@@ -1,7 +1,7 @@
 {
   "name": "qq-bot-v2",
   "version": "1.0.0",
-  "description": "QQ Bot V2 - \u7eaf\u6d88\u606f\u5b58\u50a8 MVP",
+  "description": "QQ Bot V2 - 纯消息存储 MVP",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -16,6 +16,7 @@
   "license": "ISC",
   "packageManager": "pnpm@10.17.1",
   "dependencies": {
+    "@prisma/adapter-pg": "^7.4.0",
     "@prisma/client": "^7.4.0",
     "dotenv": "^17.3.1",
     "node-napcat-ts": "^0.4.21",

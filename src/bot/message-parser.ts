@@ -34,7 +34,7 @@ function parseSegment(msg: ReceiveSegment): ParsedSegment | undefined {
     case 'face':
       return {
         type: 'face',
-        faceId: parseInt(msg.data.id),
+        faceId: parseInt(msg.data.id) || 0,
         name: msg.data.raw?.faceText,
       }
 

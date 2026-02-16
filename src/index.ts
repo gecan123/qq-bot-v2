@@ -9,11 +9,14 @@ async function main() {
   await startBot()
 }
 
-process.on('SIGINT', async () => {
+async function shutdown() {
   log.info('Shutting down...')
   await prisma.$disconnect()
   process.exit(0)
-})
+}
+
+process.on('SIGINT', shutdown)
+process.on('SIGTERM', shutdown)
 
 main().catch((err) => {
   log.fatal(err, 'Failed to start')

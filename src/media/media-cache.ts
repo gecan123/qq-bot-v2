@@ -1,6 +1,7 @@
 import { prisma } from '../database/client.js'
 import { log } from '../logger.js'
 import { jobQueue } from '../queue/index.js'
+import { computeMediaHash } from './media-hash.js'
 import type {
   ImageSegment,
   VideoSegment,
@@ -66,6 +67,10 @@ function formatError(error: unknown): Record<string, unknown> {
   }
 
   return { value: String(error) }
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === 'P2002'
 }
 
 async function resolveMediaUrl(segment: MediaSegment, napcat: NCWebsocket): Promise<string | undefined> {
@@ -140,19 +145,39 @@ async function cacheMediaSegment(input: CacheInput): Promise<string | undefined>
 
   const contentType = resolveContentType(response.headers.get('content-type') ?? undefined, segment.fileName)
   const fileSize = bytes.length
+  const dataHash = computeMediaHash(bytes)
 
-  const media = await prisma.media.create({
-    data: {
-      data: new Uint8Array(bytes),
-      mediaType: resolveMediaType(segment),
-      contentType,
-      fileName: segment.fileName,
-      fileSize,
-    },
+  const existing = await prisma.media.findUnique({
+    where: { dataHash },
+    select: { mediaId: true },
   })
-  jobQueue.enqueue('generate-description', { mediaId: media.mediaId })
+  if (existing) {
+    return String(existing.mediaId)
+  }
 
-  return String(media.mediaId)
+  try {
+    const media = await prisma.media.create({
+      data: {
+        data: new Uint8Array(bytes),
+        dataHash,
+        mediaType: resolveMediaType(segment),
+        contentType,
+        fileName: segment.fileName,
+        fileSize,
+      },
+    })
+    jobQueue.enqueue('generate-description', { mediaId: media.mediaId })
+    return String(media.mediaId)
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      const deduped = await prisma.media.findUnique({
+        where: { dataHash },
+        select: { mediaId: true },
+      })
+      if (deduped) return String(deduped.mediaId)
+    }
+    throw error
+  }
 }
 
 export async function persistMediaReferences(params: {

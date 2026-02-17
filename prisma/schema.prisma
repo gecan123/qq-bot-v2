@@ -29,6 +29,7 @@ model Message {
 model Media {
   mediaId     Int      @id @default(autoincrement()) @map("media_id")
   data        Bytes    @map("data")
+  dataHash    String?  @map("data_hash") @db.VarChar(64)
   mediaType   String?  @map("media_type")
   contentType String?  @map("content_type")
   fileName    String?  @map("file_name")
@@ -36,5 +37,6 @@ model Media {
   description String?  @map("description") @db.Text
   createdAt   DateTime @default(now()) @map("created_at")
 
+  @@unique([dataHash])
   @@map("media")
 }

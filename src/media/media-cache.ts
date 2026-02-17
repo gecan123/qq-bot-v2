@@ -1,5 +1,6 @@
 import { prisma } from '../database/client.js'
 import { log } from '../logger.js'
+import { jobQueue } from '../queue/index.js'
 import type {
   ImageSegment,
   VideoSegment,
@@ -112,6 +113,7 @@ async function cacheMediaSegment(input: CacheInput): Promise<string | undefined>
         fileSize: fileSizeBytes,
       },
     })
+    jobQueue.enqueue('generate-description', { mediaId: media.mediaId })
     return String(media.mediaId)
   }
 
@@ -148,6 +150,7 @@ async function cacheMediaSegment(input: CacheInput): Promise<string | undefined>
       fileSize,
     },
   })
+  jobQueue.enqueue('generate-description', { mediaId: media.mediaId })
 
   return String(media.mediaId)
 }

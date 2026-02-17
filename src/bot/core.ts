@@ -1,10 +1,74 @@
 import { napcat } from './napcat.js'
 import { parseMessage } from './message-parser.js'
-import { insertMessage } from '../database/messages.js'
+import { findExistingMessageIds, insertMessage } from '../database/messages.js'
 import { config } from '../config/index.js'
 import { log } from '../logger.js'
 import { persistMediaReferences } from '../media/media-cache.js'
 import type { TextSegment } from '../types/message-segments.js'
+
+const BACKFILL_COUNT = 50
+
+async function processMessage(groupId: number, messageId: number): Promise<void> {
+  const qqMsg = await napcat.get_msg({ message_id: messageId })
+  const parsed = parseMessage(qqMsg)
+  const groupName = await resolveGroupName({ group_id: groupId, ...qqMsg })
+  const mediaResult = await persistMediaReferences({
+    content: parsed.content,
+    groupId,
+    messageId: parsed.messageId,
+    senderId: parsed.senderId,
+    napcat,
+  })
+
+  await insertMessage({
+    groupId,
+    groupName,
+    mediaReferenceIds: mediaResult.mediaReferenceIds,
+    messageId: parsed.messageId,
+    senderId: parsed.senderId,
+    senderNickname: parsed.senderNickname,
+    senderGroupNickname: parsed.senderGroupNickname,
+    content: mediaResult.content,
+    rawContent: qqMsg.message,
+    rawMessage: qqMsg.raw_message,
+  })
+
+  const textPreview = mediaResult.content
+    .filter((s): s is TextSegment => s.type === 'text')
+    .map((s) => s.content)
+    .join(' ')
+    .slice(0, 50)
+
+  log.info(
+    {
+      group: groupId,
+      sender: parsed.senderNickname,
+      segments: mediaResult.content.length,
+      mediaReferences: mediaResult.mediaReferenceIds.length,
+    },
+    textPreview || `[${mediaResult.content.map((s) => s.type).join(', ')}]`
+  )
+}
+
+async function backfillGroupMessages(groupId: number): Promise<void> {
+  const { messages } = await napcat.get_group_msg_history({
+    group_id: groupId,
+    count: BACKFILL_COUNT,
+  })
+
+  const allMessageIds = messages.map((m) => m.message_id)
+  const existingIds = await findExistingMessageIds(groupId, allMessageIds)
+
+  for (const msg of messages) {
+    if (existingIds.has(msg.message_id)) continue
+    try {
+      await processMessage(groupId, msg.message_id)
+    } catch (error) {
+      log.warn({ error, groupId, msgId: msg.message_id }, '补拉消息处理失败，跳过')
+    }
+  }
+  log.info({ groupId, total: messages.length, skipped: existingIds.size }, '历史消息补拉完成')
+}
 
 function getGroupNameFromEvent(context: { group_name?: string; groupName?: string }): string | undefined {
   if (!context || typeof context !== 'object') return undefined
@@ -43,9 +107,14 @@ export async function startBot(): Promise<void> {
     log.warn({ code: ctx.code }, 'WebSocket 连接关闭')
   })
 
-  napcat.on('meta_event.lifecycle', (ctx) => {
+  napcat.on('meta_event.lifecycle', async (ctx) => {
     if (ctx.sub_type === 'connect') {
       log.info('NapCat 连接成功')
+      for (const groupId of config.groupIds) {
+        backfillGroupMessages(groupId).catch((error) => {
+          log.error({ error, groupId }, '群历史消息补拉失败')
+        })
+      }
     }
   })
 
@@ -55,48 +124,9 @@ export async function startBot(): Promise<void> {
 
   napcat.on('message.group', async (context) => {
     if (!config.groupIds.includes(context.group_id)) return
-    if (context.sender.user_id === config.selfNumber) return
 
     try {
-      const qqMsg = await napcat.get_msg({ message_id: context.message_id })
-      const parsed = parseMessage(qqMsg)
-      const groupName = await resolveGroupName(context)
-      const mediaResult = await persistMediaReferences({
-        content: parsed.content,
-        groupId: context.group_id,
-        messageId: parsed.messageId,
-        senderId: parsed.senderId,
-        napcat,
-      })
-
-      await insertMessage({
-        groupId: context.group_id,
-        groupName,
-        mediaReferenceIds: mediaResult.mediaReferenceIds,
-        messageId: parsed.messageId,
-        senderId: parsed.senderId,
-        senderNickname: parsed.senderNickname,
-        senderGroupNickname: parsed.senderGroupNickname,
-        content: mediaResult.content,
-        rawContent: qqMsg.message,
-        rawMessage: qqMsg.raw_message,
-      })
-
-      const textPreview = mediaResult.content
-        .filter((s): s is TextSegment => s.type === 'text')
-        .map((s) => s.content)
-        .join(' ')
-        .slice(0, 50)
-
-      log.info(
-        {
-          group: context.group_id,
-          sender: parsed.senderNickname,
-          segments: mediaResult.content.length,
-          mediaReferences: mediaResult.mediaReferenceIds.length,
-        },
-        textPreview || `[${mediaResult.content.map((s) => s.type).join(', ')}]`
-      )
+      await processMessage(context.group_id, context.message_id)
     } catch (error) {
       log.error({ error, group: context.group_id, msgId: context.message_id }, '处理群消息失败')
     }

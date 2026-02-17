@@ -16,6 +16,17 @@ export interface InsertMessageParams {
   rawMessage?: string
 }
 
+export async function findExistingMessageIds(groupId: number, messageIds: number[]): Promise<Set<number>> {
+  const rows = await prisma.message.findMany({
+    where: {
+      groupId: BigInt(groupId),
+      messageId: { in: messageIds.map(BigInt) },
+    },
+    select: { messageId: true },
+  })
+  return new Set(rows.map((r) => Number(r.messageId)))
+}
+
 export async function insertMessage(params: InsertMessageParams): Promise<void> {
   const mediaReferenceIds = params.mediaReferenceIds ?? []
 

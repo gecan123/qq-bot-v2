@@ -3,7 +3,32 @@ import { parseMessage } from './message-parser.js'
 import { insertMessage } from '../database/messages.js'
 import { config } from '../config/index.js'
 import { log } from '../logger.js'
+import { persistImageReferences } from '../media/image-reference.js'
 import type { TextSegment } from '../types/message-segments.js'
+
+function getGroupNameFromEvent(context: { group_name?: string; groupName?: string }): string | undefined {
+  if (!context || typeof context !== 'object') return undefined
+
+  const candidate = context.group_name ?? context.groupName
+
+  if (typeof candidate !== 'string') return undefined
+  const normalized = candidate.trim()
+  return normalized.length > 0 ? normalized : undefined
+}
+
+async function resolveGroupName(context: { group_id: number; group_name?: string; groupName?: string }): Promise<string | undefined> {
+  const eventGroupName = getGroupNameFromEvent(context)
+  if (eventGroupName) return eventGroupName
+
+  try {
+    const groupInfo = await napcat.get_group_info({ group_id: context.group_id })
+    const apiGroupName = groupInfo.group_name?.trim()
+    return apiGroupName ? apiGroupName : undefined
+  } catch (error) {
+    log.warn({ error, groupId: context.group_id }, '获取群名失败')
+    return undefined
+  }
+}
 
 export async function startBot(): Promise<void> {
   napcat.on('socket.open', () => {
@@ -35,19 +60,28 @@ export async function startBot(): Promise<void> {
     try {
       const qqMsg = await napcat.get_msg({ message_id: context.message_id })
       const parsed = parseMessage(qqMsg)
+      const groupName = await resolveGroupName(context)
+      const mediaResult = await persistImageReferences({
+        content: parsed.content,
+        groupId: context.group_id,
+        messageId: parsed.messageId,
+        senderId: parsed.senderId,
+      })
 
       await insertMessage({
         groupId: context.group_id,
+        groupName,
+        imageReferenceIds: mediaResult.imageReferenceIds,
         messageId: parsed.messageId,
         senderId: parsed.senderId,
         senderNickname: parsed.senderNickname,
         senderGroupNickname: parsed.senderGroupNickname,
-        content: parsed.content,
+        content: mediaResult.content,
         rawContent: qqMsg.message,
         rawMessage: qqMsg.raw_message,
       })
 
-      const textPreview = parsed.content
+      const textPreview = mediaResult.content
         .filter((s): s is TextSegment => s.type === 'text')
         .map((s) => s.content)
         .join(' ')
@@ -57,9 +91,10 @@ export async function startBot(): Promise<void> {
         {
           group: context.group_id,
           sender: parsed.senderNickname,
-          segments: parsed.content.length,
+          segments: mediaResult.content.length,
+          imageReferences: mediaResult.imageReferenceIds.length,
         },
-        textPreview || `[${parsed.content.map((s) => s.type).join(', ')}]`
+        textPreview || `[${mediaResult.content.map((s) => s.type).join(', ')}]`
       )
     } catch (error) {
       log.error({ error, group: context.group_id, msgId: context.message_id }, '处理群消息失败')

@@ -10,6 +10,7 @@ function requireEnv(name: string): string {
 
 export const config = {
   databaseUrl: requireEnv('DATABASE_URL'),
+  redisUrl: requireEnv('REDIS_URL'),
   napcat: {
     wsUrl: requireEnv('NAPCAT_WS_URL'),
     accessToken: requireEnv('NAPCAT_ACCESS_TOKEN'),

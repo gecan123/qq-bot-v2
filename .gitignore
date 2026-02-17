@@ -3,3 +3,6 @@ dist/
 .env
 *.log
 src/generated/
+.idea/
+.tmp/
+temp/

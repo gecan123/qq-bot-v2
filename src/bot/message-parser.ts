@@ -23,11 +23,20 @@ function parseSegment(msg: ReceiveSegment): ParsedSegment | undefined {
     }
 
     case 'image': {
-      const data = msg.data as { url?: string; file_size?: string }
+      const data = msg.data as {
+        url?: string
+        file_size?: string
+        file?: string
+        summary?: string
+        sub_type?: number
+      }
       return {
         type: 'image',
-        url: data.url ?? '',
+        url: data.url,
         fileSize: data.file_size,
+        fileName: data.file,
+        summary: data.summary,
+        subType: data.sub_type,
       }
     }
 

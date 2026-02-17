@@ -10,6 +10,8 @@ datasource db {
 model Message {
   id                  Int      @id @default(autoincrement())
   groupId             BigInt   @map("group_id")
+  groupName           String?  @map("group_name") @db.VarChar(255)
+  imageReferenceIds   String[] @default([]) @map("image_reference_ids")
   messageId           BigInt   @map("message_id")
   senderId            BigInt   @map("sender_id")
   senderNickname      String?  @map("sender_nickname") @db.VarChar(100)
@@ -22,4 +24,15 @@ model Message {
   @@unique([groupId, messageId])
   @@index([groupId, createdAt(sort: Desc)])
   @@map("messages")
+}
+
+model Media {
+  mediaId     Int      @id @default(autoincrement()) @map("media_id")
+  data        Bytes    @map("data")
+  contentType String?  @map("content_type")
+  fileName    String?  @map("file_name")
+  fileSize    Int?     @map("file_size")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("media")
 }

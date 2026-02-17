@@ -5,8 +5,12 @@ export interface TextSegment {
 
 export interface ImageSegment {
   type: 'image'
-  url: string
+  referenceId?: string
+  url?: string
   fileSize?: string
+  fileName?: string
+  summary?: string
+  subType?: number
 }
 
 export interface FaceSegment {

@@ -3,7 +3,7 @@ import { parseMessage } from './message-parser.js'
 import { insertMessage } from '../database/messages.js'
 import { config } from '../config/index.js'
 import { log } from '../logger.js'
-import { persistImageReferences } from '../media/image-reference.js'
+import { persistMediaReferences } from '../media/media-cache.js'
 import type { TextSegment } from '../types/message-segments.js'
 
 function getGroupNameFromEvent(context: { group_name?: string; groupName?: string }): string | undefined {
@@ -61,17 +61,18 @@ export async function startBot(): Promise<void> {
       const qqMsg = await napcat.get_msg({ message_id: context.message_id })
       const parsed = parseMessage(qqMsg)
       const groupName = await resolveGroupName(context)
-      const mediaResult = await persistImageReferences({
+      const mediaResult = await persistMediaReferences({
         content: parsed.content,
         groupId: context.group_id,
         messageId: parsed.messageId,
         senderId: parsed.senderId,
+        napcat,
       })
 
       await insertMessage({
         groupId: context.group_id,
         groupName,
-        imageReferenceIds: mediaResult.imageReferenceIds,
+        mediaReferenceIds: mediaResult.mediaReferenceIds,
         messageId: parsed.messageId,
         senderId: parsed.senderId,
         senderNickname: parsed.senderNickname,
@@ -92,7 +93,7 @@ export async function startBot(): Promise<void> {
           group: context.group_id,
           sender: parsed.senderNickname,
           segments: mediaResult.content.length,
-          imageReferences: mediaResult.imageReferenceIds.length,
+          mediaReferences: mediaResult.mediaReferenceIds.length,
         },
         textPreview || `[${mediaResult.content.map((s) => s.type).join(', ')}]`
       )

@@ -53,6 +53,50 @@ function parseSegment(msg: ReceiveSegment): ParsedSegment | undefined {
         targetId: String(msg.data.qq),
       }
 
+    case 'video': {
+      const data = msg.data as {
+        url?: string
+        file?: string
+        file_size?: string
+      }
+      return {
+        type: 'video',
+        url: data.url,
+        fileName: data.file,
+        fileSize: data.file_size,
+      }
+    }
+
+    case 'record': {
+      const data = msg.data as {
+        url?: string
+        file?: string
+        file_size?: string
+      }
+      return {
+        type: 'record',
+        url: data.url,
+        fileName: data.file,
+        fileSize: data.file_size,
+      }
+    }
+
+    case 'file': {
+      const data = msg.data as {
+        url?: string
+        file?: string
+        file_id?: string
+        file_size?: string
+      }
+      return {
+        type: 'file',
+        url: data.url,
+        fileName: data.file,
+        fileId: data.file_id,
+        fileSize: data.file_size,
+      }
+    }
+
     case 'reply':
       return {
         type: 'reply',

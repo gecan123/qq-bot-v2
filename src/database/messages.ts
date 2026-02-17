@@ -6,7 +6,7 @@ import { log } from '../logger.js'
 export interface InsertMessageParams {
   groupId: number
   groupName?: string
-  imageReferenceIds?: string[]
+  mediaReferenceIds?: string[]
   messageId: number
   senderId: number
   senderNickname: string
@@ -17,7 +17,7 @@ export interface InsertMessageParams {
 }
 
 export async function insertMessage(params: InsertMessageParams): Promise<void> {
-  const imageReferenceIds = params.imageReferenceIds ?? []
+  const mediaReferenceIds = params.mediaReferenceIds ?? []
 
   try {
     await prisma.message.upsert({
@@ -30,7 +30,7 @@ export async function insertMessage(params: InsertMessageParams): Promise<void> 
       create: {
         groupId: BigInt(params.groupId),
         groupName: params.groupName ?? null,
-        imageReferenceIds,
+        mediaReferenceIds,
         messageId: BigInt(params.messageId),
         senderId: BigInt(params.senderId),
         senderNickname: params.senderNickname,
@@ -41,10 +41,10 @@ export async function insertMessage(params: InsertMessageParams): Promise<void> 
       },
       update: {
         groupName: params.groupName ?? null,
-        imageReferenceIds,
+        mediaReferenceIds,
       },
     })
-    log.debug({ messageId: params.messageId, imageReferences: imageReferenceIds.length }, 'Message saved')
+    log.debug({ messageId: params.messageId, imageReferences: mediaReferenceIds.length }, 'Message saved')
   } catch (error) {
     log.error({ error, messageId: params.messageId }, 'Failed to save message')
     throw error

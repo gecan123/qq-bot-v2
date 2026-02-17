@@ -30,6 +30,31 @@ export interface ReplySegment {
   messageId: string
 }
 
+export interface VideoSegment {
+  type: 'video'
+  referenceId?: string
+  url?: string
+  fileName?: string
+  fileSize?: string
+}
+
+export interface RecordSegment {
+  type: 'record'
+  referenceId?: string
+  url?: string
+  fileName?: string
+  fileSize?: string
+}
+
+export interface FileSegment {
+  type: 'file'
+  referenceId?: string
+  url?: string
+  fileId?: string
+  fileName?: string
+  fileSize?: string
+}
+
 export interface RawSegment {
   type: 'raw'
   originalType: string
@@ -39,6 +64,9 @@ export interface RawSegment {
 export type ParsedSegment =
   | TextSegment
   | ImageSegment
+  | VideoSegment
+  | RecordSegment
+  | FileSegment
   | FaceSegment
   | AtSegment
   | ReplySegment

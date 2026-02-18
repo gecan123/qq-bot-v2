@@ -22,4 +22,5 @@ export const config = {
   replyMediaTimeoutMs: Number(process.env.REPLY_MEDIA_TIMEOUT_MS ?? '5000'),
   memoryJobIntervalHours: Number(process.env.MEMORY_JOB_INTERVAL_HOURS ?? '4'),
   memoryJobSkipThreshold: Number(process.env.MEMORY_JOB_SKIP_THRESHOLD ?? '20'),
+  jobInterDelayMs: Number(process.env.JOB_INTER_DELAY_MS ?? '200'),
 } as const

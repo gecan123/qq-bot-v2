@@ -20,4 +20,6 @@ export const config = {
   nodeEnv: process.env.NODE_ENV || 'development',
   replyMediaWaitN: Number(process.env.REPLY_MEDIA_WAIT_N ?? '5'),
   replyMediaTimeoutMs: Number(process.env.REPLY_MEDIA_TIMEOUT_MS ?? '5000'),
+  memoryJobIntervalHours: Number(process.env.MEMORY_JOB_INTERVAL_HOURS ?? '4'),
+  memoryJobSkipThreshold: Number(process.env.MEMORY_JOB_SKIP_THRESHOLD ?? '20'),
 } as const

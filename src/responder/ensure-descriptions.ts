@@ -9,6 +9,7 @@ export function collectReferenceIds(segmentGroups: ParsedSegment[][]): number[] 
   for (const segments of segmentGroups) {
     for (const seg of segments) {
       if (
+        // 'image' 覆盖贴纸（贴纸以 ImageSegment subType===1 存储，DB mediaType 字段才被标记为 'sticker'）
         (seg.type === 'image' || seg.type === 'video' || seg.type === 'record' || seg.type === 'file') &&
         typeof seg.referenceId === 'string'
       ) {

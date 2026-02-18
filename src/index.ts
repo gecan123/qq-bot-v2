@@ -4,6 +4,9 @@ import { log } from './logger.js'
 import { jobQueue } from './queue/index.js'
 import { setLlmProvider } from './llm/provider.js'
 import { GeminiProvider, isGeminiAvailable } from './llm/gemini-adapter.js'
+import { startMemoryRefreshJob } from './jobs/refresh-memory.js'
+
+let stopMemoryJob: () => void = () => {}
 
 async function main() {
   log.info('QQ Bot V2 starting...')
@@ -18,11 +21,14 @@ async function main() {
   }
 
   jobQueue.start()
+  stopMemoryJob = startMemoryRefreshJob()
+  log.info('Memory refresh job started')
   await startBot()
 }
 
 async function shutdown() {
   log.info('Shutting down...')
+  stopMemoryJob()
   jobQueue.stop()
   await prisma.$disconnect()
   process.exit(0)

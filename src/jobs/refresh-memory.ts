@@ -22,7 +22,8 @@ function parseUserProfileJson(raw: string): { profile: string; examples: string[
       typeof parsed === 'object' &&
       parsed !== null &&
       typeof (parsed as Record<string, unknown>).profile === 'string' &&
-      Array.isArray((parsed as Record<string, unknown>).examples)
+      Array.isArray((parsed as Record<string, unknown>).examples) &&
+      ((parsed as Record<string, unknown>).examples as unknown[]).every((e) => typeof e === 'string')
     ) {
       return parsed as { profile: string; examples: string[] }
     }
@@ -69,7 +70,7 @@ async function refreshGroup(groupId: number): Promise<void> {
     log.debug({ groupId, chunkSize: chunk.length }, '已处理一个消息分段')
   }
 
-  if (runningSummary && runningSummary !== (existing?.summary ?? null)) {
+  if (runningSummary) {
     await upsertGroupMemory({ groupId: groupBigInt, groupName, summary: runningSummary, lastMessageId: maxMessageId })
     log.info({ groupId, chunks: chunks.length }, '群摘要已更新')
   }

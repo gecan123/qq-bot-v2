@@ -3,4 +3,5 @@ export interface LlmProvider {
   summarizeText(params: { text: string; context?: string }): Promise<string>
   transcribeAudio?(params: { audio: Buffer; contentType: string }): Promise<string>
   generateReply?(systemPrompt: string, context: string, trigger: string): Promise<string>
+  generateText?(systemInstruction: string, prompt: string): Promise<string>
 }

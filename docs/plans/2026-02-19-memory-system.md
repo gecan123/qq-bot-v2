@@ -4,7 +4,7 @@
 
 **Goal:** Build a scheduled background job that progressively generates and updates group impressions and per-user profiles using the LLM, stored in PostgreSQL for manual inspection.
 
-**Architecture:** A `setInterval`-based job runs every N hours and, for each monitored group, fetches messages since the last run cursor, calls the LLM to update a group summary and per-user profiles (with few-shot examples). A new `generateText` method on `LlmProvider` powers structured generation separately from the chat reply path. No context injection in this phase.
+**Architecture:** A `setInterval`-based job runs every N hours and, for each monitored group, fetches messages since the last run cursor. Large batches are split into chunks by 20-minute time gaps (with 15-message overlap at boundaries) and summarized progressively — each chunk updates the running summary so topic context carries forward. Per-user profiles are generated separately from each user's own messages. A new `generateText` method on `LlmProvider` powers structured generation separately from the chat reply path. No context injection in this phase.
 
 **Tech Stack:** Prisma 7, PostgreSQL, pino, Node.js `setInterval`, existing `GeminiProvider`
 
@@ -468,6 +468,125 @@ git commit -m "feat: add message formatter for memory job"
 
 ---
 
+### Task 6b: Message chunker
+
+**Files:**
+- Create: `src/memory/chunk-messages.ts`
+- Create: `src/memory/chunk-messages.test.ts`
+
+**Step 1: Write failing tests**
+
+`src/memory/chunk-messages.test.ts`:
+
+```ts
+import assert from 'node:assert/strict'
+import { describe, test } from 'node:test'
+import { chunkByTimeGap, addOverlap } from './chunk-messages.js'
+
+function makeMsg(minutesFromStart: number, id = 1) {
+  return {
+    messageId: BigInt(id),
+    createdAt: new Date(Date.UTC(2026, 0, 1, 0, minutesFromStart, 0)),
+  }
+}
+
+describe('chunkByTimeGap', () => {
+  test('keeps all messages in one chunk when no large gap', () => {
+    const msgs = [makeMsg(0, 1), makeMsg(5, 2), makeMsg(10, 3)]
+    const chunks = chunkByTimeGap(msgs as never, 20)
+    assert.equal(chunks.length, 1)
+    assert.equal(chunks[0].length, 3)
+  })
+
+  test('splits on gap exceeding threshold', () => {
+    const msgs = [makeMsg(0, 1), makeMsg(5, 2), makeMsg(30, 3), makeMsg(35, 4)]
+    const chunks = chunkByTimeGap(msgs as never, 20)
+    assert.equal(chunks.length, 2)
+    assert.equal(chunks[0].length, 2)
+    assert.equal(chunks[1].length, 2)
+  })
+
+  test('returns empty array for empty input', () => {
+    assert.deepEqual(chunkByTimeGap([], 20), [])
+  })
+})
+
+describe('addOverlap', () => {
+  test('first chunk is unchanged', () => {
+    const chunks = [[makeMsg(0, 1), makeMsg(1, 2)], [makeMsg(30, 3)]] as never
+    const result = addOverlap(chunks, 2)
+    assert.equal(result[0].length, 2)
+  })
+
+  test('subsequent chunks prepend tail of previous chunk', () => {
+    const a = [makeMsg(0, 1), makeMsg(1, 2), makeMsg(2, 3)]
+    const b = [makeMsg(30, 4)]
+    const result = addOverlap([a, b] as never, 2)
+    assert.equal(result[1].length, 3) // 2 overlap + 1 original
+    assert.equal(result[1][0].messageId, 2n)
+    assert.equal(result[1][2].messageId, 4n)
+  })
+})
+```
+
+**Step 2: Run tests to verify they fail**
+
+```bash
+pnpm test src/memory/chunk-messages.test.ts
+```
+
+Expected: FAIL
+
+**Step 3: Implement chunk-messages.ts**
+
+`src/memory/chunk-messages.ts`:
+
+```ts
+import type { Message } from '../generated/prisma/client.js'
+
+export function chunkByTimeGap(messages: Message[], gapMinutes: number): Message[][] {
+  if (messages.length === 0) return []
+  const gapMs = gapMinutes * 60 * 1000
+  const chunks: Message[][] = []
+  let current: Message[] = [messages[0]]
+  for (let i = 1; i < messages.length; i++) {
+    const gap = messages[i].createdAt.getTime() - messages[i - 1].createdAt.getTime()
+    if (gap > gapMs) {
+      chunks.push(current)
+      current = []
+    }
+    current.push(messages[i])
+  }
+  chunks.push(current)
+  return chunks
+}
+
+export function addOverlap(chunks: Message[][], overlapSize: number): Message[][] {
+  return chunks.map((chunk, i) => {
+    if (i === 0) return chunk
+    const overlap = chunks[i - 1].slice(-overlapSize)
+    return [...overlap, ...chunk]
+  })
+}
+```
+
+**Step 4: Run tests**
+
+```bash
+pnpm test src/memory/chunk-messages.test.ts
+```
+
+Expected: PASS
+
+**Step 5: Commit**
+
+```bash
+git add src/memory/chunk-messages.ts src/memory/chunk-messages.test.ts
+git commit -m "feat: add time-gap message chunker with overlap"
+```
+
+---
+
 ### Task 7: Refresh memory job
 
 **Files:**
@@ -485,10 +604,14 @@ import { config } from '../config/index.js'
 import { getGroupMemory, upsertGroupMemory, getUserMemory, upsertUserMemory } from '../database/memory.js'
 import { formatMessagesForMemory } from '../memory/format-messages.js'
 import { buildGroupSummaryPrompt, buildUserProfilePrompt } from '../memory/prompts.js'
+import { chunkByTimeGap, addOverlap } from '../memory/chunk-messages.js'
 import type { Message } from '../generated/prisma/client.js'
 
 const MEMORY_SYSTEM_INSTRUCTION =
   '你是一个群聊分析助手，负责为机器人维护对群聊和群成员的长期印象记忆。请根据提供的消息客观、简洁地更新印象描述。'
+
+const GAP_MINUTES = 20
+const OVERLAP_SIZE = 15
 
 function parseUserProfileJson(raw: string): { profile: string; examples: string[] } | null {
   const cleaned = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
@@ -534,14 +657,23 @@ async function refreshGroup(groupId: number): Promise<void> {
   const groupName = newMessages[newMessages.length - 1]?.groupName ?? null
   const maxMessageId = newMessages.reduce((max, m) => (m.messageId > max ? m.messageId : max), 0n)
 
-  // Update group summary
-  const formattedAll = formatMessagesForMemory(newMessages)
-  const groupPrompt = buildGroupSummaryPrompt(existing?.summary ?? null, formattedAll)
-  const newSummary = await provider.generateText(MEMORY_SYSTEM_INSTRUCTION, groupPrompt)
-  await upsertGroupMemory({ groupId: groupBigInt, groupName, summary: newSummary, lastMessageId: maxMessageId })
-  log.info({ groupId }, '群摘要已更新')
+  // Update group summary: chunk by time gap, add overlap, roll forward progressively
+  const chunks = addOverlap(chunkByTimeGap(newMessages, GAP_MINUTES), OVERLAP_SIZE)
+  let runningSummary = existing?.summary ?? null
+  for (const chunk of chunks) {
+    const formatted = formatMessagesForMemory(chunk)
+    if (!formatted.trim()) continue
+    const prompt = buildGroupSummaryPrompt(runningSummary, formatted)
+    runningSummary = await provider.generateText(MEMORY_SYSTEM_INSTRUCTION, prompt)
+    log.debug({ groupId, chunkSize: chunk.length }, '已处理一个消息分段')
+  }
 
-  // Update per-user profiles
+  if (runningSummary && runningSummary !== (existing?.summary ?? null)) {
+    await upsertGroupMemory({ groupId: groupBigInt, groupName, summary: runningSummary, lastMessageId: maxMessageId })
+    log.info({ groupId, chunks: chunks.length }, '群摘要已更新')
+  }
+
+  // Update per-user profiles (volume per user is small, no chunking needed)
   const byUser = new Map<bigint, Message[]>()
   for (const msg of newMessages) {
     const arr = byUser.get(msg.senderId) ?? []

@@ -5,7 +5,7 @@ const MAX_ATTEMPTS = 3
 const RETRY_DELAY_MS = 5_000
 const POLL_INTERVAL_MS = 1_000
 
-export function createMemoryQueue(): JobQueue {
+export function createMemoryQueue(interJobDelayMs = 0): JobQueue {
   const queue: Job[] = []
   const handlers = new Map<string, JobHandler<string, unknown>>()
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -54,7 +54,7 @@ export function createMemoryQueue(): JobQueue {
       processing = false
     }
 
-    schedule(0)
+    schedule(interJobDelayMs)
   }
 
   function schedule(delayMs: number) {

@@ -2,11 +2,21 @@ import { prisma } from './database/client.js'
 import { startBot } from './bot/core.js'
 import { log } from './logger.js'
 import { jobQueue } from './queue/index.js'
+import { setLlmProvider } from './llm/provider.js'
+import { GeminiProvider, isGeminiAvailable } from './llm/gemini-adapter.js'
 
 async function main() {
   log.info('QQ Bot V2 starting...')
   await prisma.$connect()
   log.info('Database connected')
+
+  if (isGeminiAvailable()) {
+    setLlmProvider(new GeminiProvider())
+    log.info('Gemini LLM provider registered')
+  } else {
+    log.warn('Gemini OAuth credentials not found, LLM features disabled')
+  }
+
   jobQueue.start()
   await startBot()
 }

@@ -60,7 +60,28 @@ export async function handleGenerateDescription(
   }
 
   if (mediaType === 'record') {
-    log.debug({ mediaId, jobId: job.id }, '语音 ASR 暂未实现，跳过')
+    if (!provider.transcribeAudio) {
+      log.debug({ mediaId, jobId: job.id }, 'LLM provider 不支持语音转写，跳过')
+      return
+    }
+
+    const buffer = Buffer.from(media.data)
+    if (buffer.length === 0) {
+      log.debug({ mediaId, jobId: job.id }, '语音数据为空，跳过')
+      return
+    }
+
+    const description = await provider.transcribeAudio({
+      audio: buffer,
+      contentType: media.contentType ?? 'audio/mp4',
+    })
+
+    await prisma.media.update({
+      where: { mediaId },
+      data: { description },
+    })
+
+    log.info({ mediaId, jobId: job.id }, '语音转写已完成')
     return
   }
 

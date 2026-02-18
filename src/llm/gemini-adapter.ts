@@ -57,14 +57,27 @@ export class GeminiProvider implements LlmProvider {
     }
 
     async generateReply(systemPrompt: string, context: string, trigger: string): Promise<string> {
+        const userMessage = [
+            '[用户对你说]',
+            trigger,
+            '',
+            '[群聊背景记录（仅供参考）]',
+            context || '（无）',
+        ].join('\n')
+
+        const fullSystemPrompt =
+            systemPrompt +
+            '\n\n---\n你的首要任务是回复"[用户对你说]"部分的内容。' +
+            '"群聊背景记录"仅供参考，请根据相关性自行判断是否使用，不要主动评论历史内容本身。'
+
         const response = await this.server.generateContent({
             model: MODEL,
             contents: [{
                 role: 'user',
-                parts: [{ text: `${context}\n\n---\n${trigger}` }],
+                parts: [{ text: userMessage }],
             }],
             config: {
-                systemInstruction: systemPrompt,
+                systemInstruction: fullSystemPrompt,
                 temperature: 0.8,
             },
         })

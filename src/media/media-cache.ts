@@ -22,6 +22,27 @@ function resolveMediaType(segment: MediaSegment): string {
 
 const MAX_DOWNLOAD_SIZE = 20 * 1024 * 1024 // 20MB
 
+function formatMB(bytes: number): string {
+  return (bytes / 1024 / 1024).toFixed(1) + 'MB'
+}
+
+const MEDIA_TYPE_LABEL: Record<string, string> = {
+  image: '图片',
+  sticker: '贴纸',
+  video: '视频',
+  record: '语音',
+  file: '文件',
+}
+
+function buildOversizeDescription(segment: MediaSegment, mediaType: string, fileSize: number): string {
+  const label = MEDIA_TYPE_LABEL[mediaType] ?? '媒体'
+  const size = formatMB(fileSize)
+  if (mediaType === 'file' && segment.fileName) {
+    return `[${label}] 文件过大（${segment.fileName}, ${size}），跳过解析`
+  }
+  return `[${label}] 文件过大（${size}），跳过解析`
+}
+
 const MIME_BY_EXT: Record<string, string> = {
   '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
   '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
@@ -106,6 +127,7 @@ async function cacheMediaSegment(input: CacheInput): Promise<string | undefined>
 
   // Skip download for files over 20MB, but still create a metadata-only record
   if (fileSizeBytes && fileSizeBytes > MAX_DOWNLOAD_SIZE) {
+    const mediaType = resolveMediaType(segment)
     log.info(
       { type: segment.type, fileName: segment.type !== 'image' ? segment.fileName : undefined, fileSize: fileSizeBytes },
       '媒体文件超过20MB，仅保存元数据'
@@ -113,12 +135,12 @@ async function cacheMediaSegment(input: CacheInput): Promise<string | undefined>
     const media = await prisma.media.create({
       data: {
         data: new Uint8Array(0),
-        mediaType: resolveMediaType(segment),
+        mediaType,
         fileName: segment.type !== 'image' ? segment.fileName : (segment as ImageSegment).fileName,
         fileSize: fileSizeBytes,
+        description: buildOversizeDescription(segment, mediaType, fileSizeBytes),
       },
     })
-    jobQueue.enqueue('generate-description', { mediaId: media.mediaId })
     return String(media.mediaId)
   }
 

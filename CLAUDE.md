@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Monorepo Scope Routing
+- First classify the task scope before reading files.
+- If the task explicitly involves admin WebUI design or implementation, read and modify only `apps/admin-web/**` first.
+- If the task is bot/backend related, do not read or modify `apps/admin-web/**`.
+- When working inside admin WebUI, follow `apps/admin-web/CLAUDE.md`.
+
 ## Project Overview
 
 QQ Bot V2 — a QQ group message storage bot. Connects to NapCat (QQ bridge) via WebSocket, listens for group messages, parses them into structured segments, and persists them to PostgreSQL.

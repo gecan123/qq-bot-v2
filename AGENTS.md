@@ -1,5 +1,11 @@
 # Repository Guidelines
 
+## Monorepo Scope Routing
+- First classify the task scope before reading files.
+- If the task explicitly involves admin WebUI design or implementation, read and modify only `apps/admin-web/**` first.
+- If the task is bot/backend related, do not read or modify `apps/admin-web/**`.
+- Apply subdirectory instructions when entering `apps/admin-web/` (see `apps/admin-web/AGENTS.md`).
+
 ## Project Structure & Module Organization
 Core application code lives in `src/`:
 - `src/index.ts` boots the process, database connection, and shutdown hooks.

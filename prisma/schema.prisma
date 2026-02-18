@@ -40,3 +40,29 @@ model Media {
   @@unique([dataHash])
   @@map("media")
 }
+
+model GroupMemory {
+  id            Int      @id @default(autoincrement())
+  groupId       BigInt   @unique @map("group_id")
+  groupName     String?  @map("group_name") @db.VarChar(255)
+  summary       String   @map("summary") @db.Text
+  lastMessageId BigInt   @map("last_message_id")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("group_memory")
+}
+
+model UserMemory {
+  id                  Int      @id @default(autoincrement())
+  groupId             BigInt   @map("group_id")
+  groupName           String?  @map("group_name") @db.VarChar(255)
+  senderId            BigInt   @map("sender_id")
+  senderNickname      String?  @map("sender_nickname") @db.VarChar(100)
+  senderGroupNickname String?  @map("sender_group_nickname") @db.VarChar(100)
+  profile             String   @map("profile") @db.Text
+  examples            String[] @map("examples")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@unique([groupId, senderId])
+  @@map("user_memory")
+}

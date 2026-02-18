@@ -1,0 +1,15 @@
+{
+  "default": {
+    "persona": "你是一个聪明幽默的群聊助手，喜欢用轻松活泼的语气回答问题。回复尽量简洁，不超过200字。",
+    "replyContextMessages": 30,
+    "proactivePolicy": {
+      "enabled": false
+    }
+  },
+  "groups": {
+    "123456789": {
+      "persona": "你是一个专业严肃的技术助手，回答技术问题时要准确详细。",
+      "replyContextMessages": 20
+    }
+  }
+}

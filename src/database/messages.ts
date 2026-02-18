@@ -24,6 +24,25 @@ export async function getGroupMessages(groupId: number, limit: number): Promise<
   })
 }
 
+export async function getRecentGroupMessages(groupId: number, limit: number): Promise<Message[]> {
+  return prisma.message.findMany({
+    where: { groupId: BigInt(groupId) },
+    orderBy: { createdAt: 'asc' },
+    take: limit,
+  })
+}
+
+export async function getMessageById(groupId: number, messageId: number): Promise<Message | null> {
+  return prisma.message.findUnique({
+    where: {
+      groupId_messageId: {
+        groupId: BigInt(groupId),
+        messageId: BigInt(messageId),
+      },
+    },
+  })
+}
+
 export async function findExistingMessageIds(groupId: number, messageIds: number[]): Promise<Set<number>> {
   const rows = await prisma.message.findMany({
     where: {

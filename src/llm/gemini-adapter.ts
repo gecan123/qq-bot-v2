@@ -56,6 +56,21 @@ export class GeminiProvider implements LlmProvider {
         return this.extractText(response).trim()
     }
 
+    async generateReply(systemPrompt: string, context: string, trigger: string): Promise<string> {
+        const response = await this.server.generateContent({
+            model: MODEL,
+            contents: [{
+                role: 'user',
+                parts: [{ text: `${context}\n\n---\n${trigger}` }],
+            }],
+            config: {
+                systemInstruction: systemPrompt,
+                temperature: 0.8,
+            },
+        })
+        return this.extractText(response).trim()
+    }
+
     async transcribeAudio(params: { audio: Buffer; contentType: string }): Promise<string> {
         const base64 = params.audio.toString('base64')
 

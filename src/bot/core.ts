@@ -5,6 +5,11 @@ import { config } from '../config/index.js'
 import { log } from '../logger.js'
 import { persistMediaReferences } from '../media/media-cache.js'
 import type { TextSegment } from '../types/message-segments.js'
+import { ResponderPipeline } from '../responder/pipeline.js'
+import { atMentionHandler } from '../responder/handlers/at-mention.js'
+import { proactiveHandler } from '../responder/handlers/proactive.js'
+
+const responderPipeline = new ResponderPipeline([atMentionHandler, proactiveHandler])
 
 const BACKFILL_COUNT = 50
 
@@ -31,6 +36,15 @@ async function processMessage(groupId: number, messageId: number): Promise<void>
     content: mediaResult.content,
     rawContent: qqMsg.message,
     rawMessage: qqMsg.raw_message,
+  })
+
+  await responderPipeline.handle({
+    groupId,
+    groupName,
+    messageId: parsed.messageId,
+    senderId: parsed.senderId,
+    senderNickname: parsed.senderNickname,
+    segments: mediaResult.content,
   })
 
   const textPreview = mediaResult.content

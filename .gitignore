@@ -8,3 +8,4 @@ src/generated/
 temp/
 .gemini/
 .worktrees/
+agent-config.json

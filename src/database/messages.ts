@@ -1,5 +1,5 @@
 import { prisma } from './client.js'
-import type { Prisma } from '../generated/prisma/client.js'
+import type { Prisma, Message } from '../generated/prisma/client.js'
 import type { ParsedSegment } from '../types/message-segments.js'
 import { log } from '../logger.js'
 
@@ -14,6 +14,14 @@ export interface InsertMessageParams {
   content: ParsedSegment[]
   rawContent?: unknown
   rawMessage?: string
+}
+
+export async function getGroupMessages(groupId: number, limit: number): Promise<Message[]> {
+  return prisma.message.findMany({
+    where: { groupId: BigInt(groupId) },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+  })
 }
 
 export async function findExistingMessageIds(groupId: number, messageIds: number[]): Promise<Set<number>> {

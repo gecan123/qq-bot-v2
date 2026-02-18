@@ -36,6 +36,7 @@ export interface VideoSegment {
   url?: string
   fileName?: string
   fileSize?: string
+  description?: string
 }
 
 export interface RecordSegment {
@@ -44,6 +45,7 @@ export interface RecordSegment {
   url?: string
   fileName?: string
   fileSize?: string
+  description?: string
 }
 
 export interface FileSegment {
@@ -53,6 +55,7 @@ export interface FileSegment {
   fileId?: string
   fileName?: string
   fileSize?: string
+  description?: string
 }
 
 export interface RawSegment {

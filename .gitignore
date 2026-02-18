@@ -9,3 +9,5 @@ temp/
 .gemini/
 .worktrees/
 agent-config.json
+
+.next/

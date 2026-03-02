@@ -1,13 +1,17 @@
 node_modules/
 dist/
 .env
+.env.local
 *.log
 src/generated/
+**/lib/generated/
 .idea/
 .tmp/
 temp/
 .gemini/
 .worktrees/
 agent-config.json
+.DS_Store
+*.tsbuildinfo
 
 .next/

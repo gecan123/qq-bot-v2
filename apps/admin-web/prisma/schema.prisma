@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Message {
+  id                  Int      @id @default(autoincrement())
+  groupId             BigInt   @map("group_id")
+  groupName           String?  @map("group_name") @db.VarChar(255)
+  mediaReferenceIds   String[] @default([]) @map("media_reference_ids")
+  messageId           BigInt   @map("message_id")
+  senderId            BigInt   @map("sender_id")
+  senderNickname      String?  @map("sender_nickname") @db.VarChar(100)
+  senderGroupNickname String?  @map("sender_group_nickname") @db.VarChar(100)
+  content             Json     @map("content")
+  rawContent          Json?    @map("raw_content")
+  rawMessage          String?  @map("raw_message") @db.Text
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  @@unique([groupId, messageId])
+  @@index([groupId, createdAt(sort: Desc)])
+  @@map("messages")
+}
+
+model Media {
+  mediaId     Int      @id @default(autoincrement()) @map("media_id")
+  data        Bytes    @map("data")
+  dataHash    String?  @map("data_hash") @db.VarChar(64)
+  mediaType   String?  @map("media_type")
+  contentType String?  @map("content_type")
+  fileName    String?  @map("file_name")
+  fileSize    Int?     @map("file_size")
+  description String?  @map("description") @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([dataHash])
+  @@map("media")
+}
+
+model GroupMemory {
+  id            Int      @id @default(autoincrement())
+  groupId       BigInt   @unique @map("group_id")
+  groupName     String?  @map("group_name") @db.VarChar(255)
+  summary       String   @map("summary") @db.Text
+  lastMessageId BigInt   @map("last_message_id")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("group_memory")
+}
+
+model UserMemory {
+  id                  Int      @id @default(autoincrement())
+  groupId             BigInt   @map("group_id")
+  groupName           String?  @map("group_name") @db.VarChar(255)
+  senderId            BigInt   @map("sender_id")
+  senderNickname      String?  @map("sender_nickname") @db.VarChar(100)
+  senderGroupNickname String?  @map("sender_group_nickname") @db.VarChar(100)
+  profile             String   @map("profile") @db.Text
+  examples            String[] @map("examples")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@unique([groupId, senderId])
+  @@map("user_memory")
+}

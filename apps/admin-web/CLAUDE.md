@@ -16,5 +16,4 @@
 - Prefer server-first rendering unless interactivity is required.
 
 ## Non-Goals (Current Stage)
-- Do not add database access in pages.
 - Do not add bot runtime code here.

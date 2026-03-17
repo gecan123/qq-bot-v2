@@ -1,9 +1,12 @@
 import * as fs from 'node:fs'
 import { log } from '../logger.js'
 
+export type AgentMode = 'single' | 'heuristic' | 'always'
+
 export interface AgentProfile {
   persona: string
   replyContextMessages?: number
+  agentMode?: AgentMode
   proactivePolicy?: { enabled: boolean }
 }
 
@@ -15,6 +18,7 @@ interface AgentConfig {
 const DEFAULT_PROFILE: AgentProfile = {
   persona: '你是一个友好的群聊助手，请简洁地回答用户的问题。',
   replyContextMessages: 30,
+  agentMode: 'single',
 }
 
 function loadConfig(): AgentConfig {
@@ -37,6 +41,6 @@ function getConfig(): AgentConfig {
 export function getAgentProfile(groupId: number): AgentProfile {
   const cfg = getConfig()
   const groupProfile = cfg.groups?.[String(groupId)]
-  if (!groupProfile) return cfg.default
-  return { ...cfg.default, ...groupProfile }
+  if (!groupProfile) return { ...DEFAULT_PROFILE, ...cfg.default }
+  return { ...DEFAULT_PROFILE, ...cfg.default, ...groupProfile }
 }

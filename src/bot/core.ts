@@ -114,7 +114,7 @@ export async function startBot(): Promise<void> {
   })
 
   napcat.on('socket.error', (ctx) => {
-    log.error({ errorType: ctx.error_type, errors: ctx.errors }, 'WebSocket 连接错误')
+    log.error({ errorType: ctx.error_type }, 'WebSocket 连接错误')
   })
 
   napcat.on('socket.close', (ctx) => {

@@ -12,7 +12,8 @@
     "admin:start": "pnpm --filter admin-web start",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:push": "prisma db push"
+    "db:push": "prisma db push",
+    "test": "tsx --test src/**/*.test.ts"
   },
   "keywords": [],
   "author": "",

@@ -16,6 +16,7 @@ function makeMsg(overrides: Partial<Message> = {}): Message {
     content: [{ type: 'text', content: '你好' }] as unknown as Message['content'],
     rawContent: null,
     rawMessage: null,
+    searchText: '',
     createdAt: new Date('2026-01-01T10:30:00'),
     ...overrides,
   }
@@ -37,7 +38,7 @@ describe('formatMessagesForMemory', () => {
 
   test('skips messages with no renderable text', () => {
     const result = formatMessagesForMemory([
-      makeMsg({ content: [{ type: 'face', faceId: 1 }] as unknown as Message['content'] }),
+      makeMsg({ content: [{ type: 'reply', messageId: '123' }] as unknown as Message['content'] }),
     ])
     assert.equal(result.trim(), '')
   })

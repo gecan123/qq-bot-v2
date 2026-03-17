@@ -1,6 +1,6 @@
 # Agent Loop 设计方案
 
-> 状态：**v1.1** | 创建：2026-03-11 | 最后更新：2026-03-11
+> 状态：**v1.1 已实现** | 创建：2026-03-11 | 最后更新：2026-03-17
 
 ## 一、目标
 
@@ -143,27 +143,18 @@ running → tool_call → running → ... → final
 
 ## 九、LLM 适配层边界
 
-agent 层（`src/agent/*`）只使用项目自有类型：
+agent 层（`src/agent/*`）只使用项目自有类型，与 `src/llm/` 完全解耦：
 
 ```typescript
-// src/agent/types.ts — agent 层的接口
+// src/agent/types.ts
 
-interface ToolCall {
-  name: string
-  args: Record<string, unknown>
-}
-
-interface ToolResult {
-  name: string
-  output: string       // 已截断的字符串
-  error?: string
-}
+interface ToolCall { id: string; name: string; args: Record<string, unknown> }
+interface ToolResult { callId: string; name: string; output: string; error?: string }
 
 interface AgentLlmAdapter {
-  /** 单次对话轮，返回模型的工具调用或文本 */
   chat(params: {
     systemPrompt: string
-    messages: AgentMessage[]
+    history: AgentMessage[]
     tools: AgentToolDeclaration[]
   }): Promise<AgentTurnResult>
 }
@@ -174,31 +165,31 @@ type AgentTurnResult =
   | { type: 'empty' }
 ```
 
-`gemini-adapter.ts` 内部实现 `AgentLlmAdapter`，负责：
-- 将 `AgentToolDeclaration` 转换为 Gemini `FunctionDeclaration`
-- 将 `AgentMessage[]` 转换为 Gemini `Content[]`
-- 将 Gemini 响应中的 `functionCall` 解析为 `ToolCall`
-
 **换模型时只需新增一个 adapter，agent 层零改动。**
 
-## 十、Gemini Function Calling 细节（封装在 adapter 内）
+## 十、OpenAI Function Calling 实现（`src/agent/openai-agent-adapter.ts`）
 
-利用 Gemini 原生 function calling，不做 prompt hack：
+> 原设计为 Gemini adapter，已调整为 OpenAI-compatible（当前主力为本地 CLIProxyAPI）。
+
+使用 `openai` SDK 的 function calling：
 
 ```
-请求：generateContent({ contents, tools: [functionDeclarations], config })
-响应：candidates[0].content.parts[] 中包含 functionCall 或 text
+请求：chat.completions.create({ messages, tools, tool_choice: 'auto' })
+响应：choices[0].message.tool_calls[] 或 message.content
 
-多轮对话 contents 数组：
-  [0] { role: "user",     parts: [{ text: "触发消息 + 初始上下文" }] }
-  [1] { role: "model",    parts: [{ functionCall: { name, args } }] }
-  [2] { role: "user",     parts: [{ functionResponse: { name, response } }] }
-  [3] { role: "model",    parts: [{ functionCall: ... }] }
-  [4] { role: "user",     parts: [{ functionResponse: ... }] }
-  [5] { role: "model",    parts: [{ text: "最终回复" }] }
+多轮对话 messages 数组：
+  [0] { role: "system",    content: systemPrompt }
+  [1] { role: "user",      content: "触发消息 + 初始上下文" }
+  [2] { role: "assistant", tool_calls: [{ id, function: { name, arguments } }] }
+  [3] { role: "tool",      tool_call_id: id, content: "工具结果" }
+  [4] { role: "assistant", tool_calls: [...] }
+  ...
 ```
 
-底层 `CodeAssistServer` 已支持 `tools` 透传，无需改动。
+工厂函数 `createOpenAIAgentAdapter()` 读取环境变量：
+- `LLM_AGENT_BASE_URL` → fallback `OPENAI_BASE_URL`
+- `LLM_AGENT_API_KEY` → fallback `OPENAI_API_KEY`
+- `LLM_AGENT_MODEL` → fallback `OPENAI_MODEL`
 
 ## 十一、初始上下文
 
@@ -355,37 +346,38 @@ fallback: 用现有 buildContext + generateReply 单轮回复
 }
 ```
 
-## 十六、文件变更清单
+## 十六、文件变更清单（已实现）
 
 ```
 新增：
-  src/agent/types.ts            ← AgentState, ToolCall, ToolResult, AgentLlmAdapter 接口
-  src/agent/tools.ts            ← 工具声明 + zod校验 + 执行器（不依赖 @google/genai）
-  src/agent/loop.ts             ← 循环主逻辑 + 超时 + 日志（只依赖 AgentLlmAdapter）
-  src/agent/heuristic.ts        ← 入口关键词规则
-  src/database/search.ts        ← searchMessages 查询（基于 searchText 字段）
+  src/agent/types.ts                     ✅ ToolCall, ToolResult, AgentLlmAdapter, AgentMessage/TurnResult/LoopResult
+  src/agent/tools.ts                     ✅ 5个只读工具 + zod校验 + 结果截断
+  src/agent/loop.ts                      ✅ runAgentLoop() maxSteps=4 timeout=30s
+  src/agent/heuristic.ts                 ✅ shouldUseAgent() 关键词规则
+  src/agent/openai-agent-adapter.ts      ✅ OpenAI function calling adapter（替代原 Gemini adapter）
+  src/database/search.ts                 ✅ searchMessages ILIKE / getUserProfile / getGroupSummary
+  scripts/backfill-search-text.ts        ✅ 历史消息 searchText 回填脚本
 
 新增（前置）：
-  src/utils/segment-text.ts              ← 唯一的 segments→纯文本 共享 helper
+  src/utils/segment-text.ts              ✅ 唯一的 segments→纯文本 共享 helper
 
 修改：
-  src/responder/handlers/at-mention.ts   ← 接入三档 agentMode 分流
-  src/responder/context-builder.ts       ← 改用共享 helper
-  src/llm/gemini-adapter.ts              ← 实现 AgentLlmAdapter（封装 function calling 细节）
-  src/llm/types.ts                       ← 扩展 LlmProvider + AgentLlmAdapter
-  src/config/agent-profiles.ts           ← 新增 agentMode 字段
-  src/database/messages.ts               ← 修复排序(messageId) + 入库时写 searchText + get_recent 支持 beforeMessageId
-  prisma/schema.prisma                   ← Message 新增 searchText 字段
+  src/responder/handlers/at-mention.ts   ✅ 三档 agentMode 分流 + fallback → 单轮
+  src/responder/context-builder.ts       ✅ 改用共享 helper
+  src/config/agent-profiles.ts           ✅ AgentMode 类型 + agentMode 字段
+  src/database/messages.ts               ✅ 排序修复(messageId desc+reverse) + searchText 写入 + beforeMessageId 支持
+  prisma/schema.prisma                   ✅ Message.searchText String @default("")
+  package.json                           ✅ test script
 
 不动：
+  src/llm/gemini-adapter.ts, src/llm/types.ts  （agent adapter 独立，无需修改）
   pipeline.ts, core.ts, media/*, jobs/*, database/client.ts, database/memory.ts
-  gemini-cli-provier.ts (CodeAssistServer 已支持 tools 透传)
 ```
 
 ## 十七、依赖
 
-- `zod` — 需要新增（工具参数校验）
-- `@google/genai` — 已有，**仅在 gemini-adapter.ts 内引用**
+- `zod` — 已有（工具参数校验）
+- `openai` — 已有（agent adapter 使用 function calling）
 
 ## 十八、实施顺序
 

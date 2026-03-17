@@ -4,11 +4,16 @@ import * as path from 'node:path'
 import { CodeAssistServer } from './gemini-cli-provier.js'
 import type { LlmProvider } from './types.js'
 
-const MODEL = 'gemini-2.5-flash'
+const DEFAULT_MODEL = 'gemini-2.5-flash'
 const PROJECT_ID = 'luna-2-449613'
 
 export class GeminiProvider implements LlmProvider {
     private server = new CodeAssistServer(PROJECT_ID)
+    private model: string
+
+    constructor(model = DEFAULT_MODEL) {
+        this.model = model
+    }
 
     private extractText(response: { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }> }): string {
         const parts = response.candidates?.[0]?.content?.parts
@@ -24,7 +29,7 @@ export class GeminiProvider implements LlmProvider {
         const mediaLabel = params.mediaType === 'sticker' ? '表情包/贴纸' : params.mediaType === 'video' ? '视频截图' : '图片'
 
         const response = await this.server.generateContent({
-            model: MODEL,
+            model: this.model,
             contents: [{
                 role: 'user',
                 parts: [
@@ -45,7 +50,7 @@ export class GeminiProvider implements LlmProvider {
         const userText = params.context ? `上下文：${params.context}\n\n内容：${params.text}` : params.text
 
         const response = await this.server.generateContent({
-            model: MODEL,
+            model: this.model,
             contents: [{ role: 'user', parts: [{ text: userText }] }],
             config: {
                 systemInstruction: '你是一个文本摘要助手。请简洁地总结以下内容，用中文回答。',
@@ -59,7 +64,7 @@ export class GeminiProvider implements LlmProvider {
 
     async generateText(systemInstruction: string, prompt: string): Promise<string> {
         const response = await this.server.generateContent({
-            model: MODEL,
+            model: this.model,
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
             config: { systemInstruction, temperature: 0.4 },
         })
@@ -81,7 +86,7 @@ export class GeminiProvider implements LlmProvider {
             '"群聊背景记录"仅供参考，请根据相关性自行判断是否使用，不要主动评论历史内容本身。'
 
         const response = await this.server.generateContent({
-            model: MODEL,
+            model: this.model,
             contents: [{
                 role: 'user',
                 parts: [{ text: userMessage }],
@@ -98,7 +103,7 @@ export class GeminiProvider implements LlmProvider {
         const base64 = params.audio.toString('base64')
 
         const response = await this.server.generateContent({
-            model: MODEL,
+            model: this.model,
             contents: [{
                 role: 'user',
                 parts: [

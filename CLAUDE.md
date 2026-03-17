@@ -50,3 +50,30 @@ Key modules:
 **Database:** Prisma 7 with PG driver adapter. Client is generated to `src/generated/prisma/` (not `node_modules`). Single `Message` model with BigInt IDs. After schema changes, run `pnpm db:generate`.
 
 **Logging:** pino with pino-pretty. Import `log` from `src/logger.ts`.
+
+**LLM:** 双 provider 架构，支持按场景路由。
+
+- `src/llm/types.ts` — `LlmProvider` 接口（5 个方法）
+- `src/llm/gemini-adapter.ts` — Gemini provider（OAuth 凭证自动检测）
+- `src/llm/openai-adapter.ts` — OpenAI-compatible provider（`openai` SDK，支持自定义 `baseURL`）
+- `src/llm/routing-provider.ts` — 路由层，按场景分发到不同 provider / model
+- `src/llm/provider.ts` — 全局单例 getter/setter
+
+本地部署了 **CLIProxyAPI**（OpenAI-compatible proxy），运行在 `http://127.0.0.1:8317`，暴露 GPT 系列模型。通过以下环境变量接入：
+
+```
+LLM_PROVIDER=openai
+OPENAI_BASE_URL=http://127.0.0.1:8317/v1
+OPENAI_API_KEY=sk-local
+OPENAI_MODEL=gpt-5.1
+```
+
+每个场景可单独覆盖 provider 和 model（详见 `.env.example`）：
+
+| 场景环境变量前缀 | 对应方法 | 用途 |
+|---|---|---|
+| `LLM_DESCRIBE_IMAGE_*` | `describeImage` | 图片/表情包描述 |
+| `LLM_SUMMARIZE_TEXT_*` | `summarizeText` | 文本摘要 |
+| `LLM_GENERATE_TEXT_*` | `generateText` | 记忆整理 |
+| `LLM_GENERATE_REPLY_*` | `generateReply` | @-mention 回复 |
+| `LLM_TRANSCRIBE_AUDIO_*` | `transcribeAudio` | 音频转写 |

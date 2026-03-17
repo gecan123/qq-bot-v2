@@ -43,9 +43,11 @@ Key modules:
 - `src/bot/core.ts` — event handlers; filters by group ID and self-number
 - `src/bot/message-parser.ts` — converts NapCat message segments into typed `ParsedSegment` discriminated union (text, image, face, at, reply, raw)
 - `src/database/client.ts` — Prisma client with `@prisma/adapter-pg` driver adapter
-- `src/database/messages.ts` — `insertMessage()` upserts parsed messages
+- `src/database/messages.ts` — `insertMessage()` upserts parsed messages; writes `searchText`
+- `src/database/search.ts` — `searchMessages()`, `getUserProfile()`, `getGroupSummary()` for agent tool use
 - `src/types/message-segments.ts` — `ParsedSegment` union type definitions
 - `src/config/index.ts` — env validation (fails fast on missing vars)
+- `src/utils/segment-text.ts` — `segmentsToPlainText(segments)` helper used across context-builder, format-messages, and insertMessage
 
 **Database:** Prisma 7 with PG driver adapter. Client is generated to `src/generated/prisma/` (not `node_modules`). Single `Message` model with BigInt IDs. After schema changes, run `pnpm db:generate`.
 
@@ -77,3 +79,23 @@ OPENAI_MODEL=gpt-5.1
 | `LLM_GENERATE_TEXT_*` | `generateText` | 记忆整理 |
 | `LLM_GENERATE_REPLY_*` | `generateReply` | @-mention 回复 |
 | `LLM_TRANSCRIBE_AUDIO_*` | `transcribeAudio` | 音频转写 |
+
+## Agent Loop
+
+Multi-turn agent reasoning for @-mention replies. Triggered based on `AgentMode` in agent profiles.
+
+- `src/agent/types.ts` — `AgentLlmAdapter` interface, `ToolCall`, `ToolResult`, `AgentMessage`, `TurnResult`, `LoopResult` types
+- `src/agent/heuristic.ts` — `shouldUseAgent(text)` regex heuristic for deciding when to use agent mode
+- `src/agent/tools.ts` — `createAgentTools(groupId)` factory returning 5 read-only tools with zod validation: `search_messages`, `get_user_profile`, `get_group_summary`, `get_message_context`, `list_recent_messages`
+- `src/agent/openai-agent-adapter.ts` — `OpenAIAgentAdapter` implementing `AgentLlmAdapter` via OpenAI function calling; `createOpenAIAgentAdapter()` factory using `LLM_AGENT_*` env vars (falls back to `OPENAI_*`)
+- `src/agent/loop.ts` — `runAgentLoop()` with maxSteps=4, maxTimeMs=30s, fallback/aborted/final states
+- `src/config/agent-profiles.ts` — `AgentMode = 'single' | 'heuristic' | 'always'` routing strategy per profile
+
+**At-mention routing:** `src/responder/handlers/at-mention.ts` selects single-turn reply (default), agent loop (if heuristic or always mode), with agent fallback to single-turn on error.
+
+**Message schema:** `prisma/schema.prisma` added `searchText String @default("")` to Message model for agent search tool. Backfill with `scripts/backfill-search-text.ts`.
+
+**Agent env vars:**
+- `LLM_AGENT_BASE_URL` — OpenAI-compatible base URL for agent (falls back to `OPENAI_BASE_URL`)
+- `LLM_AGENT_API_KEY` — API key for agent (falls back to `OPENAI_API_KEY`)
+- `LLM_AGENT_MODEL` — model for agent (falls back to `OPENAI_MODEL`)

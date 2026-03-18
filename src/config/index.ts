@@ -23,6 +23,9 @@ export const config = {
   memoryJobIntervalHours: Number(process.env.MEMORY_JOB_INTERVAL_HOURS ?? '4'),
   memoryJobSkipThreshold: Number(process.env.MEMORY_JOB_SKIP_THRESHOLD ?? '20'),
   jobInterDelayMs: Number(process.env.JOB_INTER_DELAY_MS ?? '200'),
+  tavily: process.env.TAVILY_API_KEY
+    ? { apiKey: process.env.TAVILY_API_KEY }
+    : undefined,
   llm: {
     provider: (process.env.LLM_PROVIDER ?? 'gemini') as 'gemini' | 'openai',
     openai: {

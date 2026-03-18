@@ -1,7 +1,9 @@
 import { z } from 'zod'
+import { tavily } from '@tavily/core'
 import type { AgentToolDeclaration } from './types.js'
 import { searchMessages, getUserProfile, getGroupSummary } from '../database/search.js'
 import { getRecentGroupMessages } from '../database/messages.js'
+import { config } from '../config/index.js'
 
 export type ToolExecutor = (args: Record<string, unknown>) => Promise<string>
 
@@ -58,19 +60,44 @@ const finalAnswerDecl: AgentToolDeclaration = {
   }),
 }
 
+const webSearchDecl: AgentToolDeclaration = {
+  name: 'web_search',
+  description:
+    '搜索互联网获取实时信息。当群聊历史中找不到答案，或问题涉及最新新闻、实时数据、外部知识时使用。',
+  inputSchema: z.object({
+    query: z.string().describe('搜索查询词，用中文或英文均可'),
+  }),
+}
+
 export interface AgentTools {
   declarations: AgentToolDeclaration[]
   executors: Record<string, ToolExecutor>
 }
 
+const MAX_WEB_SEARCH_CHARS = 2000
+
+function formatWebSearchResults(
+  results: Array<{ title: string; url: string; content: string }>,
+): string {
+  if (results.length === 0) return '（无搜索结果）'
+  const formatted = results.map((r) => `[${r.title}](${r.url})\n${r.content}`).join('\n\n')
+  return formatted.length > MAX_WEB_SEARCH_CHARS
+    ? formatted.slice(0, MAX_WEB_SEARCH_CHARS) + '…'
+    : formatted
+}
+
 export function createAgentTools(groupId: number): AgentTools {
-  const declarations = [
+  const declarations: AgentToolDeclaration[] = [
     searchMessagesDecl,
     getRecentMessagesDecl,
     getUserProfileDecl,
     getGroupSummaryDecl,
     finalAnswerDecl,
   ]
+
+  if (config.tavily?.apiKey) {
+    declarations.push(webSearchDecl)
+  }
 
   const executors: Record<string, ToolExecutor> = {
     search_messages: async (args) => {
@@ -118,6 +145,20 @@ export function createAgentTools(groupId: number): AgentTools {
     final_answer: async (args) => {
       const parsed = finalAnswerDecl.inputSchema.parse(args) as { text: string }
       return parsed.text.slice(0, MAX_ANSWER_CHARS)
+    },
+
+    web_search: async (args) => {
+      const parsed = webSearchDecl.inputSchema.parse(args) as { query: string }
+      const apiKey = config.tavily?.apiKey
+      if (!apiKey) return '（web_search 工具未配置 API key）'
+      try {
+        const client = tavily({ apiKey })
+        const response = await client.search(parsed.query, { maxResults: 5 })
+        return formatWebSearchResults(response.results)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        return `搜索失败: ${message}`
+      }
     },
   }
 

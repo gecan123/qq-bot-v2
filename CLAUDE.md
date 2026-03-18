@@ -47,7 +47,10 @@ Key modules:
 - `src/database/search.ts` — `searchMessages()`, `getUserProfile()`, `getGroupSummary()` for agent tool use
 - `src/types/message-segments.ts` — `ParsedSegment` union type definitions
 - `src/config/index.ts` — env validation (fails fast on missing vars)
+- `src/config/prompt-loader.ts` — `loadPrompt(filePath)` reads and caches prompt files from `prompts/`
 - `src/utils/segment-text.ts` — `segmentsToPlainText(segments)` helper used across context-builder, format-messages, and insertMessage
+
+**Prompts:** All static prompt text lives in `prompts/` (not in source code). Key files: `default-persona.md`, `reply-instruction.md`, `describe-image.md`, `summarize-text.md`, `transcribe-audio.md`, `memory-system.md`, `memory-group-summary.md`, `memory-user-profile.md`. Loaded via `loadPrompt()` at first use and cached.
 
 **Database:** Prisma 7 with PG driver adapter. Client is generated to `src/generated/prisma/` (not `node_modules`). Single `Message` model with BigInt IDs. After schema changes, run `pnpm db:generate`.
 
@@ -86,10 +89,10 @@ Multi-turn agent reasoning for @-mention replies. Triggered based on `AgentMode`
 
 - `src/agent/types.ts` — `AgentLlmAdapter` interface, `ToolCall`, `ToolResult`, `AgentMessage`, `TurnResult`, `LoopResult` types
 - `src/agent/heuristic.ts` — `shouldUseAgent(text)` regex heuristic for deciding when to use agent mode
-- `src/agent/tools.ts` — `createAgentTools(groupId)` factory returning 5 read-only tools with zod validation: `search_messages`, `get_user_profile`, `get_group_summary`, `get_message_context`, `list_recent_messages`
+- `src/agent/tools.ts` — `createAgentTools(groupId)` factory returning read-only tools with zod validation: `search_messages`, `get_user_profile`, `get_group_summary`, `get_recent_messages`, `final_answer`, and optionally `web_search` (requires `TAVILY_API_KEY`)
 - `src/agent/openai-agent-adapter.ts` — `OpenAIAgentAdapter` implementing `AgentLlmAdapter` via OpenAI function calling; `createOpenAIAgentAdapter()` factory using `LLM_AGENT_*` env vars (falls back to `OPENAI_*`)
 - `src/agent/loop.ts` — `runAgentLoop()` with maxSteps=4, maxTimeMs=30s, fallback/aborted/final states
-- `src/config/agent-profiles.ts` — `AgentMode = 'single' | 'heuristic' | 'always'` routing strategy per profile
+- `src/config/agent-profiles.ts` — `AgentMode = 'single' | 'heuristic' | 'always'`; `AgentProfile` supports `personaFile` (path to `.md`) or inline `persona` string; `getAgentProfile()` merges default → config.default → group and resolves persona
 
 **At-mention routing:** `src/responder/handlers/at-mention.ts` selects single-turn reply (default), agent loop (if heuristic or always mode), with agent fallback to single-turn on error.
 
@@ -99,3 +102,4 @@ Multi-turn agent reasoning for @-mention replies. Triggered based on `AgentMode`
 - `LLM_AGENT_BASE_URL` — OpenAI-compatible base URL for agent (falls back to `OPENAI_BASE_URL`)
 - `LLM_AGENT_API_KEY` — API key for agent (falls back to `OPENAI_API_KEY`)
 - `LLM_AGENT_MODEL` — model for agent (falls back to `OPENAI_MODEL`)
+- `TAVILY_API_KEY` — (optional) Tavily web search API key; enables `web_search` tool in agent loop when set

@@ -1,10 +1,12 @@
 import * as fs from 'node:fs'
+import * as path from 'node:path'
 import { log } from '../logger.js'
 
 export type AgentMode = 'single' | 'heuristic' | 'always'
 
 export interface AgentProfile {
-  persona: string
+  persona?: string
+  personaFile?: string
   replyContextMessages?: number
   agentMode?: AgentMode
   proactivePolicy?: { enabled: boolean }
@@ -15,10 +17,23 @@ interface AgentConfig {
   groups?: Record<string, AgentProfile>
 }
 
+const DEFAULT_PERSONA = '你是一个友好的群聊助手，请简洁地回答用户的问题。'
+
 const DEFAULT_PROFILE: AgentProfile = {
-  persona: '你是一个友好的群聊助手，请简洁地回答用户的问题。',
+  persona: DEFAULT_PERSONA,
   replyContextMessages: 30,
   agentMode: 'single',
+}
+
+function resolvePersona(profile: AgentProfile): string {
+  if (profile.personaFile) {
+    try {
+      return fs.readFileSync(path.resolve(profile.personaFile), 'utf-8').trim()
+    } catch {
+      log.warn({ personaFile: profile.personaFile }, 'persona 文件读取失败，使用内联 persona')
+    }
+  }
+  return profile.persona ?? DEFAULT_PERSONA
 }
 
 function loadConfig(): AgentConfig {
@@ -38,9 +53,11 @@ function getConfig(): AgentConfig {
   return cachedConfig
 }
 
-export function getAgentProfile(groupId: number): AgentProfile {
+export function getAgentProfile(groupId: number): AgentProfile & { persona: string } {
   const cfg = getConfig()
   const groupProfile = cfg.groups?.[String(groupId)]
-  if (!groupProfile) return { ...DEFAULT_PROFILE, ...cfg.default }
-  return { ...DEFAULT_PROFILE, ...cfg.default, ...groupProfile }
+  const merged: AgentProfile = groupProfile
+    ? { ...DEFAULT_PROFILE, ...cfg.default, ...groupProfile }
+    : { ...DEFAULT_PROFILE, ...cfg.default }
+  return { ...merged, persona: resolvePersona(merged) }
 }

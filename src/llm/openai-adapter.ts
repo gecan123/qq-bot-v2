@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import type { LlmProvider } from './types.js'
+import { loadPrompt } from '../config/prompt-loader.js'
 
 export class OpenAIProvider implements LlmProvider {
     private client: OpenAI
@@ -20,7 +21,7 @@ export class OpenAIProvider implements LlmProvider {
             messages: [
                 {
                     role: 'system',
-                    content: `你是一个图片描述助手。请简洁地描述这张${mediaLabel}的内容，用中文回答，不超过100字。`,
+                    content: loadPrompt('./prompts/describe-image.md').replace('{mediaLabel}', mediaLabel),
                 },
                 {
                     role: 'user',
@@ -42,7 +43,7 @@ export class OpenAIProvider implements LlmProvider {
             model: this.model,
             temperature: 0.3,
             messages: [
-                { role: 'system', content: '你是一个文本摘要助手。请简洁地总结以下内容，用中文回答。' },
+                { role: 'system', content: loadPrompt('./prompts/summarize-text.md') },
                 { role: 'user', content: userText },
             ],
         })
@@ -73,9 +74,7 @@ export class OpenAIProvider implements LlmProvider {
         ].join('\n')
 
         const fullSystemPrompt =
-            systemPrompt +
-            '\n\n---\n你的首要任务是回复"[用户对你说]"部分的内容。' +
-            '"群聊背景记录"仅供参考，请根据相关性自行判断是否使用，不要主动评论历史内容本身。'
+            systemPrompt + '\n\n---\n' + loadPrompt('./prompts/reply-instruction.md')
 
         const response = await this.client.chat.completions.create({
             model: this.model,

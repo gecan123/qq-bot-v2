@@ -6,10 +6,10 @@ import { getGroupMemory, upsertGroupMemory, getUserMemory, upsertUserMemory } fr
 import { formatMessagesForMemory } from '../memory/format-messages.js'
 import { buildGroupSummaryPrompt, buildUserProfilePrompt } from '../memory/prompts.js'
 import { chunkByTimeGap, addOverlap } from '../memory/chunk-messages.js'
+import { loadPrompt } from '../config/prompt-loader.js'
 import type { Message } from '../generated/prisma/client.js'
 
-const MEMORY_SYSTEM_INSTRUCTION =
-  '你是一个群聊分析助手，负责为机器人维护对群聊和群成员的长期印象记忆。请根据提供的消息客观、简洁地更新印象描述。'
+const MEMORY_SYSTEM_INSTRUCTION = loadPrompt('./prompts/memory-system.md')
 
 const GAP_MINUTES = 20
 const OVERLAP_SIZE = 15

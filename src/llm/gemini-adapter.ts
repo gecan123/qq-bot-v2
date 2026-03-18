@@ -3,6 +3,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { CodeAssistServer } from './gemini-cli-provier.js'
 import type { LlmProvider } from './types.js'
+import { loadPrompt } from '../config/prompt-loader.js'
 
 const DEFAULT_MODEL = 'gemini-2.5-flash'
 const PROJECT_ID = 'luna-2-449613'
@@ -38,7 +39,7 @@ export class GeminiProvider implements LlmProvider {
                 ],
             }],
             config: {
-                systemInstruction: `你是一个图片描述助手。请简洁地描述这张${mediaLabel}的内容，用中文回答，不超过100字。`,
+                systemInstruction: loadPrompt('./prompts/describe-image.md').replace('{mediaLabel}', mediaLabel),
                 temperature: 0.3,
             },
         })
@@ -53,7 +54,7 @@ export class GeminiProvider implements LlmProvider {
             model: this.model,
             contents: [{ role: 'user', parts: [{ text: userText }] }],
             config: {
-                systemInstruction: '你是一个文本摘要助手。请简洁地总结以下内容，用中文回答。',
+                systemInstruction: loadPrompt('./prompts/summarize-text.md'),
                 temperature: 0.3,
             },
         })
@@ -81,9 +82,7 @@ export class GeminiProvider implements LlmProvider {
         ].join('\n')
 
         const fullSystemPrompt =
-            systemPrompt +
-            '\n\n---\n你的首要任务是回复"[用户对你说]"部分的内容。' +
-            '"群聊背景记录"仅供参考，请根据相关性自行判断是否使用，不要主动评论历史内容本身。'
+            systemPrompt + '\n\n---\n' + loadPrompt('./prompts/reply-instruction.md')
 
         const response = await this.server.generateContent({
             model: this.model,
@@ -112,14 +111,7 @@ export class GeminiProvider implements LlmProvider {
                 ],
             }],
             config: {
-                systemInstruction: `你是一个专业的音频转录助手。请仔细听取音频内容并提供准确的文字转录。
-
-要求：
-1. 准确转录所有听到的内容
-2. 保持原意和语气
-3. 如果有不清楚的地方，用[不清楚]标注
-4. 如果是方言，尽量转为普通话
-5. 保持自然的语言表达`,
+                systemInstruction: loadPrompt('./prompts/transcribe-audio.md'),
                 temperature: 0.3,
             },
         })

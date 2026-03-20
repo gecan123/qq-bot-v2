@@ -2,13 +2,10 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { log } from '../logger.js'
 
-export type AgentMode = 'single' | 'heuristic' | 'always'
-
 export interface AgentProfile {
   persona?: string
   personaFile?: string
   replyContextMessages?: number
-  agentMode?: AgentMode
   proactivePolicy?: { enabled: boolean }
 }
 
@@ -22,7 +19,6 @@ const DEFAULT_PERSONA = '你是一个友好的群聊助手，请简洁地回答�
 const DEFAULT_PROFILE: AgentProfile = {
   persona: DEFAULT_PERSONA,
   replyContextMessages: 30,
-  agentMode: 'single',
 }
 
 function resolvePersona(profile: AgentProfile): string {

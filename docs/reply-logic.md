@@ -19,22 +19,9 @@
 收到消息
   └── segments 含 at(selfNumber)?
         ├── 否 → continue（不处理）
-        └── 是 → 读取 AgentProfile (agent-config.json)
-                    │
-                    agentMode
-                    ├── 'single'     → 单轮回复
-                    ├── 'always'     → agent loop
-                    └── 'heuristic'  → 启发式判断
-                                          ├── 匹配关键词 → agent loop
-                                          └── 未匹配     → 单轮回复
+        └── 是 → agent loop
+                    └── 失败(null) → 单轮回复（兜底）
 ```
-
-**启发式关键词（正则）：**
-- 时间回溯：`昨天 / 今天 / 最近 / 刚才` 等
-- 用户查询：`谁 / 哪个 / 说了什么` 等
-- 检索意图：`找一下 / 搜一下 / 有没有` 等
-- 分析摘要：`总结 / 分析 / 回顾` 等
-- 用户画像：`喜欢 / 习惯 / 性格` 等
 
 ---
 
@@ -113,7 +100,7 @@ agent loop 返回 null（fallback / aborted）
 
 ## 配置
 
-运行时读取项目根目录的 `agent-config.json`（首次读取后缓存）。**文件不存在时不报错**，所有群使用内置默认值（单轮模式，agent loop 不触发）。
+运行时读取项目根目录的 `agent-config.json`（首次读取后缓存）。**文件不存在时不报错**，所有群使用内置默认值。
 
 ### agent-config.json
 
@@ -121,13 +108,11 @@ agent loop 返回 null（fallback / aborted）
 {
   "default": {
     "personaFile": "./prompts/default-persona.md",
-    "replyContextMessages": 30,
-    "agentMode": "heuristic"
+    "replyContextMessages": 30
   },
   "groups": {
     "123456789": {
-      "personaFile": "./prompts/group-123456789.md",
-      "agentMode": "always"
+      "personaFile": "./prompts/group-123456789.md"
     }
   }
 }

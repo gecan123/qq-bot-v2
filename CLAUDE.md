@@ -92,7 +92,7 @@ Multi-turn agent reasoning for @-mention replies. Triggered based on `AgentMode`
 - `src/agent/tools.ts` — `createAgentTools(groupId)` factory returning read-only tools with zod validation: `search_messages`, `get_user_profile`, `get_group_summary`, `get_recent_messages`, `final_answer`, and optionally `web_search` (requires `TAVILY_API_KEY`)
 - `src/agent/openai-agent-adapter.ts` — `OpenAIAgentAdapter` implementing `AgentLlmAdapter` via OpenAI function calling; `createOpenAIAgentAdapter()` factory using `LLM_AGENT_*` env vars (falls back to `OPENAI_*`)
 - `src/agent/loop.ts` — `runAgentLoop()` with maxSteps=4, maxTimeMs=30s, fallback/aborted/final states
-- `src/config/agent-profiles.ts` — `AgentMode = 'single' | 'heuristic' | 'always'`; `AgentProfile` supports `personaFile` (path to `.md`) or inline `persona` string; `getAgentProfile()` merges default → config.default → group and resolves persona
+- `src/config/agent-profiles.ts` — `AgentProfile` supports `personaFile` (path to `.md`) or inline `persona` string; `getAgentProfile()` merges default → config.default → group and resolves persona
 
 **At-mention routing:** `src/responder/handlers/at-mention.ts` selects single-turn reply (default), agent loop (if heuristic or always mode), with agent fallback to single-turn on error.
 

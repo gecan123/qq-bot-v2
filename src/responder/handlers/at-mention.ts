@@ -5,7 +5,6 @@ import { getAgentProfile } from '../../config/agent-profiles.js'
 import { getLlmProvider } from '../../llm/provider.js'
 import { buildContext, extractTriggerText } from '../context-builder.js'
 import { sendGroupReply } from '../reply-executor.js'
-import { shouldUseAgent } from '../../agent/heuristic.js'
 import { createAgentTools } from '../../agent/tools.js'
 import { runAgentLoop } from '../../agent/loop.js'
 import { createOpenAIAgentAdapter } from '../../agent/openai-agent-adapter.js'
@@ -64,23 +63,15 @@ export const atMentionHandler: Handler = async (msg) => {
 
   const profile = getAgentProfile(msg.groupId)
   const contextLimit = profile.replyContextMessages ?? 30
-  const agentMode = profile.agentMode ?? 'single'
   const triggerText = extractTriggerText(msg.segments)
 
   let reply: string | null = null
 
   try {
-    const useAgent =
-      agentMode === 'always' || (agentMode === 'heuristic' && shouldUseAgent(triggerText))
-
-    if (useAgent) {
-      reply = await agentReply(msg, profile.persona, contextLimit, triggerText)
-      if (reply === null) {
-        log.warn({ groupId: msg.groupId, agentMode }, 'agent_loop_fallback_to_single_turn')
-      }
-    }
+    reply = await agentReply(msg, profile.persona, contextLimit, triggerText)
 
     if (reply === null) {
+      log.warn({ groupId: msg.groupId }, 'agent_loop_fallback_to_single_turn')
       const llm = getLlmProvider()
       if (!llm?.generateReply) {
         log.warn({ groupId: msg.groupId }, '收到@消息但 LLM 未配置，跳过回复')

@@ -6,6 +6,9 @@ export interface AgentProfile {
   persona?: string
   personaFile?: string
   replyContextMessages?: number
+  agentMaxSteps?: number
+  agentMaxTimeMs?: number
+  agentMaxAnswerChars?: number
   proactivePolicy?: { enabled: boolean }
 }
 

@@ -10,6 +10,7 @@ export interface AgentLoopParams {
   executors: Record<string, ToolExecutor>
   maxSteps?: number
   maxTimeMs?: number
+  maxAnswerChars?: number
 }
 
 interface StepDetail {
@@ -19,7 +20,7 @@ interface StepDetail {
 }
 
 async function executeLoop(params: AgentLoopParams, startTime: number): Promise<AgentLoopResult> {
-  const { systemPrompt, userMessage, adapter, tools, executors, maxSteps = 4 } = params
+  const { systemPrompt, userMessage, adapter, tools, executors, maxSteps = 4, maxAnswerChars = 500 } = params
 
   const history: AgentMessage[] = [{ role: 'user', content: userMessage }]
   const stepDetails: StepDetail[] = []
@@ -67,7 +68,7 @@ async function executeLoop(params: AgentLoopParams, startTime: number): Promise<
     for (const call of calls) {
       if (call.name === 'final_answer') {
         const text = (call.args['text'] as string | undefined) ?? ''
-        const answer = text.slice(0, 500)
+        const answer = text.slice(0, maxAnswerChars)
         toolsCalled.push('final_answer')
         stepDetails.push({ step, tool: 'final_answer', durationMs: Date.now() - stepStart })
         return finish({ state: 'final', answer, termination: 'final_answer' })

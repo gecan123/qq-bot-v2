@@ -3,7 +3,7 @@ import type { AtSegment } from '../../types/message-segments.js'
 import { config } from '../../config/index.js'
 import { getAgentProfile } from '../../config/agent-profiles.js'
 import { getLlmProvider } from '../../llm/provider.js'
-import { buildContext, extractTriggerText } from '../context-builder.js'
+import { buildContext, extractTriggerText, extractResolvedTriggerText } from '../context-builder.js'
 import { sendGroupReply } from '../reply-executor.js'
 import { createAgentTools } from '../../agent/tools.js'
 import { runAgentLoop } from '../../agent/loop.js'
@@ -27,9 +27,14 @@ async function agentReply(
   msg: Parameters<Handler>[0],
   persona: string,
   contextLimit: number,
-  triggerText: string,
+  maxSteps?: number,
+  maxTimeMs?: number,
+  maxAnswerChars?: number,
 ): Promise<string | null> {
   const context = await buildContext(msg, contextLimit)
+
+  // buildContext 已等待媒体描述生成，此时从 DB 解析当前消息可获得图片描述等完整内容
+  const triggerText = await extractResolvedTriggerText(msg.groupId, msg.messageId, msg.segments)
 
   const userMessage = triggerText
     ? `${triggerText}\n\n[群聊背景]\n${context}`
@@ -44,6 +49,9 @@ async function agentReply(
     adapter,
     tools: declarations,
     executors,
+    maxSteps,
+    maxTimeMs,
+    maxAnswerChars,
   })
 
   log.info(
@@ -63,12 +71,18 @@ export const atMentionHandler: Handler = async (msg) => {
 
   const profile = getAgentProfile(msg.groupId)
   const contextLimit = profile.replyContextMessages ?? 30
-  const triggerText = extractTriggerText(msg.segments)
 
   let reply: string | null = null
 
   try {
-    reply = await agentReply(msg, profile.persona, contextLimit, triggerText)
+    reply = await agentReply(
+      msg,
+      profile.persona,
+      contextLimit,
+      profile.agentMaxSteps,
+      profile.agentMaxTimeMs,
+      profile.agentMaxAnswerChars,
+    )
 
     if (reply === null) {
       log.warn({ groupId: msg.groupId }, 'agent_loop_fallback_to_single_turn')

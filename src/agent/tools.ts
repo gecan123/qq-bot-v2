@@ -9,7 +9,6 @@ export type ToolExecutor = (args: Record<string, unknown>) => Promise<string>
 
 const MAX_INFO_CHARS = 2000
 const MAX_PROFILE_CHARS = 1000
-const MAX_ANSWER_CHARS = 500
 
 function truncate(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) + '…' : text
@@ -140,11 +139,6 @@ export function createAgentTools(groupId: number): AgentTools {
       const summary = await getGroupSummary(groupId)
       if (!summary) return '（暂无群摘要）'
       return truncate(summary.summary, MAX_PROFILE_CHARS)
-    },
-
-    final_answer: async (args) => {
-      const parsed = finalAnswerDecl.inputSchema.parse(args) as { text: string }
-      return parsed.text.slice(0, MAX_ANSWER_CHARS)
     },
 
     web_search: async (args) => {

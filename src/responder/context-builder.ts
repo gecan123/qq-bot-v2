@@ -44,9 +44,19 @@ export async function buildContext(msg: IncomingMessage, contextLimit: number): 
 }
 
 export function extractTriggerText(segments: ParsedSegment[]): string {
-  return segments
-    .filter((s) => s.type === 'text')
-    .map((s) => (s.type === 'text' ? s.content : ''))
-    .join(' ')
-    .trim()
+  return segmentsToPlainText(segments.filter((s) => s.type !== 'reply'))
+}
+
+/**
+ * 从数据库中解析当前消息并提取 trigger 文本，包含图片描述等媒体信息。
+ * 在 buildContext 之后调用，此时 ensureDescriptions 已完成。
+ */
+export async function extractResolvedTriggerText(
+  groupId: number,
+  messageId: number,
+  fallbackSegments: ParsedSegment[],
+): Promise<string> {
+  const dbMsg = await getMessageById(groupId, messageId)
+  const segments = dbMsg ? await resolveMessage(dbMsg) : fallbackSegments
+  return extractTriggerText(segments)
 }

@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git Commit Messages
+
+Commit message format: `<type>: <中文描述>`
+
+The description (after the colon) must be written in Chinese. The `type` prefix stays in English (feat, fix, refactor, docs, test, chore, perf, ci).
+
 ## Monorepo Scope Routing
 - First classify the task scope before reading files.
 - If the task explicitly involves admin WebUI design or implementation, read and modify only `apps/admin-web/**` first.

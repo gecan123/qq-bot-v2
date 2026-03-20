@@ -8,7 +8,8 @@ export interface GenerateDescriptionData {
   mediaId: number
 }
 
-const VISION_MEDIA_TYPES = new Set(['image', 'sticker', 'video'])
+const VISION_MEDIA_TYPES = new Set(['image', 'sticker'])
+// 视频不支持直接作为 image_url 输入（gpt-5.4/5.4-mini 均不支持 video/mp4 MIME type）
 
 const inFlight = new Map<number, Promise<void>>()
 

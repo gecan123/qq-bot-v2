@@ -36,6 +36,7 @@ async function processMessage(groupId: number, messageId: number): Promise<void>
     content: mediaResult.content,
     rawContent: qqMsg.message,
     rawMessage: qqMsg.raw_message,
+    sentAt: parsed.time,
   })
 
   await responderPipeline.handle({

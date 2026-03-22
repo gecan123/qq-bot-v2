@@ -5,6 +5,7 @@ import { resolveMessage } from '../media/message-resolver.js'
 import { ensureDescriptions } from './ensure-descriptions.js'
 import { config } from '../config/index.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
+import { getMessageTimestamp } from '../utils/message-time.js'
 
 function formatTime(date: Date): string {
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
@@ -35,7 +36,7 @@ export async function buildContext(msg: IncomingMessage, contextLimit: number): 
   for (const dbMsg of recentMessages) {
     const resolvedSegments = await resolveMessage(dbMsg)
     const nickname = dbMsg.senderGroupNickname ?? dbMsg.senderNickname
-    const time = formatTime(dbMsg.createdAt)
+    const time = formatTime(getMessageTimestamp(dbMsg))
     const text = segmentsToPlainText(resolvedSegments)
     if (text) lines.push(`[${time}] ${nickname}: ${text}`)
   }

@@ -17,6 +17,7 @@ function makeMsg(overrides: Partial<Message> = {}): Message {
     rawContent: null,
     rawMessage: null,
     searchText: '',
+    sentAt: null,
     createdAt: new Date('2026-01-01T10:30:00'),
     ...overrides,
   }
@@ -28,6 +29,18 @@ describe('formatMessagesForMemory', () => {
     assert.ok(result.includes('小明'))
     assert.ok(result.includes('你好'))
     assert.ok(result.includes('10:30'))
+  })
+
+  test('prefers sentAt over createdAt for display time', () => {
+    const result = formatMessagesForMemory([
+      makeMsg({
+        sentAt: new Date('2026-01-01T08:15:00'),
+        createdAt: new Date('2026-01-01T10:30:00'),
+      }),
+    ])
+
+    assert.ok(result.includes('08:15'))
+    assert.ok(!result.includes('10:30'))
   })
 
   test('prefers senderGroupNickname over senderNickname', () => {

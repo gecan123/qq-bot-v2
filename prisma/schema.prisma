@@ -20,7 +20,8 @@ model Message {
   rawContent          Json?    @map("raw_content")
   rawMessage          String?  @map("raw_message") @db.Text
   searchText          String   @default("") @map("search_text") @db.Text
-  createdAt           DateTime @default(now()) @map("created_at")
+  sentAt              DateTime? @map("sent_at") @db.Timestamptz(3)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@unique([groupId, messageId])
   @@index([groupId, createdAt(sort: Desc)])
@@ -36,7 +37,7 @@ model Media {
   fileName    String?  @map("file_name")
   fileSize    Int?     @map("file_size")
   description String?  @map("description") @db.Text
-  createdAt   DateTime @default(now()) @map("created_at")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@unique([dataHash])
   @@map("media")
@@ -48,7 +49,7 @@ model GroupMemory {
   groupName     String?  @map("group_name") @db.VarChar(255)
   summary       String   @map("summary") @db.Text
   lastMessageId BigInt   @map("last_message_id")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@map("group_memory")
 }
@@ -62,7 +63,7 @@ model UserMemory {
   senderGroupNickname String?  @map("sender_group_nickname") @db.VarChar(100)
   profile             String   @map("profile") @db.Text
   examples            String[] @map("examples")
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([groupId, senderId])
   @@map("user_memory")

@@ -16,6 +16,8 @@ export interface InsertMessageParams {
   content: ParsedSegment[]
   rawContent?: unknown
   rawMessage?: string
+  /** QQ 消息发送时间（Unix 秒） */
+  sentAt?: number
 }
 
 export async function getGroupMessages(groupId: number, limit: number): Promise<Message[]> {
@@ -124,6 +126,7 @@ export async function insertMessage(params: InsertMessageParams): Promise<void> 
         rawContent: rawContent === null ? Prisma.JsonNull : rawContent,
         rawMessage: params.rawMessage ?? null,
         searchText,
+        sentAt: params.sentAt !== undefined ? new Date(params.sentAt * 1000) : null,
       },
       update: {
         groupName: params.groupName ?? null,

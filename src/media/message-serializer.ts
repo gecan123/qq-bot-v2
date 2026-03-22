@@ -22,6 +22,17 @@ function serializeSegment(segment: ParsedSegment): string {
       return segment.targetName ? `@${segment.targetName}` : `@${segment.targetId}`
     case 'reply':
       return `[回复消息 ${segment.messageId}]`
+    case 'json_card': {
+      const parts: string[] = []
+      if (segment.title) parts.push(segment.title)
+      if (segment.desc) parts.push(segment.desc)
+      if (segment.url) parts.push(segment.url)
+      if (parts.length > 0) {
+        const label = segment.source ? `分享(${segment.source})` : '分享'
+        return `[${label}: ${parts.join(' - ')}]`
+      }
+      return segment.prompt ? `[分享: ${segment.prompt}]` : '[分享]'
+    }
     case 'raw':
       return `[${segment.originalType}]`
   }

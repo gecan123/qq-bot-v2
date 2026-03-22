@@ -58,6 +58,15 @@ export interface FileSegment {
   description?: string
 }
 
+export interface JsonCardSegment {
+  type: 'json_card'
+  title?: string
+  desc?: string
+  url?: string
+  source?: string
+  prompt?: string
+}
+
 export interface RawSegment {
   type: 'raw'
   originalType: string
@@ -73,4 +82,5 @@ export type ParsedSegment =
   | FaceSegment
   | AtSegment
   | ReplySegment
+  | JsonCardSegment
   | RawSegment

@@ -103,6 +103,31 @@ function parseSegment(msg: ReceiveSegment): ParsedSegment | undefined {
         messageId: String(msg.data.id),
       }
 
+    case 'json': {
+      const raw = (msg.data as { data?: string }).data ?? ''
+      try {
+        const parsed = JSON.parse(raw) as {
+          prompt?: string
+          meta?: {
+            news?: { title?: string; desc?: string; jumpUrl?: string; tag?: string }
+            detail_1?: { title?: string; desc?: string; url?: string; qqdocurl?: string }
+          }
+        }
+        const news = parsed.meta?.news
+        const detail = parsed.meta?.detail_1
+        return {
+          type: 'json_card',
+          title: news?.title ?? detail?.title,
+          desc: news?.desc ?? detail?.desc,
+          url: news?.jumpUrl ?? detail?.qqdocurl ?? detail?.url,
+          source: news?.tag,
+          prompt: parsed.prompt,
+        }
+      } catch {
+        return { type: 'json_card', prompt: raw.slice(0, 100) }
+      }
+    }
+
     default:
       return {
         type: 'raw',

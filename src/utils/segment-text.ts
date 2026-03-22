@@ -20,6 +20,17 @@ export function segmentsToPlainText(segments: ParsedSegment[]): string {
           return seg.targetName ? `@${seg.targetName}` : `@${seg.targetId}`
         case 'reply':
           return ''
+        case 'json_card': {
+          const parts: string[] = []
+          if (seg.title) parts.push(seg.title)
+          if (seg.desc) parts.push(seg.desc)
+          if (seg.url) parts.push(seg.url)
+          if (parts.length > 0) {
+            const label = seg.source ? `分享(${seg.source})` : '分享'
+            return `[${label}: ${parts.join(' - ')}]`
+          }
+          return seg.prompt ? `[分享: ${seg.prompt}]` : '[分享]'
+        }
         case 'raw':
           return `[${seg.originalType}]`
         default:

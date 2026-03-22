@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { tavily } from '@tavily/core'
 import type { AgentToolDeclaration } from './types.js'
-import { searchMessages, getUserProfile, getGroupSummary } from '../database/search.js'
+import { searchMessages, getUserProfile, getGroupSummary, lookupGroupMember } from '../database/search.js'
 import { getRecentGroupMessages } from '../database/messages.js'
 import { config } from '../config/index.js'
 
@@ -34,6 +34,15 @@ const getRecentMessagesDecl: AgentToolDeclaration = {
   inputSchema: z.object({
     limit: z.number().int().min(1).max(30).default(10).describe('返回消息条数，最多30条'),
     beforeMessageId: z.number().int().optional().describe('返回此消息ID之前的消息，用于翻页'),
+  }),
+}
+
+const lookupGroupMemberDecl: AgentToolDeclaration = {
+  name: 'lookup_group_member',
+  description:
+    '通过昵称模糊查找群成员的QQ号。当你需要调用 get_user_profile 等需要 senderId 的工具，但只知道用户昵称时，先用此工具查找对应的QQ号。',
+  inputSchema: z.object({
+    name: z.string().describe('要查找的昵称或群名片关键词'),
   }),
 }
 
@@ -89,6 +98,7 @@ export function createAgentTools(groupId: number): AgentTools {
   const declarations: AgentToolDeclaration[] = [
     searchMessagesDecl,
     getRecentMessagesDecl,
+    lookupGroupMemberDecl,
     getUserProfileDecl,
     getGroupSummaryDecl,
     finalAnswerDecl,
@@ -119,6 +129,21 @@ export function createAgentTools(groupId: number): AgentTools {
         return `[${time}] ${name}: ${text}`
       })
       return truncate(lines.join('\n'), MAX_INFO_CHARS)
+    },
+
+    lookup_group_member: async (args) => {
+      const parsed = lookupGroupMemberDecl.inputSchema.parse(args) as { name: string }
+      const results = await lookupGroupMember(groupId, parsed.name)
+      if (results.length === 0) return '（未找到匹配成员）'
+      return results
+        .map((r, i) => {
+          const nickname = r.senderGroupNickname ?? r.senderNickname ?? String(r.senderId)
+          const extra = r.senderGroupNickname && r.senderNickname && r.senderGroupNickname !== r.senderNickname
+            ? `（QQ昵称：${r.senderNickname}）`
+            : ''
+          return `${i + 1}. ${nickname}${extra} — QQ号: ${r.senderId}`
+        })
+        .join('\n')
     },
 
     get_user_profile: async (args) => {

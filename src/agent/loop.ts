@@ -20,7 +20,7 @@ interface StepDetail {
 }
 
 async function executeLoop(params: AgentLoopParams, startTime: number): Promise<AgentLoopResult> {
-  const { systemPrompt, userMessage, adapter, tools, executors, maxSteps = 4, maxAnswerChars = 500 } = params
+  const { systemPrompt, userMessage, adapter, tools, executors, maxSteps = 8, maxAnswerChars = 500 } = params
 
   const history: AgentMessage[] = [{ role: 'user', content: userMessage }]
   const stepDetails: StepDetail[] = []

@@ -43,8 +43,19 @@ async function agentReply(
   const { declarations, executors } = createAgentTools(msg.groupId)
   const adapter = createOpenAIAgentAdapter()
 
+  const now = new Date().toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    weekday: 'short',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+  const systemPrompt = `当前时间：${now}\n\n${persona}`
+
   const result = await runAgentLoop({
-    systemPrompt: persona,
+    systemPrompt,
     userMessage,
     adapter,
     tools: declarations,

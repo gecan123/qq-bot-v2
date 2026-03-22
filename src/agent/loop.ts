@@ -17,6 +17,7 @@ interface StepDetail {
   step: number
   tool: string
   durationMs: number
+  model?: string
 }
 
 async function executeLoop(params: AgentLoopParams, startTime: number): Promise<AgentLoopResult> {
@@ -53,9 +54,11 @@ async function executeLoop(params: AgentLoopParams, startTime: number): Promise<
       return finish({ state: 'fallback', reason: 'empty_response' })
     }
 
+    const turnModel = 'model' in turnResult ? turnResult.model : undefined
+
     if (turnResult.type === 'text') {
       log.warn({ step, content: turnResult.content.slice(0, 50) }, 'agent_loop_implicit_text')
-      stepDetails.push({ step, tool: '(text)', durationMs: Date.now() - stepStart })
+      stepDetails.push({ step, tool: '(text)', durationMs: Date.now() - stepStart, model: turnModel })
       return finish({ state: 'final', answer: turnResult.content, termination: 'implicit_text' })
     }
 
@@ -70,7 +73,7 @@ async function executeLoop(params: AgentLoopParams, startTime: number): Promise<
         const text = (call.args['text'] as string | undefined) ?? ''
         const answer = text.slice(0, maxAnswerChars)
         toolsCalled.push('final_answer')
-        stepDetails.push({ step, tool: 'final_answer', durationMs: Date.now() - stepStart })
+        stepDetails.push({ step, tool: 'final_answer', durationMs: Date.now() - stepStart, model: turnModel })
         return finish({ state: 'final', answer, termination: 'final_answer' })
       }
 
@@ -87,12 +90,12 @@ async function executeLoop(params: AgentLoopParams, startTime: number): Promise<
         const durationMs = Date.now() - toolStart
         log.debug({ step, toolName: call.name, outputLen: output.length, durationMs }, 'agent_loop_tool_result')
         toolsCalled.push(call.name)
-        stepDetails.push({ step, tool: call.name, durationMs })
+        stepDetails.push({ step, tool: call.name, durationMs, model: turnModel })
         results.push({ callId: call.id, name: call.name, output })
       } catch (err) {
         log.error({ step, toolName: call.name, error: err }, 'agent_loop_tool_error')
         toolsCalled.push(call.name)
-        stepDetails.push({ step, tool: call.name, durationMs: Date.now() - toolStart })
+        stepDetails.push({ step, tool: call.name, durationMs: Date.now() - toolStart, model: turnModel })
         results.push({ callId: call.id, name: call.name, output: '', error: String(err) })
       }
     }

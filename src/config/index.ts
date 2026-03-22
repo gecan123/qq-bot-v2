@@ -27,34 +27,33 @@ export const config = {
     ? { apiKey: process.env.TAVILY_API_KEY }
     : undefined,
   llm: {
-    provider: (process.env.LLM_PROVIDER ?? 'gemini') as 'gemini' | 'openai',
-    openai: {
-      baseUrl: process.env.OPENAI_BASE_URL ?? 'http://127.0.0.1:8317/v1',
-      apiKey: process.env.OPENAI_API_KEY ?? 'sk-local',
-      model: process.env.OPENAI_MODEL ?? 'gpt-5.1',
-    },
-    gemini: {
-      model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
-    },
+    baseUrl: process.env.OPENAI_BASE_URL ?? 'http://127.0.0.1:8317/v1',
+    apiKey: process.env.OPENAI_API_KEY ?? 'sk-local',
+    model: process.env.OPENAI_MODEL ?? 'gpt-5.1',
     scenarios: {
       describeImage: {
-        provider: process.env.LLM_DESCRIBE_IMAGE_PROVIDER as 'gemini' | 'openai' | undefined,
+        baseUrl: process.env.LLM_DESCRIBE_IMAGE_BASE_URL,
+        apiKey: process.env.LLM_DESCRIBE_IMAGE_API_KEY,
         model: process.env.LLM_DESCRIBE_IMAGE_MODEL,
       },
       summarizeText: {
-        provider: process.env.LLM_SUMMARIZE_TEXT_PROVIDER as 'gemini' | 'openai' | undefined,
+        baseUrl: process.env.LLM_SUMMARIZE_TEXT_BASE_URL,
+        apiKey: process.env.LLM_SUMMARIZE_TEXT_API_KEY,
         model: process.env.LLM_SUMMARIZE_TEXT_MODEL,
       },
       generateText: {
-        provider: process.env.LLM_GENERATE_TEXT_PROVIDER as 'gemini' | 'openai' | undefined,
+        baseUrl: process.env.LLM_GENERATE_TEXT_BASE_URL,
+        apiKey: process.env.LLM_GENERATE_TEXT_API_KEY,
         model: process.env.LLM_GENERATE_TEXT_MODEL,
       },
       generateReply: {
-        provider: process.env.LLM_GENERATE_REPLY_PROVIDER as 'gemini' | 'openai' | undefined,
+        baseUrl: process.env.LLM_GENERATE_REPLY_BASE_URL,
+        apiKey: process.env.LLM_GENERATE_REPLY_API_KEY,
         model: process.env.LLM_GENERATE_REPLY_MODEL,
       },
       transcribeAudio: {
-        provider: process.env.LLM_TRANSCRIBE_AUDIO_PROVIDER as 'gemini' | 'openai' | undefined,
+        baseUrl: process.env.LLM_TRANSCRIBE_AUDIO_BASE_URL,
+        apiKey: process.env.LLM_TRANSCRIBE_AUDIO_API_KEY,
         model: process.env.LLM_TRANSCRIBE_AUDIO_MODEL,
       },
     },

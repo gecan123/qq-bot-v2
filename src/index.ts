@@ -3,10 +3,8 @@ import { startBot } from './bot/core.js'
 import { log } from './logger.js'
 import { jobQueue } from './queue/index.js'
 import { setLlmProvider } from './llm/provider.js'
-import { GeminiProvider, isGeminiAvailable } from './llm/gemini-adapter.js'
 import { OpenAIProvider } from './llm/openai-adapter.js'
 import { RoutingProvider } from './llm/routing-provider.js'
-import type { LlmProvider } from './llm/types.js'
 import { startMemoryRefreshJob } from './jobs/refresh-memory.js'
 import { config } from './config/index.js'
 
@@ -17,40 +15,31 @@ async function main() {
   await prisma.$connect()
   log.info('Database connected')
 
-  const geminiAvailable = isGeminiAvailable()
+  const { baseUrl, apiKey, model, scenarios } = config.llm
+  const defaultProvider = new OpenAIProvider(baseUrl, apiKey, model)
 
-  function buildProvider(providerName: 'gemini' | 'openai', model?: string): LlmProvider | null {
-    if (providerName === 'openai') {
-      const { baseUrl, apiKey } = config.llm.openai
-      return new OpenAIProvider(baseUrl, apiKey, model ?? config.llm.openai.model)
-    }
-    if (geminiAvailable) {
-      return new GeminiProvider(model ?? config.llm.gemini.model)
-    }
-    return null
-  }
+  const routes = Object.fromEntries(
+    Object.entries(scenarios)
+      .filter(([, s]) => s.baseUrl || s.apiKey || s.model)
+      .map(([key, s]) => [
+        key,
+        new OpenAIProvider(s.baseUrl ?? baseUrl, s.apiKey ?? apiKey, s.model ?? model),
+      ]),
+  ) as ConstructorParameters<typeof RoutingProvider>[1]
 
-  const defaultProvider = buildProvider(config.llm.provider)
-
-  if (!defaultProvider) {
-    log.warn('Default LLM provider unavailable, LLM features disabled')
-  } else {
-    const scenarios = config.llm.scenarios
-    const routes = Object.fromEntries(
-      Object.entries(scenarios)
-        .filter(([, s]) => s.provider || s.model)
-        .map(([key, s]) => {
-          const providerName = s.provider ?? config.llm.provider
-          const p = buildProvider(providerName, s.model)
-          return [key, p]
-        })
-        .filter(([, p]) => p !== null),
-    ) as ConstructorParameters<typeof RoutingProvider>[1]
-
-    const routing = new RoutingProvider(defaultProvider, routes)
-    setLlmProvider(routing)
-    log.info({ default: config.llm.provider, scenarios }, 'LLM routing provider registered')
-  }
+  const routing = new RoutingProvider(defaultProvider, routes)
+  setLlmProvider(routing)
+  log.info(
+    {
+      default: model,
+      scenarios: Object.fromEntries(
+        Object.entries(scenarios)
+          .filter(([, s]) => s.model)
+          .map(([key, s]) => [key, { model: s.model }]),
+      ),
+    },
+    'LLM routing provider registered',
+  )
 
   jobQueue.start()
   stopMemoryJob = startMemoryRefreshJob()

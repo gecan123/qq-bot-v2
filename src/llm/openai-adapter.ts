@@ -89,16 +89,20 @@ export class OpenAIProvider implements LlmProvider {
     }
 
     async transcribeAudio(params: { audio: Buffer; contentType: string }): Promise<string> {
-        const ext = params.contentType.split('/')[1] ?? 'mp3'
-        const arrayBuffer = params.audio.buffer.slice(params.audio.byteOffset, params.audio.byteOffset + params.audio.byteLength) as ArrayBuffer
-        const file = new File([arrayBuffer], `audio.${ext}`, { type: params.contentType })
+        const base64 = params.audio.toString('base64')
+        const ext = (params.contentType.split('/')[1] ?? 'mp3') as 'mp3' | 'wav' | 'ogg' | 'flac' | 'webm' | 'mp4'
 
-        const response = await this.client.audio.transcriptions.create({
-            model: 'whisper-1',
-            file,
-            language: 'zh',
+        const response = await this.client.chat.completions.create({
+            model: this.model,
+            messages: [{
+                role: 'user',
+                content: [
+                    { type: 'text', text: loadPrompt('./prompts/transcribe-audio.md') },
+                    { type: 'input_audio', input_audio: { data: base64, format: ext } } as any,
+                ],
+            }],
         })
 
-        return response.text.trim()
+        return response.choices[0]?.message.content?.trim() ?? ''
     }
 }

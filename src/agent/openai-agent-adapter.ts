@@ -108,16 +108,18 @@ export class OpenAIAgentAdapter implements AgentLlmAdapter {
 
     const message = choice.message
 
+    const model = response.model
+
     if (message.tool_calls && message.tool_calls.length > 0) {
       const calls = parseToolCalls(message.tool_calls)
       log.debug({ calls: calls.map((c) => c.name) }, 'agent_tool_calls')
-      return { type: 'tool_calls', calls }
+      return { type: 'tool_calls', calls, model }
     }
 
     const content = message.content?.trim()
     if (!content) return { type: 'empty' }
 
-    return { type: 'text', content }
+    return { type: 'text', content, model }
   }
 }
 

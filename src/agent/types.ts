@@ -26,8 +26,8 @@ export type AgentMessage =
   | { role: 'tool_results'; results: ToolResult[] }
 
 export type AgentTurnResult =
-  | { type: 'tool_calls'; calls: ToolCall[] }
-  | { type: 'text'; content: string }
+  | { type: 'tool_calls'; calls: ToolCall[]; model?: string }
+  | { type: 'text'; content: string; model?: string }
   | { type: 'empty' }
 
 export interface AgentLlmAdapter {

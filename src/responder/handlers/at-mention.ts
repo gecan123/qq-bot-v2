@@ -28,7 +28,7 @@ async function agentReply(
   persona: string,
   contextLimit: number,
   maxSteps?: number,
-  maxTimeMs?: number,
+  warningTimeMs?: number,
   maxAnswerChars?: number,
 ): Promise<string | null> {
   const context = await buildContext(msg, contextLimit)
@@ -61,7 +61,7 @@ async function agentReply(
     tools: declarations,
     executors,
     maxSteps,
-    maxTimeMs,
+    warningTimeMs,
     maxAnswerChars,
   })
 
@@ -81,7 +81,7 @@ export const atMentionHandler: Handler = async (msg) => {
   if (!isMentioned) return 'continue'
 
   const profile = getAgentProfile(msg.groupId)
-  const contextLimit = profile.replyContextMessages ?? 30
+  const contextLimit = profile.replyContextMessages ?? 20
 
   let reply: string | null = null
 
@@ -91,7 +91,7 @@ export const atMentionHandler: Handler = async (msg) => {
       profile.persona,
       contextLimit,
       profile.agentMaxSteps,
-      profile.agentMaxTimeMs,
+      profile.agentWarningTimeMs ?? profile.agentMaxTimeMs,
       profile.agentMaxAnswerChars,
     )
 

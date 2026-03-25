@@ -9,6 +9,9 @@ export interface AgentLoopParams {
   tools: AgentToolDeclaration[]
   executors: Record<string, ToolExecutor>
   maxSteps?: number
+  /** 慢请求告警阈值（毫秒），仅告警不中断 */
+  warningTimeMs?: number
+  /** @deprecated 保留兼容；等价于 warningTimeMs */
   maxTimeMs?: number
   maxAnswerChars?: number
 }
@@ -21,7 +24,7 @@ interface StepDetail {
 }
 
 async function executeLoop(params: AgentLoopParams, startTime: number): Promise<AgentLoopResult> {
-  const { systemPrompt, userMessage, adapter, tools, executors, maxSteps = 8, maxAnswerChars = 500 } = params
+  const { systemPrompt, userMessage, adapter, tools, executors, maxSteps = 12, maxAnswerChars = 500 } = params
 
   const history: AgentMessage[] = [{ role: 'user', content: userMessage }]
   const stepDetails: StepDetail[] = []
@@ -108,22 +111,21 @@ async function executeLoop(params: AgentLoopParams, startTime: number): Promise<
 }
 
 export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopResult> {
-  const { maxTimeMs = 30_000, ...rest } = params
+  const { warningTimeMs, maxTimeMs, ...rest } = params
   const startTime = Date.now()
-
-  const timeoutPromise = new Promise<AgentLoopResult>((resolve) => {
-    const timer = setTimeout(() => {
-      const totalDurationMs = Date.now() - startTime
-      log.warn({ maxTimeMs, totalDurationMs }, 'agent_loop_timeout')
-      resolve({ state: 'fallback', reason: 'timeout' })
-    }, maxTimeMs)
-    timer.unref?.()
-  })
+  const slowWarningMs = warningTimeMs ?? maxTimeMs ?? 60_000
+  const timer = setTimeout(() => {
+    const totalDurationMs = Date.now() - startTime
+    log.warn({ warningTimeMs: slowWarningMs, totalDurationMs }, 'agent_loop_slow_warning')
+  }, slowWarningMs)
+  timer.unref?.()
 
   try {
-    return await Promise.race([executeLoop(rest, startTime), timeoutPromise])
+    return await executeLoop(rest as AgentLoopParams, startTime)
   } catch (err) {
     log.error({ error: err, totalDurationMs: Date.now() - startTime }, 'agent_loop_error')
     return { state: 'fallback', reason: String(err) }
+  } finally {
+    clearTimeout(timer)
   }
 }

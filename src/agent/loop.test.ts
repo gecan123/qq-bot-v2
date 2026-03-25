@@ -128,7 +128,34 @@ describe('runAgentLoop', () => {
     }
   })
 
-  test('returns fallback on timeout', async () => {
+  test('uses default maxSteps=12 when maxSteps is not provided', async () => {
+    let calls = 0
+    const neverEndingAdapter: AgentLlmAdapter = {
+      async chat() {
+        calls++
+        return {
+          type: 'tool_calls',
+          calls: [{ id: `call_${calls}`, name: 'unknown_tool', args: {} }],
+        }
+      },
+    }
+
+    const result = await runAgentLoop({
+      systemPrompt: 'test',
+      userMessage: '问题',
+      adapter: neverEndingAdapter,
+      tools: noopTools.declarations,
+      executors: {},
+    })
+
+    assert.equal(result.state, 'aborted')
+    assert.equal(calls, 12)
+    if (result.state === 'aborted') {
+      assert.equal(result.reason, 'max_steps_exceeded')
+    }
+  })
+
+  test('keeps running and returns final when exceeding warning threshold', async () => {
     const slowAdapter: AgentLlmAdapter = {
       async chat() {
         await new Promise((resolve) => setTimeout(resolve, 200))
@@ -142,12 +169,13 @@ describe('runAgentLoop', () => {
       adapter: slowAdapter,
       tools: noopTools.declarations,
       executors: noopTools.executors,
-      maxTimeMs: 50,
+      warningTimeMs: 50,
     })
 
-    assert.equal(result.state, 'fallback')
-    if (result.state === 'fallback') {
-      assert.equal(result.reason, 'timeout')
+    assert.equal(result.state, 'final')
+    if (result.state === 'final') {
+      assert.equal(result.answer, '太慢了')
+      assert.equal(result.termination, 'implicit_text')
     }
   })
 

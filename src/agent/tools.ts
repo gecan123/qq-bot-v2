@@ -1,68 +1,39 @@
 import { z } from 'zod'
 import { tavily } from '@tavily/core'
 import type { AgentToolDeclaration } from './types.js'
-import { searchMessages, getUserProfile, getGroupSummary, lookupGroupMember } from '../database/search.js'
-import { getRecentGroupMessages } from '../database/messages.js'
 import { config } from '../config/index.js'
+import { executeDbRead, type SqlParamValue } from '../database/agent-sql.js'
 
 export type ToolExecutor = (args: Record<string, unknown>) => Promise<string>
 
-const MAX_INFO_CHARS = 2000
-const MAX_PROFILE_CHARS = 1000
+const DB_READ_MAX_ROWS = 200
+const DB_READ_TIMEOUT_MS = 8_000
+const DB_READ_MAX_OUTPUT_CHARS = 8_000
+const WEB_SEARCH_MAX_RESULTS = 5
+const WEB_SEARCH_MAX_OUTPUT_CHARS = 2_000
 
-function truncate(text: string, max: number): string {
-  return text.length > max ? text.slice(0, max) + '…' : text
-}
-
-function formatSearchResults(results: Awaited<ReturnType<typeof searchMessages>>): string {
-  if (results.length === 0) return '（无匹配结果）'
-  return results.map((r) => `[${r.time}] ${r.senderName}: ${r.text}`).join('\n')
-}
-
-const searchMessagesDecl: AgentToolDeclaration = {
-  name: 'search_messages',
-  description: '在群消息历史中搜索包含指定关键词的消息',
-  inputSchema: z.object({
-    keyword: z.string().describe('搜索关键词'),
-    limit: z.number().int().min(1).max(20).default(10).describe('返回结果数量，最多20条'),
-  }),
-}
-
-const getRecentMessagesDecl: AgentToolDeclaration = {
-  name: 'get_recent_messages',
-  description: '获取群内最近的消息记录，可指定截止消息ID以获取更早的消息',
-  inputSchema: z.object({
-    limit: z.number().int().min(1).max(30).default(10).describe('返回消息条数，最多30条'),
-    beforeMessageId: z.number().int().optional().describe('返回此消息ID之前的消息，用于翻页'),
-  }),
-}
-
-const lookupGroupMemberDecl: AgentToolDeclaration = {
-  name: 'lookup_group_member',
-  description:
-    '通过昵称模糊查找群成员的QQ号。当你需要调用 get_user_profile 等需要 senderId 的工具，但只知道用户昵称时，先用此工具查找对应的QQ号。',
-  inputSchema: z.object({
-    name: z.string().describe('要查找的昵称或群名片关键词'),
-  }),
-}
-
-const getUserProfileDecl: AgentToolDeclaration = {
-  name: 'get_user_profile',
-  description: '获取群内某个用户的画像信息（性格、习惯、历史发言特点等）',
-  inputSchema: z.object({
-    senderId: z.number().int().describe('目标用户的QQ号'),
-  }),
-}
-
-const getGroupSummaryDecl: AgentToolDeclaration = {
-  name: 'get_group_summary',
-  description: '获取本群的整体摘要，包括近期主要话题和群氛围',
+const dbSchemaDecl: AgentToolDeclaration = {
+  name: 'db_schema',
+  description: '查看可用数据库结构（只读），用于规划 db_read 查询',
   inputSchema: z.object({}),
+}
+
+const dbReadDecl: AgentToolDeclaration = {
+  name: 'db_read',
+  description:
+    '执行只读 SQL 查询。仅允许 SELECT / WITH 查询，必须包含 :group_id 参数并带显式 group_id 过滤条件。',
+  inputSchema: z.object({
+    sql: z.string().min(1).describe('只读 SQL，必须包含 :group_id'),
+    params: z
+      .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+      .optional()
+      .describe('可选命名参数；group_id 会由系统注入'),
+  }),
 }
 
 const finalAnswerDecl: AgentToolDeclaration = {
   name: 'final_answer',
-  description: '当你已经收集到足够信息，准备好最终回复时调用此工具。调用后循环立即终止。',
+  description: '当你准备好最终回复时调用。调用后循环立即终止。',
   inputSchema: z.object({
     text: z.string().describe('发送给用户的最终回复内容，不超过500字'),
   }),
@@ -70,10 +41,10 @@ const finalAnswerDecl: AgentToolDeclaration = {
 
 const webSearchDecl: AgentToolDeclaration = {
   name: 'web_search',
-  description:
-    '搜索互联网获取实时信息。当群聊历史中找不到答案，或问题涉及最新新闻、实时数据、外部知识时使用。',
+  description: '搜索互联网获取实时信息。当群聊历史中找不到答案时使用。',
   inputSchema: z.object({
-    query: z.string().describe('搜索查询词，用中文或英文均可'),
+    query: z.string().min(1).describe('搜索查询词'),
+    maxResults: z.number().int().min(1).max(10).optional().describe('结果条数，默认5，最大10'),
   }),
 }
 
@@ -82,101 +53,116 @@ export interface AgentTools {
   executors: Record<string, ToolExecutor>
 }
 
-const MAX_WEB_SEARCH_CHARS = 2000
+function buildDbSchemaPayload() {
+  return {
+    dialect: 'postgresql',
+    constraints: {
+      readOnly: true,
+      requiredParam: ':group_id',
+      requiredPredicateForms: ['group_id = :group_id', '<alias>.group_id = :group_id'],
+      maxRows: DB_READ_MAX_ROWS,
+      statementTimeoutMs: DB_READ_TIMEOUT_MS,
+    },
+    tables: [
+      {
+        name: 'messages',
+        columns: [
+          'group_id',
+          'message_id',
+          'sender_id',
+          'sender_nickname',
+          'sender_group_nickname',
+          'search_text',
+          'raw_message',
+          'sent_at',
+          'created_at',
+        ],
+      },
+      {
+        name: 'media',
+        columns: ['media_id', 'media_type', 'content_type', 'file_name', 'description', 'created_at'],
+      },
+      {
+        name: 'group_memory',
+        columns: ['group_id', 'summary', 'last_message_id', 'updated_at'],
+      },
+      {
+        name: 'user_memory',
+        columns: ['group_id', 'sender_id', 'profile', 'examples', 'updated_at'],
+      },
+    ],
+  }
+}
+
+function toSqlParams(value: Record<string, unknown> | undefined): Record<string, SqlParamValue> | undefined {
+  if (!value) return undefined
+  const out: Record<string, SqlParamValue> = {}
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' || v === null) {
+      out[k] = v
+      continue
+    }
+    throw new Error(`Unsupported SQL param type for key: ${k}`)
+  }
+  return out
+}
+
+function truncate(text: string, max: number): string {
+  return text.length > max ? text.slice(0, max) + '…' : text
+}
 
 function formatWebSearchResults(
   results: Array<{ title: string; url: string; content: string }>,
 ): string {
-  if (results.length === 0) return '（无搜索结果）'
-  const formatted = results.map((r) => `[${r.title}](${r.url})\n${r.content}`).join('\n\n')
-  return formatted.length > MAX_WEB_SEARCH_CHARS
-    ? formatted.slice(0, MAX_WEB_SEARCH_CHARS) + '…'
-    : formatted
+  const payload = {
+    results: results.map((r) => ({
+      title: r.title,
+      url: r.url,
+      snippet: r.content,
+    })),
+  }
+  return truncate(JSON.stringify(payload, null, 2), WEB_SEARCH_MAX_OUTPUT_CHARS)
 }
 
 export function createAgentTools(groupId: number): AgentTools {
-  const declarations: AgentToolDeclaration[] = [
-    searchMessagesDecl,
-    getRecentMessagesDecl,
-    lookupGroupMemberDecl,
-    getUserProfileDecl,
-    getGroupSummaryDecl,
-    finalAnswerDecl,
-  ]
-
-  if (config.tavily?.apiKey) {
-    declarations.push(webSearchDecl)
-  }
+  const declarations: AgentToolDeclaration[] = [dbSchemaDecl, dbReadDecl, finalAnswerDecl]
+  if (config.tavily?.apiKey) declarations.push(webSearchDecl)
 
   const executors: Record<string, ToolExecutor> = {
-    search_messages: async (args) => {
-      const parsed = searchMessagesDecl.inputSchema.parse(args) as { keyword: string; limit: number }
-      const results = await searchMessages(groupId, parsed.keyword, parsed.limit)
-      return truncate(formatSearchResults(results), MAX_INFO_CHARS)
-    },
+    db_schema: async () => JSON.stringify(buildDbSchemaPayload(), null, 2),
 
-    get_recent_messages: async (args) => {
-      const parsed = getRecentMessagesDecl.inputSchema.parse(args) as {
-        limit: number
-        beforeMessageId?: number
+    db_read: async (args) => {
+      const parsed = dbReadDecl.inputSchema.parse(args) as {
+        sql: string
+        params?: Record<string, unknown>
       }
-      const messages = await getRecentGroupMessages(groupId, parsed.limit, parsed.beforeMessageId)
-      if (messages.length === 0) return '（无消息记录）'
-      const lines = messages.map((m) => {
-        const name = m.senderGroupNickname ?? m.senderNickname ?? String(m.senderId)
-        const time = m.createdAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
-        const text = m.searchText || '（媒体消息）'
-        return `[${time}] ${name}: ${text}`
+      const result = await executeDbRead({
+        sql: parsed.sql,
+        params: toSqlParams(parsed.params),
+        groupId,
+        maxRows: DB_READ_MAX_ROWS,
+        statementTimeoutMs: DB_READ_TIMEOUT_MS,
+        maxOutputChars: DB_READ_MAX_OUTPUT_CHARS,
       })
-      return truncate(lines.join('\n'), MAX_INFO_CHARS)
-    },
-
-    lookup_group_member: async (args) => {
-      const parsed = lookupGroupMemberDecl.inputSchema.parse(args) as { name: string }
-      const results = await lookupGroupMember(groupId, parsed.name)
-      if (results.length === 0) return '（未找到匹配成员）'
-      return results
-        .map((r, i) => {
-          const nickname = r.senderGroupNickname ?? r.senderNickname ?? String(r.senderId)
-          const extra = r.senderGroupNickname && r.senderNickname && r.senderGroupNickname !== r.senderNickname
-            ? `（QQ昵称：${r.senderNickname}）`
-            : ''
-          return `${i + 1}. ${nickname}${extra} — QQ号: ${r.senderId}`
-        })
-        .join('\n')
-    },
-
-    get_user_profile: async (args) => {
-      const parsed = getUserProfileDecl.inputSchema.parse(args) as { senderId: number }
-      const profile = await getUserProfile(groupId, parsed.senderId)
-      if (!profile) return '（该用户暂无画像信息）'
-      const lines = [
-        `昵称: ${profile.senderGroupNickname ?? profile.senderNickname ?? String(profile.senderId)}`,
-        `画像: ${profile.profile}`,
-      ]
-      if (profile.examples.length > 0) {
-        lines.push(`典型发言: ${profile.examples.slice(0, 3).join(' / ')}`)
-      }
-      return truncate(lines.join('\n'), MAX_PROFILE_CHARS)
-    },
-
-    get_group_summary: async (_args) => {
-      const summary = await getGroupSummary(groupId)
-      if (!summary) return '（暂无群摘要）'
-      return truncate(summary.summary, MAX_PROFILE_CHARS)
+      return JSON.stringify(result, null, 2)
     },
 
     web_search: async (args) => {
-      const parsed = webSearchDecl.inputSchema.parse(args) as { query: string }
+      const parsed = webSearchDecl.inputSchema.parse(args) as { query: string; maxResults?: number }
       const apiKey = config.tavily?.apiKey
-      if (!apiKey) return '（web_search 工具未配置 API key）'
+      if (!apiKey) {
+        return JSON.stringify({ error: 'web_search 工具未配置 API key' })
+      }
+
       try {
         const client = tavily({ apiKey })
-        const response = await client.search(parsed.query, { maxResults: 5 })
+        const response = await client.search(parsed.query, {
+          maxResults: Math.min(parsed.maxResults ?? WEB_SEARCH_MAX_RESULTS, 10),
+        })
         return formatWebSearchResults(response.results)
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
-        return `搜索失败: ${message}`
+        return JSON.stringify({ error: `搜索失败: ${message}` })
       }
     },
   }

@@ -1,135 +1,97 @@
-# @-mention 回复逻辑
+# @-mention 回复逻辑（P0 原子工具架构）
 
-## 重构前 vs 现在
+## 入口
 
-| | 重构前（单轮） | 现在（可路由） |
-|---|---|---|
-| 触发条件 | 消息含 @Bot | 同 |
-| 上下文来源 | 最近 N 条消息 | 同，另加引用消息解析 |
-| 回复方式 | 单次 LLM 调用 | 单轮 **或** 多轮 agent loop |
-| 工具调用 | 无 | 6 个工具（历史检索 + 网搜） |
-| 兜底 | 无 | agent 失败自动降级单轮 |
-| 配置 | 无 | `agent-config.json` 按群配置 |
-
----
-
-## 触发与路由
-
-```
-收到消息
-  └── segments 含 at(selfNumber)?
-        ├── 否 → continue（不处理）
-        └── 是 → agent loop
-                    └── 失败(null) → 单轮回复（兜底）
+```text
+收到群消息
+  └─ 是否包含 @Bot
+      ├─ 否 -> continue
+      └─ 是 -> 进入 agentReply
+               └─ 失败时降级到 singleTurnReply
 ```
 
----
+主入口：`src/responder/handlers/at-mention.ts`
 
-## 单轮回复
+## 上下文构建
 
-```
-buildContext(最近 30 条消息 + 引用消息解析)
-  + triggerText（@消息的文本部分）
-  → llm.generateReply(persona, context, text)
-  → 发送回复
-```
+- 通过 `buildContext(msg, contextLimit)` 构造群聊背景。
+- `contextLimit` 默认 `20`（来自 `src/config/agent-profiles.ts`，可按群覆盖）。
+- 当前触发文本优先使用 `extractResolvedTriggerText`，确保媒体描述已就绪后再送入 agent。
 
-媒体处理：最近 5 条含图/音频的消息会等待 AI 描述生成（最多 5s），超时降级为占位符。
+传给 agent 的 `userMessage` 结构：
 
----
+```text
+{triggerText 或 (用户@了你)}
 
-## Agent Loop
-
-适用场景：需要检索历史、分析数据、或查询互联网时。
-
-```
-buildContext
-  + triggerText
-  → userMessage = "${triggerText}\n\n[群聊背景]\n${context}"
-
-runAgentLoop(maxSteps=4, maxTimeMs=30s):
-
-  for step in 0..3:
-    adapter.chat(systemPrompt, history, tools)
-      │
-      ├── type=text       → 直接作为最终回答返回（implicit_text）
-      ├── type=empty      → fallback
-      └── type=tool_calls
-            ├── final_answer(text) → 取 text（截断 500 字）→ 返回
-            └── 其他工具           → executor(args)
-                                       → 结果追加 history
-                                       → 继续下一 step
-
-  超出 maxSteps → aborted
-  超时 30s      → fallback（Promise.race）
+[群聊背景]
+{context}
 ```
 
-### 可用工具
+## Agent Loop 行为
 
-| 工具 | 作用 |
+调用：`runAgentLoop({...})`
+
+- 默认最大步数：`maxSteps = 12`
+- 默认最终回答最大长度：`maxAnswerChars = 500`
+- 慢请求告警：`warningTimeMs`（默认 60s，仅告警，不中断）
+
+终止条件：
+
+1. 模型调用 `final_answer(text)` -> 返回最终答案
+2. 模型直接输出文本（`implicit_text`）-> 作为最终答案
+3. 模型返回 `empty` -> fallback
+4. 超过 `maxSteps` -> `aborted`
+5. adapter/执行器抛错 -> fallback
+
+## 可用工具
+
+| 工具 | 说明 |
 |---|---|
-| `search_messages` | 按关键词全文搜索历史消息 |
-| `get_user_profile` | 查询某用户发言统计与画像 |
-| `get_group_summary` | 群整体活跃度与话题摘要 |
-| `get_recent_messages` | 拉取最近 N 条消息 |
-| `final_answer` | 提交最终回答（截断至 500 字） |
-| `web_search` | Tavily 网络搜索（需配置 `TAVILY_API_KEY`） |
+| `db_schema` | 返回可查询表结构、约束和限制 |
+| `db_read` | 执行只读 SQL（强约束） |
+| `final_answer` | 提交最终回复 |
+| `web_search` | Tavily 实时搜索（仅配置 API key 时可见） |
 
-> `web_search` 仅在 `TAVILY_API_KEY` 存在时才注入工具列表，未配置时 LLM 不可见。
+> 已移除旧工具：`search_messages` / `get_recent_messages` / `get_user_profile` / `get_group_summary` 等。
 
----
+## `db_read` 关键约束
 
-## 兜底机制
+由 `src/database/agent-sql.ts` 强制执行：
 
-```
-agent loop 返回 null（fallback / aborted）
-  → 自动降级为单轮回复
-    → 单轮也失败
-      → log.error，跳过本条消息（不回复）
-```
+- 仅允许 `SELECT` / `WITH ... SELECT`
+- 禁止多语句
+- 禁止 DDL/DML 危险关键字
+- SQL 必须包含 `:group_id`
+- SQL 必须包含显式 `group_id = :group_id` 过滤
+- 自动注入 `group_id` 参数
+- 结果行数和输出长度受限（并返回 `truncated`）
+- 查询设置 statement timeout
 
----
+## 降级策略
 
-## 回复格式
-
-```
-[reply: 原消息 ID] + [at: 发送者] + " " + 回复文本
-```
-
----
+- Agent 返回非 `final`（`fallback`/`aborted`）时，自动走 `singleTurnReply`。
+- 单轮也失败则记录错误并跳过发送。
 
 ## 配置
 
-运行时读取项目根目录的 `agent-config.json`（首次读取后缓存）。**文件不存在时不报错**，所有群使用内置默认值。
-
-### agent-config.json
+`agent-config.json`（不存在时使用内置默认）：
 
 ```json
 {
   "default": {
     "personaFile": "./prompts/default-persona.md",
-    "replyContextMessages": 30
+    "replyContextMessages": 20,
+    "agentMaxSteps": 12,
+    "agentWarningTimeMs": 60000,
+    "agentMaxAnswerChars": 500
   },
   "groups": {
     "123456789": {
-      "personaFile": "./prompts/group-123456789.md"
+      "personaFile": "./prompts/group-123456789.md",
+      "replyContextMessages": 20
     }
   }
 }
 ```
 
-Profile 合并顺序：内置默认 → `default` → 群专属配置（后者覆盖前者）。
-
-### Persona 文件
-
-人格 prompt 存放在 `prompts/` 目录（与其他 prompt 文件共存），每个文件是纯文本/Markdown，支持任意长度、换行与格式。
-
-`agent-config.json` 中通过 `personaFile` 字段引用（相对于项目根目录的路径）。也可直接用内联 `persona` 字段写短文本，两者选其一；若 `personaFile` 读取失败则自动回退到 `persona` 字段。
-
-**相关文件：**
-- `src/responder/handlers/at-mention.ts` — 主入口
-- `src/responder/context-builder.ts` — 上下文构建
-- `src/agent/loop.ts` — agent loop 核心
-- `src/agent/tools.ts` — 工具声明与执行器
-- `src/agent/heuristic.ts` — 启发式判断
-- `src/config/agent-profiles.ts` — profile 加载与合并
+兼容字段：`agentMaxTimeMs`（等价于 `agentWarningTimeMs`，仅保留兼容）。

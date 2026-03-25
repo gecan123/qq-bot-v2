@@ -16,7 +16,7 @@ In scope for v1:
 - Agentic loop with `maxSteps=12`.
 - Atomic tools for DB + web retrieval.
 - Read-only SQL access with strict execution guardrails.
-- Fallback to single-turn reply on system-level failure.
+- Fallback to single-turn reply on terminal loop failures (`max steps exceeded`, global timeout, adapter/system fatal error).
 - Observability sufficient for iterative tuning.
 
 Out of scope for v1:
@@ -89,7 +89,7 @@ Purpose:
 
 Input:
 - `sql: string`
-- `params?: Record<string, string | number | boolean | null>`
+- `params?: Record<string, string | number | boolean | null>` (caller-optional; runtime materializes params object and injects `group_id` before execution)
 
 Output (structured):
 - `columns: string[]`
@@ -103,6 +103,10 @@ Output (structured):
 Purpose:
 - Retrieve external knowledge when group history is insufficient.
 
+Input:
+- `query: string`
+- optional `maxResults?: number` (runtime-capped)
+
 Output normalization requirement:
 - Keep a predictable, structured result shape (title/url/snippet style).
 
@@ -111,6 +115,7 @@ Purpose:
 - Sole formal completion protocol for final user-facing text.
 
 Constraint:
+- Payload shape is fixed to `{ text: string }` (plain text only).
 - Runtime truncates final text to configured maximum.
 
 ## 5. SQL Guardrails (`db_read`)
@@ -122,9 +127,14 @@ This is mandatory for v1.
 - Reject DDL/DML and dangerous keywords.
 
 2. Group scope hard boundary
-- Runtime injects current `groupId`.
-- Query must contain required group scope placeholder/predicate.
-- Reject otherwise.
+- Contract (single source of truth):
+  - SQL must include `:group_id` parameter.
+  - SQL must contain an explicit group filter predicate bound to `:group_id` (for example `group_id = :group_id`).
+  - Runtime injects the concrete current-group value into `params.group_id`.
+  - Runtime does not rewrite SQL for group scoping; missing/invalid scope is rejected.
+  - Accepted predicate forms for v1 validator:
+    - `group_id = :group_id`
+    - `<table_or_alias>.group_id = :group_id`
 
 3. Runtime limits
 - Statement timeout.
@@ -204,6 +214,19 @@ Operational metrics (v1 acceptance):
 - max-steps abort rate
 - P50/P95/P99 latency
 
+Quantitative target thresholds (for rollout gate):
+- `final_answer` termination rate >= 90%
+- fallback rate <= 15%
+- timeout rate <= 5%
+- max-steps abort rate <= 8%
+- cross-group leakage incidents = 0
+- P95 end-to-end latency <= 18s
+- P99 end-to-end latency <= 30s
+- average input tokens per run <= 12,000
+
+Metric denominator definition:
+- Unless otherwise stated, percentages are computed over `agent-started runs` (runs that entered the new agent loop), not all inbound `@` events.
+
 ## 9. Prioritized Delivery Scope
 
 ### P0 (must-have)
@@ -219,6 +242,9 @@ Operational metrics (v1 acceptance):
 2. Improve `db_schema` with examples/annotations.
 3. Improve tool result channel as "structured + preview text" dual form.
 4. Add monitoring views for steps/latency/fallback.
+
+Planning note:
+- The immediate implementation plan should target P0 only. P1 remains backlog for the next cycle.
 
 ### Deferred (intentionally not planned now)
 - P2 items (memory dual-track redesign, planner/executor split, advanced DB isolation) are postponed.
@@ -247,6 +273,8 @@ The following principles are derived from broad open-source agent practices and 
 6. Queueing should be session-serialized to avoid race-induced context corruption.
 7. Observability must be designed in from day one.
 
+This section is guidance, not a separate implementation scope gate for v1 delivery.
+
 ## 12. Acceptance Criteria (Experiment Phase)
 
 Functionality:
@@ -260,13 +288,18 @@ Safety:
 - No write-capable DB execution.
 
 Stability:
-- Controlled fallback rate and timeout behavior.
+- fallback rate <= 15%
+- timeout rate <= 5%
+- max-steps abort rate <= 8%
 
 Performance:
-- Latency and token cost remain within acceptable experimental bounds.
+- P95 end-to-end latency <= 18s
+- P99 end-to-end latency <= 30s
+- average input tokens per run <= 12,000
 
 Exit condition for v1.1 planning:
-- After continuous observation (3-7 days), if quality/stability/cost are acceptable, proceed to next iteration scope.
+- Observe for 3-7 days with at least 300 `@` runs.
+- If all quantitative gates above pass, proceed to next iteration scope.
 
 ## 13. Mapping To Existing Repo Modules
 

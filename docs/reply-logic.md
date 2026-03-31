@@ -1,97 +1,86 @@
-# @-mention 回复逻辑（P0 原子工具架构）
+# 异步 `@` 回复逻辑
 
-## 入口
+## 总体链路
 
 ```text
 收到群消息
-  └─ 是否包含 @Bot
-      ├─ 否 -> continue
-      └─ 是 -> 进入 agentReply
-               └─ 失败时降级到 singleTurnReply
+  └─ parse + media + DB insert
+      └─ 是否包含 @Bot
+          ├─ 否 -> 结束
+          └─ 是 -> enqueue mention event
+                   └─ scheduler 按群聚合
+                        └─ worker 异步生成正式回复
+                             └─ sender 发送 reply/at/text
 ```
 
-主入口：`src/responder/handlers/at-mention.ts`
+当前运行入口：
 
-## 上下文构建
+- 入库与分发：`src/bot/core.ts`
+- mention 分发：`src/conversation/dispatcher.ts`
+- 群级调度：`src/conversation/scheduler.ts`
+- 回复 worker：`src/conversation/worker.ts`
+- 回复生成：`src/responder/reply-generator.ts`
+- 发送抽象：`src/messaging/message-sender.ts`
 
-- 通过 `buildContext(msg, contextLimit)` 构造群聊背景。
-- `contextLimit` 默认 `20`（来自 `src/config/agent-profiles.ts`，可按群覆盖）。
-- 当前触发文本优先使用 `extractResolvedTriggerText`，确保媒体描述已就绪后再送入 agent。
+## 一期规则
 
-传给 agent 的 `userMessage` 结构：
+- 只处理 `@bot`
+- 历史消息补拉只入库，不触发回复
+- 同群使用 30 秒 merge window
+- 跨群并发，同群串行
+- 同一 sender 在同一 batch 内视为同一线程
+- 单轮最多处理 2 个 sender 线程
+- 超出部分静默进入下一轮
+- 不发 ack，不发“稍等”
+- 默认尽量一条发完
 
-```text
-{triggerText 或 (用户@了你)}
+## worker 如何决定回复对象
 
-[群聊背景]
-{context}
-```
+对一个 `GroupConversationBatch`：
 
-## Agent Loop 行为
+1. 先按 `senderId` 分组
+2. 取最早出现的前 2 个 sender 线程处理
+3. 每个 sender 线程：
+   - 用该线程最后一条消息构造回复输入
+   - 用该线程最早一条消息作为 reply 锚点
+4. 剩余 sender 线程作为 leftovers 交回 scheduler，立即进入下一轮
 
-调用：`runAgentLoop({...})`
+这样做的目的：
 
-- 默认最大步数：`maxSteps = 12`
-- 默认最终回答最大长度：`maxAnswerChars = 500`
-- 慢请求告警：`warningTimeMs`（默认 60s，仅告警，不中断）
+- 边界规则固定，不交给 AI 决定
+- 保留一点“像人一样分批回”的感觉
+- 避免同群内并发回复打架
 
-终止条件：
+## 回复生成
 
-1. 模型调用 `final_answer(text)` -> 返回最终答案
-2. 模型直接输出文本（`implicit_text`）-> 作为最终答案
-3. 模型返回 `empty` -> fallback
-4. 超过 `maxSteps` -> `aborted`
-5. adapter/执行器抛错 -> fallback
+`src/responder/reply-generator.ts` 只负责“生成什么内容”，不负责发送。
 
-## 可用工具
+当前策略：
 
-| 工具 | 说明 |
-|---|---|
-| `db_schema` | 返回可查询表结构、约束和限制 |
-| `db_read` | 执行只读 SQL（强约束） |
-| `final_answer` | 提交最终回复 |
-| `web_search` | Tavily 实时搜索（仅配置 API key 时可见） |
+1. 优先走 `agentReply`
+2. 如果 agent loop 返回非最终答案，降级到 `singleTurnReply`
+3. 两条都失败则本轮跳过发送并记录日志
 
-> 已移除旧工具：`search_messages` / `get_recent_messages` / `get_user_profile` / `get_group_summary` 等。
+上下文仍然复用原有逻辑：
 
-## `db_read` 关键约束
+- `buildContext(msg, contextLimit)`
+- `extractResolvedTriggerText(...)`
+- `runAgentLoop(...)`
 
-由 `src/database/agent-sql.ts` 强制执行：
+## 发送层
 
-- 仅允许 `SELECT` / `WITH ... SELECT`
-- 禁止多语句
-- 禁止 DDL/DML 危险关键字
-- SQL 必须包含 `:group_id`
-- SQL 必须包含显式 `group_id = :group_id` 过滤
-- 自动注入 `group_id` 参数
-- 结果行数和输出长度受限（并返回 `truncated`）
-- 查询设置 statement timeout
+`src/messaging/message-sender.ts` 和 `src/messaging/segment-builder.ts` 负责把内部回复渲染为 NapCat segments。
 
-## 降级策略
+当前只支持：
 
-- Agent 返回非 `final`（`fallback`/`aborted`）时，自动走 `singleTurnReply`。
-- 单轮也失败则记录错误并跳过发送。
+- `reply`
+- `at`
+- `text`
 
-## 配置
+底层仍复用 `src/responder/reply-executor.ts` 的发送、重试和日志能力。
 
-`agent-config.json`（不存在时使用内置默认）：
+## 运维边界
 
-```json
-{
-  "default": {
-    "personaFile": "./prompts/default-persona.md",
-    "replyContextMessages": 20,
-    "agentMaxSteps": 12,
-    "agentWarningTimeMs": 60000,
-    "agentMaxAnswerChars": 500
-  },
-  "groups": {
-    "123456789": {
-      "personaFile": "./prompts/group-123456789.md",
-      "replyContextMessages": 20
-    }
-  }
-}
-```
-
-兼容字段：`agentMaxTimeMs`（等价于 `agentWarningTimeMs`，仅保留兼容）。
+- 当前 conversation queue 是内存实现，不持久化
+- 进程退出后，未执行的 mention task 会丢失
+- Redis 化是后续演进项

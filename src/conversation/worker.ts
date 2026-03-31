@@ -54,12 +54,12 @@ function groupEventsBySender(events: MentionEvent[]): SenderThread[] {
   return [...threads.values()]
 }
 
-function getEarliestEvent(events: MentionEvent[]): MentionEvent {
-  return events.reduce((earliest, current) => (current.createdAt < earliest.createdAt ? current : earliest))
+function getFirstEvent(events: MentionEvent[]): MentionEvent {
+  return events[0] as MentionEvent
 }
 
-function getLatestEvent(events: MentionEvent[]): MentionEvent {
-  return events.reduce((latest, current) => (current.createdAt > latest.createdAt ? current : latest))
+function getLastEvent(events: MentionEvent[]): MentionEvent {
+  return events[events.length - 1] as MentionEvent
 }
 
 async function loadIncomingMessage(
@@ -95,8 +95,8 @@ export function createConversationWorker(options: ConversationWorkerOptions = {}
       const leftoverEvents = senderThreads.slice(maxSenderThreadsPerRun).flatMap((thread) => thread.events)
 
       for (const thread of activeThreads) {
-        const replyTarget = getEarliestEvent(thread.events)
-        const latestEvent = getLatestEvent(thread.events)
+        const replyTarget = getFirstEvent(thread.events)
+        const latestEvent = getLastEvent(thread.events)
         const message = await loadIncomingMessage(latestEvent, { getMessage, resolveSegments })
 
         if (!message) {

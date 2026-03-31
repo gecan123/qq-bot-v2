@@ -104,4 +104,37 @@ describe('conversation worker', () => {
     ])
     assert.deepEqual(result.leftoverEvents, [third])
   })
+
+  test('worker uses batch order when same-sender events share the same timestamp', async () => {
+    const first = makeEvent({ messageId: 21, senderId: 20, createdAt: 1000 })
+    const second = makeEvent({ messageId: 22, senderId: 20, createdAt: 1000 })
+    const sent: Array<{ replyToMessageId: number; mentionUserId?: number; text: string }> = []
+    const generatedFor: number[] = []
+
+    const messages = new Map<number, FakeStoredMessage>([
+      [21, makeStoredMessage(first, '@bot 第一条')],
+      [22, makeStoredMessage(second, '@bot 第二条补充')],
+    ])
+
+    const worker = createConversationWorker({
+      getMessage: async (_groupId, messageId) => messages.get(messageId) ?? null,
+      resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
+      generateReply: async (message) => {
+        generatedFor.push(message.messageId)
+        return `reply:${message.messageId}`
+      },
+      sender: {
+        replyToMessage: async (params) => {
+          sent.push(params)
+        },
+      },
+    })
+
+    await worker.run(makeBatch([first, second]))
+
+    assert.deepEqual(generatedFor, [22])
+    assert.deepEqual(sent, [
+      { groupId: 1, replyToMessageId: 21, mentionUserId: 20, text: 'reply:22' },
+    ])
+  })
 })

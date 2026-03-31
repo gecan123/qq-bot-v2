@@ -13,7 +13,10 @@ export function collectReferenceIds(segmentGroups: ParsedSegment[][]): number[] 
         (seg.type === 'image' || seg.type === 'video' || seg.type === 'record' || seg.type === 'file') &&
         typeof seg.referenceId === 'string'
       ) {
-        ids.push(Number(seg.referenceId))
+        const mediaId = Number(seg.referenceId)
+        if (Number.isInteger(mediaId) && mediaId > 0) {
+          ids.push(mediaId)
+        }
       }
     }
   }

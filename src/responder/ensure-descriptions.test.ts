@@ -42,4 +42,16 @@ describe('collectReferenceIds', () => {
   test('returns empty array for messages with no segments', () => {
     assert.deepEqual(collectReferenceIds([[]]), [])
   })
+
+  test('ignores invalid referenceIds', () => {
+    const groups: ParsedSegment[][] = [
+      [
+        { type: 'image', referenceId: 'abc' },
+        { type: 'video', referenceId: '-1' },
+        { type: 'record', referenceId: '0' },
+        { type: 'file', referenceId: '12' },
+      ],
+    ]
+    assert.deepEqual(collectReferenceIds(groups), [12])
+  })
 })

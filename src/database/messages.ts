@@ -131,7 +131,13 @@ export async function insertMessage(params: InsertMessageParams): Promise<void> 
       update: {
         groupName: params.groupName ?? null,
         mediaReferenceIds,
+        senderNickname: params.senderNickname,
+        senderGroupNickname: params.senderGroupNickname ?? null,
+        content: (content ?? []) as Prisma.InputJsonValue,
+        rawContent: rawContent === undefined ? undefined : rawContent === null ? Prisma.JsonNull : rawContent,
+        rawMessage: params.rawMessage ?? undefined,
         searchText,
+        sentAt: params.sentAt !== undefined ? new Date(params.sentAt * 1000) : undefined,
       },
     })
     log.debug({ messageId: params.messageId, imageReferences: mediaReferenceIds.length }, 'Message saved')

@@ -1,0 +1,88 @@
+import assert from 'node:assert/strict'
+import { afterEach, describe, test } from 'node:test'
+import { prisma } from '../database/client.js'
+import { setLlmProvider } from '../llm/provider.js'
+import { generateDescriptionForMedia } from './generate-description.js'
+
+const originalFindUnique = prisma.media.findUnique
+const originalUpdate = prisma.media.update
+
+afterEach(() => {
+  prisma.media.findUnique = originalFindUnique
+  prisma.media.update = originalUpdate
+  setLlmProvider(undefined as any)
+})
+
+describe('generateDescriptionForMedia', () => {
+  test('uses describeVideo for video media', async () => {
+    const updates: any[] = []
+    let received: any
+
+    prisma.media.findUnique = (async () => ({
+      data: new Uint8Array(Buffer.from('video-bytes')),
+      contentType: 'video/mp4',
+      mediaType: 'video',
+      description: null,
+      fileName: 'clip.mp4',
+    })) as unknown as typeof prisma.media.findUnique
+
+    prisma.media.update = (async (args: any) => {
+      updates.push(args)
+      return {} as any
+    }) as typeof prisma.media.update
+
+    setLlmProvider({
+      describeImage: async () => '',
+      describeVideo: async (params) => {
+        received = params
+        return '视频描述'
+      },
+      describePdf: async () => '',
+      summarizeText: async () => '',
+      transcribeAudio: async () => '',
+    })
+
+    await generateDescriptionForMedia(1)
+
+    assert.equal(received.contentType, 'video/mp4')
+    assert.equal(received.fileName, 'clip.mp4')
+    assert.equal(Buffer.isBuffer(received.video), true)
+    assert.equal(updates[0].data.description, '视频描述')
+  })
+
+  test('uses describePdf for pdf file media', async () => {
+    const updates: any[] = []
+    let received: any
+
+    prisma.media.findUnique = (async () => ({
+      data: new Uint8Array(Buffer.from('pdf-bytes')),
+      contentType: 'application/pdf',
+      mediaType: 'file',
+      description: null,
+      fileName: 'doc.pdf',
+    })) as unknown as typeof prisma.media.findUnique
+
+    prisma.media.update = (async (args: any) => {
+      updates.push(args)
+      return {} as any
+    }) as typeof prisma.media.update
+
+    setLlmProvider({
+      describeImage: async () => '',
+      describeVideo: async () => '',
+      describePdf: async (params) => {
+        received = params
+        return 'PDF摘要'
+      },
+      summarizeText: async () => '',
+      transcribeAudio: async () => '',
+    })
+
+    await generateDescriptionForMedia(2)
+
+    assert.equal(received.contentType, 'application/pdf')
+    assert.equal(received.fileName, 'doc.pdf')
+    assert.equal(Buffer.isBuffer(received.file), true)
+    assert.equal(updates[0].data.description, 'PDF摘要')
+  })
+})

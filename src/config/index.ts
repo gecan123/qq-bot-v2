@@ -36,6 +36,16 @@ export const config = {
         apiKey: process.env.LLM_DESCRIBE_IMAGE_API_KEY,
         model: process.env.LLM_DESCRIBE_IMAGE_MODEL,
       },
+      describeVideo: {
+        baseUrl: process.env.LLM_DESCRIBE_VIDEO_BASE_URL,
+        apiKey: process.env.LLM_DESCRIBE_VIDEO_API_KEY,
+        model: process.env.LLM_DESCRIBE_VIDEO_MODEL,
+      },
+      describePdf: {
+        baseUrl: process.env.LLM_DESCRIBE_PDF_BASE_URL,
+        apiKey: process.env.LLM_DESCRIBE_PDF_API_KEY,
+        model: process.env.LLM_DESCRIBE_PDF_MODEL,
+      },
       summarizeText: {
         baseUrl: process.env.LLM_SUMMARIZE_TEXT_BASE_URL,
         apiKey: process.env.LLM_SUMMARIZE_TEXT_API_KEY,

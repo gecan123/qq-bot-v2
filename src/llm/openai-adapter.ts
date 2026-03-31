@@ -5,6 +5,7 @@ import { loadPrompt } from '../config/prompt-loader.js'
 export class OpenAIProvider implements LlmProvider {
     private client: OpenAI
     private model: string
+    private static readonly MAX_VIDEO_BYTES = 5 * 1024 * 1024
 
     constructor(baseURL: string, apiKey: string, model: string) {
         this.client = new OpenAI({ baseURL, apiKey })
@@ -34,6 +35,28 @@ export class OpenAIProvider implements LlmProvider {
         })
 
         return response.choices[0]?.message.content?.trim() ?? ''
+    }
+
+    async describeVideo(params: { video: Buffer; contentType: string; fileName?: string }): Promise<string> {
+        const video = params.video.length > OpenAIProvider.MAX_VIDEO_BYTES
+            ? params.video.subarray(0, OpenAIProvider.MAX_VIDEO_BYTES)
+            : params.video
+
+        return this.describeFileWithPrompt({
+            promptPath: './prompts/describe-video.md',
+            instruction: '请描述这个视频的内容：',
+            file: video,
+            fileName: params.fileName ?? 'video.mp4',
+        })
+    }
+
+    async describePdf(params: { file: Buffer; contentType: string; fileName?: string }): Promise<string> {
+        return this.describeFileWithPrompt({
+            promptPath: './prompts/describe-pdf.md',
+            instruction: '请描述这个 PDF 文档的内容：',
+            file: params.file,
+            fileName: params.fileName ?? 'document.pdf',
+        })
     }
 
     async summarizeText(params: { text: string; context?: string }): Promise<string> {
@@ -101,6 +124,39 @@ export class OpenAIProvider implements LlmProvider {
                     { type: 'input_audio', input_audio: { data: base64, format: ext } } as any,
                 ],
             }],
+        })
+
+        return response.choices[0]?.message.content?.trim() ?? ''
+    }
+
+    private async describeFileWithPrompt(params: {
+        promptPath: string
+        instruction: string
+        file: Buffer
+        fileName: string
+    }): Promise<string> {
+        const response = await this.client.chat.completions.create({
+            model: this.model,
+            temperature: 0.3,
+            messages: [
+                {
+                    role: 'system',
+                    content: loadPrompt(params.promptPath),
+                },
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: params.instruction },
+                        {
+                            type: 'file',
+                            file: {
+                                file_data: params.file.toString('base64'),
+                                filename: params.fileName,
+                            },
+                        },
+                    ],
+                },
+            ],
         })
 
         return response.choices[0]?.message.content?.trim() ?? ''

@@ -2,6 +2,8 @@ import type { LlmProvider } from './types.js'
 
 type ScenarioProviders = {
     describeImage?: LlmProvider
+    describeVideo?: LlmProvider
+    describePdf?: LlmProvider
     summarizeText?: LlmProvider
     generateText?: LlmProvider
     generateReply?: LlmProvider
@@ -19,6 +21,16 @@ export class RoutingProvider implements LlmProvider {
 
     async describeImage(params: Parameters<LlmProvider['describeImage']>[0]): Promise<string> {
         return (this.routes.describeImage ?? this.defaultProvider).describeImage(params)
+    }
+
+    async describeVideo(params: Parameters<NonNullable<LlmProvider['describeVideo']>>[0]): Promise<string> {
+        const p = this.routes.describeVideo ?? this.defaultProvider
+        return p.describeVideo?.(params) ?? ''
+    }
+
+    async describePdf(params: Parameters<NonNullable<LlmProvider['describePdf']>>[0]): Promise<string> {
+        const p = this.routes.describePdf ?? this.defaultProvider
+        return p.describePdf?.(params) ?? ''
     }
 
     async summarizeText(params: Parameters<LlmProvider['summarizeText']>[0]): Promise<string> {

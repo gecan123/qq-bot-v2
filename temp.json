@@ -1,0 +1,77 @@
+{
+  "data": [
+    {
+      "created": 1762905600,
+      "id": "gpt-5.1-codex",
+      "object": "model",
+      "owned_by": "openai"
+    },
+    {
+      "created": 1762905600,
+      "id": "gpt-5.1-codex-mini",
+      "object": "model",
+      "owned_by": "openai"
+    },
+    {
+      "created": 1770307200,
+      "id": "gpt-5.3-codex",
+      "object": "model",
+      "owned_by": "openai"
+    },
+    {
+      "created": 1770912000,
+      "id": "gpt-5.3-codex-spark",
+      "object": "model",
+      "owned_by": "openai"
+    },
+    {
+      "created": 1772668800,
+      "id": "gpt-5.4",
+      "object": "model",
+      "owned_by": "openai"
+    },
+    {
+      "created": 1757894400,
+      "id": "gpt-5-codex",
+      "object": "model",
+      "owned_by": "openai"
+    },
+    {
+      "created": 1762473600,
+      "id": "gpt-5-codex-mini",
+      "object": "model",
+      "owned_by": "openai"
+    },
+    {
+      "created": 1762905600,
+      "id": "gpt-5.1",
+      "object": "model",
+      "owned_by": "openai"
+    },
+    {
+      "created": 1763424000,
+      "id": "gpt-5.1-codex-max",
+      "object": "model",
+      "owned_by": "openai"
+    },
+    {
+      "created": 1765440000,
+      "id": "gpt-5.2",
+      "object": "model",
+      "owned_by": "openai"
+    },
+    {
+      "created": 1765440000,
+      "id": "gpt-5.2-codex",
+      "object": "model",
+      "owned_by": "openai"
+    },
+    {
+      "created": 1754524800,
+      "id": "gpt-5",
+      "object": "model",
+      "owned_by": "openai"
+    }
+  ],
+  "object": "list"
+}

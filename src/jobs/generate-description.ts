@@ -9,9 +9,13 @@ export interface GenerateDescriptionData {
 }
 
 const VISION_MEDIA_TYPES = new Set(['image', 'sticker'])
-// 视频不支持直接作为 image_url 输入（gpt-5.4/5.4-mini 均不支持 video/mp4 MIME type）
 
 const inFlight = new Map<number, Promise<void>>()
+
+function isPdfFile(contentType: string | null, fileName: string | null): boolean {
+  if (contentType === 'application/pdf') return true
+  return fileName?.toLowerCase().endsWith('.pdf') ?? false
+}
 
 export function generateDescriptionForMedia(mediaId: number): Promise<void> {
   return withInFlight(inFlight, mediaId, () => doGenerate(mediaId))
@@ -20,7 +24,7 @@ export function generateDescriptionForMedia(mediaId: number): Promise<void> {
 async function doGenerate(mediaId: number): Promise<void> {
   const media = await prisma.media.findUnique({
     where: { mediaId },
-    select: { data: true, contentType: true, mediaType: true, description: true },
+    select: { data: true, contentType: true, mediaType: true, description: true, fileName: true },
   })
 
   if (!media) {
@@ -59,6 +63,29 @@ async function doGenerate(mediaId: number): Promise<void> {
     return
   }
 
+  if (mediaType === 'video') {
+    if (!provider.describeVideo) {
+      log.debug({ mediaId }, 'LLM provider 不支持视频解析，跳过')
+      return
+    }
+
+    const buffer = Buffer.from(media.data)
+    if (buffer.length === 0) {
+      log.debug({ mediaId }, '视频数据为空，跳过')
+      return
+    }
+
+    const description = await provider.describeVideo({
+      video: buffer,
+      contentType: media.contentType ?? 'video/mp4',
+      fileName: media.fileName ?? undefined,
+    })
+
+    await prisma.media.update({ where: { mediaId }, data: { description } })
+    log.info({ mediaId }, '视频描述已生成')
+    return
+  }
+
   if (mediaType === 'record') {
     if (!provider.transcribeAudio) {
       log.debug({ mediaId }, 'LLM provider 不支持语音转写，跳过')
@@ -82,7 +109,30 @@ async function doGenerate(mediaId: number): Promise<void> {
   }
 
   if (mediaType === 'file') {
-    log.debug({ mediaId }, '文件文本提取暂未实现，跳过')
+    if (!isPdfFile(media.contentType ?? null, media.fileName ?? null)) {
+      log.debug({ mediaId }, '文件解析暂未实现，跳过')
+      return
+    }
+
+    if (!provider.describePdf) {
+      log.debug({ mediaId }, 'LLM provider 不支持 PDF 解析，跳过')
+      return
+    }
+
+    const buffer = Buffer.from(media.data)
+    if (buffer.length === 0) {
+      log.debug({ mediaId }, 'PDF 数据为空，跳过')
+      return
+    }
+
+    const description = await provider.describePdf({
+      file: buffer,
+      contentType: media.contentType ?? 'application/pdf',
+      fileName: media.fileName ?? undefined,
+    })
+
+    await prisma.media.update({ where: { mediaId }, data: { description } })
+    log.info({ mediaId }, 'PDF 描述已生成')
     return
   }
 

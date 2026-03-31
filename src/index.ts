@@ -7,8 +7,17 @@ import { OpenAIProvider } from './llm/openai-adapter.js'
 import { RoutingProvider } from './llm/routing-provider.js'
 import { startMemoryRefreshJob } from './jobs/refresh-memory.js'
 import { config } from './config/index.js'
+import { createConversationScheduler, type ConversationScheduler } from './conversation/scheduler.js'
+import { createConversationMemoryQueue } from './queue/conversation-memory-queue.js'
+import type { ConversationQueue } from './queue/conversation-queue.js'
+import { createConversationWorker } from './conversation/worker.js'
+import { createMentionDispatcher } from './conversation/dispatcher.js'
 
 let stopMemoryJob: () => void = () => {}
+let conversationQueue: ConversationQueue | null = null
+let conversationScheduler: ConversationScheduler | null = null
+
+const ASYNC_MENTION_MERGE_WINDOW_MS = 30_000
 
 async function main() {
   log.info('QQ Bot V2 starting...')
@@ -42,14 +51,30 @@ async function main() {
   )
 
   jobQueue.start()
+  const conversationWorker = createConversationWorker()
+  conversationScheduler = createConversationScheduler({
+    mergeWindowMs: ASYNC_MENTION_MERGE_WINDOW_MS,
+    worker: (batch) => conversationWorker.run(batch),
+  })
+  conversationQueue = createConversationMemoryQueue({
+    onMention: (event) => conversationScheduler?.onMention(event),
+  })
+  const mentionDispatcher = createMentionDispatcher({
+    selfNumber: config.selfNumber,
+    queue: conversationQueue,
+  })
+  conversationQueue.start()
   stopMemoryJob = startMemoryRefreshJob()
+  log.info({ mergeWindowMs: ASYNC_MENTION_MERGE_WINDOW_MS }, 'Async mention conversation scheduler started')
   log.info('Memory refresh job started')
-  await startBot()
+  await startBot({ mentionDispatcher })
 }
 
 async function shutdown() {
   log.info('Shutting down...')
   stopMemoryJob()
+  conversationQueue?.stop()
+  conversationScheduler?.stop()
   jobQueue.stop()
   await prisma.$disconnect()
   process.exit(0)

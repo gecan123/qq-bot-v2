@@ -12,3 +12,6 @@ export interface GroupConversationBatch {
   closedAt: number
 }
 
+export interface ConversationWorkerResult {
+  leftoverEvents: MentionEvent[]
+}

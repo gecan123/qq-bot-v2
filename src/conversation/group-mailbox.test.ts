@@ -128,4 +128,42 @@ describe('conversation scheduler', () => {
       scheduler.stop()
     }
   })
+
+  test('same group leftover events continue in the next run after current batch completes', async () => {
+    const callbacks: Array<() => void> = []
+    const runs: number[] = []
+
+    const scheduler = createConversationScheduler({
+      mergeWindowMs: 5,
+      worker: async (batch) => {
+        runs.push(batch.events[0]?.messageId ?? -1)
+
+        await new Promise<void>((resolve) => callbacks.push(resolve))
+
+        if (batch.events[0]?.messageId === 1) {
+          return {
+            leftoverEvents: [makeEvent({ groupId: 1, messageId: 99, senderId: 30, createdAt: Date.now() })],
+          }
+        }
+      },
+    })
+
+    try {
+      scheduler.onMention(makeEvent({ groupId: 1, messageId: 1, createdAt: Date.now() }))
+      await new Promise((resolve) => setTimeout(resolve, 15))
+      assert.deepEqual(runs, [1])
+
+      callbacks.shift()?.()
+      await new Promise((resolve) => setTimeout(resolve, 15))
+      assert.deepEqual(runs, [1, 99])
+
+      callbacks.shift()?.()
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    } finally {
+      while (callbacks.length > 0) {
+        callbacks.shift()?.()
+      }
+      scheduler.stop()
+    }
+  })
 })

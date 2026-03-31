@@ -6,14 +6,19 @@ import { log } from '../logger.js'
 import { persistMediaReferences } from '../media/media-cache.js'
 import type { TextSegment } from '../types/message-segments.js'
 import { ResponderPipeline } from '../responder/pipeline.js'
-import { atMentionHandler } from '../responder/handlers/at-mention.js'
 import { proactiveHandler } from '../responder/handlers/proactive.js'
+import type { MentionDispatcher } from '../conversation/dispatcher.js'
 
-const responderPipeline = new ResponderPipeline([atMentionHandler, proactiveHandler])
+const responderPipeline = new ResponderPipeline([proactiveHandler])
 
 const BACKFILL_COUNT = 50
 
-async function processMessage(groupId: number, messageId: number): Promise<void> {
+interface ProcessMessageOptions {
+  dispatchMention?: boolean
+  mentionDispatcher?: MentionDispatcher
+}
+
+async function processMessage(groupId: number, messageId: number, options: ProcessMessageOptions = {}): Promise<void> {
   const qqMsg = await napcat.get_msg({ message_id: messageId })
   const parsed = parseMessage(qqMsg)
   const groupName = await resolveGroupName({ group_id: groupId, ...qqMsg })
@@ -38,6 +43,16 @@ async function processMessage(groupId: number, messageId: number): Promise<void>
     rawMessage: qqMsg.raw_message,
     sentAt: parsed.time,
   })
+
+  if (options.dispatchMention !== false) {
+    options.mentionDispatcher?.dispatchIfMentioned({
+      groupId,
+      messageId: parsed.messageId,
+      senderId: parsed.senderId,
+      createdAt: parsed.time * 1000,
+      segments: mediaResult.content,
+    })
+  }
 
   await responderPipeline.handle({
     groupId,
@@ -77,7 +92,7 @@ async function backfillGroupMessages(groupId: number): Promise<void> {
   for (const msg of messages) {
     if (existingIds.has(msg.message_id)) continue
     try {
-      await processMessage(groupId, msg.message_id)
+      await processMessage(groupId, msg.message_id, { dispatchMention: false })
     } catch (error) {
       log.warn({ error, groupId, msgId: msg.message_id }, '补拉消息处理失败，跳过')
     }
@@ -109,7 +124,11 @@ async function resolveGroupName(context: { group_id: number; group_name?: string
   }
 }
 
-export async function startBot(): Promise<void> {
+export interface StartBotOptions {
+  mentionDispatcher?: MentionDispatcher
+}
+
+export async function startBot(options: StartBotOptions = {}): Promise<void> {
   napcat.on('socket.open', () => {
     log.info('WebSocket 开始连接')
   })
@@ -141,7 +160,10 @@ export async function startBot(): Promise<void> {
     if (!config.groupIds.includes(context.group_id)) return
 
     try {
-      await processMessage(context.group_id, context.message_id)
+      await processMessage(context.group_id, context.message_id, {
+        dispatchMention: true,
+        mentionDispatcher: options.mentionDispatcher,
+      })
     } catch (error) {
       log.error({ error, group: context.group_id, msgId: context.message_id }, '处理群消息失败')
     }

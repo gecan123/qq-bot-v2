@@ -1,10 +1,10 @@
 import { log } from '../logger.js'
 import { createGroupMailbox, type GroupMailbox } from './group-mailbox.js'
-import type { GroupConversationBatch, MentionEvent } from './types.js'
+import type { ConversationWorkerResult, GroupConversationBatch, MentionEvent } from './types.js'
 
 export interface ConversationSchedulerOptions {
   mergeWindowMs: number
-  worker: (batch: GroupConversationBatch) => Promise<void>
+  worker: (batch: GroupConversationBatch) => Promise<ConversationWorkerResult | void>
 }
 
 export interface ConversationScheduler {
@@ -15,6 +15,13 @@ export interface ConversationScheduler {
 export function createConversationScheduler(options: ConversationSchedulerOptions): ConversationScheduler {
   const mailboxes = new Map<number, GroupMailbox>()
 
+  const createBatch = (groupId: number, events: MentionEvent[]): GroupConversationBatch => ({
+    groupId,
+    events,
+    openedAt: events[0]?.createdAt ?? Date.now(),
+    closedAt: events[events.length - 1]?.createdAt ?? Date.now(),
+  })
+
   const runIfIdle = (groupId: number) => {
     const mailbox = mailboxes.get(groupId)
     if (!mailbox) return
@@ -23,6 +30,11 @@ export function createConversationScheduler(options: ConversationSchedulerOption
     if (!batch) return
 
     void options.worker(batch)
+      .then((result) => {
+        if (result?.leftoverEvents.length) {
+          mailbox.enqueueBatch(createBatch(groupId, result.leftoverEvents))
+        }
+      })
       .catch((error) => {
         log.error({ error, groupId, batch }, '异步会话任务执行失败')
       })
@@ -61,4 +73,3 @@ export function createConversationScheduler(options: ConversationSchedulerOption
     },
   }
 }
-

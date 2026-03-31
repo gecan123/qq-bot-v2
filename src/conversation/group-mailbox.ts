@@ -20,6 +20,7 @@ export interface GroupMailboxSnapshot {
 
 export interface GroupMailbox {
   addMention(event: MentionEvent): void
+  enqueueBatch(batch: GroupConversationBatch): void
   claimNextBatch(): GroupConversationBatch | undefined
   finishCurrentRun(): void
   stop(): void
@@ -62,6 +63,11 @@ export function createGroupMailbox(options: GroupMailboxOptions): GroupMailbox {
       }
     },
 
+    enqueueBatch(batch) {
+      readyBatches.push(batch)
+      options.onBatchReady?.(batch)
+    },
+
     claimNextBatch() {
       if (running) return undefined
       const next = readyBatches.shift()
@@ -96,4 +102,3 @@ export function createGroupMailbox(options: GroupMailboxOptions): GroupMailbox {
     },
   }
 }
-

@@ -1,8 +1,8 @@
 import { prisma } from '../database/client.js'
 import type { Message } from '../generated/prisma/client.js'
 import type { ParsedSegment } from '../types/message-segments.js'
-import { generateDescriptionForMedia } from '../jobs/generate-description.js'
 import { log } from '../logger.js'
+import { jobQueue } from '../queue/index.js'
 
 export function collectReferenceIds(segmentGroups: ParsedSegment[][]): number[] {
   const ids: number[] = []
@@ -39,7 +39,11 @@ export async function ensureDescriptions(messages: Message[], timeoutMs: number)
   log.debug({ count: pendingIds.length }, '等待媒体描述生成')
 
   const timeout = new Promise<void>((resolve) => setTimeout(resolve, timeoutMs))
-  const all = Promise.allSettled(pendingIds.map((id) => generateDescriptionForMedia(id)))
+  const all = Promise.allSettled(
+    pendingIds.map((mediaId) =>
+      jobQueue.enqueueAndWait('generate-description', { mediaId }, { priority: 'high' }),
+    ),
+  )
 
   await Promise.race([all, timeout])
 }

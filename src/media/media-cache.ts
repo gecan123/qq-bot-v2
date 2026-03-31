@@ -188,7 +188,7 @@ async function cacheMediaSegment(input: CacheInput): Promise<string | undefined>
         fileSize,
       },
     })
-    jobQueue.enqueue('generate-description', { mediaId: media.mediaId })
+    jobQueue.enqueue('generate-description', { mediaId: media.mediaId }, { priority: 'low' })
     return String(media.mediaId)
   } catch (error) {
     if (isUniqueConstraintError(error)) {

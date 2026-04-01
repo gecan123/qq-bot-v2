@@ -2,7 +2,6 @@ import type { IncomingMessage } from './pipeline.js'
 import type { ParsedSegment, ReplySegment } from '../types/message-segments.js'
 import { getRecentGroupMessages, getMessageById } from '../database/messages.js'
 import { resolveMessage } from '../media/message-resolver.js'
-import { ensureDescriptions } from './ensure-descriptions.js'
 import { config } from '../config/index.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
 import { getMessageTimestamp } from '../utils/message-time.js'
@@ -19,7 +18,7 @@ export async function buildContext(msg: IncomingMessage, contextLimit: number): 
     const replyMsgId = Number(replySegment.messageId)
     const quotedMsg = await getMessageById(msg.groupId, replyMsgId)
     if (quotedMsg) {
-      const resolvedSegments = await resolveMessage(quotedMsg)
+      const resolvedSegments = await resolveMessage(quotedMsg, { timeoutMs: config.replyMediaTimeoutMs })
       const nickname = quotedMsg.senderGroupNickname ?? quotedMsg.senderNickname
       const text = segmentsToPlainText(resolvedSegments)
       lines.push(`[被引用消息] ${nickname}: ${text}`)
@@ -28,13 +27,15 @@ export async function buildContext(msg: IncomingMessage, contextLimit: number): 
   }
 
   const recentMessages = await getRecentGroupMessages(msg.groupId, contextLimit)
+  const waitStartIndex = Math.max(recentMessages.length - config.replyMediaWaitN, 0)
+  const resolvedRecentMessages = await Promise.all(
+    recentMessages.map((dbMsg, index) =>
+      resolveMessage(dbMsg, { timeoutMs: index >= waitStartIndex ? config.replyMediaTimeoutMs : 0 }),
+    ),
+  )
 
-  // 等待最近 N 条消息的媒体描述生成完毕（超时后降级为占位符）
-  const waitMessages = recentMessages.slice(-config.replyMediaWaitN)
-  await ensureDescriptions(waitMessages, config.replyMediaTimeoutMs)
-
-  for (const dbMsg of recentMessages) {
-    const resolvedSegments = await resolveMessage(dbMsg)
+  for (const [index, dbMsg] of recentMessages.entries()) {
+    const resolvedSegments = resolvedRecentMessages[index] ?? (dbMsg.content as unknown as ParsedSegment[])
     const nickname = dbMsg.senderGroupNickname ?? dbMsg.senderNickname
     const time = formatTime(getMessageTimestamp(dbMsg))
     const text = segmentsToPlainText(resolvedSegments)
@@ -58,6 +59,6 @@ export async function extractResolvedTriggerText(
   fallbackSegments: ParsedSegment[],
 ): Promise<string> {
   const dbMsg = await getMessageById(groupId, messageId)
-  const segments = dbMsg ? await resolveMessage(dbMsg) : fallbackSegments
+  const segments = dbMsg ? await resolveMessage(dbMsg, { timeoutMs: config.replyMediaTimeoutMs }) : fallbackSegments
   return extractTriggerText(segments)
 }

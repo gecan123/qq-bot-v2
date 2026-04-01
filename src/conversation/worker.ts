@@ -15,7 +15,7 @@ async function defaultGetMessage(groupId: number, messageId: number): Promise<St
 }
 
 async function defaultResolveSegments(message: StoredConversationMessage): Promise<ParsedSegment[]> {
-  return resolveMessage(message as Message)
+  return resolveMessage(message as Message, { timeoutMs: 0 })
 }
 
 export interface ConversationWorker {

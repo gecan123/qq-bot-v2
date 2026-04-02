@@ -1,24 +1,49 @@
 import assert from 'node:assert/strict'
 import { afterEach, describe, test } from 'node:test'
+import { Prisma } from '../generated/prisma/client.js'
 import { prisma } from './client.js'
-import { insertMessage } from './messages.js'
+import { buildMessageUpsertSql, insertMessage } from './messages.js'
 
 describe('insertMessage update payload', () => {
-  let originalUpsert: typeof prisma.message.upsert
+  let originalExecuteRaw: typeof prisma.$executeRaw
 
   afterEach(() => {
-    if (originalUpsert) {
-      ;(prisma.message as { upsert: typeof prisma.message.upsert }).upsert = originalUpsert
+    if (originalExecuteRaw) {
+      prisma.$executeRaw = originalExecuteRaw
     }
   })
 
-  test('upsert update should refresh content/raw/sentAt fields', async () => {
-    let capturedArgs: unknown
-    originalUpsert = prisma.message.upsert
-    ;(prisma.message as { upsert: typeof prisma.message.upsert }).upsert = (async (args) => {
-      capturedArgs = args
-      return {} as any
-    }) as typeof prisma.message.upsert
+  test('builds SQL that lets postgres derive timestamps from unix seconds', () => {
+    const sql = buildMessageUpsertSql({
+      groupId: 10001,
+      groupName: '测试群',
+      mediaReferenceIds: ['123'],
+      messageId: 20002,
+      senderId: 30003,
+      senderNickname: 'Alice',
+      senderGroupNickname: 'Alice群名片',
+      content: [{ type: 'text', content: '  hello world  ' }],
+      rawContent: [{ type: 'text', data: { text: 'hello world' } }],
+      rawMessage: 'hello world',
+      sentAt: 1_710_000_000,
+    })
+
+    assert.ok(sql instanceof Prisma.Sql)
+    assert.match(sql.sql, /to_timestamp\(/)
+    assert.equal(sql.values.filter((value) => value === 1_710_000_000).length, 3)
+  })
+
+  test('insertMessage executes raw upsert SQL', async () => {
+    let capturedSql: Prisma.Sql | undefined
+    originalExecuteRaw = prisma.$executeRaw
+    prisma.$executeRaw = (async (query: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
+      if (query instanceof Prisma.Sql) {
+        capturedSql = query
+      } else {
+        capturedSql = new Prisma.Sql(query, values)
+      }
+      return 1
+    }) as typeof prisma.$executeRaw
 
     await insertMessage({
       groupId: 10001,
@@ -34,17 +59,8 @@ describe('insertMessage update payload', () => {
       sentAt: 1_710_000_000,
     })
 
-    const args = capturedArgs as {
-      update: Record<string, unknown>
-    }
-
-    assert.equal(args.update.groupName, '测试群')
-    assert.deepEqual(args.update.mediaReferenceIds, ['123'])
-    assert.equal(args.update.searchText, 'hello world')
-
-    assert.deepEqual(args.update.content, [{ type: 'text', content: '  hello world  ' }])
-    assert.deepEqual(args.update.rawContent, [{ type: 'text', data: { text: 'hello world' } }])
-    assert.equal(args.update.rawMessage, 'hello world')
-    assert.equal((args.update.sentAt as Date).toISOString(), '2024-03-09T16:00:00.000Z')
+    assert.ok(capturedSql)
+    assert.match(capturedSql.sql, /ON CONFLICT/)
+    assert.match(capturedSql.sql, /to_timestamp\(/)
   })
 })

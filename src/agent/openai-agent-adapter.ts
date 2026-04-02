@@ -2,6 +2,7 @@ import OpenAI from 'openai'
 import { z } from 'zod'
 import type { AgentLlmAdapter, AgentMessage, AgentToolDeclaration, AgentTurnResult, ToolCall } from './types.js'
 import { log } from '../logger.js'
+import { recordCurrentTokenUsage, toTokenUsage } from '../llm/token-usage.js'
 
 function toOpenAIMessages(
   systemPrompt: string,
@@ -102,6 +103,7 @@ export class OpenAIAgentAdapter implements AgentLlmAdapter {
       tools,
       tool_choice: 'auto',
     })
+    recordCurrentTokenUsage('agent.chat', toTokenUsage(response.usage))
 
     const choice = response.choices[0]
     if (!choice) return { type: 'empty' }

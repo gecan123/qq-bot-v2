@@ -21,7 +21,7 @@ export const config = {
   replyMediaWaitN: Number(process.env.REPLY_MEDIA_WAIT_N ?? '5'),
   replyMediaTimeoutMs: Number(process.env.REPLY_MEDIA_TIMEOUT_MS ?? '5000'),
   memoryJobIntervalHours: Number(process.env.MEMORY_JOB_INTERVAL_HOURS ?? '4'),
-  memoryJobSkipThreshold: Number(process.env.MEMORY_JOB_SKIP_THRESHOLD ?? '20'),
+  memoryJobSkipThreshold: Number(process.env.MEMORY_JOB_SKIP_THRESHOLD ?? '50'),
   jobInterDelayMs: Number(process.env.JOB_INTER_DELAY_MS ?? '200'),
   tavily: process.env.TAVILY_API_KEY
     ? { apiKey: process.env.TAVILY_API_KEY }

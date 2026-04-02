@@ -67,6 +67,17 @@ export async function findExistingMessageIds(groupId: number, messageIds: number
   return new Set(rows.map((r) => Number(r.messageId)))
 }
 
+function jsonSql(value: Prisma.InputJsonValue | null | undefined): Prisma.Sql {
+  if (value === undefined) return Prisma.sql`NULL`
+  if (value === null) return Prisma.sql`'null'::jsonb`
+  return Prisma.sql`CAST(${JSON.stringify(value)} AS jsonb)`
+}
+
+function timestampSql(unixSeconds: number | undefined, fallback: Prisma.Sql): Prisma.Sql {
+  if (unixSeconds === undefined) return fallback
+  return Prisma.sql`to_timestamp(${unixSeconds})`
+}
+
 function sanitizeJsonValue(value: unknown): Prisma.InputJsonValue | null | undefined {
   if (value === undefined) return undefined
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {
@@ -100,46 +111,74 @@ function sanitizeJsonValue(value: unknown): Prisma.InputJsonValue | null | undef
   return String(value)
 }
 
-export async function insertMessage(params: InsertMessageParams): Promise<void> {
+export function buildMessageUpsertSql(params: InsertMessageParams): Prisma.Sql {
   const mediaReferenceIds = params.mediaReferenceIds ?? []
   const searchText = segmentsToPlainText(params.content)
-  const content = sanitizeJsonValue(params.content)
+  const content = sanitizeJsonValue(params.content) ?? []
+  const rawContent = sanitizeJsonValue(params.rawContent)
+  const updates: Prisma.Sql[] = [
+    Prisma.sql`"group_name" = ${params.groupName ?? null}`,
+    Prisma.sql`"media_reference_ids" = ${mediaReferenceIds}`,
+    Prisma.sql`"sender_nickname" = ${params.senderNickname}`,
+    Prisma.sql`"sender_group_nickname" = ${params.senderGroupNickname ?? null}`,
+    Prisma.sql`"content" = ${jsonSql(content)}`,
+    Prisma.sql`"search_text" = ${searchText}`,
+  ]
+
+  if (params.rawContent !== undefined) {
+    updates.push(Prisma.sql`"raw_content" = ${jsonSql(rawContent)}`)
+  }
+
+  if (params.rawMessage !== undefined) {
+    updates.push(Prisma.sql`"raw_message" = ${params.rawMessage}`)
+  }
+
+  if (params.sentAt !== undefined) {
+    updates.push(Prisma.sql`"sent_at" = ${timestampSql(params.sentAt, Prisma.sql`NULL`)}`)
+  }
+
+  return Prisma.sql`
+    INSERT INTO "messages" (
+      "group_id",
+      "group_name",
+      "media_reference_ids",
+      "message_id",
+      "sender_id",
+      "sender_nickname",
+      "sender_group_nickname",
+      "content",
+      "raw_content",
+      "raw_message",
+      "search_text",
+      "sent_at",
+      "created_at"
+    ) VALUES (
+      ${BigInt(params.groupId)},
+      ${params.groupName ?? null},
+      ${mediaReferenceIds},
+      ${BigInt(params.messageId)},
+      ${BigInt(params.senderId)},
+      ${params.senderNickname},
+      ${params.senderGroupNickname ?? null},
+      ${jsonSql(content)},
+      ${jsonSql(rawContent)},
+      ${params.rawMessage ?? null},
+      ${searchText},
+      ${timestampSql(params.sentAt, Prisma.sql`NULL`)},
+      ${timestampSql(params.sentAt, Prisma.sql`CURRENT_TIMESTAMP`)}
+    )
+    ON CONFLICT ("group_id", "message_id") DO UPDATE SET
+    ${Prisma.join(updates, ', ')}
+  `
+}
+
+export async function insertMessage(params: InsertMessageParams): Promise<void> {
+  const mediaReferenceIds = params.mediaReferenceIds ?? []
+  const content = sanitizeJsonValue(params.content) ?? []
   const rawContent = sanitizeJsonValue(params.rawContent)
 
   try {
-    await prisma.message.upsert({
-      where: {
-        groupId_messageId: {
-          groupId: BigInt(params.groupId),
-          messageId: BigInt(params.messageId),
-        },
-      },
-      create: {
-        groupId: BigInt(params.groupId),
-        groupName: params.groupName ?? null,
-        mediaReferenceIds,
-        messageId: BigInt(params.messageId),
-        senderId: BigInt(params.senderId),
-        senderNickname: params.senderNickname,
-        senderGroupNickname: params.senderGroupNickname ?? null,
-        content: (content ?? []) as Prisma.InputJsonValue,
-        rawContent: rawContent === null ? Prisma.JsonNull : rawContent,
-        rawMessage: params.rawMessage ?? null,
-        searchText,
-        sentAt: params.sentAt !== undefined ? new Date(params.sentAt * 1000) : null,
-      },
-      update: {
-        groupName: params.groupName ?? null,
-        mediaReferenceIds,
-        senderNickname: params.senderNickname,
-        senderGroupNickname: params.senderGroupNickname ?? null,
-        content: (content ?? []) as Prisma.InputJsonValue,
-        rawContent: rawContent === undefined ? undefined : rawContent === null ? Prisma.JsonNull : rawContent,
-        rawMessage: params.rawMessage ?? undefined,
-        searchText,
-        sentAt: params.sentAt !== undefined ? new Date(params.sentAt * 1000) : undefined,
-      },
-    })
+    await prisma.$executeRaw(buildMessageUpsertSql(params))
     log.debug({ messageId: params.messageId, imageReferences: mediaReferenceIds.length }, 'Message saved')
   } catch (error) {
     log.error(

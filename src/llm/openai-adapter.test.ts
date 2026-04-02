@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { OpenAIProvider } from './openai-adapter.js'
+import { getCurrentTokenUsageTracker, runWithTokenUsageTracking } from './token-usage.js'
 
 describe('OpenAIProvider media file inputs', () => {
   test('describeVideo sends video as file input', async () => {
@@ -55,5 +56,36 @@ describe('OpenAIProvider media file inputs', () => {
     assert.equal(calls[0].messages[1].content[1].type, 'file')
     assert.equal(calls[0].messages[1].content[1].file.filename, 'doc.pdf')
     assert.ok(typeof calls[0].messages[1].content[1].file.file_data === 'string')
+  })
+
+  test('generateReply records token usage when tracking is enabled', async () => {
+    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')
+    ;(provider as any).client = {
+      chat: {
+        completions: {
+          create: async () => ({
+            choices: [{ message: { content: '你好' } }],
+            usage: {
+              prompt_tokens: 111,
+              completion_tokens: 22,
+              total_tokens: 133,
+            },
+          }),
+        },
+      },
+    }
+
+    const summary = await runWithTokenUsageTracking(async () => {
+      await provider.generateReply('persona', 'context', 'trigger')
+      return getCurrentTokenUsageTracker()?.snapshot()
+    })
+
+    assert.ok(summary)
+    assert.deepEqual(summary.byOperation.generateReply, {
+      promptTokens: 111,
+      completionTokens: 22,
+      totalTokens: 133,
+      calls: 1,
+    })
   })
 })

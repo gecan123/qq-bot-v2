@@ -1,6 +1,7 @@
 import OpenAI from 'openai'
 import type { LlmProvider } from './types.js'
 import { loadPrompt } from '../config/prompt-loader.js'
+import { recordCurrentTokenUsage, toTokenUsage } from './token-usage.js'
 
 export class OpenAIProvider implements LlmProvider {
     private client: OpenAI
@@ -33,6 +34,7 @@ export class OpenAIProvider implements LlmProvider {
                 },
             ],
         })
+        recordCurrentTokenUsage('describeImage', toTokenUsage(response.usage))
 
         return response.choices[0]?.message.content?.trim() ?? ''
     }
@@ -70,6 +72,7 @@ export class OpenAIProvider implements LlmProvider {
                 { role: 'user', content: userText },
             ],
         })
+        recordCurrentTokenUsage('summarizeText', toTokenUsage(response.usage))
 
         return response.choices[0]?.message.content?.trim() ?? ''
     }
@@ -83,6 +86,7 @@ export class OpenAIProvider implements LlmProvider {
                 { role: 'user', content: prompt },
             ],
         })
+        recordCurrentTokenUsage('generateText', toTokenUsage(response.usage))
 
         return response.choices[0]?.message.content?.trim() ?? ''
     }
@@ -107,6 +111,7 @@ export class OpenAIProvider implements LlmProvider {
                 { role: 'user', content: userMessage },
             ],
         })
+        recordCurrentTokenUsage('generateReply', toTokenUsage(response.usage))
 
         return response.choices[0]?.message.content?.trim() ?? ''
     }
@@ -125,6 +130,7 @@ export class OpenAIProvider implements LlmProvider {
                 ],
             }],
         })
+        recordCurrentTokenUsage('transcribeAudio', toTokenUsage(response.usage))
 
         return response.choices[0]?.message.content?.trim() ?? ''
     }
@@ -158,6 +164,10 @@ export class OpenAIProvider implements LlmProvider {
                 },
             ],
         })
+        recordCurrentTokenUsage(
+            params.promptPath.includes('describe-video') ? 'describeVideo' : 'describePdf',
+            toTokenUsage(response.usage),
+        )
 
         return response.choices[0]?.message.content?.trim() ?? ''
     }

@@ -10,6 +10,11 @@ type StructuredImageDescription = {
     extractedText?: string[]
 }
 
+type StructuredAudioTranscription = {
+    transcription?: string
+    refer?: boolean
+}
+
 const IMAGE_DESCRIPTION_RESPONSE_FORMAT = {
     type: 'json_schema',
     json_schema: {
@@ -28,6 +33,23 @@ const IMAGE_DESCRIPTION_RESPONSE_FORMAT = {
                 },
             },
             required: ['detectedType', 'summary', 'description', 'extractedText'],
+        },
+    },
+} as const
+
+const AUDIO_TRANSCRIPTION_RESPONSE_FORMAT = {
+    type: 'json_schema',
+    json_schema: {
+        name: 'audio_transcription',
+        strict: true,
+        schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+                transcription: { type: 'string' },
+                refer: { type: 'boolean' },
+            },
+            required: ['transcription', 'refer'],
         },
     },
 } as const
@@ -177,6 +199,7 @@ export class OpenAIProvider implements LlmProvider {
 
         const response = await this.client.chat.completions.create({
             model: this.model,
+            response_format: AUDIO_TRANSCRIPTION_RESPONSE_FORMAT as any,
             messages: [{
                 role: 'user',
                 content: [
@@ -187,7 +210,8 @@ export class OpenAIProvider implements LlmProvider {
         })
         recordCurrentTokenUsage('transcribeAudio', toTokenUsage(response.usage))
 
-        return response.choices[0]?.message.content?.trim() ?? ''
+        const content = response.choices[0]?.message.content?.trim() ?? ''
+        return this.formatStructuredAudioTranscription(content)
     }
 
     private async describeFileWithPrompt(params: {
@@ -249,6 +273,17 @@ export class OpenAIProvider implements LlmProvider {
             }
 
             return parts.join(' ')
+        } catch {
+            return content
+        }
+    }
+
+    private formatStructuredAudioTranscription(content: string): string {
+        if (!content) return ''
+
+        try {
+            const parsed = JSON.parse(content) as StructuredAudioTranscription
+            return parsed.transcription?.trim() ?? ''
         } catch {
             return content
         }

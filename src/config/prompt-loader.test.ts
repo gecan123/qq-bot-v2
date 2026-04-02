@@ -17,6 +17,9 @@ describe('media prompts', () => {
 
   test('transcribe-audio prompt requires faithful transcription output', () => {
     const prompt = loadPrompt('./prompts/transcribe-audio.md')
+    assert.match(prompt, /schema|结构化 JSON/)
+    assert.match(prompt, /transcription/)
+    assert.match(prompt, /refer/)
     assert.match(prompt, /准确转录/)
     assert.match(prompt, /方言/)
     assert.match(prompt, /不清楚/)

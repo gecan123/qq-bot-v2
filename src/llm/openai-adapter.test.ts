@@ -120,6 +120,41 @@ describe('OpenAIProvider media file inputs', () => {
     assert.ok(typeof calls[0].messages[1].content[1].file.file_data === 'string')
   })
 
+  test('transcribeAudio requests structured output and returns transcription text', async () => {
+    const calls: any[] = []
+    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')
+    ;(provider as any).client = {
+      chat: {
+        completions: {
+          create: async (request: any) => {
+            calls.push(request)
+            return {
+              choices: [{
+                message: {
+                  content: JSON.stringify({
+                    transcription: '小林说周六晚上七点一起吃饭，并问我要不要去。',
+                    refer: true,
+                  }),
+                },
+              }],
+            }
+          },
+        },
+      },
+    }
+
+    const result = await provider.transcribeAudio({
+      audio: Buffer.from('audio-bytes'),
+      contentType: 'audio/mp3',
+    })
+
+    assert.equal(result, '小林说周六晚上七点一起吃饭，并问我要不要去。')
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].response_format.type, 'json_schema')
+    assert.equal(calls[0].response_format.json_schema.name, 'audio_transcription')
+    assert.equal(calls[0].messages[0].content[1].type, 'input_audio')
+  })
+
   test('generateReply records token usage when tracking is enabled', async () => {
     const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')
     ;(provider as any).client = {

@@ -73,6 +73,7 @@ function buildDbSchemaPayload() {
           'sender_nickname',
           'sender_group_nickname',
           'search_text',
+          'resolved_text',
           'raw_message',
           'sent_at',
           'created_at',

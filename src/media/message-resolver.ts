@@ -1,7 +1,7 @@
 import { prisma } from '../database/client.js'
 import type { Message } from '../generated/prisma/client.js'
 import type { ParsedSegment, ImageSegment, VideoSegment, RecordSegment, FileSegment } from '../types/message-segments.js'
-import { jobQueue } from '../queue/index.js'
+import { jobQueue } from '../queue/runtime.js'
 
 type MediaSegment = ImageSegment | VideoSegment | RecordSegment | FileSegment
 type ResolvePriority = 'high' | 'normal' | 'low'

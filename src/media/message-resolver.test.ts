@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { afterEach, describe, test } from 'node:test'
 import { prisma } from '../database/client.js'
 import type { Message } from '../generated/prisma/client.js'
-import { jobQueue } from '../queue/index.js'
+import { jobQueue } from '../queue/runtime.js'
 import { resolveMessage } from './message-resolver.js'
 
 const originalFindMany = prisma.media.findMany
@@ -22,6 +22,7 @@ function makeMessage(content: unknown): Message {
     rawContent: null,
     rawMessage: null,
     searchText: '',
+    resolvedText: null,
     sentAt: null,
     createdAt: new Date(0),
   }

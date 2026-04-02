@@ -1,6 +1,6 @@
 import { prisma } from '../database/client.js'
 import { log } from '../logger.js'
-import { jobQueue } from '../queue/index.js'
+import { jobQueue } from '../queue/runtime.js'
 import { computeMediaHash } from './media-hash.js'
 import type {
   ImageSegment,

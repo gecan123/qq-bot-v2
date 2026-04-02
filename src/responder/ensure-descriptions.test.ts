@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, describe, test } from 'node:test'
 import { prisma } from '../database/client.js'
-import { jobQueue } from '../queue/index.js'
+import { jobQueue } from '../queue/runtime.js'
 import { collectReferenceIds, ensureDescriptions } from './ensure-descriptions.js'
 import type { ParsedSegment } from '../types/message-segments.js'
 

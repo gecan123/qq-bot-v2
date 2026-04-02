@@ -1,11 +1,17 @@
 import { handleGenerateDescription } from '../jobs/generate-description.js'
 import type { GenerateDescriptionData } from '../jobs/generate-description.js'
-import { createMemoryQueue } from './memory-queue.js'
-import { config } from '../config/index.js'
+import { handleRefreshMessageResolution } from '../jobs/refresh-message-resolution.js'
+import type { RefreshMessageResolutionData } from '../jobs/refresh-message-resolution.js'
+import { jobQueue } from './runtime.js'
 
-export const jobQueue = createMemoryQueue(config.jobInterDelayMs)
+export { jobQueue }
 
 jobQueue.register<'generate-description', GenerateDescriptionData>(
   'generate-description',
   handleGenerateDescription,
+)
+
+jobQueue.register<'refresh-message-resolution', RefreshMessageResolutionData>(
+  'refresh-message-resolution',
+  handleRefreshMessageResolution,
 )

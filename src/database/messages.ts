@@ -20,6 +20,26 @@ export interface InsertMessageParams {
   sentAt?: number
 }
 
+export async function getRecentMessagesReferencingMedia(mediaId: number, since: Date): Promise<Message[]> {
+  return prisma.message.findMany({
+    where: {
+      mediaReferenceIds: { has: String(mediaId) },
+      OR: [
+        { sentAt: { gte: since } },
+        { sentAt: null, createdAt: { gte: since } },
+      ],
+    },
+    orderBy: { messageId: 'asc' },
+  })
+}
+
+export async function updateResolvedText(messageId: number, resolvedText: string): Promise<void> {
+  await prisma.message.update({
+    where: { id: messageId },
+    data: { resolvedText },
+  })
+}
+
 export async function getGroupMessages(groupId: number, limit: number): Promise<Message[]> {
   return prisma.message.findMany({
     where: { groupId: BigInt(groupId) },
@@ -150,6 +170,7 @@ export function buildMessageUpsertSql(params: InsertMessageParams): Prisma.Sql {
       "raw_content",
       "raw_message",
       "search_text",
+      "resolved_text",
       "sent_at",
       "created_at"
     ) VALUES (
@@ -163,6 +184,7 @@ export function buildMessageUpsertSql(params: InsertMessageParams): Prisma.Sql {
       ${jsonSql(content)},
       ${jsonSql(rawContent)},
       ${params.rawMessage ?? null},
+      ${searchText},
       ${searchText},
       ${timestampSql(params.sentAt, Prisma.sql`NULL`)},
       ${timestampSql(params.sentAt, Prisma.sql`CURRENT_TIMESTAMP`)}

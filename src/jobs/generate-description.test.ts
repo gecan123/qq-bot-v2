@@ -2,14 +2,17 @@ import assert from 'node:assert/strict'
 import { afterEach, describe, test } from 'node:test'
 import { prisma } from '../database/client.js'
 import { setLlmProvider } from '../llm/provider.js'
+import { jobQueue } from '../queue/runtime.js'
 import { generateDescriptionForMedia } from './generate-description.js'
 
 const originalFindUnique = prisma.media.findUnique
 const originalUpdate = prisma.media.update
+const originalEnqueue = jobQueue.enqueue
 
 afterEach(() => {
   prisma.media.findUnique = originalFindUnique
   prisma.media.update = originalUpdate
+  jobQueue.enqueue = originalEnqueue
   setLlmProvider(undefined as any)
 })
 
@@ -84,5 +87,43 @@ describe('generateDescriptionForMedia', () => {
     assert.equal(received.fileName, 'doc.pdf')
     assert.equal(Buffer.isBuffer(received.file), true)
     assert.equal(updates[0].data.description, 'PDF摘要')
+  })
+
+  test('enqueues recent message resolution refresh after description update', async () => {
+    const enqueued: Array<{ type: string; data: unknown; options?: { priority?: string } }> = []
+
+    prisma.media.findUnique = (async () => ({
+      data: new Uint8Array(Buffer.from('video-bytes')),
+      contentType: 'video/mp4',
+      mediaType: 'video',
+      description: null,
+      fileName: 'clip.mp4',
+    })) as unknown as typeof prisma.media.findUnique
+
+    prisma.media.update = (async () => {
+      return {} as any
+    }) as typeof prisma.media.update
+
+    jobQueue.enqueue = ((type: string, data: unknown, options?: { priority?: string }) => {
+      enqueued.push({ type, data, options })
+    }) as typeof jobQueue.enqueue
+
+    setLlmProvider({
+      describeImage: async () => '',
+      describeVideo: async () => '视频描述',
+      describePdf: async () => '',
+      summarizeText: async () => '',
+      transcribeAudio: async () => '',
+    })
+
+    await generateDescriptionForMedia(3)
+
+    assert.deepEqual(enqueued, [
+      {
+        type: 'refresh-message-resolution',
+        data: { mediaId: 3 },
+        options: { priority: 'low' },
+      },
+    ])
   })
 })

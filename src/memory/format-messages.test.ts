@@ -17,10 +17,11 @@ function makeMsg(overrides: Partial<Message> = {}): Message {
     rawContent: null,
     rawMessage: null,
     searchText: '',
+    resolvedText: null,
     sentAt: null,
     createdAt: new Date('2026-01-01T10:30:00'),
     ...overrides,
-  }
+  } as Message
 }
 
 describe('formatMessagesForMemory', () => {

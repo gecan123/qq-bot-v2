@@ -20,6 +20,7 @@ model Message {
   rawContent          Json?    @map("raw_content")
   rawMessage          String?  @map("raw_message") @db.Text
   searchText          String   @default("") @map("search_text") @db.Text
+  resolvedText        String?  @map("resolved_text") @db.Text
   sentAt              DateTime? @map("sent_at") @db.Timestamptz(3)
   createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 

@@ -63,4 +63,17 @@ describe('insertMessage update payload', () => {
     assert.match(capturedSql.sql, /ON CONFLICT/)
     assert.match(capturedSql.sql, /to_timestamp\(/)
   })
+
+  test('builds SQL that initializes resolved_text from the current plain text', () => {
+    const sql = buildMessageUpsertSql({
+      groupId: 10001,
+      messageId: 20002,
+      senderId: 30003,
+      senderNickname: 'Alice',
+      content: [{ type: 'text', content: 'hello world' }],
+    })
+
+    assert.match(sql.sql, /resolved_text/)
+    assert.ok(sql.values.includes('hello world'))
+  })
 })

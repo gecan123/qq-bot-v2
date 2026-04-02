@@ -39,6 +39,7 @@ function makeStoredMessage(event: MentionEvent, text: string): FakeStoredMessage
     rawContent: null,
     rawMessage: null,
     searchText: text,
+    resolvedText: text,
     sentAt: null,
     createdAt: new Date(0),
   }

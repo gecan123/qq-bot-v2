@@ -1,6 +1,7 @@
 import { prisma } from '../database/client.js'
 import { getLlmProvider } from '../llm/provider.js'
 import { log } from '../logger.js'
+import { jobQueue } from '../queue/runtime.js'
 import { withInFlight } from '../utils/in-flight.js'
 import type { Job } from '../queue/types.js'
 
@@ -59,6 +60,7 @@ async function doGenerate(mediaId: number): Promise<void> {
     })
 
     await prisma.media.update({ where: { mediaId }, data: { description } })
+    jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
     log.info({ mediaId }, '媒体描述已生成')
     return
   }
@@ -82,6 +84,7 @@ async function doGenerate(mediaId: number): Promise<void> {
     })
 
     await prisma.media.update({ where: { mediaId }, data: { description } })
+    jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
     log.info({ mediaId }, '视频描述已生成')
     return
   }
@@ -104,6 +107,7 @@ async function doGenerate(mediaId: number): Promise<void> {
     })
 
     await prisma.media.update({ where: { mediaId }, data: { description } })
+    jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
     log.info({ mediaId }, '语音转写已完成')
     return
   }
@@ -132,6 +136,7 @@ async function doGenerate(mediaId: number): Promise<void> {
     })
 
     await prisma.media.update({ where: { mediaId }, data: { description } })
+    jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
     log.info({ mediaId }, 'PDF 描述已生成')
     return
   }

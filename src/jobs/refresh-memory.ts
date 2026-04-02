@@ -2,17 +2,39 @@ import { prisma } from '../database/client.js'
 import { getLlmProvider } from '../llm/provider.js'
 import { log } from '../logger.js'
 import { config } from '../config/index.js'
-import { getGroupMemory, upsertGroupMemory, getUserMemory, upsertUserMemory } from '../database/memory.js'
+import {
+  getGroupMemory,
+  getGroupMemoryCursor,
+  getUserMemory,
+  saveGroupMemory,
+  saveGroupMemoryCursor,
+  upsertUserMemory,
+} from '../database/memory.js'
 import { formatMessagesForMemory } from '../memory/format-messages.js'
 import { buildGroupSummaryPrompt, buildUserProfilePrompt } from '../memory/prompts.js'
 import { chunkByTimeGap, addOverlap } from '../memory/chunk-messages.js'
+import { buildRecoveryWindowWhere, resolveMemoryRefreshStart } from '../memory/message-cursor.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import type { Message } from '../generated/prisma/client.js'
+import { getMessageTimestamp } from '../utils/message-time.js'
 
 const MEMORY_SYSTEM_INSTRUCTION = loadPrompt('./prompts/memory-system.md')
 
 const GAP_MINUTES = 20
 const OVERLAP_SIZE = 15
+
+function sortMessagesForMemory(messages: Message[]): Message[] {
+  return [...messages].sort((a, b) => {
+    const timeDiff = getMessageTimestamp(a).getTime() - getMessageTimestamp(b).getTime()
+    if (timeDiff !== 0) return timeDiff
+
+    if (a.messageId !== b.messageId) {
+      return a.messageId < b.messageId ? -1 : 1
+    }
+
+    return a.id - b.id
+  })
+}
 
 function parseUserProfileJson(raw: string): { profile: string; examples: string[] } | null {
   const cleaned = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
@@ -42,22 +64,29 @@ async function refreshGroup(groupId: number): Promise<void> {
 
   const groupBigInt = BigInt(groupId)
   const existing = await getGroupMemory(groupBigInt)
-  const lastMessageId = existing?.lastMessageId ?? 0n
-
-  const newMessages = await prisma.message.findMany({
-    where: { groupId: groupBigInt, messageId: { gt: lastMessageId } },
-    orderBy: { messageId: 'asc' },
+  const existingCursor = await getGroupMemoryCursor(groupBigInt)
+  const refreshStart = resolveMemoryRefreshStart({
+    lastProcessedMessageRowId: existingCursor?.lastProcessedMessageRowId ?? null,
   })
+  const where =
+    refreshStart.mode === 'cursor'
+      ? { groupId: groupBigInt, id: { gt: refreshStart.lastProcessedMessageRowId } }
+      : { groupId: groupBigInt, ...buildRecoveryWindowWhere(refreshStart.since) }
+
+  const fetchedMessages = await prisma.message.findMany({ where, orderBy: { id: 'asc' } })
+  const newMessages = sortMessagesForMemory(fetchedMessages)
 
   if (newMessages.length < config.memoryJobSkipThreshold) {
-    log.debug({ groupId, newCount: newMessages.length }, '新消息不足，跳过本群记忆更新')
+    log.info({ groupId, newCount: newMessages.length }, '新消息不足，跳过本群记忆更新')
     return
   }
 
   log.info({ groupId, newCount: newMessages.length }, '开始更新群记忆')
 
   const groupName = newMessages[newMessages.length - 1]?.groupName ?? null
-  const maxMessageId = newMessages.reduce((max, m) => (m.messageId > max ? m.messageId : max), 0n)
+  const lastMessage = newMessages[newMessages.length - 1] ?? null
+  const maxMessageId = lastMessage?.messageId ?? existingCursor?.lastProcessedExternalMessageId ?? 0n
+  const maxMessageDbId = lastMessage?.id ?? existingCursor?.lastProcessedMessageRowId ?? 0
 
   // Update group summary: chunk by time gap, add overlap, roll forward progressively
   const chunks = addOverlap(chunkByTimeGap(newMessages, GAP_MINUTES), OVERLAP_SIZE)
@@ -71,7 +100,16 @@ async function refreshGroup(groupId: number): Promise<void> {
   }
 
   if (runningSummary) {
-    await upsertGroupMemory({ groupId: groupBigInt, groupName, summary: runningSummary, lastMessageId: maxMessageId })
+    await saveGroupMemory({
+      groupId: groupBigInt,
+      groupName,
+      summary: runningSummary,
+    })
+    await saveGroupMemoryCursor({
+      groupId: groupBigInt,
+      lastProcessedExternalMessageId: maxMessageId,
+      lastProcessedMessageRowId: maxMessageDbId,
+    })
     log.info({ groupId, chunks: chunks.length }, '群摘要已更新')
   }
 

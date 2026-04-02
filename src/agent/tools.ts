@@ -84,7 +84,11 @@ function buildDbSchemaPayload() {
       },
       {
         name: 'group_memory',
-        columns: ['group_id', 'summary', 'last_message_id', 'updated_at'],
+        columns: ['group_id', 'summary', 'updated_at'],
+      },
+      {
+        name: 'group_memory_cursor',
+        columns: ['group_id', 'last_processed_external_message_id', 'last_processed_message_row_id', 'updated_at'],
       },
       {
         name: 'user_memory',

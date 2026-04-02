@@ -1,4 +1,5 @@
 import type { Message } from '../generated/prisma/client.js'
+import { getMessageTimestamp } from '../utils/message-time.js'
 
 export function chunkByTimeGap(messages: Message[], gapMinutes: number): Message[][] {
   if (messages.length === 0) return []
@@ -6,7 +7,7 @@ export function chunkByTimeGap(messages: Message[], gapMinutes: number): Message
   const chunks: Message[][] = []
   let current: Message[] = [messages[0]]
   for (let i = 1; i < messages.length; i++) {
-    const gap = messages[i].createdAt.getTime() - messages[i - 1].createdAt.getTime()
+    const gap = getMessageTimestamp(messages[i]).getTime() - getMessageTimestamp(messages[i - 1]).getTime()
     if (gap > gapMs) {
       chunks.push(current)
       current = []

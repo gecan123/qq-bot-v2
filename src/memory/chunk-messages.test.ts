@@ -5,6 +5,7 @@ import { chunkByTimeGap, addOverlap } from './chunk-messages.js'
 function makeMsg(minutesFromStart: number, id = 1) {
   return {
     messageId: BigInt(id),
+    sentAt: null,
     createdAt: new Date(Date.UTC(2026, 0, 1, 0, minutesFromStart, 0)),
   }
 }
@@ -27,6 +28,30 @@ describe('chunkByTimeGap', () => {
 
   test('returns empty array for empty input', () => {
     assert.deepEqual(chunkByTimeGap([], 20), [])
+  })
+
+  test('prefers sentAt over createdAt when computing gaps', () => {
+    const msgs = [
+      {
+        messageId: 1n,
+        sentAt: new Date(Date.UTC(2026, 0, 1, 0, 0, 0)),
+        createdAt: new Date(Date.UTC(2026, 0, 1, 1, 0, 0)),
+      },
+      {
+        messageId: 2n,
+        sentAt: new Date(Date.UTC(2026, 0, 1, 0, 5, 0)),
+        createdAt: new Date(Date.UTC(2026, 0, 1, 1, 5, 0)),
+      },
+      {
+        messageId: 3n,
+        sentAt: new Date(Date.UTC(2026, 0, 1, 0, 40, 0)),
+        createdAt: new Date(Date.UTC(2026, 0, 1, 1, 6, 0)),
+      },
+    ]
+    const chunks = chunkByTimeGap(msgs as never, 20)
+    assert.equal(chunks.length, 2)
+    assert.equal(chunks[0].length, 2)
+    assert.equal(chunks[1].length, 1)
   })
 })
 

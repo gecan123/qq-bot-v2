@@ -3,6 +3,57 @@ import type { LlmProvider } from './types.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import { recordCurrentTokenUsage, toTokenUsage } from './token-usage.js'
 
+type StructuredImageDescription = {
+    detectedType?: string
+    summary?: string
+    description?: string
+    extractedText?: string[]
+}
+
+const IMAGE_DESCRIPTION_RESPONSE_FORMAT = {
+    type: 'json_schema',
+    json_schema: {
+        name: 'image_description',
+        strict: true,
+        schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+                detectedType: { type: 'string' },
+                summary: { type: 'string' },
+                description: { type: 'string' },
+                extractedText: {
+                    type: 'array',
+                    items: { type: 'string' },
+                },
+            },
+            required: ['detectedType', 'summary', 'description', 'extractedText'],
+        },
+    },
+} as const
+
+const VIDEO_DESCRIPTION_RESPONSE_FORMAT = {
+    type: 'json_schema',
+    json_schema: {
+        name: 'video_description',
+        strict: true,
+        schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+                detectedType: { type: 'string' },
+                summary: { type: 'string' },
+                description: { type: 'string' },
+                extractedText: {
+                    type: 'array',
+                    items: { type: 'string' },
+                },
+            },
+            required: ['detectedType', 'summary', 'description', 'extractedText'],
+        },
+    },
+} as const
+
 export class OpenAIProvider implements LlmProvider {
     private client: OpenAI
     private model: string
@@ -20,6 +71,7 @@ export class OpenAIProvider implements LlmProvider {
         const response = await this.client.chat.completions.create({
             model: this.model,
             temperature: 0.3,
+            response_format: IMAGE_DESCRIPTION_RESPONSE_FORMAT as any,
             messages: [
                 {
                     role: 'system',
@@ -36,7 +88,8 @@ export class OpenAIProvider implements LlmProvider {
         })
         recordCurrentTokenUsage('describeImage', toTokenUsage(response.usage))
 
-        return response.choices[0]?.message.content?.trim() ?? ''
+        const content = response.choices[0]?.message.content?.trim() ?? ''
+        return this.formatStructuredImageDescription(content)
     }
 
     async describeVideo(params: { video: Buffer; contentType: string; fileName?: string }): Promise<string> {
@@ -49,6 +102,8 @@ export class OpenAIProvider implements LlmProvider {
             instruction: '请描述这个视频的内容：',
             file: video,
             fileName: params.fileName ?? 'video.mp4',
+            responseFormat: VIDEO_DESCRIPTION_RESPONSE_FORMAT as any,
+            formatter: (content) => this.formatStructuredImageDescription(content),
         })
     }
 
@@ -140,10 +195,13 @@ export class OpenAIProvider implements LlmProvider {
         instruction: string
         file: Buffer
         fileName: string
+        responseFormat?: any
+        formatter?: (content: string) => string
     }): Promise<string> {
         const response = await this.client.chat.completions.create({
             model: this.model,
             temperature: 0.3,
+            response_format: params.responseFormat,
             messages: [
                 {
                     role: 'system',
@@ -169,6 +227,30 @@ export class OpenAIProvider implements LlmProvider {
             toTokenUsage(response.usage),
         )
 
-        return response.choices[0]?.message.content?.trim() ?? ''
+        const content = response.choices[0]?.message.content?.trim() ?? ''
+        return params.formatter ? params.formatter(content) : content
+    }
+
+    private formatStructuredImageDescription(content: string): string {
+        if (!content) return ''
+
+        try {
+            const parsed = JSON.parse(content) as StructuredImageDescription
+            const parts: string[] = []
+
+            const summary = parsed.summary?.trim()
+            const description = parsed.description?.trim()
+            const extractedText = (parsed.extractedText ?? []).map((item) => item.trim()).filter(Boolean)
+
+            if (summary) parts.push(summary)
+            if (description && description !== summary) parts.push(description)
+            if (extractedText.length > 0) {
+                parts.push(`图中文字：${extractedText.join('；')}`)
+            }
+
+            return parts.join(' ')
+        } catch {
+            return content
+        }
     }
 }

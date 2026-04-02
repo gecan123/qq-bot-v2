@@ -5,9 +5,13 @@ import { loadPrompt } from './prompt-loader.js'
 describe('media prompts', () => {
   test('describe-image prompt includes rich media parsing guidance', () => {
     const prompt = loadPrompt('./prompts/describe-image.md')
-    assert.match(prompt, /包含文字/)
+    assert.match(prompt, /schema|结构化 JSON/)
+    assert.match(prompt, /detectedType/)
+    assert.match(prompt, /2 到 4 句话|够用/)
+    assert.match(prompt, /包含环境信息|环境信息|环境或地点线索/)
     assert.match(prompt, /聊天记录|聊天截图/)
     assert.match(prompt, /表情包|贴纸/)
+    assert.match(prompt, /只输出符合 schema 的 JSON|只输出/)
     assert.match(prompt, /不要编造|不清楚/)
   })
 
@@ -21,8 +25,11 @@ describe('media prompts', () => {
 
   test('describe-video prompt includes timeline-style parsing guidance', () => {
     const prompt = loadPrompt('./prompts/describe-video.md')
+    assert.match(prompt, /schema|结构化 JSON/)
+    assert.match(prompt, /detectedType/)
     assert.match(prompt, /仔细观察视频后/)
     assert.match(prompt, /动作、表情、性别、大致年龄、穿着/)
+    assert.match(prompt, /连续的动作|前后过程/)
     assert.match(prompt, /不要编造|看不清/)
   })
 

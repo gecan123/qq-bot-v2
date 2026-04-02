@@ -4,6 +4,50 @@ import { OpenAIProvider } from './openai-adapter.js'
 import { getCurrentTokenUsageTracker, runWithTokenUsageTracking } from './token-usage.js'
 
 describe('OpenAIProvider media file inputs', () => {
+  test('describeImage requests structured output and formats moderate rich description text', async () => {
+    const calls: any[] = []
+    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')
+    ;(provider as any).client = {
+      chat: {
+        completions: {
+          create: async (request: any) => {
+            calls.push(request)
+            return {
+              choices: [{
+                message: {
+                  content: JSON.stringify({
+                    detectedType: 'chat_screenshot',
+                    summary: '微信群聊天截图，几个人在确认周六晚上七点聚餐。',
+                    description: '截图显示大家在讨论去静安寺附近吃火锅，其中一人表示会负责订位。',
+                    extractedText: [
+                      '小林：周六晚上七点吃火锅？',
+                      '阿杰：我可以，静安寺附近都行',
+                      'Mia：那我来订位',
+                      '这条不会出现在最终文本里',
+                    ],
+                  }),
+                },
+              }],
+            }
+          },
+        },
+      },
+    }
+
+    const result = await provider.describeImage({
+      image: Buffer.from('image-bytes'),
+      contentType: 'image/jpeg',
+    })
+
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].response_format.type, 'json_schema')
+    assert.equal(calls[0].response_format.json_schema.name, 'image_description')
+    assert.equal(calls[0].messages[1].content[0].text, '请描述这张图片：')
+    assert.match(result, /微信群聊天截图/)
+    assert.match(result, /讨论去静安寺附近吃火锅/)
+    assert.match(result, /图中文字：小林：周六晚上七点吃火锅？；阿杰：我可以，静安寺附近都行；Mia：那我来订位；这条不会出现在最终文本里/)
+  })
+
   test('describeVideo sends video as file input', async () => {
     const calls: any[] = []
     const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')
@@ -12,7 +56,21 @@ describe('OpenAIProvider media file inputs', () => {
         completions: {
           create: async (request: any) => {
             calls.push(request)
-            return { choices: [{ message: { content: '视频内容描述' } }] }
+            return {
+              choices: [{
+                message: {
+                  content: JSON.stringify({
+                    detectedType: 'video_clip',
+                    summary: '一段室内聚餐视频，几个人边吃火锅边聊天。',
+                    description: '视频前半段拍到桌上的火锅和食材，随后镜头转向正在说笑的人群，能看出气氛轻松热闹。',
+                    extractedText: [
+                      '生日快乐',
+                      '海底捞',
+                    ],
+                  }),
+                },
+              }],
+            }
           },
         },
       },
@@ -24,8 +82,12 @@ describe('OpenAIProvider media file inputs', () => {
       fileName: 'clip.mp4',
     })
 
-    assert.equal(result, '视频内容描述')
+    assert.match(result, /一段室内聚餐视频/)
+    assert.match(result, /镜头转向正在说笑的人群/)
+    assert.match(result, /图中文字：生日快乐；海底捞/)
     assert.equal(calls.length, 1)
+    assert.equal(calls[0].response_format.type, 'json_schema')
+    assert.equal(calls[0].response_format.json_schema.name, 'video_description')
     assert.equal(calls[0].messages[1].content[1].type, 'file')
     assert.equal(calls[0].messages[1].content[1].file.filename, 'clip.mp4')
     assert.ok(typeof calls[0].messages[1].content[1].file.file_data === 'string')

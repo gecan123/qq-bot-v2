@@ -47,10 +47,15 @@ export const config = {
         apiKey: process.env.LLM_DESCRIBE_PDF_API_KEY,
         model: process.env.LLM_DESCRIBE_PDF_MODEL,
       },
-      generateText: {
-        baseUrl: process.env.LLM_GENERATE_TEXT_BASE_URL,
-        apiKey: process.env.LLM_GENERATE_TEXT_API_KEY,
-        model: process.env.LLM_GENERATE_TEXT_MODEL,
+      generateGroupMemorySummary: {
+        baseUrl: process.env.LLM_GENERATE_GROUP_MEMORY_SUMMARY_BASE_URL,
+        apiKey: process.env.LLM_GENERATE_GROUP_MEMORY_SUMMARY_API_KEY,
+        model: process.env.LLM_GENERATE_GROUP_MEMORY_SUMMARY_MODEL,
+      },
+      generateUserMemoryProfile: {
+        baseUrl: process.env.LLM_GENERATE_USER_MEMORY_PROFILE_BASE_URL,
+        apiKey: process.env.LLM_GENERATE_USER_MEMORY_PROFILE_API_KEY,
+        model: process.env.LLM_GENERATE_USER_MEMORY_PROFILE_MODEL,
       },
       generateReply: {
         baseUrl: process.env.LLM_GENERATE_REPLY_BASE_URL,

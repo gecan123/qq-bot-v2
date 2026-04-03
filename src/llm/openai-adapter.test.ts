@@ -155,6 +155,84 @@ describe('OpenAIProvider media file inputs', () => {
     assert.equal(calls[0].messages[0].content[1].type, 'input_audio')
   })
 
+  test('generateGroupMemorySummary requests structured output', async () => {
+    const calls: any[] = []
+    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')
+    ;(provider as any).client = {
+      chat: {
+        completions: {
+          create: async (request: any) => {
+            calls.push(request)
+            return {
+              choices: [{
+                message: {
+                  content: JSON.stringify({
+                    summary: '群里最近主要在约饭，整体节奏快。',
+                    topics: ['约饭', '火锅'],
+                    activePatterns: ['中午和晚饭前更活跃'],
+                    styleTags: ['务实', '热闹'],
+                  }),
+                },
+              }],
+            }
+          },
+        },
+      },
+    }
+
+    const result = await provider.generateGroupMemorySummary('memory-system', 'prompt-body')
+
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].response_format.type, 'json_schema')
+    assert.equal(calls[0].response_format.json_schema.name, 'group_memory_summary')
+    assert.deepEqual(result, {
+      summary: '群里最近主要在约饭，整体节奏快。',
+      topics: ['约饭', '火锅'],
+      activePatterns: ['中午和晚饭前更活跃'],
+      styleTags: ['务实', '热闹'],
+    })
+  })
+
+  test('generateUserMemoryProfile requests structured output', async () => {
+    const calls: any[] = []
+    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')
+    ;(provider as any).client = {
+      chat: {
+        completions: {
+          create: async (request: any) => {
+            calls.push(request)
+            return {
+              choices: [{
+                message: {
+                  content: JSON.stringify({
+                    profile: '说话直接，习惯快速确认安排。',
+                    traits: ['直接', '靠谱'],
+                    interests: ['聚餐'],
+                    speakingStyle: ['短句', '推进式'],
+                    examples: ['周六去吃火锅吗', '我可以负责订位'],
+                  }),
+                },
+              }],
+            }
+          },
+        },
+      },
+    }
+
+    const result = await provider.generateUserMemoryProfile('memory-system', 'prompt-body')
+
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].response_format.type, 'json_schema')
+    assert.equal(calls[0].response_format.json_schema.name, 'user_memory_profile')
+    assert.deepEqual(result, {
+      profile: '说话直接，习惯快速确认安排。',
+      traits: ['直接', '靠谱'],
+      interests: ['聚餐'],
+      speakingStyle: ['短句', '推进式'],
+      examples: ['周六去吃火锅吗', '我可以负责订位'],
+    })
+  })
+
   test('generateReply records token usage when tracking is enabled', async () => {
     const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')
     ;(provider as any).client = {

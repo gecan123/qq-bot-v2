@@ -41,6 +41,19 @@ describe('generateDescriptionForMedia', () => {
         return '视频描述'
       },
       describePdf: async () => '',
+      generateGroupMemorySummary: async () => ({
+        summary: '',
+        topics: [],
+        activePatterns: [],
+        styleTags: [],
+      }),
+      generateUserMemoryProfile: async () => ({
+        profile: '',
+        traits: [],
+        interests: [],
+        speakingStyle: [],
+        examples: [],
+      }),
       transcribeAudio: async () => '',
     })
 
@@ -76,6 +89,19 @@ describe('generateDescriptionForMedia', () => {
         received = params
         return 'PDF摘要'
       },
+      generateGroupMemorySummary: async () => ({
+        summary: '',
+        topics: [],
+        activePatterns: [],
+        styleTags: [],
+      }),
+      generateUserMemoryProfile: async () => ({
+        profile: '',
+        traits: [],
+        interests: [],
+        speakingStyle: [],
+        examples: [],
+      }),
       transcribeAudio: async () => '',
     })
 
@@ -110,6 +136,19 @@ describe('generateDescriptionForMedia', () => {
       describeImage: async () => '',
       describeVideo: async () => '视频描述',
       describePdf: async () => '',
+      generateGroupMemorySummary: async () => ({
+        summary: '',
+        topics: [],
+        activePatterns: [],
+        styleTags: [],
+      }),
+      generateUserMemoryProfile: async () => ({
+        profile: '',
+        traits: [],
+        interests: [],
+        speakingStyle: [],
+        examples: [],
+      }),
       transcribeAudio: async () => '',
     })
 

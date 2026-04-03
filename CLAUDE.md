@@ -84,7 +84,8 @@ OPENAI_MODEL=gpt-5.1
 | 场景环境变量前缀 | 对应方法 | 用途 |
 |---|---|---|
 | `LLM_DESCRIBE_IMAGE_*` | `describeImage` | 图片/表情包描述 |
-| `LLM_GENERATE_TEXT_*` | `generateText` | 记忆整理 |
+| `LLM_GENERATE_GROUP_MEMORY_SUMMARY_*` | `generateGroupMemorySummary` | 群记忆摘要 |
+| `LLM_GENERATE_USER_MEMORY_PROFILE_*` | `generateUserMemoryProfile` | 用户画像 |
 | `LLM_GENERATE_REPLY_*` | `generateReply` | @-mention 回复 |
 | `LLM_TRANSCRIBE_AUDIO_*` | `transcribeAudio` | 音频转写 |
 

@@ -14,6 +14,21 @@ describe('buildGroupSummaryPrompt', () => {
     assert.ok(prompt.includes('消息内容'))
     assert.ok(!prompt.includes('null'))
   })
+
+  test('includes schema-oriented guidance for structured history', () => {
+    const prompt = buildGroupSummaryPrompt(
+      JSON.stringify({
+        summary: '旧摘要',
+        topics: ['旧话题'],
+        activePatterns: ['晚上活跃'],
+        styleTags: ['热闹'],
+      }),
+      '消息内容',
+    )
+    assert.ok(prompt.includes('旧摘要'))
+    assert.ok(prompt.toLowerCase().includes('json'))
+    assert.ok(prompt.includes('topics'))
+  })
 })
 
 describe('buildUserProfilePrompt', () => {
@@ -33,5 +48,22 @@ describe('buildUserProfilePrompt', () => {
   test('requests JSON output', () => {
     const prompt = buildUserProfilePrompt(null, [], '消息')
     assert.ok(prompt.toLowerCase().includes('json'))
+  })
+
+  test('includes structured old profile context when profile is stored as json string', () => {
+    const prompt = buildUserProfilePrompt(
+      JSON.stringify({
+        profile: '旧画像',
+        traits: ['直接'],
+        interests: ['聚餐'],
+        speakingStyle: ['短句'],
+        examples: ['旧例句'],
+      }),
+      [],
+      '消息',
+    )
+    assert.ok(prompt.includes('旧画像'))
+    assert.ok(prompt.includes('traits'))
+    assert.ok(prompt.includes('旧例句'))
   })
 })

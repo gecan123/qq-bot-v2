@@ -1,5 +1,9 @@
 import OpenAI from 'openai'
-import type { LlmProvider } from './types.js'
+import type {
+    GroupMemorySummaryResult,
+    LlmProvider,
+    UserMemoryProfileResult,
+} from './types.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import { recordCurrentTokenUsage, toTokenUsage } from './token-usage.js'
 
@@ -14,6 +18,45 @@ type StructuredAudioTranscription = {
     transcription?: string
     refer?: boolean
 }
+
+const GROUP_MEMORY_SUMMARY_RESPONSE_FORMAT = {
+    type: 'json_schema',
+    json_schema: {
+        name: 'group_memory_summary',
+        strict: true,
+        schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+                summary: { type: 'string' },
+                topics: { type: 'array', items: { type: 'string' } },
+                activePatterns: { type: 'array', items: { type: 'string' } },
+                styleTags: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['summary', 'topics', 'activePatterns', 'styleTags'],
+        },
+    },
+} as const
+
+const USER_MEMORY_PROFILE_RESPONSE_FORMAT = {
+    type: 'json_schema',
+    json_schema: {
+        name: 'user_memory_profile',
+        strict: true,
+        schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+                profile: { type: 'string' },
+                traits: { type: 'array', items: { type: 'string' } },
+                interests: { type: 'array', items: { type: 'string' } },
+                speakingStyle: { type: 'array', items: { type: 'string' } },
+                examples: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['profile', 'traits', 'interests', 'speakingStyle', 'examples'],
+        },
+    },
+} as const
 
 const IMAGE_DESCRIPTION_RESPONSE_FORMAT = {
     type: 'json_schema',
@@ -138,18 +181,28 @@ export class OpenAIProvider implements LlmProvider {
         })
     }
 
-    async generateText(systemInstruction: string, prompt: string): Promise<string> {
-        const response = await this.client.chat.completions.create({
-            model: this.model,
-            temperature: 0.4,
-            messages: [
-                { role: 'system', content: systemInstruction },
-                { role: 'user', content: prompt },
-            ],
+    async generateGroupMemorySummary(
+        systemInstruction: string,
+        prompt: string,
+    ): Promise<GroupMemorySummaryResult> {
+        return this.generateStructuredJson<GroupMemorySummaryResult>({
+            systemInstruction,
+            prompt,
+            responseFormat: GROUP_MEMORY_SUMMARY_RESPONSE_FORMAT as any,
+            operation: 'generateGroupMemorySummary',
         })
-        recordCurrentTokenUsage('generateText', toTokenUsage(response.usage))
+    }
 
-        return response.choices[0]?.message.content?.trim() ?? ''
+    async generateUserMemoryProfile(
+        systemInstruction: string,
+        prompt: string,
+    ): Promise<UserMemoryProfileResult> {
+        return this.generateStructuredJson<UserMemoryProfileResult>({
+            systemInstruction,
+            prompt,
+            responseFormat: USER_MEMORY_PROFILE_RESPONSE_FORMAT as any,
+            operation: 'generateUserMemoryProfile',
+        })
     }
 
     async generateReply(systemPrompt: string, context: string, trigger: string): Promise<string> {
@@ -237,6 +290,27 @@ export class OpenAIProvider implements LlmProvider {
 
         const content = response.choices[0]?.message.content?.trim() ?? ''
         return params.formatter ? params.formatter(content) : content
+    }
+
+    private async generateStructuredJson<T>(params: {
+        systemInstruction: string
+        prompt: string
+        responseFormat: any
+        operation: string
+    }): Promise<T> {
+        const response = await this.client.chat.completions.create({
+            model: this.model,
+            temperature: 0.3,
+            response_format: params.responseFormat,
+            messages: [
+                { role: 'system', content: params.systemInstruction },
+                { role: 'user', content: params.prompt },
+            ],
+        })
+        recordCurrentTokenUsage(params.operation, toTokenUsage(response.usage))
+
+        const content = response.choices[0]?.message.content?.trim() ?? ''
+        return JSON.parse(content) as T
     }
 
     private formatStructuredImageDescription(content: string): string {

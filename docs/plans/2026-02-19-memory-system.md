@@ -4,7 +4,7 @@
 
 **Goal:** Build a scheduled background job that progressively generates and updates group impressions and per-user profiles using the LLM, stored in PostgreSQL for manual inspection.
 
-**Architecture:** A `setInterval`-based job runs every N hours and, for each monitored group, fetches messages since the last run cursor. Large batches are split into chunks by 20-minute time gaps (with 15-message overlap at boundaries) and summarized progressively — each chunk updates the running summary so topic context carries forward. Per-user profiles are generated separately from each user's own messages. A new `generateText` method on `LlmProvider` powers structured generation separately from the chat reply path. No context injection in this phase.
+**Architecture:** A `setInterval`-based job runs every N hours and, for each monitored group, fetches messages since the last run cursor. Large batches are split into chunks by 20-minute time gaps (with 15-message overlap at boundaries) and summarized progressively — each chunk updates the running summary so topic context carries forward. Per-user profiles are generated separately from each user's own messages. Structured generation is handled by dedicated `generateGroupMemorySummary` and `generateUserMemoryProfile` methods on `LlmProvider`, separate from the chat reply path. No context injection in this phase.
 
 **Tech Stack:** Prisma 7, PostgreSQL, pino, Node.js `setInterval`, existing `GeminiProvider`
 
@@ -104,37 +104,37 @@ git commit -m "feat: add memory job config vars"
 
 ---
 
-### Task 3: Add generateText to LlmProvider
+### Task 3: Add structured memory methods to LlmProvider
 
 **Files:**
 - Modify: `src/llm/types.ts`
 - Modify: `src/llm/gemini-adapter.ts`
 
-**Step 1: Add optional method to interface**
+**Step 1: Add optional methods to interface**
 
-In `src/llm/types.ts`, add `generateText?`:
+In `src/llm/types.ts`, add structured memory methods:
 
 ```ts
 export interface LlmProvider {
   describeImage(params: { image: Buffer; contentType: string; mediaType?: string }): Promise<string>
   transcribeAudio?(params: { audio: Buffer; contentType: string }): Promise<string>
   generateReply?(systemPrompt: string, context: string, trigger: string): Promise<string>
-  generateText?(systemInstruction: string, prompt: string): Promise<string>
+  generateGroupMemorySummary?(systemInstruction: string, prompt: string): Promise<GroupMemorySummaryResult>
+  generateUserMemoryProfile?(systemInstruction: string, prompt: string): Promise<UserMemoryProfileResult>
 }
 ```
 
 **Step 2: Implement in GeminiProvider**
 
-Add method inside the `GeminiProvider` class:
+Add methods inside the provider class:
 
 ```ts
-async generateText(systemInstruction: string, prompt: string): Promise<string> {
-    const response = await this.server.generateContent({
-        model: MODEL,
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: { systemInstruction, temperature: 0.4 },
-    })
-    return this.extractText(response).trim()
+async generateGroupMemorySummary(systemInstruction: string, prompt: string): Promise<GroupMemorySummaryResult> {
+    // use structured schema output
+}
+
+async generateUserMemoryProfile(systemInstruction: string, prompt: string): Promise<UserMemoryProfileResult> {
+    // use structured schema output
 }
 ```
 
@@ -142,7 +142,7 @@ async generateText(systemInstruction: string, prompt: string): Promise<string> {
 
 ```bash
 git add src/llm/types.ts src/llm/gemini-adapter.ts
-git commit -m "feat: add generateText method to LlmProvider"
+git commit -m "feat: add structured memory methods to LlmProvider"
 ```
 
 ---
@@ -632,8 +632,8 @@ function parseUserProfileJson(raw: string): { profile: string; examples: string[
 
 async function refreshGroup(groupId: number): Promise<void> {
   const provider = getLlmProvider()
-  if (!provider?.generateText) {
-    log.debug('LLM provider 不支持 generateText，跳过记忆更新')
+  if (!provider?.generateGroupMemorySummary || !provider.generateUserMemoryProfile) {
+    log.debug('LLM provider 不支持结构化记忆更新，跳过记忆更新')
     return
   }
 
@@ -663,7 +663,7 @@ async function refreshGroup(groupId: number): Promise<void> {
     const formatted = formatMessagesForMemory(chunk)
     if (!formatted.trim()) continue
     const prompt = buildGroupSummaryPrompt(runningSummary, formatted)
-    runningSummary = await provider.generateText(MEMORY_SYSTEM_INSTRUCTION, prompt)
+    runningSummary = JSON.stringify(await provider.generateGroupMemorySummary(MEMORY_SYSTEM_INSTRUCTION, prompt))
     log.debug({ groupId, chunkSize: chunk.length }, '已处理一个消息分段')
   }
 
@@ -690,8 +690,7 @@ async function refreshGroup(groupId: number): Promise<void> {
       existingUser?.examples ?? [],
       formattedUser,
     )
-    const raw = await provider.generateText(MEMORY_SYSTEM_INSTRUCTION, userPrompt)
-    const parsed = parseUserProfileJson(raw)
+    const parsed = await provider.generateUserMemoryProfile(MEMORY_SYSTEM_INSTRUCTION, userPrompt)
 
     if (!parsed) {
       log.warn({ groupId, senderId: senderId.toString() }, 'LLM 返回的用户画像 JSON 解析失败，跳过')

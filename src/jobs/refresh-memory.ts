@@ -16,6 +16,7 @@ import { chunkByTimeGap, addOverlap } from '../memory/chunk-messages.js'
 import { buildRecoveryWindowWhere, resolveMemoryRefreshStart } from '../memory/message-cursor.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import type { Message } from '../generated/prisma/client.js'
+import type { GroupMemorySummaryResult, UserMemoryProfileResult } from '../llm/types.js'
 import { getMessageTimestamp } from '../utils/message-time.js'
 
 const MEMORY_SYSTEM_INSTRUCTION = loadPrompt('./prompts/memory-system.md')
@@ -36,18 +37,24 @@ function sortMessagesForMemory(messages: Message[]): Message[] {
   })
 }
 
-function parseUserProfileJson(raw: string): { profile: string; examples: string[] } | null {
-  const cleaned = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
+function parseStoredUserMemoryProfile(raw: string | null): UserMemoryProfileResult | null {
+  if (!raw) return null
   try {
-    const parsed = JSON.parse(cleaned) as unknown
+    const parsed = JSON.parse(raw) as unknown
     if (
       typeof parsed === 'object' &&
       parsed !== null &&
       typeof (parsed as Record<string, unknown>).profile === 'string' &&
+      Array.isArray((parsed as Record<string, unknown>).traits) &&
+      Array.isArray((parsed as Record<string, unknown>).interests) &&
+      Array.isArray((parsed as Record<string, unknown>).speakingStyle) &&
       Array.isArray((parsed as Record<string, unknown>).examples) &&
+      ((parsed as Record<string, unknown>).traits as unknown[]).every((e) => typeof e === 'string') &&
+      ((parsed as Record<string, unknown>).interests as unknown[]).every((e) => typeof e === 'string') &&
+      ((parsed as Record<string, unknown>).speakingStyle as unknown[]).every((e) => typeof e === 'string') &&
       ((parsed as Record<string, unknown>).examples as unknown[]).every((e) => typeof e === 'string')
     ) {
-      return parsed as { profile: string; examples: string[] }
+      return parsed as UserMemoryProfileResult
     }
   } catch {
     // fall through
@@ -55,10 +62,10 @@ function parseUserProfileJson(raw: string): { profile: string; examples: string[
   return null
 }
 
-async function refreshGroup(groupId: number): Promise<void> {
+export async function refreshGroup(groupId: number): Promise<void> {
   const provider = getLlmProvider()
-  if (!provider?.generateText) {
-    log.debug('LLM provider 不支持 generateText，跳过记忆更新')
+  if (!provider?.generateGroupMemorySummary || !provider.generateUserMemoryProfile) {
+    log.debug('LLM provider 不支持结构化记忆更新，跳过记忆更新')
     return
   }
 
@@ -90,20 +97,21 @@ async function refreshGroup(groupId: number): Promise<void> {
 
   // Update group summary: chunk by time gap, add overlap, roll forward progressively
   const chunks = addOverlap(chunkByTimeGap(newMessages, GAP_MINUTES), OVERLAP_SIZE)
-  let runningSummary = existing?.summary ?? null
+  let runningSummaryRaw = existing?.summary ?? null
   for (const chunk of chunks) {
     const formatted = formatMessagesForMemory(chunk)
     if (!formatted.trim()) continue
-    const prompt = buildGroupSummaryPrompt(runningSummary, formatted)
-    runningSummary = await provider.generateText(MEMORY_SYSTEM_INSTRUCTION, prompt)
+    const prompt = buildGroupSummaryPrompt(runningSummaryRaw, formatted)
+    const structured = await provider.generateGroupMemorySummary(MEMORY_SYSTEM_INSTRUCTION, prompt)
+    runningSummaryRaw = JSON.stringify(structured)
     log.debug({ groupId, chunkSize: chunk.length }, '已处理一个消息分段')
   }
 
-  if (runningSummary) {
+  if (runningSummaryRaw) {
     await saveGroupMemory({
       groupId: groupBigInt,
       groupName,
-      summary: runningSummary,
+      summary: runningSummaryRaw,
     })
     await saveGroupMemoryCursor({
       groupId: groupBigInt,
@@ -126,18 +134,13 @@ async function refreshGroup(groupId: number): Promise<void> {
     if (!formattedUser.trim()) continue
 
     const existingUser = await getUserMemory(groupBigInt, senderId)
+    const storedProfile = parseStoredUserMemoryProfile(existingUser?.profile ?? null)
     const userPrompt = buildUserProfilePrompt(
       existingUser?.profile ?? null,
-      existingUser?.examples ?? [],
+      storedProfile?.examples ?? existingUser?.examples ?? [],
       formattedUser,
     )
-    const raw = await provider.generateText(MEMORY_SYSTEM_INSTRUCTION, userPrompt)
-    const parsed = parseUserProfileJson(raw)
-
-    if (!parsed) {
-      log.warn({ groupId, senderId: senderId.toString() }, 'LLM 返回的用户画像 JSON 解析失败，跳过')
-      continue
-    }
+    const parsed = await provider.generateUserMemoryProfile(MEMORY_SYSTEM_INSTRUCTION, userPrompt)
 
     const lastMsg = userMsgs[userMsgs.length - 1]
     await upsertUserMemory({
@@ -146,7 +149,7 @@ async function refreshGroup(groupId: number): Promise<void> {
       senderId,
       senderNickname: lastMsg.senderNickname,
       senderGroupNickname: lastMsg.senderGroupNickname,
-      profile: parsed.profile,
+      profile: JSON.stringify(parsed),
       examples: parsed.examples,
     })
     log.info({ groupId, senderId: senderId.toString() }, '用户画像已更新')

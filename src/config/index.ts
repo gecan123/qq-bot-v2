@@ -57,11 +57,6 @@ export const config = {
         apiKey: process.env.LLM_GENERATE_USER_MEMORY_PROFILE_API_KEY,
         model: process.env.LLM_GENERATE_USER_MEMORY_PROFILE_MODEL,
       },
-      generateReply: {
-        baseUrl: process.env.LLM_GENERATE_REPLY_BASE_URL,
-        apiKey: process.env.LLM_GENERATE_REPLY_API_KEY,
-        model: process.env.LLM_GENERATE_REPLY_MODEL,
-      },
       transcribeAudio: {
         baseUrl: process.env.LLM_TRANSCRIBE_AUDIO_BASE_URL,
         apiKey: process.env.LLM_TRANSCRIBE_AUDIO_API_KEY,

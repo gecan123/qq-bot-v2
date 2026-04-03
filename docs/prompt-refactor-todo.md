@@ -2,9 +2,9 @@
 
 ---
 
-## ~~1. `generateReply` 后缀指令~~ ✅
+## ~~1. `generateReply` 后缀指令~~ ✅（已废弃）
 
-已提取到 `prompts/reply-instruction.md`，两处适配器均改为 `loadPrompt` 加载。
+单轮 `generateReply` 链路和 `prompts/reply-instruction.md` 已删除，@ 提及回复统一走 agent。
 
 ---
 

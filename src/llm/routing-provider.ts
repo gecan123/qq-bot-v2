@@ -6,7 +6,6 @@ type ScenarioProviders = {
     describePdf?: LlmProvider
     generateGroupMemorySummary?: LlmProvider
     generateUserMemoryProfile?: LlmProvider
-    generateReply?: LlmProvider
     transcribeAudio?: LlmProvider
 }
 
@@ -47,11 +46,6 @@ export class RoutingProvider implements LlmProvider {
             throw new Error('generateUserMemoryProfile is not supported by the configured provider')
         }
         return p.generateUserMemoryProfile(systemInstruction, prompt)
-    }
-
-    async generateReply(systemPrompt: string, context: string, trigger: string): Promise<string> {
-        const p = this.routes.generateReply ?? this.defaultProvider
-        return p.generateReply?.(systemPrompt, context, trigger) ?? ''
     }
 
     async transcribeAudio(params: Parameters<NonNullable<LlmProvider['transcribeAudio']>>[0]): Promise<string> {

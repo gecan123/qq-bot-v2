@@ -14,7 +14,7 @@ describe('generateMentionReply token usage logging', () => {
     logMentionReplyTokenUsage({
       groupId: 1001,
       messageId: 2002,
-      mode: 'single_turn',
+      mode: 'agent',
       durationMs: 345,
       summary: {
         total: {
@@ -39,7 +39,7 @@ describe('generateMentionReply token usage logging', () => {
     assert.deepEqual(infoMock.mock.calls[0]?.arguments[0], {
       groupId: 1001,
       messageId: 2002,
-      mode: 'single_turn',
+      mode: 'agent',
       durationMs: 345,
       promptTokens: 120,
       completionTokens: 45,

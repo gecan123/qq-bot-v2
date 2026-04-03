@@ -205,31 +205,6 @@ export class OpenAIProvider implements LlmProvider {
         })
     }
 
-    async generateReply(systemPrompt: string, context: string, trigger: string): Promise<string> {
-        const userMessage = [
-            '[用户对你说]',
-            trigger,
-            '',
-            '[群聊背景记录（仅供参考）]',
-            context || '（无）',
-        ].join('\n')
-
-        const fullSystemPrompt =
-            systemPrompt + '\n\n---\n' + loadPrompt('./prompts/reply-instruction.md')
-
-        const response = await this.client.chat.completions.create({
-            model: this.model,
-            temperature: 0.8,
-            messages: [
-                { role: 'system', content: fullSystemPrompt },
-                { role: 'user', content: userMessage },
-            ],
-        })
-        recordCurrentTokenUsage('generateReply', toTokenUsage(response.usage))
-
-        return response.choices[0]?.message.content?.trim() ?? ''
-    }
-
     async transcribeAudio(params: { audio: Buffer; contentType: string }): Promise<string> {
         const base64 = params.audio.toString('base64')
         const ext = (params.contentType.split('/')[1] ?? 'mp3') as 'mp3' | 'wav' | 'ogg' | 'flac' | 'webm' | 'mp4'

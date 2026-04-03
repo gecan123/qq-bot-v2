@@ -56,7 +56,7 @@ Key modules:
 - `src/config/prompt-loader.ts` — `loadPrompt(filePath)` reads and caches prompt files from `prompts/`
 - `src/utils/segment-text.ts` — `segmentsToPlainText(segments)` helper used across context-builder, format-messages, and insertMessage
 
-**Prompts:** All static prompt text lives in `prompts/` (not in source code). Key files: `default-persona.md`, `reply-instruction.md`, `describe-image.md`, `transcribe-audio.md`, `memory-system.md`, `memory-group-summary.md`, `memory-user-profile.md`. Loaded via `loadPrompt()` at first use and cached.
+**Prompts:** All static prompt text lives in `prompts/` (not in source code). Key files: `default-persona.md`, `describe-image.md`, `transcribe-audio.md`, `memory-system.md`, `memory-group-summary.md`, `memory-user-profile.md`. Loaded via `loadPrompt()` at first use and cached.
 
 **Database:** Prisma 7 with PG driver adapter. Client is generated to `src/generated/prisma/` (not `node_modules`). Single `Message` model with BigInt IDs. After schema changes, run `pnpm db:generate`.
 
@@ -64,7 +64,7 @@ Key modules:
 
 **LLM:** 双 provider 架构，支持按场景路由。
 
-- `src/llm/types.ts` — `LlmProvider` 接口（5 个方法）
+- `src/llm/types.ts` — `LlmProvider` 接口（媒体理解 + 记忆生成）
 - `src/llm/gemini-adapter.ts` — Gemini provider（OAuth 凭证自动检测）
 - `src/llm/openai-adapter.ts` — OpenAI-compatible provider（`openai` SDK，支持自定义 `baseURL`）
 - `src/llm/routing-provider.ts` — 路由层，按场景分发到不同 provider / model
@@ -86,7 +86,6 @@ OPENAI_MODEL=gpt-5.1
 | `LLM_DESCRIBE_IMAGE_*` | `describeImage` | 图片/表情包描述 |
 | `LLM_GENERATE_GROUP_MEMORY_SUMMARY_*` | `generateGroupMemorySummary` | 群记忆摘要 |
 | `LLM_GENERATE_USER_MEMORY_PROFILE_*` | `generateUserMemoryProfile` | 用户画像 |
-| `LLM_GENERATE_REPLY_*` | `generateReply` | @-mention 回复 |
 | `LLM_TRANSCRIBE_AUDIO_*` | `transcribeAudio` | 音频转写 |
 
 ## Agent Loop
@@ -97,10 +96,10 @@ Multi-turn agent reasoning for @-mention replies. Triggered based on `AgentMode`
 - `src/agent/heuristic.ts` — `shouldUseAgent(text)` regex heuristic for deciding when to use agent mode
 - `src/agent/tools.ts` — `createAgentTools(groupId)` factory returning read-only tools with zod validation: `search_messages`, `get_user_profile`, `get_group_summary`, `get_recent_messages`, `final_answer`, and optionally `web_search` (requires `TAVILY_API_KEY`)
 - `src/agent/openai-agent-adapter.ts` — `OpenAIAgentAdapter` implementing `AgentLlmAdapter` via OpenAI function calling; `createOpenAIAgentAdapter()` factory using `LLM_AGENT_*` env vars (falls back to `OPENAI_*`)
-- `src/agent/loop.ts` — `runAgentLoop()` with maxSteps=4, maxTimeMs=30s, fallback/aborted/final states
+- `src/agent/loop.ts` — `runAgentLoop()` with maxSteps=4, maxTimeMs=30s, final/fallback/aborted states
 - `src/config/agent-profiles.ts` — `AgentProfile` supports `personaFile` (path to `.md`) or inline `persona` string; `getAgentProfile()` merges default → config.default → group and resolves persona
 
-**At-mention routing:** `src/responder/handlers/at-mention.ts` selects single-turn reply (default), agent loop (if heuristic or always mode), with agent fallback to single-turn on error.
+**At-mention routing:** `src/responder/handlers/at-mention.ts` always routes to the async agent reply pipeline. There is no single-turn reply fallback.
 
 **Message schema:** `prisma/schema.prisma` added `searchText String @default("")` to Message model for agent search tool. Backfill with `scripts/backfill-search-text.ts`.
 

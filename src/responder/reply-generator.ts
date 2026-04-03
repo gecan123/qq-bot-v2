@@ -2,25 +2,11 @@ import { createAgentTools } from '../agent/tools.js'
 import { runAgentLoop } from '../agent/loop.js'
 import { createOpenAIAgentAdapter } from '../agent/openai-agent-adapter.js'
 import { getAgentProfile } from '../config/agent-profiles.js'
-import { getLlmProvider } from '../llm/provider.js'
 import { getCurrentTokenUsageTracker, runWithTokenUsageTracking } from '../llm/token-usage.js'
 import { log } from '../logger.js'
 import type { IncomingMessage } from './pipeline.js'
-import { buildContext, extractResolvedTriggerText, extractTriggerText } from './context-builder.js'
+import { buildContext, extractResolvedTriggerText } from './context-builder.js'
 import { logMentionReplyTokenUsage } from './reply-token-usage.js'
-
-async function singleTurnReply(
-  msg: IncomingMessage,
-  persona: string,
-  contextLimit: number,
-): Promise<string | null> {
-  const llm = getLlmProvider()
-  if (!llm?.generateReply) return null
-
-  const context = await buildContext(msg, contextLimit)
-  const triggerText = extractTriggerText(msg.segments)
-  return llm.generateReply(persona, context, triggerText || '(用户@了你)')
-}
 
 async function agentReply(
   msg: IncomingMessage,
@@ -73,13 +59,13 @@ async function agentReply(
 export async function generateMentionReply(msg: IncomingMessage): Promise<string | null> {
   return runWithTokenUsageTracking(async () => {
     const startedAt = Date.now()
-    let mode: 'agent' | 'single_turn' = 'agent'
+    const mode: 'agent' = 'agent'
 
     try {
       const profile = getAgentProfile(msg.groupId)
       const contextLimit = profile.replyContextMessages ?? 20
 
-      let reply = await agentReply(
+      const reply = await agentReply(
         msg,
         profile.persona,
         contextLimit,
@@ -87,18 +73,6 @@ export async function generateMentionReply(msg: IncomingMessage): Promise<string
         profile.agentWarningTimeMs ?? profile.agentMaxTimeMs,
         profile.agentMaxAnswerChars,
       )
-
-      if (reply !== null) return reply
-
-      mode = 'single_turn'
-      log.warn({ groupId: msg.groupId }, 'agent_loop_fallback_to_single_turn')
-      const llm = getLlmProvider()
-      if (!llm?.generateReply) {
-        log.warn({ groupId: msg.groupId }, '收到@消息但 LLM 未配置，跳过回复')
-        return null
-      }
-
-      reply = await singleTurnReply(msg, profile.persona, contextLimit)
       return reply
     } finally {
       const summary = getCurrentTokenUsageTracker()?.snapshot()

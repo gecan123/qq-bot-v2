@@ -117,7 +117,6 @@ In `src/llm/types.ts`, add `generateText?`:
 ```ts
 export interface LlmProvider {
   describeImage(params: { image: Buffer; contentType: string; mediaType?: string }): Promise<string>
-  summarizeText(params: { text: string; context?: string }): Promise<string>
   transcribeAudio?(params: { audio: Buffer; contentType: string }): Promise<string>
   generateReply?(systemPrompt: string, context: string, trigger: string): Promise<string>
   generateText?(systemInstruction: string, prompt: string): Promise<string>
@@ -126,7 +125,7 @@ export interface LlmProvider {
 
 **Step 2: Implement in GeminiProvider**
 
-Add method inside the `GeminiProvider` class (after `summarizeText`):
+Add method inside the `GeminiProvider` class:
 
 ```ts
 async generateText(systemInstruction: string, prompt: string): Promise<string> {

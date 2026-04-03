@@ -138,22 +138,6 @@ export class OpenAIProvider implements LlmProvider {
         })
     }
 
-    async summarizeText(params: { text: string; context?: string }): Promise<string> {
-        const userText = params.context ? `上下文：${params.context}\n\n内容：${params.text}` : params.text
-
-        const response = await this.client.chat.completions.create({
-            model: this.model,
-            temperature: 0.3,
-            messages: [
-                { role: 'system', content: loadPrompt('./prompts/summarize-text.md') },
-                { role: 'user', content: userText },
-            ],
-        })
-        recordCurrentTokenUsage('summarizeText', toTokenUsage(response.usage))
-
-        return response.choices[0]?.message.content?.trim() ?? ''
-    }
-
     async generateText(systemInstruction: string, prompt: string): Promise<string> {
         const response = await this.client.chat.completions.create({
             model: this.model,

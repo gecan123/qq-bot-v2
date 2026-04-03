@@ -4,7 +4,6 @@ type ScenarioProviders = {
     describeImage?: LlmProvider
     describeVideo?: LlmProvider
     describePdf?: LlmProvider
-    summarizeText?: LlmProvider
     generateText?: LlmProvider
     generateReply?: LlmProvider
     transcribeAudio?: LlmProvider
@@ -31,10 +30,6 @@ export class RoutingProvider implements LlmProvider {
     async describePdf(params: Parameters<NonNullable<LlmProvider['describePdf']>>[0]): Promise<string> {
         const p = this.routes.describePdf ?? this.defaultProvider
         return p.describePdf?.(params) ?? ''
-    }
-
-    async summarizeText(params: Parameters<LlmProvider['summarizeText']>[0]): Promise<string> {
-        return (this.routes.summarizeText ?? this.defaultProvider).summarizeText(params)
     }
 
     async generateText(systemInstruction: string, prompt: string): Promise<string> {

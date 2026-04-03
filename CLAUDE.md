@@ -56,7 +56,7 @@ Key modules:
 - `src/config/prompt-loader.ts` — `loadPrompt(filePath)` reads and caches prompt files from `prompts/`
 - `src/utils/segment-text.ts` — `segmentsToPlainText(segments)` helper used across context-builder, format-messages, and insertMessage
 
-**Prompts:** All static prompt text lives in `prompts/` (not in source code). Key files: `default-persona.md`, `reply-instruction.md`, `describe-image.md`, `summarize-text.md`, `transcribe-audio.md`, `memory-system.md`, `memory-group-summary.md`, `memory-user-profile.md`. Loaded via `loadPrompt()` at first use and cached.
+**Prompts:** All static prompt text lives in `prompts/` (not in source code). Key files: `default-persona.md`, `reply-instruction.md`, `describe-image.md`, `transcribe-audio.md`, `memory-system.md`, `memory-group-summary.md`, `memory-user-profile.md`. Loaded via `loadPrompt()` at first use and cached.
 
 **Database:** Prisma 7 with PG driver adapter. Client is generated to `src/generated/prisma/` (not `node_modules`). Single `Message` model with BigInt IDs. After schema changes, run `pnpm db:generate`.
 
@@ -84,7 +84,6 @@ OPENAI_MODEL=gpt-5.1
 | 场景环境变量前缀 | 对应方法 | 用途 |
 |---|---|---|
 | `LLM_DESCRIBE_IMAGE_*` | `describeImage` | 图片/表情包描述 |
-| `LLM_SUMMARIZE_TEXT_*` | `summarizeText` | 文本摘要 |
 | `LLM_GENERATE_TEXT_*` | `generateText` | 记忆整理 |
 | `LLM_GENERATE_REPLY_*` | `generateReply` | @-mention 回复 |
 | `LLM_TRANSCRIBE_AUDIO_*` | `transcribeAudio` | 音频转写 |

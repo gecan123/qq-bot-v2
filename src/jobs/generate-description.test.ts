@@ -41,7 +41,6 @@ describe('generateDescriptionForMedia', () => {
         return '视频描述'
       },
       describePdf: async () => '',
-      summarizeText: async () => '',
       transcribeAudio: async () => '',
     })
 
@@ -77,7 +76,6 @@ describe('generateDescriptionForMedia', () => {
         received = params
         return 'PDF摘要'
       },
-      summarizeText: async () => '',
       transcribeAudio: async () => '',
     })
 
@@ -112,7 +110,6 @@ describe('generateDescriptionForMedia', () => {
       describeImage: async () => '',
       describeVideo: async () => '视频描述',
       describePdf: async () => '',
-      summarizeText: async () => '',
       transcribeAudio: async () => '',
     })
 

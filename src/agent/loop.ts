@@ -73,8 +73,11 @@ async function executeLoop(params: AgentLoopParams, startTime: number): Promise<
 
     for (const call of calls) {
       if (call.name === 'final_answer') {
-        const text = (call.args['text'] as string | undefined) ?? ''
-        const answer = text.slice(0, maxAnswerChars)
+        const replyText =
+          (call.args['replyText'] as string | undefined) ??
+          (call.args['text'] as string | undefined) ??
+          ''
+        const answer = replyText.slice(0, maxAnswerChars)
         toolsCalled.push('final_answer')
         stepDetails.push({ step, tool: 'final_answer', durationMs: Date.now() - stepStart, model: turnModel })
         return finish({ state: 'final', answer, termination: 'final_answer' })

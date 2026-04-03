@@ -25,7 +25,16 @@ describe('runAgentLoop', () => {
     const adapter = makeAdapter([
       {
         type: 'tool_calls',
-        calls: [{ id: 'call_1', name: 'final_answer', args: { text: '这是答案' } }],
+        calls: [{
+          id: 'call_1',
+          name: 'final_answer',
+          args: {
+            replyText: '这是答案',
+            confidence: 'high',
+            shouldReferenceContext: true,
+            shouldAskClarifyingQuestion: false,
+          },
+        }],
       },
     ])
 
@@ -49,7 +58,16 @@ describe('runAgentLoop', () => {
     const adapter = makeAdapter([
       {
         type: 'tool_calls',
-        calls: [{ id: 'call_1', name: 'final_answer', args: { text: longText } }],
+        calls: [{
+          id: 'call_1',
+          name: 'final_answer',
+          args: {
+            replyText: longText,
+            confidence: 'medium',
+            shouldReferenceContext: false,
+            shouldAskClarifyingQuestion: false,
+          },
+        }],
       },
     ])
 
@@ -196,7 +214,16 @@ describe('runAgentLoop', () => {
         // Second call: after tool result, return final answer
         return {
           type: 'tool_calls',
-          calls: [{ id: 'call_2', name: 'final_answer', args: { text: '工具执行完毕' } }],
+          calls: [{
+            id: 'call_2',
+            name: 'final_answer',
+            args: {
+              replyText: '工具执行完毕',
+              confidence: 'high',
+              shouldReferenceContext: true,
+              shouldAskClarifyingQuestion: false,
+            },
+          }],
         }
       },
     }
@@ -216,6 +243,38 @@ describe('runAgentLoop', () => {
 
     assert.equal(toolExecuted, true)
     assert.equal(result.state, 'final')
+  })
+
+  test('uses replyText instead of legacy text field for final_answer', async () => {
+    const adapter = makeAdapter([
+      {
+        type: 'tool_calls',
+        calls: [{
+          id: 'call_1',
+          name: 'final_answer',
+          args: {
+            text: '旧字段',
+            replyText: '新字段',
+            confidence: 'low',
+            shouldReferenceContext: false,
+            shouldAskClarifyingQuestion: true,
+          },
+        }],
+      },
+    ])
+
+    const result = await runAgentLoop({
+      systemPrompt: 'test',
+      userMessage: '问题',
+      adapter,
+      tools: noopTools.declarations,
+      executors: noopTools.executors,
+    })
+
+    assert.equal(result.state, 'final')
+    if (result.state === 'final') {
+      assert.equal(result.answer, '新字段')
+    }
   })
 
   test('returns fallback when adapter throws', async () => {

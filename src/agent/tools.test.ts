@@ -36,4 +36,31 @@ describe('createAgentTools', () => {
     }) as { params: Record<string, unknown> }
     assert.equal(ok2.params.sender_id, 10001)
   })
+
+  test('final_answer schema requires structured reply control fields', () => {
+    const { declarations } = createAgentTools(1)
+    const finalAnswer = declarations.find((d) => d.name === 'final_answer')
+    assert.ok(finalAnswer)
+
+    const parsed = finalAnswer.inputSchema.parse({
+      replyText: '今晚七点可以。',
+      confidence: 'high',
+      shouldReferenceContext: true,
+      shouldAskClarifyingQuestion: false,
+      contextCitations: ['你刚才提到“今晚七点”'],
+    }) as {
+      replyText: string
+      confidence: string
+      shouldReferenceContext: boolean
+      shouldAskClarifyingQuestion: boolean
+      contextCitations?: string[]
+    }
+    assert.equal(parsed.replyText, '今晚七点可以。')
+    assert.equal(parsed.confidence, 'high')
+    assert.equal(parsed.shouldReferenceContext, true)
+    assert.equal(parsed.shouldAskClarifyingQuestion, false)
+    assert.deepEqual(parsed.contextCitations, ['你刚才提到“今晚七点”'])
+
+    assert.throws(() => finalAnswer.inputSchema.parse({ text: '旧格式' }))
+  })
 })

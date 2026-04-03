@@ -2,9 +2,9 @@
 
 ---
 
-## ~~1. `generateReply` 后缀指令~~ ✅（已废弃）
+## ~~1. `generateReply` 后缀指令~~ ✅（已迁移）
 
-单轮 `generateReply` 链路和 `prompts/reply-instruction.md` 已删除，@ 提及回复统一走 agent。
+单轮 `generateReply` 链路已删除。`prompts/reply-instruction.md` 现作为 agent 的任务约束层使用；群聊人格基座迁移到 `src/config/agent-profiles.ts` 默认值，并允许 group 覆盖。
 
 ---
 

@@ -2,11 +2,14 @@ import { createAgentTools } from '../agent/tools.js'
 import { runAgentLoop } from '../agent/loop.js'
 import { createOpenAIAgentAdapter } from '../agent/openai-agent-adapter.js'
 import { getAgentProfile } from '../config/agent-profiles.js'
+import { loadPrompt } from '../config/prompt-loader.js'
 import { getCurrentTokenUsageTracker, runWithTokenUsageTracking } from '../llm/token-usage.js'
 import { log } from '../logger.js'
 import type { IncomingMessage } from './pipeline.js'
 import { buildContext, extractResolvedTriggerText } from './context-builder.js'
 import { logMentionReplyTokenUsage } from './reply-token-usage.js'
+
+const REPLY_INSTRUCTION = loadPrompt('./prompts/reply-instruction.md')
 
 async function agentReply(
   msg: IncomingMessage,
@@ -34,7 +37,15 @@ async function agentReply(
     hour: '2-digit',
     minute: '2-digit',
   })
-  const systemPrompt = `当前时间：${now}\n\n${persona}`
+  const systemPrompt = [
+    `当前时间：${now}`,
+    '',
+    '[群聊人格基座]',
+    persona,
+    '',
+    '[任务约束]',
+    REPLY_INSTRUCTION,
+  ].join('\n')
 
   const result = await runAgentLoop({
     systemPrompt,

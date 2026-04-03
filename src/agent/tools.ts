@@ -35,7 +35,11 @@ const finalAnswerDecl: AgentToolDeclaration = {
   name: 'final_answer',
   description: '当你准备好最终回复时调用。调用后循环立即终止。',
   inputSchema: z.object({
-    text: z.string().describe('发送给用户的最终回复内容，不超过500字'),
+    replyText: z.string().min(1).describe('最终发给群里的回复正文，不超过500字'),
+    confidence: z.enum(['high', 'medium', 'low']).describe('你对这条回复是否站得住脚的主观置信度'),
+    shouldReferenceContext: z.boolean().describe('这条回复是否显式依赖了群聊上下文、数据库结果或搜索结果'),
+    shouldAskClarifyingQuestion: z.boolean().describe('如果信息不足，是否应该先澄清再继续'),
+    contextCitations: z.array(z.string()).max(3).optional().describe('可选；列出你实际依赖的上下文要点，简短即可'),
   }),
 }
 

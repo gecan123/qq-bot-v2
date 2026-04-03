@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import * as fs from 'node:fs'
 import { afterEach, describe, test } from 'node:test'
+import { loadPrompt } from './prompt-loader.js'
 
 const CONFIG_PATH = 'agent-config.json'
 
@@ -16,7 +17,9 @@ describe('agent profiles', () => {
   test('default profile exposes a richer group-chat persona baseline', async () => {
     const { getAgentProfile } = await loadProfilesModule()
     const profile = getAgentProfile(123)
+    const expectedPersona = loadPrompt('./prompts/default-persona.md')
 
+    assert.equal(profile.persona, expectedPersona)
     assert.match(profile.persona, /群聊/)
     assert.match(profile.persona, /嘴碎|话多/)
     assert.match(profile.persona, /边界/)

@@ -1,4 +1,5 @@
 import OpenAI from 'openai'
+import { jsonrepair } from 'jsonrepair'
 import type {
     GroupMemorySummaryResult,
     LlmProvider,
@@ -19,44 +20,7 @@ type StructuredAudioTranscription = {
     refer?: boolean
 }
 
-const GROUP_MEMORY_SUMMARY_RESPONSE_FORMAT = {
-    type: 'json_schema',
-    json_schema: {
-        name: 'group_memory_summary',
-        strict: true,
-        schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-                summary: { type: 'string' },
-                topics: { type: 'array', items: { type: 'string' } },
-                activePatterns: { type: 'array', items: { type: 'string' } },
-                styleTags: { type: 'array', items: { type: 'string' } },
-            },
-            required: ['summary', 'topics', 'activePatterns', 'styleTags'],
-        },
-    },
-} as const
-
-const USER_MEMORY_PROFILE_RESPONSE_FORMAT = {
-    type: 'json_schema',
-    json_schema: {
-        name: 'user_memory_profile',
-        strict: true,
-        schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-                profile: { type: 'string' },
-                traits: { type: 'array', items: { type: 'string' } },
-                interests: { type: 'array', items: { type: 'string' } },
-                speakingStyle: { type: 'array', items: { type: 'string' } },
-                examples: { type: 'array', items: { type: 'string' } },
-            },
-            required: ['profile', 'traits', 'interests', 'speakingStyle', 'examples'],
-        },
-    },
-} as const
+const JSON_OBJECT_FORMAT = { type: 'json_object' } as const
 
 const IMAGE_DESCRIPTION_RESPONSE_FORMAT = {
     type: 'json_schema',
@@ -70,10 +34,7 @@ const IMAGE_DESCRIPTION_RESPONSE_FORMAT = {
                 detectedType: { type: 'string' },
                 summary: { type: 'string' },
                 description: { type: 'string' },
-                extractedText: {
-                    type: 'array',
-                    items: { type: 'string' },
-                },
+                extractedText: { type: 'array', items: { type: 'string' } },
             },
             required: ['detectedType', 'summary', 'description', 'extractedText'],
         },
@@ -109,10 +70,7 @@ const VIDEO_DESCRIPTION_RESPONSE_FORMAT = {
                 detectedType: { type: 'string' },
                 summary: { type: 'string' },
                 description: { type: 'string' },
-                extractedText: {
-                    type: 'array',
-                    items: { type: 'string' },
-                },
+                extractedText: { type: 'array', items: { type: 'string' } },
             },
             required: ['detectedType', 'summary', 'description', 'extractedText'],
         },
@@ -188,7 +146,7 @@ export class OpenAIProvider implements LlmProvider {
         return this.generateStructuredJson<GroupMemorySummaryResult>({
             systemInstruction,
             prompt,
-            responseFormat: GROUP_MEMORY_SUMMARY_RESPONSE_FORMAT as any,
+            responseFormat: JSON_OBJECT_FORMAT as any,
             operation: 'generateGroupMemorySummary',
         })
     }
@@ -200,7 +158,7 @@ export class OpenAIProvider implements LlmProvider {
         return this.generateStructuredJson<UserMemoryProfileResult>({
             systemInstruction,
             prompt,
-            responseFormat: USER_MEMORY_PROFILE_RESPONSE_FORMAT as any,
+            responseFormat: JSON_OBJECT_FORMAT as any,
             operation: 'generateUserMemoryProfile',
         })
     }
@@ -284,8 +242,13 @@ export class OpenAIProvider implements LlmProvider {
         })
         recordCurrentTokenUsage(params.operation, toTokenUsage(response.usage))
 
-        const content = response.choices[0]?.message.content?.trim() ?? ''
-        return JSON.parse(content) as T
+        const raw = response.choices[0]?.message.content?.trim() ?? ''
+        const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+        try {
+            return JSON.parse(stripped) as T
+        } catch {
+            return JSON.parse(jsonrepair(stripped)) as T
+        }
     }
 
     private formatStructuredImageDescription(content: string): string {

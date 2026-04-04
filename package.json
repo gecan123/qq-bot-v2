@@ -26,6 +26,7 @@
     "@tavily/core": "^0.7.2",
     "dotenv": "^17.3.1",
     "google-auth-library": "^9.0.0",
+    "jsonrepair": "^3.13.3",
     "node-napcat-ts": "^0.4.21",
     "openai": "^6.31.0",
     "pg": "^8.18.0",

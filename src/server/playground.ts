@@ -1,12 +1,16 @@
+import OpenAI from 'openai'
 import { createAgentTools } from '../agent/tools.js'
 import { runAgentLoop } from '../agent/loop.js'
-import { createOpenAIAgentAdapter } from '../agent/openai-agent-adapter.js'
+import { createAgentOpenAIConfig, createOpenAIChatFn } from '../agent/openai-compat.js'
 import { getAgentProfile } from '../config/agent-profiles.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import { buildContext } from '../responder/context-builder.js'
 import type { RouteHandler } from './http.js'
 
 const REPLY_INSTRUCTION = loadPrompt('./prompts/reply-instruction.md')
+const _agentConfig = createAgentOpenAIConfig()
+const _agentClient = new OpenAI({ baseURL: _agentConfig.baseURL, apiKey: _agentConfig.apiKey })
+const _agentModel = _agentConfig.model
 
 export interface PlaygroundStep {
   type: 'tool_call' | 'tool_result'
@@ -60,7 +64,7 @@ export const handlePlaygroundRun: RouteHandler = async (_params, rawBody) => {
   const userMessage = context ? `${message}\n\n[群聊背景]\n${context}` : message
 
   const { declarations, executors } = createAgentTools(groupIdNum)
-  const adapter = createOpenAIAgentAdapter()
+  const chatFn = createOpenAIChatFn(_agentClient, _agentModel)
 
   const now = new Date().toLocaleString('zh-CN', {
     timeZone: 'Asia/Shanghai',
@@ -104,7 +108,7 @@ export const handlePlaygroundRun: RouteHandler = async (_params, rawBody) => {
   const result = await runAgentLoop({
     systemPrompt,
     userMessage,
-    adapter,
+    chatFn,
     tools: declarations,
     executors: tracedExecutors,
     maxSteps: profile.agentMaxSteps,

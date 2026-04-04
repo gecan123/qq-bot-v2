@@ -1,6 +1,7 @@
+import OpenAI from 'openai'
 import { createAgentTools } from '../agent/tools.js'
 import { runAgentLoop } from '../agent/loop.js'
-import { createOpenAIAgentAdapter } from '../agent/openai-agent-adapter.js'
+import { createAgentOpenAIConfig, createOpenAIChatFn } from '../agent/openai-compat.js'
 import { getAgentProfile } from '../config/agent-profiles.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import { getCurrentTokenUsageTracker, runWithTokenUsageTracking } from '../llm/token-usage.js'
@@ -10,6 +11,10 @@ import { buildContext, extractResolvedTriggerText } from './context-builder.js'
 import { logMentionReplyTokenUsage } from './reply-token-usage.js'
 
 const REPLY_INSTRUCTION = loadPrompt('./prompts/reply-instruction.md')
+
+const _agentConfig = createAgentOpenAIConfig()
+const _agentClient = new OpenAI({ baseURL: _agentConfig.baseURL, apiKey: _agentConfig.apiKey })
+const _agentModel = _agentConfig.model
 
 async function agentReply(
   msg: IncomingMessage,
@@ -27,7 +32,7 @@ async function agentReply(
     : `(用户@了你)\n\n[群聊背景]\n${context}`
 
   const { declarations, executors } = createAgentTools(msg.groupId)
-  const adapter = createOpenAIAgentAdapter({ reasoningEffort: 'medium' })
+  const chatFn = createOpenAIChatFn(_agentClient, _agentModel, { reasoningEffort: 'medium' })
   const now = new Date().toLocaleString('zh-CN', {
     timeZone: 'Asia/Shanghai',
     weekday: 'short',
@@ -50,7 +55,7 @@ async function agentReply(
   const result = await runAgentLoop({
     systemPrompt,
     userMessage,
-    adapter,
+    chatFn,
     tools: declarations,
     executors,
     maxSteps,

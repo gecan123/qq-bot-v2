@@ -1,17 +1,14 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { runAgentLoop } from './loop.js'
-import type { AgentLlmAdapter, AgentTurnResult, AgentLoopResult } from './types.js'
-import { z } from 'zod'
+import type { AgentTurnResult } from './types.js'
 
-function makeAdapter(responses: AgentTurnResult[]): AgentLlmAdapter {
+function makeChatFn(responses: AgentTurnResult[]) {
   let callCount = 0
-  return {
-    async chat() {
-      const response = responses[callCount]
-      callCount++
-      return response ?? { type: 'empty' }
-    },
+  return async () => {
+    const response = responses[callCount]
+    callCount++
+    return response ?? { type: 'empty' as const }
   }
 }
 
@@ -22,7 +19,7 @@ const noopTools = {
 
 describe('runAgentLoop', () => {
   test('returns final when final_answer tool is called', async () => {
-    const adapter = makeAdapter([
+    const chatFn = makeChatFn([
       {
         type: 'tool_calls',
         calls: [{
@@ -41,7 +38,7 @@ describe('runAgentLoop', () => {
     const result = await runAgentLoop({
       systemPrompt: 'test',
       userMessage: '问题',
-      adapter,
+      chatFn,
       tools: noopTools.declarations,
       executors: noopTools.executors,
     })
@@ -55,7 +52,7 @@ describe('runAgentLoop', () => {
 
   test('truncates final_answer to 500 chars', async () => {
     const longText = 'x'.repeat(600)
-    const adapter = makeAdapter([
+    const chatFn = makeChatFn([
       {
         type: 'tool_calls',
         calls: [{
@@ -74,7 +71,7 @@ describe('runAgentLoop', () => {
     const result = await runAgentLoop({
       systemPrompt: 'test',
       userMessage: '问题',
-      adapter,
+      chatFn,
       tools: noopTools.declarations,
       executors: noopTools.executors,
     })
@@ -86,12 +83,12 @@ describe('runAgentLoop', () => {
   })
 
   test('returns final with implicit_text when adapter returns text', async () => {
-    const adapter = makeAdapter([{ type: 'text', content: '直接回复' }])
+    const chatFn = makeChatFn([{ type: 'text', content: '直接回复' }])
 
     const result = await runAgentLoop({
       systemPrompt: 'test',
       userMessage: '问题',
-      adapter,
+      chatFn,
       tools: noopTools.declarations,
       executors: noopTools.executors,
     })
@@ -104,12 +101,12 @@ describe('runAgentLoop', () => {
   })
 
   test('returns fallback when adapter returns empty', async () => {
-    const adapter = makeAdapter([{ type: 'empty' }])
+    const chatFn = makeChatFn([{ type: 'empty' }])
 
     const result = await runAgentLoop({
       systemPrompt: 'test',
       userMessage: '问题',
-      adapter,
+      chatFn,
       tools: noopTools.declarations,
       executors: noopTools.executors,
     })
@@ -121,20 +118,15 @@ describe('runAgentLoop', () => {
   })
 
   test('returns aborted when maxSteps exceeded', async () => {
-    // Adapter always returns tool calls that don't terminate
-    const neverEndingAdapter: AgentLlmAdapter = {
-      async chat() {
-        return {
-          type: 'tool_calls',
-          calls: [{ id: 'call_x', name: 'unknown_tool', args: {} }],
-        }
-      },
-    }
+    const chatFn = async () => ({
+      type: 'tool_calls' as const,
+      calls: [{ id: 'call_x', name: 'unknown_tool', args: {} }],
+    })
 
     const result = await runAgentLoop({
       systemPrompt: 'test',
       userMessage: '问题',
-      adapter: neverEndingAdapter,
+      chatFn,
       tools: noopTools.declarations,
       executors: {},
       maxSteps: 2,
@@ -148,20 +140,18 @@ describe('runAgentLoop', () => {
 
   test('uses default maxSteps=12 when maxSteps is not provided', async () => {
     let calls = 0
-    const neverEndingAdapter: AgentLlmAdapter = {
-      async chat() {
-        calls++
-        return {
-          type: 'tool_calls',
-          calls: [{ id: `call_${calls}`, name: 'unknown_tool', args: {} }],
-        }
-      },
+    const chatFn = async () => {
+      calls++
+      return {
+        type: 'tool_calls' as const,
+        calls: [{ id: `call_${calls}`, name: 'unknown_tool', args: {} }],
+      }
     }
 
     const result = await runAgentLoop({
       systemPrompt: 'test',
       userMessage: '问题',
-      adapter: neverEndingAdapter,
+      chatFn,
       tools: noopTools.declarations,
       executors: {},
     })
@@ -174,17 +164,15 @@ describe('runAgentLoop', () => {
   })
 
   test('keeps running and returns final when exceeding warning threshold', async () => {
-    const slowAdapter: AgentLlmAdapter = {
-      async chat() {
-        await new Promise((resolve) => setTimeout(resolve, 200))
-        return { type: 'text', content: '太慢了' }
-      },
+    const chatFn = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      return { type: 'text' as const, content: '太慢了' }
     }
 
     const result = await runAgentLoop({
       systemPrompt: 'test',
       userMessage: '问题',
-      adapter: slowAdapter,
+      chatFn,
       tools: noopTools.declarations,
       executors: noopTools.executors,
       warningTimeMs: 50,
@@ -201,37 +189,33 @@ describe('runAgentLoop', () => {
     let toolExecuted = false
     const callHistory: string[] = []
 
-    const adapter: AgentLlmAdapter = {
-      async chat({ history }) {
-        callHistory.push(`call_${history.length}`)
-        if (history.length === 1) {
-          // First call: request a tool
-          return {
-            type: 'tool_calls',
-            calls: [{ id: 'call_1', name: 'test_tool', args: {} }],
-          }
-        }
-        // Second call: after tool result, return final answer
+    const chatFn = async ({ history }: { history: unknown[] }) => {
+      callHistory.push(`call_${history.length}`)
+      if (history.length === 1) {
         return {
-          type: 'tool_calls',
-          calls: [{
-            id: 'call_2',
-            name: 'final_answer',
-            args: {
-              replyText: '工具执行完毕',
-              confidence: 'high',
-              shouldReferenceContext: true,
-              shouldAskClarifyingQuestion: false,
-            },
-          }],
+          type: 'tool_calls' as const,
+          calls: [{ id: 'call_1', name: 'test_tool', args: {} }],
         }
-      },
+      }
+      return {
+        type: 'tool_calls' as const,
+        calls: [{
+          id: 'call_2',
+          name: 'final_answer',
+          args: {
+            replyText: '工具执行完毕',
+            confidence: 'high',
+            shouldReferenceContext: true,
+            shouldAskClarifyingQuestion: false,
+          },
+        }],
+      }
     }
 
     const result = await runAgentLoop({
       systemPrompt: 'test',
       userMessage: '问题',
-      adapter,
+      chatFn,
       tools: noopTools.declarations,
       executors: {
         test_tool: async () => {
@@ -246,7 +230,7 @@ describe('runAgentLoop', () => {
   })
 
   test('uses replyText instead of legacy text field for final_answer', async () => {
-    const adapter = makeAdapter([
+    const chatFn = makeChatFn([
       {
         type: 'tool_calls',
         calls: [{
@@ -266,7 +250,7 @@ describe('runAgentLoop', () => {
     const result = await runAgentLoop({
       systemPrompt: 'test',
       userMessage: '问题',
-      adapter,
+      chatFn,
       tools: noopTools.declarations,
       executors: noopTools.executors,
     })
@@ -278,16 +262,14 @@ describe('runAgentLoop', () => {
   })
 
   test('returns fallback when adapter throws', async () => {
-    const throwingAdapter: AgentLlmAdapter = {
-      async chat() {
-        throw new Error('LLM error')
-      },
+    const chatFn = async () => {
+      throw new Error('LLM error')
     }
 
     const result = await runAgentLoop({
       systemPrompt: 'test',
       userMessage: '问题',
-      adapter: throwingAdapter,
+      chatFn,
       tools: noopTools.declarations,
       executors: noopTools.executors,
     })

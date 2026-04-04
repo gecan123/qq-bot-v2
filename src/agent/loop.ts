@@ -1,11 +1,17 @@
-import type { AgentLlmAdapter, AgentLoopResult, AgentMessage, AgentToolDeclaration, ToolResult } from './types.js'
+import type { AgentLoopResult, AgentMessage, AgentToolDeclaration, AgentTurnResult, ToolResult } from './types.js'
 import type { ToolExecutor } from './tools.js'
 import { log } from '../logger.js'
+
+type ChatFn = (params: {
+  systemPrompt: string
+  history: AgentMessage[]
+  tools: AgentToolDeclaration[]
+}) => Promise<AgentTurnResult>
 
 export interface AgentLoopParams {
   systemPrompt: string
   userMessage: string
-  adapter: AgentLlmAdapter
+  chatFn: ChatFn
   tools: AgentToolDeclaration[]
   executors: Record<string, ToolExecutor>
   maxSteps?: number
@@ -24,7 +30,7 @@ interface StepDetail {
 }
 
 async function executeLoop(params: AgentLoopParams, startTime: number): Promise<AgentLoopResult> {
-  const { systemPrompt, userMessage, adapter, tools, executors, maxSteps = 12, maxAnswerChars = 500 } = params
+  const { systemPrompt, userMessage, chatFn, tools, executors, maxSteps = 12, maxAnswerChars = 500 } = params
 
   const history: AgentMessage[] = [{ role: 'user', content: userMessage }]
   const stepDetails: StepDetail[] = []
@@ -50,7 +56,7 @@ async function executeLoop(params: AgentLoopParams, startTime: number): Promise<
     const stepStart = Date.now()
     log.debug({ step }, 'agent_loop_step_start')
 
-    const turnResult = await adapter.chat({ systemPrompt, history, tools })
+    const turnResult = await chatFn({ systemPrompt, history, tools })
 
     if (turnResult.type === 'empty') {
       log.warn({ step }, 'agent_loop_empty_response')

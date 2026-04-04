@@ -30,14 +30,6 @@ export type AgentTurnResult =
   | { type: 'text'; content: string; model?: string }
   | { type: 'empty' }
 
-export interface AgentLlmAdapter {
-  chat(params: {
-    systemPrompt: string
-    history: AgentMessage[]
-    tools: AgentToolDeclaration[]
-  }): Promise<AgentTurnResult>
-}
-
 export type AgentLoopResult =
   | { state: 'final'; answer: string; termination: 'final_answer' | 'implicit_text' }
   | { state: 'fallback'; reason: string }

@@ -182,8 +182,7 @@ describe('OpenAIProvider media file inputs', () => {
     const result = await provider.generateGroupMemorySummary('memory-system', 'prompt-body')
 
     assert.equal(calls.length, 1)
-    assert.equal(calls[0].response_format.type, 'json_schema')
-    assert.equal(calls[0].response_format.json_schema.name, 'group_memory_summary')
+    assert.equal(calls[0].response_format.type, 'json_object')
     assert.deepEqual(result, {
       summary: '群里最近主要在约饭，整体节奏快。',
       topics: ['约饭', '火锅'],
@@ -221,8 +220,7 @@ describe('OpenAIProvider media file inputs', () => {
     const result = await provider.generateUserMemoryProfile('memory-system', 'prompt-body')
 
     assert.equal(calls.length, 1)
-    assert.equal(calls[0].response_format.type, 'json_schema')
-    assert.equal(calls[0].response_format.json_schema.name, 'user_memory_profile')
+    assert.equal(calls[0].response_format.type, 'json_object')
     assert.deepEqual(result, {
       profile: '说话直接，习惯快速确认安排。',
       traits: ['直接', '靠谱'],

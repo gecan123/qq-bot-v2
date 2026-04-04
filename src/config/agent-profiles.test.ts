@@ -17,14 +17,15 @@ describe('agent profiles', () => {
   test('default profile exposes a richer group-chat persona baseline', async () => {
     const { getAgentProfile } = await loadProfilesModule()
     const profile = getAgentProfile(123)
-    const expectedPersona = loadPrompt('./prompts/default-persona.md')
+    const expectedPersona = loadPrompt('./prompts/characters/default.md')
 
     assert.equal(profile.persona, expectedPersona)
-    assert.match(profile.persona, /群聊/)
-    assert.match(profile.persona, /嘴碎|话多/)
-    assert.match(profile.persona, /边界/)
-    assert.match(profile.persona, /玩笑|幽默/)
-    assert.match(profile.persona, /收敛/)
+    assert.match(profile.persona, /你是.+AI 智能体/)
+    assert.match(profile.persona, /持续存在/)
+    assert.match(profile.persona, /你的人格核心：/)
+    assert.match(profile.persona, /你的说话风格：/)
+    assert.match(profile.persona, /你的连续性原则：/)
+    assert.match(profile.persona, /群聊中的最低规则：/)
   })
 
   test('group config can override the default persona baseline', async () => {

@@ -21,7 +21,7 @@ interface AgentConfig {
   groups?: Record<string, AgentProfile>
 }
 
-const DEFAULT_PERSONA = loadPrompt('./prompts/default-persona.md')
+const DEFAULT_PERSONA = loadPrompt('./prompts/characters/default.md')
 
 const DEFAULT_PROFILE: AgentProfile = {
   persona: DEFAULT_PERSONA,

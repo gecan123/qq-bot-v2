@@ -40,19 +40,25 @@ export interface MessageRow {
   senderNickname: string | null;
   senderGroupNickname: string | null;
   content: ParsedSegment[];
+  resolvedText: string | null;
+  sentAt: Date | null;
   createdAt: Date;
 }
 
 export async function getGroupMessages(
   groupId: string,
   page: number,
-  pageSize = 50
+  pageSize = 50,
+  search?: string
 ): Promise<{ messages: MessageRow[]; total: number }> {
   const groupIdBig = BigInt(groupId);
+  const where = search
+    ? { groupId: groupIdBig, searchText: { contains: search, mode: "insensitive" as const } }
+    : { groupId: groupIdBig };
 
   const [messages, total] = await Promise.all([
     prisma.message.findMany({
-      where: { groupId: groupIdBig },
+      where,
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * pageSize,
       take: pageSize,
@@ -64,10 +70,12 @@ export async function getGroupMessages(
         senderNickname: true,
         senderGroupNickname: true,
         content: true,
+        resolvedText: true,
+        sentAt: true,
         createdAt: true,
       },
     }),
-    prisma.message.count({ where: { groupId: groupIdBig } }),
+    prisma.message.count({ where }),
   ]);
 
   return {
@@ -80,7 +88,6 @@ export interface GroupMemoryRow {
   groupId: string;
   groupName: string | null;
   summary: string;
-  lastMessageId: string;
   updatedAt: Date;
 }
 
@@ -105,6 +112,7 @@ export interface UserMemoryRow {
   senderNickname: string | null;
   senderGroupNickname: string | null;
   profile: string;
+  examples: string[];
   updatedAt: Date;
 }
 
@@ -117,13 +125,36 @@ export async function getUserMemories(groupId: string): Promise<UserMemoryRow[]>
   return serializeBigInt(rows) as unknown as UserMemoryRow[];
 }
 
+export interface GroupMemoryCursorRow {
+  groupId: string;
+  lastProcessedExternalMessageId: string;
+  lastProcessedMessageRowId: number;
+  updatedAt: Date;
+}
+
+export async function getGroupMemoryCursor(
+  groupId: string
+): Promise<GroupMemoryCursorRow | null> {
+  const row = await prisma.groupMemoryCursor.findUnique({
+    where: { groupId: BigInt(groupId) },
+  });
+
+  if (!row) return null;
+  return serializeBigInt(row) as unknown as GroupMemoryCursorRow;
+}
+
 export interface MediaMeta {
   mediaId: number;
   mediaType: string | null;
   contentType: string | null;
   fileName: string | null;
   fileSize: number | null;
+  description: string | null;
   createdAt: Date;
+}
+
+export async function getMediaCount(): Promise<number> {
+  return prisma.media.count();
 }
 
 export async function getMediaList(
@@ -141,6 +172,7 @@ export async function getMediaList(
         contentType: true,
         fileName: true,
         fileSize: true,
+        description: true,
         createdAt: true,
       },
     }),

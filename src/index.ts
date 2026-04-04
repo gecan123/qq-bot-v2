@@ -12,10 +12,15 @@ import { createConversationMemoryQueue } from './queue/conversation-memory-queue
 import type { ConversationQueue } from './queue/conversation-queue.js'
 import { createConversationWorker } from './conversation/worker.js'
 import { createMentionDispatcher } from './conversation/dispatcher.js'
+import { startHttpServer, addRoute } from './server/http.js'
+import { handlePlaygroundRun } from './server/playground.js'
+import { handleMediaReanalyze } from './server/media-reanalyze.js'
+import type http from 'node:http'
 
 let stopMemoryJob: () => void = () => {}
 let conversationQueue: ConversationQueue | null = null
 let conversationScheduler: ConversationScheduler | null = null
+let httpServer: http.Server | null = null
 
 const ASYNC_MENTION_MERGE_WINDOW_MS = 30_000
 
@@ -50,6 +55,11 @@ async function main() {
     'LLM routing provider registered',
   )
 
+  addRoute('POST', '/api/playground/run', handlePlaygroundRun)
+  addRoute('POST', '/api/media/:id/reanalyze', handleMediaReanalyze)
+  const apiPort = Number(process.env.BOT_API_PORT ?? '3101')
+  httpServer = startHttpServer(apiPort)
+
   jobQueue.start()
   const conversationWorker = createConversationWorker()
   conversationScheduler = createConversationScheduler({
@@ -76,6 +86,7 @@ async function shutdown() {
   conversationQueue?.stop()
   conversationScheduler?.stop()
   jobQueue.stop()
+  httpServer?.close()
   await prisma.$disconnect()
   process.exit(0)
 }

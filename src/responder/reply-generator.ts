@@ -27,7 +27,7 @@ async function agentReply(
     : `(用户@了你)\n\n[群聊背景]\n${context}`
 
   const { declarations, executors } = createAgentTools(msg.groupId)
-  const adapter = createOpenAIAgentAdapter()
+  const adapter = createOpenAIAgentAdapter({ reasoningEffort: 'medium' })
   const now = new Date().toLocaleString('zh-CN', {
     timeZone: 'Asia/Shanghai',
     weekday: 'short',

@@ -82,10 +82,17 @@ function parseToolCalls(toolCalls: OpenAI.Chat.ChatCompletionMessageToolCall[]):
 export class OpenAIAgentAdapter implements AgentLlmAdapter {
   private client: OpenAI
   private model: string
+  private reasoningEffort?: OpenAI.Chat.ChatCompletionReasoningEffort
 
-  constructor(baseURL: string, apiKey: string, model: string) {
+  constructor(
+    baseURL: string,
+    apiKey: string,
+    model: string,
+    options?: { reasoningEffort?: OpenAI.Chat.ChatCompletionReasoningEffort },
+  ) {
     this.client = new OpenAI({ baseURL, apiKey })
     this.model = model
+    this.reasoningEffort = options?.reasoningEffort
   }
 
   async chat(params: {
@@ -99,6 +106,7 @@ export class OpenAIAgentAdapter implements AgentLlmAdapter {
     const response = await this.client.chat.completions.create({
       model: this.model,
       temperature: 0.7,
+      ...(this.reasoningEffort ? { reasoning_effort: this.reasoningEffort } : {}),
       messages,
       tools,
       tool_choice: 'auto',
@@ -125,12 +133,14 @@ export class OpenAIAgentAdapter implements AgentLlmAdapter {
   }
 }
 
-export function createOpenAIAgentAdapter(): OpenAIAgentAdapter {
+export function createOpenAIAgentAdapter(options?: {
+  reasoningEffort?: OpenAI.Chat.ChatCompletionReasoningEffort
+}): OpenAIAgentAdapter {
   const baseURL =
     process.env.LLM_AGENT_BASE_URL ??
     process.env.OPENAI_BASE_URL ??
     'http://127.0.0.1:8317/v1'
   const apiKey = process.env.LLM_AGENT_API_KEY ?? process.env.OPENAI_API_KEY ?? 'sk-local'
   const model = process.env.LLM_AGENT_MODEL ?? process.env.OPENAI_MODEL ?? 'gpt-5.1'
-  return new OpenAIAgentAdapter(baseURL, apiKey, model)
+  return new OpenAIAgentAdapter(baseURL, apiKey, model, options)
 }

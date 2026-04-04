@@ -1,6 +1,7 @@
-import { Clock } from "lucide-react";
+import { Clock, MessageSquare } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import type { UserMemoryRow } from "@/lib/queries";
+import { formatDateTime } from "@/lib/format-time";
 
 interface UserProfileCardProps {
   user: UserMemoryRow;
@@ -26,12 +27,30 @@ export function UserProfileCard({ user }: UserProfileCardProps) {
               )}
             </div>
             <p className="text-xs text-slate-400 font-mono">{user.senderId}</p>
-            <p className="mt-2 text-sm text-slate-500 leading-relaxed line-clamp-3">
+            <p className="mt-2 text-sm text-slate-500 leading-relaxed line-clamp-4">
               {user.profile}
             </p>
+            {user.examples.length > 0 && (
+              <div className="mt-2 space-y-1">
+                <p className="flex items-center gap-1 text-xs font-medium text-slate-400">
+                  <MessageSquare className="h-3 w-3" />
+                  典型发言
+                </p>
+                <ul className="space-y-0.5">
+                  {user.examples.slice(0, 3).map((ex, i) => (
+                    <li
+                      key={i}
+                      className="text-xs text-slate-400 italic pl-2 border-l-2 border-slate-100 line-clamp-1"
+                    >
+                      {ex}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <p className="mt-2 flex items-center gap-1 text-xs text-slate-400">
               <Clock className="h-3 w-3" />
-              {new Date(user.updatedAt).toLocaleString("zh-CN")}
+              {formatDateTime(user.updatedAt)}
             </p>
           </div>
         </div>

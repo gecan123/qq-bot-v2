@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, RefreshCw } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { MemoryCard } from "@/components/memory/memory-card";
 import { UserProfileCard } from "@/components/memory/user-profile-card";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { getGroupMemory, getUserMemories, getGroups } from "@/lib/queries";
+import { getGroupMemory, getUserMemories, getGroups, getGroupMemoryCursor } from "@/lib/queries";
+import { formatDateTime } from "@/lib/format-time";
 
 interface Props {
   params: Promise<{ groupId: string }>;
@@ -15,10 +16,11 @@ interface Props {
 export default async function GroupMemoryPage({ params }: Props) {
   const { groupId } = await params;
 
-  const [memory, userMemories, groups] = await Promise.all([
+  const [memory, userMemories, groups, cursor] = await Promise.all([
     getGroupMemory(groupId),
     getUserMemories(groupId),
     getGroups(),
+    getGroupMemoryCursor(groupId),
   ]);
 
   const group = groups.find((g) => g.groupId === groupId);
@@ -65,6 +67,17 @@ export default async function GroupMemoryPage({ params }: Props) {
             暂无群组记忆
           </CardContent>
         </Card>
+      )}
+
+      {cursor && (
+        <div className="mb-6 flex items-center gap-2 text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+          <RefreshCw className="h-3 w-3 shrink-0 text-slate-400" />
+          <span>
+            记忆已处理至消息行 #{cursor.lastProcessedMessageRowId}
+            <span className="mx-1.5 text-slate-300">·</span>
+            最后同步 {formatDateTime(cursor.updatedAt)}
+          </span>
+        </div>
       )}
 
       <h2 className="text-xs font-medium text-slate-400 mb-3 uppercase tracking-wider">

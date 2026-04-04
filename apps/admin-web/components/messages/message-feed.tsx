@@ -9,9 +9,17 @@ interface PaginationProps {
   total: number;
   pageSize: number;
   baseUrl: string;
+  search?: string;
 }
 
-function Pagination({ page, total, pageSize, baseUrl }: PaginationProps) {
+function buildPageUrl(baseUrl: string, page: number, search?: string): string {
+  const params = new URLSearchParams();
+  params.set("page", String(page));
+  if (search) params.set("search", search);
+  return `${baseUrl}?${params.toString()}`;
+}
+
+function Pagination({ page, total, pageSize, baseUrl, search }: PaginationProps) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const hasPrev = page > 1;
   const hasNext = page < totalPages;
@@ -30,7 +38,7 @@ function Pagination({ page, total, pageSize, baseUrl }: PaginationProps) {
           asChild={hasPrev}
         >
           {hasPrev ? (
-            <Link href={`${baseUrl}?page=${page - 1}`}>
+            <Link href={buildPageUrl(baseUrl, page - 1, search)}>
               <ChevronLeft className="h-4 w-4 mr-1" />
               上一页
             </Link>
@@ -49,7 +57,7 @@ function Pagination({ page, total, pageSize, baseUrl }: PaginationProps) {
           asChild={hasNext}
         >
           {hasNext ? (
-            <Link href={`${baseUrl}?page=${page + 1}`}>
+            <Link href={buildPageUrl(baseUrl, page + 1, search)}>
               下一页
               <ChevronRight className="h-4 w-4 ml-1" />
             </Link>
@@ -71,9 +79,10 @@ interface MessageFeedProps {
   page: number;
   pageSize: number;
   baseUrl: string;
+  search?: string;
 }
 
-export function MessageFeed({ messages, total, page, pageSize, baseUrl }: MessageFeedProps) {
+export function MessageFeed({ messages, total, page, pageSize, baseUrl, search }: MessageFeedProps) {
   if (messages.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-slate-400">
@@ -89,7 +98,7 @@ export function MessageFeed({ messages, total, page, pageSize, baseUrl }: Messag
           <MessageItem key={msg.id} message={msg} />
         ))}
       </div>
-      <Pagination page={page} total={total} pageSize={pageSize} baseUrl={baseUrl} />
+      <Pagination page={page} total={total} pageSize={pageSize} baseUrl={baseUrl} search={search} />
     </div>
   );
 }

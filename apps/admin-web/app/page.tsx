@@ -2,7 +2,7 @@ import { MessageSquare, Image, Users, Activity } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Header } from "@/components/layout/header";
 import { GroupCard } from "@/components/groups/group-card";
-import { getGroups } from "@/lib/queries";
+import { getGroups, getMediaCount } from "@/lib/queries";
 
 function StatCard({
   label,
@@ -33,7 +33,7 @@ function StatCard({
 }
 
 export default async function HomePage() {
-  const groups = await getGroups();
+  const [groups, mediaCount] = await Promise.all([getGroups(), getMediaCount()]);
   const totalMessages = groups.reduce((sum, g) => sum + g.messageCount, 0);
 
   function formatCount(n: number) {
@@ -73,7 +73,7 @@ export default async function HomePage() {
         />
         <StatCard
           label="媒体文件"
-          value="—"
+          value={formatCount(mediaCount)}
           icon={Image}
           accent="bg-violet-50 text-violet-600"
         />

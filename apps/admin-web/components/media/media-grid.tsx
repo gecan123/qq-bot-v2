@@ -1,5 +1,8 @@
+"use client";
+
+import { useState, useTransition } from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, FileImage, FileVideo, FileAudio, File } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileImage, FileVideo, FileAudio, File, RefreshCw, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { MediaMeta } from "@/lib/queries";
 
@@ -17,8 +20,41 @@ function MediaTypeIcon({ contentType }: { contentType: string | null }) {
   return <File className="h-5 w-5 text-slate-400" />;
 }
 
+function ReanalyzeButton({ mediaId, onDone }: { mediaId: number; onDone: () => void }) {
+  const [isPending, startTransition] = useTransition();
+  const [done, setDone] = useState(false);
+
+  function handleClick(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    startTransition(async () => {
+      await fetch(`/api/bot/api/media/${mediaId}/reanalyze`, { method: "POST" });
+      setDone(true);
+      onDone();
+    });
+  }
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={isPending}
+      title="重新解析"
+      className="flex items-center justify-center h-6 w-6 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors disabled:opacity-50"
+    >
+      {done ? (
+        <CheckCircle className="h-3.5 w-3.5 text-green-300" />
+      ) : isPending ? (
+        <RefreshCw className="h-3 w-3 animate-spin" />
+      ) : (
+        <RefreshCw className="h-3 w-3" />
+      )}
+    </button>
+  );
+}
+
 function MediaTile({ item }: { item: MediaMeta }) {
   const isImage = item.contentType?.startsWith("image/");
+  const [reanalyzed, setReanalyzed] = useState(false);
 
   return (
     <a
@@ -36,12 +72,19 @@ function MediaTile({ item }: { item: MediaMeta }) {
             className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
             loading="lazy"
           />
-          {/* Hover overlay */}
           <div className="absolute inset-0 bg-slate-900/50 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex flex-col justify-end p-2">
-            <p className="text-xs text-white truncate font-mono">{item.fileName ?? `#${item.mediaId}`}</p>
-            {item.fileSize && (
-              <p className="text-xs text-slate-300">{formatBytes(item.fileSize)}</p>
-            )}
+            <div className="flex items-end justify-between">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-white truncate font-mono">{item.fileName ?? `#${item.mediaId}`}</p>
+                {item.fileSize && (
+                  <p className="text-xs text-slate-300">{formatBytes(item.fileSize)}</p>
+                )}
+                {(item.description || reanalyzed) && (
+                  <p className="text-xs text-green-300 truncate mt-0.5">✓ 已解析</p>
+                )}
+              </div>
+              <ReanalyzeButton mediaId={item.mediaId} onDone={() => setReanalyzed(true)} />
+            </div>
           </div>
         </>
       ) : (
@@ -51,6 +94,10 @@ function MediaTile({ item }: { item: MediaMeta }) {
           {item.fileSize && (
             <span className="text-xs text-slate-400">{formatBytes(item.fileSize)}</span>
           )}
+          {(item.description || reanalyzed) && (
+            <span className="text-xs text-green-500">✓ 已解析</span>
+          )}
+          <ReanalyzeButton mediaId={item.mediaId} onDone={() => setReanalyzed(true)} />
         </div>
       )}
     </a>

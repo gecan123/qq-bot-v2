@@ -3,6 +3,7 @@ import { MessageSquare, Clock, Brain } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { GroupSummary } from "@/lib/queries";
+import { formatDate } from "@/lib/format-time";
 
 function formatRelativeTime(date: Date): string {
   const now = new Date();
@@ -15,7 +16,7 @@ function formatRelativeTime(date: Date): string {
   if (diffMins < 60) return `${diffMins} 分钟前`;
   if (diffHours < 24) return `${diffHours} 小时前`;
   if (diffDays < 30) return `${diffDays} 天前`;
-  return new Date(date).toLocaleDateString("zh-CN");
+  return formatDate(date);
 }
 
 function formatCount(n: number): string {

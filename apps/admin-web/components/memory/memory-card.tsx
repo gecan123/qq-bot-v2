@@ -2,6 +2,7 @@ import { Brain, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import type { GroupMemoryRow } from "@/lib/queries";
+import { formatDateTime } from "@/lib/format-time";
 
 interface MemoryCardProps {
   memory: GroupMemoryRow;
@@ -29,9 +30,8 @@ export function MemoryCard({ memory }: MemoryCardProps) {
         <div className="mt-4 flex items-center gap-4 text-xs text-slate-400">
           <span className="flex items-center gap-1">
             <Clock className="h-3 w-3" />
-            {new Date(memory.updatedAt).toLocaleString("zh-CN")}
+            {formatDateTime(memory.updatedAt)}
           </span>
-          <span className="font-mono">最后消息 #{memory.lastMessageId}</span>
         </div>
       </CardContent>
     </Card>

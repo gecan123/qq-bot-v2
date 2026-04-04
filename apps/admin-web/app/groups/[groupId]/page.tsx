@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ChevronRight, Brain } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { MessageFeed } from "@/components/messages/message-feed";
+import { MessageSearch } from "@/components/messages/message-search";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -10,18 +11,18 @@ import { getGroupMessages, getGroups } from "@/lib/queries";
 
 interface Props {
   params: Promise<{ groupId: string }>;
-  searchParams: Promise<{ page?: string }>;
+  searchParams: Promise<{ page?: string; search?: string }>;
 }
 
 const PAGE_SIZE = 50;
 
 export default async function GroupDetailPage({ params, searchParams }: Props) {
   const { groupId } = await params;
-  const { page: pageParam } = await searchParams;
+  const { page: pageParam, search } = await searchParams;
   const page = Math.max(1, parseInt(pageParam ?? "1", 10));
 
   const [{ messages, total }, groups] = await Promise.all([
-    getGroupMessages(groupId, page, PAGE_SIZE),
+    getGroupMessages(groupId, page, PAGE_SIZE, search),
     getGroups(),
   ]);
 
@@ -50,6 +51,7 @@ export default async function GroupDetailPage({ params, searchParams }: Props) {
             <Badge variant="secondary" className="bg-slate-100 text-slate-500 border-slate-200">
               {total.toLocaleString("zh-CN")} 条消息
             </Badge>
+            <MessageSearch defaultValue={search} />
             <Button
               variant="outline"
               size="sm"
@@ -73,6 +75,7 @@ export default async function GroupDetailPage({ params, searchParams }: Props) {
             page={page}
             pageSize={PAGE_SIZE}
             baseUrl={`/groups/${groupId}`}
+            search={search}
           />
         </CardContent>
       </Card>

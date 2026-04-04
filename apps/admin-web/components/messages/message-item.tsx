@@ -1,20 +1,7 @@
-import { Reply, FileText, Video, Mic, File } from "lucide-react";
+import { Reply, FileText, Video, Mic, File, Sparkles } from "lucide-react";
 import type { MessageRow } from "@/lib/queries";
 import type { ParsedSegment } from "@/lib/message-segments";
-
-function formatTime(date: Date): string {
-  return new Date(date).toLocaleTimeString("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatDate(date: Date): string {
-  return new Date(date).toLocaleDateString("zh-CN", {
-    month: "short",
-    day: "numeric",
-  });
-}
+import { formatTime, formatDate } from "@/lib/format-time";
 
 function SegmentRenderer({ seg }: { seg: ParsedSegment }) {
   switch (seg.type) {
@@ -114,11 +101,18 @@ interface MessageItemProps {
   message: MessageRow;
 }
 
+function hasMediaSegments(segments: ParsedSegment[]): boolean {
+  return segments.some(
+    (s) => s.type === "image" || s.type === "video" || s.type === "record" || s.type === "file"
+  );
+}
+
 export function MessageItem({ message }: MessageItemProps) {
   const displayName =
     message.senderGroupNickname ?? message.senderNickname ?? message.senderId;
   const initial = displayName.charAt(0).toUpperCase();
   const segments = message.content as ParsedSegment[];
+  const showResolved = message.resolvedText && hasMediaSegments(segments);
 
   return (
     <div className="flex gap-3 py-3 group hover:bg-slate-50 px-3 -mx-3 rounded-lg transition-colors duration-100">
@@ -135,7 +129,7 @@ export function MessageItem({ message }: MessageItemProps) {
             <span className="text-xs text-slate-400">({message.senderNickname})</span>
           )}
           <span className="text-xs text-slate-400 font-mono ml-auto">
-            {formatDate(message.createdAt)} {formatTime(message.createdAt)}
+            {formatDate(message.sentAt ?? message.createdAt)} {formatTime(message.sentAt ?? message.createdAt)}
           </span>
         </div>
 
@@ -145,6 +139,12 @@ export function MessageItem({ message }: MessageItemProps) {
             <SegmentRenderer key={i} seg={seg} />
           ))}
         </p>
+        {showResolved && (
+          <p className="mt-1 flex items-start gap-1 text-xs text-slate-400 leading-relaxed">
+            <Sparkles className="h-3 w-3 mt-0.5 shrink-0 text-indigo-300" />
+            <span className="italic">{message.resolvedText}</span>
+          </p>
+        )}
       </div>
     </div>
   );

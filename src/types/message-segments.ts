@@ -1,6 +1,16 @@
+export type MediaDescription = Record<string, unknown>
+
 export interface TextSegment {
   type: 'text'
   content: string
+}
+
+interface BaseMediaSegment {
+  referenceId?: string
+  url?: string
+  fileName?: string
+  fileSize?: string
+  mediaDescription?: MediaDescription
 }
 
 export interface ImageSegment {
@@ -9,7 +19,7 @@ export interface ImageSegment {
   url?: string
   fileSize?: string
   fileName?: string
-  summary?: string
+  mediaDescription?: MediaDescription
   subType?: number
 }
 
@@ -30,32 +40,17 @@ export interface ReplySegment {
   messageId: string
 }
 
-export interface VideoSegment {
+export interface VideoSegment extends BaseMediaSegment {
   type: 'video'
-  referenceId?: string
-  url?: string
-  fileName?: string
-  fileSize?: string
-  description?: string
 }
 
-export interface RecordSegment {
+export interface RecordSegment extends BaseMediaSegment {
   type: 'record'
-  referenceId?: string
-  url?: string
-  fileName?: string
-  fileSize?: string
-  description?: string
 }
 
-export interface FileSegment {
+export interface FileSegment extends BaseMediaSegment {
   type: 'file'
-  referenceId?: string
-  url?: string
   fileId?: string
-  fileName?: string
-  fileSize?: string
-  description?: string
 }
 
 export interface JsonCardSegment {

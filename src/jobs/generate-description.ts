@@ -2,6 +2,7 @@ import { prisma } from '../database/client.js'
 import { Prisma } from '../generated/prisma/client.js'
 import { getLlmProvider } from '../llm/provider.js'
 import { log } from '../logger.js'
+import { isMediaDescription } from '../media/media-description.js'
 import { jobQueue } from '../queue/runtime.js'
 import { withInFlight } from '../utils/in-flight.js'
 import type { Job } from '../queue/types.js'
@@ -14,15 +15,19 @@ const VISION_MEDIA_TYPES = new Set(['image', 'sticker'])
 
 const inFlight = new Map<number, Promise<void>>()
 
-function normalizeDescription(description: string): string | null {
-  const trimmed = description.trim()
-  return trimmed ? trimmed : null
-}
-
 function toDescriptionRawInput(raw: unknown): Prisma.InputJsonValue | Prisma.NullableJsonNullValueInput | undefined {
   if (raw === undefined) return undefined
   if (raw === null) return Prisma.JsonNull
   return JSON.parse(JSON.stringify(raw)) as Prisma.InputJsonValue
+}
+
+function normalizeDescriptionRaw(raw: unknown, fallbackDescription?: string): Record<string, unknown> | null {
+  if (isMediaDescription(raw)) return raw
+  if (typeof fallbackDescription !== 'string') return null
+
+  const trimmed = fallbackDescription.trim()
+  if (!trimmed) return null
+  return { description: trimmed }
 }
 
 function isPdfFile(contentType: string | null, fileName: string | null): boolean {
@@ -37,7 +42,7 @@ export function generateDescriptionForMedia(mediaId: number): Promise<void> {
 async function doGenerate(mediaId: number): Promise<void> {
   const media = await prisma.media.findUnique({
     where: { mediaId },
-    select: { data: true, contentType: true, mediaType: true, description: true, fileName: true },
+    select: { data: true, contentType: true, mediaType: true, descriptionRaw: true, fileName: true },
   })
 
   if (!media) {
@@ -45,7 +50,7 @@ async function doGenerate(mediaId: number): Promise<void> {
     return
   }
 
-  if (media.description) {
+  if (media.descriptionRaw) {
     log.debug({ mediaId }, '描述已存在，跳过')
     return
   }
@@ -78,16 +83,16 @@ async function doGenerate(mediaId: number): Promise<void> {
             mediaType,
           }),
         }
-    const description = normalizeDescription(result.description)
+    const descriptionRaw = normalizeDescriptionRaw(result?.raw, result?.description)
 
-    if (!description) {
-      log.warn({ mediaId, mediaType }, '媒体描述结果为空，保留待解析状态')
+    if (!descriptionRaw) {
+      log.warn({ mediaId, mediaType }, '媒体描述结果不是有效对象，保留待解析状态')
       return
     }
 
     await prisma.media.update({
       where: { mediaId },
-      data: { description, descriptionRaw: toDescriptionRawInput(result.raw) },
+      data: { descriptionRaw: toDescriptionRawInput(descriptionRaw) },
     })
     jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
     log.info({ mediaId }, '媒体描述已生成')
@@ -119,16 +124,16 @@ async function doGenerate(mediaId: number): Promise<void> {
             fileName: media.fileName ?? undefined,
           }),
         }
-    const description = normalizeDescription(result.description)
+    const descriptionRaw = normalizeDescriptionRaw(result?.raw, result?.description)
 
-    if (!description) {
-      log.warn({ mediaId, mediaType }, '媒体描述结果为空，保留待解析状态')
+    if (!descriptionRaw) {
+      log.warn({ mediaId, mediaType }, '媒体描述结果不是有效对象，保留待解析状态')
       return
     }
 
     await prisma.media.update({
       where: { mediaId },
-      data: { description, descriptionRaw: toDescriptionRawInput(result.raw) },
+      data: { descriptionRaw: toDescriptionRawInput(descriptionRaw) },
     })
     jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
     log.info({ mediaId }, '视频描述已生成')
@@ -158,16 +163,16 @@ async function doGenerate(mediaId: number): Promise<void> {
             contentType: media.contentType ?? 'audio/mp4',
           }),
         }
-    const description = normalizeDescription(result.description)
+    const descriptionRaw = normalizeDescriptionRaw(result?.raw, result?.description)
 
-    if (!description) {
-      log.warn({ mediaId, mediaType }, '媒体描述结果为空，保留待解析状态')
+    if (!descriptionRaw) {
+      log.warn({ mediaId, mediaType }, '媒体描述结果不是有效对象，保留待解析状态')
       return
     }
 
     await prisma.media.update({
       where: { mediaId },
-      data: { description, descriptionRaw: toDescriptionRawInput(result.raw) },
+      data: { descriptionRaw: toDescriptionRawInput(descriptionRaw) },
     })
     jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
     log.info({ mediaId }, '语音转写已完成')
@@ -204,16 +209,16 @@ async function doGenerate(mediaId: number): Promise<void> {
             fileName: media.fileName ?? undefined,
           }),
         }
-    const description = normalizeDescription(result.description)
+    const descriptionRaw = normalizeDescriptionRaw(result?.raw, result?.description)
 
-    if (!description) {
-      log.warn({ mediaId, mediaType }, '媒体描述结果为空，保留待解析状态')
+    if (!descriptionRaw) {
+      log.warn({ mediaId, mediaType }, '媒体描述结果不是有效对象，保留待解析状态')
       return
     }
 
     await prisma.media.update({
       where: { mediaId },
-      data: { description, descriptionRaw: toDescriptionRawInput(result.raw) },
+      data: { descriptionRaw: toDescriptionRawInput(descriptionRaw) },
     })
     jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
     log.info({ mediaId }, 'PDF 描述已生成')

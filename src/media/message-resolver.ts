@@ -1,6 +1,7 @@
 import { prisma } from '../database/client.js'
-import type { Message } from '../generated/prisma/client.js'
+import { Prisma, type Message } from '../generated/prisma/client.js'
 import type { ParsedSegment, ImageSegment, VideoSegment, RecordSegment, FileSegment } from '../types/message-segments.js'
+import { isMediaDescription } from './media-description.js'
 import { jobQueue } from '../queue/runtime.js'
 
 type MediaSegment = ImageSegment | VideoSegment | RecordSegment | FileSegment
@@ -33,7 +34,7 @@ async function ensureDescriptions(refIds: number[], options: ResolveMessageOptio
   if (refIds.length === 0) return
 
   const pendingRows = await prisma.media.findMany({
-    where: { mediaId: { in: refIds }, description: null },
+    where: { mediaId: { in: refIds }, descriptionRaw: { equals: Prisma.AnyNull } },
     select: { mediaId: true },
   })
   const pendingIds = pendingRows.map((row) => row.mediaId)
@@ -77,12 +78,12 @@ async function resolveDescriptions(segments: ParsedSegment[], refIds: number[]):
 
   const mediaRows = await prisma.media.findMany({
     where: { mediaId: { in: refIds } },
-    select: { mediaId: true, description: true },
+    select: { mediaId: true, descriptionRaw: true },
   })
 
-  const descriptionMap = new Map<string, string>()
+  const descriptionMap = new Map<string, Record<string, unknown>>()
   for (const row of mediaRows) {
-    if (row.description) descriptionMap.set(String(row.mediaId), row.description)
+    if (isMediaDescription(row.descriptionRaw)) descriptionMap.set(String(row.mediaId), row.descriptionRaw)
   }
 
   return segments.map((segment) => {
@@ -90,10 +91,7 @@ async function resolveDescriptions(segments: ParsedSegment[], refIds: number[]):
     const desc = descriptionMap.get(segment.referenceId)
     if (!desc) return segment
 
-    if (segment.type === 'image') {
-      return { ...segment, summary: desc }
-    }
-    return { ...segment, description: desc }
+    return { ...segment, mediaDescription: desc }
   })
 }
 

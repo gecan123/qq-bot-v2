@@ -63,4 +63,16 @@ describe('createAgentTools', () => {
 
     assert.throws(() => finalAnswer.inputSchema.parse({ text: '旧格式' }))
   })
+
+  test('db_schema exposes media description_raw instead of deleted description column', async () => {
+    const { executors } = createAgentTools(1)
+    const payload = JSON.parse(await executors.db_schema({})) as {
+      tables: Array<{ name: string; columns: string[] }>
+    }
+
+    const mediaTable = payload.tables.find((table) => table.name === 'media')
+    assert.ok(mediaTable)
+    assert.equal(mediaTable.columns.includes('description_raw'), true)
+    assert.equal(mediaTable.columns.includes('description'), false)
+  })
 })

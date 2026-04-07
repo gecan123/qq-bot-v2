@@ -85,7 +85,7 @@ function buildDbSchemaPayload() {
       },
       {
         name: 'media',
-        columns: ['media_id', 'media_type', 'content_type', 'file_name', 'description', 'created_at'],
+        columns: ['media_id', 'media_type', 'content_type', 'file_name', 'description_raw', 'created_at'],
       },
       {
         name: 'group_memory',

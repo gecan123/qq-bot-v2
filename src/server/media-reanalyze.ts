@@ -21,21 +21,20 @@ export const handleMediaReanalyze: RouteHandler = async (params) => {
   // Clear existing description so generateDescriptionForMedia won't skip
   await prisma.media.update({
     where: { mediaId },
-    data: { description: null, descriptionRaw: Prisma.DbNull },
+    data: { descriptionRaw: Prisma.DbNull },
   })
 
   await generateDescriptionForMedia(mediaId)
 
   const updated = await prisma.media.findUnique({
     where: { mediaId },
-    select: { description: true, descriptionRaw: true },
+    select: { descriptionRaw: true },
   })
 
   return {
     ok: true,
     mediaId,
     mediaType: media.mediaType,
-    description: updated?.description ?? null,
     descriptionRaw: updated?.descriptionRaw ?? null,
   }
 }

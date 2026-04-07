@@ -1,5 +1,5 @@
 import { prisma } from '../database/client.js'
-import type { Message } from '../generated/prisma/client.js'
+import { Prisma, type Message } from '../generated/prisma/client.js'
 import type { ParsedSegment } from '../types/message-segments.js'
 import { log } from '../logger.js'
 import { jobQueue } from '../queue/runtime.js'
@@ -29,7 +29,7 @@ export async function ensureDescriptions(messages: Message[], timeoutMs: number)
   if (allIds.length === 0) return
 
   const mediaRows = await prisma.media.findMany({
-    where: { mediaId: { in: allIds }, description: null },
+    where: { mediaId: { in: allIds }, descriptionRaw: { equals: Prisma.AnyNull } },
     select: { mediaId: true },
   })
 

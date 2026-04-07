@@ -88,7 +88,7 @@ describe('resolveMessage', () => {
     prisma.media.findMany = (async () => {
       findManyCount += 1
       if (findManyCount === 1) return [{ mediaId: 42 }]
-      return [{ mediaId: 42, description: '视频描述' }]
+      return [{ mediaId: 42, descriptionRaw: { description: '视频描述', summary: '摘要' } }]
     }) as unknown as typeof prisma.media.findMany
 
     jobQueue.enqueueAndWait = (async (type: string, data: { mediaId: number }, options?: { priority?: string }) => {
@@ -102,6 +102,12 @@ describe('resolveMessage', () => {
     assert.deepEqual(calls, [
       { type: 'generate-description', data: { mediaId: 42 }, options: { priority: 'high' } },
     ])
-    assert.deepEqual(resolved, [{ type: 'video', referenceId: '42', description: '视频描述' }])
+    assert.deepEqual(resolved, [
+      {
+        type: 'video',
+        referenceId: '42',
+        mediaDescription: { description: '视频描述', summary: '摘要' },
+      },
+    ])
   })
 })

@@ -77,7 +77,7 @@ describe('ensureDescriptions', () => {
       data: new Uint8Array(Buffer.from('image-bytes')),
       contentType: 'image/jpeg',
       mediaType: 'image',
-      description: null,
+      descriptionRaw: null,
       fileName: 'test.jpg',
     })) as unknown as typeof prisma.media.findUnique
 

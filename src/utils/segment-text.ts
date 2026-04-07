@@ -1,4 +1,5 @@
 import type { ParsedSegment } from '../types/message-segments.js'
+import { getMediaDescriptionText } from '../media/media-description.js'
 
 export function segmentsToPlainText(segments: ParsedSegment[]): string {
   return segments
@@ -6,12 +7,18 @@ export function segmentsToPlainText(segments: ParsedSegment[]): string {
       switch (seg.type) {
         case 'text':
           return seg.content
-        case 'image':
-          return seg.summary ? `[图片: ${seg.summary}]` : '[图片]'
-        case 'video':
-          return seg.description ? `[视频: ${seg.description}]` : '[视频]'
-        case 'record':
-          return seg.description ? `[语音: ${seg.description}]` : '[语音]'
+        case 'image': {
+          const text = getMediaDescriptionText(seg.mediaDescription)
+          return text ? `[图片: ${text}]` : '[图片]'
+        }
+        case 'video': {
+          const text = getMediaDescriptionText(seg.mediaDescription)
+          return text ? `[视频: ${text}]` : '[视频]'
+        }
+        case 'record': {
+          const text = getMediaDescriptionText(seg.mediaDescription)
+          return text ? `[语音: ${text}]` : '[语音]'
+        }
         case 'file':
           return seg.fileName ? `[文件: ${seg.fileName}]` : '[文件]'
         case 'face':

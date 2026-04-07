@@ -1,4 +1,5 @@
 import type { ParsedSegment } from '../types/message-segments.js'
+import { getMediaDescriptionText } from './media-description.js'
 
 function serializeSegment(segment: ParsedSegment): string {
   switch (segment.type) {
@@ -6,16 +7,23 @@ function serializeSegment(segment: ParsedSegment): string {
       return segment.content
     case 'image': {
       const label = segment.subType === 1 ? '[贴纸]' : '[图片]'
-      return segment.summary ? `${label} ${segment.summary}` : label
+      const text = getMediaDescriptionText(segment.mediaDescription)
+      return text ? `${label} ${text}` : label
     }
-    case 'video':
-      return segment.description ? `[视频] ${segment.description}` : '[视频]'
-    case 'record':
-      return segment.description ? `[语音] ${segment.description}` : '[语音]'
-    case 'file':
-      if (segment.description) return `[文件] ${segment.description}`
+    case 'video': {
+      const text = getMediaDescriptionText(segment.mediaDescription)
+      return text ? `[视频] ${text}` : '[视频]'
+    }
+    case 'record': {
+      const text = getMediaDescriptionText(segment.mediaDescription)
+      return text ? `[语音] ${text}` : '[语音]'
+    }
+    case 'file': {
+      const text = getMediaDescriptionText(segment.mediaDescription)
+      if (text) return `[文件] ${text}`
       if (segment.fileName) return `[文件] ${segment.fileName}`
       return '[文件]'
+    }
     case 'face':
       return segment.name ? `[表情: ${segment.name}]` : '[表情]'
     case 'at':

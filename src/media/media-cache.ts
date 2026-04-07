@@ -138,7 +138,11 @@ async function cacheMediaSegment(input: CacheInput): Promise<string | undefined>
         mediaType,
         fileName: segment.type !== 'image' ? segment.fileName : (segment as ImageSegment).fileName,
         fileSize: fileSizeBytes,
-        description: buildOversizeDescription(segment, mediaType, fileSizeBytes),
+        descriptionRaw: {
+          description: buildOversizeDescription(segment, mediaType, fileSizeBytes),
+          skippedReason: 'oversize',
+          fileSizeBytes,
+        },
       },
     })
     return String(media.mediaId)

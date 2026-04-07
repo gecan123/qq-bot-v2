@@ -14,8 +14,8 @@ describe('segmentsToPlainText', () => {
     assert.equal(segmentsToPlainText(segments), '[图片]')
   })
 
-  test('image segment with summary includes summary', () => {
-    const segments: ParsedSegment[] = [{ type: 'image', summary: '一只猫' }]
+  test('image segment with mediaDescription includes derived text', () => {
+    const segments: ParsedSegment[] = [{ type: 'image', mediaDescription: { summary: '一只猫' } }]
     assert.equal(segmentsToPlainText(segments), '[图片: 一只猫]')
   })
 
@@ -24,8 +24,8 @@ describe('segmentsToPlainText', () => {
     assert.equal(segmentsToPlainText(segments), '[视频]')
   })
 
-  test('video segment with description includes it', () => {
-    const segments: ParsedSegment[] = [{ type: 'video', description: '搞笑片段' }]
+  test('video segment with mediaDescription includes it', () => {
+    const segments: ParsedSegment[] = [{ type: 'video', mediaDescription: { description: '搞笑片段' } }]
     assert.equal(segmentsToPlainText(segments), '[视频: 搞笑片段]')
   })
 
@@ -34,8 +34,8 @@ describe('segmentsToPlainText', () => {
     assert.equal(segmentsToPlainText(segments), '[语音]')
   })
 
-  test('record segment with description includes it', () => {
-    const segments: ParsedSegment[] = [{ type: 'record', description: '语音内容' }]
+  test('record segment with mediaDescription includes it', () => {
+    const segments: ParsedSegment[] = [{ type: 'record', mediaDescription: { transcription: '语音内容' } }]
     assert.equal(segmentsToPlainText(segments), '[语音: 语音内容]')
   })
 

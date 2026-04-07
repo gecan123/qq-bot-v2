@@ -35,7 +35,7 @@ function parseSegment(msg: ReceiveSegment): ParsedSegment | undefined {
         url: data.url,
         fileSize: data.file_size,
         fileName: data.file,
-        summary: data.summary,
+        mediaDescription: data.summary ? { summary: data.summary } : undefined,
         subType: data.sub_type,
       }
     }

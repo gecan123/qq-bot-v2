@@ -64,8 +64,8 @@ describe('refreshResolvedTextForMedia', () => {
       },
       resolve: async (message) => {
         return message.id === 1
-          ? [{ type: 'image', referenceId: '42', summary: '一只猫' }]
-          : [{ type: 'image', referenceId: '42', summary: '不应出现' }]
+          ? [{ type: 'image', referenceId: '42', mediaDescription: { summary: '一只猫' } }]
+          : [{ type: 'image', referenceId: '42', mediaDescription: { summary: '不应出现' } }]
       },
       updateMessage: async (messageId, resolvedText) => {
         updates.push({ id: messageId, resolvedText })

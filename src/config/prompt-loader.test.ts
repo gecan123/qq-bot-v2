@@ -51,5 +51,15 @@ describe('media prompts', () => {
     assert.match(prompt, /上下文/)
     assert.match(prompt, /replyText/)
     assert.match(prompt, /confidence/)
+    assert.match(prompt, /中国人|群友/)
+    assert.match(prompt, /北京时间|Asia\/Shanghai/)
+    assert.match(prompt, /UTC/)
+  })
+
+  test('memory system prompt includes China locale and Beijing time guidance', () => {
+    const prompt = loadPrompt('./prompts/memory-system.md')
+    assert.match(prompt, /中国人|群成员/)
+    assert.match(prompt, /北京时间|Asia\/Shanghai/)
+    assert.match(prompt, /UTC/)
   })
 })

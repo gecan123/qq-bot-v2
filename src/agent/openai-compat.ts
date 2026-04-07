@@ -112,14 +112,17 @@ export function createOpenAIChatFn(
 
     const message = choice.message
     const responseModel = response.model
+    const messageContent = typeof message.content === 'string' ? message.content.trim() : undefined
 
     if (message.tool_calls && message.tool_calls.length > 0) {
       const calls = parseToolCalls(message.tool_calls)
       log.debug({ calls: calls.map((call) => call.name) }, 'agent_tool_calls')
-      return { type: 'tool_calls', calls, model: responseModel }
+      return messageContent
+        ? { type: 'tool_calls', calls, model: responseModel, content: messageContent }
+        : { type: 'tool_calls', calls, model: responseModel }
     }
 
-    const content = message.content?.trim()
+    const content = messageContent
     if (!content) return { type: 'empty' }
 
     return { type: 'text', content, model: responseModel }

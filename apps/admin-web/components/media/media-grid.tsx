@@ -2,7 +2,16 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, FileImage, FileVideo, FileAudio, File, RefreshCw, CheckCircle } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  FileImage,
+  FileVideo,
+  FileAudio,
+  File,
+  RefreshCw,
+  CheckCircle,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { MediaMeta } from "@/lib/queries";
 
@@ -18,6 +27,15 @@ function MediaTypeIcon({ contentType }: { contentType: string | null }) {
   if (contentType?.startsWith("video/")) return <FileVideo className="h-5 w-5 text-purple-500" />;
   if (contentType?.startsWith("audio/")) return <FileAudio className="h-5 w-5 text-green-500" />;
   return <File className="h-5 w-5 text-slate-400" />;
+}
+
+function formatCreatedAt(createdAt: Date): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(createdAt));
 }
 
 function ReanalyzeButton({ mediaId, onDone }: { mediaId: number; onDone: () => void }) {
@@ -55,51 +73,82 @@ function ReanalyzeButton({ mediaId, onDone }: { mediaId: number; onDone: () => v
 function MediaTile({ item }: { item: MediaMeta }) {
   const isImage = item.contentType?.startsWith("image/");
   const [reanalyzed, setReanalyzed] = useState(false);
+  const hasDescription = Boolean(item.description || reanalyzed);
+  const descriptionText = reanalyzed
+    ? item.description ?? "媒体描述已更新，刷新后可看到最新结果。"
+    : item.description ?? "暂无媒体描述";
 
   return (
     <a
       href={`/api/media/${item.mediaId}`}
       target="_blank"
       rel="noopener noreferrer"
-      className="group relative aspect-square overflow-hidden rounded-lg bg-slate-100 border border-slate-200 hover:border-slate-300 hover:shadow-sm transition-all duration-150 cursor-pointer block"
+      className="group flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-lg hover:shadow-slate-200/70"
     >
-      {isImage ? (
-        <>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={`/api/media/${item.mediaId}`}
-            alt={item.fileName ?? `media-${item.mediaId}`}
-            className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
-            loading="lazy"
-          />
-          <div className="absolute inset-0 bg-slate-900/50 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex flex-col justify-end p-2">
-            <div className="flex items-end justify-between">
-              <div className="flex-1 min-w-0">
-                <p className="text-xs text-white truncate font-mono">{item.fileName ?? `#${item.mediaId}`}</p>
-                {item.fileSize && (
-                  <p className="text-xs text-slate-300">{formatBytes(item.fileSize)}</p>
-                )}
-                {(item.description || reanalyzed) && (
-                  <p className="text-xs text-green-300 truncate mt-0.5">✓ 已解析</p>
-                )}
-              </div>
-              <ReanalyzeButton mediaId={item.mediaId} onDone={() => setReanalyzed(true)} />
+      <div className="relative aspect-square overflow-hidden bg-slate-100">
+        {isImage ? (
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={`/api/media/${item.mediaId}`}
+              alt={item.fileName ?? `media-${item.mediaId}`}
+              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+              loading="lazy"
+            />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-slate-950/45 via-slate-950/10 to-transparent" />
+          </>
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-3 bg-slate-50 p-4 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+              <MediaTypeIcon contentType={item.contentType} />
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
+                {item.mediaType ?? "FILE"}
+              </p>
+              <p className="text-sm text-slate-500">
+                无缩略图预览
+              </p>
             </div>
           </div>
-        </>
-      ) : (
-        <div className="flex h-full flex-col items-center justify-center gap-2 p-3">
-          <MediaTypeIcon contentType={item.contentType} />
-          <p className="text-xs text-slate-500 text-center truncate w-full">{item.fileName ?? `#${item.mediaId}`}</p>
-          {item.fileSize && (
-            <span className="text-xs text-slate-400">{formatBytes(item.fileSize)}</span>
-          )}
-          {(item.description || reanalyzed) && (
-            <span className="text-xs text-green-500">✓ 已解析</span>
-          )}
+        )}
+        <div className="absolute right-2 top-2">
           <ReanalyzeButton mediaId={item.mediaId} onDone={() => setReanalyzed(true)} />
         </div>
-      )}
+      </div>
+      <div className="flex flex-1 flex-col gap-3 p-3">
+        <div className="space-y-1.5">
+          <p className="truncate text-sm font-medium text-slate-900">
+            {item.fileName ?? `#${item.mediaId}`}
+          </p>
+          <p
+            className={`text-xs leading-5 ${
+              hasDescription ? "text-slate-600" : "text-slate-400"
+            } line-clamp-3 min-h-[3.75rem]`}
+            title={item.description ?? undefined}
+          >
+            {descriptionText}
+          </p>
+        </div>
+        <div className="mt-auto flex items-center justify-between gap-2 text-[11px] text-slate-400">
+          <span className="truncate">
+            {item.fileSize ? formatBytes(item.fileSize) : item.mediaType ?? "未知类型"}
+          </span>
+          <span className="shrink-0">{formatCreatedAt(item.createdAt)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
+          <span
+            className={`inline-flex items-center rounded-full px-2 py-1 text-[11px] font-medium ${
+              hasDescription
+                ? "bg-emerald-50 text-emerald-700"
+                : "bg-slate-100 text-slate-500"
+            }`}
+          >
+            {hasDescription ? "已解析描述" : "待补充描述"}
+          </span>
+          <span className="text-[11px] text-slate-400">#{item.mediaId}</span>
+        </div>
+      </div>
     </a>
   );
 }
@@ -171,7 +220,7 @@ export function MediaGrid({ items, total, page, pageSize }: MediaGridProps) {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
         {items.map((item) => (
           <MediaTile key={item.mediaId} item={item} />
         ))}

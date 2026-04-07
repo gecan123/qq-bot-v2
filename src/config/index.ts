@@ -36,6 +36,7 @@ export const config = {
         baseUrl: process.env.LLM_DESCRIBE_IMAGE_BASE_URL,
         apiKey: process.env.LLM_DESCRIBE_IMAGE_API_KEY,
         model: process.env.LLM_DESCRIBE_IMAGE_MODEL,
+        streamMode: process.env.LLM_DESCRIBE_IMAGE_STREAM_MODE === 'fallback' ? 'fallback' : 'off',
       },
       describeVideo: {
         baseUrl: process.env.LLM_DESCRIBE_VIDEO_BASE_URL,

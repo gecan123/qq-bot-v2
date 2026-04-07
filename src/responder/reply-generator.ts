@@ -6,6 +6,7 @@ import { getAgentProfile } from '../config/agent-profiles.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import { getCurrentTokenUsageTracker, runWithTokenUsageTracking } from '../llm/token-usage.js'
 import { log } from '../logger.js'
+import type { AgentMessage } from '../agent/types.js'
 import type { IncomingMessage } from './pipeline.js'
 import { buildContext, extractResolvedTriggerText } from './context-builder.js'
 import { logMentionReplyTokenUsage } from './reply-token-usage.js'
@@ -25,11 +26,20 @@ async function agentReply(
   maxAnswerChars?: number,
 ): Promise<string | null> {
   const context = await buildContext(msg, contextLimit)
-
   const triggerText = await extractResolvedTriggerText(msg.groupId, msg.messageId, msg.segments)
-  const userMessage = triggerText
-    ? `${triggerText}\n\n[群聊背景]\n${context}`
-    : `(用户@了你)\n\n[群聊背景]\n${context}`
+
+  const contextContent = context
+    ? `[群聊背景]\n${context}`
+    : '[群聊背景]\n（暂无近期消息记录）'
+  const triggerContent = triggerText
+    ? `请根据你的人设回复这条消息：${triggerText}`
+    : '（用户@了你，请根据你的人设回复）'
+
+  const initialHistory: AgentMessage[] = [
+    { role: 'user', content: contextContent },
+    { role: 'model', content: '好的。' },
+    { role: 'user', content: triggerContent },
+  ]
 
   const { declarations, executors } = createAgentTools(msg.groupId)
   const chatFn = createOpenAIChatFn(_agentClient, _agentModel, { reasoningEffort: 'medium' })
@@ -54,7 +64,7 @@ async function agentReply(
 
   const result = await runAgentLoop({
     systemPrompt,
-    userMessage,
+    initialHistory,
     chatFn,
     tools: declarations,
     executors,

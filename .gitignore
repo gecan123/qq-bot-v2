@@ -16,3 +16,4 @@ agent-config.json
 *.tsbuildinfo
 
 .next/
+.superpowers/

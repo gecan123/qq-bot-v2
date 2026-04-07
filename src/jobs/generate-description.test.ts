@@ -17,6 +17,110 @@ afterEach(() => {
 })
 
 describe('generateDescriptionForMedia', () => {
+  test('persists raw structured image description alongside flattened text', async () => {
+    const updates: any[] = []
+
+    prisma.media.findUnique = (async () => ({
+      data: new Uint8Array(Buffer.from('image-bytes')),
+      contentType: 'image/jpeg',
+      mediaType: 'image',
+      description: null,
+      fileName: 'frame.jpg',
+    })) as unknown as typeof prisma.media.findUnique
+
+    prisma.media.update = (async (args: any) => {
+      updates.push(args)
+      return {} as any
+    }) as typeof prisma.media.update
+
+    setLlmProvider({
+      describeImage: async () => '平铺描述',
+      describeImageDetailed: async () => ({
+        description: '平铺描述',
+        raw: {
+          detectedType: 'photo',
+          summary: '摘要',
+          description: '详细描述',
+          extractedText: ['文本1'],
+        },
+      }),
+      describeVideo: async () => '',
+      describePdf: async () => '',
+      generateGroupMemorySummary: async () => ({
+        summary: '',
+        topics: [],
+        activePatterns: [],
+        styleTags: [],
+      }),
+      generateUserMemoryProfile: async () => ({
+        profile: '',
+        traits: [],
+        interests: [],
+        speakingStyle: [],
+        examples: [],
+      }),
+      transcribeAudio: async () => '',
+    })
+
+    await generateDescriptionForMedia(1)
+
+    assert.equal(updates.length, 1)
+    assert.equal(updates[0].data.description, '平铺描述')
+    assert.deepEqual(updates[0].data.descriptionRaw, {
+      detectedType: 'photo',
+      summary: '摘要',
+      description: '详细描述',
+      extractedText: ['文本1'],
+    })
+  })
+
+  test('does not persist blank image descriptions', async () => {
+    const updates: any[] = []
+    const enqueued: Array<{ type: string; data: unknown; options?: { priority?: string } }> = []
+
+    prisma.media.findUnique = (async () => ({
+      data: new Uint8Array(Buffer.from('image-bytes')),
+      contentType: 'image/jpeg',
+      mediaType: 'image',
+      description: null,
+      fileName: 'frame.jpg',
+    })) as unknown as typeof prisma.media.findUnique
+
+    prisma.media.update = (async (args: any) => {
+      updates.push(args)
+      return {} as any
+    }) as typeof prisma.media.update
+
+    jobQueue.enqueue = ((type: string, data: unknown, options?: { priority?: string }) => {
+      enqueued.push({ type, data, options })
+    }) as typeof jobQueue.enqueue
+
+    setLlmProvider({
+      describeImage: async () => '   ',
+      describeVideo: async () => '',
+      describePdf: async () => '',
+      generateGroupMemorySummary: async () => ({
+        summary: '',
+        topics: [],
+        activePatterns: [],
+        styleTags: [],
+      }),
+      generateUserMemoryProfile: async () => ({
+        profile: '',
+        traits: [],
+        interests: [],
+        speakingStyle: [],
+        examples: [],
+      }),
+      transcribeAudio: async () => '',
+    })
+
+    await generateDescriptionForMedia(1)
+
+    assert.equal(updates.length, 0)
+    assert.deepEqual(enqueued, [])
+  })
+
   test('uses describeVideo for video media', async () => {
     const updates: any[] = []
     let received: any

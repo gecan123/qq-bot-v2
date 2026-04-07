@@ -1,4 +1,5 @@
 import { prisma } from '../database/client.js'
+import { Prisma } from '../generated/prisma/client.js'
 import { getLlmProvider } from '../llm/provider.js'
 import { log } from '../logger.js'
 import { jobQueue } from '../queue/runtime.js'
@@ -12,6 +13,17 @@ export interface GenerateDescriptionData {
 const VISION_MEDIA_TYPES = new Set(['image', 'sticker'])
 
 const inFlight = new Map<number, Promise<void>>()
+
+function normalizeDescription(description: string): string | null {
+  const trimmed = description.trim()
+  return trimmed ? trimmed : null
+}
+
+function toDescriptionRawInput(raw: unknown): Prisma.InputJsonValue | Prisma.NullableJsonNullValueInput | undefined {
+  if (raw === undefined) return undefined
+  if (raw === null) return Prisma.JsonNull
+  return JSON.parse(JSON.stringify(raw)) as Prisma.InputJsonValue
+}
 
 function isPdfFile(contentType: string | null, fileName: string | null): boolean {
   if (contentType === 'application/pdf') return true
@@ -53,13 +65,30 @@ async function doGenerate(mediaId: number): Promise<void> {
       return
     }
 
-    const description = await provider.describeImage({
-      image: buffer,
-      contentType: media.contentType ?? 'application/octet-stream',
-      mediaType,
-    })
+    const result = provider.describeImageDetailed
+      ? await provider.describeImageDetailed({
+          image: buffer,
+          contentType: media.contentType ?? 'application/octet-stream',
+          mediaType,
+        })
+      : {
+          description: await provider.describeImage({
+            image: buffer,
+            contentType: media.contentType ?? 'application/octet-stream',
+            mediaType,
+          }),
+        }
+    const description = normalizeDescription(result.description)
 
-    await prisma.media.update({ where: { mediaId }, data: { description } })
+    if (!description) {
+      log.warn({ mediaId, mediaType }, '媒体描述结果为空，保留待解析状态')
+      return
+    }
+
+    await prisma.media.update({
+      where: { mediaId },
+      data: { description, descriptionRaw: toDescriptionRawInput(result.raw) },
+    })
     jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
     log.info({ mediaId }, '媒体描述已生成')
     return
@@ -77,13 +106,30 @@ async function doGenerate(mediaId: number): Promise<void> {
       return
     }
 
-    const description = await provider.describeVideo({
-      video: buffer,
-      contentType: media.contentType ?? 'video/mp4',
-      fileName: media.fileName ?? undefined,
-    })
+    const result = provider.describeVideoDetailed
+      ? await provider.describeVideoDetailed({
+          video: buffer,
+          contentType: media.contentType ?? 'video/mp4',
+          fileName: media.fileName ?? undefined,
+        })
+      : {
+          description: await provider.describeVideo({
+            video: buffer,
+            contentType: media.contentType ?? 'video/mp4',
+            fileName: media.fileName ?? undefined,
+          }),
+        }
+    const description = normalizeDescription(result.description)
 
-    await prisma.media.update({ where: { mediaId }, data: { description } })
+    if (!description) {
+      log.warn({ mediaId, mediaType }, '媒体描述结果为空，保留待解析状态')
+      return
+    }
+
+    await prisma.media.update({
+      where: { mediaId },
+      data: { description, descriptionRaw: toDescriptionRawInput(result.raw) },
+    })
     jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
     log.info({ mediaId }, '视频描述已生成')
     return
@@ -101,12 +147,28 @@ async function doGenerate(mediaId: number): Promise<void> {
       return
     }
 
-    const description = await provider.transcribeAudio({
-      audio: buffer,
-      contentType: media.contentType ?? 'audio/mp4',
-    })
+    const result = provider.transcribeAudioDetailed
+      ? await provider.transcribeAudioDetailed({
+          audio: buffer,
+          contentType: media.contentType ?? 'audio/mp4',
+        })
+      : {
+          description: await provider.transcribeAudio({
+            audio: buffer,
+            contentType: media.contentType ?? 'audio/mp4',
+          }),
+        }
+    const description = normalizeDescription(result.description)
 
-    await prisma.media.update({ where: { mediaId }, data: { description } })
+    if (!description) {
+      log.warn({ mediaId, mediaType }, '媒体描述结果为空，保留待解析状态')
+      return
+    }
+
+    await prisma.media.update({
+      where: { mediaId },
+      data: { description, descriptionRaw: toDescriptionRawInput(result.raw) },
+    })
     jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
     log.info({ mediaId }, '语音转写已完成')
     return
@@ -129,13 +191,30 @@ async function doGenerate(mediaId: number): Promise<void> {
       return
     }
 
-    const description = await provider.describePdf({
-      file: buffer,
-      contentType: media.contentType ?? 'application/pdf',
-      fileName: media.fileName ?? undefined,
-    })
+    const result = provider.describePdfDetailed
+      ? await provider.describePdfDetailed({
+          file: buffer,
+          contentType: media.contentType ?? 'application/pdf',
+          fileName: media.fileName ?? undefined,
+        })
+      : {
+          description: await provider.describePdf({
+            file: buffer,
+            contentType: media.contentType ?? 'application/pdf',
+            fileName: media.fileName ?? undefined,
+          }),
+        }
+    const description = normalizeDescription(result.description)
 
-    await prisma.media.update({ where: { mediaId }, data: { description } })
+    if (!description) {
+      log.warn({ mediaId, mediaType }, '媒体描述结果为空，保留待解析状态')
+      return
+    }
+
+    await prisma.media.update({
+      where: { mediaId },
+      data: { description, descriptionRaw: toDescriptionRawInput(result.raw) },
+    })
     jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
     log.info({ mediaId }, 'PDF 描述已生成')
     return

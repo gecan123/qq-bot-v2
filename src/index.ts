@@ -30,14 +30,18 @@ async function main() {
   log.info('Database connected')
 
   const { baseUrl, apiKey, model, scenarios } = config.llm
-  const defaultProvider = new OpenAIProvider(baseUrl, apiKey, model)
+  const defaultProvider = new OpenAIProvider(baseUrl, apiKey, model, {
+    imageStreamMode: scenarios.describeImage.streamMode,
+  })
 
   const routes = Object.fromEntries(
     Object.entries(scenarios)
       .filter(([, s]) => s.baseUrl || s.apiKey || s.model)
       .map(([key, s]) => [
         key,
-        new OpenAIProvider(s.baseUrl ?? baseUrl, s.apiKey ?? apiKey, s.model ?? model),
+        new OpenAIProvider(s.baseUrl ?? baseUrl, s.apiKey ?? apiKey, s.model ?? model, {
+          imageStreamMode: key === 'describeImage' ? scenarios.describeImage.streamMode : undefined,
+        }),
       ]),
   ) as ConstructorParameters<typeof RoutingProvider>[1]
 

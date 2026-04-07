@@ -2,6 +2,7 @@ import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { runAgentLoop } from './loop.js'
 import type { AgentTurnResult } from './types.js'
+import { createTraceRecorder } from './trace.js'
 
 function makeChatFn(responses: AgentTurnResult[]) {
   let callCount = 0
@@ -261,6 +262,38 @@ describe('runAgentLoop', () => {
     }
   })
 
+  test('uses initialHistory as starting history when provided', async () => {
+    const receivedHistories: unknown[][] = []
+    const chatFn = async ({ history }: { history: unknown[] }) => {
+      receivedHistories.push([...history])
+      return {
+        type: 'tool_calls' as const,
+        calls: [{ id: 'call_1', name: 'final_answer', args: { replyText: '回复' } }],
+      }
+    }
+
+    await runAgentLoop({
+      systemPrompt: 'test',
+      initialHistory: [
+        { role: 'user', content: '[群聊背景]\n消息记录' },
+        { role: 'model', content: '好的。' },
+        { role: 'user', content: '请回复这条消息：你好' },
+      ],
+      chatFn,
+      tools: noopTools.declarations,
+      executors: noopTools.executors,
+    })
+
+    assert.equal(receivedHistories.length, 1)
+    const firstHistory = receivedHistories[0] as Array<{ role: string; content: string }>
+    assert.equal(firstHistory.length, 3)
+    assert.equal(firstHistory[0]?.role, 'user')
+    assert.match(firstHistory[0]?.content ?? '', /群聊背景/)
+    assert.equal(firstHistory[1]?.role, 'model')
+    assert.equal(firstHistory[2]?.role, 'user')
+    assert.match(firstHistory[2]?.content ?? '', /请回复/)
+  })
+
   test('returns fallback when adapter throws', async () => {
     const chatFn = async () => {
       throw new Error('LLM error')
@@ -275,5 +308,44 @@ describe('runAgentLoop', () => {
     })
 
     assert.equal(result.state, 'fallback')
+  })
+
+  test('emits trace events when recorder is provided', async () => {
+    const chatFn = makeChatFn([
+      {
+        type: 'tool_calls',
+        content: '先查一下数据库',
+        calls: [{ id: 'call_1', name: 'test_tool', args: { keyword: 'foo' } }],
+      },
+      {
+        type: 'tool_calls',
+        calls: [{ id: 'call_2', name: 'final_answer', args: { replyText: '完成' } }],
+      },
+    ])
+    const traceRecorder = createTraceRecorder({
+      runId: 'run_trace',
+      groupId: 1,
+      senderName: 'tester',
+      userMessage: 'hi',
+    })
+
+    const result = await runAgentLoop({
+      systemPrompt: 'test',
+      userMessage: '问题',
+      chatFn,
+      tools: noopTools.declarations,
+      executors: {
+        test_tool: async () => '工具结果',
+      },
+      traceRecorder,
+    })
+
+    assert.equal(result.state, 'final')
+    assert.ok(result.trace)
+    assert.equal(result.trace?.terminationReason, 'final_answer')
+    assert.ok(result.trace?.events.some((event) => event.phase === 'loop' && event.type === 'loop_started'))
+    assert.ok(result.trace?.events.some((event) => event.type === 'think' && event.summary.includes('先查一下数据库')))
+    assert.ok(result.trace?.events.some((event) => event.type === 'tool_call'))
+    assert.ok(result.trace?.events.some((event) => event.phase === 'finalize'))
   })
 })

@@ -47,6 +47,223 @@ describe('OpenAIProvider media file inputs', () => {
     assert.match(result, /图中文字：小林：周六晚上七点吃火锅？；阿杰：我可以，静安寺附近都行；Mia：那我来订位；这条不会出现在最终文本里/)
   })
 
+  test('describeImage parses fenced structured json responses', async () => {
+    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')
+    ;(provider as any).client = {
+      chat: {
+        completions: {
+          create: async () => ({
+            choices: [{
+              message: {
+                content: [
+                  '```json',
+                  JSON.stringify({
+                    detectedType: 'news_screenshot',
+                    summary: '新闻截图，内容是一则遗产分配报道。',
+                    description: '截图展示一篇关于遗产分配的新闻文章页面。',
+                    extractedText: ['女首富陈丽华530亿遗产分配'],
+                  }, null, 2),
+                  '```',
+                ].join('\n'),
+              },
+            }],
+          }),
+        },
+      },
+    }
+
+    const result = await provider.describeImage({
+      image: Buffer.from('image-bytes'),
+      contentType: 'image/jpeg',
+    })
+
+    assert.match(result, /新闻截图，内容是一则遗产分配报道/)
+    assert.match(result, /截图展示一篇关于遗产分配的新闻文章页面/)
+    assert.match(result, /图中文字：女首富陈丽华530亿遗产分配/)
+  })
+
+  test('describeImage repairs malformed fenced structured json responses', async () => {
+    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')
+    ;(provider as any).client = {
+      chat: {
+        completions: {
+          create: async () => ({
+            choices: [{
+              message: {
+                content: [
+                  '```json',
+                  '{',
+                  '  "detectedType": "ui_screenshot",',
+                  '  "summary": "商场内一家娱乐游戏厅的店铺外观，以霓虹灯装饰和中文招牌为主。",',
+                  '  "description": "这是一张在室内商场拍摄的照片，主招牌为黄色霓虹字"极喜特乐"，下方有"WELCOM"等英文标识。",',
+                  '  "extractedText": ["极喜特乐", "WELCOM"]',
+                  '}',
+                  '```',
+                ].join('\n'),
+              },
+            }],
+          }),
+        },
+      },
+    }
+
+    const result = await provider.describeImage({
+      image: Buffer.from('image-bytes'),
+      contentType: 'image/jpeg',
+    })
+
+    assert.match(result, /商场内一家娱乐游戏厅的店铺外观/)
+    assert.match(result, /主招牌为黄色霓虹字"极喜特乐"/)
+    assert.match(result, /图中文字：极喜特乐；WELCOM/)
+    assert.doesNotMatch(result, /^```/)
+  })
+
+  test('describeImage falls back to streaming when stream mode is fallback and non-stream content is empty', async () => {
+    const calls: any[] = []
+    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.4-mini', {
+      imageStreamMode: 'fallback',
+    })
+    ;(provider as any).client = {
+      chat: {
+        completions: {
+          create: async (request: any) => {
+            calls.push(request)
+            if (!request.stream) {
+              return {
+                choices: [{
+                  message: {
+                    content: null,
+                  },
+                }],
+                usage: {
+                  prompt_tokens: 10,
+                  completion_tokens: 0,
+                  total_tokens: 10,
+                },
+              }
+            }
+
+            async function* chunks() {
+              yield {
+                choices: [{
+                  delta: {
+                    content: '```json\n{\n  "detectedType": "sticker",\n  "summary": "一张害羞表情贴纸。",'
+                  },
+                }],
+              }
+              yield {
+                choices: [{
+                  delta: {
+                    content: '\n  "description": "一个动漫角色抱着枕头，神情害羞。",\n  "extractedText": []\n}\n```'
+                  },
+                }],
+              }
+            }
+
+            return chunks()
+          },
+        },
+      },
+    }
+
+    const result = await provider.describeImage({
+      image: Buffer.from('image-bytes'),
+      contentType: 'image/gif',
+      mediaType: 'sticker',
+    })
+
+    assert.equal(calls.length, 2)
+    assert.equal(calls[0].stream, undefined)
+    assert.equal(calls[1].stream, true)
+    assert.match(result, /一张害羞表情贴纸/)
+    assert.match(result, /一个动漫角色抱着枕头，神情害羞/)
+  })
+
+  test('describeImage does not fall back to streaming when stream mode is off', async () => {
+    const calls: any[] = []
+    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.4-mini', {
+      imageStreamMode: 'off',
+    })
+    ;(provider as any).client = {
+      chat: {
+        completions: {
+          create: async (request: any) => {
+            calls.push(request)
+            return {
+              choices: [{
+                message: {
+                  content: null,
+                },
+              }],
+              usage: {
+                prompt_tokens: 10,
+                completion_tokens: 0,
+                total_tokens: 10,
+              },
+            }
+          },
+        },
+      },
+    }
+
+    const result = await provider.describeImage({
+      image: Buffer.from('image-bytes'),
+      contentType: 'image/gif',
+      mediaType: 'sticker',
+    })
+
+    assert.equal(calls.length, 1)
+    assert.equal(result, '')
+  })
+
+  test('describeImage preprocesses oversized images before request', async () => {
+    const calls: any[] = []
+    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.4-mini')
+    ;(provider as any).prepareImageForRequest = async () => ({
+      image: Buffer.from('compressed-image'),
+      contentType: 'image/jpeg',
+    })
+    ;(provider as any).client = {
+      chat: {
+        completions: {
+          create: async (request: any) => {
+            calls.push(request)
+            return {
+              choices: [{
+                message: {
+                  content: JSON.stringify({
+                    detectedType: 'photo',
+                    summary: '压缩后的图片请求。',
+                    description: '请求已使用压缩后的 jpeg 图像。',
+                    extractedText: [],
+                  }),
+                },
+              }],
+              usage: {
+                prompt_tokens: 10,
+                completion_tokens: 10,
+                total_tokens: 20,
+              },
+            }
+          },
+        },
+      },
+    }
+
+    const result = await provider.describeImage({
+      image: Buffer.alloc(6 * 1024 * 1024, 1),
+      contentType: 'image/png',
+    })
+
+    assert.match(result, /压缩后的图片请求/)
+    assert.equal(calls.length, 1)
+    assert.match(calls[0].messages[1].content[1].image_url.url, /^data:image\/jpeg;base64,/)
+    assert.equal(
+      calls[0].messages[1].content[1].image_url.url,
+      `data:image/jpeg;base64,${Buffer.from('compressed-image').toString('base64')}`,
+    )
+  })
+
   test('describeVideo sends video as file input', async () => {
     const calls: any[] = []
     const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')

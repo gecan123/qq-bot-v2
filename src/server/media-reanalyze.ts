@@ -1,4 +1,5 @@
 import { prisma } from '../database/client.js'
+import { Prisma } from '../generated/prisma/client.js'
 import { generateDescriptionForMedia } from '../jobs/generate-description.js'
 import type { RouteHandler } from './http.js'
 
@@ -20,14 +21,14 @@ export const handleMediaReanalyze: RouteHandler = async (params) => {
   // Clear existing description so generateDescriptionForMedia won't skip
   await prisma.media.update({
     where: { mediaId },
-    data: { description: null },
+    data: { description: null, descriptionRaw: Prisma.DbNull },
   })
 
   await generateDescriptionForMedia(mediaId)
 
   const updated = await prisma.media.findUnique({
     where: { mediaId },
-    select: { description: true },
+    select: { description: true, descriptionRaw: true },
   })
 
   return {
@@ -35,5 +36,6 @@ export const handleMediaReanalyze: RouteHandler = async (params) => {
     mediaId,
     mediaType: media.mediaType,
     description: updated?.description ?? null,
+    descriptionRaw: updated?.descriptionRaw ?? null,
   }
 }

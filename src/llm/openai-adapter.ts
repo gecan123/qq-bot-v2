@@ -1,8 +1,10 @@
 import OpenAI from 'openai'
 import { jsonrepair } from 'jsonrepair'
+import sharp from 'sharp'
 import type {
     GroupMemorySummaryResult,
     LlmProvider,
+    MediaDescriptionResult,
     UserMemoryProfileResult,
 } from './types.js'
 import { loadPrompt } from '../config/prompt-loader.js'
@@ -77,21 +79,53 @@ const VIDEO_DESCRIPTION_RESPONSE_FORMAT = {
     },
 } as const
 
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024
+const IMAGE_COMPRESSION_QUALITIES = [85, 70, 55, 40] as const
+
+function stripJsonFence(content: string): string {
+    return content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+}
+
+function parseStructuredContent<T>(content: string): T {
+    const stripped = stripJsonFence(content)
+    try {
+        return JSON.parse(stripped) as T
+    } catch {
+        return JSON.parse(jsonrepair(stripped)) as T
+    }
+}
+
+type ImageStreamMode = 'off' | 'fallback'
+
+interface OpenAIProviderOptions {
+    imageStreamMode?: ImageStreamMode
+}
+
 export class OpenAIProvider implements LlmProvider {
     private client: OpenAI
     private model: string
+    private imageStreamMode: ImageStreamMode
     private static readonly MAX_VIDEO_BYTES = 5 * 1024 * 1024
 
-    constructor(baseURL: string, apiKey: string, model: string) {
+    constructor(baseURL: string, apiKey: string, model: string, options: OpenAIProviderOptions = {}) {
         this.client = new OpenAI({ baseURL, apiKey })
         this.model = model
+        this.imageStreamMode = options.imageStreamMode ?? 'off'
     }
 
     async describeImage(params: { image: Buffer; contentType: string; mediaType?: string }): Promise<string> {
-        const base64 = params.image.toString('base64')
+        const result = await this.describeImageDetailed(params)
+        return result.description
+    }
+
+    async describeImageDetailed(
+        params: { image: Buffer; contentType: string; mediaType?: string },
+    ): Promise<MediaDescriptionResult> {
+        const prepared = await this.prepareImageForRequest(params.image, params.contentType)
+        const base64 = prepared.image.toString('base64')
         const mediaLabel = params.mediaType === 'sticker' ? '表情包/贴纸' : params.mediaType === 'video' ? '视频截图' : '图片'
 
-        const response = await this.client.chat.completions.create({
+        const request = {
             model: this.model,
             temperature: 0.3,
             response_format: IMAGE_DESCRIPTION_RESPONSE_FORMAT as any,
@@ -104,18 +138,32 @@ export class OpenAIProvider implements LlmProvider {
                     role: 'user',
                     content: [
                         { type: 'text', text: `请描述这张${mediaLabel}：` },
-                        { type: 'image_url', image_url: { url: `data:${params.contentType};base64,${base64}` } },
+                        { type: 'image_url', image_url: { url: `data:${prepared.contentType};base64,${base64}` } },
                     ],
                 },
             ],
-        })
-        recordCurrentTokenUsage('describeImage', toTokenUsage(response.usage))
-
-        const content = response.choices[0]?.message.content?.trim() ?? ''
-        return this.formatStructuredImageDescription(content)
+        }
+        const content = await this.createTextCompletionWithStreamFallback(
+            request,
+            'describeImage',
+            this.imageStreamMode === 'fallback',
+        )
+        return {
+            description: this.formatStructuredImageDescription(content),
+            raw: this.tryParseStructuredContent(content),
+        }
     }
 
     async describeVideo(params: { video: Buffer; contentType: string; fileName?: string }): Promise<string> {
+        const result = await this.describeVideoDetailed(params)
+        return result.description
+    }
+
+    async describeVideoDetailed(params: {
+        video: Buffer
+        contentType: string
+        fileName?: string
+    }): Promise<MediaDescriptionResult> {
         const video = params.video.length > OpenAIProvider.MAX_VIDEO_BYTES
             ? params.video.subarray(0, OpenAIProvider.MAX_VIDEO_BYTES)
             : params.video
@@ -126,11 +174,19 @@ export class OpenAIProvider implements LlmProvider {
             file: video,
             fileName: params.fileName ?? 'video.mp4',
             responseFormat: VIDEO_DESCRIPTION_RESPONSE_FORMAT as any,
-            formatter: (content) => this.formatStructuredImageDescription(content),
+            formatter: (content) => ({
+                description: this.formatStructuredImageDescription(content),
+                raw: this.tryParseStructuredContent(content),
+            }),
         })
     }
 
     async describePdf(params: { file: Buffer; contentType: string; fileName?: string }): Promise<string> {
+        const result = await this.describePdfDetailed(params)
+        return result.description
+    }
+
+    async describePdfDetailed(params: { file: Buffer; contentType: string; fileName?: string }): Promise<MediaDescriptionResult> {
         return this.describeFileWithPrompt({
             promptPath: './prompts/describe-pdf.md',
             instruction: '请描述这个 PDF 文档的内容：',
@@ -164,6 +220,11 @@ export class OpenAIProvider implements LlmProvider {
     }
 
     async transcribeAudio(params: { audio: Buffer; contentType: string }): Promise<string> {
+        const result = await this.transcribeAudioDetailed(params)
+        return result.description
+    }
+
+    async transcribeAudioDetailed(params: { audio: Buffer; contentType: string }): Promise<MediaDescriptionResult> {
         const base64 = params.audio.toString('base64')
         const ext = (params.contentType.split('/')[1] ?? 'mp3') as 'mp3' | 'wav' | 'ogg' | 'flac' | 'webm' | 'mp4'
 
@@ -181,7 +242,10 @@ export class OpenAIProvider implements LlmProvider {
         recordCurrentTokenUsage('transcribeAudio', toTokenUsage(response.usage))
 
         const content = response.choices[0]?.message.content?.trim() ?? ''
-        return this.formatStructuredAudioTranscription(content)
+        return {
+            description: this.formatStructuredAudioTranscription(content),
+            raw: this.tryParseStructuredContent(content),
+        }
     }
 
     private async describeFileWithPrompt(params: {
@@ -190,8 +254,8 @@ export class OpenAIProvider implements LlmProvider {
         file: Buffer
         fileName: string
         responseFormat?: any
-        formatter?: (content: string) => string
-    }): Promise<string> {
+        formatter?: (content: string) => MediaDescriptionResult
+    }): Promise<MediaDescriptionResult> {
         const response = await this.client.chat.completions.create({
             model: this.model,
             temperature: 0.3,
@@ -222,7 +286,7 @@ export class OpenAIProvider implements LlmProvider {
         )
 
         const content = response.choices[0]?.message.content?.trim() ?? ''
-        return params.formatter ? params.formatter(content) : content
+        return params.formatter ? params.formatter(content) : { description: content }
     }
 
     private async generateStructuredJson<T>(params: {
@@ -243,19 +307,14 @@ export class OpenAIProvider implements LlmProvider {
         recordCurrentTokenUsage(params.operation, toTokenUsage(response.usage))
 
         const raw = response.choices[0]?.message.content?.trim() ?? ''
-        const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
-        try {
-            return JSON.parse(stripped) as T
-        } catch {
-            return JSON.parse(jsonrepair(stripped)) as T
-        }
+        return parseStructuredContent<T>(raw)
     }
 
     private formatStructuredImageDescription(content: string): string {
         if (!content) return ''
 
         try {
-            const parsed = JSON.parse(content) as StructuredImageDescription
+            const parsed = parseStructuredContent<StructuredImageDescription>(content)
             const parts: string[] = []
 
             const summary = parsed.summary?.trim()
@@ -278,10 +337,101 @@ export class OpenAIProvider implements LlmProvider {
         if (!content) return ''
 
         try {
-            const parsed = JSON.parse(content) as StructuredAudioTranscription
+            const parsed = parseStructuredContent<StructuredAudioTranscription>(content)
             return parsed.transcription?.trim() ?? ''
         } catch {
             return content
         }
+    }
+
+    private tryParseStructuredContent(content: string): unknown {
+        if (!content) return undefined
+        try {
+            return parseStructuredContent<unknown>(content)
+        } catch {
+            return undefined
+        }
+    }
+
+    private async createTextCompletionWithStreamFallback(
+        request: any,
+        operation: string,
+        allowStreamingFallback: boolean,
+    ): Promise<string> {
+        const response = await this.client.chat.completions.create(request)
+        const content = response.choices[0]?.message.content?.trim() ?? ''
+        if (content || !allowStreamingFallback) {
+            recordCurrentTokenUsage(operation, toTokenUsage(response.usage))
+            return content
+        }
+
+        const stream = await this.client.chat.completions.create({
+            ...request,
+            stream: true,
+            stream_options: { include_usage: true },
+        } as any) as unknown as AsyncIterable<any>
+
+        let streamedContent = ''
+        let usage: any
+        for await (const chunk of stream) {
+            usage = chunk.usage ?? usage
+            const delta = chunk.choices?.[0]?.delta?.content
+            if (typeof delta === 'string') streamedContent += delta
+        }
+
+        if (usage) {
+            recordCurrentTokenUsage(operation, toTokenUsage(usage))
+        }
+
+        return streamedContent.trim()
+    }
+
+    private async prepareImageForRequest(
+        image: Buffer,
+        contentType: string,
+    ): Promise<{ image: Buffer; contentType: string }> {
+        if (image.length <= MAX_IMAGE_BYTES) {
+            return { image, contentType }
+        }
+
+        let metadata: sharp.Metadata
+        try {
+            metadata = await sharp(image, { animated: false }).metadata()
+        } catch {
+            return { image, contentType }
+        }
+
+        const originalWidth = metadata.width ?? null
+        const resizeWidths = [
+            originalWidth,
+            originalWidth ? Math.max(Math.floor(originalWidth * 0.85), 256) : null,
+            originalWidth ? Math.max(Math.floor(originalWidth * 0.7), 256) : null,
+            originalWidth ? Math.max(Math.floor(originalWidth * 0.55), 256) : null,
+        ]
+
+        for (const width of resizeWidths) {
+            for (const quality of IMAGE_COMPRESSION_QUALITIES) {
+                let pipeline = sharp(image, { animated: false, limitInputPixels: false }).rotate()
+                if (width && originalWidth && width < originalWidth) {
+                    pipeline = pipeline.resize({ width, withoutEnlargement: true })
+                }
+
+                const compressed = await pipeline
+                    .jpeg({
+                        quality,
+                        mozjpeg: true,
+                    })
+                    .toBuffer()
+
+                if (compressed.length <= MAX_IMAGE_BYTES) {
+                    return {
+                        image: compressed,
+                        contentType: 'image/jpeg',
+                    }
+                }
+            }
+        }
+
+        return { image, contentType }
     }
 }

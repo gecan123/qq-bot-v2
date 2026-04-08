@@ -3,6 +3,13 @@ import { describe, test } from 'node:test'
 import { OpenAIProvider } from './openai-adapter.js'
 
 describe('OpenAIProvider media file inputs', () => {
+  test('throws a clear error when baseURL is not an absolute http url', () => {
+    assert.throws(
+      () => new OpenAIProvider('AIzaSy-invalid-key', 'sk-local', 'gpt-5.1'),
+      /Invalid LLM baseURL/,
+    )
+  })
+
   test('describeImage requests structured output and formats moderate rich description text', async () => {
     const calls: any[] = []
     const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')

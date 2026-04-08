@@ -101,6 +101,19 @@ interface OpenAIProviderOptions {
     imageStreamMode?: ImageStreamMode
 }
 
+function assertValidBaseURL(baseURL: string): void {
+    let parsed: URL
+    try {
+        parsed = new URL(baseURL)
+    } catch {
+        throw new Error(`Invalid LLM baseURL: "${baseURL}"`)
+    }
+
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error(`Invalid LLM baseURL: "${baseURL}"`)
+    }
+}
+
 export class OpenAIProvider implements LlmProvider {
     private client: OpenAI
     private model: string
@@ -108,6 +121,7 @@ export class OpenAIProvider implements LlmProvider {
     private static readonly MAX_VIDEO_BYTES = 5 * 1024 * 1024
 
     constructor(baseURL: string, apiKey: string, model: string, options: OpenAIProviderOptions = {}) {
+        assertValidBaseURL(baseURL)
         this.client = new OpenAI({ baseURL, apiKey })
         this.model = model
         this.imageStreamMode = options.imageStreamMode ?? 'off'

@@ -145,11 +145,12 @@ export async function getGroupMemoryCursor(
 
 export interface MediaMeta {
   mediaId: number;
+  dataHash: string | null;
   mediaType: string | null;
   contentType: string | null;
   fileName: string | null;
   fileSize: number | null;
-  description: string | null;
+  descriptionRaw: unknown | null;
   createdAt: Date;
 }
 
@@ -168,11 +169,12 @@ export async function getMediaList(
       take: pageSize,
       select: {
         mediaId: true,
+        dataHash: true,
         mediaType: true,
         contentType: true,
         fileName: true,
         fileSize: true,
-        description: true,
+        descriptionRaw: true,
         createdAt: true,
       },
     }),

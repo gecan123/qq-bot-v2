@@ -86,6 +86,22 @@ function stripJsonFence(content: string): string {
     return content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
 }
 
+class EmptyStructuredResponseError extends Error {
+    rawResponse: unknown
+
+    constructor(operation: string, rawResponse: unknown) {
+        super(`Empty structured response for ${operation}`)
+        this.name = 'EmptyStructuredResponseError'
+        this.rawResponse = rawResponse
+    }
+}
+
+function assertStructuredContentNotEmpty(content: string, operation: string, rawResponse: unknown): void {
+    if (!content.trim()) {
+        throw new EmptyStructuredResponseError(operation, rawResponse)
+    }
+}
+
 function parseStructuredContent<T>(content: string): T {
     const stripped = stripJsonFence(content)
     try {
@@ -95,7 +111,7 @@ function parseStructuredContent<T>(content: string): T {
     }
 }
 
-type ImageStreamMode = 'off' | 'fallback'
+type ImageStreamMode = 'off' | 'fallback' | 'on'
 
 interface OpenAIProviderOptions {
     imageStreamMode?: ImageStreamMode
@@ -160,7 +176,7 @@ export class OpenAIProvider implements LlmProvider {
         const content = await this.createTextCompletionWithStreamFallback(
             request,
             'describeImage',
-            this.imageStreamMode === 'fallback',
+            this.imageStreamMode,
         )
         return {
             description: this.formatStructuredImageDescription(content),
@@ -321,6 +337,7 @@ export class OpenAIProvider implements LlmProvider {
         recordCurrentTokenUsage(params.operation, toTokenUsage(response.usage))
 
         const raw = response.choices[0]?.message.content?.trim() ?? ''
+        assertStructuredContentNotEmpty(raw, params.operation, response)
         return parseStructuredContent<T>(raw)
     }
 
@@ -370,15 +387,24 @@ export class OpenAIProvider implements LlmProvider {
     private async createTextCompletionWithStreamFallback(
         request: any,
         operation: string,
-        allowStreamingFallback: boolean,
+        mode: ImageStreamMode,
     ): Promise<string> {
+        if (mode === 'on') {
+            const streamed = await this.createStreamingTextCompletion(request, operation)
+            return streamed.trim()
+        }
+
         const response = await this.client.chat.completions.create(request)
         const content = response.choices[0]?.message.content?.trim() ?? ''
-        if (content || !allowStreamingFallback) {
+        if (content || mode !== 'fallback') {
             recordCurrentTokenUsage(operation, toTokenUsage(response.usage))
             return content
         }
 
+        return this.createStreamingTextCompletion(request, operation)
+    }
+
+    private async createStreamingTextCompletion(request: any, operation: string): Promise<string> {
         const stream = await this.client.chat.completions.create({
             ...request,
             stream: true,

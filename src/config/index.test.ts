@@ -25,6 +25,9 @@ describe('config', () => {
       LLM_PROVIDER_GEMINI_API_KEY: 'gemini-key',
       LLM_SCENARIO_DESCRIBE_IMAGE_PROVIDER: 'gemini',
       LLM_SCENARIO_DESCRIBE_IMAGE_MODEL: 'gemini-3-flash-preview',
+      LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_PROVIDER: 'claude',
+      LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_MODEL: 'gpt-5.4',
+      LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_GPT_STREAM_MODE: 'on',
       LLM_SCENARIO_DESCRIBE_IMAGE_STREAM_MODE: 'fallback',
       LLM_SCENARIO_TRANSCRIBE_AUDIO_PROVIDER: 'gemini',
       LLM_SCENARIO_TRANSCRIBE_AUDIO_MODEL: 'gemini-3-flash-preview',
@@ -43,6 +46,9 @@ describe('config', () => {
     assert.deepEqual(config.llm.scenarios.describeImage, {
       provider: 'gemini',
       model: 'gemini-3-flash-preview',
+      fallbackProvider: 'claude',
+      fallbackModel: 'gpt-5.4',
+      fallbackGptStreamMode: 'on',
       streamMode: 'fallback',
     })
     assert.deepEqual(config.llm.scenarios.transcribeAudio, {
@@ -75,6 +81,16 @@ describe('config', () => {
           LLM_SCENARIO_DESCRIBE_IMAGE_PROVIDER: 'gemini',
         })),
       /Missing provider configuration for scenario describeImage: gemini/,
+    )
+  })
+
+  test('throws when image fallback points to an unknown provider', () => {
+    assert.throws(
+      () =>
+        parseConfig(createBaseEnv({
+          LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_PROVIDER: 'gemini',
+        })),
+      /Missing fallback provider configuration for scenario describeImage: gemini/,
     )
   })
 })

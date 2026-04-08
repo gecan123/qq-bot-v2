@@ -18,6 +18,9 @@ type ProviderConfig = {
 type LlmScenarioConfig = {
   provider?: string
   model?: string
+  fallbackProvider?: string
+  fallbackModel?: string
+  fallbackGptStreamMode?: 'off' | 'fallback' | 'on'
   streamMode?: 'off' | 'fallback'
 }
 
@@ -69,20 +72,36 @@ function parseScenarioConfigs(env: EnvSource): Record<LlmScenarioKey, LlmScenari
   const scenarios = Object.fromEntries(
     Object.values(SCENARIO_NAME_MAP).map((key) => [key, {}]),
   ) as Record<LlmScenarioKey, LlmScenarioConfig>
+  const scenarioFields = [
+    'FALLBACK_PROVIDER',
+    'FALLBACK_MODEL',
+    'FALLBACK_GPT_STREAM_MODE',
+    'STREAM_MODE',
+    'PROVIDER',
+    'MODEL',
+  ] as const
 
   for (const [name, value] of Object.entries(env)) {
     if (!value) continue
 
-    const match = name.match(/^LLM_SCENARIO_([A-Z0-9_]+)_(PROVIDER|MODEL|STREAM_MODE)$/)
-    if (!match) continue
+    const prefix = 'LLM_SCENARIO_'
+    if (!name.startsWith(prefix)) continue
 
-    const [, rawScenarioName, field] = match
+    const matchedField = scenarioFields.find((field) => name.endsWith(`_${field}`))
+    if (!matchedField) continue
+
+    const rawScenarioName = name.slice(prefix.length, -(matchedField.length + 1))
     const scenarioName = SCENARIO_NAME_MAP[rawScenarioName]
     if (!scenarioName) continue
 
-    if (field === 'PROVIDER') scenarios[scenarioName].provider = value.toLowerCase()
-    if (field === 'MODEL') scenarios[scenarioName].model = value
-    if (field === 'STREAM_MODE') {
+    if (matchedField === 'PROVIDER') scenarios[scenarioName].provider = value.toLowerCase()
+    if (matchedField === 'MODEL') scenarios[scenarioName].model = value
+    if (matchedField === 'FALLBACK_PROVIDER') scenarios[scenarioName].fallbackProvider = value.toLowerCase()
+    if (matchedField === 'FALLBACK_MODEL') scenarios[scenarioName].fallbackModel = value
+    if (matchedField === 'FALLBACK_GPT_STREAM_MODE') {
+      scenarios[scenarioName].fallbackGptStreamMode = value === 'on' ? 'on' : value === 'fallback' ? 'fallback' : 'off'
+    }
+    if (matchedField === 'STREAM_MODE') {
       scenarios[scenarioName].streamMode = value === 'fallback' ? 'fallback' : 'off'
     }
   }
@@ -104,6 +123,9 @@ function parseLlmConfig(env: EnvSource) {
   for (const [scenarioName, scenario] of Object.entries(scenarios)) {
     if (scenario.provider && !providers[scenario.provider]) {
       throw new Error(`Missing provider configuration for scenario ${scenarioName}: ${scenario.provider}`)
+    }
+    if (scenario.fallbackProvider && !providers[scenario.fallbackProvider]) {
+      throw new Error(`Missing fallback provider configuration for scenario ${scenarioName}: ${scenario.fallbackProvider}`)
     }
   }
 

@@ -223,6 +223,56 @@ describe('OpenAIProvider media file inputs', () => {
     assert.equal(result, '')
   })
 
+  test('describeImage uses streaming directly when stream mode is on', async () => {
+    const calls: any[] = []
+    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.4', {
+      imageStreamMode: 'on',
+    })
+    ;(provider as any).client = {
+      chat: {
+        completions: {
+          create: async (request: any) => {
+            calls.push(request)
+
+            async function* chunks() {
+              yield {
+                choices: [{
+                  delta: {
+                    content: '```json\n{\n  "detectedType": "photo",\n  "summary": "一张照片。",'
+                  },
+                }],
+              }
+              yield {
+                choices: [{
+                  delta: {
+                    content: '\n  "description": "直接走流式返回。",\n  "extractedText": []\n}\n```'
+                  },
+                }],
+                usage: {
+                  prompt_tokens: 10,
+                  completion_tokens: 10,
+                  total_tokens: 20,
+                },
+              }
+            }
+
+            return chunks()
+          },
+        },
+      },
+    }
+
+    const result = await provider.describeImage({
+      image: Buffer.from('image-bytes'),
+      contentType: 'image/jpeg',
+    })
+
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].stream, true)
+    assert.match(result, /一张照片/)
+    assert.match(result, /直接走流式返回/)
+  })
+
   test('describeImage preprocesses oversized images before request', async () => {
     const calls: any[] = []
     const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.4-mini')
@@ -406,13 +456,45 @@ describe('OpenAIProvider media file inputs', () => {
     const result = await provider.generateGroupMemorySummary('memory-system', 'prompt-body')
 
     assert.equal(calls.length, 1)
-    assert.equal(calls[0].response_format.type, 'json_object')
+    assert.equal(calls[0].response_format.type, 'json_schema')
+    assert.equal(calls[0].response_format.json_schema.name, 'group_memory_summary')
     assert.deepEqual(result, {
       summary: '群里最近主要在约饭，整体节奏快。',
       topics: ['约饭', '火锅'],
       activePatterns: ['中午和晚饭前更活跃'],
       styleTags: ['务实', '热闹'],
     })
+  })
+
+  test('generateGroupMemorySummary throws a clear error when structured response content is empty', async () => {
+    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')
+    const rawResponse = {
+      id: 'resp_empty',
+      choices: [{
+        message: {
+          content: null,
+        },
+      }],
+    }
+    ;(provider as any).client = {
+      chat: {
+        completions: {
+          create: async () => rawResponse,
+        },
+      },
+    }
+
+    let err: unknown
+    try {
+      await provider.generateGroupMemorySummary('memory-system', 'prompt-body')
+      assert.fail('expected generateGroupMemorySummary to throw')
+    } catch (caught) {
+      err = caught
+    }
+
+    assert.match((err as Error).message, /Empty structured response for generateGroupMemorySummary/)
+    assert.equal((err as Error).name, 'EmptyStructuredResponseError')
+    assert.deepEqual((err as Error & { rawResponse?: unknown }).rawResponse, rawResponse)
   })
 
   test('generateUserMemoryProfile requests structured output', async () => {
@@ -444,7 +526,8 @@ describe('OpenAIProvider media file inputs', () => {
     const result = await provider.generateUserMemoryProfile('memory-system', 'prompt-body')
 
     assert.equal(calls.length, 1)
-    assert.equal(calls[0].response_format.type, 'json_object')
+    assert.equal(calls[0].response_format.type, 'json_schema')
+    assert.equal(calls[0].response_format.json_schema.name, 'user_memory_profile')
     assert.deepEqual(result, {
       profile: '说话直接，习惯快速确认安排。',
       traits: ['直接', '靠谱'],

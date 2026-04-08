@@ -24,6 +24,10 @@ let httpServer: http.Server | null = null
 
 const ASYNC_MENTION_MERGE_WINDOW_MS = 30_000
 
+function isGptModel(model: string): boolean {
+  return model.toLowerCase().startsWith('gpt')
+}
+
 async function main() {
   log.info('QQ Bot V2 starting...')
   await prisma.$connect()
@@ -35,21 +39,36 @@ async function main() {
     imageStreamMode: scenarios.describeImage.streamMode,
   })
 
-  const routes = Object.fromEntries(
-    Object.entries(scenarios)
-      .filter(([, s]) => s.provider || s.model)
-      .map(([key, s]) => [
-        key,
-        new OpenAIProvider(
-          providers[s.provider ?? defaultProviderName].url,
-          providers[s.provider ?? defaultProviderName].apiKey,
-          s.model ?? defaultModel,
-          {
-            imageStreamMode: key === 'describeImage' ? scenarios.describeImage.streamMode : undefined,
-          },
-        ),
-      ]),
-  ) as ConstructorParameters<typeof RoutingProvider>[1]
+  const routes: ConstructorParameters<typeof RoutingProvider>[1] = {}
+  for (const [key, s] of Object.entries(scenarios)) {
+    if (!s.provider && !s.model) continue
+    const providerName = s.provider ?? defaultProviderName
+    const providerConfig = providers[providerName]
+    routes[key as keyof typeof routes] = new OpenAIProvider(
+      providerConfig.url,
+      providerConfig.apiKey,
+      s.model ?? defaultModel,
+      {
+        imageStreamMode: key === 'describeImage' ? scenarios.describeImage.streamMode : undefined,
+      },
+    )
+  }
+
+  if (scenarios.describeImage.fallbackProvider || scenarios.describeImage.fallbackModel) {
+    const fallbackProviderName = scenarios.describeImage.fallbackProvider ?? defaultProviderName
+    const fallbackProviderConfig = providers[fallbackProviderName]
+    const fallbackModel = scenarios.describeImage.fallbackModel ?? defaultModel
+    routes.describeImageFallback = new OpenAIProvider(
+      fallbackProviderConfig.url,
+      fallbackProviderConfig.apiKey,
+      fallbackModel,
+      {
+        imageStreamMode: isGptModel(fallbackModel)
+          ? scenarios.describeImage.fallbackGptStreamMode ?? 'off'
+          : 'off',
+      },
+    )
+  }
 
   const routing = new RoutingProvider(defaultProvider, routes)
   setLlmProvider(routing)
@@ -64,6 +83,13 @@ async function main() {
             {
               provider: s.provider ?? defaultProviderName,
               model: s.model ?? defaultModel,
+              ...(key === 'describeImage' && (s.fallbackProvider || s.fallbackModel)
+                ? {
+                    fallbackProvider: s.fallbackProvider ?? defaultProviderName,
+                    fallbackModel: s.fallbackModel ?? defaultModel,
+                    ...(s.fallbackGptStreamMode ? { fallbackGptStreamMode: s.fallbackGptStreamMode } : {}),
+                  }
+                : {}),
             },
           ]),
       ),

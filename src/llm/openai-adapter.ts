@@ -22,7 +22,44 @@ type StructuredAudioTranscription = {
     refer?: boolean
 }
 
-const JSON_OBJECT_FORMAT = { type: 'json_object' } as const
+const GROUP_MEMORY_SUMMARY_RESPONSE_FORMAT = {
+    type: 'json_schema',
+    json_schema: {
+        name: 'group_memory_summary',
+        strict: true,
+        schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+                summary: { type: 'string' },
+                topics: { type: 'array', items: { type: 'string' } },
+                activePatterns: { type: 'array', items: { type: 'string' } },
+                styleTags: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['summary', 'topics', 'activePatterns', 'styleTags'],
+        },
+    },
+} as const
+
+const USER_MEMORY_PROFILE_RESPONSE_FORMAT = {
+    type: 'json_schema',
+    json_schema: {
+        name: 'user_memory_profile',
+        strict: true,
+        schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+                profile: { type: 'string' },
+                traits: { type: 'array', items: { type: 'string' } },
+                interests: { type: 'array', items: { type: 'string' } },
+                speakingStyle: { type: 'array', items: { type: 'string' } },
+                examples: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['profile', 'traits', 'interests', 'speakingStyle', 'examples'],
+        },
+    },
+} as const
 
 const IMAGE_DESCRIPTION_RESPONSE_FORMAT = {
     type: 'json_schema',
@@ -132,7 +169,7 @@ function assertValidBaseURL(baseURL: string): void {
 
 export class OpenAIProvider implements LlmProvider {
     private client: OpenAI
-    private model: string
+    readonly model: string
     private imageStreamMode: ImageStreamMode
     private static readonly MAX_VIDEO_BYTES = 5 * 1024 * 1024
 
@@ -232,7 +269,7 @@ export class OpenAIProvider implements LlmProvider {
         return this.generateStructuredJson<GroupMemorySummaryResult>({
             systemInstruction,
             prompt,
-            responseFormat: JSON_OBJECT_FORMAT as any,
+            responseFormat: GROUP_MEMORY_SUMMARY_RESPONSE_FORMAT as any,
             operation: 'generateGroupMemorySummary',
         })
     }
@@ -244,7 +281,7 @@ export class OpenAIProvider implements LlmProvider {
         return this.generateStructuredJson<UserMemoryProfileResult>({
             systemInstruction,
             prompt,
-            responseFormat: JSON_OBJECT_FORMAT as any,
+            responseFormat: USER_MEMORY_PROFILE_RESPONSE_FORMAT as any,
             operation: 'generateUserMemoryProfile',
         })
     }

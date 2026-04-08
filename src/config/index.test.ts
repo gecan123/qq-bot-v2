@@ -14,6 +14,8 @@ function createBaseEnv(overrides: Record<string, string | undefined> = {}): Node
     LLM_DEFAULT_MODEL: 'claude-sonnet-4-6',
     LLM_PROVIDER_CLAUDE_URL: 'http://127.0.0.1:8317/v1',
     LLM_PROVIDER_CLAUDE_API_KEY: 'sk-local',
+    LLM_PROVIDER_OPENAI_URL: 'http://127.0.0.1:8317/v1',
+    LLM_PROVIDER_OPENAI_API_KEY: 'sk-local',
     ...overrides,
   }
 }
@@ -25,7 +27,7 @@ describe('config', () => {
       LLM_PROVIDER_GEMINI_API_KEY: 'gemini-key',
       LLM_SCENARIO_DESCRIBE_IMAGE_PROVIDER: 'gemini',
       LLM_SCENARIO_DESCRIBE_IMAGE_MODEL: 'gemini-3-flash-preview',
-      LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_PROVIDER: 'claude',
+      LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_PROVIDER: 'openai',
       LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_MODEL: 'gpt-5.4',
       LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_GPT_STREAM_MODE: 'on',
       LLM_SCENARIO_DESCRIBE_IMAGE_STREAM_MODE: 'fallback',
@@ -39,6 +41,10 @@ describe('config', () => {
       url: 'http://127.0.0.1:8317/v1',
       apiKey: 'sk-local',
     })
+    assert.deepEqual(config.llm.providers.openai, {
+      url: 'http://127.0.0.1:8317/v1',
+      apiKey: 'sk-local',
+    })
     assert.deepEqual(config.llm.providers.gemini, {
       url: 'https://generativelanguage.googleapis.com/v1beta/openai/',
       apiKey: 'gemini-key',
@@ -46,7 +52,7 @@ describe('config', () => {
     assert.deepEqual(config.llm.scenarios.describeImage, {
       provider: 'gemini',
       model: 'gemini-3-flash-preview',
-      fallbackProvider: 'claude',
+      fallbackProvider: 'openai',
       fallbackModel: 'gpt-5.4',
       fallbackGptStreamMode: 'on',
       streamMode: 'fallback',
@@ -68,9 +74,9 @@ describe('config', () => {
     assert.throws(
       () =>
         parseConfig(createBaseEnv({
-          LLM_DEFAULT_PROVIDER: 'openai',
+          LLM_DEFAULT_PROVIDER: 'anthropic',
         })),
-      /Missing provider configuration for LLM_DEFAULT_PROVIDER: openai/,
+      /Missing provider configuration for LLM_DEFAULT_PROVIDER: anthropic/,
     )
   })
 

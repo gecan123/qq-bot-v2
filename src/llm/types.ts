@@ -19,6 +19,7 @@ export interface MediaDescriptionResult {
 }
 
 export interface LlmProvider {
+  model?: string
   describeImage(params: { image: Buffer; contentType: string; mediaType?: string }): Promise<string>
   describeImageDetailed?(params: { image: Buffer; contentType: string; mediaType?: string }): Promise<MediaDescriptionResult>
   describeVideo?(params: { video: Buffer; contentType: string; fileName?: string }): Promise<string>

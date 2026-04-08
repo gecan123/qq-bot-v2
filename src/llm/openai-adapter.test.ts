@@ -466,7 +466,7 @@ describe('OpenAIProvider media file inputs', () => {
     })
   })
 
-  test('generateGroupMemorySummary throws a clear error when structured response content is empty', async () => {
+  test('generateGroupMemorySummary throws a clear error when both non-stream and stream structured content are empty', async () => {
     const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')
     const rawResponse = {
       id: 'resp_empty',
@@ -479,7 +479,26 @@ describe('OpenAIProvider media file inputs', () => {
     ;(provider as any).client = {
       chat: {
         completions: {
-          create: async () => rawResponse,
+          create: async (request: any) => {
+            if (!request.stream) return rawResponse
+
+            async function* chunks() {
+              yield {
+                choices: [{
+                  delta: {
+                    content: '',
+                  },
+                }],
+                usage: {
+                  prompt_tokens: 10,
+                  completion_tokens: 0,
+                  total_tokens: 10,
+                },
+              }
+            }
+
+            return chunks()
+          },
         },
       },
     }
@@ -495,6 +514,70 @@ describe('OpenAIProvider media file inputs', () => {
     assert.match((err as Error).message, /Empty structured response for generateGroupMemorySummary/)
     assert.equal((err as Error).name, 'EmptyStructuredResponseError')
     assert.deepEqual((err as Error & { rawResponse?: unknown }).rawResponse, rawResponse)
+  })
+
+  test('generateGroupMemorySummary falls back to streaming when non-stream structured content is empty', async () => {
+    const calls: any[] = []
+    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')
+    ;(provider as any).client = {
+      chat: {
+        completions: {
+          create: async (request: any) => {
+            calls.push(request)
+            if (!request.stream) {
+              return {
+                choices: [{
+                  message: {
+                    content: null,
+                  },
+                }],
+                usage: {
+                  prompt_tokens: 10,
+                  completion_tokens: 0,
+                  total_tokens: 10,
+                },
+              }
+            }
+
+            async function* chunks() {
+              yield {
+                choices: [{
+                  delta: {
+                    content: '{"summary":"群里最近主要在约饭，整体节奏快。",'
+                  },
+                }],
+              }
+              yield {
+                choices: [{
+                  delta: {
+                    content: '"topics":["约饭","火锅"],"activePatterns":["中午和晚饭前更活跃"],"styleTags":["务实","热闹"]}'
+                  },
+                }],
+                usage: {
+                  prompt_tokens: 10,
+                  completion_tokens: 12,
+                  total_tokens: 22,
+                },
+              }
+            }
+
+            return chunks()
+          },
+        },
+      },
+    }
+
+    const result = await provider.generateGroupMemorySummary('memory-system', 'prompt-body')
+
+    assert.equal(calls.length, 2)
+    assert.equal(calls[0].stream, undefined)
+    assert.equal(calls[1].stream, true)
+    assert.deepEqual(result, {
+      summary: '群里最近主要在约饭，整体节奏快。',
+      topics: ['约饭', '火锅'],
+      activePatterns: ['中午和晚饭前更活跃'],
+      styleTags: ['务实', '热闹'],
+    })
   })
 
   test('generateUserMemoryProfile requests structured output', async () => {

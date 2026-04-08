@@ -25,6 +25,15 @@ const log = createLogger('JOB_MEMORY')
 const GAP_MINUTES = 20
 const OVERLAP_SIZE = 15
 
+function isEmptyStructuredResponseError(err: unknown): boolean {
+  return err instanceof Error && err.message.startsWith('Empty structured response for ')
+}
+
+function getEmptyStructuredResponsePayload(err: unknown): unknown {
+  if (!isEmptyStructuredResponseError(err)) return undefined
+  return (err as Error & { rawResponse?: unknown }).rawResponse
+}
+
 function sortMessagesForMemory(messages: Message[]): Message[] {
   return [...messages].sort((a, b) => {
     const timeDiff = getMessageTimestamp(a).getTime() - getMessageTimestamp(b).getTime()
@@ -99,13 +108,22 @@ export async function refreshGroup(groupId: number): Promise<void> {
   // Update group summary: chunk by time gap, add overlap, roll forward progressively
   const chunks = addOverlap(chunkByTimeGap(newMessages, GAP_MINUTES), OVERLAP_SIZE)
   let runningSummaryRaw = existing?.summary ?? null
-  for (const chunk of chunks) {
-    const formatted = formatMessagesForMemory(chunk)
-    if (!formatted.trim()) continue
-    const prompt = buildGroupSummaryPrompt(runningSummaryRaw, formatted)
-    const structured = await provider.generateGroupMemorySummary(MEMORY_SYSTEM_INSTRUCTION, prompt)
-    runningSummaryRaw = JSON.stringify(structured)
-    log.debug({ groupId, chunkSize: chunk.length }, '已处理一个消息分段')
+  try {
+    for (const chunk of chunks) {
+      const formatted = formatMessagesForMemory(chunk)
+      if (!formatted.trim()) continue
+      const prompt = buildGroupSummaryPrompt(runningSummaryRaw, formatted)
+      const structured = await provider.generateGroupMemorySummary(MEMORY_SYSTEM_INSTRUCTION, prompt)
+      runningSummaryRaw = JSON.stringify(structured)
+      log.debug({ groupId, chunkSize: chunk.length }, '已处理一个消息分段')
+    }
+  } catch (err) {
+    if (isEmptyStructuredResponseError(err)) {
+      log.warn({ groupId, rawResponse: getEmptyStructuredResponsePayload(err) }, '群记忆结构化响应为空，跳过本次更新')
+      return
+    }
+
+    throw err
   }
 
   if (runningSummaryRaw) {
@@ -141,7 +159,24 @@ export async function refreshGroup(groupId: number): Promise<void> {
       storedProfile?.examples ?? existingUser?.examples ?? [],
       formattedUser,
     )
-    const parsed = await provider.generateUserMemoryProfile(MEMORY_SYSTEM_INSTRUCTION, userPrompt)
+    let parsed: UserMemoryProfileResult
+    try {
+      parsed = await provider.generateUserMemoryProfile(MEMORY_SYSTEM_INSTRUCTION, userPrompt)
+    } catch (err) {
+      if (isEmptyStructuredResponseError(err)) {
+        log.warn(
+          {
+            groupId,
+            senderId: senderId.toString(),
+            rawResponse: getEmptyStructuredResponsePayload(err),
+          },
+          '用户画像结构化响应为空，跳过本次更新',
+        )
+        continue
+      }
+
+      throw err
+    }
 
     const lastMsg = userMsgs[userMsgs.length - 1]
     await upsertUserMemory({

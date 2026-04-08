@@ -2,17 +2,23 @@ import assert from 'node:assert/strict'
 import { afterEach, describe, test } from 'node:test'
 import { prisma } from '../database/client.js'
 import { setLlmProvider } from '../llm/provider.js'
+import { RoutingProvider } from '../llm/routing-provider.js'
+import { log } from '../logger.js'
 import { jobQueue } from '../queue/runtime.js'
 import { generateDescriptionForMedia } from './generate-description.js'
 
 const originalFindUnique = prisma.media.findUnique
 const originalUpdate = prisma.media.update
 const originalEnqueue = jobQueue.enqueue
+const originalInfo = log.info
+const originalWarn = log.warn
 
 afterEach(() => {
   prisma.media.findUnique = originalFindUnique
   prisma.media.update = originalUpdate
   jobQueue.enqueue = originalEnqueue
+  log.info = originalInfo
+  log.warn = originalWarn
   setLlmProvider(undefined as any)
 })
 
@@ -122,6 +128,171 @@ describe('generateDescriptionForMedia', () => {
 
     assert.equal(updates.length, 0)
     assert.deepEqual(enqueued, [])
+  })
+
+  test('logs model and duration when image description is generated', async () => {
+    const infos: Array<{ object: Record<string, unknown>; message: string | undefined }> = []
+
+    prisma.media.findUnique = (async () => ({
+      data: new Uint8Array(Buffer.from('image-bytes')),
+      contentType: 'image/jpeg',
+      mediaType: 'image',
+      descriptionRaw: null,
+      fileName: 'frame.jpg',
+    })) as unknown as typeof prisma.media.findUnique
+
+    prisma.media.update = (async () => {
+      return {} as any
+    }) as typeof prisma.media.update
+
+    log.info = ((object: Record<string, unknown>, message?: string) => {
+      infos.push({ object, message })
+    }) as typeof log.info
+
+    setLlmProvider({
+      model: 'gpt-5.4-mini',
+      describeImage: async () => '平铺描述',
+      describeImageDetailed: async () => ({
+        description: '平铺描述',
+        raw: {
+          detectedType: 'photo',
+          summary: '摘要',
+          description: '详细描述',
+        },
+      }),
+      describeVideo: async () => '',
+      describePdf: async () => '',
+      generateGroupMemorySummary: async () => ({
+        summary: '',
+        topics: [],
+        activePatterns: [],
+        styleTags: [],
+      }),
+      generateUserMemoryProfile: async () => ({
+        profile: '',
+        traits: [],
+        interests: [],
+        speakingStyle: [],
+        examples: [],
+      }),
+      transcribeAudio: async () => '',
+    } as any)
+
+    await generateDescriptionForMedia(22)
+
+    assert.equal(infos.length, 1)
+    assert.equal(infos[0]?.message, '媒体描述已生成')
+    assert.equal(infos[0]?.object.mediaId, 22)
+    assert.equal(infos[0]?.object.model, 'gpt-5.4-mini')
+    assert.equal(typeof infos[0]?.object.durationMs, 'number')
+  })
+
+  test('logs routed provider model when image description is generated through routing provider', async () => {
+    const infos: Array<{ object: Record<string, unknown>; message: string | undefined }> = []
+
+    prisma.media.findUnique = (async () => ({
+      data: new Uint8Array(Buffer.from('image-bytes')),
+      contentType: 'image/jpeg',
+      mediaType: 'image',
+      descriptionRaw: null,
+      fileName: 'frame.jpg',
+    })) as unknown as typeof prisma.media.findUnique
+
+    prisma.media.update = (async () => {
+      return {} as any
+    }) as typeof prisma.media.update
+
+    log.info = ((object: Record<string, unknown>, message?: string) => {
+      infos.push({ object, message })
+    }) as typeof log.info
+
+    const defaultProvider = {
+      model: 'gpt-5.1',
+      describeImage: async () => 'default description',
+      describeVideo: async () => '',
+      describePdf: async () => '',
+      generateGroupMemorySummary: async () => ({
+        summary: '',
+        topics: [],
+        activePatterns: [],
+        styleTags: [],
+      }),
+      generateUserMemoryProfile: async () => ({
+        profile: '',
+        traits: [],
+        interests: [],
+        speakingStyle: [],
+        examples: [],
+      }),
+      transcribeAudio: async () => '',
+    }
+
+    const describeImageProvider = {
+      model: 'gpt-5.4-mini',
+      describeImage: async () => 'image description',
+      describeImageDetailed: async () => ({
+        description: 'image description',
+        raw: { description: 'image description' },
+      }),
+    }
+
+    setLlmProvider(new RoutingProvider(defaultProvider as any, { describeImage: describeImageProvider as any }))
+
+    await generateDescriptionForMedia(23)
+
+    assert.equal(infos.length, 1)
+    assert.equal(infos[0]?.message, '媒体描述已生成')
+    assert.equal(infos[0]?.object.mediaId, 23)
+    assert.equal(infos[0]?.object.model, 'gpt-5.4-mini')
+  })
+
+  test('logs llm response when image description result is invalid', async () => {
+    const warnings: Array<{ object: Record<string, unknown>; message: string | undefined }> = []
+
+    prisma.media.findUnique = (async () => ({
+      data: new Uint8Array(Buffer.from('image-bytes')),
+      contentType: 'image/jpeg',
+      mediaType: 'image',
+      descriptionRaw: null,
+      fileName: 'frame.jpg',
+    })) as unknown as typeof prisma.media.findUnique
+
+    log.warn = ((object: Record<string, unknown>, message?: string) => {
+      warnings.push({ object, message })
+    }) as typeof log.warn
+
+    setLlmProvider({
+      describeImage: async () => '   ',
+      describeImageDetailed: async () => ({
+        description: '   ',
+        raw: ['bad-shape'],
+      }),
+      describeVideo: async () => '',
+      describePdf: async () => '',
+      generateGroupMemorySummary: async () => ({
+        summary: '',
+        topics: [],
+        activePatterns: [],
+        styleTags: [],
+      }),
+      generateUserMemoryProfile: async () => ({
+        profile: '',
+        traits: [],
+        interests: [],
+        speakingStyle: [],
+        examples: [],
+      }),
+      transcribeAudio: async () => '',
+    })
+
+    await generateDescriptionForMedia(333)
+
+    assert.equal(warnings.length, 1)
+    assert.equal(warnings[0]?.message, '媒体描述结果不是有效对象，保留待解析状态')
+    assert.equal(warnings[0]?.object.mediaId, 333)
+    assert.equal(warnings[0]?.object.mediaType, 'image')
+    assert.equal(warnings[0]?.object.llmDescription, '   ')
+    assert.deepEqual(warnings[0]?.object.llmRaw, ['bad-shape'])
   })
 
   test('uses describeVideo for video media', async () => {

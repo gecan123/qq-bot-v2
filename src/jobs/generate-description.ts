@@ -1,6 +1,7 @@
 import { prisma } from '../database/client.js'
 import { Prisma } from '../generated/prisma/client.js'
 import { getLlmProvider } from '../llm/provider.js'
+import type { RoutingScenario } from '../llm/routing-provider.js'
 import { createLogger } from '../logger.js'
 import { isMediaDescription } from '../media/media-description.js'
 import { jobQueue } from '../queue/runtime.js'
@@ -14,8 +15,39 @@ export interface GenerateDescriptionData {
 const VISION_MEDIA_TYPES = new Set(['image', 'sticker'])
 
 const inFlight = new Map<number, Promise<void>>()
-
 const log = createLogger('JOB_MEDIA')
+
+function getScenarioProvider(
+  provider: ReturnType<typeof getLlmProvider>,
+  scenario: RoutingScenario,
+): ReturnType<typeof getLlmProvider> {
+  if (provider && 'getProviderForScenario' in provider && typeof provider.getProviderForScenario === 'function') {
+    return provider.getProviderForScenario(scenario)
+  }
+  return provider
+}
+
+function getProviderModel(provider: ReturnType<typeof getLlmProvider>, scenario: RoutingScenario): string {
+  return getScenarioProvider(provider, scenario)?.model?.trim() || 'unknown'
+}
+
+function logDescriptionGenerated(
+  provider: ReturnType<typeof getLlmProvider>,
+  scenario: RoutingScenario,
+  mediaId: number,
+  startedAt: number,
+  message: string,
+): void {
+  log.info(
+    {
+      mediaId,
+      model: getProviderModel(provider, scenario),
+      durationMs: Date.now() - startedAt,
+    },
+    message,
+  )
+}
+
 function toDescriptionRawInput(raw: unknown): Prisma.InputJsonValue | Prisma.NullableJsonNullValueInput | undefined {
   if (raw === undefined) return undefined
   if (raw === null) return Prisma.JsonNull
@@ -29,6 +61,22 @@ function normalizeDescriptionRaw(raw: unknown, fallbackDescription?: string): Re
   const trimmed = fallbackDescription.trim()
   if (!trimmed) return null
   return { description: trimmed }
+}
+
+function logInvalidDescriptionResult(
+  mediaId: number,
+  mediaType: string,
+  result: { description?: string; raw?: unknown } | undefined,
+): void {
+  log.warn(
+    {
+      mediaId,
+      mediaType,
+      llmDescription: result?.description,
+      llmRaw: result?.raw,
+    },
+    '媒体描述结果不是有效对象，保留待解析状态',
+  )
 }
 
 function isPdfFile(contentType: string | null, fileName: string | null): boolean {
@@ -71,6 +119,7 @@ async function doGenerate(mediaId: number): Promise<void> {
       return
     }
 
+    const startedAt = Date.now()
     const result = provider.describeImageDetailed
       ? await provider.describeImageDetailed({
           image: buffer,
@@ -87,7 +136,7 @@ async function doGenerate(mediaId: number): Promise<void> {
     const descriptionRaw = normalizeDescriptionRaw(result?.raw, result?.description)
 
     if (!descriptionRaw) {
-      log.warn({ mediaId, mediaType }, '媒体描述结果不是有效对象，保留待解析状态')
+      logInvalidDescriptionResult(mediaId, mediaType, result)
       return
     }
 
@@ -96,7 +145,7 @@ async function doGenerate(mediaId: number): Promise<void> {
       data: { descriptionRaw: toDescriptionRawInput(descriptionRaw) },
     })
     jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
-    log.info({ mediaId }, '媒体描述已生成')
+    logDescriptionGenerated(provider, 'describeImage', mediaId, startedAt, '媒体描述已生成')
     return
   }
 
@@ -112,6 +161,7 @@ async function doGenerate(mediaId: number): Promise<void> {
       return
     }
 
+    const startedAt = Date.now()
     const result = provider.describeVideoDetailed
       ? await provider.describeVideoDetailed({
           video: buffer,
@@ -128,7 +178,7 @@ async function doGenerate(mediaId: number): Promise<void> {
     const descriptionRaw = normalizeDescriptionRaw(result?.raw, result?.description)
 
     if (!descriptionRaw) {
-      log.warn({ mediaId, mediaType }, '媒体描述结果不是有效对象，保留待解析状态')
+      logInvalidDescriptionResult(mediaId, mediaType, result)
       return
     }
 
@@ -137,7 +187,7 @@ async function doGenerate(mediaId: number): Promise<void> {
       data: { descriptionRaw: toDescriptionRawInput(descriptionRaw) },
     })
     jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
-    log.info({ mediaId }, '视频描述已生成')
+    logDescriptionGenerated(provider, 'describeVideo', mediaId, startedAt, '视频描述已生成')
     return
   }
 
@@ -153,6 +203,7 @@ async function doGenerate(mediaId: number): Promise<void> {
       return
     }
 
+    const startedAt = Date.now()
     const result = provider.transcribeAudioDetailed
       ? await provider.transcribeAudioDetailed({
           audio: buffer,
@@ -167,7 +218,7 @@ async function doGenerate(mediaId: number): Promise<void> {
     const descriptionRaw = normalizeDescriptionRaw(result?.raw, result?.description)
 
     if (!descriptionRaw) {
-      log.warn({ mediaId, mediaType }, '媒体描述结果不是有效对象，保留待解析状态')
+      logInvalidDescriptionResult(mediaId, mediaType, result)
       return
     }
 
@@ -176,7 +227,7 @@ async function doGenerate(mediaId: number): Promise<void> {
       data: { descriptionRaw: toDescriptionRawInput(descriptionRaw) },
     })
     jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
-    log.info({ mediaId }, '语音转写已完成')
+    logDescriptionGenerated(provider, 'transcribeAudio', mediaId, startedAt, '语音转写已完成')
     return
   }
 
@@ -197,6 +248,7 @@ async function doGenerate(mediaId: number): Promise<void> {
       return
     }
 
+    const startedAt = Date.now()
     const result = provider.describePdfDetailed
       ? await provider.describePdfDetailed({
           file: buffer,
@@ -213,7 +265,7 @@ async function doGenerate(mediaId: number): Promise<void> {
     const descriptionRaw = normalizeDescriptionRaw(result?.raw, result?.description)
 
     if (!descriptionRaw) {
-      log.warn({ mediaId, mediaType }, '媒体描述结果不是有效对象，保留待解析状态')
+      logInvalidDescriptionResult(mediaId, mediaType, result)
       return
     }
 
@@ -222,7 +274,7 @@ async function doGenerate(mediaId: number): Promise<void> {
       data: { descriptionRaw: toDescriptionRawInput(descriptionRaw) },
     })
     jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
-    log.info({ mediaId }, 'PDF 描述已生成')
+    logDescriptionGenerated(provider, 'describePdf', mediaId, startedAt, 'PDF 描述已生成')
     return
   }
 

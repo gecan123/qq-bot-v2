@@ -15,6 +15,8 @@ type ScenarioProviders = {
     transcribeAudio?: LlmProvider
 }
 
+export type RoutingScenario = keyof ScenarioProviders
+
 export class RoutingProvider implements LlmProvider {
     private defaultProvider: LlmProvider
     private routes: ScenarioProviders
@@ -24,14 +26,18 @@ export class RoutingProvider implements LlmProvider {
         this.routes = routes
     }
 
+    getProviderForScenario(scenario: RoutingScenario): LlmProvider {
+        return this.routes[scenario] ?? this.defaultProvider
+    }
+
     async describeImage(params: Parameters<LlmProvider['describeImage']>[0]): Promise<string> {
-        return (this.routes.describeImage ?? this.defaultProvider).describeImage(params)
+        return this.getProviderForScenario('describeImage').describeImage(params)
     }
 
     async describeImageDetailed(
         params: Parameters<NonNullable<LlmProvider['describeImageDetailed']>>[0],
     ): Promise<MediaDescriptionResult> {
-        const p = this.routes.describeImage ?? this.defaultProvider
+        const p = this.getProviderForScenario('describeImage')
         try {
             if (p.describeImageDetailed) return await p.describeImageDetailed(params)
             return { description: await p.describeImage(params) }
@@ -44,33 +50,33 @@ export class RoutingProvider implements LlmProvider {
     }
 
     async describeVideo(params: Parameters<NonNullable<LlmProvider['describeVideo']>>[0]): Promise<string> {
-        const p = this.routes.describeVideo ?? this.defaultProvider
+        const p = this.getProviderForScenario('describeVideo')
         return p.describeVideo?.(params) ?? ''
     }
 
     async describeVideoDetailed(
         params: Parameters<NonNullable<LlmProvider['describeVideoDetailed']>>[0],
     ): Promise<MediaDescriptionResult> {
-        const p = this.routes.describeVideo ?? this.defaultProvider
+        const p = this.getProviderForScenario('describeVideo')
         if (p.describeVideoDetailed) return p.describeVideoDetailed(params)
         return { description: (await p.describeVideo?.(params)) ?? '' }
     }
 
     async describePdf(params: Parameters<NonNullable<LlmProvider['describePdf']>>[0]): Promise<string> {
-        const p = this.routes.describePdf ?? this.defaultProvider
+        const p = this.getProviderForScenario('describePdf')
         return p.describePdf?.(params) ?? ''
     }
 
     async describePdfDetailed(
         params: Parameters<NonNullable<LlmProvider['describePdfDetailed']>>[0],
     ): Promise<MediaDescriptionResult> {
-        const p = this.routes.describePdf ?? this.defaultProvider
+        const p = this.getProviderForScenario('describePdf')
         if (p.describePdfDetailed) return p.describePdfDetailed(params)
         return { description: (await p.describePdf?.(params)) ?? '' }
     }
 
     async generateGroupMemorySummary(systemInstruction: string, prompt: string): Promise<GroupMemorySummaryResult> {
-        const p = this.routes.generateGroupMemorySummary ?? this.defaultProvider
+        const p = this.getProviderForScenario('generateGroupMemorySummary')
         if (!p.generateGroupMemorySummary) {
             throw new Error('generateGroupMemorySummary is not supported by the configured provider')
         }
@@ -78,7 +84,7 @@ export class RoutingProvider implements LlmProvider {
     }
 
     async generateUserMemoryProfile(systemInstruction: string, prompt: string): Promise<UserMemoryProfileResult> {
-        const p = this.routes.generateUserMemoryProfile ?? this.defaultProvider
+        const p = this.getProviderForScenario('generateUserMemoryProfile')
         if (!p.generateUserMemoryProfile) {
             throw new Error('generateUserMemoryProfile is not supported by the configured provider')
         }
@@ -86,14 +92,14 @@ export class RoutingProvider implements LlmProvider {
     }
 
     async transcribeAudio(params: Parameters<NonNullable<LlmProvider['transcribeAudio']>>[0]): Promise<string> {
-        const p = this.routes.transcribeAudio ?? this.defaultProvider
+        const p = this.getProviderForScenario('transcribeAudio')
         return p.transcribeAudio?.(params) ?? ''
     }
 
     async transcribeAudioDetailed(
         params: Parameters<NonNullable<LlmProvider['transcribeAudioDetailed']>>[0],
     ): Promise<MediaDescriptionResult> {
-        const p = this.routes.transcribeAudio ?? this.defaultProvider
+        const p = this.getProviderForScenario('transcribeAudio')
         if (p.transcribeAudioDetailed) return p.transcribeAudioDetailed(params)
         return { description: (await p.transcribeAudio?.(params)) ?? '' }
     }

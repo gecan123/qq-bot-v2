@@ -73,11 +73,20 @@ Key modules:
 本地部署了 **CLIProxyAPI**（OpenAI-compatible proxy），运行在 `http://127.0.0.1:8317`，暴露 GPT 系列模型。通过以下环境变量接入：
 
 ```
-LLM_PROVIDER=openai
-OPENAI_BASE_URL=http://127.0.0.1:8317/v1
-OPENAI_API_KEY=sk-local
-OPENAI_MODEL=gpt-5.1
+LLM_DEFAULT_PROVIDER=claude
+LLM_DEFAULT_MODEL=claude-sonnet-4-6
+
+LLM_PROVIDER_CLAUDE_URL=http://127.0.0.1:8317/v1
+LLM_PROVIDER_CLAUDE_API_KEY=sk-local
+
+LLM_PROVIDER_OPENAI_URL=http://127.0.0.1:8317/v1
+LLM_PROVIDER_OPENAI_API_KEY=sk-local
+
+LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_PROVIDER=openai
+LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_MODEL=gpt-5.4
 ```
+
+即使 `claude` 和 `openai` 暂时都指向同一个本地统一网关，也建议保留两个独立 provider key，后续切换真实上游时只需要改对应 provider 的 URL / API_KEY。
 
 每个场景可单独覆盖 provider 和 model（详见 `.env.example`）：
 

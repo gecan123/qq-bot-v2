@@ -80,10 +80,18 @@ export function parseToolCalls(toolCalls: OpenAI.Chat.ChatCompletionMessageToolC
 }
 
 export function createAgentOpenAIConfig(): { baseURL: string; apiKey: string; model: string } {
+  const defaultProviderName = process.env.LLM_DEFAULT_PROVIDER?.toLowerCase()
+  const defaultProviderUrl = defaultProviderName
+    ? process.env[`LLM_PROVIDER_${defaultProviderName.toUpperCase()}_URL`]
+    : undefined
+  const defaultProviderApiKey = defaultProviderName
+    ? process.env[`LLM_PROVIDER_${defaultProviderName.toUpperCase()}_API_KEY`]
+    : undefined
+
   return {
-    baseURL: process.env.LLM_AGENT_BASE_URL ?? process.env.OPENAI_BASE_URL ?? 'http://127.0.0.1:8317/v1',
-    apiKey: process.env.LLM_AGENT_API_KEY ?? process.env.OPENAI_API_KEY ?? 'sk-local',
-    model: process.env.LLM_AGENT_MODEL ?? process.env.OPENAI_MODEL ?? 'gpt-5.1',
+    baseURL: process.env.LLM_AGENT_BASE_URL ?? defaultProviderUrl ?? process.env.OPENAI_BASE_URL ?? 'http://127.0.0.1:8317/v1',
+    apiKey: process.env.LLM_AGENT_API_KEY ?? defaultProviderApiKey ?? process.env.OPENAI_API_KEY ?? 'sk-local',
+    model: process.env.LLM_AGENT_MODEL ?? process.env.LLM_DEFAULT_MODEL ?? process.env.OPENAI_MODEL ?? 'gpt-5.1',
   }
 }
 

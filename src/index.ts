@@ -29,19 +29,25 @@ async function main() {
   await prisma.$connect()
   log.info('Database connected')
 
-  const { baseUrl, apiKey, model, scenarios } = config.llm
-  const defaultProvider = new OpenAIProvider(baseUrl, apiKey, model, {
+  const { defaultProvider: defaultProviderName, defaultModel, providers, scenarios } = config.llm
+  const defaultProviderConfig = providers[defaultProviderName]
+  const defaultProvider = new OpenAIProvider(defaultProviderConfig.url, defaultProviderConfig.apiKey, defaultModel, {
     imageStreamMode: scenarios.describeImage.streamMode,
   })
 
   const routes = Object.fromEntries(
     Object.entries(scenarios)
-      .filter(([, s]) => s.baseUrl || s.apiKey || s.model)
+      .filter(([, s]) => s.provider || s.model)
       .map(([key, s]) => [
         key,
-        new OpenAIProvider(s.baseUrl ?? baseUrl, s.apiKey ?? apiKey, s.model ?? model, {
-          imageStreamMode: key === 'describeImage' ? scenarios.describeImage.streamMode : undefined,
-        }),
+        new OpenAIProvider(
+          providers[s.provider ?? defaultProviderName].url,
+          providers[s.provider ?? defaultProviderName].apiKey,
+          s.model ?? defaultModel,
+          {
+            imageStreamMode: key === 'describeImage' ? scenarios.describeImage.streamMode : undefined,
+          },
+        ),
       ]),
   ) as ConstructorParameters<typeof RoutingProvider>[1]
 
@@ -49,11 +55,17 @@ async function main() {
   setLlmProvider(routing)
   log.info(
     {
-      default: model,
+      default: { provider: defaultProviderName, model: defaultModel },
       scenarios: Object.fromEntries(
         Object.entries(scenarios)
-          .filter(([, s]) => s.model)
-          .map(([key, s]) => [key, { model: s.model }]),
+          .filter(([, s]) => s.provider || s.model)
+          .map(([key, s]) => [
+            key,
+            {
+              provider: s.provider ?? defaultProviderName,
+              model: s.model ?? defaultModel,
+            },
+          ]),
       ),
     },
     'LLM routing provider registered',

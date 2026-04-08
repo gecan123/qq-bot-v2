@@ -95,11 +95,15 @@ describe('parseToolCalls', () => {
 })
 
 describe('createAgentOpenAIConfig', () => {
-  test('reads LLM_AGENT_* env vars with fallback to OPENAI_*', () => {
+  test('reads LLM_AGENT_* env vars with fallback to shared provider defaults', () => {
     const saved = {
       agentBase: process.env.LLM_AGENT_BASE_URL,
       agentKey: process.env.LLM_AGENT_API_KEY,
       agentModel: process.env.LLM_AGENT_MODEL,
+      defaultProvider: process.env.LLM_DEFAULT_PROVIDER,
+      providerUrl: process.env.LLM_PROVIDER_CLAUDE_URL,
+      providerKey: process.env.LLM_PROVIDER_CLAUDE_API_KEY,
+      llmModel: process.env.LLM_DEFAULT_MODEL,
       openaiBase: process.env.OPENAI_BASE_URL,
       openaiKey: process.env.OPENAI_API_KEY,
       openaiModel: process.env.OPENAI_MODEL,
@@ -124,12 +128,62 @@ describe('createAgentOpenAIConfig', () => {
       else process.env.LLM_AGENT_API_KEY = saved.agentKey
       if (saved.agentModel === undefined) delete process.env.LLM_AGENT_MODEL
       else process.env.LLM_AGENT_MODEL = saved.agentModel
+      if (saved.defaultProvider === undefined) delete process.env.LLM_DEFAULT_PROVIDER
+      else process.env.LLM_DEFAULT_PROVIDER = saved.defaultProvider
+      if (saved.providerUrl === undefined) delete process.env.LLM_PROVIDER_CLAUDE_URL
+      else process.env.LLM_PROVIDER_CLAUDE_URL = saved.providerUrl
+      if (saved.providerKey === undefined) delete process.env.LLM_PROVIDER_CLAUDE_API_KEY
+      else process.env.LLM_PROVIDER_CLAUDE_API_KEY = saved.providerKey
+      if (saved.llmModel === undefined) delete process.env.LLM_DEFAULT_MODEL
+      else process.env.LLM_DEFAULT_MODEL = saved.llmModel
       if (saved.openaiBase === undefined) delete process.env.OPENAI_BASE_URL
       else process.env.OPENAI_BASE_URL = saved.openaiBase
       if (saved.openaiKey === undefined) delete process.env.OPENAI_API_KEY
       else process.env.OPENAI_API_KEY = saved.openaiKey
       if (saved.openaiModel === undefined) delete process.env.OPENAI_MODEL
       else process.env.OPENAI_MODEL = saved.openaiModel
+    }
+  })
+
+  test('falls back to shared llm config when LLM_AGENT_* is unset', () => {
+    const saved = {
+      agentBase: process.env.LLM_AGENT_BASE_URL,
+      agentKey: process.env.LLM_AGENT_API_KEY,
+      agentModel: process.env.LLM_AGENT_MODEL,
+      defaultProvider: process.env.LLM_DEFAULT_PROVIDER,
+      providerUrl: process.env.LLM_PROVIDER_CLAUDE_URL,
+      providerKey: process.env.LLM_PROVIDER_CLAUDE_API_KEY,
+      llmModel: process.env.LLM_DEFAULT_MODEL,
+    }
+
+    try {
+      delete process.env.LLM_AGENT_BASE_URL
+      delete process.env.LLM_AGENT_API_KEY
+      delete process.env.LLM_AGENT_MODEL
+      process.env.LLM_DEFAULT_PROVIDER = 'claude'
+      process.env.LLM_PROVIDER_CLAUDE_URL = 'http://shared-url/v1'
+      process.env.LLM_PROVIDER_CLAUDE_API_KEY = 'sk-shared'
+      process.env.LLM_DEFAULT_MODEL = 'shared-model'
+
+      const config = createAgentOpenAIConfig()
+      assert.equal(config.baseURL, 'http://shared-url/v1')
+      assert.equal(config.apiKey, 'sk-shared')
+      assert.equal(config.model, 'shared-model')
+    } finally {
+      if (saved.agentBase === undefined) delete process.env.LLM_AGENT_BASE_URL
+      else process.env.LLM_AGENT_BASE_URL = saved.agentBase
+      if (saved.agentKey === undefined) delete process.env.LLM_AGENT_API_KEY
+      else process.env.LLM_AGENT_API_KEY = saved.agentKey
+      if (saved.agentModel === undefined) delete process.env.LLM_AGENT_MODEL
+      else process.env.LLM_AGENT_MODEL = saved.agentModel
+      if (saved.defaultProvider === undefined) delete process.env.LLM_DEFAULT_PROVIDER
+      else process.env.LLM_DEFAULT_PROVIDER = saved.defaultProvider
+      if (saved.providerUrl === undefined) delete process.env.LLM_PROVIDER_CLAUDE_URL
+      else process.env.LLM_PROVIDER_CLAUDE_URL = saved.providerUrl
+      if (saved.providerKey === undefined) delete process.env.LLM_PROVIDER_CLAUDE_API_KEY
+      else process.env.LLM_PROVIDER_CLAUDE_API_KEY = saved.providerKey
+      if (saved.llmModel === undefined) delete process.env.LLM_DEFAULT_MODEL
+      else process.env.LLM_DEFAULT_MODEL = saved.llmModel
     }
   })
 })

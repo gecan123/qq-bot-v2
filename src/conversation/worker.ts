@@ -1,6 +1,6 @@
 import { getMessageById } from '../database/messages.js'
 import type { Message } from '../generated/prisma/client.js'
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
 import { messageSender, type MessageSender } from '../messaging/message-sender.js'
 import { resolveMessage } from '../media/message-resolver.js'
 import type { IncomingMessage } from '../responder/pipeline.js'
@@ -9,6 +9,7 @@ import type { ParsedSegment } from '../types/message-segments.js'
 import type { ConversationWorkerResult, GroupConversationBatch, MentionEvent } from './types.js'
 
 type StoredConversationMessage = NonNullable<Awaited<ReturnType<typeof getMessageById>>>
+const log = createLogger('CONV_WORKER')
 
 async function defaultGetMessage(groupId: number, messageId: number): Promise<StoredConversationMessage | null> {
   return (await getMessageById(groupId, messageId)) as StoredConversationMessage | null

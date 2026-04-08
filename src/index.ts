@@ -1,6 +1,6 @@
 import { prisma } from './database/client.js'
 import { startBot } from './bot/core.js'
-import { log } from './logger.js'
+import { createLogger } from './logger.js'
 import { jobQueue } from './queue/index.js'
 import { setLlmProvider } from './llm/provider.js'
 import { OpenAIProvider } from './llm/openai-adapter.js'
@@ -21,6 +21,7 @@ let stopMemoryJob: () => void = () => {}
 let conversationQueue: ConversationQueue | null = null
 let conversationScheduler: ConversationScheduler | null = null
 let httpServer: http.Server | null = null
+const log = createLogger('APP')
 
 const ASYNC_MENTION_MERGE_WINDOW_MS = 30_000
 

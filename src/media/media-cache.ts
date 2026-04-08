@@ -1,5 +1,5 @@
 import { prisma } from '../database/client.js'
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
 import { jobQueue } from '../queue/runtime.js'
 import { computeMediaHash } from './media-hash.js'
 import type {
@@ -12,6 +12,7 @@ import type {
 import type { NCWebsocket } from 'node-napcat-ts'
 
 type MediaSegment = ImageSegment | VideoSegment | RecordSegment | FileSegment
+const log = createLogger('MEDIA')
 
 function resolveMediaType(segment: MediaSegment): string {
   if (segment.type === 'image') {

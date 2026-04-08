@@ -1,8 +1,10 @@
 import { prisma } from '../database/client.js'
 import { Prisma, type Message } from '../generated/prisma/client.js'
 import type { ParsedSegment } from '../types/message-segments.js'
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
 import { jobQueue } from '../queue/runtime.js'
+
+const log = createLogger('REPLY')
 
 export function collectReferenceIds(segmentGroups: ParsedSegment[][]): number[] {
   const ids: number[] = []

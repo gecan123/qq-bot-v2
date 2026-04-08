@@ -2,7 +2,7 @@ import { napcat } from './napcat.js'
 import { parseMessage } from './message-parser.js'
 import { findExistingMessageIds, insertMessage } from '../database/messages.js'
 import { config } from '../config/index.js'
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
 import { persistMediaReferences } from '../media/media-cache.js'
 import type { TextSegment } from '../types/message-segments.js'
 import { ResponderPipeline } from '../responder/pipeline.js'
@@ -10,6 +10,7 @@ import { proactiveHandler } from '../responder/handlers/proactive.js'
 import type { MentionDispatcher } from '../conversation/dispatcher.js'
 
 const responderPipeline = new ResponderPipeline([proactiveHandler])
+const log = createLogger('BOT')
 
 const BACKFILL_COUNT = 50
 

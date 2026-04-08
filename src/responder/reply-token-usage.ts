@@ -1,5 +1,7 @@
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
 import type { TokenUsageSummary } from '../llm/token-usage.js'
+
+const log = createLogger('REPLY')
 
 export function logMentionReplyTokenUsage(params: {
   groupId: number

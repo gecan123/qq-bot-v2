@@ -1,6 +1,8 @@
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
 import { createGroupMailbox, type GroupMailbox } from './group-mailbox.js'
 import type { ConversationWorkerResult, GroupConversationBatch, MentionEvent } from './types.js'
+
+const log = createLogger('CONV_SCHED')
 
 export interface ConversationSchedulerOptions {
   mergeWindowMs: number

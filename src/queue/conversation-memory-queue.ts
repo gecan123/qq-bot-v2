@@ -1,8 +1,9 @@
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
 import type { MentionEvent } from '../conversation/types.js'
 import type { ConversationQueue } from './conversation-queue.js'
 
 type TimerHandle = ReturnType<typeof setTimeout>
+const log = createLogger('CONV_QUEUE')
 
 export interface ConversationMemoryQueueOptions {
   onMention: (event: MentionEvent) => Promise<void> | void
@@ -63,4 +64,3 @@ export function createConversationMemoryQueue(
     },
   }
 }
-

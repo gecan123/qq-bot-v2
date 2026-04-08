@@ -1,6 +1,6 @@
 import http from 'node:http'
 import { URL } from 'node:url'
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
 
 export type RouteHandler = (
   params: Record<string, string>,
@@ -17,6 +17,7 @@ interface Route {
 }
 
 const routes: Route[] = []
+const log = createLogger('HTTP')
 
 export function addRoute(method: string, path: string, handler: RouteHandler): void {
   const paramNames: string[] = []

@@ -1,6 +1,6 @@
 import { prisma } from '../database/client.js'
 import { getLlmProvider } from '../llm/provider.js'
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
 import { config } from '../config/index.js'
 import {
   getGroupMemory,
@@ -20,6 +20,7 @@ import type { GroupMemorySummaryResult, UserMemoryProfileResult } from '../llm/t
 import { getMessageTimestamp } from '../utils/message-time.js'
 
 const MEMORY_SYSTEM_INSTRUCTION = loadPrompt('./prompts/memory-system.md')
+const log = createLogger('JOB_MEMORY')
 
 const GAP_MINUTES = 20
 const OVERLAP_SIZE = 15

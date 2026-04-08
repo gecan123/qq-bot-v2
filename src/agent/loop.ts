@@ -1,13 +1,15 @@
 import type { AgentLoopResult, AgentMessage, AgentToolDeclaration, AgentTurnResult, ToolResult } from './types.js'
 import type { ToolExecutor } from './tools.js'
 import type { TraceRecorder, TraceTerminationReason } from './trace.js'
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
 
 type ChatFn = (params: {
   systemPrompt: string
   history: AgentMessage[]
   tools: AgentToolDeclaration[]
 }) => Promise<AgentTurnResult>
+
+const log = createLogger('AGENT')
 
 export interface AgentLoopParams {
   systemPrompt: string

@@ -1,7 +1,9 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
 import { loadPrompt } from './prompt-loader.js'
+
+const log = createLogger('CONFIG')
 
 export interface AgentProfile {
   persona?: string

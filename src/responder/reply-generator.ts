@@ -5,13 +5,14 @@ import { createAgentOpenAIConfig, createOpenAIChatFn } from '../agent/openai-com
 import { getAgentProfile } from '../config/agent-profiles.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import { getCurrentTokenUsageTracker, runWithTokenUsageTracking } from '../llm/token-usage.js'
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
 import type { AgentMessage } from '../agent/types.js'
 import type { IncomingMessage } from './pipeline.js'
 import { buildContext, extractResolvedTriggerText } from './context-builder.js'
 import { logMentionReplyTokenUsage } from './reply-token-usage.js'
 
 const REPLY_INSTRUCTION = loadPrompt('./prompts/reply-instruction.md')
+const log = createLogger('REPLY')
 
 const _agentConfig = createAgentOpenAIConfig()
 const _agentClient = new OpenAI({ baseURL: _agentConfig.baseURL, apiKey: _agentConfig.apiKey })

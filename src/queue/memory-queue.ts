@@ -1,9 +1,10 @@
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
 import type { Job, JobEnqueueOptions, JobHandler, JobPriority, JobQueue } from './types.js'
 
 const MAX_ATTEMPTS = 3
 const RETRY_DELAY_MS = 5_000
 const POLL_INTERVAL_MS = 1_000
+const log = createLogger('QUEUE')
 
 function getJobContext(data: unknown): Record<string, unknown> {
   if (data == null) return {}

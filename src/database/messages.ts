@@ -3,7 +3,9 @@ import { Prisma } from '../generated/prisma/client.js'
 import type { Message } from '../generated/prisma/client.js'
 import type { ParsedSegment } from '../types/message-segments.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
+
+const log = createLogger('DB')
 
 export interface InsertMessageParams {
   groupId: number

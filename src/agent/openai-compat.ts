@@ -1,8 +1,10 @@
 import OpenAI from 'openai'
 import { z } from 'zod'
 import { recordCurrentTokenUsage, toTokenUsage } from '../llm/token-usage.js'
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
 import type { AgentMessage, AgentToolDeclaration, AgentTurnResult, ToolCall } from './types.js'
+
+const log = createLogger('AGENT')
 
 export function toOpenAIMessages(
   systemPrompt: string,

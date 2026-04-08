@@ -1,7 +1,7 @@
 import { getRecentMessagesReferencingMedia, updateResolvedText } from '../database/messages.js'
 import { config } from '../config/index.js'
 import type { Message } from '../generated/prisma/client.js'
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
 import { resolveMessage } from '../media/message-resolver.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
 import type { Job } from '../queue/types.js'
@@ -17,6 +17,8 @@ interface RefreshResolvedTextDeps {
   updateMessage?: (messageId: number, resolvedText: string) => Promise<void>
   windowMinutes?: number
 }
+
+const log = createLogger('JOB_RESOLVE')
 
 export async function refreshResolvedTextForMedia(
   mediaId: number,

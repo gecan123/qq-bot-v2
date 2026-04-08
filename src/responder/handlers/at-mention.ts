@@ -1,7 +1,9 @@
 import type { Handler } from '../pipeline.js'
 import type { AtSegment } from '../../types/message-segments.js'
 import { config } from '../../config/index.js'
-import { log } from '../../logger.js'
+import { createLogger } from '../../logger.js'
+
+const log = createLogger('REPLY')
 
 export const atMentionHandler: Handler = async (msg) => {
   const isMentioned = msg.segments.some(

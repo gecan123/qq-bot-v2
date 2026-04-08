@@ -1,7 +1,7 @@
 import { prisma } from '../database/client.js'
 import { Prisma } from '../generated/prisma/client.js'
 import { getLlmProvider } from '../llm/provider.js'
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
 import { isMediaDescription } from '../media/media-description.js'
 import { jobQueue } from '../queue/runtime.js'
 import { withInFlight } from '../utils/in-flight.js'
@@ -15,6 +15,7 @@ const VISION_MEDIA_TYPES = new Set(['image', 'sticker'])
 
 const inFlight = new Map<number, Promise<void>>()
 
+const log = createLogger('JOB_MEDIA')
 function toDescriptionRawInput(raw: unknown): Prisma.InputJsonValue | Prisma.NullableJsonNullValueInput | undefined {
   if (raw === undefined) return undefined
   if (raw === null) return Prisma.JsonNull

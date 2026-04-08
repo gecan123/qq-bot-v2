@@ -1,5 +1,5 @@
 import { napcat } from '../bot/napcat.js'
-import { log } from '../logger.js'
+import { createLogger } from '../logger.js'
 
 interface NapcatSegment {
   type: string
@@ -8,6 +8,7 @@ interface NapcatSegment {
 
 const RETRY_LIMIT = 2
 const RETRY_DELAY_MS = 1000
+const log = createLogger('SEND')
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))

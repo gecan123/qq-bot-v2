@@ -79,7 +79,7 @@ describe('generateDescriptionForMedia', () => {
     })
   })
 
-  test('does not persist blank image descriptions', async () => {
+  test('falls back to sensitive_content when image description is blank', async () => {
     const updates: any[] = []
     const enqueued: Array<{ type: string; data: unknown; options?: { priority?: string } }> = []
 
@@ -126,8 +126,10 @@ describe('generateDescriptionForMedia', () => {
 
     await generateDescriptionForMedia(1)
 
-    assert.equal(updates.length, 0)
-    assert.deepEqual(enqueued, [])
+    assert.equal(updates.length, 1)
+    assert.equal(updates[0].data.descriptionRaw.detectedType, 'sensitive_content')
+    assert.equal(updates[0].data.descriptionRaw.confidence, 0.1)
+    assert.deepEqual(enqueued, [{ type: 'refresh-message-resolution', data: { mediaId: 1 }, options: { priority: 'low' } }])
   })
 
   test('logs model and duration when image description is generated', async () => {
@@ -246,8 +248,9 @@ describe('generateDescriptionForMedia', () => {
     assert.equal(infos[0]?.object.model, 'gpt-5.4-mini')
   })
 
-  test('logs llm response when image description result is invalid', async () => {
+  test('logs llm response and writes sensitive_content fallback when image description result is invalid', async () => {
     const warnings: Array<{ object: Record<string, unknown>; message: string | undefined }> = []
+    const updates: any[] = []
 
     prisma.media.findUnique = (async () => ({
       data: new Uint8Array(Buffer.from('image-bytes')),
@@ -256,6 +259,11 @@ describe('generateDescriptionForMedia', () => {
       descriptionRaw: null,
       fileName: 'frame.jpg',
     })) as unknown as typeof prisma.media.findUnique
+
+    prisma.media.update = (async (args: any) => {
+      updates.push(args)
+      return {} as any
+    }) as typeof prisma.media.update
 
     log.warn = ((object: Record<string, unknown>, message?: string) => {
       warnings.push({ object, message })
@@ -293,6 +301,8 @@ describe('generateDescriptionForMedia', () => {
     assert.equal(warnings[0]?.object.mediaType, 'image')
     assert.equal(warnings[0]?.object.llmDescription, '   ')
     assert.deepEqual(warnings[0]?.object.llmRaw, ['bad-shape'])
+    assert.equal(updates.length, 1)
+    assert.equal(updates[0].data.descriptionRaw.detectedType, 'sensitive_content')
   })
 
   test('uses describeVideo for video media', async () => {

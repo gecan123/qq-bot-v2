@@ -14,6 +14,16 @@ export interface GenerateDescriptionData {
 
 const VISION_MEDIA_TYPES = new Set(['image', 'sticker'])
 
+const SENSITIVE_CONTENT_FALLBACK = {
+  detectedType: 'sensitive_content',
+  summary: '内容受限',
+  description: '图片内容无法详述，可能包含敏感元素或超出解析能力',
+  extractedText: [] as string[],
+  memeContext: '',
+  confidence: 0.1,
+  intentSignal: 'unknown',
+}
+
 const inFlight = new Map<number, Promise<void>>()
 const log = createLogger('JOB_MEDIA')
 
@@ -137,6 +147,11 @@ async function doGenerate(mediaId: number): Promise<void> {
 
     if (!descriptionRaw) {
       logInvalidDescriptionResult(mediaId, mediaType, result)
+      await prisma.media.update({
+        where: { mediaId },
+        data: { descriptionRaw: toDescriptionRawInput(SENSITIVE_CONTENT_FALLBACK) },
+      })
+      jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
       return
     }
 

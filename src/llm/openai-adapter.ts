@@ -15,6 +15,9 @@ type StructuredImageDescription = {
     summary?: string
     description?: string
     extractedText?: string[]
+    memeContext?: string
+    confidence?: number
+    intentSignal?: string
 }
 
 type StructuredAudioTranscription = {
@@ -74,8 +77,11 @@ const IMAGE_DESCRIPTION_RESPONSE_FORMAT = {
                 summary: { type: 'string' },
                 description: { type: 'string' },
                 extractedText: { type: 'array', items: { type: 'string' } },
+                memeContext: { type: 'string' },
+                confidence: { type: 'number' },
+                intentSignal: { type: 'string' },
             },
-            required: ['detectedType', 'summary', 'description', 'extractedText'],
+            required: ['detectedType', 'summary', 'description', 'extractedText', 'memeContext', 'confidence', 'intentSignal'],
         },
     },
 } as const
@@ -388,9 +394,11 @@ export class OpenAIProvider implements LlmProvider {
             const summary = parsed.summary?.trim()
             const description = parsed.description?.trim()
             const extractedText = (parsed.extractedText ?? []).map((item) => item.trim()).filter(Boolean)
+            const memeContext = parsed.memeContext?.trim()
 
             if (summary) parts.push(summary)
             if (description && description !== summary) parts.push(description)
+            if (memeContext) parts.push(`[梗图背景：${memeContext}]`)
             if (extractedText.length > 0) {
                 parts.push(`图中文字：${extractedText.join('；')}`)
             }

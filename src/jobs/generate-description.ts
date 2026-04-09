@@ -7,6 +7,7 @@ import { isMediaDescription } from '../media/media-description.js'
 import { jobQueue } from '../queue/runtime.js'
 import { withInFlight } from '../utils/in-flight.js'
 import type { Job } from '../queue/types.js'
+import type { MediaDescriptionResult } from '../llm/types.js'
 
 export interface GenerateDescriptionData {
   mediaId: number
@@ -56,6 +57,34 @@ function logDescriptionGenerated(
     },
     message,
   )
+}
+
+async function runWithDescriptionFailureLog<T>(
+  provider: ReturnType<typeof getLlmProvider>,
+  scenario: RoutingScenario,
+  mediaId: number,
+  startedAt: number,
+  fn: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await fn()
+  } catch (error) {
+    log.error(
+      {
+        mediaId,
+        scenario,
+        model: getProviderModel(provider, scenario),
+        durationMs: Date.now() - startedAt,
+        error,
+      },
+      '媒体描述生成失败',
+    )
+    throw error
+  }
+}
+
+async function wrapLegacyDescription(fn: () => Promise<string>): Promise<MediaDescriptionResult> {
+  return { description: await fn() }
 }
 
 function toDescriptionRawInput(raw: unknown): Prisma.InputJsonValue | Prisma.NullableJsonNullValueInput | undefined {
@@ -130,19 +159,26 @@ async function doGenerate(mediaId: number): Promise<void> {
     }
 
     const startedAt = Date.now()
-    const result = provider.describeImageDetailed
-      ? await provider.describeImageDetailed({
-          image: buffer,
-          contentType: media.contentType ?? 'application/octet-stream',
-          mediaType,
-        })
-      : {
-          description: await provider.describeImage({
+    const result: MediaDescriptionResult = await runWithDescriptionFailureLog(
+      provider,
+      'describeImage',
+      mediaId,
+      startedAt,
+      async () =>
+      provider.describeImageDetailed
+        ? provider.describeImageDetailed({
             image: buffer,
             contentType: media.contentType ?? 'application/octet-stream',
             mediaType,
-          }),
-        }
+          })
+        : wrapLegacyDescription(() =>
+            provider.describeImage({
+              image: buffer,
+              contentType: media.contentType ?? 'application/octet-stream',
+              mediaType,
+            }),
+          ),
+    )
     const descriptionRaw = normalizeDescriptionRaw(result?.raw, result?.description)
 
     if (!descriptionRaw) {
@@ -174,6 +210,7 @@ async function doGenerate(mediaId: number): Promise<void> {
       log.debug({ mediaId }, 'LLM provider 不支持视频解析，跳过')
       return
     }
+    const describeVideo = provider.describeVideo
 
     const buffer = Buffer.from(media.data)
     if (buffer.length === 0) {
@@ -182,19 +219,26 @@ async function doGenerate(mediaId: number): Promise<void> {
     }
 
     const startedAt = Date.now()
-    const result = provider.describeVideoDetailed
-      ? await provider.describeVideoDetailed({
-          video: buffer,
-          contentType: media.contentType ?? 'video/mp4',
-          fileName: media.fileName ?? undefined,
-        })
-      : {
-          description: await provider.describeVideo({
+    const result: MediaDescriptionResult = await runWithDescriptionFailureLog(
+      provider,
+      'describeVideo',
+      mediaId,
+      startedAt,
+      async () =>
+      provider.describeVideoDetailed
+        ? provider.describeVideoDetailed({
             video: buffer,
             contentType: media.contentType ?? 'video/mp4',
             fileName: media.fileName ?? undefined,
-          }),
-        }
+          })
+        : wrapLegacyDescription(() =>
+            describeVideo({
+              video: buffer,
+              contentType: media.contentType ?? 'video/mp4',
+              fileName: media.fileName ?? undefined,
+            }),
+          ),
+    )
     const descriptionRaw = normalizeDescriptionRaw(result?.raw, result?.description)
 
     if (!descriptionRaw) {
@@ -216,6 +260,7 @@ async function doGenerate(mediaId: number): Promise<void> {
       log.debug({ mediaId }, 'LLM provider 不支持语音转写，跳过')
       return
     }
+    const transcribeAudio = provider.transcribeAudio
 
     const buffer = Buffer.from(media.data)
     if (buffer.length === 0) {
@@ -224,17 +269,24 @@ async function doGenerate(mediaId: number): Promise<void> {
     }
 
     const startedAt = Date.now()
-    const result = provider.transcribeAudioDetailed
-      ? await provider.transcribeAudioDetailed({
-          audio: buffer,
-          contentType: media.contentType ?? 'audio/mp4',
-        })
-      : {
-          description: await provider.transcribeAudio({
+    const result: MediaDescriptionResult = await runWithDescriptionFailureLog(
+      provider,
+      'transcribeAudio',
+      mediaId,
+      startedAt,
+      async () =>
+      provider.transcribeAudioDetailed
+        ? provider.transcribeAudioDetailed({
             audio: buffer,
             contentType: media.contentType ?? 'audio/mp4',
-          }),
-        }
+          })
+        : wrapLegacyDescription(() =>
+            transcribeAudio({
+              audio: buffer,
+              contentType: media.contentType ?? 'audio/mp4',
+            }),
+          ),
+    )
     const descriptionRaw = normalizeDescriptionRaw(result?.raw, result?.description)
 
     if (!descriptionRaw) {
@@ -261,6 +313,7 @@ async function doGenerate(mediaId: number): Promise<void> {
       log.debug({ mediaId }, 'LLM provider 不支持 PDF 解析，跳过')
       return
     }
+    const describePdf = provider.describePdf
 
     const buffer = Buffer.from(media.data)
     if (buffer.length === 0) {
@@ -269,19 +322,26 @@ async function doGenerate(mediaId: number): Promise<void> {
     }
 
     const startedAt = Date.now()
-    const result = provider.describePdfDetailed
-      ? await provider.describePdfDetailed({
-          file: buffer,
-          contentType: media.contentType ?? 'application/pdf',
-          fileName: media.fileName ?? undefined,
-        })
-      : {
-          description: await provider.describePdf({
+    const result: MediaDescriptionResult = await runWithDescriptionFailureLog(
+      provider,
+      'describePdf',
+      mediaId,
+      startedAt,
+      async () =>
+      provider.describePdfDetailed
+        ? provider.describePdfDetailed({
             file: buffer,
             contentType: media.contentType ?? 'application/pdf',
             fileName: media.fileName ?? undefined,
-          }),
-        }
+          })
+        : wrapLegacyDescription(() =>
+            describePdf({
+              file: buffer,
+              contentType: media.contentType ?? 'application/pdf',
+              fileName: media.fileName ?? undefined,
+            }),
+          ),
+    )
     const descriptionRaw = normalizeDescriptionRaw(result?.raw, result?.description)
 
     if (!descriptionRaw) {

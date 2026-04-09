@@ -12,6 +12,7 @@ const originalUpdate = prisma.media.update
 const originalEnqueue = jobQueue.enqueue
 const originalInfo = log.info
 const originalWarn = log.warn
+const originalError = log.error
 
 afterEach(() => {
   prisma.media.findUnique = originalFindUnique
@@ -19,6 +20,7 @@ afterEach(() => {
   jobQueue.enqueue = originalEnqueue
   log.info = originalInfo
   log.warn = originalWarn
+  log.error = originalError
   setLlmProvider(undefined as any)
 })
 
@@ -192,6 +194,55 @@ describe('generateDescriptionForMedia', () => {
     assert.equal(infos[0]?.object.mediaId, 22)
     assert.equal(infos[0]?.object.model, 'gpt-5.4-mini')
     assert.equal(typeof infos[0]?.object.durationMs, 'number')
+  })
+
+  test('logs model when image description generation fails', async () => {
+    const errors: Array<{ object: Record<string, unknown>; message: string | undefined }> = []
+    const failure = { status: 400, headers: {}, requestID: null }
+
+    prisma.media.findUnique = (async () => ({
+      data: new Uint8Array(Buffer.from('image-bytes')),
+      contentType: 'image/jpeg',
+      mediaType: 'image',
+      descriptionRaw: null,
+      fileName: 'frame.jpg',
+    })) as unknown as typeof prisma.media.findUnique
+
+    log.error = ((object: Record<string, unknown>, message?: string) => {
+      errors.push({ object, message })
+    }) as typeof log.error
+
+    setLlmProvider({
+      model: 'gpt-5.4-mini',
+      describeImage: async () => '平铺描述',
+      describeImageDetailed: async () => {
+        throw failure
+      },
+      describeVideo: async () => '',
+      describePdf: async () => '',
+      generateGroupMemorySummary: async () => ({
+        summary: '',
+        topics: [],
+        activePatterns: [],
+        styleTags: [],
+      }),
+      generateUserMemoryProfile: async () => ({
+        profile: '',
+        traits: [],
+        interests: [],
+        speakingStyle: [],
+        examples: [],
+      }),
+      transcribeAudio: async () => '',
+    } as any)
+
+    await assert.rejects(() => generateDescriptionForMedia(24), (error: unknown) => error === failure)
+
+    assert.equal(errors.length, 1)
+    assert.equal(errors[0]?.message, '媒体描述生成失败')
+    assert.equal(errors[0]?.object.mediaId, 24)
+    assert.equal(errors[0]?.object.scenario, 'describeImage')
+    assert.equal(errors[0]?.object.model, 'gpt-5.4-mini')
   })
 
   test('logs routed provider model when image description is generated through routing provider', async () => {

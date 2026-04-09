@@ -51,6 +51,13 @@ export async function getUserMemory(groupId: bigint, senderId: bigint): Promise<
   })
 }
 
+export async function getUserMemories(groupId: bigint, senderIds: bigint[]): Promise<UserMemory[]> {
+  if (senderIds.length === 0) return []
+  return prisma.userMemory.findMany({
+    where: { groupId, senderId: { in: senderIds } },
+  })
+}
+
 export interface UpsertUserMemoryParams {
   groupId: bigint
   groupName: string | null

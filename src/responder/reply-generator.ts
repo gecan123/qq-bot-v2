@@ -9,6 +9,7 @@ import { createLogger } from '../logger.js'
 import type { AgentMessage } from '../agent/types.js'
 import type { IncomingMessage } from './pipeline.js'
 import { buildContext, extractResolvedTriggerText } from './context-builder.js'
+import { buildMemorySnapshot } from './memory-loader.js'
 import { logMentionReplyTokenUsage } from './reply-token-usage.js'
 
 const REPLY_INSTRUCTION = loadPrompt('./prompts/reply-instruction.md')
@@ -26,21 +27,31 @@ async function agentReply(
   warningTimeMs?: number,
   maxAnswerChars?: number,
 ): Promise<string | null> {
-  const context = await buildContext(msg, contextLimit)
-  const triggerText = await extractResolvedTriggerText(msg.groupId, msg.messageId, msg.segments)
+  const { contextText, recentMessages } = await buildContext(msg, contextLimit)
+  const [triggerText, memorySnapshot] = await Promise.all([
+    extractResolvedTriggerText(msg.groupId, msg.messageId, msg.segments),
+    buildMemorySnapshot(msg.groupId, recentMessages, msg.senderId),
+  ])
 
-  const contextContent = context
-    ? `[群聊背景]\n${context}`
+  const contextContent = contextText
+    ? `[群聊背景]\n${contextText}`
     : '[群聊背景]\n（暂无近期消息记录）'
   const triggerContent = triggerText
     ? `请根据你的人设回复这条消息：${triggerText}`
     : '（用户@了你，请根据你的人设回复）'
 
-  const initialHistory: AgentMessage[] = [
+  const initialHistory: AgentMessage[] = []
+  if (memorySnapshot) {
+    initialHistory.push(
+      { role: 'user', content: memorySnapshot },
+      { role: 'model', content: '了解。' },
+    )
+  }
+  initialHistory.push(
     { role: 'user', content: contextContent },
     { role: 'model', content: '好的。' },
     { role: 'user', content: triggerContent },
-  ]
+  )
 
   const { declarations, executors } = createAgentTools(msg.groupId)
   const chatFn = createOpenAIChatFn(_agentClient, _agentModel, { reasoningEffort: 'medium' })

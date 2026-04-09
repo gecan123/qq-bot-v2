@@ -6,6 +6,7 @@ import { createAgentOpenAIConfig, createOpenAIChatFn } from '../agent/openai-com
 import { getAgentProfile } from '../config/agent-profiles.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import { buildContext } from '../responder/context-builder.js'
+import { buildMemorySnapshot } from '../responder/memory-loader.js'
 import type { RouteHandler } from './http.js'
 import type { AgentMessage, AgentTurnResult } from '../agent/types.js'
 
@@ -56,6 +57,7 @@ interface PlaygroundProfile {
 
 interface PlaygroundDeps {
   buildContext?: typeof buildContext
+  buildMemorySnapshot?: typeof buildMemorySnapshot
   getAgentProfile?: (groupId: number) => PlaygroundProfile
   createAgentTools?: typeof createAgentTools
   chatFn?: (params: {
@@ -115,7 +117,8 @@ export async function runPlayground(body: PlaygroundBody, deps: PlaygroundDeps =
   }
 
   traceRecorder.phaseStarted('load_context', 'building context')
-  const context = await (deps.buildContext ?? buildContext)(fakeMsg, contextLimit)
+  const { contextText: context, recentMessages } = await (deps.buildContext ?? buildContext)(fakeMsg, contextLimit)
+  const memorySnapshot = await (deps.buildMemorySnapshot ?? buildMemorySnapshot)(groupIdNum, recentMessages, fakeMsg.senderId)
   traceRecorder.phaseFinished({
     phase: 'load_context',
     summary: context ? 'context loaded' : 'no context available',
@@ -125,11 +128,18 @@ export async function runPlayground(body: PlaygroundBody, deps: PlaygroundDeps =
     ? `[群聊背景]\n${context}`
     : '[群聊背景]\n（暂无近期消息记录）'
 
-  const initialHistory: AgentMessage[] = [
+  const initialHistory: AgentMessage[] = []
+  if (memorySnapshot) {
+    initialHistory.push(
+      { role: 'user', content: memorySnapshot },
+      { role: 'model', content: '了解。' },
+    )
+  }
+  initialHistory.push(
     { role: 'user', content: contextContent },
     { role: 'model', content: '好的。' },
     { role: 'user', content: message },
-  ]
+  )
 
   const { declarations, executors } = (deps.createAgentTools ?? createAgentTools)(groupIdNum)
   const chatFn = deps.chatFn ?? createOpenAIChatFn(_agentClient, _agentModel)

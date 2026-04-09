@@ -1,5 +1,6 @@
 import type { IncomingMessage } from './pipeline.js'
 import type { ParsedSegment, ReplySegment } from '../types/message-segments.js'
+import type { Message } from '../generated/prisma/client.js'
 import { getRecentGroupMessages, getMessageById } from '../database/messages.js'
 import { resolveMessage } from '../media/message-resolver.js'
 import { config } from '../config/index.js'
@@ -10,7 +11,12 @@ function formatTime(date: Date): string {
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
-export async function buildContext(msg: IncomingMessage, contextLimit: number): Promise<string> {
+export interface BuildContextResult {
+  contextText: string
+  recentMessages: Message[]
+}
+
+export async function buildContext(msg: IncomingMessage, contextLimit: number): Promise<BuildContextResult> {
   const lines: string[] = []
 
   const replySegment = msg.segments.find((s): s is ReplySegment => s.type === 'reply')
@@ -42,7 +48,7 @@ export async function buildContext(msg: IncomingMessage, contextLimit: number): 
     if (text) lines.push(`[${time}] ${nickname}: ${text}`)
   }
 
-  return lines.join('\n')
+  return { contextText: lines.join('\n'), recentMessages }
 }
 
 export function extractTriggerText(segments: ParsedSegment[]): string {

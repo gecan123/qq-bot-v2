@@ -13,7 +13,7 @@ describe('runPlayground', () => {
         senderName: '测试用户',
       },
       {
-        buildContext: async () => '上下文',
+        buildContext: async () => ({ contextText: '上下文', recentMessages: [] }),
         getAgentProfile: () => ({
           persona: '你是测试助手',
           replyContextMessages: 20,
@@ -65,7 +65,7 @@ describe('runPlayground', () => {
         senderName: '测试用户',
       },
       {
-        buildContext: async () => '上下文',
+        buildContext: async () => ({ contextText: '上下文', recentMessages: [] }),
         getAgentProfile: () => ({
           persona: '你是测试助手',
           replyContextMessages: 20,

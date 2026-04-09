@@ -8,7 +8,7 @@ describe('media prompts', () => {
     assert.match(prompt, /schema|结构化 JSON/)
     assert.match(prompt, /detectedType/)
     assert.match(prompt, /2 到 4 句话|够用/)
-    assert.match(prompt, /包含环境信息|环境信息|环境或地点线索/)
+    assert.match(prompt, /包含环境信息|环境信息|环境或地点线索|包含环境时/)
     assert.match(prompt, /聊天记录|聊天截图/)
     assert.match(prompt, /表情包|贴纸/)
     assert.match(prompt, /只输出符合 schema 的 JSON|只输出/)

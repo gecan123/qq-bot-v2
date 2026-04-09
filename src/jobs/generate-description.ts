@@ -85,7 +85,7 @@ function logInvalidDescriptionResult(
       llmDescription: result?.description,
       llmRaw: result?.raw,
     },
-    '媒体描述结果不是有效对象，保留待解析状态',
+    '媒体描述结果不是有效对象，写入 sensitive_content 兜底描述',
   )
 }
 
@@ -146,12 +146,17 @@ async function doGenerate(mediaId: number): Promise<void> {
     const descriptionRaw = normalizeDescriptionRaw(result?.raw, result?.description)
 
     if (!descriptionRaw) {
-      logInvalidDescriptionResult(mediaId, mediaType, result)
-      await prisma.media.update({
-        where: { mediaId },
-        data: { descriptionRaw: toDescriptionRawInput(SENSITIVE_CONTENT_FALLBACK) },
-      })
-      jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
+      const hasInvalidShape = result?.raw !== null && result?.raw !== undefined
+      if (hasInvalidShape) {
+        logInvalidDescriptionResult(mediaId, mediaType, result)
+        await prisma.media.update({
+          where: { mediaId },
+          data: { descriptionRaw: toDescriptionRawInput(SENSITIVE_CONTENT_FALLBACK) },
+        })
+        jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
+      } else {
+        log.warn({ mediaId, mediaType, llmDescription: result?.description }, '图片描述返回空结果，保留待解析状态供重试')
+      }
       return
     }
 

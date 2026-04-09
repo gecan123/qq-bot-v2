@@ -66,6 +66,114 @@ describe('group mailbox', () => {
   })
 })
 
+describe('group mailbox proactive', () => {
+  test('addMessage triggers debounce timer that flushes a proactive batch', () => {
+    const timers: Array<{ callback: () => void; delayMs: number }> = []
+
+    const mailbox = createGroupMailbox({
+      groupId: 1,
+      mergeWindowMs: 20_000,
+      proactiveDebounceMs: 90_000,
+      proactiveMaxWaitMs: 300_000,
+      schedule: (callback, delayMs) => {
+        const entry = { callback, delayMs }
+        timers.push(entry)
+        return timers.length as unknown as ReturnType<typeof setTimeout>
+      },
+      clearSchedule: () => {},
+    })
+
+    mailbox.addMessage()
+    mailbox.addMessage()
+    mailbox.addMessage()
+
+    assert.equal(mailbox.snapshot().messagesSinceLastEval, 3)
+
+    // debounce timer fires
+    const debounceTimer = timers.find((t) => t.delayMs === 90_000)
+    assert.ok(debounceTimer, 'debounce timer should be scheduled')
+    debounceTimer.callback()
+
+    const snap = mailbox.snapshot()
+    assert.equal(snap.readyBatches.length, 1)
+    assert.equal(snap.readyBatches[0]?.messagesSinceLastEval, 3)
+    assert.equal(snap.readyBatches[0]?.events.length, 0)
+    assert.equal(snap.messagesSinceLastEval, 0)
+  })
+
+  test('maxWait timer forces flush even when debounce keeps resetting', () => {
+    const timers: Array<{ callback: () => void; delayMs: number }> = []
+    let cleared: number[] = []
+
+    const mailbox = createGroupMailbox({
+      groupId: 1,
+      mergeWindowMs: 20_000,
+      proactiveDebounceMs: 90_000,
+      proactiveMaxWaitMs: 300_000,
+      schedule: (callback, delayMs) => {
+        const entry = { callback, delayMs }
+        timers.push(entry)
+        return timers.length as unknown as ReturnType<typeof setTimeout>
+      },
+      clearSchedule: (timer) => {
+        cleared.push(timer as unknown as number)
+      },
+    })
+
+    // 模拟持续热聊
+    for (let i = 0; i < 20; i++) {
+      mailbox.addMessage()
+    }
+
+    assert.equal(mailbox.snapshot().messagesSinceLastEval, 20)
+
+    // maxWait timer fires (300s)
+    const maxWaitTimer = timers.find((t) => t.delayMs === 300_000)
+    assert.ok(maxWaitTimer, 'maxWait timer should be scheduled')
+    maxWaitTimer.callback()
+
+    const snap = mailbox.snapshot()
+    assert.equal(snap.readyBatches.length, 1)
+    assert.equal(snap.readyBatches[0]?.messagesSinceLastEval, 20)
+    assert.equal(snap.messagesSinceLastEval, 0)
+  })
+
+  test('addMessage does nothing when proactiveDebounceMs is not set', () => {
+    const mailbox = createGroupMailbox({
+      groupId: 1,
+      mergeWindowMs: 20_000,
+    })
+
+    mailbox.addMessage()
+    mailbox.addMessage()
+
+    assert.equal(mailbox.snapshot().messagesSinceLastEval, 0)
+    assert.equal(mailbox.snapshot().readyBatches.length, 0)
+  })
+
+  test('stop clears proactive timers and resets state', () => {
+    const timers: Array<{ callback: () => void; delayMs: number }> = []
+
+    const mailbox = createGroupMailbox({
+      groupId: 1,
+      mergeWindowMs: 20_000,
+      proactiveDebounceMs: 90_000,
+      schedule: (callback, delayMs) => {
+        timers.push({ callback, delayMs })
+        return timers.length as unknown as ReturnType<typeof setTimeout>
+      },
+      clearSchedule: () => {},
+    })
+
+    mailbox.addMessage()
+    mailbox.addMessage()
+    mailbox.stop()
+
+    assert.equal(mailbox.snapshot().messagesSinceLastEval, 0)
+    assert.equal(mailbox.snapshot().readyBatches.length, 0)
+  })
+})
+
 describe('conversation scheduler', () => {
   test('same group never runs two workers concurrently', async () => {
     const callbacks: Array<() => void> = []

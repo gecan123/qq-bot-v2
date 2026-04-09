@@ -1,7 +1,3 @@
-import OpenAI from 'openai'
-import { createAgentTools } from '../agent/tools.js'
-import { runAgentLoop } from '../agent/loop.js'
-import { createAgentOpenAIConfig, createOpenAIChatFn } from '../agent/openai-compat.js'
 import { getAgentProfile } from '../config/agent-profiles.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import { getCurrentTokenUsageTracker, runWithTokenUsageTracking } from '../llm/token-usage.js'
@@ -11,13 +7,10 @@ import type { IncomingMessage } from './pipeline.js'
 import { buildContext, extractResolvedTriggerText } from './context-builder.js'
 import { buildMemorySnapshot } from './memory-loader.js'
 import { logMentionReplyTokenUsage } from './reply-token-usage.js'
+import { runAgentSession } from './agent-session.js'
 
 const REPLY_INSTRUCTION = loadPrompt('./prompts/reply-instruction.md')
 const log = createLogger('REPLY')
-
-const _agentConfig = createAgentOpenAIConfig()
-const _agentClient = new OpenAI({ baseURL: _agentConfig.baseURL, apiKey: _agentConfig.apiKey })
-const _agentModel = _agentConfig.model
 
 async function agentReply(
   msg: IncomingMessage,
@@ -53,33 +46,11 @@ async function agentReply(
     { role: 'user', content: triggerContent },
   )
 
-  const { declarations, executors } = createAgentTools(msg.groupId)
-  const chatFn = createOpenAIChatFn(_agentClient, _agentModel, { reasoningEffort: 'medium' })
-  const now = new Date().toLocaleString('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    weekday: 'short',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-  const systemPrompt = [
-    `当前时间：${now}`,
-    '',
-    '[群聊人格基座]',
+  const result = await runAgentSession({
+    groupId: msg.groupId,
     persona,
-    '',
-    '[任务约束]',
-    REPLY_INSTRUCTION,
-  ].join('\n')
-
-  const result = await runAgentLoop({
-    systemPrompt,
+    instruction: REPLY_INSTRUCTION,
     initialHistory,
-    chatFn,
-    tools: declarations,
-    executors,
     maxSteps,
     warningTimeMs,
     maxAnswerChars,

@@ -5,11 +5,9 @@ import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
 import { persistMediaReferences } from '../media/media-cache.js'
 import type { TextSegment } from '../types/message-segments.js'
-import { ResponderPipeline } from '../responder/pipeline.js'
-import { proactiveHandler } from '../responder/handlers/proactive.js'
 import type { MentionDispatcher } from '../conversation/dispatcher.js'
+import type { ConversationScheduler } from '../conversation/scheduler.js'
 
-const responderPipeline = new ResponderPipeline([proactiveHandler])
 const log = createLogger('BOT')
 
 const BACKFILL_COUNT = 50
@@ -17,6 +15,7 @@ const BACKFILL_COUNT = 50
 interface ProcessMessageOptions {
   dispatchMention?: boolean
   mentionDispatcher?: MentionDispatcher
+  conversationScheduler?: ConversationScheduler
 }
 
 async function processMessage(groupId: number, messageId: number, options: ProcessMessageOptions = {}): Promise<void> {
@@ -55,14 +54,10 @@ async function processMessage(groupId: number, messageId: number, options: Proce
     })
   }
 
-  await responderPipeline.handle({
-    groupId,
-    groupName,
-    messageId: parsed.messageId,
-    senderId: parsed.senderId,
-    senderNickname: parsed.senderNickname,
-    segments: mediaResult.content,
-  })
+  // proactive: 非 bot 自身的消息计入 scheduler
+  if (options.conversationScheduler && parsed.senderId !== config.selfNumber) {
+    options.conversationScheduler.onMessage(groupId)
+  }
 
   const textPreview = mediaResult.content
     .filter((s): s is TextSegment => s.type === 'text')
@@ -127,6 +122,7 @@ async function resolveGroupName(context: { group_id: number; group_name?: string
 
 export interface StartBotOptions {
   mentionDispatcher?: MentionDispatcher
+  conversationScheduler?: ConversationScheduler
 }
 
 export async function startBot(options: StartBotOptions = {}): Promise<void> {
@@ -164,6 +160,7 @@ export async function startBot(options: StartBotOptions = {}): Promise<void> {
       await processMessage(context.group_id, context.message_id, {
         dispatchMention: true,
         mentionDispatcher: options.mentionDispatcher,
+        conversationScheduler: options.conversationScheduler,
       })
     } catch (error) {
       log.error({ error, group: context.group_id, msgId: context.message_id }, '处理群消息失败')

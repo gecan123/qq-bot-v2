@@ -8,6 +8,12 @@ export interface MessageSender {
     mentionUserId?: number
     text: string
   }): Promise<void>
+
+  /** 发送独立消息（不引用、不 @），用于主动回复 */
+  sendMessage(params: {
+    groupId: number
+    text: string
+  }): Promise<void>
 }
 
 class NapcatMessageSender implements MessageSender {
@@ -25,6 +31,10 @@ class NapcatMessageSender implements MessageSender {
         text: params.text,
       }),
     )
+  }
+
+  async sendMessage(params: { groupId: number; text: string }): Promise<void> {
+    await sendGroupReply(params.groupId, [{ type: 'text', data: { text: params.text } }])
   }
 }
 

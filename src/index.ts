@@ -10,8 +10,10 @@ import { config } from './config/index.js'
 import { createConversationScheduler, type ConversationScheduler } from './conversation/scheduler.js'
 import { createConversationMemoryQueue } from './queue/conversation-memory-queue.js'
 import type { ConversationQueue } from './queue/conversation-queue.js'
-import { createConversationWorker } from './conversation/worker.js'
+import { createConversationWorker, type ProactiveHandler } from './conversation/worker.js'
 import { createMentionDispatcher } from './conversation/dispatcher.js'
+import { evaluateAndReply } from './responder/proactive/generator.js'
+import { getAgentProfile } from './config/agent-profiles.js'
 import { startHttpServer, addRoute } from './server/http.js'
 import { handlePlaygroundRun } from './server/playground.js'
 import { handleMediaReanalyze } from './server/media-reanalyze.js'
@@ -104,9 +106,35 @@ async function main() {
   httpServer = startHttpServer(apiPort)
 
   jobQueue.start()
-  const conversationWorker = createConversationWorker()
+
+  // proactive 状态：每群最后一次 bot 回复时间
+  const lastBotReplyAtMap = new Map<number, number>()
+
+  const proactiveHandler: ProactiveHandler = {
+    async evaluate(groupId) {
+      const profile = getAgentProfile(groupId)
+      const cooldownMs = profile.proactivePolicy?.cooldownMs ?? 120_000
+      return evaluateAndReply(groupId, {
+        lastBotReplyAt: lastBotReplyAtMap.get(groupId),
+        cooldownMs,
+      })
+    },
+  }
+
+  const conversationWorker = createConversationWorker({
+    proactiveHandler,
+    onBotReplySent(groupId) {
+      lastBotReplyAtMap.set(groupId, Date.now())
+    },
+  })
+
+  const PROACTIVE_DEBOUNCE_MS = 90_000
+  const PROACTIVE_MAX_WAIT_MS = 300_000
+
   conversationScheduler = createConversationScheduler({
     mergeWindowMs: ASYNC_MENTION_MERGE_WINDOW_MS,
+    proactiveDebounceMs: PROACTIVE_DEBOUNCE_MS,
+    proactiveMaxWaitMs: PROACTIVE_MAX_WAIT_MS,
     worker: (batch) => conversationWorker.run(batch),
   })
   conversationQueue = createConversationMemoryQueue({
@@ -118,9 +146,12 @@ async function main() {
   })
   conversationQueue.start()
   stopMemoryJob = startMemoryRefreshJob()
-  log.info({ mergeWindowMs: ASYNC_MENTION_MERGE_WINDOW_MS }, 'Async mention conversation scheduler started')
+  log.info(
+    { mergeWindowMs: ASYNC_MENTION_MERGE_WINDOW_MS, proactiveDebounceMs: PROACTIVE_DEBOUNCE_MS, proactiveMaxWaitMs: PROACTIVE_MAX_WAIT_MS },
+    'Conversation scheduler started (mention + proactive)',
+  )
   log.info('Memory refresh job started')
-  await startBot({ mentionDispatcher })
+  await startBot({ mentionDispatcher, conversationScheduler })
 }
 
 async function shutdown() {

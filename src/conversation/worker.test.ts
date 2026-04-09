@@ -20,8 +20,22 @@ function makeBatch(events: MentionEvent[]): GroupConversationBatch {
   return {
     groupId: 1,
     events,
+    messagesSinceLastEval: 0,
     openedAt: events[0]?.createdAt ?? Date.now(),
     closedAt: events[events.length - 1]?.createdAt ?? Date.now(),
+  }
+}
+
+function fakeSender() {
+  const sent: Array<{ replyToMessageId: number; mentionUserId?: number; text: string }> = []
+  return {
+    sent,
+    sender: {
+      replyToMessage: async (params: { groupId: number; replyToMessageId: number; mentionUserId?: number; text: string }) => {
+        sent.push(params)
+      },
+      sendMessage: async () => {},
+    },
   }
 }
 
@@ -48,17 +62,13 @@ function makeStoredMessage(event: MentionEvent, text: string): FakeStoredMessage
 describe('conversation worker', () => {
   test('worker generates one reply for a simple single-user batch', async () => {
     const event = makeEvent({ messageId: 10, senderId: 20, createdAt: 1 })
-    const sent: Array<{ replyToMessageId: number; mentionUserId?: number; text: string }> = []
+    const { sent, sender } = fakeSender()
 
     const worker = createConversationWorker({
       getMessage: async () => makeStoredMessage(event, '@bot 你好'),
       resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
       generateReply: async () => '你好',
-      sender: {
-        replyToMessage: async (params) => {
-          sent.push(params)
-        },
-      },
+      sender,
     })
 
     const result = await worker.run(makeBatch([event]))
@@ -72,7 +82,7 @@ describe('conversation worker', () => {
     const second = makeEvent({ messageId: 11, senderId: 30, createdAt: 2 })
     const third = makeEvent({ messageId: 12, senderId: 40, createdAt: 3 })
     const fourth = makeEvent({ messageId: 15, senderId: 20, createdAt: 4 })
-    const sent: Array<{ replyToMessageId: number; mentionUserId?: number; text: string }> = []
+    const { sent, sender } = fakeSender()
     const generatedFor: number[] = []
 
     const messages = new Map<number, FakeStoredMessage>([
@@ -89,11 +99,7 @@ describe('conversation worker', () => {
         generatedFor.push(message.messageId)
         return `reply:${message.messageId}`
       },
-      sender: {
-        replyToMessage: async (params) => {
-          sent.push(params)
-        },
-      },
+      sender,
     })
 
     const result = await worker.run(makeBatch([first, second, third, fourth]))
@@ -109,7 +115,7 @@ describe('conversation worker', () => {
   test('worker uses batch order when same-sender events share the same timestamp', async () => {
     const first = makeEvent({ messageId: 21, senderId: 20, createdAt: 1000 })
     const second = makeEvent({ messageId: 22, senderId: 20, createdAt: 1000 })
-    const sent: Array<{ replyToMessageId: number; mentionUserId?: number; text: string }> = []
+    const { sent, sender } = fakeSender()
     const generatedFor: number[] = []
 
     const messages = new Map<number, FakeStoredMessage>([
@@ -124,11 +130,7 @@ describe('conversation worker', () => {
         generatedFor.push(message.messageId)
         return `reply:${message.messageId}`
       },
-      sender: {
-        replyToMessage: async (params) => {
-          sent.push(params)
-        },
-      },
+      sender,
     })
 
     await worker.run(makeBatch([first, second]))

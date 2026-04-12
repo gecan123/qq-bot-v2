@@ -107,16 +107,30 @@ async function main() {
 
   jobQueue.start()
 
-  // proactive 状态：每群最后一次 bot 回复时间
+  // proactive 状态
   const lastBotReplyAtMap = new Map<number, number>()
+  const proactiveTimestamps = new Map<number, number[]>()
+
+  const ONE_HOUR_MS = 60 * 60 * 1000
+
+  function getRecentProactiveTimestamps(groupId: number): number[] {
+    const timestamps = proactiveTimestamps.get(groupId) ?? []
+    const now = Date.now()
+    const recent = timestamps.filter((ts) => now - ts < ONE_HOUR_MS)
+    proactiveTimestamps.set(groupId, recent)
+    return recent
+  }
 
   const proactiveHandler: ProactiveHandler = {
-    async evaluate(groupId) {
-      const profile = getAgentProfile(groupId)
-      const cooldownMs = profile.proactivePolicy?.cooldownMs ?? 120_000
+    async evaluate(groupId, messagesSinceLastEval) {
       return evaluateAndReply(groupId, {
         lastBotReplyAt: lastBotReplyAtMap.get(groupId),
-        cooldownMs,
+        recentProactiveTimestamps: getRecentProactiveTimestamps(groupId),
+        messagesSinceLastEval,
+        onProactiveAttempt() {
+          const timestamps = proactiveTimestamps.get(groupId) ?? []
+          proactiveTimestamps.set(groupId, [...timestamps, Date.now()])
+        },
       })
     },
   }

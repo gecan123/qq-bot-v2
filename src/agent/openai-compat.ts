@@ -109,7 +109,7 @@ export function createOpenAIChatFn(
   return async ({ systemPrompt, history, tools }) => {
     const response = await client.chat.completions.create({
       model,
-      temperature: 0.7,
+      temperature: 0.8,
       ...(opts?.reasoningEffort ? { reasoning_effort: opts.reasoningEffort } : {}),
       messages: toOpenAIMessages(systemPrompt, history),
       tools: toOpenAITools(tools),

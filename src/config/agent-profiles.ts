@@ -28,6 +28,12 @@ export interface ProactivePolicy {
   maxWaitMs?: number
   /** 任何 bot 回复后抑制 proactive 的间隔（毫秒），默认 120_000 */
   cooldownMs?: number
+  /** 机会评分阈值（0-100），越低越容易触发，默认 45 */
+  scoreThreshold?: number
+  /** 每群每小时最多 N 次主动回复，默认 3 */
+  hourlyBudget?: number
+  /** 至少积累 N 条消息才评估，默认 5 */
+  minMessages?: number
 }
 
 interface AgentConfig {

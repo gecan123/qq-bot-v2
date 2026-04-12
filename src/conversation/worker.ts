@@ -21,7 +21,7 @@ async function defaultResolveSegments(message: StoredConversationMessage): Promi
 
 export interface ProactiveHandler {
   /** 评估并可能执行主动回复。返回 true 表示已发送消息 */
-  evaluate(groupId: number): Promise<boolean>
+  evaluate(groupId: number, messagesSinceLastEval: number): Promise<boolean>
 }
 
 export interface ConversationWorker {
@@ -107,7 +107,7 @@ export function createConversationWorker(options: ConversationWorkerOptions = {}
       // --- proactive 评估 ---
       if (batch.messagesSinceLastEval > 0 && options.proactiveHandler) {
         try {
-          const sent = await options.proactiveHandler.evaluate(batch.groupId)
+          const sent = await options.proactiveHandler.evaluate(batch.groupId, batch.messagesSinceLastEval)
           if (sent) {
             options.onBotReplySent?.(batch.groupId)
           }

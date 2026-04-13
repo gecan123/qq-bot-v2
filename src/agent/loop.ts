@@ -21,6 +21,7 @@ export interface AgentLoopParams {
   tools: AgentToolDeclaration[]
   executors: Record<string, ToolExecutor>
   maxSteps?: number
+  allowImplicitText?: boolean
   /** 慢请求告警阈值（毫秒），仅告警不中断 */
   warningTimeMs?: number
   /** @deprecated 保留兼容；等价于 warningTimeMs */
@@ -37,7 +38,18 @@ interface StepDetail {
 }
 
 async function executeLoop(params: AgentLoopParams, startTime: number): Promise<AgentLoopResult> {
-  const { systemPrompt, initialHistory, userMessage, chatFn, tools, executors, maxSteps = 12, maxAnswerChars = 500, traceRecorder } = params
+  const {
+    systemPrompt,
+    initialHistory,
+    userMessage,
+    chatFn,
+    tools,
+    executors,
+    maxSteps = 12,
+    maxAnswerChars = 500,
+    allowImplicitText = true,
+    traceRecorder,
+  } = params
 
   const history: AgentMessage[] = initialHistory ?? [{ role: 'user', content: userMessage ?? '' }]
   const stepDetails: StepDetail[] = []
@@ -91,6 +103,19 @@ async function executeLoop(params: AgentLoopParams, startTime: number): Promise<
     const turnModel = 'model' in turnResult ? turnResult.model : undefined
 
     if (turnResult.type === 'text') {
+      if (!allowImplicitText) {
+        log.warn({ step, content: turnResult.content.slice(0, 50) }, 'agent_loop_implicit_text_disallowed')
+        traceRecorder?.think({
+          phase: 'loop',
+          loopIndex,
+          summary: turnResult.content,
+          raw: turnResult.content,
+        })
+        traceRecorder?.loopFinished({ phase: 'loop', loopIndex, summary: 'loop produced disallowed direct text answer' })
+        traceRecorder?.phaseStarted('finalize', 'finalize started')
+        traceRecorder?.phaseFinished({ phase: 'finalize', summary: 'implicit text disallowed by policy' })
+        return finish({ state: 'fallback', reason: 'implicit_text_disallowed' }, 'implicit_text')
+      }
       log.warn({ step, content: turnResult.content.slice(0, 50) }, 'agent_loop_implicit_text')
       stepDetails.push({ step, tool: '(text)', durationMs: Date.now() - stepStart, model: turnModel })
       traceRecorder?.think({

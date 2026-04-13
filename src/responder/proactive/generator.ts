@@ -172,6 +172,7 @@ export async function evaluateAndReply(groupId: number, options: ProactiveEvalua
     instruction,
     initialHistory,
     maxSteps: profile.agentMaxSteps,
+    allowImplicitText: false,
     warningTimeMs: profile.agentWarningTimeMs ?? profile.agentMaxTimeMs,
     maxAnswerChars: profile.agentMaxAnswerChars,
   })

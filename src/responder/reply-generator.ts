@@ -52,6 +52,7 @@ async function agentReply(
     instruction: REPLY_INSTRUCTION,
     initialHistory,
     maxSteps,
+    allowImplicitText: true,
     warningTimeMs,
     maxAnswerChars,
   })

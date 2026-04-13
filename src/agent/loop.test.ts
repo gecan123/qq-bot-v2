@@ -101,6 +101,24 @@ describe('runAgentLoop', () => {
     }
   })
 
+  test('returns fallback when implicit text is disallowed', async () => {
+    const chatFn = makeChatFn([{ type: 'text', content: '这个我刚说过了，不重复。' }])
+
+    const result = await runAgentLoop({
+      systemPrompt: 'test',
+      userMessage: '问题',
+      chatFn,
+      tools: noopTools.declarations,
+      executors: noopTools.executors,
+      allowImplicitText: false,
+    })
+
+    assert.equal(result.state, 'fallback')
+    if (result.state === 'fallback') {
+      assert.equal(result.reason, 'implicit_text_disallowed')
+    }
+  })
+
   test('returns fallback when adapter returns empty', async () => {
     const chatFn = makeChatFn([{ type: 'empty' }])
 

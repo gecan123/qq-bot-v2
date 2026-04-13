@@ -1,6 +1,7 @@
 import { createAgentTools } from '../agent/tools.js'
 import { runAgentLoop } from '../agent/loop.js'
 import { createAgentChatFn } from '../agent/runtime.js'
+import { withLlmTrace } from '../agent/llm-trace.js'
 import type { AgentLoopResult, AgentMessage } from '../agent/types.js'
 
 export interface AgentSessionParams {
@@ -9,6 +10,7 @@ export interface AgentSessionParams {
   instruction: string
   initialHistory: AgentMessage[]
   maxSteps?: number
+  allowImplicitText?: boolean
   warningTimeMs?: number
   maxAnswerChars?: number
 }
@@ -37,7 +39,7 @@ export function buildSystemPrompt(persona: string, instruction: string): string 
 
 export async function runAgentSession(params: AgentSessionParams): Promise<AgentLoopResult> {
   const { declarations, executors } = createAgentTools(params.groupId)
-  const chatFn = createAgentChatFn({ reasoningEffort: 'medium' })
+  const chatFn = withLlmTrace(createAgentChatFn({ reasoningEffort: 'medium' }), params.groupId)
   const systemPrompt = buildSystemPrompt(params.persona, params.instruction)
 
   return runAgentLoop({
@@ -47,6 +49,7 @@ export async function runAgentSession(params: AgentSessionParams): Promise<Agent
     tools: declarations,
     executors,
     maxSteps: params.maxSteps,
+    allowImplicitText: params.allowImplicitText,
     warningTimeMs: params.warningTimeMs,
     maxAnswerChars: params.maxAnswerChars,
   })

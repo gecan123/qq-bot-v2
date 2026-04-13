@@ -8,11 +8,13 @@ import type { GroupSummary } from "@/lib/queries";
 import { RecentRuns } from "./recent-runs";
 import { RunTimeline } from "./run-timeline";
 import { StepInspector } from "./step-inspector";
-import type { PlaygroundRunResult, TimelineFilter } from "./types";
+import { ReplayEditor } from "./replay-editor";
+import type { PlaygroundRunResult, ReplayPayload, TimelineFilter } from "./types";
 import { getLoopCount, getToolCount } from "./trace-utils";
 
 interface AgentSandboxProps {
   groups: GroupSummary[];
+  replayTraceId?: number | null;
 }
 
 interface RunEntry {
@@ -23,7 +25,7 @@ interface RunEntry {
 
 const FILTERS: TimelineFilter[] = ["all", "loop", "think", "tool"];
 
-export function AgentSandbox({ groups }: AgentSandboxProps) {
+export function AgentSandbox({ groups, replayTraceId = null }: AgentSandboxProps) {
   const [groupId, setGroupId] = useState(groups[0]?.groupId ?? "");
   const [senderName, setSenderName] = useState("测试用户");
   const [message, setMessage] = useState("");
@@ -37,6 +39,9 @@ export function AgentSandbox({ groups }: AgentSandboxProps) {
   const [autoExpandLoops, setAutoExpandLoops] = useState(true);
   const [historyCompare, setHistoryCompare] = useState(true);
   const [requestError, setRequestError] = useState<string | null>(null);
+  const [replayLoading, setReplayLoading] = useState(false);
+  const [replayError, setReplayError] = useState<string | null>(null);
+  const [replayPayload, setReplayPayload] = useState<ReplayPayload | null>(null);
   const nextId = useRef(0);
 
   const activeRun = runs.find((run) => run.id === selectedRunId) ?? runs[0] ?? null;
@@ -54,6 +59,37 @@ export function AgentSandbox({ groups }: AgentSandboxProps) {
       setSelectedEventId(activeRun.result.trace.events[0]?.id ?? null);
     }
   }, [activeRun, selectedEventId]);
+
+  useEffect(() => {
+    if (!replayTraceId) return;
+
+    let canceled = false;
+    setReplayLoading(true);
+    setReplayError(null);
+
+    fetch(`/api/bot/api/playground/trace/${replayTraceId}`)
+      .then(async (res) => {
+        const data = (await res.json()) as ReplayPayload | { error: string };
+        if (!res.ok) {
+          throw new Error("error" in data ? data.error : `请求失败(${res.status})`);
+        }
+        if (!canceled) {
+          setReplayPayload(data as ReplayPayload);
+        }
+      })
+      .catch((err) => {
+        if (!canceled) {
+          setReplayError(err instanceof Error ? err.message : String(err));
+        }
+      })
+      .finally(() => {
+        if (!canceled) setReplayLoading(false);
+      });
+
+    return () => {
+      canceled = true;
+    };
+  }, [replayTraceId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -95,6 +131,31 @@ export function AgentSandbox({ groups }: AgentSandboxProps) {
       e.preventDefault();
       handleSubmit(e as unknown as React.FormEvent);
     }
+  }
+
+  async function runReplay(payload: ReplayPayload): Promise<PlaygroundRunResult> {
+    const previousSelected = selectedRunId;
+    const res = await fetch("/api/bot/api/playground/replay", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = (await res.json()) as PlaygroundRunResult | { error: string };
+    if (!res.ok) {
+      throw new Error("error" in data ? data.error : `请求失败(${res.status})`);
+    }
+
+    const result = data as PlaygroundRunResult;
+    const nextRun: RunEntry = {
+      id: nextId.current++,
+      message: `strict replay #${payload.traceId}`,
+      result,
+    };
+    setRuns((current) => [nextRun, ...current]);
+    setSelectedRunId(nextRun.id);
+    setSelectedEventId(result.trace.events[0]?.id ?? null);
+    setComparisonRunId(historyCompare ? previousSelected : null);
+    return result;
   }
 
   return (
@@ -204,6 +265,30 @@ export function AgentSandbox({ groups }: AgentSandboxProps) {
           {requestError && <p className="mt-3 text-sm text-red-500">{requestError}</p>}
         </CardContent>
       </Card>
+
+      {replayTraceId && (
+        <Card className="border-slate-200 bg-white">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold text-slate-800">
+              Replay from Trace #{replayTraceId}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {replayLoading ? (
+              <div className="flex items-center text-sm text-slate-500">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="ml-2">加载 trace...</span>
+              </div>
+            ) : replayError ? (
+              <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+                {replayError}
+              </p>
+            ) : replayPayload ? (
+              <ReplayEditor payload={replayPayload} onRun={runReplay} />
+            ) : null}
+          </CardContent>
+        </Card>
+      )}
 
       {runs.length === 0 ? (
         <Card className="border-slate-200 bg-white flex-1">

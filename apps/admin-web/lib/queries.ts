@@ -183,3 +183,70 @@ export async function getMediaList(
 
   return { items, total };
 }
+
+export interface LlmTraceListRow {
+  id: number;
+  groupId: string;
+  model: string | null;
+  durationMs: number;
+  error: string | null;
+  createdAt: Date;
+  systemPromptPreview: string;
+  historyCount: number;
+}
+
+export async function getLlmTraceList(
+  page: number,
+  pageSize = 20
+): Promise<{ items: LlmTraceListRow[]; total: number }> {
+  const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
+  const safePageSize = Number.isFinite(pageSize) && pageSize > 0 ? Math.floor(pageSize) : 20;
+  const offset = (safePage - 1) * safePageSize;
+
+  const [items, totalRows] = await Promise.all([
+    prisma.$queryRaw<
+      Array<{
+        id: number;
+        group_id: bigint;
+        model: string | null;
+        duration_ms: number;
+        error: string | null;
+        created_at: Date;
+        system_prompt_preview: string | null;
+        history_count: number | null;
+      }>
+    >`
+      SELECT
+        id,
+        group_id,
+        model,
+        duration_ms,
+        error,
+        created_at,
+        LEFT(COALESCE(input->>'systemPrompt', ''), 120) AS system_prompt_preview,
+        COALESCE(JSONB_ARRAY_LENGTH(CASE
+          WHEN JSONB_TYPEOF(input::jsonb->'history') = 'array' THEN input::jsonb->'history'
+          ELSE '[]'::jsonb
+        END), 0) AS history_count
+      FROM llm_traces
+      ORDER BY created_at DESC
+      LIMIT ${safePageSize}
+      OFFSET ${offset}
+    `,
+    prisma.$queryRaw<Array<{ total: bigint }>>`SELECT COUNT(*)::bigint AS total FROM llm_traces`,
+  ]);
+
+  return {
+    items: items.map((row) => ({
+      id: row.id,
+      groupId: row.group_id.toString(),
+      model: row.model,
+      durationMs: row.duration_ms,
+      error: row.error,
+      createdAt: row.created_at,
+      systemPromptPreview: row.system_prompt_preview ?? "",
+      historyCount: row.history_count ?? 0,
+    })),
+    total: Number(totalRows[0]?.total ?? BigInt(0)),
+  };
+}

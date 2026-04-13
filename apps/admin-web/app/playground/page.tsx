@@ -2,7 +2,12 @@ import { Header } from "@/components/layout/header";
 import { AgentSandbox } from "@/components/playground/agent-sandbox";
 import { getGroups } from "@/lib/queries";
 
-export default async function PlaygroundPage() {
+interface PlaygroundPageProps {
+  searchParams?: Promise<{ replayTraceId?: string }>;
+}
+
+export default async function PlaygroundPage({ searchParams }: PlaygroundPageProps) {
+  const replayTraceId = Number((await searchParams)?.replayTraceId ?? "");
   const groups = await getGroups();
 
   return (
@@ -16,7 +21,7 @@ export default async function PlaygroundPage() {
           暂无群组数据，请先确保 bot 已接收过群消息
         </div>
       ) : (
-        <AgentSandbox groups={groups} />
+        <AgentSandbox groups={groups} replayTraceId={Number.isFinite(replayTraceId) ? replayTraceId : null} />
       )}
     </>
   );

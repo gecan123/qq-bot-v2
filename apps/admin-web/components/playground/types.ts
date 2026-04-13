@@ -59,7 +59,28 @@ export interface PlaygroundRunResult {
   trace: RunTrace;
   llmContext: {
     systemPrompt: string;
-    messages: Array<{ role: "user"; content: string }>;
+    messages: Array<{ role: string; content: string }>;
     tools: string[];
+  };
+}
+
+export interface ReplayMessage {
+  role: string;
+  content: string;
+}
+
+export interface ReplayPayload {
+  traceId: number;
+  groupId: string;
+  model: string;
+  systemPrompt: string;
+  history: ReplayMessage[];
+  tools: string[];
+  meta: {
+    createdAt: string;
+    durationMs: number;
+    error?: string | null;
+    source: "trace";
+    toolsSource: "trace" | "dynamic";
   };
 }

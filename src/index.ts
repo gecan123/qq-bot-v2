@@ -15,7 +15,7 @@ import { createMentionDispatcher } from './conversation/dispatcher.js'
 import { evaluateAndReply } from './responder/proactive/generator.js'
 import { getAgentProfile } from './config/agent-profiles.js'
 import { startHttpServer, addRoute } from './server/http.js'
-import { handlePlaygroundRun } from './server/playground.js'
+import { handlePlaygroundReplay, handlePlaygroundRun, handleReplayTraceGet } from './server/playground.js'
 import { handleMediaReanalyze } from './server/media-reanalyze.js'
 import type http from 'node:http'
 
@@ -101,6 +101,8 @@ async function main() {
   )
 
   addRoute('POST', '/api/playground/run', handlePlaygroundRun)
+  addRoute('GET', '/api/playground/trace/:id', handleReplayTraceGet)
+  addRoute('POST', '/api/playground/replay', handlePlaygroundReplay)
   addRoute('POST', '/api/media/:id/reanalyze', handleMediaReanalyze)
   const apiPort = Number(process.env.BOT_API_PORT ?? '3101')
   httpServer = startHttpServer(apiPort)

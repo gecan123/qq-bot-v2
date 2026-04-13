@@ -1,7 +1,20 @@
 # Proactive `implicit_text` 策略隔离设计（@ 必回，主动可沉默）
 
 日期：2026-04-13  
-状态：Draft（已完成用户方案确认）
+状态：Implemented（代码已落地，待运行时 dry-run 场景观察）
+
+## 实施状态
+
+- 已完成：
+  - `runAgentLoop` 增加 `allowImplicitText` 策略开关（默认 `true`）
+  - 禁用场景下 direct text 走 `fallback: implicit_text_disallowed`
+  - 新增日志事件 `agent_loop_implicit_text_disallowed`
+  - `runAgentSession` 支持策略透传
+  - `@` 链路显式 `allowImplicitText: true`
+  - proactive 链路显式 `allowImplicitText: false`
+  - 新增 loop 单测覆盖 disallow 分支并通过
+- 待观察：
+  - 真实 dry-run 日志中 `agent_loop_implicit_text_disallowed` 命中率与主动沉默比例
 
 ## 1. 背景与问题
 

@@ -20,12 +20,11 @@ describe('agent profiles', () => {
     const expectedPersona = loadPrompt('./prompts/characters/default.md')
 
     assert.equal(profile.persona, expectedPersona)
-    assert.match(profile.persona, /你是.+AI 智能体/)
-    assert.match(profile.persona, /持续存在/)
-    assert.match(profile.persona, /你的人格核心：/)
-    assert.match(profile.persona, /你的说话风格：/)
-    assert.match(profile.persona, /你的连续性原则：/)
-    assert.match(profile.persona, /群聊中的最低规则：/)
+    assert.match(profile.persona, /你是群里的常驻 AI 搭子/)
+    assert.match(profile.persona, /你的整体气质：/)
+    assert.match(profile.persona, /你的说话习惯：/)
+    assert.match(profile.persona, /你的连续性：/)
+    assert.match(profile.persona, /群聊里的最低规则：/)
   })
 
   test('group config can override the default persona baseline', async () => {

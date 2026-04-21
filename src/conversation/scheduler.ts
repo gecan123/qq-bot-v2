@@ -6,15 +6,11 @@ const log = createLogger('CONV_SCHED')
 
 export interface ConversationSchedulerOptions {
   mergeWindowMs: number
-  proactiveDebounceMs?: number
-  proactiveMaxWaitMs?: number
   worker: (batch: GroupConversationBatch) => Promise<ConversationWorkerResult | void>
 }
 
 export interface ConversationScheduler {
   onMention(event: MentionEvent): void
-  /** 记录一条普通消息（用于 proactive 评估） */
-  onMessage(groupId: number): void
   stop(): void
 }
 
@@ -24,7 +20,6 @@ export function createConversationScheduler(options: ConversationSchedulerOption
   const createBatch = (groupId: number, events: MentionEvent[]): GroupConversationBatch => ({
     groupId,
     events,
-    messagesSinceLastEval: 0,
     openedAt: events[0]?.createdAt ?? Date.now(),
     closedAt: events[events.length - 1]?.createdAt ?? Date.now(),
   })
@@ -58,8 +53,6 @@ export function createConversationScheduler(options: ConversationSchedulerOption
     const mailbox = createGroupMailbox({
       groupId,
       mergeWindowMs: options.mergeWindowMs,
-      proactiveDebounceMs: options.proactiveDebounceMs,
-      proactiveMaxWaitMs: options.proactiveMaxWaitMs,
       onBatchReady: () => {
         runIfIdle(groupId)
       },
@@ -72,11 +65,6 @@ export function createConversationScheduler(options: ConversationSchedulerOption
     onMention(event) {
       const mailbox = getMailbox(event.groupId)
       mailbox.addMention(event)
-    },
-
-    onMessage(groupId) {
-      const mailbox = getMailbox(groupId)
-      mailbox.addMessage()
     },
 
     stop() {

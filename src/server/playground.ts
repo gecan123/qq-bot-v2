@@ -6,7 +6,8 @@ import { createAgentOpenAIConfig, createOpenAIChatFn } from '../agent/openai-com
 import { getAgentProfile } from '../config/agent-profiles.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import { buildContext } from '../responder/context-builder.js'
-import { buildMemorySnapshot } from '../responder/memory-loader.js'
+import { buildSystemPrompt } from '../responder/agent-session.js'
+import { buildReplyHistory } from '../responder/reply-history.js'
 import type { RouteHandler } from './http.js'
 import type { AgentMessage, AgentTurnResult, ToolCall, ToolResult } from '../agent/types.js'
 import { prisma } from '../database/client.js'
@@ -58,7 +59,6 @@ interface PlaygroundProfile {
 
 interface PlaygroundDeps {
   buildContext?: typeof buildContext
-  buildMemorySnapshot?: typeof buildMemorySnapshot
   getAgentProfile?: (groupId: number) => PlaygroundProfile
   createAgentTools?: typeof createAgentTools
   chatFn?: (params: {
@@ -79,18 +79,6 @@ interface ReplayPayload {
 }
 
 interface ReplayBody extends ReplayPayload {}
-
-function getNowString() {
-  return new Date().toLocaleString('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    weekday: 'short',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
 
 export async function runPlayground(body: PlaygroundBody, deps: PlaygroundDeps = {}): Promise<PlaygroundResult> {
   const groupIdNum = Number(body.groupId)
@@ -129,43 +117,19 @@ export async function runPlayground(body: PlaygroundBody, deps: PlaygroundDeps =
   }
 
   traceRecorder.phaseStarted('load_context', 'building context')
-  const { contextText: context, recentMessages } = await (deps.buildContext ?? buildContext)(fakeMsg, contextLimit)
-  const memorySnapshot = await (deps.buildMemorySnapshot ?? buildMemorySnapshot)(groupIdNum, recentMessages, fakeMsg.senderId)
+  const mediaDeadlineAt = Date.now() + 15_000
+  const { contextText: context } = await (deps.buildContext ?? buildContext)(fakeMsg, contextLimit, { mediaDeadlineAt })
   traceRecorder.phaseFinished({
     phase: 'load_context',
     summary: context ? 'context loaded' : 'no context available',
     raw: context,
   })
-  const contextContent = context
-    ? `[群聊背景]\n${context}`
-    : '[群聊背景]\n（暂无近期消息记录）'
-
-  const initialHistory: AgentMessage[] = []
-  if (memorySnapshot) {
-    initialHistory.push(
-      { role: 'user', content: memorySnapshot },
-      { role: 'model', content: '了解。' },
-    )
-  }
-  initialHistory.push(
-    { role: 'user', content: contextContent },
-    { role: 'model', content: '好的。' },
-    { role: 'user', content: message },
-  )
+  const initialHistory: AgentMessage[] = buildReplyHistory(context, message)
 
   const { declarations, executors } = (deps.createAgentTools ?? createAgentTools)(groupIdNum)
   const chatFn = deps.chatFn ?? createOpenAIChatFn(_agentClient, _agentModel)
 
-  const now = (deps.nowFactory ?? getNowString)()
-  const systemPrompt = [
-    `当前时间：${now}`,
-    '',
-    '[群聊人格基座]',
-    profile.persona,
-    '',
-    '[任务约束]',
-    REPLY_INSTRUCTION,
-  ].join('\n')
+  const systemPrompt = buildSystemPrompt(profile.persona, REPLY_INSTRUCTION)
   traceRecorder.phaseStarted('plan', 'preparing system prompt and tool context')
   traceRecorder.phaseFinished({
     phase: 'plan',

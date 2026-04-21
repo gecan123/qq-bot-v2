@@ -14,6 +14,25 @@ async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void>
 }
 
 describe('conversation memory queue', () => {
+  test('queue buffers mention events enqueued before start', async () => {
+    const delivered: number[] = []
+    const queue = createConversationMemoryQueue({
+      onMention: async (event) => {
+        delivered.push(event.messageId)
+      },
+    })
+
+    queue.enqueueMention({ groupId: 1, messageId: 7, senderId: 9, createdAt: Date.now() })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    assert.deepEqual(delivered, [])
+
+    queue.start()
+
+    await waitFor(() => delivered.length === 1)
+    assert.deepEqual(delivered, [7])
+    queue.stop()
+  })
+
   test('conversation queue delivers mention events to scheduler callback', async () => {
     const delivered: number[] = []
     const queue = createConversationMemoryQueue({

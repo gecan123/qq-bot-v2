@@ -21,6 +21,10 @@ interface ProcessMessageOptions {
 async function processMessage(groupId: number, messageId: number, options: ProcessMessageOptions = {}): Promise<void> {
   const qqMsg = await napcat.get_msg({ message_id: messageId })
   const parsed = parseMessage(qqMsg)
+  if (parsed.senderId === config.selfNumber) {
+    log.debug({ groupId, messageId: parsed.messageId }, '忽略 bot 自身回灌消息')
+    return
+  }
   const groupName = await resolveGroupName({ group_id: groupId, ...qqMsg })
   const mediaResult = await persistMediaReferences({
     content: parsed.content,
@@ -53,12 +57,6 @@ async function processMessage(groupId: number, messageId: number, options: Proce
       segments: mediaResult.content,
     })
   }
-
-  // proactive: 非 bot 自身的消息计入 scheduler
-  if (options.conversationScheduler && parsed.senderId !== config.selfNumber) {
-    options.conversationScheduler.onMessage(groupId)
-  }
-
   const textPreview = mediaResult.content
     .filter((s): s is TextSegment => s.type === 'text')
     .map((s) => s.content)

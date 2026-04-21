@@ -18,6 +18,53 @@ The description (after the colon) must be written in Chinese. The `type` prefix 
 
 QQ Bot V2 — a QQ group message storage bot. Connects to NapCat (QQ bridge) via WebSocket, listens for group messages, parses them into structured segments, and persists them to PostgreSQL.
 
+## Perpetual Context Contract
+
+Perpetual context here means the LLM history must be stable, replayable, and cheap to extend.
+
+Core intent:
+- Keep the LLM history prefix as stable as possible across runs.
+- Preserve Claude-style prompt-cache hit rate by avoiding needless rewrites of earlier turns.
+- Use the low marginal cost of cached prefixes to let the bot work for longer and more often.
+
+Hard requirements:
+- `messages` is the only inbound user-fact ledger. Do not introduce a second inbound user append ledger.
+- The full conversation ledger is reconstructed deterministically from:
+  - inbound user facts in `messages`
+  - bot-local assistant turns
+  - conversation state / compaction metadata
+
+Design implications:
+- Optimize for deterministic history reconstruction, not for making every late-arriving fact backfill older turns.
+- Treat cache stability as a product feature, not as an incidental optimization.
+- If a design would make the already-appended prompt prefix differ between equivalent reruns, treat that as a regression unless there is a strong reason otherwise.
+The current product direction is no longer "memory-heavy bot features first". The P0 priority is a Kagami-style perpetual context runtime whose first concern is stable, replayable LLM history.
+
+Core intent:
+- Keep the LLM history prefix as stable as possible across runs.
+- Preserve Claude-style prompt-cache hit rate by avoiding needless rewrites of earlier turns.
+- Use the low marginal cost of cached prefixes to let the bot work for longer and more often.
+
+Hard requirements:
+- `messages` is the only inbound user-fact ledger. Do not introduce a second inbound user append ledger.
+- The full conversation ledger is reconstructed deterministically from:
+  - inbound user facts in `messages`
+  - bot-local assistant turns
+  - conversation state / compaction metadata
+- Once a turn has been appended into durable history, do not rewrite it later just because media finished parsing.
+- Media is first-class group-chat semantics, not optional enrichment.
+- For `@bot` messages that include media, execution may wait up to `15s` total for media completeness.
+- After `15s`, the bot should still reply using a stable degraded marker; that degraded representation becomes part of history and must not be rewritten later.
+- `memory` is out of scope for this phase. Memory-related code may be deleted instead of preserved.
+- `proactive` is out of scope for this phase. Proactive code may be deleted instead of preserved.
+- `apps/admin-web` is temporarily out of scope and may be explicitly disabled instead of adapted.
+
+Design implications:
+- Optimize for deterministic history reconstruction, not for making every late-arriving fact backfill older turns.
+- Prefer one runtime-owned media wait budget over multiple independent waits in different layers.
+- Treat cache stability as a product feature, not as an incidental optimization.
+- If a design would make the already-appended prompt prefix differ between equivalent reruns, treat that as a regression unless there is a strong reason otherwise.
+
 ## Commands
 
 ```bash
@@ -56,7 +103,7 @@ Key modules:
 - `src/config/prompt-loader.ts` — `loadPrompt(filePath)` reads and caches prompt files from `prompts/`
 - `src/utils/segment-text.ts` — `segmentsToPlainText(segments)` helper used across context-builder, format-messages, and insertMessage
 
-**Prompts:** All static prompt text lives in `prompts/` (not in source code). Key files: `default-persona.md`, `reply-instruction.md`, `describe-image.md`, `transcribe-audio.md`, `memory-system.md`, `memory-group-summary.md`, `memory-user-profile.md`. Loaded via `loadPrompt()` at first use and cached. Agent persona baseline is loaded from `default-persona.md` by `src/config/agent-profiles.ts`, and can still be overridden per group.
+**Prompts:** All static prompt text lives in `prompts/` (not in source code). Key files: `default-persona.md`, `reply-instruction.md`, `describe-image.md`, `describe-video.md`, `describe-pdf.md`, `transcribe-audio.md`. Loaded via `loadPrompt()` at first use and cached. Agent persona baseline is loaded from `default-persona.md` by `src/config/agent-profiles.ts`, and can still be overridden per group.
 
 **Database:** Prisma 7 with PG driver adapter. Client is generated to `src/generated/prisma/` (not `node_modules`). Single `Message` model with BigInt IDs. After schema changes, run `pnpm db:generate`.
 
@@ -93,8 +140,6 @@ LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_MODEL=gpt-5.4
 | 场景环境变量前缀 | 对应方法 | 用途 |
 |---|---|---|
 | `LLM_DESCRIBE_IMAGE_*` | `describeImage` | 图片/表情包描述 |
-| `LLM_GENERATE_GROUP_MEMORY_SUMMARY_*` | `generateGroupMemorySummary` | 群记忆摘要 |
-| `LLM_GENERATE_USER_MEMORY_PROFILE_*` | `generateUserMemoryProfile` | 用户画像 |
 | `LLM_TRANSCRIBE_AUDIO_*` | `transcribeAudio` | 音频转写 |
 
 ## Agent Loop

@@ -1,5 +1,16 @@
 import { getMessageById } from '../database/messages.js'
 import type { Message } from '../generated/prisma/client.js'
+import {
+  createOrReusePendingAssistantTurn,
+  findAssistantTurnByReplyIntentId,
+  markAssistantTurnFailed,
+  markAssistantTurnSending,
+  markAssistantTurnSent,
+} from './assistant-turn-store.js'
+import { deliverAssistantTurn } from './assistant-turn-delivery.js'
+import { compactConversationIfNeeded } from './compaction.js'
+import { updateConversationStateLastIncorporated } from './conversation-state-store.js'
+import { toSenderThreadKey } from './thread-key.js'
 import { createLogger } from '../logger.js'
 import { messageSender, type MessageSender } from '../messaging/message-sender.js'
 import { resolveMessage } from '../media/message-resolver.js'
@@ -19,11 +30,6 @@ async function defaultResolveSegments(message: StoredConversationMessage): Promi
   return resolveMessage(message as Message, { timeoutMs: 0 })
 }
 
-export interface ProactiveHandler {
-  /** 评估并可能执行主动回复。返回 true 表示已发送消息 */
-  evaluate(groupId: number, messagesSinceLastEval: number): Promise<boolean>
-}
-
 export interface ConversationWorker {
   run(batch: GroupConversationBatch): Promise<ConversationWorkerResult>
 }
@@ -33,8 +39,18 @@ export interface ConversationWorkerOptions {
   resolveSegments?: (message: StoredConversationMessage) => Promise<ParsedSegment[]>
   generateReply?: (message: IncomingMessage) => Promise<string | null>
   sender?: MessageSender
+  assistantTurnStore?: {
+    findByReplyIntentId: typeof findAssistantTurnByReplyIntentId
+    createOrReusePending: typeof createOrReusePendingAssistantTurn
+    markSending: typeof markAssistantTurnSending
+    markSent: typeof markAssistantTurnSent
+    markFailed: typeof markAssistantTurnFailed
+  }
+  conversationStateStore?: {
+    updateLastIncorporated: typeof updateConversationStateLastIncorporated
+  }
+  compactor?: typeof compactConversationIfNeeded
   maxSenderThreadsPerRun?: number
-  proactiveHandler?: ProactiveHandler
   /** 调用时机：bot 消息实际发送成功后 */
   onBotReplySent?: (groupId: number) => void
 }
@@ -96,24 +112,22 @@ export function createConversationWorker(options: ConversationWorkerOptions = {}
   const resolveSegments = options.resolveSegments ?? defaultResolveSegments
   const generateReply = options.generateReply ?? generateMentionReply
   const sender = options.sender ?? messageSender
+  const assistantTurnStore = options.assistantTurnStore ?? {
+    findByReplyIntentId: findAssistantTurnByReplyIntentId,
+    createOrReusePending: createOrReusePendingAssistantTurn,
+    markSending: markAssistantTurnSending,
+    markSent: markAssistantTurnSent,
+    markFailed: markAssistantTurnFailed,
+  }
+  const conversationStateStore = options.conversationStateStore ?? {
+    updateLastIncorporated: updateConversationStateLastIncorporated,
+  }
+  const compactor = options.compactor ?? compactConversationIfNeeded
 
   return {
     async run(batch) {
-      // --- mention 优先处理 ---
       if (batch.events.length > 0) {
         return runMentionBatch(batch)
-      }
-
-      // --- proactive 评估 ---
-      if (batch.messagesSinceLastEval > 0 && options.proactiveHandler) {
-        try {
-          const sent = await options.proactiveHandler.evaluate(batch.groupId, batch.messagesSinceLastEval)
-          if (sent) {
-            options.onBotReplySent?.(batch.groupId)
-          }
-        } catch (error) {
-          log.error({ error, groupId: batch.groupId }, '主动回复评估失败')
-        }
       }
 
       return { leftoverEvents: [] }
@@ -128,9 +142,18 @@ export function createConversationWorker(options: ConversationWorkerOptions = {}
     for (const thread of activeThreads) {
       const replyTarget = getFirstEvent(thread.events)
       const latestEvent = getLastEvent(thread.events)
-      const message = await loadIncomingMessage(latestEvent, { getMessage, resolveSegments })
+      const [replyTargetStored, latestStored] = await Promise.all([
+        getMessage(batch.groupId, replyTarget.messageId),
+        getMessage(batch.groupId, latestEvent.messageId),
+      ])
+      const message = latestStored
+        ? await loadIncomingMessage(latestEvent, {
+            getMessage: async () => latestStored,
+            resolveSegments,
+          })
+        : null
 
-      if (!message) {
+      if (!message || !replyTargetStored || !latestStored) {
         log.warn(
           { groupId: batch.groupId, messageId: latestEvent.messageId, senderId: thread.senderId },
           '异步会话消息不存在，跳过本轮回复',
@@ -138,7 +161,10 @@ export function createConversationWorker(options: ConversationWorkerOptions = {}
         continue
       }
 
-      const reply = await generateReply(message)
+      const senderThreadKey = toSenderThreadKey(thread.senderId)
+      const replyIntentId = `${batch.groupId}:${senderThreadKey}:${replyTargetStored.id}:${latestStored.id}`
+      const existingTurn = await assistantTurnStore.findByReplyIntentId(batch.groupId, senderThreadKey, replyIntentId)
+      const reply = existingTurn?.text ?? await generateReply(message)
       if (!reply) {
         log.warn(
           { groupId: batch.groupId, messageId: latestEvent.messageId, senderId: thread.senderId },
@@ -147,14 +173,30 @@ export function createConversationWorker(options: ConversationWorkerOptions = {}
         continue
       }
 
-      await sender.replyToMessage({
+      const assistantTurn = await assistantTurnStore.createOrReusePending({
         groupId: batch.groupId,
-        replyToMessageId: replyTarget.messageId,
+        senderThreadKey,
+        replyIntentId,
+        triggerMessageRowId: replyTargetStored.id,
+        incorporatedMessageRowId: latestStored.id,
+        replyToMessageId: Number(replyTargetStored.messageId),
         mentionUserId: thread.senderId,
         text: reply,
       })
 
-      options.onBotReplySent?.(batch.groupId)
+      if (assistantTurn.status === 'sent') {
+        continue
+      }
+
+      const delivered = await deliverAssistantTurn(assistantTurn, {
+        sender,
+        assistantTurnStore,
+        conversationStateStore,
+        compactor,
+      })
+      if (delivered) {
+        options.onBotReplySent?.(batch.groupId)
+      }
     }
 
     return { leftoverEvents }

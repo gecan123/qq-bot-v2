@@ -88,16 +88,12 @@ function buildDbSchemaPayload() {
         columns: ['media_id', 'media_type', 'content_type', 'file_name', 'description_raw', 'created_at'],
       },
       {
-        name: 'group_memory',
-        columns: ['group_id', 'summary', 'updated_at'],
+        name: 'conversation_states',
+        columns: ['group_id', 'sender_thread_key', 'compacted_base', 'compacted_version', 'last_compacted_message_row_id', 'last_incorporated_message_row_id', 'updated_at'],
       },
       {
-        name: 'group_memory_cursor',
-        columns: ['group_id', 'last_processed_external_message_id', 'last_processed_message_row_id', 'updated_at'],
-      },
-      {
-        name: 'user_memory',
-        columns: ['group_id', 'sender_id', 'profile', 'examples', 'updated_at'],
+        name: 'assistant_turns',
+        columns: ['group_id', 'sender_thread_key', 'reply_intent_id', 'trigger_message_row_id', 'incorporated_message_row_id', 'sequence', 'reply_to_message_id', 'mention_user_id', 'status', 'attempt_count', 'created_at', 'updated_at'],
       },
     ],
   }

@@ -6,8 +6,6 @@ type LlmScenarioKey =
   | 'describeImage'
   | 'describeVideo'
   | 'describePdf'
-  | 'generateGroupMemorySummary'
-  | 'generateUserMemoryProfile'
   | 'transcribeAudio'
 
 type ProviderConfig = {
@@ -28,8 +26,6 @@ const SCENARIO_NAME_MAP: Record<string, LlmScenarioKey> = {
   DESCRIBE_IMAGE: 'describeImage',
   DESCRIBE_VIDEO: 'describeVideo',
   DESCRIBE_PDF: 'describePdf',
-  GENERATE_GROUP_MEMORY_SUMMARY: 'generateGroupMemorySummary',
-  GENERATE_USER_MEMORY_PROFILE: 'generateUserMemoryProfile',
   TRANSCRIBE_AUDIO: 'transcribeAudio',
 }
 
@@ -140,7 +136,6 @@ function parseLlmConfig(env: EnvSource) {
 export function parseConfig(env: EnvSource) {
   return {
     databaseUrl: requireEnv(env, 'DATABASE_URL'),
-    redisUrl: requireEnv(env, 'REDIS_URL'),
     napcat: {
       wsUrl: requireEnv(env, 'NAPCAT_WS_URL'),
       accessToken: requireEnv(env, 'NAPCAT_ACCESS_TOKEN'),
@@ -148,11 +143,7 @@ export function parseConfig(env: EnvSource) {
     groupIds: requireEnv(env, 'GROUP_IDS').split(',').map(Number),
     selfNumber: Number(requireEnv(env, 'SELF_NUMBER')),
     nodeEnv: env.NODE_ENV || 'development',
-    replyMediaWaitN: Number(env.REPLY_MEDIA_WAIT_N ?? '5'),
-    replyMediaTimeoutMs: Number(env.REPLY_MEDIA_TIMEOUT_MS ?? '5000'),
-    messageResolutionRefreshWindowMinutes: Number(env.MESSAGE_RESOLUTION_REFRESH_WINDOW_MINUTES ?? '30'),
-    memoryJobIntervalHours: Number(env.MEMORY_JOB_INTERVAL_HOURS ?? '4'),
-    memoryJobSkipThreshold: Number(env.MEMORY_JOB_SKIP_THRESHOLD ?? '50'),
+    replyMediaTimeoutMs: Number(env.REPLY_MEDIA_TIMEOUT_MS ?? '15000'),
     jobInterDelayMs: Number(env.JOB_INTER_DELAY_MS ?? '200'),
     tavily: env.TAVILY_API_KEY
       ? { apiKey: env.TAVILY_API_KEY }

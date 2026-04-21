@@ -12,10 +12,10 @@ describe('buildSystemPrompt', () => {
     assert.ok(result.includes('简洁回复'), 'should contain instruction text')
   })
 
-  test('contains current time header', () => {
+  test('does not include dynamic current time header', () => {
     const result = buildSystemPrompt('persona', 'instruction')
 
-    assert.ok(result.startsWith('当前时间：'), 'should start with time header')
+    assert.ok(!result.includes('当前时间：'), 'should not include dynamic time header')
   })
 
   test('persona appears before instruction', () => {
@@ -30,7 +30,7 @@ describe('buildSystemPrompt', () => {
   test('sections are separated by blank lines', () => {
     const result = buildSystemPrompt('persona', 'instruction')
 
-    assert.ok(result.includes('\n\n[群聊人格基座]'), 'blank line before persona section')
+    assert.ok(result.startsWith('[群聊人格基座]'), 'persona section should be first')
     assert.ok(result.includes('\n\n[任务约束]'), 'blank line before instruction section')
   })
 })

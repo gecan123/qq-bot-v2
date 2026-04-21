@@ -20,7 +20,6 @@ function makeBatch(events: MentionEvent[]): GroupConversationBatch {
   return {
     groupId: 1,
     events,
-    messagesSinceLastEval: 0,
     openedAt: events[0]?.createdAt ?? Date.now(),
     closedAt: events[events.length - 1]?.createdAt ?? Date.now(),
   }
@@ -33,10 +32,56 @@ function fakeSender() {
     sender: {
       replyToMessage: async (params: { groupId: number; replyToMessageId: number; mentionUserId?: number; text: string }) => {
         sent.push(params)
+        return { success: true, attempts: 1 }
       },
-      sendMessage: async () => {},
+      sendMessage: async () => ({ success: true, attempts: 1 }),
     },
   }
+}
+
+function fakeAssistantTurnStore(status: 'pending' | 'sent' | null = null, text = 'reply') {
+  let nextId = 1
+  return {
+    findByReplyIntentId: async () =>
+      status === 'pending' || status === 'sent'
+        ? { id: nextId, groupId: 1, senderThreadKey: 'sender:0', replyIntentId: 'intent', triggerMessageRowId: 1, incorporatedMessageRowId: 1, sequence: 1, replyToMessageId: 1, mentionUserId: undefined, text, status, attemptCount: 0, createdAt: new Date(0), updatedAt: new Date(0) }
+        : null,
+    createOrReusePending: async (input: {
+      triggerMessageRowId: number
+      incorporatedMessageRowId: number
+      replyToMessageId: number
+      mentionUserId?: number
+      text: string
+    }) => ({
+      id: nextId++,
+      groupId: 1,
+      senderThreadKey: 'sender:0',
+      replyIntentId: 'intent',
+      triggerMessageRowId: input.triggerMessageRowId,
+      incorporatedMessageRowId: input.incorporatedMessageRowId,
+      sequence: 1,
+      replyToMessageId: input.replyToMessageId,
+      mentionUserId: input.mentionUserId,
+      text: status === 'pending' || status === 'sent' ? text : input.text,
+      status: status ?? 'pending',
+      attemptCount: 0,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    }),
+    markSending: async () => {},
+    markSent: async () => {},
+    markFailed: async () => {},
+  }
+}
+
+function fakeConversationStateStore() {
+  return {
+    updateLastIncorporated: async () => {},
+  }
+}
+
+function fakeCompactor() {
+  return async () => {}
 }
 
 function makeStoredMessage(event: MentionEvent, text: string): FakeStoredMessage {
@@ -69,6 +114,9 @@ describe('conversation worker', () => {
       resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
       generateReply: async () => '你好',
       sender,
+      assistantTurnStore: fakeAssistantTurnStore(),
+      conversationStateStore: fakeConversationStateStore(),
+      compactor: fakeCompactor(),
     })
 
     const result = await worker.run(makeBatch([event]))
@@ -100,6 +148,9 @@ describe('conversation worker', () => {
         return `reply:${message.messageId}`
       },
       sender,
+      assistantTurnStore: fakeAssistantTurnStore(),
+      conversationStateStore: fakeConversationStateStore(),
+      compactor: fakeCompactor(),
     })
 
     const result = await worker.run(makeBatch([first, second, third, fourth]))
@@ -131,6 +182,9 @@ describe('conversation worker', () => {
         return `reply:${message.messageId}`
       },
       sender,
+      assistantTurnStore: fakeAssistantTurnStore(),
+      conversationStateStore: fakeConversationStateStore(),
+      compactor: fakeCompactor(),
     })
 
     await worker.run(makeBatch([first, second]))
@@ -139,5 +193,49 @@ describe('conversation worker', () => {
     assert.deepEqual(sent, [
       { groupId: 1, replyToMessageId: 21, mentionUserId: 20, text: 'reply:22' },
     ])
+  })
+
+  test('worker does not send duplicate reply when assistant turn is already sent', async () => {
+    const event = makeEvent({ messageId: 31, senderId: 20, createdAt: 1 })
+    const { sent, sender } = fakeSender()
+
+    const worker = createConversationWorker({
+      getMessage: async () => makeStoredMessage(event, '@bot 你好'),
+      resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
+      generateReply: async () => '你好',
+      sender,
+      assistantTurnStore: fakeAssistantTurnStore('sent'),
+      conversationStateStore: fakeConversationStateStore(),
+      compactor: fakeCompactor(),
+    })
+
+    const result = await worker.run(makeBatch([event]))
+
+    assert.deepEqual(sent, [])
+    assert.deepEqual(result.leftoverEvents, [])
+  })
+
+  test('worker reuses stored assistant turn text when reply intent already exists', async () => {
+    const event = makeEvent({ messageId: 41, senderId: 20, createdAt: 1 })
+    const { sent, sender } = fakeSender()
+    let generateReplyCalls = 0
+
+    const worker = createConversationWorker({
+      getMessage: async () => makeStoredMessage(event, '@bot 你好'),
+      resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
+      generateReply: async () => {
+        generateReplyCalls++
+        return '新生成文本'
+      },
+      sender,
+      assistantTurnStore: fakeAssistantTurnStore('pending', '已存文本'),
+      conversationStateStore: fakeConversationStateStore(),
+      compactor: fakeCompactor(),
+    })
+
+    await worker.run(makeBatch([event]))
+
+    assert.equal(generateReplyCalls, 0)
+    assert.deepEqual(sent, [{ groupId: 1, replyToMessageId: 41, mentionUserId: 20, text: '已存文本' }])
   })
 })

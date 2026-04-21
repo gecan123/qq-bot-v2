@@ -26,7 +26,6 @@ describe('runPlayground real api', () => {
           ].join('\n'),
           recentMessages: [],
         }),
-        buildMemorySnapshot: async () => null,
       },
     )
 
@@ -53,7 +52,6 @@ describe('runPlayground real api', () => {
           ].join('\n'),
           recentMessages: [],
         }),
-        buildMemorySnapshot: async () => null,
       },
     )
 

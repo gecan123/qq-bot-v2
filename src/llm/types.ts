@@ -1,18 +1,3 @@
-export interface GroupMemorySummaryResult {
-  summary: string
-  topics: string[]
-  activePatterns: string[]
-  styleTags: string[]
-}
-
-export interface UserMemoryProfileResult {
-  profile: string
-  traits: string[]
-  interests: string[]
-  speakingStyle: string[]
-  examples: string[]
-}
-
 export interface MediaDescriptionResult {
   description: string
   raw?: unknown
@@ -28,12 +13,4 @@ export interface LlmProvider {
   describePdfDetailed?(params: { file: Buffer; contentType: string; fileName?: string }): Promise<MediaDescriptionResult>
   transcribeAudio?(params: { audio: Buffer; contentType: string }): Promise<string>
   transcribeAudioDetailed?(params: { audio: Buffer; contentType: string }): Promise<MediaDescriptionResult>
-  generateGroupMemorySummary?(
-    systemInstruction: string,
-    prompt: string,
-  ): Promise<GroupMemorySummaryResult>
-  generateUserMemoryProfile?(
-    systemInstruction: string,
-    prompt: string,
-  ): Promise<UserMemoryProfileResult>
 }

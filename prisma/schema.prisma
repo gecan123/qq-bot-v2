@@ -44,26 +44,6 @@ model Media {
   @@map("media")
 }
 
-model GroupMemory {
-  id        Int      @id @default(autoincrement())
-  groupId   BigInt   @unique @map("group_id")
-  groupName String?  @map("group_name") @db.VarChar(255)
-  summary   String   @map("summary") @db.Text
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
-
-  @@map("group_memory")
-}
-
-model GroupMemoryCursor {
-  id                             Int      @id @default(autoincrement())
-  groupId                        BigInt   @unique @map("group_id")
-  lastProcessedExternalMessageId BigInt   @map("last_processed_external_message_id")
-  lastProcessedMessageRowId      Int      @map("last_processed_message_row_id")
-  updatedAt                      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
-
-  @@map("group_memory_cursor")
-}
-
 model LlmTrace {
   id         Int      @id @default(autoincrement())
   groupId    BigInt   @map("group_id")
@@ -78,17 +58,41 @@ model LlmTrace {
   @@map("llm_traces")
 }
 
-model UserMemory {
-  id                  Int      @id @default(autoincrement())
-  groupId             BigInt   @map("group_id")
-  groupName           String?  @map("group_name") @db.VarChar(255)
-  senderId            BigInt   @map("sender_id")
-  senderNickname      String?  @map("sender_nickname") @db.VarChar(100)
-  senderGroupNickname String?  @map("sender_group_nickname") @db.VarChar(100)
-  profile             String   @map("profile") @db.Text
-  examples            String[] @map("examples")
-  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+model ConversationState {
+  id                     Int      @id @default(autoincrement())
+  groupId                BigInt   @map("group_id")
+  senderThreadKey        String   @map("sender_thread_key") @db.VarChar(128)
+  compactedBase          String   @default("") @map("compacted_base") @db.Text
+  compactedVersion       Int      @default(1) @map("compacted_version")
+  lastCompactedMessageRowId Int?  @map("last_compacted_message_row_id")
+  lastIncorporatedMessageRowId Int? @map("last_incorporated_message_row_id")
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  @@unique([groupId, senderId])
-  @@map("user_memory")
+  @@unique([groupId, senderThreadKey])
+  @@index([groupId, updatedAt(sort: Desc)])
+  @@map("conversation_states")
+}
+
+model AssistantTurn {
+  id                     Int      @id @default(autoincrement())
+  groupId                BigInt   @map("group_id")
+  senderThreadKey        String   @map("sender_thread_key") @db.VarChar(128)
+  replyIntentId          String   @map("reply_intent_id") @db.VarChar(191)
+  triggerMessageRowId    Int      @map("trigger_message_row_id")
+  incorporatedMessageRowId Int    @map("incorporated_message_row_id")
+  sequence               Int      @map("sequence")
+  replyToMessageId       BigInt   @map("reply_to_message_id")
+  mentionUserId          BigInt?  @map("mention_user_id")
+  text                   String   @map("text") @db.Text
+  status                 String   @map("status") @db.VarChar(32)
+  attemptCount           Int      @default(0) @map("attempt_count")
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([groupId, senderThreadKey, replyIntentId])
+  @@unique([groupId, senderThreadKey, sequence])
+  @@index([groupId, senderThreadKey, triggerMessageRowId])
+  @@index([groupId, senderThreadKey, updatedAt(sort: Desc)])
+  @@map("assistant_turns")
 }

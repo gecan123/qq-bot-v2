@@ -189,7 +189,6 @@ async function doGenerate(mediaId: number): Promise<void> {
           where: { mediaId },
           data: { descriptionRaw: toDescriptionRawInput(SENSITIVE_CONTENT_FALLBACK) },
         })
-        jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
       } else {
         log.warn({ mediaId, mediaType, llmDescription: result?.description }, '图片描述返回空结果，保留待解析状态供重试')
       }
@@ -200,7 +199,6 @@ async function doGenerate(mediaId: number): Promise<void> {
       where: { mediaId },
       data: { descriptionRaw: toDescriptionRawInput(descriptionRaw) },
     })
-    jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
     logDescriptionGenerated(provider, 'describeImage', mediaId, startedAt, '媒体描述已生成')
     return
   }
@@ -250,7 +248,6 @@ async function doGenerate(mediaId: number): Promise<void> {
       where: { mediaId },
       data: { descriptionRaw: toDescriptionRawInput(descriptionRaw) },
     })
-    jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
     logDescriptionGenerated(provider, 'describeVideo', mediaId, startedAt, '视频描述已生成')
     return
   }
@@ -298,7 +295,6 @@ async function doGenerate(mediaId: number): Promise<void> {
       where: { mediaId },
       data: { descriptionRaw: toDescriptionRawInput(descriptionRaw) },
     })
-    jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
     logDescriptionGenerated(provider, 'transcribeAudio', mediaId, startedAt, '语音转写已完成')
     return
   }
@@ -353,7 +349,6 @@ async function doGenerate(mediaId: number): Promise<void> {
       where: { mediaId },
       data: { descriptionRaw: toDescriptionRawInput(descriptionRaw) },
     })
-    jobQueue.enqueue('refresh-message-resolution', { mediaId }, { priority: 'low' })
     logDescriptionGenerated(provider, 'describePdf', mediaId, startedAt, 'PDF 描述已生成')
     return
   }

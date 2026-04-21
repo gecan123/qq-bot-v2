@@ -5,25 +5,22 @@
 当前项目主要做三件事：
 
 - 监听指定 QQ 群消息
-- 持久化消息、媒体和群记忆
-- 在可用时接入 Gemini 能力，生成图片描述、摘要和自动回复
+- 持久化消息与媒体
+- 在可用时接入 LLM 能力，生成媒体理解和 `@bot` 回复
 
 ## 功能概览
 
 - 监听指定群消息并写入 PostgreSQL
 - 启动后自动补拉最近一批群历史消息
 - 缓存图片/媒体引用，支持媒体描述
-- 基于 Redis 队列处理异步任务
-- 定时刷新群记忆和用户记忆
-- 可选启用 Gemini 能力用于总结、描述和回复
 - `@bot` 走独立异步会话调度器，按群聚合后再回复
+- 永续上下文方向：保留消息事实账本，并开始引入 bot 本地回复账本
 
 ## 环境要求
 
 - Node.js 20+
 - pnpm 10+
 - PostgreSQL
-- Redis
 - NapCat，并开启 WebSocket
 
 ## 安装
@@ -46,9 +43,6 @@ cp .env.example .env
 # PostgreSQL
 DATABASE_URL=postgresql://qq_user:qq_password@127.0.0.1:5432/qq_bot_v2
 
-# Redis
-REDIS_URL=redis://127.0.0.1:6379
-
 # NapCat
 NAPCAT_WS_URL=ws://127.0.0.1:3001
 NAPCAT_ACCESS_TOKEN=your_token_here
@@ -61,17 +55,13 @@ SELF_NUMBER=10001
 
 # 可选
 NODE_ENV=development
-REPLY_MEDIA_WAIT_N=5
-REPLY_MEDIA_TIMEOUT_MS=5000
-MEMORY_JOB_INTERVAL_HOURS=4
-MEMORY_JOB_SKIP_THRESHOLD=50
+REPLY_MEDIA_TIMEOUT_MS=15000
 JOB_INTER_DELAY_MS=200
 ```
 
 ### 必填项说明
 
 - `DATABASE_URL`: PostgreSQL 连接串
-- `REDIS_URL`: Redis 连接串
 - `NAPCAT_WS_URL`: NapCat WebSocket 地址
 - `NAPCAT_ACCESS_TOKEN`: NapCat 鉴权 token
 - `GROUP_IDS`: 要监听的 QQ 群号列表
@@ -139,8 +129,10 @@ pnpm start
 确保以下服务都已经可用：
 
 - PostgreSQL
-- Redis
 - NapCat WebSocket
+
+说明：
+- `admin-web` 当前为临时禁用状态，不属于这一阶段的支持面。
 
 ### 2. 配置群号和机器人账号
 
@@ -165,25 +157,23 @@ pnpm dev
 - 连接 NapCat
 - 启动任务队列
 - 启动异步 `@` 会话调度器
-- 启动记忆刷新定时任务
 - 对已配置群执行最近历史消息补拉
 
 ### 4. 在群里使用
 
-项目当前更偏向“消息接入 + 存储 + 异步回复任务”。
+项目当前更偏向“消息接入 + 存储 + 异步回复任务 + 永续上下文重建”。
 
 你可以这样验证是否正常工作：
 
 - 在配置的 QQ 群里发送文本消息
 - 发送图片等媒体消息
 - 查看终端日志是否输出消息处理记录
-- 查看 PostgreSQL 中 `messages`、`media`、`group_memory`、`user_memory` 表是否有新增数据
+- 查看 PostgreSQL 中 `messages`、`media`、`conversation_states`、`assistant_turns` 表是否有新增数据
 
 如果本地已配置 Gemini 凭据，还可以进一步验证：
 
 - 图片是否生成描述
 - `@bot` 后是否在消息入库后异步回复
-- 定时任务是否更新群记忆/用户记忆
 
 ### 异步 `@` 回复
 
@@ -208,7 +198,7 @@ pnpm dev
 
 - 当前 `@` 回复任务队列是内存实现，进程重启会丢失 pending reply task
 - 历史消息补拉只入库，不会对旧消息补发回复
-- Redis 持久化队列是后续规划，不在当前版本内
+- `admin-web` 暂时禁用，相关脚本会直接报错退出
 
 ## 常用命令
 
@@ -234,7 +224,6 @@ pnpm db:push      # 直接同步 schema 到数据库
 │   ├── jobs/             # 定时任务
 │   ├── llm/              # Gemini 能力适配
 │   ├── media/            # 媒体缓存、序列化、描述
-│   ├── memory/           # 群记忆/用户记忆逻辑
 │   ├── messaging/        # 回复消息发送抽象
 │   ├── queue/            # 异步队列
 │   └── responder/        # 回复生成与执行
@@ -248,7 +237,6 @@ pnpm db:push      # 直接同步 schema 到数据库
 检查 `.env` 是否存在，并确认以下字段都已填写：
 
 - `DATABASE_URL`
-- `REDIS_URL`
 - `NAPCAT_WS_URL`
 - `NAPCAT_ACCESS_TOKEN`
 - `GROUP_IDS`

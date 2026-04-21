@@ -2,10 +2,9 @@ import { getAgentProfile } from '../config/agent-profiles.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import { getCurrentTokenUsageTracker, runWithTokenUsageTracking } from '../llm/token-usage.js'
 import { createLogger } from '../logger.js'
-import type { AgentMessage } from '../agent/types.js'
 import type { IncomingMessage } from './pipeline.js'
 import { buildContext, extractResolvedTriggerText } from './context-builder.js'
-import { buildMemorySnapshot } from './memory-loader.js'
+import { buildReplyHistory } from './reply-history.js'
 import { logMentionReplyTokenUsage } from './reply-token-usage.js'
 import { runAgentSession } from './agent-session.js'
 
@@ -20,31 +19,10 @@ async function agentReply(
   warningTimeMs?: number,
   maxAnswerChars?: number,
 ): Promise<string | null> {
-  const { contextText, recentMessages } = await buildContext(msg, contextLimit)
-  const [triggerText, memorySnapshot] = await Promise.all([
-    extractResolvedTriggerText(msg.groupId, msg.messageId, msg.segments),
-    buildMemorySnapshot(msg.groupId, recentMessages, msg.senderId),
-  ])
-
-  const contextContent = contextText
-    ? `[群聊背景]\n${contextText}`
-    : '[群聊背景]\n（暂无近期消息记录）'
-  const triggerContent = triggerText
-    ? `请根据你的人设回复这条消息：${triggerText}`
-    : '（用户@了你，请根据你的人设回复）'
-
-  const initialHistory: AgentMessage[] = []
-  if (memorySnapshot) {
-    initialHistory.push(
-      { role: 'user', content: memorySnapshot },
-      { role: 'model', content: '了解。' },
-    )
-  }
-  initialHistory.push(
-    { role: 'user', content: contextContent },
-    { role: 'model', content: '好的。' },
-    { role: 'user', content: triggerContent },
-  )
+  const mediaDeadlineAt = Date.now() + 15_000
+  const { contextText } = await buildContext(msg, contextLimit, { mediaDeadlineAt })
+  const triggerText = await extractResolvedTriggerText(msg.groupId, msg.messageId, msg.segments, { mediaDeadlineAt })
+  const initialHistory = buildReplyHistory(contextText, triggerText)
 
   const result = await runAgentSession({
     groupId: msg.groupId,

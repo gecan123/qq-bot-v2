@@ -15,25 +15,6 @@ export interface AgentProfile {
   /** @deprecated 保留兼容；等价于 agentWarningTimeMs */
   agentMaxTimeMs?: number
   agentMaxAnswerChars?: number
-  proactivePolicy?: ProactivePolicy
-}
-
-export interface ProactivePolicy {
-  enabled: boolean
-  /** 仅打日志不实际发送，用于观察调试 */
-  dryRun?: boolean
-  /** proactive debounce 间隔（毫秒），对话暂歇后触发评估，默认 90_000 */
-  debounceMs?: number
-  /** 持续热聊时强制评估上限（毫秒），默认 300_000 */
-  maxWaitMs?: number
-  /** 任何 bot 回复后抑制 proactive 的间隔（毫秒），默认 120_000 */
-  cooldownMs?: number
-  /** 机会评分阈值（0-100），越低越容易触发，默认 45 */
-  scoreThreshold?: number
-  /** 每群每小时最多 N 次主动回复，默认 3 */
-  hourlyBudget?: number
-  /** 至少积累 N 条消息才评估，默认 5 */
-  minMessages?: number
 }
 
 interface AgentConfig {

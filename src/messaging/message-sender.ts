@@ -1,4 +1,4 @@
-import { sendGroupReply } from '../responder/reply-executor.js'
+import { sendGroupReply, type SendGroupReplyResult } from '../responder/reply-executor.js'
 import { buildReplySegments } from './segment-builder.js'
 
 export interface MessageSender {
@@ -7,13 +7,13 @@ export interface MessageSender {
     replyToMessageId: number
     mentionUserId?: number
     text: string
-  }): Promise<void>
+  }): Promise<SendGroupReplyResult>
 
   /** 发送独立消息（不引用、不 @），用于主动回复 */
   sendMessage(params: {
     groupId: number
     text: string
-  }): Promise<void>
+  }): Promise<SendGroupReplyResult>
 }
 
 class NapcatMessageSender implements MessageSender {
@@ -22,8 +22,8 @@ class NapcatMessageSender implements MessageSender {
     replyToMessageId: number
     mentionUserId?: number
     text: string
-  }): Promise<void> {
-    await sendGroupReply(
+  }): Promise<SendGroupReplyResult> {
+    return sendGroupReply(
       params.groupId,
       buildReplySegments({
         replyToMessageId: params.replyToMessageId,
@@ -33,10 +33,9 @@ class NapcatMessageSender implements MessageSender {
     )
   }
 
-  async sendMessage(params: { groupId: number; text: string }): Promise<void> {
-    await sendGroupReply(params.groupId, [{ type: 'text', data: { text: params.text } }])
+  async sendMessage(params: { groupId: number; text: string }): Promise<SendGroupReplyResult> {
+    return sendGroupReply(params.groupId, [{ type: 'text', data: { text: params.text } }])
   }
 }
 
 export const messageSender: MessageSender = new NapcatMessageSender()
-

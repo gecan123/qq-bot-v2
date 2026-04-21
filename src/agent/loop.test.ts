@@ -294,8 +294,7 @@ describe('runAgentLoop', () => {
       systemPrompt: 'test',
       initialHistory: [
         { role: 'user', content: '[群聊背景]\n消息记录' },
-        { role: 'model', content: '好的。' },
-        { role: 'user', content: '请回复这条消息：你好' },
+        { role: 'user', content: '[当前要回复的消息]\n你好' },
       ],
       chatFn,
       tools: noopTools.declarations,
@@ -304,12 +303,11 @@ describe('runAgentLoop', () => {
 
     assert.equal(receivedHistories.length, 1)
     const firstHistory = receivedHistories[0] as Array<{ role: string; content: string }>
-    assert.equal(firstHistory.length, 3)
+    assert.equal(firstHistory.length, 2)
     assert.equal(firstHistory[0]?.role, 'user')
     assert.match(firstHistory[0]?.content ?? '', /群聊背景/)
-    assert.equal(firstHistory[1]?.role, 'model')
-    assert.equal(firstHistory[2]?.role, 'user')
-    assert.match(firstHistory[2]?.content ?? '', /请回复/)
+    assert.equal(firstHistory[1]?.role, 'user')
+    assert.match(firstHistory[1]?.content ?? '', /当前要回复的消息/)
   })
 
   test('returns fallback when adapter throws', async () => {

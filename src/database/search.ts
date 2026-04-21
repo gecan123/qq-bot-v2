@@ -1,5 +1,4 @@
 import { prisma } from './client.js'
-import type { GroupMemory, UserMemory } from '../generated/prisma/client.js'
 import { getMessageTimestamp } from '../utils/message-time.js'
 
 export interface SearchResult {
@@ -54,7 +53,7 @@ export async function lookupGroupMember(
   groupId: number,
   name: string,
 ): Promise<MemberLookupResult[]> {
-  const rows = await prisma.userMemory.findMany({
+  const rows = await prisma.message.findMany({
     where: {
       groupId: BigInt(groupId),
       OR: [
@@ -63,6 +62,8 @@ export async function lookupGroupMember(
       ],
     },
     take: 10,
+    distinct: ['senderId'],
+    orderBy: { createdAt: 'desc' },
     select: { senderId: true, senderNickname: true, senderGroupNickname: true },
   })
 
@@ -71,14 +72,4 @@ export async function lookupGroupMember(
     senderNickname: r.senderNickname,
     senderGroupNickname: r.senderGroupNickname,
   }))
-}
-
-export async function getUserProfile(groupId: number, senderId: number): Promise<UserMemory | null> {
-  return prisma.userMemory.findUnique({
-    where: { groupId_senderId: { groupId: BigInt(groupId), senderId: BigInt(senderId) } },
-  })
-}
-
-export async function getGroupSummary(groupId: number): Promise<GroupMemory | null> {
-  return prisma.groupMemory.findUnique({ where: { groupId: BigInt(groupId) } })
 }

@@ -5,21 +5,18 @@ import { jobQueue } from './queue/index.js'
 import { setLlmProvider } from './llm/provider.js'
 import { OpenAIProvider } from './llm/openai-adapter.js'
 import { RoutingProvider } from './llm/routing-provider.js'
-import { startMemoryRefreshJob } from './jobs/refresh-memory.js'
 import { config } from './config/index.js'
 import { createConversationScheduler, type ConversationScheduler } from './conversation/scheduler.js'
 import { createConversationMemoryQueue } from './queue/conversation-memory-queue.js'
 import type { ConversationQueue } from './queue/conversation-queue.js'
-import { createConversationWorker, type ProactiveHandler } from './conversation/worker.js'
+import { createConversationWorker } from './conversation/worker.js'
 import { createMentionDispatcher } from './conversation/dispatcher.js'
-import { evaluateAndReply } from './responder/proactive/generator.js'
-import { getAgentProfile } from './config/agent-profiles.js'
+import { recoverConversationStartupState } from './conversation/recovery.js'
 import { startHttpServer, addRoute } from './server/http.js'
 import { handlePlaygroundReplay, handlePlaygroundRun, handleReplayTraceGet } from './server/playground.js'
 import { handleMediaReanalyze } from './server/media-reanalyze.js'
 import type http from 'node:http'
 
-let stopMemoryJob: () => void = () => {}
 let conversationQueue: ConversationQueue | null = null
 let conversationScheduler: ConversationScheduler | null = null
 let httpServer: http.Server | null = null
@@ -109,48 +106,10 @@ async function main() {
 
   jobQueue.start()
 
-  // proactive 状态
-  const lastBotReplyAtMap = new Map<number, number>()
-  const proactiveTimestamps = new Map<number, number[]>()
-
-  const ONE_HOUR_MS = 60 * 60 * 1000
-
-  function getRecentProactiveTimestamps(groupId: number): number[] {
-    const timestamps = proactiveTimestamps.get(groupId) ?? []
-    const now = Date.now()
-    const recent = timestamps.filter((ts) => now - ts < ONE_HOUR_MS)
-    proactiveTimestamps.set(groupId, recent)
-    return recent
-  }
-
-  const proactiveHandler: ProactiveHandler = {
-    async evaluate(groupId, messagesSinceLastEval) {
-      return evaluateAndReply(groupId, {
-        lastBotReplyAt: lastBotReplyAtMap.get(groupId),
-        recentProactiveTimestamps: getRecentProactiveTimestamps(groupId),
-        messagesSinceLastEval,
-        onProactiveAttempt() {
-          const timestamps = proactiveTimestamps.get(groupId) ?? []
-          proactiveTimestamps.set(groupId, [...timestamps, Date.now()])
-        },
-      })
-    },
-  }
-
-  const conversationWorker = createConversationWorker({
-    proactiveHandler,
-    onBotReplySent(groupId) {
-      lastBotReplyAtMap.set(groupId, Date.now())
-    },
-  })
-
-  const PROACTIVE_DEBOUNCE_MS = 90_000
-  const PROACTIVE_MAX_WAIT_MS = 300_000
+  const conversationWorker = createConversationWorker()
 
   conversationScheduler = createConversationScheduler({
     mergeWindowMs: ASYNC_MENTION_MERGE_WINDOW_MS,
-    proactiveDebounceMs: PROACTIVE_DEBOUNCE_MS,
-    proactiveMaxWaitMs: PROACTIVE_MAX_WAIT_MS,
     worker: (batch) => conversationWorker.run(batch),
   })
   conversationQueue = createConversationMemoryQueue({
@@ -160,19 +119,18 @@ async function main() {
     selfNumber: config.selfNumber,
     queue: conversationQueue,
   })
-  conversationQueue.start()
-  stopMemoryJob = startMemoryRefreshJob()
-  log.info(
-    { mergeWindowMs: ASYNC_MENTION_MERGE_WINDOW_MS, proactiveDebounceMs: PROACTIVE_DEBOUNCE_MS, proactiveMaxWaitMs: PROACTIVE_MAX_WAIT_MS },
-    'Conversation scheduler started (mention + proactive)',
-  )
-  log.info('Memory refresh job started')
   await startBot({ mentionDispatcher, conversationScheduler })
+  await recoverConversationStartupState({
+    groupIds: config.groupIds,
+    selfNumber: config.selfNumber,
+    queue: conversationQueue,
+  })
+  conversationQueue.start()
+  log.info({ mergeWindowMs: ASYNC_MENTION_MERGE_WINDOW_MS }, 'Conversation scheduler started (mention only)')
 }
 
 async function shutdown() {
   log.info('Shutting down...')
-  stopMemoryJob()
   conversationQueue?.stop()
   conversationScheduler?.stop()
   jobQueue.stop()

@@ -1,17 +1,10 @@
-import type {
-    GroupMemorySummaryResult,
-    LlmProvider,
-    MediaDescriptionResult,
-    UserMemoryProfileResult,
-} from './types.js'
+import type { LlmProvider, MediaDescriptionResult } from './types.js'
 
 type ScenarioProviders = {
     describeImage?: LlmProvider
     describeImageFallback?: LlmProvider
     describeVideo?: LlmProvider
     describePdf?: LlmProvider
-    generateGroupMemorySummary?: LlmProvider
-    generateUserMemoryProfile?: LlmProvider
     transcribeAudio?: LlmProvider
 }
 
@@ -73,22 +66,6 @@ export class RoutingProvider implements LlmProvider {
         const p = this.getProviderForScenario('describePdf')
         if (p.describePdfDetailed) return p.describePdfDetailed(params)
         return { description: (await p.describePdf?.(params)) ?? '' }
-    }
-
-    async generateGroupMemorySummary(systemInstruction: string, prompt: string): Promise<GroupMemorySummaryResult> {
-        const p = this.getProviderForScenario('generateGroupMemorySummary')
-        if (!p.generateGroupMemorySummary) {
-            throw new Error('generateGroupMemorySummary is not supported by the configured provider')
-        }
-        return p.generateGroupMemorySummary(systemInstruction, prompt)
-    }
-
-    async generateUserMemoryProfile(systemInstruction: string, prompt: string): Promise<UserMemoryProfileResult> {
-        const p = this.getProviderForScenario('generateUserMemoryProfile')
-        if (!p.generateUserMemoryProfile) {
-            throw new Error('generateUserMemoryProfile is not supported by the configured provider')
-        }
-        return p.generateUserMemoryProfile(systemInstruction, prompt)
     }
 
     async transcribeAudio(params: Parameters<NonNullable<LlmProvider['transcribeAudio']>>[0]): Promise<string> {

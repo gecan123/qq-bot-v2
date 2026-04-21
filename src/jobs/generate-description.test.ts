@@ -68,7 +68,7 @@ describe('generateDescriptionForMedia', () => {
         examples: [],
       }),
       transcribeAudio: async () => '',
-    })
+    } as any)
 
     await generateDescriptionForMedia(1)
 
@@ -129,7 +129,7 @@ describe('generateDescriptionForMedia', () => {
         examples: [],
       }),
       transcribeAudio: async () => '',
-    })
+    } as any)
 
     await generateDescriptionForMedia(1)
 
@@ -347,7 +347,7 @@ describe('generateDescriptionForMedia', () => {
         examples: [],
       }),
       transcribeAudio: async () => '',
-    })
+    } as any)
 
     await generateDescriptionForMedia(333)
 
@@ -381,7 +381,7 @@ describe('generateDescriptionForMedia', () => {
     setLlmProvider({
       describeImage: async () => '',
       describeVideo: async () => '',
-      describeVideoDetailed: async (params) => {
+      describeVideoDetailed: async (params: any) => {
         received = params
         return {
           description: '视频描述',
@@ -403,7 +403,7 @@ describe('generateDescriptionForMedia', () => {
         examples: [],
       }),
       transcribeAudio: async () => '',
-    })
+    } as any)
 
     await generateDescriptionForMedia(1)
 
@@ -432,7 +432,7 @@ describe('generateDescriptionForMedia', () => {
 
     setLlmProvider({
       describeImage: async () => '',
-      describeVideo: async (params) => {
+      describeVideo: async (params: any) => {
         received = params
         return '旧接口视频描述'
       },
@@ -451,7 +451,7 @@ describe('generateDescriptionForMedia', () => {
         examples: [],
       }),
       transcribeAudio: async () => '',
-    })
+    } as any)
 
     await generateDescriptionForMedia(11)
 
@@ -482,7 +482,7 @@ describe('generateDescriptionForMedia', () => {
       describeImage: async () => '',
       describeVideo: async () => '',
       describePdf: async () => '',
-      describePdfDetailed: async (params) => {
+      describePdfDetailed: async (params: any) => {
         received = params
         return {
           description: 'PDF摘要',
@@ -503,7 +503,7 @@ describe('generateDescriptionForMedia', () => {
         examples: [],
       }),
       transcribeAudio: async () => '',
-    })
+    } as any)
 
     await generateDescriptionForMedia(2)
 
@@ -547,11 +547,11 @@ describe('generateDescriptionForMedia', () => {
         speakingStyle: [],
         examples: [],
       }),
-      transcribeAudio: async (params) => {
+      transcribeAudio: async (params: any) => {
         received = params
         return '旧接口语音转写'
       },
-    })
+    } as any)
 
     await generateDescriptionForMedia(12)
 
@@ -580,7 +580,7 @@ describe('generateDescriptionForMedia', () => {
     setLlmProvider({
       describeImage: async () => '',
       describeVideo: async () => '',
-      describePdf: async (params) => {
+      describePdf: async (params: any) => {
         received = params
         return '旧接口PDF描述'
       },
@@ -598,7 +598,7 @@ describe('generateDescriptionForMedia', () => {
         examples: [],
       }),
       transcribeAudio: async () => '',
-    })
+    } as any)
 
     await generateDescriptionForMedia(13)
 
@@ -608,7 +608,7 @@ describe('generateDescriptionForMedia', () => {
     assert.deepEqual(updates[0].data.descriptionRaw, { description: '旧接口PDF描述' })
   })
 
-  test('enqueues recent message resolution refresh after description update', async () => {
+  test('does not enqueue old message resolution refresh after description update', async () => {
     const enqueued: Array<{ type: string; data: unknown; options?: { priority?: string } }> = []
 
     prisma.media.findUnique = (async () => ({
@@ -649,16 +649,10 @@ describe('generateDescriptionForMedia', () => {
         examples: [],
       }),
       transcribeAudio: async () => '',
-    })
+    } as any)
 
     await generateDescriptionForMedia(3)
 
-    assert.deepEqual(enqueued, [
-      {
-        type: 'refresh-message-resolution',
-        data: { mediaId: 3 },
-        options: { priority: 'low' },
-      },
-    ])
+    assert.deepEqual(enqueued, [])
   })
 })

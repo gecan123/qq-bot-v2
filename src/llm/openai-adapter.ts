@@ -1,12 +1,7 @@
 import OpenAI from 'openai'
 import { jsonrepair } from 'jsonrepair'
 import sharp from 'sharp'
-import type {
-    GroupMemorySummaryResult,
-    LlmProvider,
-    MediaDescriptionResult,
-    UserMemoryProfileResult,
-} from './types.js'
+import type { LlmProvider, MediaDescriptionResult } from './types.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import { recordCurrentTokenUsage, toTokenUsage } from './token-usage.js'
 
@@ -24,45 +19,6 @@ type StructuredAudioTranscription = {
     transcription?: string
     refer?: boolean
 }
-
-const GROUP_MEMORY_SUMMARY_RESPONSE_FORMAT = {
-    type: 'json_schema',
-    json_schema: {
-        name: 'group_memory_summary',
-        strict: true,
-        schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-                summary: { type: 'string' },
-                topics: { type: 'array', items: { type: 'string' } },
-                activePatterns: { type: 'array', items: { type: 'string' } },
-                styleTags: { type: 'array', items: { type: 'string' } },
-            },
-            required: ['summary', 'topics', 'activePatterns', 'styleTags'],
-        },
-    },
-} as const
-
-const USER_MEMORY_PROFILE_RESPONSE_FORMAT = {
-    type: 'json_schema',
-    json_schema: {
-        name: 'user_memory_profile',
-        strict: true,
-        schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-                profile: { type: 'string' },
-                traits: { type: 'array', items: { type: 'string' } },
-                interests: { type: 'array', items: { type: 'string' } },
-                speakingStyle: { type: 'array', items: { type: 'string' } },
-                examples: { type: 'array', items: { type: 'string' } },
-            },
-            required: ['profile', 'traits', 'interests', 'speakingStyle', 'examples'],
-        },
-    },
-} as const
 
 const IMAGE_DESCRIPTION_RESPONSE_FORMAT = {
     type: 'json_schema',
@@ -265,30 +221,6 @@ export class OpenAIProvider implements LlmProvider {
             instruction: '请描述这个 PDF 文档的内容：',
             file: params.file,
             fileName: params.fileName ?? 'document.pdf',
-        })
-    }
-
-    async generateGroupMemorySummary(
-        systemInstruction: string,
-        prompt: string,
-    ): Promise<GroupMemorySummaryResult> {
-        return this.generateStructuredJson<GroupMemorySummaryResult>({
-            systemInstruction,
-            prompt,
-            responseFormat: GROUP_MEMORY_SUMMARY_RESPONSE_FORMAT as any,
-            operation: 'generateGroupMemorySummary',
-        })
-    }
-
-    async generateUserMemoryProfile(
-        systemInstruction: string,
-        prompt: string,
-    ): Promise<UserMemoryProfileResult> {
-        return this.generateStructuredJson<UserMemoryProfileResult>({
-            systemInstruction,
-            prompt,
-            responseFormat: USER_MEMORY_PROFILE_RESPONSE_FORMAT as any,
-            operation: 'generateUserMemoryProfile',
         })
     }
 

@@ -12,17 +12,3 @@ services:
     network_mode: bridge
     restart: always
     image: mlikiowa/napcat-docker:latest
-
-  redis:
-    container_name: my-redis
-    image: redis:latest
-    ports:
-      - "16379:6379"
-    environment:
-      - REDIS_PASSWORD=c8npecu85kr
-    command: redis-server --requirepass c8npecu85kr
-    volumes:
-      - redis_data:/home/ubuntu/redis-data
-
-volumes:
-  redis_data:

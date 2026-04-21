@@ -5,7 +5,6 @@ import { parseConfig } from './index.js'
 function createBaseEnv(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
   return {
     DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',
-    REDIS_URL: 'redis://127.0.0.1:6379',
     NAPCAT_WS_URL: 'ws://localhost:3001',
     NAPCAT_ACCESS_TOKEN: 'token',
     GROUP_IDS: '123,456',

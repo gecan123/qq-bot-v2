@@ -22,22 +22,12 @@ export interface InsertMessageParams {
   sentAt?: number
 }
 
-export async function getRecentMessagesReferencingMedia(mediaId: number, since: Date): Promise<Message[]> {
-  return prisma.message.findMany({
+export async function freezeResolvedTextIfUnset(messageId: number, resolvedText: string): Promise<void> {
+  await prisma.message.updateMany({
     where: {
-      mediaReferenceIds: { has: String(mediaId) },
-      OR: [
-        { sentAt: { gte: since } },
-        { sentAt: null, createdAt: { gte: since } },
-      ],
+      id: messageId,
+      resolvedText: null,
     },
-    orderBy: { messageId: 'asc' },
-  })
-}
-
-export async function updateResolvedText(messageId: number, resolvedText: string): Promise<void> {
-  await prisma.message.update({
-    where: { id: messageId },
     data: { resolvedText },
   })
 }
@@ -65,6 +55,19 @@ export async function getRecentGroupMessages(
     take: limit,
   })
   return rows.reverse()
+}
+
+export async function getGroupMessagesAfterRowId(
+  groupId: number,
+  afterRowId?: number,
+): Promise<Message[]> {
+  return prisma.message.findMany({
+    where: {
+      groupId: BigInt(groupId),
+      ...(afterRowId !== undefined ? { id: { gt: afterRowId } } : {}),
+    },
+    orderBy: { id: 'asc' },
+  })
 }
 
 export async function getMessageById(groupId: number, messageId: number): Promise<Message | null> {
@@ -136,6 +139,7 @@ function sanitizeJsonValue(value: unknown): Prisma.InputJsonValue | null | undef
 export function buildMessageUpsertSql(params: InsertMessageParams): Prisma.Sql {
   const mediaReferenceIds = params.mediaReferenceIds ?? []
   const searchText = segmentsToPlainText(params.content)
+  const initialResolvedText = mediaReferenceIds.length > 0 ? null : searchText
   const content = sanitizeJsonValue(params.content) ?? []
   const rawContent = sanitizeJsonValue(params.rawContent)
   const updates: Prisma.Sql[] = [
@@ -187,7 +191,7 @@ export function buildMessageUpsertSql(params: InsertMessageParams): Prisma.Sql {
       ${jsonSql(rawContent)},
       ${params.rawMessage ?? null},
       ${searchText},
-      ${searchText},
+      ${initialResolvedText},
       ${timestampSql(params.sentAt, Prisma.sql`NULL`)},
       ${timestampSql(params.sentAt, Prisma.sql`CURRENT_TIMESTAMP`)}
     )

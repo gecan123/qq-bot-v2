@@ -1,6 +1,6 @@
 import { napcat } from './napcat.js'
 import { parseMessage } from './message-parser.js'
-import { findExistingMessageIds, getMessageById, insertMessage } from '../database/messages.js'
+import { findExistingMessageIds, insertMessage } from '../database/messages.js'
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
 import { persistMediaReferences } from '../media/media-cache.js'
@@ -20,49 +20,28 @@ interface ProcessMessageOptions {
 type FinalizePersistedMessageOptions = {
   groupId: number
   messageId: number
+  messageRowId: number
   senderId: number
   senderNickname: string
   createdAt: number
   segments: ParsedSegment[]
   dispatchMention?: boolean
   rootRuntime?: RootRuntimeManager
-  loadPersistedMessage?: typeof getMessageById
+  persistedCreatedAt: Date
 }
 
 export async function finalizePersistedGroupMessage(
   options: FinalizePersistedMessageOptions,
 ): Promise<void> {
-  if (options.dispatchMention !== false) {
-    options.rootRuntime?.dispatchPassiveMentionIfMentioned({
-      groupId: options.groupId,
-      messageId: options.messageId,
-      senderId: options.senderId,
-      createdAt: options.createdAt,
-      segments: options.segments,
-    })
-  }
-
-  const loadPersistedMessage = options.loadPersistedMessage ?? getMessageById
-
-  try {
-    const persistedMessage = await loadPersistedMessage(options.groupId, options.messageId)
-    if (persistedMessage) {
-      await options.rootRuntime?.ingestGroupMessage({
-        groupId: options.groupId,
-        messageRowId: persistedMessage.id,
-        messageId: options.messageId,
-        senderId: options.senderId,
-        senderNickname: options.senderNickname,
-        segments: options.segments,
-        createdAt: persistedMessage.sentAt ?? persistedMessage.createdAt,
-      })
-    }
-  } catch (error) {
-    log.warn(
-      { error, groupId: options.groupId, messageId: options.messageId },
-      'root runtime ingress 失败，降级继续旧回复链',
-    )
-  }
+  await options.rootRuntime?.ingestGroupMessage({
+    groupId: options.groupId,
+    messageRowId: options.messageRowId,
+    messageId: options.messageId,
+    senderId: options.senderId,
+    senderNickname: options.senderNickname,
+    segments: options.segments,
+    createdAt: options.persistedCreatedAt,
+  })
 }
 
 async function processMessage(groupId: number, messageId: number, options: ProcessMessageOptions = {}): Promise<void> {
@@ -81,7 +60,7 @@ async function processMessage(groupId: number, messageId: number, options: Proce
     napcat,
   })
 
-  await insertMessage({
+  const persistedMessage = await insertMessage({
     groupId,
     groupName,
     mediaReferenceIds: mediaResult.mediaReferenceIds,
@@ -98,12 +77,14 @@ async function processMessage(groupId: number, messageId: number, options: Proce
   await finalizePersistedGroupMessage({
     groupId,
     messageId: parsed.messageId,
+    messageRowId: persistedMessage.id,
     senderId: parsed.senderId,
     senderNickname: parsed.senderGroupNickname ?? parsed.senderNickname,
     createdAt: parsed.time * 1000,
     segments: mediaResult.content,
     dispatchMention: options.dispatchMention,
     rootRuntime: options.rootRuntime,
+    persistedCreatedAt: persistedMessage.sentAt ?? persistedMessage.createdAt,
   })
   const textPreview = mediaResult.content
     .filter((s): s is TextSegment => s.type === 'text')

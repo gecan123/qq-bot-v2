@@ -4,6 +4,7 @@ import { createPassiveMentionProcessor } from './passive-mention-processor.js'
 import type { GroupConversationBatch, MentionEvent } from '../conversation/types.js'
 import type { ParsedSegment } from '../types/message-segments.js'
 import type { Message } from '../generated/prisma/client.js'
+import type { CreateOrReuseReplyRecordInput } from '../conversation/reply-record-store.js'
 
 type FakeStoredMessage = Message
 
@@ -39,44 +40,50 @@ function fakeSender() {
   }
 }
 
-function fakeAssistantTurnStore(status: 'pending' | 'sent' | null = null, text = 'reply') {
+function fakeReplyRecordStore(status: 'pending' | 'sent' | 'dry_run' | null = null, text = 'reply') {
   let nextId = 1
   return {
     findByReplyIntentId: async () =>
-      status === 'pending' || status === 'sent'
-        ? { id: nextId, groupId: 1, senderThreadKey: 'sender:0', replyIntentId: 'intent', triggerMessageRowId: 1, incorporatedMessageRowId: 1, sequence: 1, replyToMessageId: 1, mentionUserId: undefined, text, status, attemptCount: 0, createdAt: new Date(0), updatedAt: new Date(0) }
+      status === 'pending' || status === 'sent' || status === 'dry_run'
+        ? {
+            id: nextId,
+            runtimeKey: 'qq_group:1',
+            groupId: 1,
+            scopeKey: 'sender:20',
+            replyIntentId: 'intent',
+            sourceKind: 'mention',
+            triggerMessageRowId: 1,
+            incorporatedMessageRowId: 1,
+            deliveryPayload: { type: 'reply_to_message' as const, replyToMessageId: 1 },
+            text,
+            executionState: status,
+            providerMessageId: undefined,
+            attemptCount: 0,
+            createdAt: new Date(0),
+            updatedAt: new Date(0),
+          }
         : null,
-    createOrReusePending: async (input: {
-      triggerMessageRowId: number
-      incorporatedMessageRowId: number
-      replyToMessageId: number
-      mentionUserId?: number
-      text: string
-    }) => ({
+    createOrReuse: async (input: CreateOrReuseReplyRecordInput) => ({
       id: nextId++,
+      runtimeKey: input.runtimeKey,
       groupId: 1,
-      senderThreadKey: 'sender:0',
-      replyIntentId: 'intent',
+      scopeKey: input.scopeKey,
+      replyIntentId: input.replyIntentId,
+      sourceKind: input.sourceKind,
       triggerMessageRowId: input.triggerMessageRowId,
       incorporatedMessageRowId: input.incorporatedMessageRowId,
-      sequence: 1,
-      replyToMessageId: input.replyToMessageId,
-      mentionUserId: input.mentionUserId,
-      text: status === 'pending' || status === 'sent' ? text : input.text,
-      status: status ?? 'pending',
+      deliveryPayload: input.deliveryPayload,
+      text: status === 'pending' || status === 'sent' || status === 'dry_run' ? text : input.text,
+      executionState: status ?? input.executionState,
+      providerMessageId: undefined,
       attemptCount: 0,
       createdAt: new Date(0),
       updatedAt: new Date(0),
     }),
+    markAcked: async () => {},
     markSending: async () => {},
     markSent: async () => {},
     markFailed: async () => {},
-  }
-}
-
-function fakeConversationStateStore() {
-  return {
-    updateLastIncorporated: async () => {},
   }
 }
 
@@ -114,8 +121,7 @@ describe('passive mention processor', () => {
       resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
       generateReply: async () => '你好',
       sender,
-      assistantTurnStore: fakeAssistantTurnStore(),
-      conversationStateStore: fakeConversationStateStore(),
+      replyRecordStore: fakeReplyRecordStore(),
       compactor: fakeCompactor(),
     })
 
@@ -148,8 +154,7 @@ describe('passive mention processor', () => {
         return `reply:${message.messageId}`
       },
       sender,
-      assistantTurnStore: fakeAssistantTurnStore(),
-      conversationStateStore: fakeConversationStateStore(),
+      replyRecordStore: fakeReplyRecordStore(),
       compactor: fakeCompactor(),
     })
 
@@ -182,8 +187,7 @@ describe('passive mention processor', () => {
         return `reply:${message.messageId}`
       },
       sender,
-      assistantTurnStore: fakeAssistantTurnStore(),
-      conversationStateStore: fakeConversationStateStore(),
+      replyRecordStore: fakeReplyRecordStore(),
       compactor: fakeCompactor(),
     })
 
@@ -198,20 +202,24 @@ describe('passive mention processor', () => {
   test('does not send duplicate reply when assistant turn is already sent', async () => {
     const event = makeEvent({ messageId: 31, senderId: 20, createdAt: 1 })
     const { sent, sender } = fakeSender()
+    const deliveredTurns: number[] = []
 
     const processor = createPassiveMentionProcessor({
       getMessage: async () => makeStoredMessage(event, '@bot 你好'),
       resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
       generateReply: async () => '你好',
       sender,
-      assistantTurnStore: fakeAssistantTurnStore('sent'),
-      conversationStateStore: fakeConversationStateStore(),
+      replyRecordStore: fakeReplyRecordStore('sent'),
       compactor: fakeCompactor(),
+      onReplyRecordSent: async (record) => {
+        deliveredTurns.push(record.incorporatedMessageRowId ?? 0)
+      },
     })
 
     const result = await processor.run(makeBatch([event]))
 
     assert.deepEqual(sent, [])
+    assert.deepEqual(deliveredTurns, [31])
     assert.deepEqual(result.leftoverEvents, [])
   })
 
@@ -228,8 +236,7 @@ describe('passive mention processor', () => {
         return '新生成文本'
       },
       sender,
-      assistantTurnStore: fakeAssistantTurnStore('pending', '已存文本'),
-      conversationStateStore: fakeConversationStateStore(),
+      replyRecordStore: fakeReplyRecordStore('pending', '已存文本'),
       compactor: fakeCompactor(),
     })
 
@@ -237,6 +244,107 @@ describe('passive mention processor', () => {
 
     assert.equal(generateReplyCalls, 0)
     assert.deepEqual(sent, [{ groupId: 1, replyToMessageId: 41, mentionUserId: 20, text: '已存文本' }])
+  })
+
+  test('reuses legacy reply intent ids to avoid duplicate sends during compatibility window', async () => {
+    const first = makeEvent({ messageId: 71, senderId: 20, createdAt: 1 })
+    const second = makeEvent({ messageId: 72, senderId: 20, createdAt: 2 })
+    const { sent, sender } = fakeSender()
+    let generateReplyCalls = 0
+
+    const messages = new Map<number, FakeStoredMessage>([
+      [71, makeStoredMessage(first, '@bot 第一条')],
+      [72, makeStoredMessage(second, '@bot 第二条补充')],
+    ])
+
+    const processor = createPassiveMentionProcessor({
+      getMessage: async (_groupId, messageId) => messages.get(messageId) ?? null,
+      resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
+      generateReply: async () => {
+        generateReplyCalls++
+        return '新生成文本'
+      },
+      sender,
+      replyRecordStore: {
+        ...fakeReplyRecordStore(),
+        findByReplyIntentId: async (_runtimeKey, replyIntentId) => {
+          if (replyIntentId !== 'qq_group:1:sender:20:71:72') {
+            return null
+          }
+
+          return {
+            id: 1,
+            runtimeKey: 'qq_group:1',
+            groupId: 1,
+            scopeKey: 'sender:20',
+            replyIntentId,
+            sourceKind: 'mention',
+            triggerMessageRowId: 71,
+            incorporatedMessageRowId: 72,
+            deliveryPayload: { type: 'reply_to_message' as const, replyToMessageId: 71, mentionUserId: 20 },
+            text: '旧格式已存文本',
+            executionState: 'pending' as const,
+            providerMessageId: undefined,
+            attemptCount: 0,
+            createdAt: new Date(0),
+            updatedAt: new Date(0),
+          }
+        },
+      },
+      compactor: fakeCompactor(),
+    })
+
+    await processor.run(makeBatch([first, second]))
+
+    assert.equal(generateReplyCalls, 0)
+    assert.deepEqual(sent, [{ groupId: 1, replyToMessageId: 71, mentionUserId: 20, text: '旧格式已存文本' }])
+  })
+
+  test('derives stable reply intent id from the anchored mention cue', async () => {
+    const first = makeEvent({ messageId: 61, senderId: 20, createdAt: 1 })
+    const second = makeEvent({ messageId: 62, senderId: 20, createdAt: 2 })
+    const { sender } = fakeSender()
+    const replyIntentIds: string[] = []
+
+    const messages = new Map<number, FakeStoredMessage>([
+      [61, makeStoredMessage(first, '@bot 第一条')],
+      [62, makeStoredMessage(second, '@bot 第二条补充')],
+    ])
+
+    const processor = createPassiveMentionProcessor({
+      getMessage: async (_groupId, messageId) => messages.get(messageId) ?? null,
+      resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
+      generateReply: async () => 'reply:62',
+      sender,
+      replyRecordStore: {
+        ...fakeReplyRecordStore(),
+        createOrReuse: async (input) => {
+          replyIntentIds.push(input.replyIntentId)
+          return {
+            id: 1,
+            runtimeKey: input.runtimeKey,
+            groupId: 1,
+            scopeKey: input.scopeKey,
+            replyIntentId: input.replyIntentId,
+            sourceKind: input.sourceKind,
+            triggerMessageRowId: input.triggerMessageRowId,
+            incorporatedMessageRowId: input.incorporatedMessageRowId,
+            deliveryPayload: input.deliveryPayload,
+            text: input.text,
+            executionState: input.executionState,
+            providerMessageId: undefined,
+            attemptCount: 0,
+            createdAt: new Date(0),
+            updatedAt: new Date(0),
+          }
+        },
+      },
+      compactor: fakeCompactor(),
+    })
+
+    await processor.run(makeBatch([first, second]))
+
+    assert.deepEqual(replyIntentIds, ['qq_group:1:message:61:reply_to_message'])
   })
 
   test('notifies when assistant turn is sent', async () => {
@@ -249,11 +357,10 @@ describe('passive mention processor', () => {
       resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
       generateReply: async () => '你好',
       sender,
-      assistantTurnStore: fakeAssistantTurnStore(),
-      conversationStateStore: fakeConversationStateStore(),
+      replyRecordStore: fakeReplyRecordStore(),
       compactor: fakeCompactor(),
-      onAssistantTurnSent: async (turn) => {
-        deliveredTurns.push(turn.incorporatedMessageRowId)
+      onReplyRecordSent: async (record) => {
+        deliveredTurns.push(record.incorporatedMessageRowId ?? 0)
       },
     })
 

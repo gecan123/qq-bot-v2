@@ -112,6 +112,19 @@ describe('root runtime manager', () => {
         content: '[QQ消息]\n用户20: hello',
       },
     ])
+    assert.deepEqual(snapshot.sessionSnapshot.sceneRecords, [
+      {
+        sceneId: 'qq_group:1',
+        kind: 'qq_group',
+        groupId: 1,
+        unreadCount: 1,
+        lastObservedMessageRowId: 5,
+        lastMaterializedReplyRowId: null,
+        lastFocusedAt: null,
+        lastSpokeAt: null,
+        outstandingCueIds: [],
+      },
+    ])
     assert.deepEqual(snapshot.sessionSnapshot.recentObservedMessageRowIds, [5])
     assert.equal(persistedInputs.length, 1)
   })
@@ -411,5 +424,373 @@ describe('root runtime manager', () => {
         updatedAt: snapshot.sessionSnapshot.senderContinuities[0]?.updatedAt,
       },
     ])
+    assert.deepEqual(snapshot.sessionSnapshot.sceneRecords, [
+      {
+        sceneId: 'qq_group:1',
+        kind: 'qq_group',
+        groupId: 1,
+        unreadCount: 0,
+        lastObservedMessageRowId: null,
+        lastMaterializedReplyRowId: 33,
+        lastFocusedAt: null,
+        lastSpokeAt: snapshot.sessionSnapshot.sceneRecords?.[0]?.lastSpokeAt ?? null,
+        outstandingCueIds: [],
+      },
+    ])
+  })
+
+  test('promotes @self ingress into a stable pending cue and marks it replied after delivery', async () => {
+    const manager = createRootRuntimeManager({
+      selfNumber: 999,
+      snapshotStore: {
+        listByGroupIds: async () => [],
+        upsert: async (input) => makeSnapshotRecord(input),
+      },
+    })
+
+    await manager.restore([1])
+    const mentioned = manager.dispatchPassiveMentionIfMentioned({
+      groupId: 1,
+      messageId: 1005,
+      senderId: 20,
+      createdAt: 1,
+      segments: [{ type: 'at', targetId: '999' }],
+    })
+    assert.equal(mentioned, true)
+
+    await manager.ingestGroupMessage({
+      groupId: 1,
+      messageRowId: 5,
+      messageId: 1005,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'at', targetId: '999' }],
+      createdAt: new Date('2026-04-22T00:00:00Z'),
+    })
+
+    assert.deepEqual(manager.getSnapshot(1)?.sessionSnapshot.outstandingCues, [
+      {
+        cueId: 'qq_group:1:message:5:reply_to_message',
+        sceneId: 'qq_group:1',
+        cueKind: 'message',
+        triggerMessageRowId: 5,
+        messageId: 1005,
+        senderId: 20,
+        senderNickname: '用户20',
+        addressedToAgent: true,
+        cueStrength: 'strong',
+        replyModeHint: 'anchored',
+        preferredDeliveryMode: 'reply_to_message',
+        mustReplyOverride: true,
+        status: 'pending',
+        createdAt: '2026-04-22T00:00:00.000Z',
+      },
+    ])
+
+    await manager.markPassiveReplyDelivered({
+      groupId: 1,
+      senderId: 20,
+      incorporatedMessageRowId: 5,
+      text: '收到',
+    })
+
+    assert.equal(manager.getSnapshot(1)?.sessionSnapshot.outstandingCues?.[0]?.status, 'replied')
+    assert.deepEqual(manager.getSnapshot(1)?.sessionSnapshot.sceneRecords?.[0]?.outstandingCueIds, [])
+  })
+
+  test('requeues pending mentioned unread messages from restored snapshot', async () => {
+    const batches: Array<{ groupId: number; messageIds: number[] }> = []
+    const manager = createRootRuntimeManager({
+      selfNumber: 999,
+      passiveMergeWindowMs: 1,
+      passiveWorker: async (batch) => {
+        batches.push({
+          groupId: batch.groupId,
+          messageIds: batch.events.map((event) => event.messageId),
+        })
+        return { leftoverEvents: [] }
+      },
+      snapshotStore: {
+        listByGroupIds: async () => [
+          makeSnapshotRecord({
+            runtimeKey: getGroupRuntimeKey(1),
+            groupId: 1,
+            schemaVersion: ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+            contextSnapshot: { messages: [] },
+            sessionSnapshot: {
+              focusedStateId: 'qq_group:1',
+              stateStack: ['qq_group:1'],
+              unreadMessages: [
+                {
+                  messageRowId: 11,
+                  messageId: 1001,
+                  senderId: 20,
+                  senderNickname: '用户20',
+                  mentionedSelf: true,
+                  createdAt: '2026-04-22T00:00:00.000Z',
+                },
+                {
+                  messageRowId: 12,
+                  messageId: 1002,
+                  senderId: 20,
+                  senderNickname: '用户20',
+                  mentionedSelf: true,
+                  createdAt: '2026-04-22T00:00:01.000Z',
+                },
+                {
+                  messageRowId: 13,
+                  messageId: 1003,
+                  senderId: 30,
+                  senderNickname: '用户30',
+                  mentionedSelf: false,
+                  createdAt: '2026-04-22T00:00:02.000Z',
+                },
+              ],
+              senderContinuities: [
+                {
+                  senderThreadKey: 'sender:20',
+                  senderId: 20,
+                  lastSeenMessageRowId: 12,
+                  lastMaterializedMessageRowId: 10,
+                  updatedAt: '2026-04-22T00:00:01.000Z',
+                },
+              ],
+              proactiveCandidates: [],
+              recentObservedMessageRowIds: [11, 12, 13],
+              lastWakeAt: null,
+            },
+            lastObservedMessageRowId: 13,
+          }),
+        ],
+        upsert: async (input) => makeSnapshotRecord(input),
+      },
+    })
+
+    await manager.restore([1])
+    const requeued = manager.requeuePendingPassiveMentions([1])
+    assert.equal(requeued, 2)
+    manager.startPassiveExecution()
+
+    const startedAt = Date.now()
+    while (batches.length < 1) {
+      if (Date.now() - startedAt > 500) {
+        throw new Error('waitFor timeout')
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    manager.stopPassiveExecution()
+
+    assert.deepEqual(batches, [{ groupId: 1, messageIds: [1001, 1002] }])
+  })
+
+  test('keeps startup mentions out of mailbox until passive execution is started', async () => {
+    const batches: Array<{ groupId: number; messageIds: number[] }> = []
+    const manager = createRootRuntimeManager({
+      selfNumber: 999,
+      passiveMergeWindowMs: 1,
+      passiveWorker: async (batch) => {
+        batches.push({
+          groupId: batch.groupId,
+          messageIds: batch.events.map((event) => event.messageId),
+        })
+        return { leftoverEvents: [] }
+      },
+      snapshotStore: {
+        listByGroupIds: async () => [],
+        upsert: async (input) => makeSnapshotRecord(input),
+      },
+    })
+
+    await manager.restore([1])
+
+    const mentioned = manager.dispatchPassiveMentionIfMentioned({
+      groupId: 1,
+      messageId: 1002,
+      senderId: 20,
+      createdAt: new Date('2026-04-22T00:00:01Z').getTime(),
+      segments: [{ type: 'at', targetId: '999' }],
+    })
+    assert.equal(mentioned, true)
+
+    await manager.ingestGroupMessage({
+      groupId: 1,
+      messageRowId: 12,
+      messageId: 1002,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'at', targetId: '999' }],
+      createdAt: new Date('2026-04-22T00:00:01Z'),
+    })
+
+    const requeued = manager.requeuePendingPassiveMentions([1])
+    assert.equal(requeued, 1)
+
+    manager.startPassiveExecution()
+
+    const startedAt = Date.now()
+    while (batches.length < 1) {
+      if (Date.now() - startedAt > 500) {
+        throw new Error('waitFor timeout')
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    manager.stopPassiveExecution()
+
+    assert.deepEqual(batches, [{ groupId: 1, messageIds: [1002] }])
+  })
+
+  test('requeue preserves startup order for unread mentions that arrived before passive execution started', async () => {
+    const batches: Array<{ groupId: number; messageIds: number[] }> = []
+    const manager = createRootRuntimeManager({
+      selfNumber: 999,
+      passiveMergeWindowMs: 1,
+      passiveWorker: async (batch) => {
+        batches.push({
+          groupId: batch.groupId,
+          messageIds: batch.events.map((event) => event.messageId),
+        })
+        return { leftoverEvents: [] }
+      },
+      snapshotStore: {
+        listByGroupIds: async () => [
+          makeSnapshotRecord({
+            runtimeKey: getGroupRuntimeKey(1),
+            groupId: 1,
+            schemaVersion: ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+            contextSnapshot: { messages: [] },
+            sessionSnapshot: {
+              focusedStateId: 'qq_group:1',
+              stateStack: ['qq_group:1'],
+              unreadMessages: [
+                {
+                  messageRowId: 11,
+                  messageId: 1001,
+                  senderId: 20,
+                  senderNickname: '用户20',
+                  mentionedSelf: true,
+                  createdAt: '2026-04-22T00:00:00.000Z',
+                },
+              ],
+              senderContinuities: [
+                {
+                  senderThreadKey: 'sender:20',
+                  senderId: 20,
+                  lastSeenMessageRowId: 11,
+                  lastMaterializedMessageRowId: 10,
+                  updatedAt: '2026-04-22T00:00:00.000Z',
+                },
+              ],
+              proactiveCandidates: [],
+              recentObservedMessageRowIds: [11],
+              lastWakeAt: null,
+            },
+            lastObservedMessageRowId: 11,
+          }),
+        ],
+        upsert: async (input) => makeSnapshotRecord(input),
+      },
+    })
+
+    await manager.restore([1])
+
+    const mentioned = manager.dispatchPassiveMentionIfMentioned({
+      groupId: 1,
+      messageId: 1002,
+      senderId: 20,
+      createdAt: new Date('2026-04-22T00:00:01Z').getTime(),
+      segments: [{ type: 'at', targetId: '999' }],
+    })
+    assert.equal(mentioned, true)
+
+    await manager.ingestGroupMessage({
+      groupId: 1,
+      messageRowId: 12,
+      messageId: 1002,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'at', targetId: '999' }],
+      createdAt: new Date('2026-04-22T00:00:01Z'),
+    })
+
+    const requeued = manager.requeuePendingPassiveMentions([1])
+    assert.equal(requeued, 2)
+
+    manager.startPassiveExecution()
+
+    const startedAt = Date.now()
+    while (batches.length < 1) {
+      if (Date.now() - startedAt > 500) {
+        throw new Error('waitFor timeout')
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    manager.stopPassiveExecution()
+
+    assert.deepEqual(batches, [{ groupId: 1, messageIds: [1001, 1002] }])
+  })
+
+  test('clears incorporated sender unread messages after passive reply delivery', async () => {
+    const manager = createRootRuntimeManager({
+      selfNumber: 999,
+      snapshotStore: {
+        listByGroupIds: async () => [
+          makeSnapshotRecord({
+            runtimeKey: getGroupRuntimeKey(1),
+            groupId: 1,
+            schemaVersion: ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+            contextSnapshot: { messages: [] },
+            sessionSnapshot: {
+              focusedStateId: 'qq_group:1',
+              stateStack: ['qq_group:1'],
+              unreadMessages: [
+                {
+                  messageRowId: 10,
+                  messageId: 1010,
+                  senderId: 20,
+                  senderNickname: '用户20',
+                  mentionedSelf: true,
+                  createdAt: '2026-04-22T00:00:00.000Z',
+                },
+                {
+                  messageRowId: 11,
+                  messageId: 1011,
+                  senderId: 20,
+                  senderNickname: '用户20',
+                  mentionedSelf: false,
+                  createdAt: '2026-04-22T00:00:01.000Z',
+                },
+                {
+                  messageRowId: 12,
+                  messageId: 1012,
+                  senderId: 30,
+                  senderNickname: '用户30',
+                  mentionedSelf: false,
+                  createdAt: '2026-04-22T00:00:02.000Z',
+                },
+              ],
+              senderContinuities: [],
+              proactiveCandidates: [],
+              recentObservedMessageRowIds: [10, 11, 12],
+              lastWakeAt: null,
+            },
+            lastObservedMessageRowId: 12,
+          }),
+        ],
+        upsert: async (input) => makeSnapshotRecord(input),
+      },
+    })
+
+    await manager.restore([1])
+    await manager.markPassiveReplyDelivered({
+      groupId: 1,
+      senderId: 20,
+      incorporatedMessageRowId: 11,
+      text: '已回复',
+    })
+
+    assert.deepEqual(
+      manager.getSnapshot(1)?.sessionSnapshot.unreadMessages.map((message) => message.messageRowId),
+      [12],
+    )
   })
 })

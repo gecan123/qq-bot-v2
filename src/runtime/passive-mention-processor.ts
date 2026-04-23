@@ -7,18 +7,20 @@ import type { IncomingMessage } from '../responder/pipeline.js'
 import { generateMentionReply } from '../responder/reply-generator.js'
 import type { ParsedSegment } from '../types/message-segments.js'
 import type { ConversationWorkerResult, GroupConversationBatch, MentionEvent } from '../conversation/types.js'
-import { toSenderThreadKey } from '../conversation/thread-key.js'
+import { toSenderReplyScopeKey } from '../conversation/reply-scope.js'
 import {
-  createOrReusePendingAssistantTurn,
-  findAssistantTurnByReplyIntentId,
-  markAssistantTurnFailed,
-  markAssistantTurnSending,
-  markAssistantTurnSent,
-  type AssistantTurnRecord,
-} from '../conversation/assistant-turn-store.js'
-import { deliverAssistantTurn } from '../conversation/assistant-turn-delivery.js'
+  createOrReuseReplyRecord,
+  findReplyRecordByReplyIntentId,
+  markReplyRecordAcked,
+  markReplyRecordFailed,
+  markReplyRecordSending,
+  markReplyRecordSent,
+  type ReplyRecord,
+} from '../conversation/reply-record-store.js'
+import { createReplyAudit } from '../conversation/reply-audit-store.js'
+import { deliverReplyRecord } from '../conversation/reply-record-delivery.js'
 import { compactConversationIfNeeded } from '../conversation/compaction.js'
-import { updateConversationStateLastIncorporated } from '../conversation/conversation-state-store.js'
+import { makeGroupRuntimeKey, makeMentionReplyIntentId } from './types.js'
 
 type StoredConversationMessage = NonNullable<Awaited<ReturnType<typeof getMessageById>>>
 const log = createLogger('PASSIVE_RUNTIME')
@@ -32,19 +34,20 @@ export interface PassiveMentionProcessorOptions {
   resolveSegments?: (message: StoredConversationMessage) => Promise<ParsedSegment[]>
   generateReply?: (message: IncomingMessage) => Promise<string | null>
   sender?: MessageSender
-  assistantTurnStore?: {
-    findByReplyIntentId: typeof findAssistantTurnByReplyIntentId
-    createOrReusePending: typeof createOrReusePendingAssistantTurn
-    markSending: typeof markAssistantTurnSending
-    markSent: typeof markAssistantTurnSent
-    markFailed: typeof markAssistantTurnFailed
+  replyRecordStore?: {
+    findByReplyIntentId: typeof findReplyRecordByReplyIntentId
+    createOrReuse: typeof createOrReuseReplyRecord
+    markAcked: typeof markReplyRecordAcked
+    markSending: typeof markReplyRecordSending
+    markSent: typeof markReplyRecordSent
+    markFailed: typeof markReplyRecordFailed
   }
-  conversationStateStore?: {
-    updateLastIncorporated: typeof updateConversationStateLastIncorporated
+  replyAuditStore?: {
+    create: typeof createReplyAudit
   }
   compactor?: typeof compactConversationIfNeeded
   maxSenderThreadsPerRun?: number
-  onAssistantTurnSent?: (turn: AssistantTurnRecord) => Promise<void> | void
+  onReplyRecordSent?: (record: ReplyRecord) => Promise<void> | void
 }
 
 interface SenderThread {
@@ -77,6 +80,15 @@ function getFirstEvent(events: MentionEvent[]): MentionEvent {
 
 function getLastEvent(events: MentionEvent[]): MentionEvent {
   return events[events.length - 1] as MentionEvent
+}
+
+function makeLegacyMentionReplyIntentId(
+  runtimeKey: string,
+  scopeKey: string,
+  triggerMessageRowId: number,
+  incorporatedMessageRowId: number,
+): string {
+  return `${runtimeKey}:${scopeKey}:${triggerMessageRowId}:${incorporatedMessageRowId}`
 }
 
 async function loadIncomingMessage(
@@ -114,15 +126,16 @@ export function createPassiveMentionProcessor(
   const resolveSegments = options.resolveSegments ?? defaultResolveSegments
   const generateReply = options.generateReply ?? generateMentionReply
   const sender = options.sender ?? messageSender
-  const assistantTurnStore = options.assistantTurnStore ?? {
-    findByReplyIntentId: findAssistantTurnByReplyIntentId,
-    createOrReusePending: createOrReusePendingAssistantTurn,
-    markSending: markAssistantTurnSending,
-    markSent: markAssistantTurnSent,
-    markFailed: markAssistantTurnFailed,
+  const replyRecordStore = options.replyRecordStore ?? {
+    findByReplyIntentId: findReplyRecordByReplyIntentId,
+    createOrReuse: createOrReuseReplyRecord,
+    markAcked: markReplyRecordAcked,
+    markSending: markReplyRecordSending,
+    markSent: markReplyRecordSent,
+    markFailed: markReplyRecordFailed,
   }
-  const conversationStateStore = options.conversationStateStore ?? {
-    updateLastIncorporated: updateConversationStateLastIncorporated,
+  const replyAuditStore = options.replyAuditStore ?? {
+    create: createReplyAudit,
   }
   const compactor = options.compactor ?? compactConversationIfNeeded
 
@@ -158,10 +171,21 @@ export function createPassiveMentionProcessor(
           continue
         }
 
-        const senderThreadKey = toSenderThreadKey(thread.senderId)
-        const replyIntentId = `${batch.groupId}:${senderThreadKey}:${replyTargetStored.id}:${latestStored.id}`
-        const existingTurn = await assistantTurnStore.findByReplyIntentId(batch.groupId, senderThreadKey, replyIntentId)
-        const reply = existingTurn?.text ?? await generateReply(message)
+        const scopeKey = toSenderReplyScopeKey(thread.senderId)
+        const runtimeKey = makeGroupRuntimeKey(batch.groupId)
+        const replyIntentId = makeMentionReplyIntentId(batch.groupId, replyTargetStored.id)
+        const legacyReplyIntentId = makeLegacyMentionReplyIntentId(
+          runtimeKey,
+          scopeKey,
+          replyTargetStored.id,
+          latestStored.id,
+        )
+        const existingRecord =
+          (await replyRecordStore.findByReplyIntentId(runtimeKey, replyIntentId)) ??
+          (legacyReplyIntentId === replyIntentId
+            ? null
+            : await replyRecordStore.findByReplyIntentId(runtimeKey, legacyReplyIntentId))
+        const reply = existingRecord?.text ?? await generateReply(message)
         if (!reply) {
           log.warn(
             { groupId: batch.groupId, messageId: latestEvent.messageId, senderId: thread.senderId },
@@ -170,29 +194,54 @@ export function createPassiveMentionProcessor(
           continue
         }
 
-        const assistantTurn = await assistantTurnStore.createOrReusePending({
+        const shouldDryRun = sender.isReplyDryRunEnabled?.() ?? false
+        const replyRecord = await replyRecordStore.createOrReuse({
+          runtimeKey,
           groupId: batch.groupId,
-          senderThreadKey,
-          replyIntentId,
+          scopeKey,
+          replyIntentId: existingRecord?.replyIntentId ?? replyIntentId,
+          sourceKind: 'mention',
           triggerMessageRowId: replyTargetStored.id,
           incorporatedMessageRowId: latestStored.id,
-          replyToMessageId: Number(replyTargetStored.messageId),
-          mentionUserId: thread.senderId,
+          deliveryPayload: {
+            type: 'reply_to_message',
+            replyToMessageId: Number(replyTargetStored.messageId),
+            mentionUserId: thread.senderId,
+          },
           text: reply,
+          executionState: shouldDryRun ? 'dry_run' : 'pending',
         })
 
-        if (assistantTurn.status === 'sent') {
+        if (replyRecord.executionState === 'sent') {
+          await options.onReplyRecordSent?.(replyRecord)
           continue
         }
 
-        const deliveryResult = await deliverAssistantTurn(assistantTurn, {
+        if (replyRecord.executionState === 'dry_run') {
+          await replyAuditStore.create({
+            replyRecordId: replyRecord.id,
+            runtimeKey: replyRecord.runtimeKey,
+            groupId: replyRecord.groupId,
+            scopeKey: replyRecord.scopeKey,
+            replyIntentId: replyRecord.replyIntentId,
+            auditKind: 'dry_run_intent',
+            payload: {
+              sourceKind: replyRecord.sourceKind,
+              deliveryType: replyRecord.deliveryPayload.type,
+              text: replyRecord.text,
+            },
+          })
+          continue
+        }
+
+        const deliveryResult = await deliverReplyRecord(replyRecord, {
           sender,
-          assistantTurnStore,
-          conversationStateStore,
-          compactor,
+          replyRecordStore,
+          replyAuditStore,
         })
         if (deliveryResult === 'sent') {
-          await options.onAssistantTurnSent?.(assistantTurn)
+          await compactor(batch.groupId, scopeKey)
+          await options.onReplyRecordSent?.(replyRecord)
         }
       }
 

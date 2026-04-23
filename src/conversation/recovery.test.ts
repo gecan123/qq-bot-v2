@@ -34,6 +34,7 @@ describe('conversation recovery', () => {
               sequence: 1,
               replyToMessageId: 2001,
               mentionUserId: 20,
+              providerMessageId: undefined,
               text: '恢复发送的回复',
               status: 'pending',
               attemptCount: 0,
@@ -41,6 +42,9 @@ describe('conversation recovery', () => {
               updatedAt: new Date('2026-04-21T00:00:00Z'),
             },
           ]
+        },
+        markAcked: async (id, providerMessageId) => {
+          turnMutations.push(`acked:${id}:${providerMessageId}`)
         },
         markSending: async (id) => {
           turnMutations.push(`sending:${id}`)
@@ -51,9 +55,6 @@ describe('conversation recovery', () => {
         markFailed: async (id) => {
           turnMutations.push(`failed:${id}`)
         },
-      },
-      conversationStateStore: {
-        updateLastIncorporated: async () => {},
       },
       compactor: async () => {},
       onAssistantTurnRecovered: async (turn) => {
@@ -96,16 +97,20 @@ describe('conversation recovery', () => {
             replyIntentId: 'intent-2',
             triggerMessageRowId: 9,
             incorporatedMessageRowId: 9,
-            sequence: 2,
-            replyToMessageId: 3001,
-            mentionUserId: 20,
-            text: '会失败的回复',
+              sequence: 2,
+              replyToMessageId: 3001,
+              mentionUserId: 20,
+              providerMessageId: undefined,
+              text: '会失败的回复',
             status: 'failed',
             attemptCount: 1,
             createdAt: new Date('2026-04-21T00:00:00Z'),
             updatedAt: new Date('2026-04-21T00:00:00Z'),
           },
         ],
+        markAcked: async (id, providerMessageId) => {
+          turnMutations.push(`acked:${id}:${providerMessageId}`)
+        },
         markSending: async (id) => {
           turnMutations.push(`sending:${id}`)
         },
@@ -115,9 +120,6 @@ describe('conversation recovery', () => {
         markFailed: async (id) => {
           turnMutations.push(`failed:${id}`)
         },
-      },
-      conversationStateStore: {
-        updateLastIncorporated: async () => {},
       },
       compactor: async () => {},
     })
@@ -158,16 +160,20 @@ describe('conversation recovery', () => {
             replyIntentId: 'intent-3',
             triggerMessageRowId: 12,
             incorporatedMessageRowId: 12,
-            sequence: 3,
-            replyToMessageId: 4001,
-            mentionUserId: 20,
-            text: '不会真的发出去',
+              sequence: 3,
+              replyToMessageId: 4001,
+              mentionUserId: 20,
+              providerMessageId: undefined,
+              text: '不会真的发出去',
             status: 'pending',
             attemptCount: 0,
             createdAt: new Date('2026-04-21T00:00:00Z'),
             updatedAt: new Date('2026-04-21T00:00:00Z'),
           },
         ],
+        markAcked: async (id, providerMessageId) => {
+          turnMutations.push(`acked:${id}:${providerMessageId}`)
+        },
         markSending: async (id) => {
           turnMutations.push(`sending:${id}`)
         },
@@ -177,9 +183,6 @@ describe('conversation recovery', () => {
         markFailed: async (id) => {
           turnMutations.push(`failed:${id}`)
         },
-      },
-      conversationStateStore: {
-        updateLastIncorporated: async () => {},
       },
       compactor: async () => {},
       onAssistantTurnRecovered: async (turn) => {
@@ -192,6 +195,66 @@ describe('conversation recovery', () => {
     assert.deepEqual(recoveredTurnIds, [])
     assert.deepEqual(result, {
       recoveredAssistantTurns: 0,
+      failedAssistantTurns: 0,
+      enqueuedMentions: 0,
+    })
+  })
+
+  test('startup recovery finalizes acked assistant turns without re-sending', async () => {
+    const turnMutations: Array<string> = []
+    let replyCalls = 0
+
+    const result = await recoverConversationStartupState({
+      groupIds: [1],
+      sender: {
+        async replyToMessage() {
+          replyCalls++
+          return { success: true, attempts: 1 }
+        },
+        async sendMessage() {
+          return { success: true, attempts: 1 }
+        },
+      },
+      assistantTurnStore: {
+        listRecoverable: async () => [
+          {
+            id: 11,
+            groupId: 1,
+            senderThreadKey: 'sender:20',
+            replyIntentId: 'intent-4',
+            triggerMessageRowId: 15,
+            incorporatedMessageRowId: 15,
+            sequence: 4,
+            replyToMessageId: 5001,
+            mentionUserId: 20,
+            providerMessageId: 9003,
+            text: '已经 ack 的回复',
+            status: 'acked',
+            attemptCount: 1,
+            createdAt: new Date('2026-04-21T00:00:00Z'),
+            updatedAt: new Date('2026-04-21T00:00:00Z'),
+          },
+        ],
+        markAcked: async (id, providerMessageId) => {
+          turnMutations.push(`acked:${id}:${providerMessageId}`)
+        },
+        markSending: async (id) => {
+          turnMutations.push(`sending:${id}`)
+        },
+        markSent: async (id) => {
+          turnMutations.push(`sent:${id}`)
+        },
+        markFailed: async (id) => {
+          turnMutations.push(`failed:${id}`)
+        },
+      },
+      compactor: async () => {},
+    })
+
+    assert.equal(replyCalls, 0)
+    assert.deepEqual(turnMutations, ['sent:11'])
+    assert.deepEqual(result, {
+      recoveredAssistantTurns: 1,
       failedAssistantTurns: 0,
       enqueuedMentions: 0,
     })

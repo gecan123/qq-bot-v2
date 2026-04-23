@@ -22,6 +22,12 @@ export interface InsertMessageParams {
   sentAt?: number
 }
 
+export interface PersistedMessageInsertResult {
+  id: number
+  createdAt: Date
+  sentAt: Date | null
+}
+
 export async function freezeResolvedTextIfUnset(messageId: number, resolvedText: string): Promise<void> {
   await prisma.message.updateMany({
     where: {
@@ -212,14 +218,23 @@ export function buildMessageUpsertSql(params: InsertMessageParams): Prisma.Sql {
   `
 }
 
-export async function insertMessage(params: InsertMessageParams): Promise<void> {
+export function buildMessageUpsertReturningSql(params: InsertMessageParams): Prisma.Sql {
+  return Prisma.sql`${buildMessageUpsertSql(params)} RETURNING id, created_at AS "createdAt", sent_at AS "sentAt"`
+}
+
+export async function insertMessage(params: InsertMessageParams): Promise<PersistedMessageInsertResult> {
   const mediaReferenceIds = params.mediaReferenceIds ?? []
   const content = sanitizeJsonValue(params.content) ?? []
   const rawContent = sanitizeJsonValue(params.rawContent)
 
   try {
-    await prisma.$executeRaw(buildMessageUpsertSql(params))
+    const rows = await prisma.$queryRaw<PersistedMessageInsertResult[]>(buildMessageUpsertReturningSql(params))
+    const row = rows[0]
+    if (!row) {
+      throw new Error('insertMessage did not return persisted row')
+    }
     log.debug({ messageId: params.messageId, imageReferences: mediaReferenceIds.length }, 'Message saved')
+    return row
   } catch (error) {
     log.error(
       {

@@ -59,12 +59,11 @@ describe('conversation compaction', () => {
         compactedBase: '',
         compactedVersion: 1,
         lastCompactedMessageRowId: undefined,
-        lastIncorporatedMessageRowId: 41,
         createdAt: new Date(0),
         updatedAt: new Date(0),
       }),
       getMessagesAfterRowId: async () => messages,
-      getAssistantTurnsAfterRowId: async () => [],
+      getReplyRecordsAfterRowId: async () => [],
       resolveConversationMessage: async (message) => {
         resolveCalls.push(message.id)
         if (message.id === 1) {

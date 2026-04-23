@@ -9,6 +9,7 @@ interface NapcatSegment {
 export interface SendGroupReplyResult {
   success: boolean
   attempts: number
+  providerMessageId?: number
 }
 
 const RETRY_LIMIT = 2
@@ -28,9 +29,13 @@ export async function sendGroupReply(groupId: number, segments: NapcatSegment[])
 
   for (let attempt = 1; attempt <= RETRY_LIMIT; attempt++) {
     try {
-      await napcat.send_group_msg({ group_id: groupId, message: segments as never })
+      const result = await napcat.send_group_msg({ group_id: groupId, message: segments as never })
       log.info({ groupId, preview }, '消息发送成功')
-      return { success: true, attempts: attempt }
+      return {
+        success: true,
+        attempts: attempt,
+        providerMessageId: result.message_id,
+      }
     } catch (error) {
       log.warn({ groupId, preview, attempt, error }, '消息发送失败')
       if (attempt < RETRY_LIMIT) await sleep(RETRY_DELAY_MS)

@@ -3,41 +3,28 @@ import { describe, test } from 'node:test'
 import { finalizePersistedGroupMessage } from './core.js'
 
 describe('finalizePersistedGroupMessage', () => {
-  test('dispatches passive mention before advancing root runtime cursor', async () => {
+  test('advances root runtime cursor through persisted ingress without pre-dispatch side path', async () => {
     const callOrder: string[] = []
 
     await finalizePersistedGroupMessage({
       groupId: 1,
       messageId: 1001,
+      messageRowId: 10,
       senderId: 20,
       senderNickname: '用户20',
       createdAt: Date.now(),
       segments: [{ type: 'at', targetId: '999' }],
-      loadPersistedMessage: async () => ({
-        id: 10,
-        groupId: BigInt(1),
-        groupName: '测试群',
-        mediaReferenceIds: [],
-        messageId: BigInt(1001),
-        senderId: BigInt(20),
-        senderNickname: '用户20',
-        senderGroupNickname: null,
-        content: [],
-        rawContent: null,
-        rawMessage: null,
-        searchText: '',
-        resolvedText: '@bot hi',
-        sentAt: new Date('2026-04-22T00:00:00Z'),
-        createdAt: new Date('2026-04-22T00:00:00Z'),
-      }),
+      persistedCreatedAt: new Date('2026-04-22T00:00:00Z'),
       rootRuntime: {
         async restore() {
           return { restoredCount: 0 }
         },
         async primeGroupCursor() {},
+        requeuePendingPassiveMentions() {
+          return 0
+        },
         async markPassiveReplyDelivered() {},
         dispatchPassiveMentionIfMentioned() {
-          callOrder.push('dispatch')
           return true
         },
         async ingestGroupMessage() {
@@ -52,39 +39,39 @@ describe('finalizePersistedGroupMessage', () => {
       },
     })
 
-    assert.deepEqual(callOrder, ['dispatch', 'ingest'])
+    assert.deepEqual(callOrder, ['ingest'])
   })
 
-  test('still dispatches passive mention when best-effort ingress reread fails', async () => {
-    const dispatched: number[] = []
+  test('uses persisted row metadata directly for runtime ingress without reread', async () => {
+    const ingested: Array<{ messageRowId: number; messageId: number }> = []
 
     await finalizePersistedGroupMessage({
       groupId: 1,
       messageId: 1001,
+      messageRowId: 10,
       senderId: 20,
       senderNickname: '用户20',
       createdAt: Date.now(),
       segments: [{ type: 'at', targetId: '999' }],
-      loadPersistedMessage: async () => {
-        throw new Error('db reread failed')
-      },
+      persistedCreatedAt: new Date('2026-04-22T00:00:00Z'),
       rootRuntime: {
         async restore() {
           return { restoredCount: 0 }
         },
         async primeGroupCursor() {},
+        requeuePendingPassiveMentions() {
+          return 0
+        },
         async markPassiveReplyDelivered() {},
-        dispatchPassiveMentionIfMentioned(input: {
-          groupId: number
-          messageId: number
-          senderId: number
-          createdAt: number
-          segments: { type: string; targetId?: string }[]
-        }) {
-          dispatched.push(input.messageId)
+        dispatchPassiveMentionIfMentioned() {
           return true
         },
-        async ingestGroupMessage() {},
+        async ingestGroupMessage(input) {
+          ingested.push({
+            messageRowId: input.messageRowId,
+            messageId: input.messageId,
+          })
+        },
         getSnapshot() {
           return null
         },
@@ -94,6 +81,6 @@ describe('finalizePersistedGroupMessage', () => {
       },
     })
 
-    assert.deepEqual(dispatched, [1001])
+    assert.deepEqual(ingested, [{ messageRowId: 10, messageId: 1001 }])
   })
 })

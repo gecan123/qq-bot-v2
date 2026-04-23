@@ -10,6 +10,7 @@ export interface AssistantTurnRecord {
   sequence: number
   replyToMessageId: number
   mentionUserId?: number
+  providerMessageId?: number
   text: string
   status: string
   attemptCount: number
@@ -41,6 +42,7 @@ function mapRow(row: Awaited<ReturnType<typeof prisma.assistantTurn.findUnique>>
     sequence: row.sequence,
     replyToMessageId: Number(row.replyToMessageId),
     mentionUserId: row.mentionUserId == null ? undefined : Number(row.mentionUserId),
+    providerMessageId: row.providerMessageId == null ? undefined : Number(row.providerMessageId),
     text: row.text,
     status: row.status,
     attemptCount: row.attemptCount,
@@ -62,12 +64,43 @@ export async function listSentAssistantTurns(groupId: number, senderThreadKey: s
   return rows.map((row) => mapRow(row))
 }
 
+export async function getLatestSentAssistantTurn(
+  groupId: number,
+  senderThreadKey: string,
+): Promise<AssistantTurnRecord | null> {
+  const row = await prisma.assistantTurn.findFirst({
+    where: {
+      groupId: BigInt(groupId),
+      senderThreadKey,
+      status: 'sent',
+    },
+    orderBy: { sequence: 'desc' },
+  })
+
+  return row ? mapRow(row) : null
+}
+
 export async function listRecoverableAssistantTurns(groupIds?: number[]): Promise<AssistantTurnRecord[]> {
   const rows = await prisma.assistantTurn.findMany({
     where: {
       status: {
-        in: ['pending', 'sending', 'failed'],
+        in: ['pending', 'sending', 'failed', 'acked'],
       },
+      ...(groupIds && groupIds.length > 0 ? { groupId: { in: groupIds.map(BigInt) } } : {}),
+    },
+    orderBy: [
+      { groupId: 'asc' },
+      { senderThreadKey: 'asc' },
+      { sequence: 'asc' },
+    ],
+  })
+
+  return rows.map((row) => mapRow(row))
+}
+
+export async function listLegacyAssistantTurns(groupIds?: number[]): Promise<AssistantTurnRecord[]> {
+  const rows = await prisma.assistantTurn.findMany({
+    where: {
       ...(groupIds && groupIds.length > 0 ? { groupId: { in: groupIds.map(BigInt) } } : {}),
     },
     orderBy: [
@@ -148,6 +181,7 @@ export async function createOrReusePendingAssistantTurn(input: CreateAssistantTu
         sequence: (latest?.sequence ?? 0) + 1,
         replyToMessageId: BigInt(input.replyToMessageId),
         mentionUserId: input.mentionUserId == null ? null : BigInt(input.mentionUserId),
+        providerMessageId: null,
         text: input.text,
         status: 'pending',
         attemptCount: 0,
@@ -164,6 +198,16 @@ export async function markAssistantTurnSending(id: number): Promise<void> {
     data: {
       status: 'sending',
       attemptCount: { increment: 1 },
+    },
+  })
+}
+
+export async function markAssistantTurnAcked(id: number, providerMessageId: number): Promise<void> {
+  await prisma.assistantTurn.update({
+    where: { id },
+    data: {
+      status: 'acked',
+      providerMessageId: BigInt(providerMessageId),
     },
   })
 }

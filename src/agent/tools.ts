@@ -89,11 +89,34 @@ function buildDbSchemaPayload() {
       },
       {
         name: 'conversation_states',
-        columns: ['group_id', 'sender_thread_key', 'compacted_base', 'compacted_version', 'last_compacted_message_row_id', 'last_incorporated_message_row_id', 'updated_at'],
+        columns: ['group_id', 'sender_thread_key', 'compacted_base', 'compacted_version', 'last_compacted_message_row_id', 'updated_at'],
       },
       {
         name: 'assistant_turns',
         columns: ['group_id', 'sender_thread_key', 'reply_intent_id', 'trigger_message_row_id', 'incorporated_message_row_id', 'sequence', 'reply_to_message_id', 'mention_user_id', 'status', 'attempt_count', 'created_at', 'updated_at'],
+      },
+      {
+        name: 'reply_records',
+        columns: [
+          'runtime_key',
+          'group_id',
+          'scope_key',
+          'reply_intent_id',
+          'source_kind',
+          'trigger_message_row_id',
+          'incorporated_message_row_id',
+          'delivery_payload',
+          'text',
+          'execution_state',
+          'provider_message_id',
+          'attempt_count',
+          'created_at',
+          'updated_at',
+        ],
+      },
+      {
+        name: 'reply_audits',
+        columns: ['reply_record_id', 'runtime_key', 'group_id', 'scope_key', 'reply_intent_id', 'audit_kind', 'payload', 'created_at'],
       },
     ],
   }

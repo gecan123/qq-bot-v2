@@ -6,7 +6,7 @@ import { setLlmProvider } from './llm/provider.js'
 import { OpenAIProvider } from './llm/openai-adapter.js'
 import { RoutingProvider } from './llm/routing-provider.js'
 import { config } from './config/index.js'
-import { recoverConversationStartupState } from './conversation/recovery.js'
+import { recoverReplyRecordStartupState } from './conversation/reply-record-recovery.js'
 import { startHttpServer, addRoute } from './server/http.js'
 import { handlePlaygroundReplay, handlePlaygroundRun, handleReplayTraceGet } from './server/playground.js'
 import { handleMediaReanalyze } from './server/media-reanalyze.js'
@@ -17,6 +17,7 @@ import { getMessageTimestamp } from './utils/message-time.js'
 import type { ParsedSegment } from './types/message-segments.js'
 import type http from 'node:http'
 import { pathToFileURL } from 'node:url'
+import { migrateLegacyAssistantTurnsToReplyRecords } from './conversation/reply-record-migration.js'
 
 let httpServer: http.Server | null = null
 let rootRuntime: ReturnType<typeof createRootRuntimeManager> | null = null
@@ -26,12 +27,25 @@ function isGptModel(model: string): boolean {
   return model.toLowerCase().startsWith('gpt')
 }
 
-function resolveAssistantTurnSenderId(turn: { senderThreadKey: string; mentionUserId?: bigint | number | null }): number {
-  if (turn.mentionUserId != null) {
-    return Number(turn.mentionUserId)
+function isDirectAtSelf(segments: ParsedSegment[]): boolean {
+  return segments.some((segment) => segment.type === 'at' && segment.targetId === String(config.selfNumber))
+}
+
+function resolveReplyRecordSenderId(record: {
+  scopeKey: string
+  deliveryPayload: { type: string; mentionUserId?: number }
+}): number | null {
+  if (record.deliveryPayload.type === 'reply_to_message' && record.deliveryPayload.mentionUserId != null) {
+    return record.deliveryPayload.mentionUserId
   }
 
-  return Number(turn.senderThreadKey.replace('sender:', ''))
+  const match = /^sender:(\d+)$/.exec(record.scopeKey)
+  if (!match) {
+    return null
+  }
+
+  const senderId = Number(match[1])
+  return Number.isSafeInteger(senderId) ? senderId : null
 }
 
 export async function replayPersistedRootRuntimeDelta(params: {
@@ -74,14 +88,7 @@ export async function replayPersistedRootRuntimeDelta(params: {
     for (const message of replayMessages) {
       const segments = Array.isArray(message.content) ? (message.content as unknown as ParsedSegment[]) : []
       const createdAt = getTimestamp(message)
-      const replayedMention = params.rootRuntime.dispatchPassiveMentionIfMentioned({
-        groupId,
-        messageId: Number(message.messageId),
-        senderId: Number(message.senderId),
-        createdAt: createdAt.getTime(),
-        segments,
-      })
-      if (replayedMention) {
+      if (isDirectAtSelf(segments)) {
         replayedMentionCount++
       }
       await params.rootRuntime.ingestGroupMessage({
@@ -110,23 +117,35 @@ export async function replayPersistedRootRuntimeDelta(params: {
 export async function recoverStartupAndStartPassiveRuntime(params: {
   groupIds: number[]
   rootRuntime: ReturnType<typeof createRootRuntimeManager>
-  recoverConversationStartupStateFn?: typeof recoverConversationStartupState
+  recoverReplyRecordStartupStateFn?: typeof recoverReplyRecordStartupState
+  migrateLegacyAssistantTurnsFn?: typeof migrateLegacyAssistantTurnsToReplyRecords
 }): Promise<void> {
-  const recoverConversationStartupStateFn =
-    params.recoverConversationStartupStateFn ?? recoverConversationStartupState
+  const recoverReplyRecordStartupStateFn =
+    params.recoverReplyRecordStartupStateFn ?? recoverReplyRecordStartupState
+  const migrateLegacyAssistantTurnsFn =
+    params.migrateLegacyAssistantTurnsFn ?? migrateLegacyAssistantTurnsToReplyRecords
 
-  await recoverConversationStartupStateFn({
+  await migrateLegacyAssistantTurnsFn({
     groupIds: params.groupIds,
-    onAssistantTurnRecovered: async (turn) => {
-      await params.rootRuntime.markPassiveReplyDelivered({
-        groupId: turn.groupId,
-        senderId: resolveAssistantTurnSenderId(turn),
-        incorporatedMessageRowId: turn.incorporatedMessageRowId,
-        text: turn.text,
-      })
+    rootRuntime: params.rootRuntime,
+  })
+
+  await recoverReplyRecordStartupStateFn({
+    groupIds: params.groupIds,
+    onReplyRecordRecovered: async (record) => {
+      const senderId = resolveReplyRecordSenderId(record)
+      if (senderId != null && record.incorporatedMessageRowId != null) {
+        await params.rootRuntime.markPassiveReplyDelivered({
+          groupId: record.groupId,
+          senderId,
+          incorporatedMessageRowId: record.incorporatedMessageRowId,
+          text: record.text,
+        })
+      }
     },
   })
 
+  params.rootRuntime.requeuePendingPassiveMentions(params.groupIds)
   params.rootRuntime.startPassiveExecution()
 }
 
@@ -208,13 +227,16 @@ async function main() {
 
   jobQueue.start()
   const passiveMentionProcessor = createPassiveMentionProcessor({
-    onAssistantTurnSent: async (turn) => {
-      await rootRuntime?.markPassiveReplyDelivered({
-        groupId: turn.groupId,
-        senderId: resolveAssistantTurnSenderId(turn),
-        incorporatedMessageRowId: turn.incorporatedMessageRowId,
-        text: turn.text,
-      })
+    onReplyRecordSent: async (record) => {
+      const senderId = resolveReplyRecordSenderId(record)
+      if (senderId != null && record.incorporatedMessageRowId != null) {
+        await rootRuntime?.markPassiveReplyDelivered({
+          groupId: record.groupId,
+          senderId,
+          incorporatedMessageRowId: record.incorporatedMessageRowId,
+          text: record.text,
+        })
+      }
     },
   })
   rootRuntime = createRootRuntimeManager({

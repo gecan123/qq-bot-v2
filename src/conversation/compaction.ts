@@ -1,5 +1,5 @@
 import { freezeResolvedTextIfUnset, getGroupMessagesAfterRowId } from '../database/messages.js'
-import { listSentAssistantTurnsAfterMessageRowId, type AssistantTurnRecord } from './assistant-turn-store.js'
+import { listSentReplyRecordsAfterMessageRowId, type ReplyRecord } from './reply-record-store.js'
 import { compactConversationState, getOrCreateConversationState } from './conversation-state-store.js'
 import { resolveMessage } from '../media/message-resolver.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
@@ -12,7 +12,7 @@ const COMPACTION_KEEP_RECENT_USER_MESSAGES = 12
 interface CompactionDependencies {
   getConversationState?: typeof getOrCreateConversationState
   getMessagesAfterRowId?: typeof getGroupMessagesAfterRowId
-  getAssistantTurnsAfterRowId?: typeof listSentAssistantTurnsAfterMessageRowId
+  getReplyRecordsAfterRowId?: typeof listSentReplyRecordsAfterMessageRowId
   resolveConversationMessage?: typeof resolveMessage
   freezeResolvedText?: typeof freezeResolvedTextIfUnset
   saveCompactedState?: typeof compactConversationState
@@ -36,11 +36,11 @@ async function getStableCompactionText(message: Message, dependencies: Compactio
 
 async function mergeLines(
   messages: Message[],
-  assistantTurns: AssistantTurnRecord[],
+  replyRecords: ReplyRecord[],
   dependencies: CompactionDependencies,
 ): Promise<Array<{ anchor: number; text: string }>> {
   const lines: Array<{ anchor: number; text: string }> = []
-  let assistantIndex = 0
+  let replyIndex = 0
 
   for (const message of messages) {
     const text = await getStableCompactionText(message, dependencies)
@@ -52,14 +52,14 @@ async function mergeLines(
       })
     }
 
-    while (assistantIndex < assistantTurns.length) {
-      const turn = assistantTurns[assistantIndex]
-      if (!turn || turn.incorporatedMessageRowId > message.id) break
+    while (replyIndex < replyRecords.length) {
+      const record = replyRecords[replyIndex]
+      if (!record || (record.incorporatedMessageRowId ?? Number.MAX_SAFE_INTEGER) > message.id) break
       lines.push({
-        anchor: turn.incorporatedMessageRowId,
-        text: `[${formatTime(turn.createdAt)}] BOT: ${turn.text}`,
+        anchor: record.incorporatedMessageRowId ?? message.id,
+        text: `[${formatTime(record.createdAt)}] BOT: ${record.text}`,
       })
-      assistantIndex++
+      replyIndex++
     }
   }
 
@@ -73,7 +73,7 @@ export async function compactConversationIfNeeded(
 ): Promise<void> {
   const getConversationState = dependencies.getConversationState ?? getOrCreateConversationState
   const getMessagesAfterRowId = dependencies.getMessagesAfterRowId ?? getGroupMessagesAfterRowId
-  const getAssistantTurnsAfterRowId = dependencies.getAssistantTurnsAfterRowId ?? listSentAssistantTurnsAfterMessageRowId
+  const getReplyRecordsAfterRowId = dependencies.getReplyRecordsAfterRowId ?? listSentReplyRecordsAfterMessageRowId
   const saveCompactedState = dependencies.saveCompactedState ?? compactConversationState
 
   const state = await getConversationState(groupId, senderThreadKey)
@@ -83,14 +83,16 @@ export async function compactConversationIfNeeded(
   const boundaryMessage = messages[messages.length - COMPACTION_KEEP_RECENT_USER_MESSAGES - 1]
   if (!boundaryMessage) return
 
-  const assistantTurns = await getAssistantTurnsAfterRowId(
+  const replyRecords = await getReplyRecordsAfterRowId(
     groupId,
     senderThreadKey,
     state.lastCompactedMessageRowId,
   )
   const compactedMessages = messages.filter((message) => message.id <= boundaryMessage.id)
-  const compactedTurns = assistantTurns.filter((turn) => turn.incorporatedMessageRowId <= boundaryMessage.id)
-  const lines = await mergeLines(compactedMessages, compactedTurns, dependencies)
+  const compactedReplyRecords = replyRecords.filter(
+    (record) => (record.incorporatedMessageRowId ?? Number.MAX_SAFE_INTEGER) <= boundaryMessage.id,
+  )
+  const lines = await mergeLines(compactedMessages, compactedReplyRecords, dependencies)
   if (lines.length === 0) return
 
   const nextBase = [state.compactedBase.trim(), lines.map((line) => line.text).join('\n')]

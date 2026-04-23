@@ -7,7 +7,6 @@ export interface ConversationStateRecord {
   compactedBase: string
   compactedVersion: number
   lastCompactedMessageRowId?: number
-  lastIncorporatedMessageRowId?: number
   createdAt: Date
   updatedAt: Date
 }
@@ -22,7 +21,6 @@ function mapRow(row: Awaited<ReturnType<typeof prisma.conversationState.findUniq
     compactedBase: row.compactedBase,
     compactedVersion: row.compactedVersion,
     lastCompactedMessageRowId: row.lastCompactedMessageRowId ?? undefined,
-    lastIncorporatedMessageRowId: row.lastIncorporatedMessageRowId ?? undefined,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }
@@ -65,29 +63,6 @@ export async function listConversationStatesByGroupIds(groupIds: number[]): Prom
   return rows.map((row) => mapRow(row))
 }
 
-export async function updateConversationStateLastIncorporated(
-  groupId: number,
-  senderThreadKey: string,
-  messageRowId: number,
-): Promise<void> {
-  await prisma.conversationState.upsert({
-    where: {
-      groupId_senderThreadKey: {
-        groupId: BigInt(groupId),
-        senderThreadKey,
-      },
-    },
-    create: {
-      groupId: BigInt(groupId),
-      senderThreadKey,
-      lastIncorporatedMessageRowId: messageRowId,
-    },
-    update: {
-      lastIncorporatedMessageRowId: messageRowId,
-    },
-  })
-}
-
 export async function compactConversationState(params: {
   groupId: number
   senderThreadKey: string
@@ -106,7 +81,6 @@ export async function compactConversationState(params: {
       senderThreadKey: params.senderThreadKey,
       compactedBase: params.compactedBase,
       lastCompactedMessageRowId: params.lastCompactedMessageRowId,
-      lastIncorporatedMessageRowId: params.lastCompactedMessageRowId,
     },
     update: {
       compactedBase: params.compactedBase,

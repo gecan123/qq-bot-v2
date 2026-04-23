@@ -2,13 +2,13 @@ import { createLogger } from '../logger.js'
 import type { MessageSender } from '../messaging/message-sender.js'
 import {
   listRecoverableAssistantTurns,
+  markAssistantTurnAcked,
   markAssistantTurnFailed,
   markAssistantTurnSending,
   markAssistantTurnSent,
 } from './assistant-turn-store.js'
 import { deliverAssistantTurn } from './assistant-turn-delivery.js'
 import { compactConversationIfNeeded } from './compaction.js'
-import { updateConversationStateLastIncorporated } from './conversation-state-store.js'
 
 const log = createLogger('CONV_RECOVERY')
 
@@ -23,12 +23,10 @@ export interface RecoverConversationStartupOptions {
   sender?: MessageSender
   assistantTurnStore?: {
     listRecoverable: typeof listRecoverableAssistantTurns
+    markAcked: typeof markAssistantTurnAcked
     markSending: typeof markAssistantTurnSending
     markSent: typeof markAssistantTurnSent
     markFailed: typeof markAssistantTurnFailed
-  }
-  conversationStateStore?: {
-    updateLastIncorporated: typeof updateConversationStateLastIncorporated
   }
   compactor?: typeof compactConversationIfNeeded
   onAssistantTurnRecovered?: (turn: Awaited<ReturnType<typeof listRecoverableAssistantTurns>>[number]) => Promise<void> | void
@@ -39,12 +37,10 @@ export async function recoverConversationStartupState(
 ): Promise<ConversationRecoveryResult> {
   const assistantTurnStore = options.assistantTurnStore ?? {
     listRecoverable: (groupIds?: number[]) => listRecoverableAssistantTurns(groupIds),
+    markAcked: markAssistantTurnAcked,
     markSending: markAssistantTurnSending,
     markSent: markAssistantTurnSent,
     markFailed: markAssistantTurnFailed,
-  }
-  const conversationStateStore = options.conversationStateStore ?? {
-    updateLastIncorporated: updateConversationStateLastIncorporated,
   }
   const compactor = options.compactor ?? compactConversationIfNeeded
 
@@ -56,7 +52,6 @@ export async function recoverConversationStartupState(
     const deliveryResult = await deliverAssistantTurn(turn, {
       sender: options.sender,
       assistantTurnStore,
-      conversationStateStore,
       compactor,
     })
 

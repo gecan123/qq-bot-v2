@@ -65,7 +65,6 @@ model ConversationState {
   compactedBase          String   @default("") @map("compacted_base") @db.Text
   compactedVersion       Int      @default(1) @map("compacted_version")
   lastCompactedMessageRowId Int?  @map("last_compacted_message_row_id")
-  lastIncorporatedMessageRowId Int? @map("last_incorporated_message_row_id")
   createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -84,6 +83,7 @@ model AssistantTurn {
   sequence               Int      @map("sequence")
   replyToMessageId       BigInt   @map("reply_to_message_id")
   mentionUserId          BigInt?  @map("mention_user_id")
+  providerMessageId      BigInt?  @map("provider_message_id")
   text                   String   @map("text") @db.Text
   status                 String   @map("status") @db.VarChar(32)
   attemptCount           Int      @default(0) @map("attempt_count")
@@ -95,6 +95,45 @@ model AssistantTurn {
   @@index([groupId, senderThreadKey, triggerMessageRowId])
   @@index([groupId, senderThreadKey, updatedAt(sort: Desc)])
   @@map("assistant_turns")
+}
+
+model ReplyRecord {
+  id                       Int      @id @default(autoincrement())
+  runtimeKey               String   @map("runtime_key") @db.VarChar(191)
+  groupId                  BigInt   @map("group_id")
+  scopeKey                 String   @map("scope_key") @db.VarChar(191)
+  replyIntentId            String   @map("reply_intent_id") @db.VarChar(191)
+  sourceKind               String   @map("source_kind") @db.VarChar(32)
+  triggerMessageRowId      Int?     @map("trigger_message_row_id")
+  incorporatedMessageRowId Int?     @map("incorporated_message_row_id")
+  deliveryPayload          Json     @map("delivery_payload")
+  text                     String   @map("text") @db.Text
+  executionState           String   @map("execution_state") @db.VarChar(32)
+  providerMessageId        BigInt?  @map("provider_message_id")
+  attemptCount             Int      @default(0) @map("attempt_count")
+  createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([runtimeKey, replyIntentId])
+  @@index([groupId, scopeKey, updatedAt(sort: Desc)])
+  @@index([groupId, scopeKey, executionState, updatedAt(sort: Desc)])
+  @@map("reply_records")
+}
+
+model ReplyAudit {
+  id            Int      @id @default(autoincrement())
+  replyRecordId Int?     @map("reply_record_id")
+  runtimeKey    String   @map("runtime_key") @db.VarChar(191)
+  groupId       BigInt   @map("group_id")
+  scopeKey      String   @map("scope_key") @db.VarChar(191)
+  replyIntentId String   @map("reply_intent_id") @db.VarChar(191)
+  auditKind     String   @map("audit_kind") @db.VarChar(32)
+  payload       Json     @map("payload")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([groupId, scopeKey, createdAt(sort: Desc)])
+  @@index([replyRecordId, auditKind])
+  @@map("reply_audits")
 }
 
 model RootRuntimeSnapshot {

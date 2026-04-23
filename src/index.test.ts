@@ -17,6 +17,10 @@ describe('replayPersistedRootRuntimeDelta', () => {
       async primeGroupCursor(input) {
         calls.push(`prime:${input.lastObservedMessageRowId}`)
       },
+      requeuePendingPassiveMentions() {
+        calls.push('requeue')
+        return 0
+      },
       async markPassiveReplyDelivered() {},
       dispatchPassiveMentionIfMentioned(input: {
         groupId: number
@@ -25,7 +29,7 @@ describe('replayPersistedRootRuntimeDelta', () => {
         createdAt: number
         segments: ParsedSegment[]
       }) {
-        calls.push(`dispatch:${input.messageId}`)
+        calls.push(`unused-dispatch:${input.messageId}`)
         return input.messageId === 1002
       },
       getSnapshot() {
@@ -84,9 +88,7 @@ describe('replayPersistedRootRuntimeDelta', () => {
     })
 
     assert.deepEqual(calls, [
-      'dispatch:1001',
       'ingest:11',
-      'dispatch:1002',
       'ingest:12',
     ])
   })
@@ -102,6 +104,10 @@ describe('replayPersistedRootRuntimeDelta', () => {
       },
       async primeGroupCursor(input) {
         calls.push(`prime:${input.lastObservedMessageRowId}`)
+      },
+      requeuePendingPassiveMentions() {
+        calls.push('requeue')
+        return 0
       },
       async markPassiveReplyDelivered() {},
       dispatchPassiveMentionIfMentioned() {
@@ -141,6 +147,10 @@ describe('recoverStartupAndStartPassiveRuntime', () => {
       },
       async ingestGroupMessage() {},
       async primeGroupCursor() {},
+      requeuePendingPassiveMentions() {
+        calls.push('requeue')
+        return 1
+      },
       async markPassiveReplyDelivered(input) {
         calls.push(`mark:${input.incorporatedMessageRowId}`)
       },
@@ -160,20 +170,29 @@ describe('recoverStartupAndStartPassiveRuntime', () => {
     await recoverStartupAndStartPassiveRuntime({
       groupIds: [1],
       rootRuntime,
-      recoverConversationStartupStateFn: async (options) => {
+      migrateLegacyAssistantTurnsFn: async () => {
+        calls.push('migrate')
+        return { migratedCount: 0, projectedSentCount: 0 }
+      },
+      recoverReplyRecordStartupStateFn: async (options) => {
         calls.push('recover:start')
-        await options.onAssistantTurnRecovered?.({
+        await options.onReplyRecordRecovered?.({
           id: 7,
+          runtimeKey: 'qq_group:1',
           groupId: 1,
-          senderThreadKey: 'sender:20',
+          scopeKey: 'sender:20',
           replyIntentId: 'intent-1',
+          sourceKind: 'mention',
           triggerMessageRowId: 4,
           incorporatedMessageRowId: 5,
-          sequence: 1,
-          replyToMessageId: 2001,
-          mentionUserId: 20,
+          deliveryPayload: {
+            type: 'reply_to_message',
+            replyToMessageId: 2001,
+            mentionUserId: 20,
+          },
           text: '恢复发送的回复',
-          status: 'sent',
+          executionState: 'sent',
+          providerMessageId: undefined,
           attemptCount: 1,
           createdAt: new Date('2026-04-21T00:00:00Z'),
           updatedAt: new Date('2026-04-21T00:00:00Z'),
@@ -181,17 +200,18 @@ describe('recoverStartupAndStartPassiveRuntime', () => {
         calls.push('recover:end')
 
         return {
-          recoveredAssistantTurns: 1,
-          failedAssistantTurns: 0,
-          enqueuedMentions: 0,
+          recoveredReplyRecords: 1,
+          failedReplyRecords: 0,
         }
       },
     })
 
     assert.deepEqual(calls, [
+      'migrate',
       'recover:start',
       'mark:5',
       'recover:end',
+      'requeue',
       'start-passive',
     ])
   })

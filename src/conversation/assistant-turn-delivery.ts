@@ -1,25 +1,23 @@
 import { createLogger } from '../logger.js'
 import { messageSender, type MessageSender } from '../messaging/message-sender.js'
 import {
+  markAssistantTurnAcked,
   markAssistantTurnFailed,
   markAssistantTurnSending,
   markAssistantTurnSent,
   type AssistantTurnRecord,
 } from './assistant-turn-store.js'
 import { compactConversationIfNeeded } from './compaction.js'
-import { updateConversationStateLastIncorporated } from './conversation-state-store.js'
 
 const log = createLogger('ASSISTANT_TURN')
 
 export interface AssistantTurnDeliveryDependencies {
   sender?: MessageSender
   assistantTurnStore?: {
+    markAcked: typeof markAssistantTurnAcked
     markSending: typeof markAssistantTurnSending
     markSent: typeof markAssistantTurnSent
     markFailed: typeof markAssistantTurnFailed
-  }
-  conversationStateStore?: {
-    updateLastIncorporated: typeof updateConversationStateLastIncorporated
   }
   compactor?: typeof compactConversationIfNeeded
 }
@@ -34,12 +32,10 @@ export async function deliverAssistantTurn(
 
   const sender = options.sender ?? messageSender
   const assistantTurnStore = options.assistantTurnStore ?? {
+    markAcked: markAssistantTurnAcked,
     markSending: markAssistantTurnSending,
     markSent: markAssistantTurnSent,
     markFailed: markAssistantTurnFailed,
-  }
-  const conversationStateStore = options.conversationStateStore ?? {
-    updateLastIncorporated: updateConversationStateLastIncorporated,
   }
   const compactor = options.compactor ?? compactConversationIfNeeded
 
@@ -58,31 +54,32 @@ export async function deliverAssistantTurn(
   let sendSucceeded = false
 
   try {
-    await assistantTurnStore.markSending(turn.id)
+    if (turn.providerMessageId == null && turn.status !== 'acked') {
+      await assistantTurnStore.markSending(turn.id)
 
-    const sendResult = await sender.replyToMessage({
-      groupId: turn.groupId,
-      replyToMessageId: turn.replyToMessageId,
-      mentionUserId: turn.mentionUserId,
-      text: turn.text,
-    })
+      const sendResult = await sender.replyToMessage({
+        groupId: turn.groupId,
+        replyToMessageId: turn.replyToMessageId,
+        mentionUserId: turn.mentionUserId,
+        text: turn.text,
+      })
 
-    if (!sendResult.success) {
-      await assistantTurnStore.markFailed(turn.id)
-      return 'failed'
+      if (!sendResult.success) {
+        await assistantTurnStore.markFailed(turn.id)
+        return 'failed'
+      }
+
+      if (sendResult.providerMessageId != null) {
+        await assistantTurnStore.markAcked(turn.id, sendResult.providerMessageId)
+      }
+
+      sendSucceeded = true
     }
-
-    sendSucceeded = true
     await assistantTurnStore.markSent(turn.id)
-    await conversationStateStore.updateLastIncorporated(
-      turn.groupId,
-      turn.senderThreadKey,
-      turn.incorporatedMessageRowId,
-    )
     await compactor(turn.groupId, turn.senderThreadKey)
     return 'sent'
   } catch (error) {
-    if (!sendSucceeded) {
+    if (!sendSucceeded && turn.providerMessageId == null && turn.status !== 'acked') {
       await assistantTurnStore.markFailed(turn.id)
     }
 

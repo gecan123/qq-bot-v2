@@ -2,8 +2,11 @@ import { prisma } from '../database/client.js'
 import type { Prisma } from '../generated/prisma/client.js'
 import type {
   CreateRootRuntimeSnapshotInput,
+  FocusTargetId,
   RootRuntimeContextSnapshot,
+  RuntimeCue,
   RuntimeContextMessage,
+  RuntimeSceneRecord,
   RootRuntimeSessionSnapshot,
   RootRuntimeSnapshotRecord,
 } from './types.js'
@@ -86,9 +89,12 @@ function parseSessionSnapshot(value: unknown): RootRuntimeSessionSnapshot {
     return {
       focusedStateId: 'portal',
       stateStack: ['portal'],
+      focusedTargetId: 'portal',
       unreadMessages: [],
       senderContinuities: [],
       proactiveCandidates: [],
+      sceneRecords: [],
+      outstandingCues: [],
       recentObservedMessageRowIds: [],
       lastWakeAt: null,
     }
@@ -96,21 +102,73 @@ function parseSessionSnapshot(value: unknown): RootRuntimeSessionSnapshot {
 
   const parsed = value as Partial<RootRuntimeSessionSnapshot>
   const focusedStateId = typeof parsed.focusedStateId === 'string' ? parsed.focusedStateId : 'portal'
+  const focusedTargetId =
+    parsed.focusedTargetId === 'portal' || typeof parsed.focusedTargetId === 'string'
+      ? (parsed.focusedTargetId as FocusTargetId)
+      : (focusedStateId as FocusTargetId)
   const stateStack = Array.isArray(parsed.stateStack) && parsed.stateStack.every((item) => typeof item === 'string')
     ? parsed.stateStack
     : [focusedStateId]
+  const sceneRecords = Array.isArray(parsed.sceneRecords)
+    ? parsed.sceneRecords.filter((item): item is RuntimeSceneRecord => {
+        if (!item || typeof item !== 'object') return false
+        return (
+          typeof item.sceneId === 'string' &&
+          (item.kind === 'qq_group' || item.kind === 'qq_private') &&
+          (item.groupId === undefined || (typeof item.groupId === 'number' && Number.isInteger(item.groupId))) &&
+          typeof item.unreadCount === 'number' &&
+          Number.isInteger(item.unreadCount) &&
+          (item.lastObservedMessageRowId === null ||
+            (typeof item.lastObservedMessageRowId === 'number' && Number.isInteger(item.lastObservedMessageRowId))) &&
+          (item.lastMaterializedReplyRowId === null ||
+            (typeof item.lastMaterializedReplyRowId === 'number' &&
+              Number.isInteger(item.lastMaterializedReplyRowId))) &&
+          (item.lastFocusedAt === null || typeof item.lastFocusedAt === 'string') &&
+          (item.lastSpokeAt === null || typeof item.lastSpokeAt === 'string') &&
+          Array.isArray(item.outstandingCueIds) &&
+          item.outstandingCueIds.every((cueId) => typeof cueId === 'string')
+        )
+      })
+    : []
+  const outstandingCues = Array.isArray(parsed.outstandingCues)
+    ? parsed.outstandingCues.filter((item): item is RuntimeCue => {
+        if (!item || typeof item !== 'object') return false
+        return (
+          typeof item.cueId === 'string' &&
+          typeof item.sceneId === 'string' &&
+          item.cueKind === 'message' &&
+          typeof item.triggerMessageRowId === 'number' &&
+          Number.isInteger(item.triggerMessageRowId) &&
+          typeof item.messageId === 'number' &&
+          Number.isInteger(item.messageId) &&
+          typeof item.senderId === 'number' &&
+          Number.isInteger(item.senderId) &&
+          typeof item.senderNickname === 'string' &&
+          typeof item.addressedToAgent === 'boolean' &&
+          (item.cueStrength === 'weak' || item.cueStrength === 'strong') &&
+          (item.replyModeHint === 'anchored' || item.replyModeHint === 'unanchored') &&
+          (item.preferredDeliveryMode === 'reply_to_message' || item.preferredDeliveryMode === 'send_message') &&
+          typeof item.mustReplyOverride === 'boolean' &&
+          ['pending', 'suppressed', 'refused', 'replied', 'delivery_failed'].includes(item.status) &&
+          typeof item.createdAt === 'string'
+        )
+      })
+    : []
 
-    return {
-      focusedStateId,
-      stateStack,
-      unreadMessages: Array.isArray(parsed.unreadMessages) ? parsed.unreadMessages : [],
-      senderContinuities: Array.isArray(parsed.senderContinuities) ? parsed.senderContinuities : [],
-      proactiveCandidates: Array.isArray(parsed.proactiveCandidates) ? parsed.proactiveCandidates : [],
-      recentObservedMessageRowIds: Array.isArray(parsed.recentObservedMessageRowIds)
-        ? parsed.recentObservedMessageRowIds.filter((item): item is number => typeof item === 'number' && Number.isInteger(item))
-        : [],
-      lastWakeAt: typeof parsed.lastWakeAt === 'string' || parsed.lastWakeAt === null ? (parsed.lastWakeAt ?? null) : null,
-    }
+  return {
+    focusedStateId,
+    stateStack,
+    focusedTargetId,
+    unreadMessages: Array.isArray(parsed.unreadMessages) ? parsed.unreadMessages : [],
+    senderContinuities: Array.isArray(parsed.senderContinuities) ? parsed.senderContinuities : [],
+    proactiveCandidates: Array.isArray(parsed.proactiveCandidates) ? parsed.proactiveCandidates : [],
+    sceneRecords,
+    outstandingCues,
+    recentObservedMessageRowIds: Array.isArray(parsed.recentObservedMessageRowIds)
+      ? parsed.recentObservedMessageRowIds.filter((item): item is number => typeof item === 'number' && Number.isInteger(item))
+      : [],
+    lastWakeAt: typeof parsed.lastWakeAt === 'string' || parsed.lastWakeAt === null ? (parsed.lastWakeAt ?? null) : null,
+  }
 }
 
 function mapRow(

@@ -7,6 +7,7 @@ const log = createLogger('MESSAGE_SENDER')
 
 export interface MessageSender {
   isReplyDryRunEnabled?(): boolean
+  isSendDryRunEnabled?(): boolean
 
   replyToMessage(params: {
     groupId: number
@@ -33,6 +34,10 @@ class NapcatMessageSender implements MessageSender {
 
   isReplyDryRunEnabled(): boolean {
     return this.options.replyDryRun
+  }
+
+  isSendDryRunEnabled(): boolean {
+    return this.options.proactiveDryRun
   }
 
   async replyToMessage(params: {

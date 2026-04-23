@@ -8,10 +8,14 @@ import {
   createDefaultRootRuntimeSnapshot,
   DEFAULT_ROOT_RUNTIME_SENDER_CONTINUITY_LIMIT,
   DEFAULT_ROOT_RUNTIME_UNREAD_LIMIT,
+  makeMentionCueId,
+  makeSceneId,
   makeGroupRuntimeKey,
   ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
   type CreateRootRuntimeSnapshotInput,
+  type RuntimeCue,
   type RuntimeContextMessage,
+  type RuntimeSceneRecord,
   type RuntimeUnreadMessage,
   type RootRuntimeSnapshotRecord,
 } from './types.js'
@@ -38,6 +42,7 @@ export interface RootRuntimeManager {
   ingestGroupMessage(input: PersistedGroupMessageIngress): Promise<void>
   getSnapshot(groupId: number): RootRuntimeSnapshotRecord | null
   primeGroupCursor(input: { groupId: number; lastObservedMessageRowId: number }): Promise<void>
+  requeuePendingPassiveMentions(groupIds?: number[]): number
   markPassiveReplyDelivered(input: {
     groupId: number
     senderId: number
@@ -114,6 +119,46 @@ function upsertUnreadMessage(
     .slice(-unreadLimit)
 }
 
+function upsertSceneRecord(
+  sceneRecords: RuntimeSceneRecord[] | undefined,
+  sceneRecord: RuntimeSceneRecord,
+): RuntimeSceneRecord[] {
+  return [...(sceneRecords ?? []).filter((existing) => existing.sceneId !== sceneRecord.sceneId), sceneRecord].sort((left, right) =>
+    left.sceneId.localeCompare(right.sceneId),
+  )
+}
+
+function upsertCue(outstandingCues: RuntimeCue[] | undefined, cue: RuntimeCue): RuntimeCue[] {
+  return [...(outstandingCues ?? []).filter((existing) => existing.cueId !== cue.cueId), cue].sort(
+    (left, right) => left.triggerMessageRowId - right.triggerMessageRowId,
+  )
+}
+
+function buildSceneRecord(input: {
+  groupId: number
+  previous?: RuntimeSceneRecord
+  unreadMessages: RuntimeUnreadMessage[]
+  lastObservedMessageRowId: number | null
+  lastMaterializedReplyRowId: number | null
+  outstandingCues: RuntimeCue[]
+  nowIso?: string | null
+}): RuntimeSceneRecord {
+  const sceneId = makeSceneId(input.groupId)
+  return {
+    sceneId,
+    kind: 'qq_group',
+    groupId: input.groupId,
+    unreadCount: input.unreadMessages.length,
+    lastObservedMessageRowId: input.lastObservedMessageRowId,
+    lastMaterializedReplyRowId: input.lastMaterializedReplyRowId,
+    lastFocusedAt: input.previous?.lastFocusedAt ?? null,
+    lastSpokeAt: input.nowIso ?? input.previous?.lastSpokeAt ?? null,
+    outstandingCueIds: input.outstandingCues
+      .filter((cue) => cue.sceneId === sceneId && cue.status === 'pending')
+      .map((cue) => cue.cueId),
+  }
+}
+
 export function createRootRuntimeManager(options: RootRuntimeManagerOptions): RootRuntimeManager {
   const unreadLimit = options.unreadLimit ?? DEFAULT_ROOT_RUNTIME_UNREAD_LIMIT
   const senderContinuityLimit = options.senderContinuityLimit ?? DEFAULT_ROOT_RUNTIME_SENDER_CONTINUITY_LIMIT
@@ -125,7 +170,9 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
   }
   const snapshots = new Map<number, RootRuntimeSnapshotRecord>()
   const passiveMailboxes = new Map<number, GroupMailbox>()
+  const pendingMentionHints = new Map<number, Set<number>>()
   let passiveActive = false
+  let passiveDispatchEnabled = false
 
   const runPassiveGroup = (groupId: number) => {
     if (!passiveActive || !options.passiveWorker) {
@@ -228,8 +275,12 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       }
 
       const mentionedSelf = isMentionedSelf(input.segments, options.selfNumber)
+        || pendingMentionHints.get(input.groupId)?.has(input.messageId)
+        || false
+      const sceneId = makeSceneId(input.groupId)
       const senderThreadKey = toSenderThreadKey(input.senderId)
       const updatedAt = input.createdAt.toISOString()
+      pendingMentionHints.get(input.groupId)?.delete(input.messageId)
       const nextUnreadMessages = upsertUnreadMessage(
         current.sessionSnapshot.unreadMessages,
         {
@@ -262,6 +313,36 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
         ...current.sessionSnapshot.recentObservedMessageRowIds.filter((rowId) => rowId !== input.messageRowId),
         input.messageRowId,
       ].slice(-RECENT_OBSERVED_MESSAGE_ROW_IDS_LIMIT)
+      const nextOutstandingCues = mentionedSelf
+        ? upsertCue(current.sessionSnapshot.outstandingCues, {
+            cueId: makeMentionCueId(sceneId, input.messageRowId),
+            sceneId,
+            cueKind: 'message',
+            triggerMessageRowId: input.messageRowId,
+            messageId: input.messageId,
+            senderId: input.senderId,
+            senderNickname: input.senderNickname,
+            addressedToAgent: true,
+            cueStrength: 'strong',
+            replyModeHint: 'anchored',
+            preferredDeliveryMode: 'reply_to_message',
+            mustReplyOverride: true,
+            status: 'pending',
+            createdAt: updatedAt,
+          })
+        : (current.sessionSnapshot.outstandingCues ?? [])
+      const previousSceneRecord = (current.sessionSnapshot.sceneRecords ?? []).find((record) => record.sceneId === sceneId)
+      const nextSceneRecords = upsertSceneRecord(
+        current.sessionSnapshot.sceneRecords,
+        buildSceneRecord({
+          groupId: input.groupId,
+          previous: previousSceneRecord,
+          unreadMessages: nextUnreadMessages,
+          lastObservedMessageRowId: Math.max(currentLastObserved, input.messageRowId),
+          lastMaterializedReplyRowId: previousSceneRecord?.lastMaterializedReplyRowId ?? null,
+          outstandingCues: nextOutstandingCues,
+        }),
+      )
 
       const nextSnapshotInput: CreateRootRuntimeSnapshotInput = {
         runtimeKey: current.runtimeKey,
@@ -278,8 +359,11 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
         },
         sessionSnapshot: {
           ...current.sessionSnapshot,
+          focusedTargetId: current.sessionSnapshot.focusedTargetId ?? sceneId,
           unreadMessages: nextUnreadMessages,
           senderContinuities: nextSenderContinuities,
+          sceneRecords: nextSceneRecords,
+          outstandingCues: nextOutstandingCues,
           recentObservedMessageRowIds: nextRecentObservedMessageRowIds,
         },
         lastObservedMessageRowId: Math.max(currentLastObserved, input.messageRowId),
@@ -287,6 +371,15 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
 
       const persisted = await snapshotStore.upsert(nextSnapshotInput)
       snapshots.set(input.groupId, persisted)
+
+      if (passiveDispatchEnabled && mentionedSelf) {
+        getMailbox(input.groupId).addMention({
+          groupId: input.groupId,
+          messageId: input.messageId,
+          senderId: input.senderId,
+          createdAt: input.createdAt.getTime(),
+        })
+      }
     },
 
     getSnapshot(groupId) {
@@ -313,6 +406,46 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       snapshots.set(input.groupId, persisted)
     },
 
+    requeuePendingPassiveMentions(groupIds) {
+      const targetGroupIds = groupIds ?? [...snapshots.keys()]
+      let enqueuedCount = 0
+
+      for (const groupId of targetGroupIds) {
+        const snapshot = snapshots.get(groupId)
+        if (!snapshot) {
+          continue
+        }
+
+        const continuityByKey = new Map(
+          snapshot.sessionSnapshot.senderContinuities.map((continuity) => [continuity.senderThreadKey, continuity]),
+        )
+        const pendingCueMessageIds = new Set(
+          (snapshot.sessionSnapshot.outstandingCues ?? [])
+            .filter((cue) => cue.status === 'pending' && cue.preferredDeliveryMode === 'reply_to_message')
+            .map((cue) => cue.messageId),
+        )
+        const pendingMessages = snapshot.sessionSnapshot.unreadMessages
+          .filter((message) => message.mentionedSelf || pendingCueMessageIds.has(message.messageId))
+          .filter((message) => {
+            const continuity = continuityByKey.get(toSenderThreadKey(message.senderId))
+            return message.messageRowId > (continuity?.lastMaterializedMessageRowId ?? 0)
+          })
+          .sort((left, right) => left.messageRowId - right.messageRowId)
+
+        for (const message of pendingMessages) {
+          getMailbox(groupId).addMention({
+            groupId,
+            messageId: message.messageId,
+            senderId: message.senderId,
+            createdAt: new Date(message.createdAt).getTime(),
+          })
+          enqueuedCount++
+        }
+      }
+
+      return enqueuedCount
+    },
+
     async markPassiveReplyDelivered(input) {
       const existing = snapshots.get(input.groupId)
       const current = existing ?? {
@@ -323,6 +456,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       }
       const senderThreadKey = toSenderThreadKey(input.senderId)
       const updatedAt = now().toISOString()
+      const sceneId = makeSceneId(input.groupId)
       const continuityByKey = new Map(
         current.sessionSnapshot.senderContinuities.map((continuity) => [continuity.senderThreadKey, continuity]),
       )
@@ -341,6 +475,38 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       const nextSenderContinuities = [...continuityByKey.values()]
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
         .slice(0, senderContinuityLimit)
+      const nextUnreadMessages = current.sessionSnapshot.unreadMessages.filter(
+        (message) =>
+          !(
+            message.senderId === input.senderId &&
+            message.messageRowId <= input.incorporatedMessageRowId
+          ),
+      )
+      const nextOutstandingCues = (current.sessionSnapshot.outstandingCues ?? []).map((cue) => {
+        if (
+          cue.sceneId === sceneId &&
+          cue.status === 'pending' &&
+          cue.senderId === input.senderId &&
+          cue.triggerMessageRowId <= input.incorporatedMessageRowId
+        ) {
+          return { ...cue, status: 'replied' as const }
+        }
+
+        return cue
+      })
+      const previousSceneRecord = (current.sessionSnapshot.sceneRecords ?? []).find((record) => record.sceneId === sceneId)
+      const nextSceneRecords = upsertSceneRecord(
+        current.sessionSnapshot.sceneRecords,
+        buildSceneRecord({
+          groupId: input.groupId,
+          previous: previousSceneRecord,
+          unreadMessages: nextUnreadMessages,
+          lastObservedMessageRowId: current.lastObservedMessageRowId ?? null,
+          lastMaterializedReplyRowId: Math.max(previousSceneRecord?.lastMaterializedReplyRowId ?? 0, input.incorporatedMessageRowId),
+          outstandingCues: nextOutstandingCues,
+          nowIso: updatedAt,
+        }),
+      )
 
       const persisted = await snapshotStore.upsert({
         runtimeKey: current.runtimeKey,
@@ -357,7 +523,11 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
         },
         sessionSnapshot: {
           ...current.sessionSnapshot,
+          focusedTargetId: current.sessionSnapshot.focusedTargetId ?? sceneId,
+          unreadMessages: nextUnreadMessages,
           senderContinuities: nextSenderContinuities,
+          sceneRecords: nextSceneRecords,
+          outstandingCues: nextOutstandingCues,
         },
         lastObservedMessageRowId: current.lastObservedMessageRowId,
       })
@@ -365,16 +535,14 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
     },
 
     dispatchPassiveMentionIfMentioned(input) {
-      if (!isMentionedSelf(input.segments, options.selfNumber)) {
+      const mentionedSelf = isMentionedSelf(input.segments, options.selfNumber)
+      if (!mentionedSelf) {
         return false
       }
 
-      getMailbox(input.groupId).addMention({
-        groupId: input.groupId,
-        messageId: input.messageId,
-        senderId: input.senderId,
-        createdAt: input.createdAt,
-      })
+      const pendingGroupMentions = pendingMentionHints.get(input.groupId) ?? new Set<number>()
+      pendingGroupMentions.add(input.messageId)
+      pendingMentionHints.set(input.groupId, pendingGroupMentions)
       return true
     },
 
@@ -384,6 +552,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
 
     startPassiveExecution() {
       passiveActive = true
+      passiveDispatchEnabled = true
       for (const groupId of passiveMailboxes.keys()) {
         runPassiveGroup(groupId)
       }
@@ -391,6 +560,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
 
     stopPassiveExecution() {
       passiveActive = false
+      passiveDispatchEnabled = false
       for (const mailbox of passiveMailboxes.values()) {
         mailbox.stop()
       }

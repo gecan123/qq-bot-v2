@@ -6,26 +6,128 @@ import { setLlmProvider } from './llm/provider.js'
 import { OpenAIProvider } from './llm/openai-adapter.js'
 import { RoutingProvider } from './llm/routing-provider.js'
 import { config } from './config/index.js'
-import { createConversationScheduler, type ConversationScheduler } from './conversation/scheduler.js'
-import { createConversationMemoryQueue } from './queue/conversation-memory-queue.js'
-import type { ConversationQueue } from './queue/conversation-queue.js'
-import { createConversationWorker } from './conversation/worker.js'
-import { createMentionDispatcher } from './conversation/dispatcher.js'
 import { recoverConversationStartupState } from './conversation/recovery.js'
 import { startHttpServer, addRoute } from './server/http.js'
 import { handlePlaygroundReplay, handlePlaygroundRun, handleReplayTraceGet } from './server/playground.js'
 import { handleMediaReanalyze } from './server/media-reanalyze.js'
+import { createRootRuntimeManager } from './runtime/root-runtime.js'
+import { createPassiveMentionProcessor } from './runtime/passive-mention-processor.js'
+import { getGroupMessagesAfterRowId, getLatestGroupMessageRowId } from './database/messages.js'
+import { getMessageTimestamp } from './utils/message-time.js'
+import type { ParsedSegment } from './types/message-segments.js'
 import type http from 'node:http'
+import { pathToFileURL } from 'node:url'
 
-let conversationQueue: ConversationQueue | null = null
-let conversationScheduler: ConversationScheduler | null = null
 let httpServer: http.Server | null = null
+let rootRuntime: ReturnType<typeof createRootRuntimeManager> | null = null
 const log = createLogger('APP')
-
-const ASYNC_MENTION_MERGE_WINDOW_MS = 30_000
 
 function isGptModel(model: string): boolean {
   return model.toLowerCase().startsWith('gpt')
+}
+
+function resolveAssistantTurnSenderId(turn: { senderThreadKey: string; mentionUserId?: bigint | number | null }): number {
+  if (turn.mentionUserId != null) {
+    return Number(turn.mentionUserId)
+  }
+
+  return Number(turn.senderThreadKey.replace('sender:', ''))
+}
+
+export async function replayPersistedRootRuntimeDelta(params: {
+  groupIds: number[]
+  rootRuntime: ReturnType<typeof createRootRuntimeManager>
+  getMessagesAfterRowId?: typeof getGroupMessagesAfterRowId
+  getLatestMessageRowId?: typeof getLatestGroupMessageRowId
+  getTimestamp?: typeof getMessageTimestamp
+}): Promise<void> {
+  const getMessagesAfterRowId = params.getMessagesAfterRowId ?? getGroupMessagesAfterRowId
+  const getLatestMessageRowId = params.getLatestMessageRowId ?? getLatestGroupMessageRowId
+  const getTimestamp = params.getTimestamp ?? getMessageTimestamp
+
+  for (const groupId of params.groupIds) {
+    const snapshot = params.rootRuntime.getSnapshot(groupId)
+    const lastObservedMessageRowId = snapshot?.lastObservedMessageRowId
+    if (lastObservedMessageRowId === undefined) {
+      const latestMessageRowId = await getLatestMessageRowId(groupId)
+      if (latestMessageRowId !== undefined) {
+        await params.rootRuntime.primeGroupCursor({
+          groupId,
+          lastObservedMessageRowId: latestMessageRowId,
+        })
+      }
+      log.info(
+        {
+          groupId,
+          lastObservedMessageRowId: null,
+          primedObservedMessageRowId: latestMessageRowId ?? null,
+          replayedCount: 0,
+          replayedMentionCount: 0,
+        },
+        'Root runtime primed cursor without historical replay',
+      )
+      continue
+    }
+    const replayMessages = await getMessagesAfterRowId(groupId, lastObservedMessageRowId)
+    let replayedMentionCount = 0
+
+    for (const message of replayMessages) {
+      const segments = Array.isArray(message.content) ? (message.content as unknown as ParsedSegment[]) : []
+      const createdAt = getTimestamp(message)
+      const replayedMention = params.rootRuntime.dispatchPassiveMentionIfMentioned({
+        groupId,
+        messageId: Number(message.messageId),
+        senderId: Number(message.senderId),
+        createdAt: createdAt.getTime(),
+        segments,
+      })
+      if (replayedMention) {
+        replayedMentionCount++
+      }
+      await params.rootRuntime.ingestGroupMessage({
+        groupId,
+        messageRowId: message.id,
+        messageId: Number(message.messageId),
+        senderId: Number(message.senderId),
+        senderNickname: message.senderGroupNickname ?? message.senderNickname ?? String(message.senderId),
+        segments,
+        createdAt,
+      })
+    }
+
+    log.info(
+      {
+        groupId,
+        replayedCount: replayMessages.length,
+        replayedMentionCount,
+        lastObservedMessageRowId: lastObservedMessageRowId ?? null,
+      },
+      'Root runtime replayed persisted message delta',
+    )
+  }
+}
+
+export async function recoverStartupAndStartPassiveRuntime(params: {
+  groupIds: number[]
+  rootRuntime: ReturnType<typeof createRootRuntimeManager>
+  recoverConversationStartupStateFn?: typeof recoverConversationStartupState
+}): Promise<void> {
+  const recoverConversationStartupStateFn =
+    params.recoverConversationStartupStateFn ?? recoverConversationStartupState
+
+  await recoverConversationStartupStateFn({
+    groupIds: params.groupIds,
+    onAssistantTurnRecovered: async (turn) => {
+      await params.rootRuntime.markPassiveReplyDelivered({
+        groupId: turn.groupId,
+        senderId: resolveAssistantTurnSenderId(turn),
+        incorporatedMessageRowId: turn.incorporatedMessageRowId,
+        text: turn.text,
+      })
+    },
+  })
+
+  params.rootRuntime.startPassiveExecution()
 }
 
 async function main() {
@@ -105,44 +207,59 @@ async function main() {
   httpServer = startHttpServer(apiPort)
 
   jobQueue.start()
-
-  const conversationWorker = createConversationWorker()
-
-  conversationScheduler = createConversationScheduler({
-    mergeWindowMs: ASYNC_MENTION_MERGE_WINDOW_MS,
-    worker: (batch) => conversationWorker.run(batch),
+  const passiveMentionProcessor = createPassiveMentionProcessor({
+    onAssistantTurnSent: async (turn) => {
+      await rootRuntime?.markPassiveReplyDelivered({
+        groupId: turn.groupId,
+        senderId: resolveAssistantTurnSenderId(turn),
+        incorporatedMessageRowId: turn.incorporatedMessageRowId,
+        text: turn.text,
+      })
+    },
   })
-  conversationQueue = createConversationMemoryQueue({
-    onMention: (event) => conversationScheduler?.onMention(event),
-  })
-  const mentionDispatcher = createMentionDispatcher({
+  rootRuntime = createRootRuntimeManager({
     selfNumber: config.selfNumber,
-    queue: conversationQueue,
+    passiveWorker: (batch) => passiveMentionProcessor.run(batch),
   })
-  await startBot({ mentionDispatcher, conversationScheduler })
-  await recoverConversationStartupState({
+  const restoreResult = await rootRuntime.restore(config.groupIds)
+  log.info(restoreResult, 'Root runtime restored')
+  await replayPersistedRootRuntimeDelta({
     groupIds: config.groupIds,
-    selfNumber: config.selfNumber,
-    queue: conversationQueue,
+    rootRuntime,
   })
-  conversationQueue.start()
-  log.info({ mergeWindowMs: ASYNC_MENTION_MERGE_WINDOW_MS }, 'Conversation scheduler started (mention only)')
+
+  await startBot({ rootRuntime })
+  await recoverStartupAndStartPassiveRuntime({
+    groupIds: config.groupIds,
+    rootRuntime,
+  })
+  log.info('Root runtime passive mention execution started')
 }
 
 async function shutdown() {
   log.info('Shutting down...')
-  conversationQueue?.stop()
-  conversationScheduler?.stop()
+  rootRuntime?.stopPassiveExecution?.()
   jobQueue.stop()
   httpServer?.close()
   await prisma.$disconnect()
   process.exit(0)
 }
 
-process.on('SIGINT', shutdown)
-process.on('SIGTERM', shutdown)
+function isDirectExecution(): boolean {
+  const entryPath = process.argv[1]
+  if (!entryPath) {
+    return false
+  }
 
-main().catch((err) => {
-  log.fatal(err, 'Failed to start')
-  process.exit(1)
-})
+  return import.meta.url === pathToFileURL(entryPath).href
+}
+
+if (isDirectExecution()) {
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
+
+  main().catch((err) => {
+    log.fatal(err, 'Failed to start')
+    process.exit(1)
+  })
+}

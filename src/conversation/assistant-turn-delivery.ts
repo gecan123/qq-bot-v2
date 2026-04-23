@@ -24,11 +24,13 @@ export interface AssistantTurnDeliveryDependencies {
   compactor?: typeof compactConversationIfNeeded
 }
 
+export type AssistantTurnDeliveryResult = 'sent' | 'failed' | 'skipped'
+
 export async function deliverAssistantTurn(
   turn: AssistantTurnRecord,
   options: AssistantTurnDeliveryDependencies = {},
-): Promise<boolean> {
-  if (turn.status === 'sent') return true
+): Promise<AssistantTurnDeliveryResult> {
+  if (turn.status === 'sent') return 'sent'
 
   const sender = options.sender ?? messageSender
   const assistantTurnStore = options.assistantTurnStore ?? {
@@ -40,6 +42,18 @@ export async function deliverAssistantTurn(
     updateLastIncorporated: updateConversationStateLastIncorporated,
   }
   const compactor = options.compactor ?? compactConversationIfNeeded
+
+  if (sender.isReplyDryRunEnabled?.() ?? false) {
+    log.info(
+      {
+        groupId: turn.groupId,
+        senderThreadKey: turn.senderThreadKey,
+        replyIntentId: turn.replyIntentId,
+      },
+      'assistant turn 投递跳过：reply dry run 已开启',
+    )
+    return 'skipped'
+  }
 
   let sendSucceeded = false
 
@@ -55,7 +69,7 @@ export async function deliverAssistantTurn(
 
     if (!sendResult.success) {
       await assistantTurnStore.markFailed(turn.id)
-      return false
+      return 'failed'
     }
 
     sendSucceeded = true
@@ -66,7 +80,7 @@ export async function deliverAssistantTurn(
       turn.incorporatedMessageRowId,
     )
     await compactor(turn.groupId, turn.senderThreadKey)
-    return true
+    return 'sent'
   } catch (error) {
     if (!sendSucceeded) {
       await assistantTurnStore.markFailed(turn.id)

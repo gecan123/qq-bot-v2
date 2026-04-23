@@ -70,6 +70,18 @@ export async function getGroupMessagesAfterRowId(
   })
 }
 
+export async function getLatestGroupMessageRowId(groupId: number): Promise<number | undefined> {
+  const row = await prisma.message.findFirst({
+    where: {
+      groupId: BigInt(groupId),
+    },
+    orderBy: { id: 'desc' },
+    select: { id: true },
+  })
+
+  return row?.id
+}
+
 export async function getMessageById(groupId: number, messageId: number): Promise<Message | null> {
   return prisma.message.findUnique({
     where: {

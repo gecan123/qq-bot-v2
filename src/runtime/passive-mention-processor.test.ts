@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { createConversationWorker } from './worker.js'
-import type { GroupConversationBatch, MentionEvent } from './types.js'
+import { createPassiveMentionProcessor } from './passive-mention-processor.js'
+import type { GroupConversationBatch, MentionEvent } from '../conversation/types.js'
 import type { ParsedSegment } from '../types/message-segments.js'
 import type { Message } from '../generated/prisma/client.js'
 
@@ -104,12 +104,12 @@ function makeStoredMessage(event: MentionEvent, text: string): FakeStoredMessage
   }
 }
 
-describe('conversation worker', () => {
-  test('worker generates one reply for a simple single-user batch', async () => {
+describe('passive mention processor', () => {
+  test('generates one reply for a simple single-user batch', async () => {
     const event = makeEvent({ messageId: 10, senderId: 20, createdAt: 1 })
     const { sent, sender } = fakeSender()
 
-    const worker = createConversationWorker({
+    const processor = createPassiveMentionProcessor({
       getMessage: async () => makeStoredMessage(event, '@bot 你好'),
       resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
       generateReply: async () => '你好',
@@ -119,13 +119,13 @@ describe('conversation worker', () => {
       compactor: fakeCompactor(),
     })
 
-    const result = await worker.run(makeBatch([event]))
+    const result = await processor.run(makeBatch([event]))
 
     assert.deepEqual(sent, [{ groupId: 1, replyToMessageId: 10, mentionUserId: 20, text: '你好' }])
     assert.deepEqual(result.leftoverEvents, [])
   })
 
-  test('worker groups same-sender events, handles first two sender threads, and returns leftovers', async () => {
+  test('groups same-sender events, handles first two sender threads, and returns leftovers', async () => {
     const first = makeEvent({ messageId: 10, senderId: 20, createdAt: 1 })
     const second = makeEvent({ messageId: 11, senderId: 30, createdAt: 2 })
     const third = makeEvent({ messageId: 12, senderId: 40, createdAt: 3 })
@@ -140,7 +140,7 @@ describe('conversation worker', () => {
       [15, makeStoredMessage(fourth, '@bot 第一个人的补充')],
     ])
 
-    const worker = createConversationWorker({
+    const processor = createPassiveMentionProcessor({
       getMessage: async (_groupId, messageId) => messages.get(messageId) ?? null,
       resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
       generateReply: async (message) => {
@@ -153,7 +153,7 @@ describe('conversation worker', () => {
       compactor: fakeCompactor(),
     })
 
-    const result = await worker.run(makeBatch([first, second, third, fourth]))
+    const result = await processor.run(makeBatch([first, second, third, fourth]))
 
     assert.deepEqual(generatedFor, [15, 11])
     assert.deepEqual(sent, [
@@ -163,7 +163,7 @@ describe('conversation worker', () => {
     assert.deepEqual(result.leftoverEvents, [third])
   })
 
-  test('worker uses batch order when same-sender events share the same timestamp', async () => {
+  test('uses batch order when same-sender events share the same timestamp', async () => {
     const first = makeEvent({ messageId: 21, senderId: 20, createdAt: 1000 })
     const second = makeEvent({ messageId: 22, senderId: 20, createdAt: 1000 })
     const { sent, sender } = fakeSender()
@@ -174,7 +174,7 @@ describe('conversation worker', () => {
       [22, makeStoredMessage(second, '@bot 第二条补充')],
     ])
 
-    const worker = createConversationWorker({
+    const processor = createPassiveMentionProcessor({
       getMessage: async (_groupId, messageId) => messages.get(messageId) ?? null,
       resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
       generateReply: async (message) => {
@@ -187,7 +187,7 @@ describe('conversation worker', () => {
       compactor: fakeCompactor(),
     })
 
-    await worker.run(makeBatch([first, second]))
+    await processor.run(makeBatch([first, second]))
 
     assert.deepEqual(generatedFor, [22])
     assert.deepEqual(sent, [
@@ -195,11 +195,11 @@ describe('conversation worker', () => {
     ])
   })
 
-  test('worker does not send duplicate reply when assistant turn is already sent', async () => {
+  test('does not send duplicate reply when assistant turn is already sent', async () => {
     const event = makeEvent({ messageId: 31, senderId: 20, createdAt: 1 })
     const { sent, sender } = fakeSender()
 
-    const worker = createConversationWorker({
+    const processor = createPassiveMentionProcessor({
       getMessage: async () => makeStoredMessage(event, '@bot 你好'),
       resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
       generateReply: async () => '你好',
@@ -209,18 +209,18 @@ describe('conversation worker', () => {
       compactor: fakeCompactor(),
     })
 
-    const result = await worker.run(makeBatch([event]))
+    const result = await processor.run(makeBatch([event]))
 
     assert.deepEqual(sent, [])
     assert.deepEqual(result.leftoverEvents, [])
   })
 
-  test('worker reuses stored assistant turn text when reply intent already exists', async () => {
+  test('reuses stored assistant turn text when reply intent already exists', async () => {
     const event = makeEvent({ messageId: 41, senderId: 20, createdAt: 1 })
     const { sent, sender } = fakeSender()
     let generateReplyCalls = 0
 
-    const worker = createConversationWorker({
+    const processor = createPassiveMentionProcessor({
       getMessage: async () => makeStoredMessage(event, '@bot 你好'),
       resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
       generateReply: async () => {
@@ -233,9 +233,32 @@ describe('conversation worker', () => {
       compactor: fakeCompactor(),
     })
 
-    await worker.run(makeBatch([event]))
+    await processor.run(makeBatch([event]))
 
     assert.equal(generateReplyCalls, 0)
     assert.deepEqual(sent, [{ groupId: 1, replyToMessageId: 41, mentionUserId: 20, text: '已存文本' }])
+  })
+
+  test('notifies when assistant turn is sent', async () => {
+    const event = makeEvent({ messageId: 51, senderId: 20, createdAt: 1 })
+    const { sender } = fakeSender()
+    const deliveredTurns: number[] = []
+
+    const processor = createPassiveMentionProcessor({
+      getMessage: async () => makeStoredMessage(event, '@bot 你好'),
+      resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
+      generateReply: async () => '你好',
+      sender,
+      assistantTurnStore: fakeAssistantTurnStore(),
+      conversationStateStore: fakeConversationStateStore(),
+      compactor: fakeCompactor(),
+      onAssistantTurnSent: async (turn) => {
+        deliveredTurns.push(turn.incorporatedMessageRowId)
+      },
+    })
+
+    await processor.run(makeBatch([event]))
+
+    assert.deepEqual(deliveredTurns, [51])
   })
 })

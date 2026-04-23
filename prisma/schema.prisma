@@ -96,3 +96,18 @@ model AssistantTurn {
   @@index([groupId, senderThreadKey, updatedAt(sort: Desc)])
   @@map("assistant_turns")
 }
+
+model RootRuntimeSnapshot {
+  id                   Int      @id @default(autoincrement())
+  runtimeKey           String   @unique @map("runtime_key") @db.VarChar(191)
+  groupId              BigInt   @map("group_id")
+  schemaVersion        Int      @map("schema_version")
+  contextSnapshot      Json     @map("context_snapshot")
+  sessionSnapshot      Json     @map("session_snapshot")
+  lastObservedMessageRowId Int? @map("last_observed_message_row_id")
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([groupId, updatedAt(sort: Desc)])
+  @@map("root_runtime_snapshots")
+}

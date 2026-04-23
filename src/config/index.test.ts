@@ -67,6 +67,24 @@ describe('config', () => {
 
     assert.deepEqual(config.llm.scenarios.describeImage, { streamMode: 'off' })
     assert.deepEqual(config.llm.scenarios.describeVideo, {})
+    assert.equal(config.botReplyDryRun, false)
+    assert.equal(config.botProactiveDryRun, false)
+  })
+
+  test('parses BOT_REPLY_DRY_RUN and BOT_PROACTIVE_DRY_RUN as separate switches', () => {
+    const enabled = parseConfig(createBaseEnv({
+      BOT_REPLY_DRY_RUN: 'true',
+      BOT_PROACTIVE_DRY_RUN: 'true',
+    }))
+    const disabled = parseConfig(createBaseEnv({
+      BOT_REPLY_DRY_RUN: 'false',
+      BOT_PROACTIVE_DRY_RUN: 'false',
+    }))
+
+    assert.equal(enabled.botReplyDryRun, true)
+    assert.equal(enabled.botProactiveDryRun, true)
+    assert.equal(disabled.botReplyDryRun, false)
+    assert.equal(disabled.botProactiveDryRun, false)
   })
 
   test('throws when default provider is missing from registry', () => {

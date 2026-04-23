@@ -1,12 +1,12 @@
 import { napcat } from './napcat.js'
 import { parseMessage } from './message-parser.js'
-import { findExistingMessageIds, insertMessage } from '../database/messages.js'
+import { findExistingMessageIds, getMessageById, insertMessage } from '../database/messages.js'
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
 import { persistMediaReferences } from '../media/media-cache.js'
+import type { ParsedSegment } from '../types/message-segments.js'
 import type { TextSegment } from '../types/message-segments.js'
-import type { MentionDispatcher } from '../conversation/dispatcher.js'
-import type { ConversationScheduler } from '../conversation/scheduler.js'
+import type { RootRuntimeManager } from '../runtime/root-runtime.js'
 
 const log = createLogger('BOT')
 
@@ -14,8 +14,55 @@ const BACKFILL_COUNT = 50
 
 interface ProcessMessageOptions {
   dispatchMention?: boolean
-  mentionDispatcher?: MentionDispatcher
-  conversationScheduler?: ConversationScheduler
+  rootRuntime?: RootRuntimeManager
+}
+
+type FinalizePersistedMessageOptions = {
+  groupId: number
+  messageId: number
+  senderId: number
+  senderNickname: string
+  createdAt: number
+  segments: ParsedSegment[]
+  dispatchMention?: boolean
+  rootRuntime?: RootRuntimeManager
+  loadPersistedMessage?: typeof getMessageById
+}
+
+export async function finalizePersistedGroupMessage(
+  options: FinalizePersistedMessageOptions,
+): Promise<void> {
+  if (options.dispatchMention !== false) {
+    options.rootRuntime?.dispatchPassiveMentionIfMentioned({
+      groupId: options.groupId,
+      messageId: options.messageId,
+      senderId: options.senderId,
+      createdAt: options.createdAt,
+      segments: options.segments,
+    })
+  }
+
+  const loadPersistedMessage = options.loadPersistedMessage ?? getMessageById
+
+  try {
+    const persistedMessage = await loadPersistedMessage(options.groupId, options.messageId)
+    if (persistedMessage) {
+      await options.rootRuntime?.ingestGroupMessage({
+        groupId: options.groupId,
+        messageRowId: persistedMessage.id,
+        messageId: options.messageId,
+        senderId: options.senderId,
+        senderNickname: options.senderNickname,
+        segments: options.segments,
+        createdAt: persistedMessage.sentAt ?? persistedMessage.createdAt,
+      })
+    }
+  } catch (error) {
+    log.warn(
+      { error, groupId: options.groupId, messageId: options.messageId },
+      'root runtime ingress 失败，降级继续旧回复链',
+    )
+  }
 }
 
 async function processMessage(groupId: number, messageId: number, options: ProcessMessageOptions = {}): Promise<void> {
@@ -48,15 +95,16 @@ async function processMessage(groupId: number, messageId: number, options: Proce
     sentAt: parsed.time,
   })
 
-  if (options.dispatchMention !== false) {
-    options.mentionDispatcher?.dispatchIfMentioned({
-      groupId,
-      messageId: parsed.messageId,
-      senderId: parsed.senderId,
-      createdAt: parsed.time * 1000,
-      segments: mediaResult.content,
-    })
-  }
+  await finalizePersistedGroupMessage({
+    groupId,
+    messageId: parsed.messageId,
+    senderId: parsed.senderId,
+    senderNickname: parsed.senderGroupNickname ?? parsed.senderNickname,
+    createdAt: parsed.time * 1000,
+    segments: mediaResult.content,
+    dispatchMention: options.dispatchMention,
+    rootRuntime: options.rootRuntime,
+  })
   const textPreview = mediaResult.content
     .filter((s): s is TextSegment => s.type === 'text')
     .map((s) => s.content)
@@ -74,7 +122,7 @@ async function processMessage(groupId: number, messageId: number, options: Proce
   )
 }
 
-async function backfillGroupMessages(groupId: number): Promise<void> {
+async function backfillGroupMessages(groupId: number, options: ProcessMessageOptions = {}): Promise<void> {
   const { messages } = await napcat.get_group_msg_history({
     group_id: groupId,
     count: BACKFILL_COUNT,
@@ -86,7 +134,10 @@ async function backfillGroupMessages(groupId: number): Promise<void> {
   for (const msg of messages) {
     if (existingIds.has(msg.message_id)) continue
     try {
-      await processMessage(groupId, msg.message_id, { dispatchMention: false })
+      await processMessage(groupId, msg.message_id, {
+        ...options,
+        dispatchMention: false,
+      })
     } catch (error) {
       log.warn({ error, groupId, msgId: msg.message_id }, '补拉消息处理失败，跳过')
     }
@@ -119,8 +170,7 @@ async function resolveGroupName(context: { group_id: number; group_name?: string
 }
 
 export interface StartBotOptions {
-  mentionDispatcher?: MentionDispatcher
-  conversationScheduler?: ConversationScheduler
+  rootRuntime?: RootRuntimeManager
 }
 
 export async function startBot(options: StartBotOptions = {}): Promise<void> {
@@ -140,7 +190,9 @@ export async function startBot(options: StartBotOptions = {}): Promise<void> {
     if (ctx.sub_type === 'connect') {
       log.info('NapCat 连接成功')
       for (const groupId of config.groupIds) {
-        backfillGroupMessages(groupId).catch((error) => {
+        backfillGroupMessages(groupId, {
+          rootRuntime: options.rootRuntime,
+        }).catch((error) => {
           log.error({ error, groupId }, '群历史消息补拉失败')
         })
       }
@@ -157,8 +209,7 @@ export async function startBot(options: StartBotOptions = {}): Promise<void> {
     try {
       await processMessage(context.group_id, context.message_id, {
         dispatchMention: true,
-        mentionDispatcher: options.mentionDispatcher,
-        conversationScheduler: options.conversationScheduler,
+        rootRuntime: options.rootRuntime,
       })
     } catch (error) {
       log.error({ error, group: context.group_id, msgId: context.message_id }, '处理群消息失败')

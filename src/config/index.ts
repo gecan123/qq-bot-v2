@@ -37,6 +37,12 @@ function requireEnv(env: EnvSource, name: string): string {
   return value
 }
 
+function parseBoolean(value: string | undefined, defaultValue = false): boolean {
+  if (value == null) return defaultValue
+  const normalized = value.trim().toLowerCase()
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
+}
+
 function parseProviderConfigs(env: EnvSource): Record<string, ProviderConfig> {
   const providers: Record<string, Partial<ProviderConfig>> = {}
 
@@ -142,6 +148,8 @@ export function parseConfig(env: EnvSource) {
     },
     groupIds: requireEnv(env, 'GROUP_IDS').split(',').map(Number),
     selfNumber: Number(requireEnv(env, 'SELF_NUMBER')),
+    botReplyDryRun: parseBoolean(env.BOT_REPLY_DRY_RUN, false),
+    botProactiveDryRun: parseBoolean(env.BOT_PROACTIVE_DRY_RUN, false),
     nodeEnv: env.NODE_ENV || 'development',
     replyMediaTimeoutMs: Number(env.REPLY_MEDIA_TIMEOUT_MS ?? '15000'),
     jobInterDelayMs: Number(env.JOB_INTER_DELAY_MS ?? '200'),

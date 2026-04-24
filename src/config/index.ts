@@ -43,6 +43,13 @@ function parseBoolean(value: string | undefined, defaultValue = false): boolean 
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
 }
 
+function parseProbability(value: string | undefined, defaultValue: number): number {
+  if (value == null || value.trim() === '') return defaultValue
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return defaultValue
+  return Math.max(0, Math.min(1, parsed))
+}
+
 function parseProviderConfigs(env: EnvSource): Record<string, ProviderConfig> {
   const providers: Record<string, Partial<ProviderConfig>> = {}
 
@@ -150,6 +157,8 @@ export function parseConfig(env: EnvSource) {
     selfNumber: Number(requireEnv(env, 'SELF_NUMBER')),
     botReplyDryRun: parseBoolean(env.BOT_REPLY_DRY_RUN, false),
     botProactiveDryRun: parseBoolean(env.BOT_PROACTIVE_DRY_RUN, false),
+    botAmbientAuditEnabled: parseBoolean(env.BOT_AMBIENT_AUDIT_ENABLED, true),
+    botAmbientReplyBaseProbability: parseProbability(env.BOT_AMBIENT_REPLY_BASE_PROBABILITY, 0.02),
     nodeEnv: env.NODE_ENV || 'development',
     replyMediaTimeoutMs: Number(env.REPLY_MEDIA_TIMEOUT_MS ?? '15000'),
     jobInterDelayMs: Number(env.JOB_INTER_DELAY_MS ?? '200'),

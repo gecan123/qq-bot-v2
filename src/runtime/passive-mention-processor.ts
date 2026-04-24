@@ -1,54 +1,34 @@
 import { getMessageById } from '../database/messages.js'
 import type { Message } from '../generated/prisma/client.js'
-import { createLogger } from '../logger.js'
-import { messageSender, type MessageSender } from '../messaging/message-sender.js'
-import { resolveMessage } from '../media/message-resolver.js'
-import type { IncomingMessage } from '../responder/pipeline.js'
-import { generateMentionReply } from '../responder/reply-generator.js'
-import type { ParsedSegment } from '../types/message-segments.js'
 import type { ConversationWorkerResult, GroupConversationBatch, MentionEvent } from '../conversation/types.js'
 import { toSenderReplyScopeKey } from '../conversation/reply-scope.js'
-import {
-  createOrReuseReplyRecord,
-  findReplyRecordByReplyIntentId,
-  markReplyRecordAcked,
-  markReplyRecordFailed,
-  markReplyRecordSending,
-  markReplyRecordSent,
-  type ReplyRecord,
-} from '../conversation/reply-record-store.js'
-import { createReplyAudit } from '../conversation/reply-audit-store.js'
-import { deliverReplyRecord } from '../conversation/reply-record-delivery.js'
 import { compactConversationIfNeeded } from '../conversation/compaction.js'
-import { makeGroupRuntimeKey, makeMentionReplyIntentId } from './types.js'
+import { messageSender } from '../messaging/message-sender.js'
+import { createLogger } from '../logger.js'
+import { resolveMessage } from '../media/message-resolver.js'
+import type { ParsedSegment } from '../types/message-segments.js'
+import type { IncomingMessage } from '../responder/pipeline.js'
+import { createReplyExecutor, type ReplyExecutor, type ReplyExecutorOptions } from './reply-executor.js'
+import { makeMentionReplyIntentId, makeGroupRuntimeKey, makeSceneId } from './types.js'
+import type { ReplyRecord } from '../conversation/reply-record-store.js'
 
 type StoredConversationMessage = NonNullable<Awaited<ReturnType<typeof getMessageById>>>
+
 const log = createLogger('PASSIVE_RUNTIME')
 
 export interface PassiveMentionProcessor {
   run(batch: GroupConversationBatch): Promise<ConversationWorkerResult>
 }
 
-export interface PassiveMentionProcessorOptions {
+export interface PassiveMentionProcessorOptions extends ReplyExecutorOptions {
+  maxSenderThreadsPerRun?: number
   getMessage?: (groupId: number, messageId: number) => Promise<StoredConversationMessage | null>
   resolveSegments?: (message: StoredConversationMessage) => Promise<ParsedSegment[]>
-  generateReply?: (message: IncomingMessage) => Promise<string | null>
-  sender?: MessageSender
-  replyRecordStore?: {
-    findByReplyIntentId: typeof findReplyRecordByReplyIntentId
-    createOrReuse: typeof createOrReuseReplyRecord
-    markAcked: typeof markReplyRecordAcked
-    markSending: typeof markReplyRecordSending
-    markSent: typeof markReplyRecordSent
-    markFailed: typeof markReplyRecordFailed
-  }
-  replyAuditStore?: {
-    create: typeof createReplyAudit
-  }
+  onReplyRecordSent?: (record: ReplyRecord) => Promise<void>
   compactor?: typeof compactConversationIfNeeded
-  maxSenderThreadsPerRun?: number
-  onReplyRecordSent?: (record: ReplyRecord) => Promise<void> | void
+  executor?: ReplyExecutor
 }
+
 
 interface SenderThread {
   senderId: number
@@ -80,15 +60,6 @@ function getFirstEvent(events: MentionEvent[]): MentionEvent {
 
 function getLastEvent(events: MentionEvent[]): MentionEvent {
   return events[events.length - 1] as MentionEvent
-}
-
-function makeLegacyMentionReplyIntentId(
-  runtimeKey: string,
-  scopeKey: string,
-  triggerMessageRowId: number,
-  incorporatedMessageRowId: number,
-): string {
-  return `${runtimeKey}:${scopeKey}:${triggerMessageRowId}:${incorporatedMessageRowId}`
 }
 
 async function loadIncomingMessage(
@@ -124,20 +95,21 @@ export function createPassiveMentionProcessor(
   const maxSenderThreadsPerRun = options.maxSenderThreadsPerRun ?? 2
   const getMessage = options.getMessage ?? defaultGetMessage
   const resolveSegments = options.resolveSegments ?? defaultResolveSegments
-  const generateReply = options.generateReply ?? generateMentionReply
   const sender = options.sender ?? messageSender
-  const replyRecordStore = options.replyRecordStore ?? {
-    findByReplyIntentId: findReplyRecordByReplyIntentId,
-    createOrReuse: createOrReuseReplyRecord,
-    markAcked: markReplyRecordAcked,
-    markSending: markReplyRecordSending,
-    markSent: markReplyRecordSent,
-    markFailed: markReplyRecordFailed,
-  }
-  const replyAuditStore = options.replyAuditStore ?? {
-    create: createReplyAudit,
-  }
   const compactor = options.compactor ?? compactConversationIfNeeded
+  const executor = options.executor ?? createReplyExecutor({
+    ...options,
+    buildIncomingMessage: async (opportunity) => {
+      const event = {
+        groupId: opportunity.groupId,
+        messageId: opportunity.incorporatedMessageId,
+        senderId: opportunity.triggerSenderId,
+        createdAt: opportunity.createdAt.getTime(),
+      }
+      return loadIncomingMessage(event, { getMessage, resolveSegments })
+    },
+    sender,
+  })
 
   return {
     async run(batch) {
@@ -156,14 +128,8 @@ export function createPassiveMentionProcessor(
           getMessage(batch.groupId, replyTarget.messageId),
           getMessage(batch.groupId, latestEvent.messageId),
         ])
-        const message = latestStored
-          ? await loadIncomingMessage(latestEvent, {
-              getMessage: async () => latestStored,
-              resolveSegments,
-            })
-          : null
 
-        if (!message || !replyTargetStored || !latestStored) {
+        if (!replyTargetStored || !latestStored) {
           log.warn(
             { groupId: batch.groupId, messageId: latestEvent.messageId, senderId: thread.senderId },
             '被动 runtime 消息不存在，跳过本轮回复',
@@ -173,75 +139,30 @@ export function createPassiveMentionProcessor(
 
         const scopeKey = toSenderReplyScopeKey(thread.senderId)
         const runtimeKey = makeGroupRuntimeKey(batch.groupId)
-        const replyIntentId = makeMentionReplyIntentId(batch.groupId, replyTargetStored.id)
-        const legacyReplyIntentId = makeLegacyMentionReplyIntentId(
-          runtimeKey,
-          scopeKey,
-          replyTargetStored.id,
-          latestStored.id,
-        )
-        const existingRecord =
-          (await replyRecordStore.findByReplyIntentId(runtimeKey, replyIntentId)) ??
-          (legacyReplyIntentId === replyIntentId
-            ? null
-            : await replyRecordStore.findByReplyIntentId(runtimeKey, legacyReplyIntentId))
-        const reply = existingRecord?.text ?? await generateReply(message)
-        if (!reply) {
-          log.warn(
-            { groupId: batch.groupId, messageId: latestEvent.messageId, senderId: thread.senderId },
-            '被动 runtime 未生成正式回复',
-          )
-          continue
-        }
-
-        const shouldDryRun = sender.isReplyDryRunEnabled?.() ?? false
-        const replyRecord = await replyRecordStore.createOrReuse({
+        const result = await executor.execute({
+          opportunityId: makeMentionReplyIntentId(batch.groupId, replyTargetStored.id),
           runtimeKey,
           groupId: batch.groupId,
+          sceneId: makeSceneId(batch.groupId),
           scopeKey,
-          replyIntentId: existingRecord?.replyIntentId ?? replyIntentId,
           sourceKind: 'mention',
+          cueStrength: 'strong',
+          mustReplyOverride: true,
+          replyProbability: 1,
+          anchorMessageRowId: replyTargetStored.id,
           triggerMessageRowId: replyTargetStored.id,
+          triggerMessageId: Number(replyTargetStored.messageId),
+          triggerSenderId: thread.senderId,
           incorporatedMessageRowId: latestStored.id,
-          deliveryPayload: {
-            type: 'reply_to_message',
-            replyToMessageId: Number(replyTargetStored.messageId),
-            mentionUserId: thread.senderId,
-          },
-          text: reply,
-          executionState: shouldDryRun ? 'dry_run' : 'pending',
+          incorporatedMessageId: Number(latestStored.messageId),
+          deliveryMode: 'reply_to_message',
+          dryRun: sender.isReplyDryRunEnabled?.() ?? false,
+          reason: 'direct @self mention batched by passive mailbox',
+          createdAt: new Date(latestEvent.createdAt),
         })
 
-        if (replyRecord.executionState === 'sent') {
-          await options.onReplyRecordSent?.(replyRecord)
-          continue
-        }
-
-        if (replyRecord.executionState === 'dry_run') {
-          await replyAuditStore.create({
-            replyRecordId: replyRecord.id,
-            runtimeKey: replyRecord.runtimeKey,
-            groupId: replyRecord.groupId,
-            scopeKey: replyRecord.scopeKey,
-            replyIntentId: replyRecord.replyIntentId,
-            auditKind: 'dry_run_intent',
-            payload: {
-              sourceKind: replyRecord.sourceKind,
-              deliveryType: replyRecord.deliveryPayload.type,
-              text: replyRecord.text,
-            },
-          })
-          continue
-        }
-
-        const deliveryResult = await deliverReplyRecord(replyRecord, {
-          sender,
-          replyRecordStore,
-          replyAuditStore,
-        })
-        if (deliveryResult === 'sent') {
+        if (result.deliveryResult === 'sent') {
           await compactor(batch.groupId, scopeKey)
-          await options.onReplyRecordSent?.(replyRecord)
         }
       }
 

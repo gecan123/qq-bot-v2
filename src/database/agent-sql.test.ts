@@ -36,6 +36,12 @@ describe('validateDbReadSql', () => {
     assert.equal(result.ok, false)
     if (!result.ok) assert.match(result.reason, /group filter/i)
   })
+
+  test('rejects reply_audits reads even when group-scoped', () => {
+    const result = validateDbReadSql('select * from reply_audits where group_id = :group_id')
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.match(result.reason, /reply_audits/i)
+  })
 })
 
 describe('compileNamedSql', () => {

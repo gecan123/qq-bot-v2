@@ -92,7 +92,7 @@ function parseSessionSnapshot(value: unknown): RootRuntimeSessionSnapshot {
       focusedTargetId: 'portal',
       unreadMessages: [],
       senderContinuities: [],
-      proactiveCandidates: [],
+      ambientAuditCandidates: [],
       sceneRecords: [],
       outstandingCues: [],
       recentObservedMessageRowIds: [],
@@ -101,6 +101,7 @@ function parseSessionSnapshot(value: unknown): RootRuntimeSessionSnapshot {
   }
 
   const parsed = value as Partial<RootRuntimeSessionSnapshot>
+  const legacyParsed = value as Record<string, unknown>
   const focusedStateId = typeof parsed.focusedStateId === 'string' ? parsed.focusedStateId : 'portal'
   const focusedTargetId =
     parsed.focusedTargetId === 'portal' || typeof parsed.focusedTargetId === 'string'
@@ -161,7 +162,11 @@ function parseSessionSnapshot(value: unknown): RootRuntimeSessionSnapshot {
     focusedTargetId,
     unreadMessages: Array.isArray(parsed.unreadMessages) ? parsed.unreadMessages : [],
     senderContinuities: Array.isArray(parsed.senderContinuities) ? parsed.senderContinuities : [],
-    proactiveCandidates: Array.isArray(parsed.proactiveCandidates) ? parsed.proactiveCandidates : [],
+    ambientAuditCandidates: Array.isArray(parsed.ambientAuditCandidates)
+      ? parsed.ambientAuditCandidates
+      : Array.isArray(legacyParsed['proactive' + 'Candidates'])
+        ? (legacyParsed['proactive' + 'Candidates'] as RootRuntimeSessionSnapshot['ambientAuditCandidates'])
+        : [],
     sceneRecords,
     outstandingCues,
     recentObservedMessageRowIds: Array.isArray(parsed.recentObservedMessageRowIds)

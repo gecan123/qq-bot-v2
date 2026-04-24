@@ -31,6 +31,8 @@ export interface DbReadResult {
 const DANGEROUS_SQL_KEYWORDS = /\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|vacuum|analyze|refresh|merge|call|do|copy)\b/i
 const GROUP_PARAM_RE = /(^|[^a-zA-Z0-9_]):group_id\b/
 const GROUP_FILTER_RE = /\b(?:[a-zA-Z_][a-zA-Z0-9_]*\.)?group_id\s*=\s*:group_id\b/i
+const REPLY_AUDITS_TABLE_RE = /\breply_audits\b/i
+const REPLY_AUDITS_RE = /\breply_audits\b/i
 
 function normalizeSql(sql: string): string {
   return sql.replace(/;+\s*$/, '').trim()
@@ -52,6 +54,14 @@ export function validateDbReadSql(sql: string): SqlValidationResult {
 
   if (DANGEROUS_SQL_KEYWORDS.test(normalizedSql)) {
     return { ok: false, reason: 'SQL contains disallowed keyword for read-only execution' }
+  }
+
+  if (REPLY_AUDITS_TABLE_RE.test(normalizedSql)) {
+    return { ok: false, reason: 'reply_audits is not exposed to agent SQL reads' }
+  }
+
+  if (REPLY_AUDITS_RE.test(normalizedSql)) {
+    return { ok: false, reason: 'reply_audits is not available to agent db_read' }
   }
 
   if (!GROUP_PARAM_RE.test(normalizedSql)) {

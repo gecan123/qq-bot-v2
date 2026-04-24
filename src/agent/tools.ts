@@ -114,10 +114,6 @@ function buildDbSchemaPayload() {
           'updated_at',
         ],
       },
-      {
-        name: 'reply_audits',
-        columns: ['reply_record_id', 'runtime_key', 'group_id', 'scope_key', 'reply_intent_id', 'audit_kind', 'payload', 'created_at'],
-      },
     ],
   }
 }

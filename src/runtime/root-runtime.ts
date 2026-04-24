@@ -3,6 +3,9 @@ import { createLogger } from '../logger.js'
 import { createGroupMailbox, type GroupMailbox } from '../conversation/group-mailbox.js'
 import { toSenderThreadKey } from '../conversation/thread-key.js'
 import type { ConversationWorkerResult, GroupConversationBatch, MentionEvent } from '../conversation/types.js'
+import { toSenderReplyScopeKey } from '../conversation/reply-scope.js'
+import { createReplyExecutor, type ReplyExecutor } from './reply-executor.js'
+import type { ReplyOpportunity } from './reply-decision-types.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
 import {
   createDefaultRootRuntimeSnapshot,
@@ -26,6 +29,23 @@ import {
 
 const log = createLogger('ROOT_RUNTIME')
 const ROOT_RUNTIME_CONTEXT_MESSAGE_LIMIT = 200
+const DEFAULT_AMBIENT_REPLY_BASE_PROBABILITY = 0.02
+
+function clampProbability(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(1, value))
+}
+
+function scoreAmbientReplyProbability(input: { segments: ParsedSegment[]; baseProbability: number }): number {
+  const text = segmentsToPlainText(input.segments).trim()
+  if (!text) return 0
+
+  let score = clampProbability(input.baseProbability)
+  if (/[?？]/.test(text)) score += 0.06
+  if (/(bot|机器人|有人吗|在吗|怎么|为什么|咋|求助|帮忙)/i.test(text)) score += 0.04
+  if (text.length >= 80) score += 0.02
+  return clampProbability(score)
+}
 
 export interface PersistedGroupMessageIngress {
   groupId: number
@@ -67,6 +87,9 @@ export interface RootRuntimeManagerOptions {
   senderContinuityLimit?: number
   passiveMergeWindowMs?: number
   passiveWorker?: (batch: GroupConversationBatch) => Promise<ConversationWorkerResult | void>
+  replyExecutor?: ReplyExecutor
+  ambientAuditEnabled?: boolean
+  ambientReplyBaseProbability?: number
   now?: () => Date
   snapshotStore?: {
     listByGroupIds: typeof listRootRuntimeSnapshotsByGroupIds
@@ -164,6 +187,10 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
   const senderContinuityLimit = options.senderContinuityLimit ?? DEFAULT_ROOT_RUNTIME_SENDER_CONTINUITY_LIMIT
   const passiveMergeWindowMs = options.passiveMergeWindowMs ?? 1_000
   const now = options.now ?? (() => new Date())
+  const ambientDecisionEnabled = options.ambientAuditEnabled !== false && Boolean(options.replyExecutor)
+  const liveMentionDecisionEnabled = Boolean(options.replyExecutor)
+  const ambientReplyBaseProbability = options.ambientReplyBaseProbability ?? DEFAULT_AMBIENT_REPLY_BASE_PROBABILITY
+  const replyExecutor = options.replyExecutor ?? createReplyExecutor()
   const snapshotStore = options.snapshotStore ?? {
     listByGroupIds: listRootRuntimeSnapshotsByGroupIds,
     upsert: upsertRootRuntimeSnapshot,
@@ -372,10 +399,61 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       const persisted = await snapshotStore.upsert(nextSnapshotInput)
       snapshots.set(input.groupId, persisted)
 
-      if (passiveDispatchEnabled && mentionedSelf) {
+      const opportunity: ReplyOpportunity = mentionedSelf
+        ? {
+            opportunityId: `qq_group:${input.groupId}:message:${input.messageRowId}:mention`,
+            runtimeKey: current.runtimeKey,
+            groupId: input.groupId,
+            sceneId,
+            scopeKey: toSenderReplyScopeKey(input.senderId),
+            sourceKind: 'mention',
+            cueStrength: 'strong',
+            mustReplyOverride: true,
+            replyProbability: 1,
+            anchorMessageRowId: input.messageRowId,
+            triggerMessageRowId: input.messageRowId,
+            triggerMessageId: input.messageId,
+            triggerSenderId: input.senderId,
+            incorporatedMessageRowId: input.messageRowId,
+            incorporatedMessageId: input.messageId,
+            deliveryMode: 'reply_to_message',
+            dryRun: false,
+            reason: '@self strong anchored opportunity',
+            createdAt: input.createdAt,
+          }
+        : {
+            opportunityId: `qq_group:${input.groupId}:message:${input.messageRowId}:ambient`,
+            runtimeKey: current.runtimeKey,
+            groupId: input.groupId,
+            sceneId,
+            scopeKey: sceneId,
+            sourceKind: 'ambient_message',
+            cueStrength: 'weak',
+            mustReplyOverride: false,
+            replyProbability: scoreAmbientReplyProbability({
+              segments: input.segments,
+              baseProbability: ambientReplyBaseProbability,
+            }),
+            triggerMessageRowId: input.messageRowId,
+            triggerMessageId: input.messageId,
+            triggerSenderId: input.senderId,
+            incorporatedMessageRowId: input.messageRowId,
+            incorporatedMessageId: input.messageId,
+            deliveryMode: 'audit_only',
+            dryRun: true,
+            reason: 'ambient group message baseline weak opportunity; audit-only',
+            createdAt: input.createdAt,
+          }
+
+      if (mentionedSelf && liveMentionDecisionEnabled) {
+        await replyExecutor.execute(opportunity)
+      } else if (!mentionedSelf && ambientDecisionEnabled) {
+        await replyExecutor.execute(opportunity)
+      } else if (passiveDispatchEnabled && mentionedSelf) {
         getMailbox(input.groupId).addMention({
           groupId: input.groupId,
           messageId: input.messageId,
+          messageRowId: input.messageRowId,
           senderId: input.senderId,
           createdAt: input.createdAt.getTime(),
         })
@@ -436,6 +514,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
           getMailbox(groupId).addMention({
             groupId,
             messageId: message.messageId,
+            messageRowId: message.messageRowId,
             senderId: message.senderId,
             createdAt: new Date(message.createdAt).getTime(),
           })

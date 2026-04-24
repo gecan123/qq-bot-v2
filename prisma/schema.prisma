@@ -127,11 +127,13 @@ model ReplyAudit {
   groupId       BigInt   @map("group_id")
   scopeKey      String   @map("scope_key") @db.VarChar(191)
   replyIntentId String   @map("reply_intent_id") @db.VarChar(191)
+  opportunityId String   @default("") @map("opportunity_id") @db.VarChar(191)
   auditKind     String   @map("audit_kind") @db.VarChar(32)
   payload       Json     @map("payload")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@index([groupId, scopeKey, createdAt(sort: Desc)])
+  @@unique([runtimeKey, opportunityId, auditKind])
   @@index([replyRecordId, auditKind])
   @@map("reply_audits")
 }

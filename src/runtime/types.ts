@@ -52,7 +52,7 @@ export interface RuntimeSenderContinuity {
   updatedAt: string
 }
 
-export interface RuntimeProactiveCandidate {
+export interface RuntimeAmbientAuditCandidate {
   id: string
   createdAt: string
   text: string
@@ -78,7 +78,7 @@ export interface RootRuntimeSessionSnapshot {
   focusedTargetId?: FocusTargetId
   unreadMessages: RuntimeUnreadMessage[]
   senderContinuities: RuntimeSenderContinuity[]
-  proactiveCandidates: RuntimeProactiveCandidate[]
+  ambientAuditCandidates: RuntimeAmbientAuditCandidate[]
   sceneRecords?: RuntimeSceneRecord[]
   outstandingCues?: RuntimeCue[]
   recentObservedMessageRowIds: number[]
@@ -138,7 +138,7 @@ export function createDefaultRootRuntimeSnapshot(groupId: number): CreateRootRun
       focusedTargetId: sceneId,
       unreadMessages: [],
       senderContinuities: [],
-      proactiveCandidates: [],
+      ambientAuditCandidates: [],
       sceneRecords: [
         {
           sceneId,

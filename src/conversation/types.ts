@@ -1,6 +1,7 @@
 export interface MentionEvent {
   groupId: number
   messageId: number
+  messageRowId?: number
   senderId: number
   createdAt: number
 }

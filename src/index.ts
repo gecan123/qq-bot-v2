@@ -12,6 +12,8 @@ import { handlePlaygroundReplay, handlePlaygroundRun, handleReplayTraceGet } fro
 import { handleMediaReanalyze } from './server/media-reanalyze.js'
 import { createRootRuntimeManager } from './runtime/root-runtime.js'
 import { createPassiveMentionProcessor } from './runtime/passive-mention-processor.js'
+import { createReplyDecisionEngine } from './runtime/reply-decision-engine.js'
+import { createReplyExecutor } from './runtime/reply-executor.js'
 import { getGroupMessagesAfterRowId, getLatestGroupMessageRowId } from './database/messages.js'
 import { getMessageTimestamp } from './utils/message-time.js'
 import type { ParsedSegment } from './types/message-segments.js'
@@ -226,7 +228,10 @@ async function main() {
   httpServer = startHttpServer(apiPort)
 
   jobQueue.start()
-  const passiveMentionProcessor = createPassiveMentionProcessor({
+  const replyDecisionEngine = createReplyDecisionEngine({
+    ambientAuditEnabled: config.botAmbientAuditEnabled,
+  })
+  const replyExecutor = createReplyExecutor({
     onReplyRecordSent: async (record) => {
       const senderId = resolveReplyRecordSenderId(record)
       if (senderId != null && record.incorporatedMessageRowId != null) {
@@ -239,9 +244,16 @@ async function main() {
       }
     },
   })
+  const passiveMentionProcessor = createPassiveMentionProcessor({
+    decisionEngine: replyDecisionEngine,
+    executor: replyExecutor,
+  })
   rootRuntime = createRootRuntimeManager({
     selfNumber: config.selfNumber,
     passiveWorker: (batch) => passiveMentionProcessor.run(batch),
+    replyExecutor,
+    ambientAuditEnabled: config.botAmbientAuditEnabled,
+    ambientReplyBaseProbability: config.botAmbientReplyBaseProbability,
   })
   const restoreResult = await rootRuntime.restore(config.groupIds)
   log.info(restoreResult, 'Root runtime restored')

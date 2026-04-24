@@ -6,6 +6,7 @@ export interface CreateReplyAuditInput {
   groupId: number
   scopeKey: string
   replyIntentId: string
+  opportunityId?: string
   auditKind: string
   payload: unknown
 }
@@ -41,7 +42,12 @@ function sanitizeJsonValue(value: unknown): unknown {
   return String(value)
 }
 
+function resolveOpportunityId(input: CreateReplyAuditInput): string {
+  return input.opportunityId ?? input.replyIntentId
+}
+
 export async function createReplyAudit(input: CreateReplyAuditInput): Promise<void> {
+  const opportunityId = resolveOpportunityId(input)
   await prisma.replyAudit.create({
     data: {
       replyRecordId: input.replyRecordId ?? null,
@@ -49,7 +55,39 @@ export async function createReplyAudit(input: CreateReplyAuditInput): Promise<vo
       groupId: BigInt(input.groupId),
       scopeKey: input.scopeKey,
       replyIntentId: input.replyIntentId,
+      opportunityId,
       auditKind: input.auditKind,
+      payload: sanitizeJsonValue(input.payload) as object,
+    },
+  })
+}
+
+export async function createOrReuseReplyAudit(input: CreateReplyAuditInput): Promise<void> {
+  const opportunityId = resolveOpportunityId(input)
+
+  await prisma.replyAudit.upsert({
+    where: {
+      runtimeKey_opportunityId_auditKind: {
+        runtimeKey: input.runtimeKey,
+        opportunityId,
+        auditKind: input.auditKind,
+      },
+    },
+    create: {
+      replyRecordId: input.replyRecordId ?? null,
+      runtimeKey: input.runtimeKey,
+      groupId: BigInt(input.groupId),
+      scopeKey: input.scopeKey,
+      replyIntentId: input.replyIntentId,
+      opportunityId,
+      auditKind: input.auditKind,
+      payload: sanitizeJsonValue(input.payload) as object,
+    },
+    update: {
+      replyRecordId: input.replyRecordId ?? null,
+      groupId: BigInt(input.groupId),
+      scopeKey: input.scopeKey,
+      replyIntentId: input.replyIntentId,
       payload: sanitizeJsonValue(input.payload) as object,
     },
   })

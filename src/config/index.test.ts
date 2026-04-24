@@ -69,6 +69,8 @@ describe('config', () => {
     assert.deepEqual(config.llm.scenarios.describeVideo, {})
     assert.equal(config.botReplyDryRun, false)
     assert.equal(config.botProactiveDryRun, false)
+    assert.equal(config.botAmbientAuditEnabled, true)
+    assert.equal(config.botAmbientReplyBaseProbability, 0.02)
   })
 
   test('parses BOT_REPLY_DRY_RUN and BOT_PROACTIVE_DRY_RUN as separate switches', () => {
@@ -85,6 +87,20 @@ describe('config', () => {
     assert.equal(enabled.botProactiveDryRun, true)
     assert.equal(disabled.botReplyDryRun, false)
     assert.equal(disabled.botProactiveDryRun, false)
+  })
+
+  test('parses ambient audit switches and clamps probability', () => {
+    const disabled = parseConfig(createBaseEnv({
+      BOT_AMBIENT_AUDIT_ENABLED: 'false',
+      BOT_AMBIENT_REPLY_BASE_PROBABILITY: '2',
+    }))
+    const invalid = parseConfig(createBaseEnv({
+      BOT_AMBIENT_REPLY_BASE_PROBABILITY: 'not-a-number',
+    }))
+
+    assert.equal(disabled.botAmbientAuditEnabled, false)
+    assert.equal(disabled.botAmbientReplyBaseProbability, 1)
+    assert.equal(invalid.botAmbientReplyBaseProbability, 0.02)
   })
 
   test('throws when default provider is missing from registry', () => {

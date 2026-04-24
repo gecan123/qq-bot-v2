@@ -34,7 +34,7 @@ describe('root runtime manager', () => {
           stateStack: ['qq_group:1'],
           unreadMessages: [],
           senderContinuities: [],
-          proactiveCandidates: [],
+          ambientAuditCandidates: [],
           recentObservedMessageRowIds: [],
           lastWakeAt: null,
         },
@@ -192,7 +192,7 @@ describe('root runtime manager', () => {
               stateStack: ['qq_group:1'],
               unreadMessages: [],
               senderContinuities: [],
-              proactiveCandidates: [],
+              ambientAuditCandidates: [],
               recentObservedMessageRowIds: [9, 10],
               lastWakeAt: null,
             },
@@ -245,7 +245,7 @@ describe('root runtime manager', () => {
               stateStack: ['qq_group:1'],
               unreadMessages: [],
               senderContinuities: [],
-              proactiveCandidates: [],
+              ambientAuditCandidates: [],
               recentObservedMessageRowIds: [],
               lastWakeAt: null,
             },
@@ -286,7 +286,7 @@ describe('root runtime manager', () => {
               stateStack: ['qq_group:1'],
               unreadMessages: [],
               senderContinuities: [],
-              proactiveCandidates: [],
+              ambientAuditCandidates: [],
               recentObservedMessageRowIds: [8],
               lastWakeAt: null,
             },
@@ -555,7 +555,7 @@ describe('root runtime manager', () => {
                   updatedAt: '2026-04-22T00:00:01.000Z',
                 },
               ],
-              proactiveCandidates: [],
+              ambientAuditCandidates: [],
               recentObservedMessageRowIds: [11, 12, 13],
               lastWakeAt: null,
             },
@@ -680,7 +680,7 @@ describe('root runtime manager', () => {
                   updatedAt: '2026-04-22T00:00:00.000Z',
                 },
               ],
-              proactiveCandidates: [],
+              ambientAuditCandidates: [],
               recentObservedMessageRowIds: [11],
               lastWakeAt: null,
             },
@@ -769,7 +769,7 @@ describe('root runtime manager', () => {
                 },
               ],
               senderContinuities: [],
-              proactiveCandidates: [],
+              ambientAuditCandidates: [],
               recentObservedMessageRowIds: [10, 11, 12],
               lastWakeAt: null,
             },
@@ -792,5 +792,155 @@ describe('root runtime manager', () => {
       manager.getSnapshot(1)?.sessionSnapshot.unreadMessages.map((message) => message.messageRowId),
       [12],
     )
+  })
+
+
+  test('executes live @self opportunities directly when unified executor is provided', async () => {
+    const opportunities: string[] = []
+    const batches: Array<{ groupId: number; messageIds: number[] }> = []
+    const manager = createRootRuntimeManager({
+      selfNumber: 999,
+      passiveMergeWindowMs: 1,
+      passiveWorker: async (batch) => {
+        batches.push({ groupId: batch.groupId, messageIds: batch.events.map((event) => event.messageId) })
+        return { leftoverEvents: [] }
+      },
+      replyExecutor: {
+        async execute(opportunity) {
+          opportunities.push(`${opportunity.sourceKind}:${opportunity.opportunityId}:${opportunity.deliveryMode}`)
+          return {
+            decision: {
+              opportunity,
+              outcome: 'sendable_reply',
+              policy: {
+                shouldGenerate: true,
+                shouldCreateReplyRecord: true,
+                shouldDeliver: true,
+                shouldAudit: false,
+                reason: opportunity.reason,
+              },
+              deliveryMode: opportunity.deliveryMode,
+              dryRun: false,
+              reason: opportunity.reason,
+            },
+            deliveryResult: 'skipped',
+          }
+        },
+      },
+      snapshotStore: {
+        listByGroupIds: async () => [],
+        upsert: async (input) => makeSnapshotRecord(input),
+      },
+    })
+
+    manager.startPassiveExecution()
+    await manager.ingestGroupMessage({
+      groupId: 1,
+      messageRowId: 42,
+      messageId: 10042,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'at', targetId: '999' }],
+      createdAt: new Date('2026-04-22T00:00:00Z'),
+    })
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    manager.stopPassiveExecution()
+
+    assert.deepEqual(opportunities, ['mention:qq_group:1:message:42:mention:reply_to_message'])
+    assert.deepEqual(batches, [])
+  })
+
+  test('scores ambient reply probability from configured baseline and message shape', async () => {
+    const probabilities: number[] = []
+    const manager = createRootRuntimeManager({
+      selfNumber: 999,
+      ambientAuditEnabled: true,
+      ambientReplyBaseProbability: 0.1,
+      replyExecutor: {
+        async execute(opportunity) {
+          probabilities.push(opportunity.replyProbability)
+          return {
+            decision: {
+              opportunity,
+              outcome: 'opportunity_detected',
+              policy: {
+                shouldGenerate: false,
+                shouldCreateReplyRecord: false,
+                shouldDeliver: false,
+                shouldAudit: true,
+                reason: opportunity.reason,
+              },
+              deliveryMode: opportunity.deliveryMode,
+              dryRun: true,
+              reason: opportunity.reason,
+            },
+            deliveryResult: 'skipped',
+          }
+        },
+      },
+      snapshotStore: {
+        listByGroupIds: async () => [],
+        upsert: async (input) => makeSnapshotRecord(input),
+      },
+    })
+
+    await manager.ingestGroupMessage({
+      groupId: 1,
+      messageRowId: 43,
+      messageId: 10043,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'text', content: '有人知道这个怎么处理吗？' }],
+      createdAt: new Date('2026-04-22T00:00:00Z'),
+    })
+
+    assert.equal(probabilities.length, 1)
+    assert.ok((probabilities[0] ?? 0) > 0.1)
+  })
+  test('creates audit-only ambient opportunities for ordinary messages when ambient audit is enabled', async () => {
+    const opportunities: string[] = []
+    const manager = createRootRuntimeManager({
+      selfNumber: 999,
+      ambientAuditEnabled: true,
+      replyExecutor: {
+        async execute(opportunity) {
+          opportunities.push(`${opportunity.sourceKind}:${opportunity.opportunityId}:${opportunity.deliveryMode}`)
+          return {
+            decision: {
+              opportunity,
+              outcome: 'opportunity_detected',
+              policy: {
+                shouldGenerate: false,
+                shouldCreateReplyRecord: false,
+                shouldDeliver: false,
+                shouldAudit: true,
+                auditKind: 'opportunity_detected',
+                reason: opportunity.reason,
+              },
+              deliveryMode: opportunity.deliveryMode,
+              dryRun: true,
+              reason: opportunity.reason,
+            },
+            deliveryResult: 'skipped',
+          }
+        },
+      },
+      snapshotStore: {
+        listByGroupIds: async () => [],
+        upsert: async (input) => makeSnapshotRecord(input),
+      },
+    })
+
+    await manager.ingestGroupMessage({
+      groupId: 1,
+      messageRowId: 42,
+      messageId: 10042,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'text', content: '普通消息' }],
+      createdAt: new Date('2026-04-22T00:00:00Z'),
+    })
+
+    assert.deepEqual(opportunities, ['ambient_message:qq_group:1:message:42:ambient:audit_only'])
   })
 })

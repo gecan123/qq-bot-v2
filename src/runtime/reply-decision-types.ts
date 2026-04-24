@@ -1,0 +1,60 @@
+import type { ReplyRecord } from '../conversation/reply-record-store.js'
+
+export type ReplyOpportunitySourceKind = 'mention' | 'ambient_message'
+export type ReplyCueStrength = 'strong' | 'weak'
+export type ReplyDeliveryMode = 'reply_to_message' | 'send_message' | 'audit_only'
+
+export interface ReplyOpportunity {
+  opportunityId: string
+  runtimeKey: string
+  groupId: number
+  sceneId: string
+  scopeKey: string
+  sourceKind: ReplyOpportunitySourceKind
+  cueStrength: ReplyCueStrength
+  mustReplyOverride: boolean
+  replyProbability: number
+  anchorMessageRowId?: number
+  triggerMessageRowId: number
+  triggerMessageId: number
+  triggerSenderId: number
+  incorporatedMessageRowId: number
+  incorporatedMessageId: number
+  deliveryMode: ReplyDeliveryMode
+  dryRun: boolean
+  reason: string
+  createdAt: Date
+}
+
+export type ReplyDecisionOutcome =
+  | 'sendable_reply'
+  | 'opportunity_detected'
+  | 'policy_suppressed'
+  | 'no_intent'
+  | 'would_reply_dry_run'
+
+export interface ReplyPolicyResult {
+  shouldGenerate: boolean
+  shouldCreateReplyRecord: boolean
+  shouldDeliver: boolean
+  shouldAudit: boolean
+  auditKind?: string
+  reason: string
+}
+
+export interface ReplyDecision {
+  opportunity: ReplyOpportunity
+  outcome: ReplyDecisionOutcome
+  policy: ReplyPolicyResult
+  replyIntentId?: string
+  legacyReplyIntentId?: string
+  deliveryMode: ReplyDeliveryMode
+  dryRun: boolean
+  reason: string
+}
+
+export interface ReplyExecutionResult {
+  decision: ReplyDecision
+  replyRecord?: ReplyRecord
+  deliveryResult?: 'sent' | 'failed' | 'dry_run' | 'skipped'
+}

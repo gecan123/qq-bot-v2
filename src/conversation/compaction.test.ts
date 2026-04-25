@@ -117,8 +117,14 @@ describe('conversation compaction', () => {
           deliveryState: 'sent',
           idempotencyKey: 'intent-1',
           resultPayload: {
-            incorporatedMessageRowId: 2,
-            text: '机器人回复',
+            sourceRefs: {
+              incorporatedMessageRowId: 2,
+              source: 'messages',
+            },
+            proposedEffect: {
+              type: 'reply_to_message',
+              text: '机器人回复',
+            },
           },
           createdAt: new Date('2026-04-21T00:02:30Z'),
           updatedAt: new Date('2026-04-21T00:02:30Z'),

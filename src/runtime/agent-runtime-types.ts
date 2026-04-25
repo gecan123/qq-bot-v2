@@ -6,12 +6,42 @@ export const AGENT_RUNTIME_SNAPSHOT_SCHEMA_VERSION = 1
 export type AgentId = typeof MAIN_AGENT_ID
 export type SceneKind = 'qq_group' | 'qq_private' | 'news_feed' | 'forum' | 'workspace' | 'maintenance'
 export type SceneId = `${SceneKind}:${string}`
-export type RuntimeEventType = 'group_message' | 'scheduler_tick' | 'manual_wake'
-export type QueueKind = 'obligation' | 'social' | 'maintenance'
-export type OpportunityType = 'reply_to_mention' | 'ambient_candidate' | 'maintenance'
-export type ActionType = 'reply_to_message' | 'send_group_reply' | 'send_group_message' | 'artifact_only'
-export type ActionIntentStatus = 'pending' | 'executing' | 'completed' | 'failed' | 'suppressed'
+export type RuntimeEventType =
+  | 'qq_group_message_received'
+  | 'qq_private_message_received'
+  | 'forum_item_seen'
+  | 'news_item_seen'
+  | 'task_due'
+  | 'memory_maintenance_due'
+  | 'self_spine_review_due'
+  | 'scheduler_tick'
+  | 'manual_wake'
+export type QueueKind = 'obligation' | 'social' | 'curiosity' | 'maintenance'
+export type OpportunityType =
+  | 'reply_to_mention'
+  | 'observe_group'
+  | 'proactive_candidate'
+  | 'reply_private_message'
+  | 'read_forum_post'
+  | 'read_news_item'
+  | 'run_task'
+  | 'review_memory_proposal'
+  | 'review_self_spine_update'
+  | 'maintenance'
+export type ActionType =
+  | 'reply_to_message'
+  | 'send_group_reply'
+  | 'send_group_message'
+  | 'send_private_message'
+  | 'read_forum_post'
+  | 'read_news_item'
+  | 'create_memory_proposal'
+  | 'update_self_spine'
+  | 'artifact_only'
+export type ActionIntentStatus = 'proposed' | 'rejected' | 'approved' | 'executing' | 'succeeded' | 'failed' | 'skipped'
 export type ActionDeliveryState = 'pending' | 'sending' | 'acked' | 'sent' | 'failed' | 'dry_run' | 'suppressed' | 'skipped'
+export type RiskLevel = 'L0' | 'L1' | 'L2' | 'L3' | 'L4'
+export type DecisionVerdict = 'approved' | 'rejected' | 'dry_run' | 'skipped'
 
 export interface Agent {
   id: AgentId
@@ -62,21 +92,28 @@ export interface Opportunity {
 }
 
 export interface Decision {
+  id: string
   opportunityId: string
-  shouldAct: boolean
+  idempotencyKey: string
+  policyVersion: string
+  verdict: DecisionVerdict
   actionType: ActionType
-  dryRun: boolean
+  riskLevel: RiskLevel
   reason: string
+  barrierInput: Prisma.JsonObject
+  barrierOutput: Prisma.JsonObject
+  createdAt: Date
 }
 
 export interface ActionIntent {
   id: string
   opportunityId: string
+  decisionId: string | null
   actionType: ActionType
   targetSceneId: SceneId
   payload: Prisma.JsonObject
   dryRun: boolean
-  riskLevel: 'low' | 'medium' | 'high'
+  riskLevel: RiskLevel
   status: ActionIntentStatus
   idempotencyKey: string
 }
@@ -99,6 +136,20 @@ export interface DormantMemoryContract {
   scope: string
   payload: Prisma.JsonObject
   status?: 'dormant'
+}
+
+export interface MemoryProposal {
+  id: string
+  agentId: AgentId
+  sourceRef: Prisma.JsonObject
+  proposalType: string
+  payload: Prisma.JsonObject
+  confidence?: number | null
+  salience?: number | null
+  status: 'proposed' | 'accepted' | 'rejected' | 'edited' | 'expired'
+  idempotencyKey: string
+  createdAt: Date
+  updatedAt: Date
 }
 
 export function getMainAgentId(): AgentId {

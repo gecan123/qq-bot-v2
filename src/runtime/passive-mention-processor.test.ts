@@ -16,6 +16,9 @@ function makeEvent(overrides: Partial<MentionEvent> = {}): MentionEvent {
     messageId: overrides.messageId ?? 10,
     senderId: overrides.senderId ?? 20,
     createdAt: overrides.createdAt ?? Date.now(),
+    runtimeOpportunityId: overrides.runtimeOpportunityId,
+    runtimeDecisionId: overrides.runtimeDecisionId,
+    runtimeSceneId: overrides.runtimeSceneId,
   }
 }
 
@@ -142,6 +145,33 @@ function fakeActionRecordStore(status: 'pending' | 'sent' | 'dry_run' | null = n
       createdAt: new Date(0),
       updatedAt: new Date(0),
     }),
+  }
+}
+
+function capturingActionRecordStore(
+  intents: Array<{ opportunityId: string; decisionId?: string | null; targetSceneId: string }>,
+): NonNullable<ReplyExecutorOptions['actionRecordStore']> {
+  return {
+    ...fakeActionRecordStore(),
+    createOrReuseIntent: async (input) => {
+      intents.push({
+        opportunityId: input.opportunityId,
+        decisionId: input.decisionId,
+        targetSceneId: input.targetSceneId,
+      })
+      return {
+        id: input.id,
+        opportunityId: input.opportunityId,
+        decisionId: input.decisionId,
+        actionType: input.actionType,
+        targetSceneId: input.targetSceneId,
+        payload: input.payload,
+        dryRun: input.dryRun,
+        riskLevel: input.riskLevel ?? 'L3',
+        status: input.status ?? 'approved',
+        idempotencyKey: input.idempotencyKey,
+      }
+    },
   }
 }
 
@@ -410,6 +440,37 @@ describe('passive mention processor', () => {
     await processor.run(makeBatch([first, second]))
 
     assert.deepEqual(replyIntentIds, ['qq_group:1:message:61:reply_to_message'])
+  })
+
+  test('threads root runtime opportunity and decision ids into action intents', async () => {
+    const event = makeEvent({
+      messageId: 81,
+      senderId: 20,
+      createdAt: 1,
+      runtimeOpportunityId: 'opportunity-root-81',
+      runtimeDecisionId: 'decision-root-81',
+      runtimeSceneId: 'qq_group:1',
+    })
+    const { sender } = fakeSender()
+    const intents: Array<{ opportunityId: string; decisionId?: string | null; targetSceneId: string }> = []
+
+    const processor = createPassiveMentionProcessor({
+      getMessage: async () => makeStoredMessage(event, '@bot 你好'),
+      resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
+      generateReply: async () => '你好',
+      sender,
+      replyRecordStore: fakeReplyRecordStore(),
+      actionRecordStore: capturingActionRecordStore(intents),
+      compactor: fakeCompactor(),
+    })
+
+    await processor.run(makeBatch([event]))
+
+    assert.deepEqual(intents, [{
+      opportunityId: 'opportunity-root-81',
+      decisionId: 'decision-root-81',
+      targetSceneId: 'qq_group:1',
+    }])
   })
 
   test('notifies when assistant turn is sent', async () => {

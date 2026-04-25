@@ -140,10 +140,11 @@ export function createPassiveMentionProcessor(
         const scopeKey = toSenderReplyScopeKey(thread.senderId)
         const runtimeKey = makeMainAgentRuntimeKey()
         const result = await executor.execute({
-          opportunityId: makeMentionReplyIntentId(batch.groupId, replyTargetStored.id),
+          opportunityId: replyTarget.runtimeOpportunityId ?? makeMentionReplyIntentId(batch.groupId, replyTargetStored.id),
+          decisionId: replyTarget.runtimeDecisionId,
           runtimeKey,
           groupId: batch.groupId,
-          sceneId: makeSceneId(batch.groupId),
+          sceneId: replyTarget.runtimeSceneId ?? makeSceneId(batch.groupId),
           scopeKey,
           sourceKind: 'mention',
           cueStrength: 'strong',

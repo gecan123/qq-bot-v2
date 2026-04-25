@@ -10,6 +10,7 @@ import { segmentsToPlainText } from '../utils/segment-text.js'
 import { listSentActionRecordsForScene } from '../runtime/agent-runtime-store.js'
 import { makeQqGroupSceneId } from '../runtime/agent-runtime-types.js'
 import type { ActionRecord } from '../runtime/agent-runtime-types.js'
+import { getActionRecordText } from '../runtime/action-record-payload.js'
 
 export interface BuildContextResult {
   contextText: string
@@ -55,8 +56,7 @@ async function getStableResolvedText(
 
 function actionRecordText(actionRecord: ActionRecord): string | null {
   if (actionRecord.deliveryState !== 'sent' && actionRecord.deliveryState !== 'acked') return null
-  const payload = actionRecord.resultPayload
-  const text = typeof payload?.text === 'string' ? payload.text.trim() : ''
+  const text = getActionRecordText(actionRecord)
   return text ? `[BOT] ${text}` : null
 }
 

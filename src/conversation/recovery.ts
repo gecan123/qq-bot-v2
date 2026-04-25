@@ -4,6 +4,7 @@ import {
   listRecoverableActionRecords,
   markActionRecordDeliveryState,
 } from '../runtime/agent-runtime-store.js'
+import { getActionRecordText } from '../runtime/action-record-payload.js'
 import { makeQqGroupSceneId, type ActionRecord } from '../runtime/agent-runtime-types.js'
 
 const log = createLogger('CONV_RECOVERY')
@@ -29,16 +30,23 @@ function getNumber(payload: Record<string, unknown>, key: string): number | null
   return typeof value === 'number' && Number.isSafeInteger(value) ? value : null
 }
 
-function getText(payload: Record<string, unknown>): string | null {
-  const value = payload.text
-  return typeof value === 'string' && value.trim() ? value : null
-}
-
 function getDeliveryPayload(payload: Record<string, unknown>): Record<string, unknown> | null {
   const deliveryPayload = payload.deliveryPayload
   return deliveryPayload && typeof deliveryPayload === 'object' && !Array.isArray(deliveryPayload)
     ? deliveryPayload as Record<string, unknown>
     : null
+}
+
+function getRecord(payload: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  const value = payload[key]
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function getGroupId(
+  resultPayload: Record<string, unknown>,
+  deliveryPayload: Record<string, unknown>,
+): number | null {
+  return getNumber(getRecord(resultPayload, 'target') ?? {}, 'groupId') ?? getNumber(deliveryPayload, 'groupId')
 }
 
 async function recoverSendableActionRecord(input: {
@@ -48,8 +56,8 @@ async function recoverSendableActionRecord(input: {
 }): Promise<boolean> {
   const resultPayload = input.actionRecord.resultPayload ?? {}
   const deliveryPayload = getDeliveryPayload(resultPayload)
-  const text = getText(resultPayload)
-  const groupId = deliveryPayload ? getNumber(deliveryPayload, 'groupId') : null
+  const text = getActionRecordText(input.actionRecord)
+  const groupId = deliveryPayload ? getGroupId(resultPayload, deliveryPayload) : null
   if (!deliveryPayload || !text || groupId == null) {
     await input.markDeliveryState(input.actionRecord.id, 'failed', {
       ...resultPayload,

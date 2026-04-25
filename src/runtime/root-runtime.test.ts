@@ -15,7 +15,7 @@ const assertExcludes = (content: string, needle: string, message?: string): void
   assert.ok(!content.includes(needle), message ?? `expected file not to include ${needle}`)
 }
 
-describe('Phase 0 root runtime contract', () => {
+describe('Runtime OS contract', () => {
   test('agent:main is the only root and qq_group is only a scene identity', () => {
     assert.ok(projectFileExists('src/runtime/agent-runtime-types.ts'), 'missing src/runtime/agent-runtime-types.ts')
     const contracts = readProjectFile('src/runtime/agent-runtime-types.ts')
@@ -34,7 +34,7 @@ ${legacyTypes}`, 'makeGroupRuntimeKey', 'qq_group:* must not be constructible as
 ${rootRuntime}
 ${legacyTypes}`, 'runtimeKey: `qq_group:', 'qq_group:* must not be stored as root runtimeKey')
     assertExcludes(`${contracts}
-${rootRuntime}`, 'groupId:', 'root runtime snapshot must not carry groupId')
+${rootRuntime}`, 'runtimeKey: `qq_group:', 'root runtime snapshot must not carry qq_group runtime keys')
   })
 
   test('memory is represented only as dormant contract in Phase 0', () => {
@@ -45,8 +45,57 @@ ${rootRuntime}`, 'groupId:', 'root runtime snapshot must not carry groupId')
       .join('\n')
 
     assertIncludes(schema, 'model MemoryItem')
+    assertIncludes(schema, 'model MemoryProposal')
     assertExcludes(allRuntime, 'write_memory', 'Phase 0 must not register a write_memory action')
     assertExcludes(allRuntime, 'memoryItems', 'Phase 0 generation/SQL/runtime must not read MemoryItem rows')
     assertExcludes(allRuntime, 'MemoryItem', 'MemoryItem must remain dormant outside schema/type declarations')
+  })
+
+  test('Phase 1 contract covers runtime OS surfaces and lifecycle', () => {
+    const contracts = readProjectFile('src/runtime/agent-runtime-types.ts')
+    const schema = readProjectFile('prisma/schema.prisma')
+
+    for (const token of [
+      'qq_group_message_received',
+      'qq_private_message_received',
+      'forum_item_seen',
+      'news_item_seen',
+      'task_due',
+      'memory_maintenance_due',
+      'self_spine_review_due',
+      "'curiosity'",
+      "'proactive_candidate'",
+      "'create_memory_proposal'",
+      "'update_self_spine'",
+      "'proposed' | 'rejected' | 'approved' | 'executing' | 'succeeded' | 'failed' | 'skipped'",
+      "'L0' | 'L1' | 'L2' | 'L3' | 'L4'",
+    ]) {
+      assertIncludes(contracts, token)
+    }
+
+    for (const token of [
+      'model Decision',
+      'decisionId',
+      'policyVersion',
+      'verdict',
+      'riskLevel',
+      'barrierInput',
+      'barrierOutput',
+      'model MemoryProposal',
+    ]) {
+      assertIncludes(schema, token)
+    }
+  })
+
+  test('root runtime durable surfaces are reference-only and ambient uses executor policy', () => {
+    const rootRuntime = readProjectFile('src/runtime/root-runtime.ts')
+
+    assertIncludes(rootRuntime, "eventType: 'qq_group_message_received'")
+    assertIncludes(rootRuntime, 'createOrReuseDecision')
+    assertIncludes(rootRuntime, 'ambientExecutor.execute')
+    assertIncludes(rootRuntime, "contextSnapshot: { messages: [] }")
+    assertExcludes(rootRuntime, 'segmentsToPlainText')
+    assertExcludes(rootRuntime, 'content: text')
+    assertExcludes(rootRuntime, 'senderNickname:')
   })
 })

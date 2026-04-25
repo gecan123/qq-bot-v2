@@ -4,6 +4,9 @@ export interface MentionEvent {
   messageRowId?: number
   senderId: number
   createdAt: number
+  runtimeOpportunityId?: string
+  runtimeDecisionId?: string
+  runtimeSceneId?: string
 }
 
 export interface GroupConversationBatch {

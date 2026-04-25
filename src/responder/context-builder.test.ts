@@ -3,6 +3,10 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, test } from 'node:test'
+import { buildContext } from './context-builder.js'
+import type { IncomingMessage } from './pipeline.js'
+import type { Message } from '../generated/prisma/client.js'
+import type { ActionRecord } from '../runtime/agent-runtime-types.js'
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const readProjectFile = (relativePath: string): string =>
@@ -32,5 +36,69 @@ describe('Phase 0 responder context contract', () => {
     const contextBuilder = readProjectFile('src/responder/context-builder.ts')
     assertExcludes(contextBuilder, 'MemoryItem')
     assertExcludes(contextBuilder, 'memoryItems')
+  })
+
+  test('context reads proposedEffect text from runtime action records', async () => {
+    const message: Message = {
+      id: 1,
+      groupId: BigInt(1),
+      groupName: '测试群',
+      mediaReferenceIds: [],
+      messageId: BigInt(1001),
+      senderId: BigInt(20),
+      senderNickname: '用户20',
+      senderGroupNickname: null,
+      content: [{ type: 'text', content: '你好' }] as Message['content'],
+      rawContent: null,
+      rawMessage: null,
+      searchText: '你好',
+      resolvedText: '你好',
+      sentAt: new Date('2026-04-21T00:00:00Z'),
+      createdAt: new Date('2026-04-21T00:00:00Z'),
+    }
+    const actionRecord: ActionRecord = {
+      id: 'action-1',
+      actionIntentId: 'intent-1',
+      actionType: 'send_group_reply',
+      targetSceneId: 'qq_group:1',
+      deliveryState: 'sent',
+      idempotencyKey: 'intent-1',
+      resultPayload: {
+        sourceRefs: {
+          triggerMessageRowId: 1,
+          incorporatedMessageRowId: 1,
+          source: 'messages',
+        },
+        proposedEffect: {
+          type: 'reply_to_message',
+          text: '机器人回复',
+        },
+      },
+      createdAt: new Date('2026-04-21T00:00:30Z'),
+      updatedAt: new Date('2026-04-21T00:00:30Z'),
+    }
+
+    const result = await buildContext({
+      groupId: 1,
+      messageId: 1002,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'text', content: '继续' }],
+    } satisfies IncomingMessage, 10, {}, {
+      getConversationState: async () => ({
+        id: 1,
+        groupId: 1,
+        senderThreadKey: 'sender:20',
+        compactedBase: '',
+        compactedVersion: 1,
+        lastCompactedMessageRowId: undefined,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      }),
+      getRecentMessages: async () => [message],
+      listActionRecords: async () => [actionRecord],
+    })
+
+    assert.match(result.contextText, /\[BOT\] 机器人回复/)
   })
 })

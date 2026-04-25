@@ -178,19 +178,38 @@ model Opportunity {
 model ActionIntent {
   id             String   @id @db.VarChar(191)
   opportunityId  String   @map("opportunity_id") @db.VarChar(191)
+  decisionId     String?  @map("decision_id") @db.VarChar(191)
   actionType     String   @map("action_type") @db.VarChar(64)
   targetSceneId  String   @map("target_scene_id") @db.VarChar(191)
   payload        Json
   dryRun         Boolean  @default(false) @map("dry_run")
-  riskLevel      String   @default("low") @map("risk_level") @db.VarChar(32)
-  status         String   @default("pending") @db.VarChar(32)
+  riskLevel      String   @default("L1") @map("risk_level") @db.VarChar(32)
+  status         String   @default("proposed") @db.VarChar(32)
   idempotencyKey String   @map("idempotency_key") @db.VarChar(191)
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([opportunityId, idempotencyKey])
+  @@index([decisionId])
   @@index([targetSceneId, status, createdAt])
   @@map("action_intents")
+}
+
+model Decision {
+  id             String   @id @db.VarChar(191)
+  opportunityId  String   @map("opportunity_id") @db.VarChar(191)
+  idempotencyKey String   @map("idempotency_key") @db.VarChar(191)
+  policyVersion  String   @map("policy_version") @db.VarChar(64)
+  verdict        String   @db.VarChar(32)
+  riskLevel      String   @map("risk_level") @db.VarChar(32)
+  reason         String   @db.Text
+  barrierInput   Json     @map("barrier_input")
+  barrierOutput  Json     @map("barrier_output")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([opportunityId, idempotencyKey])
+  @@index([opportunityId, createdAt])
+  @@map("decisions")
 }
 
 model ActionRecord {
@@ -219,4 +238,22 @@ model MemoryItem {
 
   @@index([agentId, scope, updatedAt(sort: Desc)])
   @@map("memory_items")
+}
+
+model MemoryProposal {
+  id             String   @id @db.VarChar(191)
+  agentId        String   @map("agent_id") @db.VarChar(191)
+  sourceRef      Json     @map("source_ref")
+  proposalType   String   @map("proposal_type") @db.VarChar(64)
+  payload        Json
+  confidence     Float?
+  salience       Float?
+  status         String   @default("proposed") @db.VarChar(32)
+  idempotencyKey String   @map("idempotency_key") @db.VarChar(191)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([agentId, idempotencyKey])
+  @@index([agentId, status, createdAt])
+  @@map("memory_proposals")
 }

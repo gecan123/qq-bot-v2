@@ -9,9 +9,12 @@ import {
   type ActionIntentStatus,
   type ActionRecord,
   type ActionType,
+  type Decision,
+  type DecisionVerdict,
   type OpportunityType,
   type QueueKind,
   type ReferencePayload,
+  type RiskLevel,
   type RuntimeEventRecord,
   type RuntimeEventType,
   type SceneId,
@@ -23,12 +26,17 @@ const FORBIDDEN_REFERENCE_KEYS = new Set([
   'segments',
   'plainText',
   'content',
+  'text',
   'rawContent',
   'rawMessage',
   'senderNickname',
   'senderGroupNickname',
   'mediaDescriptions',
   'resolvedText',
+])
+const FORBIDDEN_INBOUND_COPY_KEYS = new Set([
+  ...FORBIDDEN_REFERENCE_KEYS,
+  'senderId',
 ])
 
 function makeId(prefix: string, key: string): string {
@@ -37,6 +45,40 @@ function makeId(prefix: string, key: string): string {
 
 function asJsonObject(value: Prisma.JsonValue): Prisma.JsonObject {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Prisma.JsonObject : {}
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function mergeStringLists(...lists: unknown[]): string[] {
+  const merged = new Set<string>()
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue
+    for (const item of list) {
+      if (typeof item === 'string' && item) merged.add(item)
+    }
+  }
+  return [...merged]
+}
+
+export function mergeRuntimeSessionSnapshot(
+  existing: Prisma.JsonObject | null | undefined,
+  next: Prisma.JsonObject,
+): Prisma.JsonObject {
+  const existingSnapshot = asRecord(existing)
+  const nextSnapshot = asRecord(next)
+  const existingCursors = asRecord(existingSnapshot.sceneCursors)
+  const nextCursors = asRecord(nextSnapshot.sceneCursors)
+  return {
+    ...existingSnapshot,
+    ...nextSnapshot,
+    scenes: mergeStringLists(existingSnapshot.scenes, nextSnapshot.scenes),
+    sceneCursors: {
+      ...existingCursors,
+      ...nextCursors,
+    },
+  }
 }
 
 function toReferencePayload(payload: ReferencePayload): Prisma.JsonObject {
@@ -56,6 +98,33 @@ export function assertReferenceOnlyPayload(payload: Record<string, unknown>): vo
       throw new Error(`runtime payload must be reference-only; forbidden key: ${key}`)
     }
   }
+}
+
+function assertNoForbiddenInboundCopies(value: unknown, path = 'payload'): void {
+  if (!value || typeof value !== 'object') return
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertNoForbiddenInboundCopies(item, `${path}[${index}]`))
+    return
+  }
+
+  for (const [key, nested] of Object.entries(value)) {
+    if (key === 'text' && path.endsWith('proposedEffect')) {
+      continue
+    }
+    if (FORBIDDEN_INBOUND_COPY_KEYS.has(key)) {
+      throw new Error(`runtime payload must not copy inbound user facts; forbidden key: ${path}.${key}`)
+    }
+    assertNoForbiddenInboundCopies(nested, `${path}.${key}`)
+  }
+}
+
+export function assertRuntimeSnapshotReferenceOnly(contextSnapshot: Prisma.JsonObject): void {
+  assertNoForbiddenInboundCopies(contextSnapshot, 'contextSnapshot')
+}
+
+export function assertActionIntentPayloadSafe(payload: Prisma.JsonObject): void {
+  assertNoForbiddenInboundCopies(payload, 'actionIntent.payload')
 }
 
 export function buildMessageReferencePayload(input: {
@@ -100,18 +169,24 @@ export async function upsertAgentRuntimeSnapshot(input: {
   sessionSnapshot: Prisma.JsonObject
 }) {
   const agentId = input.agentId ?? MAIN_AGENT_ID
+  assertRuntimeSnapshotReferenceOnly(input.contextSnapshot)
+  const existing = await prisma.agentRuntimeSnapshot.findUnique({ where: { agentId } })
+  const sessionSnapshot = mergeRuntimeSessionSnapshot(
+    existing ? asJsonObject(existing.sessionSnapshot) : null,
+    input.sessionSnapshot,
+  )
   return prisma.agentRuntimeSnapshot.upsert({
     where: { agentId },
     update: {
       schemaVersion: input.schemaVersion ?? AGENT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
       contextSnapshot: input.contextSnapshot,
-      sessionSnapshot: input.sessionSnapshot,
+      sessionSnapshot,
     },
     create: {
       agentId,
       schemaVersion: input.schemaVersion ?? AGENT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
       contextSnapshot: input.contextSnapshot,
-      sessionSnapshot: input.sessionSnapshot,
+      sessionSnapshot,
     },
   })
 }
@@ -172,6 +247,49 @@ export async function createOrReuseRuntimeEvent(input: {
   }
 }
 
+export async function createOrReuseDecision(input: {
+  opportunityId: string
+  idempotencyKey: string
+  policyVersion: string
+  verdict: DecisionVerdict
+  actionType: ActionType
+  riskLevel: RiskLevel
+  reason: string
+  barrierInput: Prisma.JsonObject
+  barrierOutput: Prisma.JsonObject
+}): Promise<Decision> {
+  assertActionIntentPayloadSafe(input.barrierInput)
+  assertActionIntentPayloadSafe(input.barrierOutput)
+  const row = await prisma.decision.upsert({
+    where: { opportunityId_idempotencyKey: { opportunityId: input.opportunityId, idempotencyKey: input.idempotencyKey } },
+    update: {},
+    create: {
+      id: makeId('decision', `${input.opportunityId}:${input.idempotencyKey}`),
+      opportunityId: input.opportunityId,
+      idempotencyKey: input.idempotencyKey,
+      policyVersion: input.policyVersion,
+      verdict: input.verdict,
+      riskLevel: input.riskLevel,
+      reason: input.reason,
+      barrierInput: input.barrierInput,
+      barrierOutput: input.barrierOutput,
+    },
+  })
+  return {
+    id: row.id,
+    opportunityId: row.opportunityId,
+    idempotencyKey: row.idempotencyKey,
+    policyVersion: row.policyVersion,
+    verdict: row.verdict as DecisionVerdict,
+    actionType: input.actionType,
+    riskLevel: row.riskLevel as RiskLevel,
+    reason: row.reason,
+    barrierInput: asJsonObject(row.barrierInput),
+    barrierOutput: asJsonObject(row.barrierOutput),
+    createdAt: row.createdAt,
+  }
+}
+
 export async function createOrReuseOpportunity(input: {
   sceneId: SceneId
   runtimeEventId?: string | null
@@ -203,26 +321,29 @@ export async function createOrReuseOpportunity(input: {
 
 export async function createOrReuseActionIntent(input: {
   opportunityId: string
+  decisionId?: string | null
   actionType: ActionType
   targetSceneId: SceneId
   payload: Prisma.JsonObject
   dryRun?: boolean
-  riskLevel?: string
+  riskLevel?: RiskLevel
   status?: ActionIntentStatus
   idempotencyKey: string
 }) {
+  assertActionIntentPayloadSafe(input.payload)
   return prisma.actionIntent.upsert({
     where: { opportunityId_idempotencyKey: { opportunityId: input.opportunityId, idempotencyKey: input.idempotencyKey } },
     update: {},
     create: {
       id: makeId('intent', `${input.opportunityId}:${input.idempotencyKey}`),
       opportunityId: input.opportunityId,
+      decisionId: input.decisionId ?? null,
       actionType: input.actionType,
       targetSceneId: input.targetSceneId,
       payload: input.payload,
       dryRun: input.dryRun ?? false,
-      riskLevel: input.riskLevel ?? 'low',
-      status: input.status ?? 'pending',
+      riskLevel: input.riskLevel ?? 'L1',
+      status: input.status ?? 'proposed',
       idempotencyKey: input.idempotencyKey,
     },
   })

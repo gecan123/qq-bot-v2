@@ -8,6 +8,7 @@ export type ReplyDeliveryMode = 'reply_to_message' | 'send_message' | 'audit_onl
 
 export interface ReplyOpportunity {
   opportunityId: string
+  decisionId?: string
   runtimeKey: string
   groupId: number
   sceneId: string

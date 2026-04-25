@@ -1,11 +1,13 @@
 import { prisma } from '../database/client.js'
 import type { Prisma } from '../generated/prisma/client.js'
+import { assertActionIntentPayloadSafe } from './agent-runtime-store.js'
 
 export type ActionDeliveryState = 'pending' | 'sending' | 'acked' | 'sent' | 'failed' | 'dry_run' | 'suppressed' | 'skipped'
 
 export interface ActionIntentRecord {
   id: string
   opportunityId: string
+  decisionId?: string | null
   actionType: string
   targetSceneId: string
   payload: Record<string, unknown>
@@ -39,7 +41,7 @@ function sanitizeJsonValue(value: unknown): Prisma.InputJsonValue | null | undef
 }
 
 function mapIntent(row: Awaited<ReturnType<typeof prisma.actionIntent.findUnique>> extends infer T ? T extends null ? never : T : never): ActionIntentRecord {
-  return { id: row.id, opportunityId: row.opportunityId, actionType: row.actionType, targetSceneId: row.targetSceneId, payload: row.payload as Record<string, unknown>, dryRun: row.dryRun, riskLevel: row.riskLevel, status: row.status, idempotencyKey: row.idempotencyKey }
+  return { id: row.id, opportunityId: row.opportunityId, decisionId: row.decisionId, actionType: row.actionType, targetSceneId: row.targetSceneId, payload: row.payload as Record<string, unknown>, dryRun: row.dryRun, riskLevel: row.riskLevel, status: row.status, idempotencyKey: row.idempotencyKey }
 }
 
 function mapRecord(row: Awaited<ReturnType<typeof prisma.actionRecord.findUnique>> extends infer T ? T extends null ? never : T : never): ActionRecord {
@@ -59,6 +61,7 @@ function mapRecord(row: Awaited<ReturnType<typeof prisma.actionRecord.findUnique
 export async function createOrReuseActionIntent(input: {
   id: string
   opportunityId: string
+  decisionId?: string | null
   actionType: string
   targetSceneId: string
   payload: Record<string, unknown>
@@ -67,9 +70,10 @@ export async function createOrReuseActionIntent(input: {
   status?: string
   idempotencyKey: string
 }): Promise<ActionIntentRecord> {
+  assertActionIntentPayloadSafe(input.payload as Prisma.JsonObject)
   const row = await prisma.actionIntent.upsert({
     where: { opportunityId_idempotencyKey: { opportunityId: input.opportunityId, idempotencyKey: input.idempotencyKey } },
-    create: { id: input.id, opportunityId: input.opportunityId, actionType: input.actionType, targetSceneId: input.targetSceneId, payload: sanitizeJsonValue(input.payload) as Prisma.InputJsonObject, dryRun: input.dryRun, riskLevel: input.riskLevel ?? 'low', status: input.status ?? 'pending', idempotencyKey: input.idempotencyKey },
+    create: { id: input.id, opportunityId: input.opportunityId, decisionId: input.decisionId ?? null, actionType: input.actionType, targetSceneId: input.targetSceneId, payload: sanitizeJsonValue(input.payload) as Prisma.InputJsonObject, dryRun: input.dryRun, riskLevel: input.riskLevel ?? 'L1', status: input.status ?? 'proposed', idempotencyKey: input.idempotencyKey },
     update: {},
   })
   return mapIntent(row)

@@ -170,19 +170,33 @@ function buildActionResultPayload(input: {
   replyIntentId: string
 }): Record<string, unknown> {
   return {
+    sourceRefs: {
+      triggerMessageRowId: input.opportunity.triggerMessageRowId,
+      incorporatedMessageRowId: input.opportunity.incorporatedMessageRowId,
+      source: 'messages',
+    },
+    target: {
+      sceneId: input.opportunity.sceneId,
+      groupId: input.opportunity.groupId,
+    },
+    decisionId: input.opportunity.decisionId,
     deliveryPayload: input.deliveryPayload,
-    text: input.text,
-    replyIntentId: input.replyIntentId,
-    groupId: input.opportunity.groupId,
-    scopeKey: input.opportunity.scopeKey,
-    sourceKind: input.opportunity.sourceKind,
-    triggerMessageRowId: input.opportunity.triggerMessageRowId,
-    incorporatedMessageRowId: input.opportunity.incorporatedMessageRowId,
+    proposedEffect: {
+      type: input.deliveryPayload.type,
+      text: input.text,
+      replyIntentId: input.replyIntentId,
+      sourceKind: input.opportunity.sourceKind,
+    },
   }
 }
 
 function getStoredActionText(payload: Record<string, unknown> | null | undefined): string | null {
-  const text = payload && typeof payload.text === 'string' ? payload.text.trim() : ''
+  const proposedEffect = payload?.proposedEffect
+  const text =
+    proposedEffect && typeof proposedEffect === 'object' && !Array.isArray(proposedEffect) &&
+    typeof (proposedEffect as Record<string, unknown>).text === 'string'
+      ? ((proposedEffect as Record<string, unknown>).text as string).trim()
+      : ''
   return text || null
 }
 
@@ -395,12 +409,13 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
       const actionIntent = await actionRecordStore.createOrReuseIntent({
         id: `${opportunity.opportunityId}:intent:${actionType}`,
         opportunityId: opportunity.opportunityId,
+        decisionId: opportunity.decisionId,
         actionType,
         targetSceneId: opportunity.sceneId,
         payload: buildActionResultPayload({ opportunity, deliveryPayload, text: reply, replyIntentId }),
         dryRun: shouldDryRun,
-        riskLevel: 'low',
-        status: shouldDryRun ? 'dry_run' : 'pending',
+        riskLevel: 'L3',
+        status: shouldDryRun ? 'skipped' : 'approved',
         idempotencyKey: `${opportunity.opportunityId}:${actionType}`,
       })
       let actionRecord = await actionRecordStore.createOrReuseRecord({

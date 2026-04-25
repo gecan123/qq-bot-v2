@@ -13,6 +13,7 @@ import { handleMediaReanalyze } from './server/media-reanalyze.js'
 import { createRootRuntimeManager } from './runtime/root-runtime.js'
 import { createPassiveMentionProcessor } from './runtime/passive-mention-processor.js'
 import { createReplyDecisionEngine } from './runtime/reply-decision-engine.js'
+import { createReplyExecutor } from './runtime/reply-executor.js'
 import { getGroupMessagesAfterRowId, getLatestGroupMessageRowId } from './database/messages.js'
 import { getMessageTimestamp } from './utils/message-time.js'
 import type { ParsedSegment } from './types/message-segments.js'
@@ -219,12 +220,16 @@ async function main() {
   const replyDecisionEngine = createReplyDecisionEngine({
     ambientAuditEnabled: config.botAmbientAuditEnabled,
   })
-  const passiveMentionProcessor = createPassiveMentionProcessor({
+  const replyExecutor = createReplyExecutor({
     decisionEngine: replyDecisionEngine,
+  })
+  const passiveMentionProcessor = createPassiveMentionProcessor({
+    executor: replyExecutor,
   })
   rootRuntime = createRootRuntimeManager({
     selfNumber: config.selfNumber,
     passiveWorker: (batch) => passiveMentionProcessor.run(batch),
+    ambientExecutor: replyExecutor,
     replyExecutionEnabled: true,
     decisionEngine: replyDecisionEngine,
     ambientAuditEnabled: config.botAmbientAuditEnabled,

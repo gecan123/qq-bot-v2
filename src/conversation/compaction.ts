@@ -1,6 +1,7 @@
 import { freezeResolvedTextIfUnset, getGroupMessagesAfterRowId } from '../database/messages.js'
 import { listSentActionRecordsForScene } from '../runtime/agent-runtime-store.js'
 import { makeQqGroupSceneId, type ActionRecord } from '../runtime/agent-runtime-types.js'
+import { getActionRecordAnchor, getActionRecordText } from '../runtime/action-record-payload.js'
 import { compactConversationState, getOrCreateConversationState } from './conversation-state-store.js'
 import { resolveMessage } from '../media/message-resolver.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
@@ -33,19 +34,6 @@ async function getStableCompactionText(message: Message, dependencies: Compactio
   const resolvedText = segmentsToPlainText(resolvedSegments).trim()
   await freezeResolvedText(message.id, resolvedText)
   return resolvedText
-}
-
-function getActionRecordAnchor(actionRecord: ActionRecord): number | null {
-  const payload = actionRecord.resultPayload
-  const anchor = payload?.incorporatedMessageRowId ?? payload?.messageRowId
-  return typeof anchor === 'number' && Number.isSafeInteger(anchor) ? anchor : null
-}
-
-function getActionRecordText(actionRecord: ActionRecord): string | null {
-  const text = typeof actionRecord.resultPayload?.text === 'string'
-    ? actionRecord.resultPayload.text.trim()
-    : ''
-  return text || null
 }
 
 async function mergeLines(

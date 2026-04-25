@@ -16,16 +16,33 @@ export interface ActionExecutorResult {
   deliveryResult: ActionDeliveryState
 }
 
-const SEND_GROUP_MESSAGE_ACTION = 'send_group_message'
-
 function getNumber(payload: Record<string, unknown>, key: string): number | null {
   const value = payload[key]
   return typeof value === 'number' && Number.isSafeInteger(value) ? value : null
 }
 
+function getNestedRecord(payload: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  const value = payload[key]
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
 function getText(payload: Record<string, unknown>): string {
-  const value = payload.text
+  const proposedEffect = getNestedRecord(payload, 'proposedEffect')
+  const value = proposedEffect?.text ?? payload.text
   return typeof value === 'string' ? value : ''
+}
+
+function getGroupId(payload: Record<string, unknown>): number | null {
+  return getNumber(getNestedRecord(payload, 'target') ?? {}, 'groupId') ?? getNumber(payload, 'groupId')
+}
+
+function getReplyToMessageId(payload: Record<string, unknown>): number | null {
+  const deliveryPayload = getNestedRecord(payload, 'deliveryPayload')
+  return getNumber(deliveryPayload ?? {}, 'replyToMessageId') ?? getNumber(deliveryPayload ?? {}, 'messageId') ?? getNumber(payload, 'messageId')
+}
+
+function isReplyAction(actionType: string): boolean {
+  return actionType === 'reply_to_message' || actionType === 'send_group_reply'
 }
 
 export function createActionExecutor(options: ActionExecutorOptions = {}) {
@@ -41,7 +58,7 @@ export function createActionExecutor(options: ActionExecutorOptions = {}) {
         targetSceneId: intent.targetSceneId,
         deliveryState: initialState,
         idempotencyKey: intent.idempotencyKey,
-        resultPayload: initialState === 'dry_run' ? { reason: 'ambient_candidate dryRun artifact-only' } : null,
+        resultPayload: initialState === 'dry_run' ? { reason: 'action intent is dry-run or artifact-only' } : null,
       })
 
       if (actionRecord.deliveryState === 'sent' || actionRecord.deliveryState === 'acked' || actionRecord.deliveryState === 'dry_run') {
@@ -53,7 +70,7 @@ export function createActionExecutor(options: ActionExecutorOptions = {}) {
         return { intent, actionRecord, deliveryResult: 'failed' }
       }
 
-      const groupId = getNumber(payload, 'groupId')
+      const groupId = getGroupId(payload)
       const text = getText(payload)
       if (groupId == null || !text) {
         await store.markDeliveryState?.(actionRecord.id, 'failed', { reason: 'invalid payload' })
@@ -61,10 +78,7 @@ export function createActionExecutor(options: ActionExecutorOptions = {}) {
       }
 
       await store.markDeliveryState?.(actionRecord.id, 'sending')
-      const messageId =
-        intent.actionType === 'reply_to_message'
-          ? getNumber(payload, 'messageId')
-          : null
+      const messageId = isReplyAction(intent.actionType) ? getReplyToMessageId(payload) : null
       const sendResult = messageId != null
         ? await options.sender.replyToMessage({ groupId, replyToMessageId: messageId, text })
         : await options.sender.sendMessage({ groupId, text })

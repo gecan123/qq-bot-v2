@@ -50,7 +50,6 @@ export async function createReplyAudit(input: CreateReplyAuditInput): Promise<vo
   const opportunityId = resolveOpportunityId(input)
   await prisma.replyAudit.create({
     data: {
-      replyRecordId: input.replyRecordId ?? null,
       runtimeKey: input.runtimeKey,
       groupId: BigInt(input.groupId),
       scopeKey: input.scopeKey,
@@ -74,7 +73,6 @@ export async function createOrReuseReplyAudit(input: CreateReplyAuditInput): Pro
       },
     },
     create: {
-      replyRecordId: input.replyRecordId ?? null,
       runtimeKey: input.runtimeKey,
       groupId: BigInt(input.groupId),
       scopeKey: input.scopeKey,
@@ -84,7 +82,6 @@ export async function createOrReuseReplyAudit(input: CreateReplyAuditInput): Pro
       payload: sanitizeJsonValue(input.payload) as object,
     },
     update: {
-      replyRecordId: input.replyRecordId ?? null,
       groupId: BigInt(input.groupId),
       scopeKey: input.scopeKey,
       replyIntentId: input.replyIntentId,

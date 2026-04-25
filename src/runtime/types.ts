@@ -148,12 +148,12 @@ export interface CreateRootRuntimeSnapshotInput {
   lastObservedMessageRowId?: number
 }
 
-export function makeGroupRuntimeKey(groupId: number): string {
-  return `qq_group:${groupId}`
+export function makeMainAgentRuntimeKey(): string {
+  return 'agent:main'
 }
 
 export function makeSceneId(groupId: number): SceneId {
-  return makeGroupRuntimeKey(groupId) as SceneId
+  return `qq_group:${groupId}` as SceneId
 }
 
 export function makeMentionCueId(sceneId: SceneId, triggerMessageRowId: number): string {
@@ -165,7 +165,7 @@ export function makeMentionReplyIntentId(groupId: number, triggerMessageRowId: n
 }
 
 export function createDefaultRootRuntimeSnapshot(groupId: number): CreateRootRuntimeSnapshotInput {
-  const runtimeKey = makeGroupRuntimeKey(groupId)
+  const runtimeKey = makeMainAgentRuntimeKey()
   const sceneId = makeSceneId(groupId)
   return {
     runtimeKey,

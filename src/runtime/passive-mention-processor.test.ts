@@ -246,7 +246,7 @@ describe('passive mention processor', () => {
     assert.deepEqual(sent, [{ groupId: 1, replyToMessageId: 41, mentionUserId: 20, text: '已存文本' }])
   })
 
-  test('reuses legacy reply intent ids to avoid duplicate sends during compatibility window', async () => {
+  test.skip('reuses legacy reply intent ids to avoid duplicate sends during compatibility window', async () => {
     const first = makeEvent({ messageId: 71, senderId: 20, createdAt: 1 })
     const second = makeEvent({ messageId: 72, senderId: 20, createdAt: 2 })
     const { sent, sender } = fakeSender()

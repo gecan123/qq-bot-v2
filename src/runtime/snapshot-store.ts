@@ -244,18 +244,22 @@ function parseSessionSnapshot(value: unknown): RootRuntimeSessionSnapshot {
 }
 
 function mapRow(
-  row: Awaited<ReturnType<typeof prisma.rootRuntimeSnapshot.findUnique>> extends infer T
+  row: Awaited<ReturnType<typeof prisma.agentRuntimeSnapshot.findUnique>> extends infer T
     ? T extends null ? never : T
     : never,
 ): RootRuntimeSnapshotRecord {
+  const sessionSnapshot = parseSessionSnapshot(row.sessionSnapshot)
   return {
     id: row.id,
-    runtimeKey: row.runtimeKey,
-    groupId: Number(row.groupId),
+    runtimeKey: row.agentId,
+    groupId: 0,
     schemaVersion: row.schemaVersion,
     contextSnapshot: parseContextSnapshot(row.contextSnapshot),
-    sessionSnapshot: parseSessionSnapshot(row.sessionSnapshot),
-    lastObservedMessageRowId: row.lastObservedMessageRowId ?? undefined,
+    sessionSnapshot,
+    lastObservedMessageRowId:
+      typeof (sessionSnapshot as unknown as { lastObservedMessageRowId?: unknown }).lastObservedMessageRowId === 'number'
+        ? (sessionSnapshot as unknown as { lastObservedMessageRowId: number }).lastObservedMessageRowId
+        : undefined,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }
@@ -264,22 +268,17 @@ function mapRow(
 export async function listRootRuntimeSnapshotsByGroupIds(groupIds: number[]): Promise<RootRuntimeSnapshotRecord[]> {
   if (groupIds.length === 0) return []
 
-  const rows = await prisma.rootRuntimeSnapshot.findMany({
-    where: {
-      groupId: { in: groupIds.map(BigInt) },
-    },
-    orderBy: [
-      { groupId: 'asc' },
-      { updatedAt: 'desc' },
-    ],
+  const rows = await prisma.agentRuntimeSnapshot.findMany({
+    where: { agentId: 'agent:main' },
+    orderBy: { updatedAt: 'desc' },
   })
 
   return rows.map((row) => mapRow(row))
 }
 
 export async function getRootRuntimeSnapshotByRuntimeKey(runtimeKey: string): Promise<RootRuntimeSnapshotRecord | null> {
-  const row = await prisma.rootRuntimeSnapshot.findUnique({
-    where: { runtimeKey },
+  const row = await prisma.agentRuntimeSnapshot.findUnique({
+    where: { agentId: runtimeKey },
   })
 
   return row ? mapRow(row) : null
@@ -295,24 +294,20 @@ export async function upsertRootRuntimeSnapshot(
     ),
     proactiveGenerationAttempts: input.sessionSnapshot.proactiveGenerationAttempts ?? [],
   }
-  const row = await prisma.rootRuntimeSnapshot.upsert({
+  const row = await prisma.agentRuntimeSnapshot.upsert({
     where: {
-      runtimeKey: input.runtimeKey,
+      agentId: input.runtimeKey,
     },
     create: {
-      runtimeKey: input.runtimeKey,
-      groupId: BigInt(input.groupId),
+      agentId: input.runtimeKey,
       schemaVersion: input.schemaVersion,
       contextSnapshot: sanitizeJsonValue(input.contextSnapshot) ?? { messages: [] },
       sessionSnapshot: sanitizeJsonValue(sessionSnapshot) ?? {},
-      lastObservedMessageRowId: input.lastObservedMessageRowId ?? null,
     },
     update: {
-      groupId: BigInt(input.groupId),
       schemaVersion: input.schemaVersion,
       contextSnapshot: sanitizeJsonValue(input.contextSnapshot) ?? { messages: [] },
       sessionSnapshot: sanitizeJsonValue(sessionSnapshot) ?? {},
-      lastObservedMessageRowId: input.lastObservedMessageRowId ?? null,
     },
   })
 

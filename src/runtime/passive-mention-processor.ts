@@ -9,7 +9,7 @@ import { resolveMessage } from '../media/message-resolver.js'
 import type { ParsedSegment } from '../types/message-segments.js'
 import type { IncomingMessage } from '../responder/pipeline.js'
 import { createReplyExecutor, type ReplyExecutor, type ReplyExecutorOptions } from './reply-executor.js'
-import { makeMentionReplyIntentId, makeGroupRuntimeKey, makeSceneId } from './types.js'
+import { makeMentionReplyIntentId, makeMainAgentRuntimeKey, makeSceneId } from './types.js'
 import type { ReplyRecord } from '../conversation/reply-record-store.js'
 
 type StoredConversationMessage = NonNullable<Awaited<ReturnType<typeof getMessageById>>>
@@ -138,7 +138,7 @@ export function createPassiveMentionProcessor(
         }
 
         const scopeKey = toSenderReplyScopeKey(thread.senderId)
-        const runtimeKey = makeGroupRuntimeKey(batch.groupId)
+        const runtimeKey = makeMainAgentRuntimeKey()
         const result = await executor.execute({
           opportunityId: makeMentionReplyIntentId(batch.groupId, replyTargetStored.id),
           runtimeKey,

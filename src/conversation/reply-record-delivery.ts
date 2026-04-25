@@ -57,7 +57,6 @@ export async function deliverReplyRecord(
 
   if (shouldDryRun) {
     await replyAuditStore.create({
-      replyRecordId: record.id,
       runtimeKey: record.runtimeKey,
       groupId: record.groupId,
       scopeKey: record.scopeKey,
@@ -98,7 +97,7 @@ export async function deliverReplyRecord(
       const sendResult = isReplyPayload(record.deliveryPayload)
         ? await sender.replyToMessage({
             groupId: record.groupId,
-            replyToMessageId: record.deliveryPayload.replyToMessageId,
+            replyToMessageId: record.deliveryPayload.replyToMessageId ?? record.deliveryPayload.messageId ?? 0,
             mentionUserId: record.deliveryPayload.mentionUserId,
             text: record.text,
           })

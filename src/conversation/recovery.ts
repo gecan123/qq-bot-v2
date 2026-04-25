@@ -1,79 +1,76 @@
 import { createLogger } from '../logger.js'
 import type { MessageSender } from '../messaging/message-sender.js'
 import {
-  listRecoverableAssistantTurns,
-  markAssistantTurnAcked,
-  markAssistantTurnFailed,
-  markAssistantTurnSending,
-  markAssistantTurnSent,
-} from './assistant-turn-store.js'
-import { deliverAssistantTurn } from './assistant-turn-delivery.js'
-import { compactConversationIfNeeded } from './compaction.js'
+  listRecoverableActionRecords,
+  markActionRecordDeliveryState,
+} from '../runtime/agent-runtime-store.js'
+import { makeQqGroupSceneId, type ActionRecord } from '../runtime/agent-runtime-types.js'
 
 const log = createLogger('CONV_RECOVERY')
 
 export interface ConversationRecoveryResult {
-  recoveredAssistantTurns: number
-  failedAssistantTurns: number
+  recoveredActionRecords: number
+  failedActionRecords: number
   enqueuedMentions: number
 }
 
 export interface RecoverConversationStartupOptions {
   groupIds: number[]
   sender?: MessageSender
-  assistantTurnStore?: {
-    listRecoverable: typeof listRecoverableAssistantTurns
-    markAcked: typeof markAssistantTurnAcked
-    markSending: typeof markAssistantTurnSending
-    markSent: typeof markAssistantTurnSent
-    markFailed: typeof markAssistantTurnFailed
+  actionRecordStore?: {
+    listRecoverable: typeof listRecoverableActionRecords
+    markDeliveryState: typeof markActionRecordDeliveryState
   }
-  compactor?: typeof compactConversationIfNeeded
-  onAssistantTurnRecovered?: (turn: Awaited<ReturnType<typeof listRecoverableAssistantTurns>>[number]) => Promise<void> | void
+  onActionRecordRecovered?: (actionRecord: ActionRecord) => Promise<void> | void
 }
 
 export async function recoverConversationStartupState(
   options: RecoverConversationStartupOptions,
 ): Promise<ConversationRecoveryResult> {
-  const assistantTurnStore = options.assistantTurnStore ?? {
-    listRecoverable: (groupIds?: number[]) => listRecoverableAssistantTurns(groupIds),
-    markAcked: markAssistantTurnAcked,
-    markSending: markAssistantTurnSending,
-    markSent: markAssistantTurnSent,
-    markFailed: markAssistantTurnFailed,
+  const actionRecordStore = options.actionRecordStore ?? {
+    listRecoverable: listRecoverableActionRecords,
+    markDeliveryState: markActionRecordDeliveryState,
   }
-  const compactor = options.compactor ?? compactConversationIfNeeded
+  const sceneIds = options.groupIds.map((id) => makeQqGroupSceneId(id))
+  const recoverable = await actionRecordStore.listRecoverable(sceneIds)
+  let recoveredActionRecords = 0
+  let failedActionRecords = 0
 
-  let recoveredAssistantTurns = 0
-  let failedAssistantTurns = 0
+  for (const actionRecord of recoverable) {
+    if (actionRecord.deliveryState === 'acked') {
+      await actionRecordStore.markDeliveryState(actionRecord.id, 'sent')
+      recoveredActionRecords++
+      await options.onActionRecordRecovered?.(actionRecord)
+      continue
+    }
 
-  const recoverableTurns = await assistantTurnStore.listRecoverable(options.groupIds)
-  for (const turn of recoverableTurns) {
-    const deliveryResult = await deliverAssistantTurn(turn, {
-      sender: options.sender,
-      assistantTurnStore,
-      compactor,
-    })
-
-    if (deliveryResult === 'sent') {
-      recoveredAssistantTurns++
-      await options.onAssistantTurnRecovered?.(turn)
-    } else if (deliveryResult === 'failed') {
-      failedAssistantTurns++
+    if (
+      actionRecord.deliveryState === 'pending' ||
+      actionRecord.deliveryState === 'sending' ||
+      actionRecord.deliveryState === 'failed'
+    ) {
+      if (!options.sender) {
+        await actionRecordStore.markDeliveryState(actionRecord.id, 'failed')
+        failedActionRecords++
+        continue
+      }
+      await actionRecordStore.markDeliveryState(actionRecord.id, 'pending')
+      recoveredActionRecords++
+      await options.onActionRecordRecovered?.(actionRecord)
     }
   }
 
   log.info(
     {
-      recoveredAssistantTurns,
-      failedAssistantTurns,
+      recoveredActionRecords,
+      failedActionRecords,
     },
-    '会话启动恢复完成',
+    '动作启动恢复完成',
   )
 
   return {
-    recoveredAssistantTurns,
-    failedAssistantTurns,
+    recoveredActionRecords,
+    failedActionRecords,
     enqueuedMentions: 0,
   }
 }

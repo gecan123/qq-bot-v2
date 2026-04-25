@@ -1,28 +1,12 @@
-import { prisma } from '../database/client.js'
-import { makeGroupRuntimeKey, makeMentionReplyIntentId } from '../runtime/types.js'
+import { makeMainAgentRuntimeKey, makeMentionReplyIntentId } from '../runtime/types.js'
 import type { AssistantTurnRecord } from './assistant-turn-store.js'
-import { parseSenderReplyScopeKey } from './reply-scope.js'
-import type { ReplyRecord as PrismaReplyRecord } from '../generated/prisma/client.js'
+
+export type ReplyRecordExecutionState = 'pending' | 'sending' | 'acked' | 'sent' | 'failed' | 'dry_run' | 'suppressed'
 
 export type ReplyDeliveryPayload =
-  | {
-      type: 'reply_to_message'
-      replyToMessageId: number
-      mentionUserId?: number
-    }
-  | {
-      type: 'send_message'
-    }
-
-export type ReplyExecutionState =
-  | 'dry_run'
-  | 'pending'
-  | 'sending'
-  | 'acked'
-  | 'sent'
-  | 'failed'
-  | 'suppressed'
-  | 'legacy_migrated'
+  | { type: 'reply_to_message'; groupId?: number; messageId?: number; replyToMessageId?: number; mentionUserId?: number }
+  | { type: 'send_message'; groupId?: number }
+  | { type: 'audit_only'; groupId?: number }
 
 export interface ReplyRecord {
   id: number
@@ -31,12 +15,12 @@ export interface ReplyRecord {
   scopeKey: string
   replyIntentId: string
   sourceKind: string
-  triggerMessageRowId?: number
-  incorporatedMessageRowId?: number
+  triggerMessageRowId?: number | null
+  incorporatedMessageRowId?: number | null
   deliveryPayload: ReplyDeliveryPayload
   text: string
-  executionState: ReplyExecutionState
-  providerMessageId?: number
+  executionState?: ReplyRecordExecutionState
+  providerMessageId?: number | null
   attemptCount: number
   createdAt: Date
   updatedAt: Date
@@ -48,227 +32,119 @@ export interface CreateOrReuseReplyRecordInput {
   scopeKey: string
   replyIntentId: string
   sourceKind: string
-  triggerMessageRowId?: number
-  incorporatedMessageRowId?: number
+  triggerMessageRowId?: number | null
+  incorporatedMessageRowId?: number | null
   deliveryPayload: ReplyDeliveryPayload
   text: string
-  executionState: Extract<ReplyExecutionState, 'dry_run' | 'pending' | 'suppressed'>
+  executionState?: ReplyRecordExecutionState
 }
 
-function mapRow(row: PrismaReplyRecord): ReplyRecord {
-  return {
-    id: row.id,
-    runtimeKey: row.runtimeKey,
-    groupId: Number(row.groupId),
-    scopeKey: row.scopeKey,
-    replyIntentId: row.replyIntentId,
-    sourceKind: row.sourceKind,
-    triggerMessageRowId: row.triggerMessageRowId ?? undefined,
-    incorporatedMessageRowId: row.incorporatedMessageRowId ?? undefined,
-    deliveryPayload: row.deliveryPayload as unknown as ReplyDeliveryPayload,
-    text: row.text,
-    executionState: row.executionState as ReplyExecutionState,
-    providerMessageId: row.providerMessageId == null ? undefined : Number(row.providerMessageId),
-    attemptCount: row.attemptCount,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  }
+const records = new Map<string, ReplyRecord>()
+let nextId = 1
+
+function key(runtimeKey: string, replyIntentId: string): string {
+  return `${runtimeKey}:${replyIntentId}`
 }
 
 export async function findReplyRecordByReplyIntentId(
   runtimeKey: string,
   replyIntentId: string,
 ): Promise<ReplyRecord | null> {
-  const row = await prisma.replyRecord.findUnique({
-    where: {
-      runtimeKey_replyIntentId: {
-        runtimeKey,
-        replyIntentId,
-      },
-    },
-  })
-
-  return row ? mapRow(row) : null
+  return records.get(key(runtimeKey, replyIntentId)) ?? null
 }
 
 export async function createOrReuseReplyRecord(input: CreateOrReuseReplyRecordInput): Promise<ReplyRecord> {
-  return prisma.$transaction(async (tx) => {
-    const existing = await tx.replyRecord.findUnique({
-      where: {
-        runtimeKey_replyIntentId: {
-          runtimeKey: input.runtimeKey,
-          replyIntentId: input.replyIntentId,
-        },
-      },
-    })
-    if (existing) return mapRow(existing)
-
-    const created = await tx.replyRecord.create({
-      data: {
-        runtimeKey: input.runtimeKey,
-        groupId: BigInt(input.groupId),
-        scopeKey: input.scopeKey,
-        replyIntentId: input.replyIntentId,
-        sourceKind: input.sourceKind,
-        triggerMessageRowId: input.triggerMessageRowId ?? null,
-        incorporatedMessageRowId: input.incorporatedMessageRowId ?? null,
-        deliveryPayload: input.deliveryPayload as unknown as object,
-        text: input.text,
-        executionState: input.executionState,
-        providerMessageId: null,
-        attemptCount: 0,
-      },
-    })
-
-    return mapRow(created)
-  })
+  const recordKey = key(input.runtimeKey, input.replyIntentId)
+  const existing = records.get(recordKey)
+  if (existing) return existing
+  const now = new Date()
+  const record: ReplyRecord = {
+    id: nextId++,
+    runtimeKey: input.runtimeKey,
+    groupId: input.groupId,
+    scopeKey: input.scopeKey,
+    replyIntentId: input.replyIntentId,
+    sourceKind: input.sourceKind,
+    triggerMessageRowId: input.triggerMessageRowId ?? null,
+    incorporatedMessageRowId: input.incorporatedMessageRowId ?? null,
+    deliveryPayload: input.deliveryPayload,
+    text: input.text,
+    executionState: input.executionState ?? 'pending',
+    providerMessageId: null,
+    attemptCount: 0,
+    createdAt: now,
+    updatedAt: now,
+  }
+  records.set(recordKey, record)
+  return record
 }
 
-export async function listRecoverableReplyRecords(groupIds?: number[]): Promise<ReplyRecord[]> {
-  const rows = await prisma.replyRecord.findMany({
-    where: {
-      executionState: {
-        in: ['pending', 'sending', 'failed', 'acked'],
-      },
-      ...(groupIds && groupIds.length > 0 ? { groupId: { in: groupIds.map(BigInt) } } : {}),
-    },
-    orderBy: [
-      { groupId: 'asc' },
-      { scopeKey: 'asc' },
-      { createdAt: 'asc' },
-    ],
-  })
-
-  return rows.map((row: PrismaReplyRecord) => mapRow(row))
+export async function listRecoverableReplyRecords(_groups?: number[]): Promise<ReplyRecord[]> {
+  return [...records.values()].filter((record) => ['pending', 'sending', 'acked', 'failed'].includes(record.executionState ?? 'pending'))
 }
 
-export async function listSentReplyRecords(
-  groupId: number,
-  scopeKey: string,
-): Promise<ReplyRecord[]> {
-  const rows = await prisma.replyRecord.findMany({
-    where: {
-      groupId: BigInt(groupId),
-      scopeKey,
-      executionState: 'sent',
-    },
-    orderBy: { createdAt: 'asc' },
-  })
-
-  return rows.map((row: PrismaReplyRecord) => mapRow(row))
+export async function listSentReplyRecords(groupId: number, scopeKey: string): Promise<ReplyRecord[]> {
+  return [...records.values()].filter((record) => record.groupId === groupId && record.scopeKey === scopeKey && record.executionState === 'sent')
 }
 
 export async function listSentReplyRecordsAfterMessageRowId(
   groupId: number,
   scopeKey: string,
-  afterMessageRowId?: number,
+  messageRowId: number,
 ): Promise<ReplyRecord[]> {
-  const rows = await prisma.replyRecord.findMany({
-    where: {
-      groupId: BigInt(groupId),
-      scopeKey,
-      executionState: 'sent',
-      ...(afterMessageRowId !== undefined
-        ? { incorporatedMessageRowId: { gt: afterMessageRowId } }
-        : {}),
-    },
-    orderBy: { createdAt: 'asc' },
-  })
-
-  return rows.map((row: PrismaReplyRecord) => mapRow(row))
+  return (await listSentReplyRecords(groupId, scopeKey)).filter((record) => (record.incorporatedMessageRowId ?? 0) > messageRowId)
 }
 
-export async function getLatestSentReplyRecord(
-  groupId: number,
-  scopeKey: string,
-): Promise<ReplyRecord | null> {
-  const row = await prisma.replyRecord.findFirst({
-    where: {
-      groupId: BigInt(groupId),
-      scopeKey,
-      executionState: 'sent',
-    },
-    orderBy: { createdAt: 'desc' },
-  })
+export async function getLatestSentReplyRecord(groupId: number, scopeKey: string): Promise<ReplyRecord | null> {
+  return (await listSentReplyRecords(groupId, scopeKey)).at(-1) ?? null
+}
 
-  return row ? mapRow(row) : null
+async function mark(id: number, executionState: ReplyRecordExecutionState, providerMessageId?: number): Promise<void> {
+  for (const record of records.values()) {
+    if (record.id !== id) continue
+    record.executionState = executionState
+    if (providerMessageId !== undefined) record.providerMessageId = providerMessageId
+    record.updatedAt = new Date()
+    return
+  }
 }
 
 export async function markReplyRecordSending(id: number): Promise<void> {
-  await prisma.replyRecord.update({
-    where: { id },
-    data: {
-      executionState: 'sending',
-      attemptCount: { increment: 1 },
-    },
-  })
+  await mark(id, 'sending')
 }
 
 export async function markReplyRecordAcked(id: number, providerMessageId: number): Promise<void> {
-  await prisma.replyRecord.update({
-    where: { id },
-    data: {
-      executionState: 'acked',
-      providerMessageId: BigInt(providerMessageId),
-    },
-  })
+  await mark(id, 'acked', providerMessageId)
 }
 
 export async function markReplyRecordSent(id: number): Promise<void> {
-  await prisma.replyRecord.update({
-    where: { id },
-    data: { executionState: 'sent' },
-  })
+  await mark(id, 'sent')
 }
 
 export async function markReplyRecordFailed(id: number): Promise<void> {
-  await prisma.replyRecord.update({
-    where: { id },
-    data: { executionState: 'failed' },
-  })
+  await mark(id, 'failed')
 }
 
 export async function markReplyRecordSuppressed(id: number): Promise<void> {
-  await prisma.replyRecord.update({
-    where: { id },
-    data: { executionState: 'suppressed' },
-  })
+  await mark(id, 'suppressed')
 }
 
 export async function upsertReplyRecordFromLegacyAssistantTurn(turn: AssistantTurnRecord): Promise<ReplyRecord> {
-  const mentionUserId = turn.mentionUserId ?? parseSenderReplyScopeKey(turn.senderThreadKey) ?? undefined
-  const normalizedReplyIntentId = turn.triggerMessageRowId
-    ? makeMentionReplyIntentId(turn.groupId, turn.triggerMessageRowId)
-    : turn.replyIntentId
-  const row = await prisma.replyRecord.upsert({
-    where: {
-      runtimeKey_replyIntentId: {
-        runtimeKey: makeGroupRuntimeKey(turn.groupId),
-        replyIntentId: normalizedReplyIntentId,
-      },
+  return createOrReuseReplyRecord({
+    runtimeKey: makeMainAgentRuntimeKey(),
+    groupId: turn.groupId,
+    scopeKey: turn.senderThreadKey,
+    replyIntentId: makeMentionReplyIntentId(turn.groupId, turn.triggerMessageRowId),
+    sourceKind: 'mention',
+    triggerMessageRowId: turn.triggerMessageRowId,
+    incorporatedMessageRowId: turn.incorporatedMessageRowId,
+    deliveryPayload: {
+      type: 'reply_to_message',
+      groupId: turn.groupId,
+      messageId: turn.replyToMessageId,
+      mentionUserId: turn.mentionUserId ?? undefined,
     },
-    create: {
-      runtimeKey: makeGroupRuntimeKey(turn.groupId),
-      groupId: BigInt(turn.groupId),
-      scopeKey: turn.senderThreadKey,
-      replyIntentId: normalizedReplyIntentId,
-      sourceKind: 'mention',
-      triggerMessageRowId: turn.triggerMessageRowId,
-      incorporatedMessageRowId: turn.incorporatedMessageRowId,
-      deliveryPayload: {
-        type: 'reply_to_message',
-        replyToMessageId: turn.replyToMessageId,
-        ...(mentionUserId != null ? { mentionUserId } : {}),
-      },
-      text: turn.text,
-      executionState: turn.status as ReplyExecutionState,
-      providerMessageId: turn.providerMessageId == null ? null : BigInt(turn.providerMessageId),
-      attemptCount: turn.attemptCount,
-      createdAt: turn.createdAt,
-      updatedAt: turn.updatedAt,
-    },
-    update: {},
+    text: turn.text,
+    executionState: turn.status as ReplyRecordExecutionState,
   })
-
-  return mapRow(row)
 }

@@ -77,7 +77,8 @@ export async function compactConversationIfNeeded(
   const saveCompactedState = dependencies.saveCompactedState ?? compactConversationState
 
   const state = await getConversationState(groupId, senderThreadKey)
-  const messages = await getMessagesAfterRowId(groupId, state.lastCompactedMessageRowId)
+  const lastCompactedMessageRowId = state.lastCompactedMessageRowId ?? 0
+  const messages = await getMessagesAfterRowId(groupId, lastCompactedMessageRowId)
   if (messages.length <= COMPACTION_TRIGGER_USER_MESSAGES) return
 
   const boundaryMessage = messages[messages.length - COMPACTION_KEEP_RECENT_USER_MESSAGES - 1]
@@ -86,7 +87,7 @@ export async function compactConversationIfNeeded(
   const replyRecords = await getReplyRecordsAfterRowId(
     groupId,
     senderThreadKey,
-    state.lastCompactedMessageRowId,
+    lastCompactedMessageRowId,
   )
   const compactedMessages = messages.filter((message) => message.id <= boundaryMessage.id)
   const compactedReplyRecords = replyRecords.filter(

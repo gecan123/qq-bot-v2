@@ -97,32 +97,8 @@ model AssistantTurn {
   @@map("assistant_turns")
 }
 
-model ReplyRecord {
-  id                       Int      @id @default(autoincrement())
-  runtimeKey               String   @map("runtime_key") @db.VarChar(191)
-  groupId                  BigInt   @map("group_id")
-  scopeKey                 String   @map("scope_key") @db.VarChar(191)
-  replyIntentId            String   @map("reply_intent_id") @db.VarChar(191)
-  sourceKind               String   @map("source_kind") @db.VarChar(32)
-  triggerMessageRowId      Int?     @map("trigger_message_row_id")
-  incorporatedMessageRowId Int?     @map("incorporated_message_row_id")
-  deliveryPayload          Json     @map("delivery_payload")
-  text                     String   @map("text") @db.Text
-  executionState           String   @map("execution_state") @db.VarChar(32)
-  providerMessageId        BigInt?  @map("provider_message_id")
-  attemptCount             Int      @default(0) @map("attempt_count")
-  createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt                DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
-
-  @@unique([runtimeKey, replyIntentId])
-  @@index([groupId, scopeKey, updatedAt(sort: Desc)])
-  @@index([groupId, scopeKey, executionState, updatedAt(sort: Desc)])
-  @@map("reply_records")
-}
-
 model ReplyAudit {
   id            Int      @id @default(autoincrement())
-  replyRecordId Int?     @map("reply_record_id")
   runtimeKey    String   @map("runtime_key") @db.VarChar(191)
   groupId       BigInt   @map("group_id")
   scopeKey      String   @map("scope_key") @db.VarChar(191)
@@ -134,7 +110,6 @@ model ReplyAudit {
 
   @@index([groupId, scopeKey, createdAt(sort: Desc)])
   @@unique([runtimeKey, opportunityId, auditKind])
-  @@index([replyRecordId, auditKind])
   @@map("reply_audits")
 }
 
@@ -239,6 +214,7 @@ model MemoryItem {
   agentId   String   @map("agent_id") @db.VarChar(191)
   scope     String   @db.VarChar(64)
   payload   Json
+  status    String   @default("dormant") @db.VarChar(32)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 

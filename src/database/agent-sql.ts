@@ -31,7 +31,7 @@ export interface DbReadResult {
 const DANGEROUS_SQL_KEYWORDS = /\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|vacuum|analyze|refresh|merge|call|do|copy)\b/i
 const GROUP_PARAM_RE = /(^|[^a-zA-Z0-9_]):group_id\b/
 const GROUP_FILTER_RE = /\b(?:[a-zA-Z_][a-zA-Z0-9_]*\.)?group_id\s*=\s*:group_id\b/i
-const DENIED_AGENT_READ_TABLE_RE = /\b(reply_audits|proactive_evaluations)\b/i
+const DENIED_AGENT_READ_TABLE_RE = /\b(reply_records|reply_audits|proactive_evaluations)\b/i
 
 function normalizeSql(sql: string): string {
   return sql.replace(/;+\s*$/, '').trim()

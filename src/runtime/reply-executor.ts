@@ -85,11 +85,13 @@ function auditReplyIntentId(decision: ReplyDecision): string {
 
 function buildDeliveryPayload(decision: ReplyDecision): ReplyDeliveryPayload {
   if (decision.deliveryMode === 'send_message') {
-    return { type: 'send_message' }
+    return { type: 'send_message', groupId: decision.opportunity.groupId }
   }
 
   return {
     type: 'reply_to_message',
+    groupId: decision.opportunity.groupId,
+    messageId: decision.opportunity.triggerMessageId,
     replyToMessageId: decision.opportunity.triggerMessageId,
     mentionUserId: decision.opportunity.triggerSenderId,
   }
@@ -375,7 +377,6 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
 
       if (replyRecord.executionState === 'dry_run') {
         await replyAuditStore.createOrReuse({
-          replyRecordId: replyRecord.id,
           opportunityId: opportunity.opportunityId,
           runtimeKey: replyRecord.runtimeKey,
           groupId: replyRecord.groupId,

@@ -2,6 +2,7 @@ import { sendGroupReply, type SendGroupReplyResult } from '../responder/reply-ex
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
 import { buildReplySegments } from './segment-builder.js'
+import { previewText } from '../utils/business-log.js'
 
 const log = createLogger('MESSAGE_SENDER')
 
@@ -49,12 +50,17 @@ class NapcatMessageSender implements MessageSender {
     if (this.options.replyDryRun) {
       log.info(
         {
+          direction: 'outbound',
+          actor: 'bot',
+          category: 'reply_delivery',
+          flow: 'napcat_send_dry_run',
           groupId: params.groupId,
           replyToMessageId: params.replyToMessageId,
           mentionUserId: params.mentionUserId,
-          preview: params.text.slice(0, 60),
+          deliveryType: 'reply_to_message',
+          textPreview: previewText(params.text),
         },
-        'replyToMessage dry run: skipped outbound send',
+        'Bot 回复发送跳过（dry run）',
       )
       return { success: true, attempts: 0 }
     }
@@ -73,10 +79,15 @@ class NapcatMessageSender implements MessageSender {
     if (this.options.proactiveDryRun) {
       log.info(
         {
+          direction: 'outbound',
+          actor: 'bot',
+          category: 'reply_delivery',
+          flow: 'napcat_send_dry_run',
           groupId: params.groupId,
-          preview: params.text.slice(0, 60),
+          deliveryType: 'send_message',
+          textPreview: previewText(params.text),
         },
-        'sendMessage dry run: skipped outbound send',
+        'Bot 独立消息发送跳过（dry run）',
       )
       return { success: true, attempts: 0 }
     }

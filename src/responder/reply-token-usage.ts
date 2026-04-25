@@ -12,6 +12,10 @@ export function logMentionReplyTokenUsage(params: {
 }): void {
   log.info(
     {
+      direction: 'internal',
+      actor: 'bot',
+      category: 'mention_reply',
+      flow: 'reply_generation_token_usage',
       groupId: params.groupId,
       messageId: params.messageId,
       mode: params.mode,

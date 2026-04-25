@@ -21,6 +21,7 @@ import {
 import { createReplyDecisionEngine, type ReplyDecisionEngine } from './reply-decision-engine.js'
 import type { ReplyDecision, ReplyExecutionResult, ReplyOpportunity } from './reply-decision-types.js'
 import type { ProactiveCandidateArtifact, ProactiveCandidateStatus } from './types.js'
+import { previewText } from '../utils/business-log.js'
 
 type StoredConversationMessage = NonNullable<Awaited<ReturnType<typeof getMessageById>>>
 
@@ -157,6 +158,30 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
   return {
     async execute(opportunity) {
       const decision = decisionEngine.decide(opportunity)
+      log.info(
+        {
+          direction: 'internal',
+          actor: 'system',
+          category: opportunity.sourceKind === 'mention' ? 'mention_reply' : 'ambient_candidate',
+          flow: 'reply_decision',
+          groupId: opportunity.groupId,
+          sceneId: opportunity.sceneId,
+          opportunityId: opportunity.opportunityId,
+          sourceKind: opportunity.sourceKind,
+          cueStrength: opportunity.cueStrength,
+          outcome: decision.outcome,
+          deliveryMode: decision.deliveryMode,
+          dryRun: decision.dryRun,
+          shouldGenerate: decision.policy.shouldGenerate,
+          shouldCreateReplyRecord: decision.policy.shouldCreateReplyRecord,
+          shouldDeliver: decision.policy.shouldDeliver,
+          shouldAudit: decision.policy.shouldAudit,
+          replyProbability: decision.opportunity.replyProbability,
+          gateReasons: decision.policy.gateReasons ?? [],
+          reason: decision.policy.reason,
+        },
+        '回复决策完成',
+      )
 
       if (decision.policy.artifactKind === 'proactive_candidate') {
         let reply: string | null = null
@@ -190,17 +215,22 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
         })
         log.info(
           {
+            direction: 'outbound',
+            actor: 'bot',
+            category: 'ambient_candidate',
+            flow: 'proactive_candidate_generation',
             groupId: artifact.groupId,
             sceneId: artifact.sceneId,
             opportunityId: artifact.opportunityId,
+            sourceKind: artifact.sourceKind,
             status: artifact.status,
             termination: artifact.termination,
             gateReasons: artifact.gateReasons,
             triggerMessageRowId: artifact.triggerMessageRowId,
             incorporatedMessageRowId: artifact.incorporatedMessageRowId,
-            candidateText: artifact.candidateText ?? null,
+            textPreview: previewText(artifact.candidateText),
           },
-          'proactive_candidate_observed',
+          'Bot 主动候选已生成',
         )
 
         if (status === 'candidate_generated') {
@@ -319,6 +349,21 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
             reason: decision.policy.reason,
           },
         })
+        log.info(
+          {
+            direction: 'outbound',
+            actor: 'bot',
+            category: 'mention_reply',
+            flow: 'reply_record_dry_run',
+            groupId: replyRecord.groupId,
+            scopeKey: replyRecord.scopeKey,
+            replyIntentId: replyRecord.replyIntentId,
+            sourceKind: replyRecord.sourceKind,
+            deliveryType: replyRecord.deliveryPayload.type,
+            textPreview: previewText(replyRecord.text),
+          },
+          'Bot 回复已生成（dry run）',
+        )
         return { decision, replyRecord, deliveryResult: 'dry_run' }
       }
 

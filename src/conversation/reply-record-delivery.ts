@@ -8,6 +8,7 @@ import {
   type ReplyRecord,
 } from './reply-record-store.js'
 import { createReplyAudit } from './reply-audit-store.js'
+import { previewText } from '../utils/business-log.js'
 
 const log = createLogger('REPLY_RECORD')
 
@@ -69,12 +70,18 @@ export async function deliverReplyRecord(
     })
     log.info(
       {
+        direction: 'outbound',
+        actor: 'bot',
+        category: 'reply_delivery',
+        flow: 'reply_record_delivery',
         groupId: record.groupId,
         scopeKey: record.scopeKey,
         replyIntentId: record.replyIntentId,
+        sourceKind: record.sourceKind,
         deliveryType: record.deliveryPayload.type,
+        textPreview: previewText(record.text),
       },
-      'reply record 投递跳过：dry run 已开启',
+      'Bot 投递跳过（dry run）',
     )
     return 'dry_run'
   }
@@ -107,6 +114,23 @@ export async function deliverReplyRecord(
       }
 
       sendSucceeded = true
+      log.info(
+        {
+          direction: 'outbound',
+          actor: 'bot',
+          category: 'reply_delivery',
+          flow: 'reply_record_delivery',
+          groupId: record.groupId,
+          scopeKey: record.scopeKey,
+          replyIntentId: record.replyIntentId,
+          sourceKind: record.sourceKind,
+          deliveryType: record.deliveryPayload.type,
+          providerMessageId: sendResult.providerMessageId,
+          attempts: sendResult.attempts,
+          textPreview: previewText(record.text),
+        },
+        'Bot 投递成功',
+      )
     }
 
     await replyRecordStore.markSent(record.id)

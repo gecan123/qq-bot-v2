@@ -1,5 +1,6 @@
 import { napcat } from '../bot/napcat.js'
 import { createLogger } from '../logger.js'
+import { previewText } from '../utils/business-log.js'
 
 interface NapcatSegment {
   type: string
@@ -21,27 +22,68 @@ function sleep(ms: number): Promise<void> {
 }
 
 export async function sendGroupReply(groupId: number, segments: NapcatSegment[]): Promise<SendGroupReplyResult> {
-  const preview = segments
-    .filter((s) => s.type === 'text')
-    .map((s) => String(s.data.text ?? ''))
-    .join('')
-    .slice(0, 60)
+  const textPreview = previewText(
+    segments
+      .filter((s) => s.type === 'text')
+      .map((s) => String(s.data.text ?? ''))
+      .join(''),
+  )
+  const deliveryType = segments.some((segment) => segment.type === 'reply') ? 'reply_to_message' : 'send_message'
+  const segmentTypes = segments.map((segment) => segment.type)
 
   for (let attempt = 1; attempt <= RETRY_LIMIT; attempt++) {
     try {
       const result = await napcat.send_group_msg({ group_id: groupId, message: segments as never })
-      log.info({ groupId, preview }, '消息发送成功')
+      log.info(
+        {
+          direction: 'outbound',
+          actor: 'bot',
+          category: 'reply_delivery',
+          flow: 'napcat_send',
+          groupId,
+          providerMessageId: result.message_id,
+          deliveryType,
+          segmentTypes,
+          textPreview,
+        },
+        'Bot 消息发送成功',
+      )
       return {
         success: true,
         attempts: attempt,
         providerMessageId: result.message_id,
       }
     } catch (error) {
-      log.warn({ groupId, preview, attempt, error }, '消息发送失败')
+      log.warn(
+        {
+          direction: 'outbound',
+          actor: 'bot',
+          category: 'reply_delivery',
+          flow: 'napcat_send',
+          groupId,
+          deliveryType,
+          segmentTypes,
+          textPreview,
+          attempt,
+          error,
+        },
+        'Bot 消息发送失败',
+      )
       if (attempt < RETRY_LIMIT) await sleep(RETRY_DELAY_MS)
     }
   }
 
-  log.error({ groupId, preview }, `消息发送失败，已重试 ${RETRY_LIMIT} 次`)
+  log.error(
+    {
+      direction: 'outbound',
+      actor: 'bot',
+      category: 'reply_delivery',
+      flow: 'napcat_send',
+      groupId,
+      deliveryType,
+      textPreview,
+    },
+    `Bot 消息发送失败，已重试 ${RETRY_LIMIT} 次`,
+  )
   return { success: false, attempts: RETRY_LIMIT }
 }

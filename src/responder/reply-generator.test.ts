@@ -38,6 +38,10 @@ describe('generateMentionReply token usage logging', () => {
     assert.equal(infoMock.mock.calls[0]?.arguments[1], 'at_mention_token_usage')
     assert.deepEqual(infoMock.mock.calls[0]?.arguments[0], {
       scope: 'REPLY',
+      direction: 'internal',
+      actor: 'bot',
+      category: 'mention_reply',
+      flow: 'reply_generation_token_usage',
       groupId: 1001,
       messageId: 2002,
       mode: 'agent',

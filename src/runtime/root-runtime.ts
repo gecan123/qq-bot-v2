@@ -8,6 +8,7 @@ import { createReplyExecutor, type ReplyExecutor, type ReplyExecutorOptions } fr
 import { createReplyDecisionEngine, type ReplyDecisionEngine } from './reply-decision-engine.js'
 import type { ReplyOpportunity } from './reply-decision-types.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
+import { summarizeSegments } from '../utils/business-log.js'
 import { config } from '../config/index.js'
 import {
   createDefaultRootRuntimeSnapshot,
@@ -660,6 +661,29 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
           }
 
       const executeDecisions = ingestOptions.executeDecisions ?? true
+
+      log.info(
+        {
+          direction: 'internal',
+          actor: 'system',
+          category: mentionedSelf ? 'mention' : 'ambient_message',
+          flow: 'runtime_classification',
+          groupId: input.groupId,
+          messageId: input.messageId,
+          messageRowId: input.messageRowId,
+          senderId: input.senderId,
+          senderNickname: input.senderNickname,
+          mentionedSelf,
+          sourceKind: opportunity.sourceKind,
+          cueStrength: opportunity.cueStrength,
+          deliveryMode: opportunity.deliveryMode,
+          replyProbability: opportunity.replyProbability,
+          gateReasons: opportunity.gateReasons ?? [],
+          executeDecisions,
+          ...summarizeSegments(input.segments),
+        },
+        '消息归类完成',
+      )
 
       if (!executeDecisions) {
         return

@@ -5,8 +5,8 @@ import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
 import { persistMediaReferences } from '../media/media-cache.js'
 import type { ParsedSegment } from '../types/message-segments.js'
-import type { TextSegment } from '../types/message-segments.js'
 import type { RootRuntimeManager } from '../runtime/root-runtime.js'
+import { summarizeSegments } from '../utils/business-log.js'
 
 const log = createLogger('BOT')
 
@@ -93,20 +93,26 @@ async function processMessage(groupId: number, messageId: number, options: Proce
     rootRuntime: options.rootRuntime,
     persistedCreatedAt: persistedMessage.sentAt ?? persistedMessage.createdAt,
   })
-  const textPreview = mediaResult.content
-    .filter((s): s is TextSegment => s.type === 'text')
-    .map((s) => s.content)
-    .join(' ')
-    .slice(0, 50)
+  const mentionedSelf = mediaResult.content.some(
+    (segment) => segment.type === 'at' && segment.targetId === String(config.selfNumber),
+  )
 
   log.info(
     {
-      group: groupId,
-      sender: parsed.senderNickname,
-      segments: mediaResult.content.length,
+      direction: 'inbound',
+      actor: 'member',
+      category: mentionedSelf ? 'mention' : 'ambient_message',
+      flow: 'group_message_ingress',
+      groupId,
+      groupName,
+      messageId: parsed.messageId,
+      messageRowId: persistedMessage.id,
+      senderId: parsed.senderId,
+      senderNickname: parsed.senderGroupNickname ?? parsed.senderNickname,
+      ...summarizeSegments(mediaResult.content),
       mediaReferences: mediaResult.mediaReferenceIds.length,
     },
-    textPreview || `[${mediaResult.content.map((s) => s.type).join(', ')}]`
+    '群友发言已入库',
   )
 }
 

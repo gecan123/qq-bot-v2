@@ -42,7 +42,19 @@ async function agentReply(
   })
 
   log.info(
-    { groupId: msg.groupId, state: result.state, reason: 'reason' in result ? result.reason : undefined },
+    {
+      direction: 'internal',
+      actor: 'bot',
+      category: 'mention_reply',
+      flow: 'reply_generation',
+      groupId: msg.groupId,
+      messageId: msg.messageId,
+      senderId: msg.senderId,
+      senderNickname: msg.senderNickname,
+      state: result.state,
+      termination: result.state === 'final' ? result.termination : undefined,
+      reason: 'reason' in result ? result.reason : undefined,
+    },
     'at_mention_agent_result',
   )
 
@@ -76,7 +88,19 @@ async function agentReplyWithTermination(
   })
 
   log.info(
-    { groupId: msg.groupId, state: result.state, reason: 'reason' in result ? result.reason : undefined },
+    {
+      direction: 'internal',
+      actor: 'bot',
+      category: 'mention_reply',
+      flow: 'reply_generation',
+      groupId: msg.groupId,
+      messageId: msg.messageId,
+      senderId: msg.senderId,
+      senderNickname: msg.senderNickname,
+      state: result.state,
+      termination: result.state === 'final' ? result.termination : undefined,
+      reason: 'reason' in result ? result.reason : undefined,
+    },
     'at_mention_agent_result',
   )
 

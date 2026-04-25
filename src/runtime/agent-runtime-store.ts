@@ -1,9 +1,25 @@
 import { prisma } from '../database/client.js'
-import type { Prisma } from '../generated/prisma/client.js'
-import { MAIN_AGENT_ID, makeSceneId, type AgentId, type SceneKind } from './types.js'
+import { Prisma } from '../generated/prisma/client.js'
+import {
+  AGENT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+  MAIN_AGENT_ID,
+  makeSceneId,
+  type AgentId,
+  type ActionDeliveryState,
+  type ActionIntentStatus,
+  type ActionRecord,
+  type ActionType,
+  type OpportunityType,
+  type QueueKind,
+  type ReferencePayload,
+  type RuntimeEventRecord,
+  type RuntimeEventType,
+  type SceneId,
+  type SceneKind,
+} from './agent-runtime-types.js'
 
-export const MESSAGE_REFERENCE_PAYLOAD_KEYS = new Set(['messageRowId', 'messageId', 'ingestSource', 'source', 'idempotencyKey'])
-const FORBIDDEN_USER_FACT_PAYLOAD_KEYS = new Set([
+const ALLOWED_REFERENCE_KEYS = new Set(['messageRowId', 'messageId', 'ingestSource', 'source', 'idempotencyKey'])
+const FORBIDDEN_REFERENCE_KEYS = new Set([
   'segments',
   'plainText',
   'content',
@@ -15,49 +31,28 @@ const FORBIDDEN_USER_FACT_PAYLOAD_KEYS = new Set([
   'resolvedText',
 ])
 
-export interface SceneRecord {
-  id: string
-  agentId: AgentId
-  kind: SceneKind
-  externalId: string
-  displayName?: string | null
-  policy?: unknown
+function makeId(prefix: string, key: string): string {
+  return `${prefix}:${Buffer.from(key).toString('base64url').slice(0, 96)}`
 }
 
-export interface RuntimeEventRecord {
-  id: string
-  sceneId: string
-  eventType: string
-  payload: Record<string, unknown>
-  idempotencyKey: string
+function asJsonObject(value: Prisma.JsonValue): Prisma.JsonObject {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Prisma.JsonObject : {}
 }
 
-export interface OpportunityRecord {
-  id: string
-  sceneId: string
-  runtimeEventId?: string | null
-  queueKind: string
-  opportunityType: string
-  payload: Record<string, unknown>
-  idempotencyKey: string
-}
-
-function sanitizeJsonValue(value: unknown): Prisma.InputJsonValue | null | undefined {
-  if (value === undefined) return undefined
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
-  if (typeof value === 'number') return Number.isFinite(value) ? value : String(value)
-  if (typeof value === 'bigint') return value.toString()
-  if (value instanceof Date) return value.toISOString()
-  if (Array.isArray(value)) return value.map((item) => sanitizeJsonValue(item) ?? null)
-  if (typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeJsonValue(item) ?? null]))
+function toReferencePayload(payload: ReferencePayload): Prisma.JsonObject {
+  const out: Prisma.JsonObject = {}
+  for (const [key, value] of Object.entries(payload)) {
+    if (!ALLOWED_REFERENCE_KEYS.has(key) || FORBIDDEN_REFERENCE_KEYS.has(key)) {
+      throw new Error(`runtime reference payload contains unsupported key: ${key}`)
+    }
+    out[key] = value
   }
-  return String(value)
+  return out
 }
 
 export function assertReferenceOnlyPayload(payload: Record<string, unknown>): void {
   for (const key of Object.keys(payload)) {
-    if (!MESSAGE_REFERENCE_PAYLOAD_KEYS.has(key) || FORBIDDEN_USER_FACT_PAYLOAD_KEYS.has(key)) {
+    if (!ALLOWED_REFERENCE_KEYS.has(key) || FORBIDDEN_REFERENCE_KEYS.has(key)) {
       throw new Error(`runtime payload must be reference-only; forbidden key: ${key}`)
     }
   }
@@ -81,84 +76,244 @@ export function buildMessageReferencePayload(input: {
   return payload
 }
 
-export async function ensureQqGroupScene(input: {
-  groupId: number
-  agentId?: AgentId
-  displayName?: string | null
-  policy?: unknown
-}): Promise<SceneRecord> {
-  const agentId = input.agentId ?? MAIN_AGENT_ID
-  const externalId = String(input.groupId)
-  const id = makeSceneId(input.groupId)
-  const row = await prisma.scene.upsert({
-    where: { agentId_kind_externalId: { agentId, kind: 'qq_group', externalId } },
+export async function getOrCreateMainAgentRuntime() {
+  return prisma.agentRuntimeSnapshot.upsert({
+    where: { agentId: MAIN_AGENT_ID },
+    update: {},
     create: {
-      id,
-      agentId,
-      kind: 'qq_group',
-      externalId,
-      displayName: input.displayName ?? null,
-      policy: input.policy === undefined ? undefined : (sanitizeJsonValue(input.policy) as Prisma.InputJsonValue),
-    },
-    update: {
-      displayName: input.displayName ?? undefined,
-      policy: input.policy === undefined ? undefined : (sanitizeJsonValue(input.policy) as Prisma.InputJsonValue),
+      agentId: MAIN_AGENT_ID,
+      schemaVersion: AGENT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+      contextSnapshot: { messages: [] },
+      sessionSnapshot: { scenes: [] },
     },
   })
-  return { id: row.id, agentId: row.agentId, kind: row.kind as SceneKind, externalId: row.externalId, displayName: row.displayName, policy: row.policy }
+}
+
+export async function getAgentRuntimeSnapshot(agentId: AgentId = MAIN_AGENT_ID) {
+  return prisma.agentRuntimeSnapshot.findUnique({ where: { agentId } })
+}
+
+export async function upsertAgentRuntimeSnapshot(input: {
+  agentId?: AgentId
+  schemaVersion?: number
+  contextSnapshot: Prisma.JsonObject
+  sessionSnapshot: Prisma.JsonObject
+}) {
+  const agentId = input.agentId ?? MAIN_AGENT_ID
+  return prisma.agentRuntimeSnapshot.upsert({
+    where: { agentId },
+    update: {
+      schemaVersion: input.schemaVersion ?? AGENT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+      contextSnapshot: input.contextSnapshot,
+      sessionSnapshot: input.sessionSnapshot,
+    },
+    create: {
+      agentId,
+      schemaVersion: input.schemaVersion ?? AGENT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+      contextSnapshot: input.contextSnapshot,
+      sessionSnapshot: input.sessionSnapshot,
+    },
+  })
+}
+
+export async function getOrCreateScene(input: {
+  agentId?: AgentId
+  kind: SceneKind
+  externalId: string | number
+  displayName?: string | null
+  policy?: Prisma.JsonObject
+}) {
+  const agentId = input.agentId ?? MAIN_AGENT_ID
+  const externalId = String(input.externalId)
+  return prisma.scene.upsert({
+    where: { agentId_kind_externalId: { agentId, kind: input.kind, externalId } },
+    update: {
+      displayName: input.displayName ?? undefined,
+      policy: input.policy ?? undefined,
+    },
+    create: {
+      id: makeSceneId(input.kind, externalId),
+      agentId,
+      kind: input.kind,
+      externalId,
+      displayName: input.displayName ?? null,
+      policy: input.policy ?? {},
+    },
+  })
 }
 
 export async function createOrReuseRuntimeEvent(input: {
-  sceneId: string
-  eventType: string
-  payload: Record<string, unknown>
+  sceneId: SceneId
+  eventType: RuntimeEventType
+  payload: ReferencePayload
   occurredAt: Date
   idempotencyKey: string
 }): Promise<RuntimeEventRecord> {
-  assertReferenceOnlyPayload(input.payload)
   const row = await prisma.runtimeEvent.upsert({
     where: { sceneId_idempotencyKey: { sceneId: input.sceneId, idempotencyKey: input.idempotencyKey } },
+    update: {},
     create: {
-      id: `${input.sceneId}:event:${input.idempotencyKey}`,
+      id: makeId('event', `${input.sceneId}:${input.idempotencyKey}`),
       sceneId: input.sceneId,
       eventType: input.eventType,
-      payload: sanitizeJsonValue(input.payload) as Prisma.InputJsonObject,
+      payload: toReferencePayload(input.payload),
       occurredAt: input.occurredAt,
       idempotencyKey: input.idempotencyKey,
     },
-    update: {},
   })
-  return { id: row.id, sceneId: row.sceneId, eventType: row.eventType, payload: row.payload as Record<string, unknown>, idempotencyKey: row.idempotencyKey }
+  return {
+    id: row.id,
+    sceneId: row.sceneId as SceneId,
+    eventType: row.eventType as RuntimeEventType,
+    payload: asJsonObject(row.payload) as ReferencePayload,
+    occurredAt: row.occurredAt,
+    idempotencyKey: row.idempotencyKey,
+    consumedAt: row.consumedAt,
+  }
 }
 
 export async function createOrReuseOpportunity(input: {
-  id: string
-  sceneId: string
+  sceneId: SceneId
   runtimeEventId?: string | null
-  queueKind: string
-  opportunityType: string
+  queueKind: QueueKind
+  opportunityType: OpportunityType
   priority?: number
   deadlineAt?: Date | null
-  payload: Record<string, unknown>
+  payload: ReferencePayload
   status?: string
   idempotencyKey: string
-}): Promise<OpportunityRecord> {
-  assertReferenceOnlyPayload(input.payload)
-  const row = await prisma.opportunity.upsert({
+}) {
+  return prisma.opportunity.upsert({
     where: { sceneId_idempotencyKey: { sceneId: input.sceneId, idempotencyKey: input.idempotencyKey } },
+    update: {},
     create: {
-      id: input.id,
+      id: makeId('opportunity', `${input.sceneId}:${input.idempotencyKey}`),
       sceneId: input.sceneId,
       runtimeEventId: input.runtimeEventId ?? null,
       queueKind: input.queueKind,
       opportunityType: input.opportunityType,
       priority: input.priority ?? 0,
       deadlineAt: input.deadlineAt ?? null,
-      payload: sanitizeJsonValue(input.payload) as Prisma.InputJsonObject,
+      payload: toReferencePayload(input.payload),
       status: input.status ?? 'pending',
       idempotencyKey: input.idempotencyKey,
     },
-    update: {},
   })
-  return { id: row.id, sceneId: row.sceneId, runtimeEventId: row.runtimeEventId, queueKind: row.queueKind, opportunityType: row.opportunityType, payload: row.payload as Record<string, unknown>, idempotencyKey: row.idempotencyKey }
+}
+
+export async function createOrReuseActionIntent(input: {
+  opportunityId: string
+  actionType: ActionType
+  targetSceneId: SceneId
+  payload: Prisma.JsonObject
+  dryRun?: boolean
+  riskLevel?: string
+  status?: ActionIntentStatus
+  idempotencyKey: string
+}) {
+  return prisma.actionIntent.upsert({
+    where: { opportunityId_idempotencyKey: { opportunityId: input.opportunityId, idempotencyKey: input.idempotencyKey } },
+    update: {},
+    create: {
+      id: makeId('intent', `${input.opportunityId}:${input.idempotencyKey}`),
+      opportunityId: input.opportunityId,
+      actionType: input.actionType,
+      targetSceneId: input.targetSceneId,
+      payload: input.payload,
+      dryRun: input.dryRun ?? false,
+      riskLevel: input.riskLevel ?? 'low',
+      status: input.status ?? 'pending',
+      idempotencyKey: input.idempotencyKey,
+    },
+  })
+}
+
+export async function createOrReuseActionRecord(input: {
+  actionIntentId: string
+  actionType: ActionType
+  targetSceneId: SceneId
+  deliveryState?: ActionDeliveryState
+  idempotencyKey: string
+  resultPayload?: Prisma.JsonObject | null
+}): Promise<ActionRecord> {
+  const row = await prisma.actionRecord.upsert({
+    where: { idempotencyKey: input.idempotencyKey },
+    update: {},
+    create: {
+      id: makeId('action', input.idempotencyKey),
+      actionIntentId: input.actionIntentId,
+      actionType: input.actionType,
+      targetSceneId: input.targetSceneId,
+      deliveryState: input.deliveryState ?? 'pending',
+      idempotencyKey: input.idempotencyKey,
+      resultPayload: input.resultPayload ?? Prisma.JsonNull,
+    },
+  })
+  return {
+    id: row.id,
+    actionIntentId: row.actionIntentId,
+    actionType: row.actionType as ActionType,
+    targetSceneId: row.targetSceneId as SceneId,
+    deliveryState: row.deliveryState as ActionDeliveryState,
+    idempotencyKey: row.idempotencyKey,
+    resultPayload: row.resultPayload ? asJsonObject(row.resultPayload) : null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }
+}
+
+export async function markActionRecordDeliveryState(
+  id: string,
+  deliveryState: ActionDeliveryState,
+  resultPayload?: Prisma.JsonObject | null,
+): Promise<void> {
+  await prisma.actionRecord.update({
+    where: { id },
+    data: {
+      deliveryState,
+      resultPayload: resultPayload === undefined ? undefined : resultPayload ?? Prisma.JsonNull,
+    },
+  })
+}
+
+export async function listSentActionRecordsForScene(sceneId: SceneId): Promise<ActionRecord[]> {
+  const rows = await prisma.actionRecord.findMany({
+    where: {
+      targetSceneId: sceneId,
+      deliveryState: { in: ['sent', 'acked'] },
+    },
+    orderBy: { createdAt: 'asc' },
+  })
+  return rows.map((row) => ({
+    id: row.id,
+    actionIntentId: row.actionIntentId,
+    actionType: row.actionType as ActionType,
+    targetSceneId: row.targetSceneId as SceneId,
+    deliveryState: row.deliveryState as ActionDeliveryState,
+    idempotencyKey: row.idempotencyKey,
+    resultPayload: row.resultPayload ? asJsonObject(row.resultPayload) : null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }))
+}
+
+export async function listRecoverableActionRecords(sceneIds?: SceneId[]): Promise<ActionRecord[]> {
+  const rows = await prisma.actionRecord.findMany({
+    where: {
+      ...(sceneIds?.length ? { targetSceneId: { in: sceneIds } } : {}),
+      deliveryState: { in: ['pending', 'sending', 'failed', 'acked'] },
+    },
+    orderBy: { createdAt: 'asc' },
+  })
+  return rows.map((row) => ({
+    id: row.id,
+    actionIntentId: row.actionIntentId,
+    actionType: row.actionType as ActionType,
+    targetSceneId: row.targetSceneId as SceneId,
+    deliveryState: row.deliveryState as ActionDeliveryState,
+    idempotencyKey: row.idempotencyKey,
+    resultPayload: row.resultPayload ? asJsonObject(row.resultPayload) : null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }))
 }

@@ -1,17 +1,19 @@
-export const MAIN_AGENT_ID = 'agent:main' as const
-export const ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION = 2
-export const DEFAULT_ROOT_RUNTIME_UNREAD_LIMIT = 200
-export const DEFAULT_ROOT_RUNTIME_SENDER_CONTINUITY_LIMIT = 50
+import type { ProactiveJudgeAdvice } from './proactive-judge.js'
+import type { TokenUsageSummary } from '../llm/token-usage.js'
 
-export type AgentId = string
-export type SceneKind = 'qq_group' | 'qq_private' | 'news_feed' | 'forum' | 'workspace' | 'maintenance'
-export type SceneId = string & { readonly __brand: 'SceneId' }
+export const ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION = 2
+export const DEFAULT_ROOT_RUNTIME_UNREAD_LIMIT = 50
+export const DEFAULT_ROOT_RUNTIME_SENDER_CONTINUITY_LIMIT = 32
+export const MAIN_AGENT_ID = 'agent:main' as const
+
+export type AgentId = typeof MAIN_AGENT_ID
+export type SceneId = `qq_group:${number}` | `qq_private:${number}`
 export type FocusTargetId = 'portal' | SceneId
 export type RuntimeCueDeliveryMode = 'reply_to_message' | 'send_message'
 
 export interface RuntimeSceneRecord {
   sceneId: SceneId
-  kind: Extract<SceneKind, 'qq_group' | 'qq_private'>
+  kind: 'qq_group' | 'qq_private'
   groupId?: number
   unreadCount: number
   lastObservedMessageRowId: number | null
@@ -30,7 +32,7 @@ export interface RuntimeCue {
   senderId: number
   senderNickname: string
   addressedToAgent: boolean
-  cueStrength: 'strong' | 'weak'
+  cueStrength: 'weak' | 'strong'
   replyModeHint: 'anchored' | 'unanchored'
   preferredDeliveryMode: RuntimeCueDeliveryMode
   mustReplyOverride: boolean
@@ -39,37 +41,28 @@ export interface RuntimeCue {
 }
 
 export interface RuntimeUnreadMessage {
-  groupId?: number
   messageRowId: number
   messageId: number
   senderId: number
   senderNickname: string
-  text?: string
-  mentionedSelf?: boolean
+  mentionedSelf: boolean
   createdAt: string
 }
 
 export interface RuntimeSenderContinuity {
-  groupId?: number
+  senderThreadKey: string
   senderId: number
-  senderThreadKey?: string
-  lastMessageRowId?: number
-  lastSeenMessageRowId?: number | null
-  lastMaterializedMessageRowId?: number | null
-  lastMessageId?: number
-  lastSeenAt?: string
+  lastSeenMessageRowId: number
+  lastMaterializedMessageRowId: number | null
   updatedAt: string
 }
 
 export interface RuntimeAmbientAuditCandidate {
-  opportunityId: string
-  groupId: number
-  sceneId: SceneId
-  triggerMessageRowId: number
-  incorporatedMessageRowId: number
-  score: number
-  reason: string
+  id: string
   createdAt: string
+  text: string
+  triggerMessageRowId?: number
+  status: 'dry_run'
 }
 
 export type ProactiveCandidateStatus = 'suppressed' | 'no_candidate' | 'candidate_generated'
@@ -77,7 +70,7 @@ export type ProactiveCandidateStatus = 'suppressed' | 'no_candidate' | 'candidat
 export interface ProactiveCandidateArtifact {
   artifactKind: 'proactive_candidate'
   opportunityId: string
-  runtimeKey: AgentId
+  runtimeKey: string
   groupId: number
   sceneId: string
   sourceKind: string
@@ -87,26 +80,26 @@ export interface ProactiveCandidateArtifact {
   expiresAt: string
   score: number
   gateReasons: string[]
-  termination: string
-  status: ProactiveCandidateStatus
-  candidateText?: string
-  model?: string
-  tokenUsage?: unknown
-  tokenUsageState?: string
   policyReasons?: string[]
-  judgeAdvice?: unknown
+  judgeAdvice?: ProactiveJudgeAdvice
+  candidateText?: string
+  termination: string
+  model?: string
+  tokenUsage?: TokenUsageSummary
+  tokenUsageState?: 'captured' | 'not_applicable' | 'unknown'
   durationMs?: number
+  status: ProactiveCandidateStatus
 }
 
 export interface RuntimeProactiveGenerationAttempt {
-  opportunityId?: string
+  opportunityId: string
   attemptedAt: string
-  messageRowId?: number
-  groupId?: number
-  sceneId?: string
 }
 
-export type RuntimeProactiveJudgeAttempt = RuntimeProactiveGenerationAttempt
+export interface RuntimeProactiveJudgeAttempt {
+  messageRowId: number
+  attemptedAt: string
+}
 
 export interface RuntimeContextMessage {
   role: 'user' | 'model'
@@ -123,31 +116,29 @@ export interface RootRuntimeContextSnapshot {
 export interface RootRuntimeSessionSnapshot {
   focusedStateId: string
   stateStack: string[]
-  focusedTargetId: FocusTargetId
+  focusedTargetId?: FocusTargetId
   unreadMessages: RuntimeUnreadMessage[]
   senderContinuities: RuntimeSenderContinuity[]
-  ambientAuditCandidates?: RuntimeAmbientAuditCandidate[]
-  sceneRecords?: RuntimeSceneRecord[]
-  outstandingCues?: RuntimeCue[]
+  ambientAuditCandidates: RuntimeAmbientAuditCandidate[]
   proactiveCandidateArtifacts?: ProactiveCandidateArtifact[]
   proactiveGenerationAttempts?: RuntimeProactiveGenerationAttempt[]
-  proactiveJudgeAttempts?: RuntimeProactiveGenerationAttempt[]
+  proactiveJudgeAttempts?: RuntimeProactiveJudgeAttempt[]
+  sceneRecords?: RuntimeSceneRecord[]
+  outstandingCues?: RuntimeCue[]
   recentObservedMessageRowIds: number[]
-  lastWakeAt?: string | null
+  lastWakeAt: string | null
 }
 
 export interface RootRuntimeSnapshotRecord {
   id: number
   agentId?: AgentId
-  /** Deprecated compatibility alias: root is always agent:main. */
   runtimeKey: string
-  /** Deprecated compatibility field: qq_group lives in Scene records. */
   groupId: number
   schemaVersion: number
   contextSnapshot: RootRuntimeContextSnapshot
   sessionSnapshot: RootRuntimeSessionSnapshot
-  createdAt: Date
   lastObservedMessageRowId?: number
+  createdAt: Date
   updatedAt: Date
 }
 
@@ -155,17 +146,17 @@ export interface CreateRootRuntimeSnapshotInput {
   agentId?: AgentId
   runtimeKey: string
   groupId: number
-  lastObservedMessageRowId?: number
   schemaVersion: number
   contextSnapshot: RootRuntimeContextSnapshot
   sessionSnapshot: RootRuntimeSessionSnapshot
+  lastObservedMessageRowId?: number
 }
 
-export function makeAgentRuntimeKey(): AgentId {
+export function makeMainAgentRuntimeKey(): string {
   return MAIN_AGENT_ID
 }
 
-export function makeGroupRuntimeKey(_groupId: number): AgentId {
+export function makeAgentRuntimeKey(): AgentId {
   return MAIN_AGENT_ID
 }
 
@@ -181,24 +172,41 @@ export function makeMentionReplyIntentId(groupId: number, triggerMessageRowId: n
   return makeMentionCueId(makeSceneId(groupId), triggerMessageRowId)
 }
 
-export function createDefaultRootRuntimeSnapshot(_groupId?: number): CreateRootRuntimeSnapshotInput {
+export function createDefaultRootRuntimeSnapshot(groupId = 0): CreateRootRuntimeSnapshotInput {
+  const runtimeKey = makeMainAgentRuntimeKey()
+  const sceneId = makeSceneId(groupId)
   return {
+    runtimeKey,
     agentId: MAIN_AGENT_ID,
-    runtimeKey: MAIN_AGENT_ID,
-    groupId: _groupId ?? 0,
+    groupId,
     schemaVersion: ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
-    contextSnapshot: { messages: [] },
+    contextSnapshot: {
+      messages: [],
+    },
     sessionSnapshot: {
-      focusedStateId: 'portal',
-      stateStack: ['portal'],
-      focusedTargetId: 'portal',
+      focusedStateId: sceneId,
+      stateStack: [sceneId],
+      focusedTargetId: sceneId,
       unreadMessages: [],
       senderContinuities: [],
       ambientAuditCandidates: [],
-      sceneRecords: [],
-      outstandingCues: [],
       proactiveCandidateArtifacts: [],
       proactiveGenerationAttempts: [],
+      proactiveJudgeAttempts: [],
+      sceneRecords: [
+        {
+          sceneId,
+          kind: 'qq_group',
+          groupId,
+          unreadCount: 0,
+          lastObservedMessageRowId: null,
+          lastMaterializedReplyRowId: null,
+          lastFocusedAt: null,
+          lastSpokeAt: null,
+          outstandingCueIds: [],
+        },
+      ],
+      outstandingCues: [],
       recentObservedMessageRowIds: [],
       lastWakeAt: null,
     },

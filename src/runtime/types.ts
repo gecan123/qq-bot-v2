@@ -77,7 +77,7 @@ export type ProactiveCandidateStatus = 'suppressed' | 'no_candidate' | 'candidat
 export interface ProactiveCandidateArtifact {
   artifactKind: 'proactive_candidate'
   opportunityId: string
-  runtimeKey: string
+  runtimeKey: AgentId
   groupId: number
   sceneId: string
   sourceKind: string
@@ -123,7 +123,7 @@ export interface RootRuntimeContextSnapshot {
 export interface RootRuntimeSessionSnapshot {
   focusedStateId: string
   stateStack: string[]
-  focusedTargetId?: FocusTargetId
+  focusedTargetId: FocusTargetId
   unreadMessages: RuntimeUnreadMessage[]
   senderContinuities: RuntimeSenderContinuity[]
   ambientAuditCandidates?: RuntimeAmbientAuditCandidate[]
@@ -174,7 +174,7 @@ export function makeSceneId(groupId: number): SceneId {
 }
 
 export function makeMentionCueId(sceneId: SceneId, triggerMessageRowId: number): string {
-  return `${sceneId}:message:${triggerMessageRowId}:reply_to_message`
+  return `${sceneId}:message:${triggerMessageRowId}`
 }
 
 export function makeMentionReplyIntentId(groupId: number, triggerMessageRowId: number): string {

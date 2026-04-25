@@ -60,10 +60,6 @@ function scoreAmbientReplyProbability(input: { segments: ParsedSegment[]; basePr
   return clampProbability(score)
 }
 
-function normalizeTextHash(text: string): string {
-  return text.toLowerCase().replace(/\s+/g, '').trim()
-}
-
 export interface PersistedGroupMessageIngress {
   groupId: number
   messageRowId: number
@@ -327,15 +323,6 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       (message) => nowMs - new Date(message.createdAt).getTime() <= proactivePolicy.activeChatWindowMs,
     ).length
     if (activeChatCount >= proactivePolicy.activeChatMessageThreshold) reasons.push('active_chat')
-
-    const normalized = normalizeTextHash(input.text)
-    if (normalized) {
-      const repeated = input.snapshot.contextSnapshot.messages
-        .filter((message) => message.role === 'user' && message.orderKey !== input.triggerMessageRowId)
-        .slice(-proactivePolicy.repetitionWindowMessages)
-        .some((message) => normalizeTextHash(message.content).includes(normalized))
-      if (repeated) reasons.push('repetition')
-    }
 
     const lastSpokeAt = input.snapshot.sessionSnapshot.sceneRecords?.find(
       (record) => record.sceneId === makeSceneId(input.groupId),

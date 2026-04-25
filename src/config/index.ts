@@ -182,7 +182,6 @@ export function parseConfig(env: EnvSource) {
     proactivePolicy: {
       activeChatMessageThreshold: parsePositiveInteger(env.PROACTIVE_ACTIVE_CHAT_MESSAGE_THRESHOLD, 12),
       activeChatWindowMs: parsePositiveInteger(env.PROACTIVE_ACTIVE_CHAT_WINDOW_MS, 120_000),
-      repetitionWindowMessages: parsePositiveInteger(env.PROACTIVE_REPETITION_WINDOW_MESSAGES, 20),
       cooldownMs: parsePositiveInteger(env.PROACTIVE_COOLDOWN_MS, 600_000),
       generationBudgetPerHour: parsePositiveInteger(env.PROACTIVE_GENERATION_BUDGET_PER_HOUR, 1000),
       candidateBudgetPerDay: parsePositiveInteger(env.PROACTIVE_CANDIDATE_BUDGET_PER_DAY, 10000),

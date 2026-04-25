@@ -1087,7 +1087,6 @@ describe('root runtime manager', () => {
       proactivePolicy: {
         activeChatMessageThreshold: 99,
         activeChatWindowMs: 120_000,
-        repetitionWindowMessages: 20,
         cooldownMs: 600_000,
         generationBudgetPerHour: 1,
         candidateBudgetPerDay: 1,

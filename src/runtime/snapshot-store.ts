@@ -130,9 +130,12 @@ function mapRow(row: AgentRuntimeSnapshotRow): RootRuntimeSnapshotRecord {
   return {
     id: row.id,
     agentId: row.agentId as AgentId,
+    runtimeKey: MAIN_AGENT_ID,
     schemaVersion: row.schemaVersion,
     contextSnapshot: parseContextSnapshot(row.contextSnapshot),
     sessionSnapshot: parseSessionSnapshot(row.sessionSnapshot),
+    groupId: undefined,
+    lastObservedMessageRowId: undefined,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }
@@ -158,10 +161,11 @@ export async function listRootRuntimeSnapshotsByGroupIds(_groupIds: number[]): P
 }
 
 export async function upsertRootRuntimeSnapshot(input: CreateRootRuntimeSnapshotInput): Promise<RootRuntimeSnapshotRecord> {
+  const agentId = input.agentId ?? MAIN_AGENT_ID
   const row = await prisma.agentRuntimeSnapshot.upsert({
-    where: { agentId: input.agentId },
+    where: { agentId },
     create: {
-      agentId: input.agentId,
+      agentId,
       schemaVersion: input.schemaVersion,
       contextSnapshot: sanitizeJsonValue(input.contextSnapshot) as Prisma.InputJsonObject,
       sessionSnapshot: sanitizeJsonValue(input.sessionSnapshot) as Prisma.InputJsonObject,

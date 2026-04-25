@@ -39,21 +39,26 @@ export interface RuntimeCue {
 }
 
 export interface RuntimeUnreadMessage {
-  groupId: number
+  groupId?: number
   messageRowId: number
   messageId: number
   senderId: number
   senderNickname: string
-  text: string
+  text?: string
+  mentionedSelf?: boolean
   createdAt: string
 }
 
 export interface RuntimeSenderContinuity {
-  groupId: number
+  groupId?: number
   senderId: number
-  lastMessageRowId: number
-  lastMessageId: number
-  lastSeenAt: string
+  senderThreadKey?: string
+  lastMessageRowId?: number
+  lastSeenMessageRowId?: number | null
+  lastMaterializedMessageRowId?: number | null
+  lastMessageId?: number
+  lastSeenAt?: string
+  updatedAt: string
 }
 
 export interface RuntimeAmbientAuditCandidate {
@@ -118,22 +123,31 @@ export interface RootRuntimeSessionSnapshot {
   outstandingCues?: RuntimeCue[]
   proactiveCandidateArtifacts?: ProactiveCandidateArtifact[]
   proactiveGenerationAttempts?: RuntimeProactiveGenerationAttempt[]
+  proactiveJudgeAttempts?: RuntimeProactiveGenerationAttempt[]
   recentObservedMessageRowIds?: number[]
   lastWakeAt?: string | null
 }
 
 export interface RootRuntimeSnapshotRecord {
   id: number
-  agentId: AgentId
+  agentId?: AgentId
+  /** Deprecated compatibility alias: root is always agent:main. */
+  runtimeKey: string
+  /** Deprecated compatibility field: qq_group lives in Scene records. */
+  groupId?: number
   schemaVersion: number
   contextSnapshot: RootRuntimeContextSnapshot
   sessionSnapshot: RootRuntimeSessionSnapshot
   createdAt: Date
+  lastObservedMessageRowId?: number
   updatedAt: Date
 }
 
 export interface CreateRootRuntimeSnapshotInput {
-  agentId: AgentId
+  agentId?: AgentId
+  runtimeKey?: string
+  groupId?: number
+  lastObservedMessageRowId?: number
   schemaVersion: number
   contextSnapshot: RootRuntimeContextSnapshot
   sessionSnapshot: RootRuntimeSessionSnapshot

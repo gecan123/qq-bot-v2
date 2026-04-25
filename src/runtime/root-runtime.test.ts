@@ -42,8 +42,7 @@ ${rootRuntime}`, 'groupId:', 'root runtime snapshot must not carry groupId')
     const allRuntime = ['src/runtime/agent-runtime-types.ts', 'src/runtime/root-runtime.ts', 'src/responder/reply-generator.ts', 'src/agent/tools.ts', 'src/database/agent-sql.ts']
       .filter(projectFileExists)
       .map(readProjectFile)
-      .join('
-')
+      .join('\n')
 
     assertIncludes(schema, 'model MemoryItem')
     assertExcludes(allRuntime, 'write_memory', 'Phase 0 must not register a write_memory action')

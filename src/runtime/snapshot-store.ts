@@ -134,7 +134,7 @@ function mapRow(row: AgentRuntimeSnapshotRow): RootRuntimeSnapshotRecord {
     schemaVersion: row.schemaVersion,
     contextSnapshot: parseContextSnapshot(row.contextSnapshot),
     sessionSnapshot: parseSessionSnapshot(row.sessionSnapshot),
-    groupId: undefined,
+    groupId: 0,
     lastObservedMessageRowId: undefined,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

@@ -3,7 +3,7 @@ export const ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION = 2
 export const DEFAULT_ROOT_RUNTIME_UNREAD_LIMIT = 200
 export const DEFAULT_ROOT_RUNTIME_SENDER_CONTINUITY_LIMIT = 50
 
-export type AgentId = typeof MAIN_AGENT_ID
+export type AgentId = string
 export type SceneKind = 'qq_group' | 'qq_private' | 'news_feed' | 'forum' | 'workspace' | 'maintenance'
 export type SceneId = string & { readonly __brand: 'SceneId' }
 export type FocusTargetId = 'portal' | SceneId
@@ -77,7 +77,7 @@ export type ProactiveCandidateStatus = 'suppressed' | 'no_candidate' | 'candidat
 export interface ProactiveCandidateArtifact {
   artifactKind: 'proactive_candidate'
   opportunityId: string
-  runtimeKey: AgentId
+  runtimeKey: string
   groupId: number
   sceneId: string
   sourceKind: string
@@ -91,14 +91,22 @@ export interface ProactiveCandidateArtifact {
   status: ProactiveCandidateStatus
   candidateText?: string
   model?: string
+  tokenUsage?: unknown
   tokenUsageState?: string
+  policyReasons?: string[]
+  judgeAdvice?: unknown
   durationMs?: number
 }
 
 export interface RuntimeProactiveGenerationAttempt {
-  opportunityId: string
+  opportunityId?: string
   attemptedAt: string
+  messageRowId?: number
+  groupId?: number
+  sceneId?: string
 }
+
+export type RuntimeProactiveJudgeAttempt = RuntimeProactiveGenerationAttempt
 
 export interface RuntimeContextMessage {
   role: 'user' | 'model'
@@ -115,7 +123,7 @@ export interface RootRuntimeContextSnapshot {
 export interface RootRuntimeSessionSnapshot {
   focusedStateId: string
   stateStack: string[]
-  focusedTargetId: FocusTargetId
+  focusedTargetId?: FocusTargetId
   unreadMessages: RuntimeUnreadMessage[]
   senderContinuities: RuntimeSenderContinuity[]
   ambientAuditCandidates?: RuntimeAmbientAuditCandidate[]
@@ -124,7 +132,7 @@ export interface RootRuntimeSessionSnapshot {
   proactiveCandidateArtifacts?: ProactiveCandidateArtifact[]
   proactiveGenerationAttempts?: RuntimeProactiveGenerationAttempt[]
   proactiveJudgeAttempts?: RuntimeProactiveGenerationAttempt[]
-  recentObservedMessageRowIds?: number[]
+  recentObservedMessageRowIds: number[]
   lastWakeAt?: string | null
 }
 
@@ -134,7 +142,7 @@ export interface RootRuntimeSnapshotRecord {
   /** Deprecated compatibility alias: root is always agent:main. */
   runtimeKey: string
   /** Deprecated compatibility field: qq_group lives in Scene records. */
-  groupId?: number
+  groupId: number
   schemaVersion: number
   contextSnapshot: RootRuntimeContextSnapshot
   sessionSnapshot: RootRuntimeSessionSnapshot
@@ -145,8 +153,8 @@ export interface RootRuntimeSnapshotRecord {
 
 export interface CreateRootRuntimeSnapshotInput {
   agentId?: AgentId
-  runtimeKey?: string
-  groupId?: number
+  runtimeKey: string
+  groupId: number
   lastObservedMessageRowId?: number
   schemaVersion: number
   contextSnapshot: RootRuntimeContextSnapshot
@@ -176,6 +184,8 @@ export function makeMentionReplyIntentId(groupId: number, triggerMessageRowId: n
 export function createDefaultRootRuntimeSnapshot(_groupId?: number): CreateRootRuntimeSnapshotInput {
   return {
     agentId: MAIN_AGENT_ID,
+    runtimeKey: MAIN_AGENT_ID,
+    groupId: _groupId ?? 0,
     schemaVersion: ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
     contextSnapshot: { messages: [] },
     sessionSnapshot: {

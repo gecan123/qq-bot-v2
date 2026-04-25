@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronRight, Brain } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { MessageFeed } from "@/components/messages/message-feed";
 import { MessageSearch } from "@/components/messages/message-search";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { getGroupMessages, getGroups } from "@/lib/queries";
@@ -52,17 +51,6 @@ export default async function GroupDetailPage({ params, searchParams }: Props) {
               {total.toLocaleString("zh-CN")} 条消息
             </Badge>
             <MessageSearch defaultValue={search} />
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
-              asChild
-            >
-              <Link href={`/groups/${groupId}/memory`}>
-                <Brain className="h-4 w-4 mr-1.5" />
-                群组记忆
-              </Link>
-            </Button>
           </div>
         }
       />

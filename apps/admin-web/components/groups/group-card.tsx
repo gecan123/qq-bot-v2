@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MessageSquare, Clock, Brain } from "lucide-react";
+import { MessageSquare, Clock } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { GroupSummary } from "@/lib/queries";
@@ -71,13 +71,6 @@ export function GroupCard({ group }: GroupCardProps) {
               >
                 <MessageSquare className="h-3 w-3" />
                 消息
-              </Link>
-              <Link
-                href={`/groups/${group.groupId}/memory`}
-                className="flex items-center gap-1 text-slate-400 hover:text-violet-600 transition-colors cursor-pointer"
-              >
-                <Brain className="h-3 w-3" />
-                记忆
               </Link>
             </div>
           </div>

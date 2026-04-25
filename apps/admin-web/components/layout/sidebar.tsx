@@ -10,8 +10,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Bot,
-  FlaskConical,
-  FileSearch,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -20,8 +18,6 @@ const navItems = [
   { href: "/", icon: LayoutDashboard, label: "概览" },
   { href: "/groups", icon: MessageSquare, label: "群组" },
   { href: "/media", icon: Image, label: "媒体库" },
-  { href: "/llm-traces", icon: FileSearch, label: "LLM Traces" },
-  { href: "/playground", icon: FlaskConical, label: "Playground" },
 ];
 
 export function Sidebar() {

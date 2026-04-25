@@ -43,38 +43,3 @@ model Media {
   @@unique([dataHash])
   @@map("media")
 }
-
-model GroupMemory {
-  id        Int      @id @default(autoincrement())
-  groupId   BigInt   @unique @map("group_id")
-  groupName String?  @map("group_name") @db.VarChar(255)
-  summary   String   @map("summary") @db.Text
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
-
-  @@map("group_memory")
-}
-
-model GroupMemoryCursor {
-  id                             Int      @id @default(autoincrement())
-  groupId                        BigInt   @unique @map("group_id")
-  lastProcessedExternalMessageId BigInt   @map("last_processed_external_message_id")
-  lastProcessedMessageRowId      Int      @map("last_processed_message_row_id")
-  updatedAt                      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
-
-  @@map("group_memory_cursor")
-}
-
-model UserMemory {
-  id                  Int      @id @default(autoincrement())
-  groupId             BigInt   @map("group_id")
-  groupName           String?  @map("group_name") @db.VarChar(255)
-  senderId            BigInt   @map("sender_id")
-  senderNickname      String?  @map("sender_nickname") @db.VarChar(100)
-  senderGroupNickname String?  @map("sender_group_nickname") @db.VarChar(100)
-  profile             String   @map("profile") @db.Text
-  examples            String[] @map("examples")
-  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
-
-  @@unique([groupId, senderId])
-  @@map("user_memory")
-}

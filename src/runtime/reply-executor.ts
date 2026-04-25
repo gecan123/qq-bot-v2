@@ -123,6 +123,8 @@ function buildProactiveCandidateArtifact(input: {
     expiresAt: expiresAt.toISOString(),
     score: opportunity.replyProbability,
     gateReasons: input.decision.policy.gateReasons ?? [],
+    policyReasons: input.decision.policy.policyReasons ?? [],
+    judgeAdvice: input.decision.policy.judgeAdvice,
     candidateText: input.status === 'candidate_generated' ? input.reply ?? undefined : undefined,
     termination: input.termination,
     status: input.status,
@@ -178,6 +180,8 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
           shouldAudit: decision.policy.shouldAudit,
           replyProbability: decision.opportunity.replyProbability,
           gateReasons: decision.policy.gateReasons ?? [],
+          policyReasons: decision.policy.policyReasons ?? [],
+          judgeAdvice: decision.policy.judgeAdvice,
           reason: decision.policy.reason,
         },
         '回复决策完成',
@@ -265,6 +269,8 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
             replyProbability: decision.opportunity.replyProbability,
             reason: decision.policy.reason,
             gateReasons: decision.policy.gateReasons ?? [],
+            policyReasons: decision.policy.policyReasons ?? [],
+            judgeAdvice: decision.policy.judgeAdvice,
           },
         })
         return { decision, deliveryResult: 'skipped' }

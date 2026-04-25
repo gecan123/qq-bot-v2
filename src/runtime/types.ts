@@ -1,3 +1,5 @@
+import type { ProactiveJudgeAdvice } from './proactive-judge.js'
+
 export const ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION = 2
 export const DEFAULT_ROOT_RUNTIME_UNREAD_LIMIT = 50
 export const DEFAULT_ROOT_RUNTIME_SENDER_CONTINUITY_LIMIT = 32
@@ -75,6 +77,8 @@ export interface ProactiveCandidateArtifact {
   expiresAt: string
   score: number
   gateReasons: string[]
+  policyReasons?: string[]
+  judgeAdvice?: ProactiveJudgeAdvice
   candidateText?: string
   termination: string
   model?: string
@@ -83,6 +87,11 @@ export interface ProactiveCandidateArtifact {
 
 export interface RuntimeProactiveGenerationAttempt {
   opportunityId: string
+  attemptedAt: string
+}
+
+export interface RuntimeProactiveJudgeAttempt {
+  messageRowId: number
   attemptedAt: string
 }
 
@@ -107,6 +116,7 @@ export interface RootRuntimeSessionSnapshot {
   ambientAuditCandidates: RuntimeAmbientAuditCandidate[]
   proactiveCandidateArtifacts?: ProactiveCandidateArtifact[]
   proactiveGenerationAttempts?: RuntimeProactiveGenerationAttempt[]
+  proactiveJudgeAttempts?: RuntimeProactiveJudgeAttempt[]
   sceneRecords?: RuntimeSceneRecord[]
   outstandingCues?: RuntimeCue[]
   recentObservedMessageRowIds: number[]
@@ -169,6 +179,7 @@ export function createDefaultRootRuntimeSnapshot(groupId: number): CreateRootRun
       ambientAuditCandidates: [],
       proactiveCandidateArtifacts: [],
       proactiveGenerationAttempts: [],
+      proactiveJudgeAttempts: [],
       sceneRecords: [
         {
           sceneId,

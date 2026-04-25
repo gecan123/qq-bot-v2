@@ -21,6 +21,18 @@ function makeSnapshotRecord(input: CreateRootRuntimeSnapshotInput, id = 1): Root
   }
 }
 
+const enabledProactiveJudgePolicy = {
+  enabled: true,
+  timeoutMs: 1000,
+  maxCallsPerHour: 10,
+  minConfidence: 0.6,
+  minUsefulness: 0.6,
+  minNovelty: 0.3,
+  maxInterruptionCost: 0.4,
+  maxSocialRisk: 0.3,
+  maxSuggestedDelayMs: 300_000,
+}
+
 describe('root runtime manager', () => {
   test('restores persisted snapshots by group id', async () => {
     const restored = [
@@ -1003,6 +1015,352 @@ describe('root runtime manager', () => {
       ['group_message'],
     )
     assert.deepEqual(manager.getSnapshot(1)?.sessionSnapshot.ambientAuditCandidates, [])
+  })
+
+  test('calls proactive judge only for deterministic-eligible ambient messages', async () => {
+    let judgeCalls = 0
+    const opportunities: Array<{ id: string; judgeStatus?: string; gates?: string[] }> = []
+    let recentContents: string[] = []
+    const manager = createRootRuntimeManager({
+      selfNumber: 999,
+      ambientAuditEnabled: true,
+      proactiveJudgePolicy: enabledProactiveJudgePolicy,
+      proactiveJudge: {
+        async evaluate(input) {
+          judgeCalls++
+          recentContents = input.recentMessages?.map((message) => message.content) ?? []
+          return {
+            status: 'valid',
+            shouldSpeak: true,
+            usefulness: 0.8,
+            novelty: 0.7,
+            confidence: 0.9,
+            interruptionCost: 0.1,
+            socialRisk: 0.1,
+            reason: '有明确锚点',
+          }
+        },
+      },
+      replyExecutor: {
+        async execute(opportunity) {
+          opportunities.push({
+            id: opportunity.opportunityId,
+            judgeStatus: opportunity.judgeAdvice?.status,
+            gates: opportunity.gateReasons,
+          })
+          return {
+            decision: {
+              opportunity,
+              outcome: 'opportunity_detected',
+              policy: {
+                shouldGenerate: false,
+                shouldCreateReplyRecord: false,
+                shouldDeliver: false,
+                shouldAudit: true,
+                reason: opportunity.reason,
+                judgeAdvice: opportunity.judgeAdvice,
+              },
+              deliveryMode: opportunity.deliveryMode,
+              dryRun: true,
+              reason: opportunity.reason,
+            },
+            deliveryResult: 'skipped',
+          }
+        },
+      },
+      snapshotStore: {
+        listByGroupIds: async () => [],
+        upsert: async (input) => makeSnapshotRecord(input),
+      },
+    })
+
+    await manager.ingestGroupMessage({
+      groupId: 1,
+      messageRowId: 41,
+      messageId: 10041,
+      senderId: 19,
+      senderNickname: '用户19',
+      segments: [{ type: 'text', content: 'hello' }],
+      createdAt: new Date('2026-04-22T00:00:00Z'),
+    })
+    await manager.ingestGroupMessage({
+      groupId: 1,
+      messageRowId: 42,
+      messageId: 10042,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'text', content: '有人知道这个怎么处理吗？' }],
+      createdAt: new Date('2026-04-22T00:00:01Z'),
+    })
+    await manager.ingestGroupMessage({
+      groupId: 1,
+      messageRowId: 43,
+      messageId: 10043,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'at', targetId: '999' }],
+      createdAt: new Date('2026-04-22T00:00:02Z'),
+    })
+    await manager.ingestGroupMessage({
+      groupId: 1,
+      messageRowId: 44,
+      messageId: 10044,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'reply', messageId: '10001' }],
+      createdAt: new Date('2026-04-22T00:00:03Z'),
+    })
+
+    assert.equal(judgeCalls, 1)
+    assert.deepEqual(opportunities, [
+      { id: 'qq_group:1:message:41:ambient', judgeStatus: undefined, gates: ['no_concrete_anchor'] },
+      { id: 'qq_group:1:message:42:ambient', judgeStatus: 'valid', gates: [] },
+      { id: 'qq_group:1:message:43:mention', judgeStatus: undefined, gates: undefined },
+      { id: 'qq_group:1:message:44:ambient', judgeStatus: undefined, gates: ['no_concrete_anchor'] },
+    ])
+    assert.deepEqual(recentContents, ['[QQ消息]\n用户19: hello'])
+    assert.deepEqual(
+      manager.getSnapshot(1)?.contextSnapshot.messages.filter((message) => message.content.includes('有明确锚点')),
+      [],
+    )
+  })
+
+  test('does not call proactive judge for hard-gated or ambient-disabled messages', async () => {
+    let judgeCalls = 0
+    const gatedManager = createRootRuntimeManager({
+      selfNumber: 999,
+      ambientAuditEnabled: true,
+      proactivePolicy: {
+        activeChatMessageThreshold: 1,
+        activeChatWindowMs: 120_000,
+        cooldownMs: 600_000,
+        generationBudgetPerHour: 1000,
+        candidateBudgetPerDay: 10000,
+      },
+      proactiveJudgePolicy: enabledProactiveJudgePolicy,
+      proactiveJudge: {
+        async evaluate() {
+          judgeCalls++
+          throw new Error('hard-gated message must not call judge')
+        },
+      },
+      replyExecutor: {
+        async execute(opportunity) {
+          assert.deepEqual(opportunity.gateReasons, ['active_chat'])
+          assert.equal(opportunity.judgeAdvice, undefined)
+          return {
+            decision: {
+              opportunity,
+              outcome: 'policy_suppressed',
+              policy: {
+                shouldGenerate: false,
+                shouldCreateReplyRecord: false,
+                shouldDeliver: false,
+                shouldAudit: true,
+                reason: opportunity.reason,
+                gateReasons: opportunity.gateReasons,
+              },
+              deliveryMode: opportunity.deliveryMode,
+              dryRun: true,
+              reason: opportunity.reason,
+            },
+            deliveryResult: 'skipped',
+          }
+        },
+      },
+      snapshotStore: {
+        listByGroupIds: async () => [],
+        upsert: async (input) => makeSnapshotRecord(input),
+      },
+    })
+    const disabledManager = createRootRuntimeManager({
+      selfNumber: 999,
+      ambientAuditEnabled: false,
+      proactiveJudgePolicy: enabledProactiveJudgePolicy,
+      proactiveJudge: {
+        async evaluate() {
+          judgeCalls++
+          throw new Error('ambient disabled message must not call judge')
+        },
+      },
+      replyExecutor: {
+        async execute() {
+          throw new Error('ambient disabled message must not execute reply decisions')
+        },
+      },
+      snapshotStore: {
+        listByGroupIds: async () => [],
+        upsert: async (input) => makeSnapshotRecord(input),
+      },
+    })
+
+    await gatedManager.ingestGroupMessage({
+      groupId: 1,
+      messageRowId: 42,
+      messageId: 10042,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'text', content: '有人知道这个怎么处理吗？' }],
+      createdAt: new Date('2026-04-22T00:00:00Z'),
+    })
+    await disabledManager.ingestGroupMessage({
+      groupId: 2,
+      messageRowId: 42,
+      messageId: 20042,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'text', content: '有人知道这个怎么处理吗？' }],
+      createdAt: new Date('2026-04-22T00:00:00Z'),
+    })
+
+    assert.equal(judgeCalls, 0)
+  })
+
+  test('proactive judge call budget fails closed without extra judge calls', async () => {
+    let judgeCalls = 0
+    const judgeStatuses: Array<string | undefined> = []
+    const manager = createRootRuntimeManager({
+      selfNumber: 999,
+      ambientAuditEnabled: true,
+      proactiveJudgePolicy: { ...enabledProactiveJudgePolicy, maxCallsPerHour: 1 },
+      proactiveJudge: {
+        async evaluate() {
+          judgeCalls++
+          return {
+            status: 'valid',
+            shouldSpeak: true,
+            usefulness: 0.8,
+            novelty: 0.7,
+            confidence: 0.9,
+            interruptionCost: 0.1,
+            socialRisk: 0.1,
+            reason: '有明确锚点',
+          }
+        },
+      },
+      replyExecutor: {
+        async execute(opportunity) {
+          judgeStatuses.push(opportunity.judgeAdvice?.status)
+          return {
+            decision: {
+              opportunity,
+              outcome: 'opportunity_detected',
+              policy: {
+                shouldGenerate: false,
+                shouldCreateReplyRecord: false,
+                shouldDeliver: false,
+                shouldAudit: true,
+                reason: opportunity.reason,
+                judgeAdvice: opportunity.judgeAdvice,
+              },
+              deliveryMode: opportunity.deliveryMode,
+              dryRun: true,
+              reason: opportunity.reason,
+            },
+            deliveryResult: 'skipped',
+          }
+        },
+      },
+      snapshotStore: {
+        listByGroupIds: async () => [],
+        upsert: async (input) => makeSnapshotRecord(input),
+      },
+    })
+
+    await manager.ingestGroupMessage({
+      groupId: 1,
+      messageRowId: 42,
+      messageId: 10042,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'text', content: '有人知道这个怎么处理吗？' }],
+      createdAt: new Date('2026-04-22T00:00:00Z'),
+    })
+    await manager.ingestGroupMessage({
+      groupId: 1,
+      messageRowId: 43,
+      messageId: 10043,
+      senderId: 21,
+      senderNickname: '用户21',
+      segments: [{ type: 'text', content: '这个怎么排查？' }],
+      createdAt: new Date('2026-04-22T00:00:10Z'),
+    })
+
+    assert.equal(judgeCalls, 1)
+    assert.deepEqual(judgeStatuses, ['valid', 'disabled'])
+  })
+
+  test('restores proactive judge call budget from durable snapshot state', async () => {
+    let judgeCalls = 0
+    const judgeStatuses: Array<string | undefined> = []
+    const manager = createRootRuntimeManager({
+      selfNumber: 999,
+      ambientAuditEnabled: true,
+      proactiveJudgePolicy: { ...enabledProactiveJudgePolicy, maxCallsPerHour: 1 },
+      proactiveJudge: {
+        async evaluate() {
+          judgeCalls++
+          throw new Error('restored judge budget should suppress new calls')
+        },
+      },
+      replyExecutor: {
+        async execute(opportunity) {
+          judgeStatuses.push(opportunity.judgeAdvice?.status)
+          return {
+            decision: {
+              opportunity,
+              outcome: 'opportunity_detected',
+              policy: {
+                shouldGenerate: false,
+                shouldCreateReplyRecord: false,
+                shouldDeliver: false,
+                shouldAudit: true,
+                reason: opportunity.reason,
+                judgeAdvice: opportunity.judgeAdvice,
+              },
+              deliveryMode: opportunity.deliveryMode,
+              dryRun: true,
+              reason: opportunity.reason,
+            },
+            deliveryResult: 'skipped',
+          }
+        },
+      },
+      snapshotStore: {
+        listByGroupIds: async () => [makeSnapshotRecord({
+          runtimeKey: getGroupRuntimeKey(1),
+          groupId: 1,
+          schemaVersion: ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+          contextSnapshot: { messages: [] },
+          sessionSnapshot: {
+            focusedStateId: 'qq_group:1',
+            stateStack: ['qq_group:1'],
+            unreadMessages: [],
+            senderContinuities: [],
+            ambientAuditCandidates: [],
+            proactiveJudgeAttempts: [{ messageRowId: 40, attemptedAt: '2026-04-22T00:00:00.000Z' }],
+            recentObservedMessageRowIds: [],
+            lastWakeAt: null,
+          },
+          lastObservedMessageRowId: 40,
+        })],
+        upsert: async (input) => makeSnapshotRecord(input),
+      },
+    })
+
+    await manager.restore([1])
+    await manager.ingestGroupMessage({
+      groupId: 1,
+      messageRowId: 42,
+      messageId: 10042,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'text', content: '有人知道这个怎么处理吗？' }],
+      createdAt: new Date('2026-04-22T00:10:00Z'),
+    })
+
+    assert.equal(judgeCalls, 0)
+    assert.deepEqual(judgeStatuses, ['disabled'])
   })
 
   test('routes group message ingress through runtime event producer', async () => {

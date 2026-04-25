@@ -1,5 +1,7 @@
 import { makeMentionReplyIntentId } from './types.js'
 import type { ReplyDecision, ReplyOpportunity } from './reply-decision-types.js'
+import { config } from '../config/index.js'
+import type { ProactiveJudgeAdvice, ProactiveJudgePolicy } from './proactive-judge.js'
 
 function clampProbability(value: number): number {
   if (!Number.isFinite(value)) return 0
@@ -12,10 +14,34 @@ export interface ReplyDecisionEngine {
 
 export interface ReplyDecisionEngineOptions {
   ambientAuditEnabled?: boolean
+  proactiveJudge?: Pick<
+    ProactiveJudgePolicy,
+    | 'minConfidence'
+    | 'minUsefulness'
+    | 'minNovelty'
+    | 'maxInterruptionCost'
+    | 'maxSocialRisk'
+  >
 }
 
 export function createReplyDecisionEngine(options: ReplyDecisionEngineOptions = {}): ReplyDecisionEngine {
   const ambientAuditEnabled = options.ambientAuditEnabled ?? true
+  const proactiveJudge = options.proactiveJudge ?? config.proactiveJudge
+
+  const getJudgePolicyReasons = (advice: ProactiveJudgeAdvice | undefined): string[] => {
+    if (!advice) return ['judge_missing']
+    if (advice.status !== 'valid') return [`judge_${advice.status}`]
+
+    const reasons: string[] = []
+    if (!advice.shouldSpeak) reasons.push('judge_veto')
+    if (advice.confidence < proactiveJudge.minConfidence) reasons.push('judge_low_confidence')
+    if (advice.usefulness < proactiveJudge.minUsefulness) reasons.push('judge_low_usefulness')
+    if (advice.novelty < proactiveJudge.minNovelty) reasons.push('judge_low_novelty')
+    if (advice.interruptionCost > proactiveJudge.maxInterruptionCost) reasons.push('judge_high_interruption_cost')
+    if (advice.socialRisk > proactiveJudge.maxSocialRisk) reasons.push('judge_high_social_risk')
+    if ((advice.suggestedDelayMs ?? 0) > 0) reasons.push('judge_suggested_delay_unsupported')
+    return reasons
+  }
 
   return {
     decide(opportunity) {
@@ -73,8 +99,17 @@ export function createReplyDecisionEngine(options: ReplyDecisionEngineOptions = 
 
       const outcome = replyProbability > 0 ? 'opportunity_detected' : 'policy_suppressed'
       const gateReasons = opportunity.gateReasons ?? []
-      const shouldGenerateProactiveCandidate = opportunity.deliveryMode === 'send_message' && replyProbability > 0 && gateReasons.length === 0
-      const proactiveSuppressed = opportunity.deliveryMode === 'send_message' && gateReasons.length > 0
+      const judgePolicyReasons =
+        opportunity.deliveryMode === 'send_message' && replyProbability > 0 && gateReasons.length === 0
+          ? getJudgePolicyReasons(opportunity.judgeAdvice)
+          : []
+      const policyReasons = [...gateReasons, ...judgePolicyReasons]
+      const shouldGenerateProactiveCandidate =
+        opportunity.deliveryMode === 'send_message' &&
+        replyProbability > 0 &&
+        gateReasons.length === 0 &&
+        judgePolicyReasons.length === 0
+      const proactiveSuppressed = opportunity.deliveryMode === 'send_message' && policyReasons.length > 0
       return {
         opportunity: {
           ...opportunity,
@@ -92,6 +127,8 @@ export function createReplyDecisionEngine(options: ReplyDecisionEngineOptions = 
           auditKind: shouldGenerateProactiveCandidate || proactiveSuppressed ? 'proactive_candidate' : outcome,
           reason: opportunity.reason,
           gateReasons,
+          policyReasons,
+          judgeAdvice: opportunity.judgeAdvice,
         },
         replyIntentId: shouldGenerateProactiveCandidate ? opportunity.opportunityId : undefined,
         deliveryMode: shouldGenerateProactiveCandidate ? 'send_message' : 'audit_only',

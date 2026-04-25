@@ -1,4 +1,5 @@
 import type { ReplyRecord } from '../conversation/reply-record-store.js'
+import type { ProactiveJudgeAdvice } from './proactive-judge.js'
 
 export type ReplyOpportunitySourceKind = 'mention' | 'ambient_message'
 export type ReplyCueStrength = 'strong' | 'weak'
@@ -24,6 +25,7 @@ export interface ReplyOpportunity {
   dryRun: boolean
   reason: string
   gateReasons?: string[]
+  judgeAdvice?: ProactiveJudgeAdvice
   createdAt: Date
 }
 
@@ -43,6 +45,8 @@ export interface ReplyPolicyResult {
   auditKind?: string
   reason: string
   gateReasons?: string[]
+  policyReasons?: string[]
+  judgeAdvice?: ProactiveJudgeAdvice
 }
 
 export interface ReplyDecision {

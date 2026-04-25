@@ -7,6 +7,12 @@ import { toSenderReplyScopeKey } from '../conversation/reply-scope.js'
 import { createReplyExecutor, type ReplyExecutor, type ReplyExecutorOptions } from './reply-executor.js'
 import { createReplyDecisionEngine, type ReplyDecisionEngine } from './reply-decision-engine.js'
 import type { ReplyOpportunity } from './reply-decision-types.js'
+import {
+  createDisabledProactiveJudgeAdvice,
+  createInvalidProactiveJudgeAdvice,
+  createProactiveJudge,
+  type ProactiveJudge,
+} from './proactive-judge.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
 import { summarizeSegments } from '../utils/business-log.js'
 import { config } from '../config/index.js'
@@ -23,6 +29,7 @@ import {
   type RuntimeContextMessage,
   type ProactiveCandidateArtifact,
   type RuntimeSceneRecord,
+  type RuntimeProactiveJudgeAttempt,
   type RuntimeUnreadMessage,
   type RootRuntimeSnapshotRecord,
 } from './types.js'
@@ -33,6 +40,7 @@ import {
 
 const log = createLogger('ROOT_RUNTIME')
 const ROOT_RUNTIME_CONTEXT_MESSAGE_LIMIT = 200
+const PROACTIVE_JUDGE_RECENT_MESSAGE_LIMIT = 12
 const DEFAULT_AMBIENT_REPLY_BASE_PROBABILITY = 0.02
 
 export type RuntimeEventKind = 'group_message' | 'scheduler_tick' | 'manual_wake'
@@ -58,6 +66,20 @@ function scoreAmbientReplyProbability(input: { segments: ParsedSegment[]; basePr
   if (/(bot|机器人|有人吗|在吗|怎么|为什么|咋|求助|帮忙)/i.test(text)) score += 0.04
   if (text.length >= 80) score += 0.02
   return clampProbability(score)
+}
+
+function hasConcreteAmbientAnchor(input: { segments: ParsedSegment[]; text: string }): boolean {
+  const text = input.text.trim()
+  if (!text) return false
+  if (/[?？]/.test(text)) return true
+  if (/(bot|机器人|有人吗|在吗|怎么|为什么|咋|求助|帮忙|报错|失败|排查|处理|解决|哪里|哪个|谁知道)/i.test(text)) {
+    return true
+  }
+  if (text.length >= 80) return true
+  return input.segments.some((segment) =>
+    (segment.type === 'image' || segment.type === 'video' || segment.type === 'record' || segment.type === 'file') &&
+    Boolean(segment.mediaDescription),
+  )
 }
 
 export interface PersistedGroupMessageIngress {
@@ -114,6 +136,8 @@ export interface RootRuntimeManagerOptions {
   ambientAuditEnabled?: boolean
   ambientReplyBaseProbability?: number
   proactivePolicy?: typeof config.proactivePolicy
+  proactiveJudge?: ProactiveJudge
+  proactiveJudgePolicy?: typeof config.proactiveJudge
   now?: () => Date
   snapshotStore?: {
     listByGroupIds: typeof listRootRuntimeSnapshotsByGroupIds
@@ -154,6 +178,19 @@ function upsertContextSnapshotMessage(
   ]
     .sort(compareContextMessage)
     .slice(-ROOT_RUNTIME_CONTEXT_MESSAGE_LIMIT)
+}
+
+function buildProactiveJudgeRecentMessages(snapshot: RootRuntimeSnapshotRecord, triggerMessageRowId: number) {
+  return snapshot.contextSnapshot.messages
+    .filter((message) => message.kind === 'group_message' && message.orderKey !== triggerMessageRowId)
+    .slice(-PROACTIVE_JUDGE_RECENT_MESSAGE_LIMIT)
+    .map((message) => ({
+      messageRowId: message.orderKey,
+      senderId: message.senderId,
+      content: message.content,
+      createdAt: snapshot.sessionSnapshot.unreadMessages.find((unread) => unread.messageRowId === message.orderKey)?.createdAt
+        ?? snapshot.updatedAt.toISOString(),
+    }))
 }
 
 function upsertUnreadMessage(
@@ -216,6 +253,8 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
   const liveMentionDecisionEnabled = replyExecutionEnabled
   const ambientReplyBaseProbability = options.ambientReplyBaseProbability ?? DEFAULT_AMBIENT_REPLY_BASE_PROBABILITY
   const proactivePolicy = options.proactivePolicy ?? config.proactivePolicy
+  const proactiveJudgePolicy = options.proactiveJudgePolicy ?? config.proactiveJudge
+  const proactiveJudge = options.proactiveJudge ?? createProactiveJudge({ policy: proactiveJudgePolicy })
   const snapshotStore = options.snapshotStore ?? {
     listByGroupIds: listRootRuntimeSnapshotsByGroupIds,
     upsert: upsertRootRuntimeSnapshot,
@@ -225,6 +264,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
   const pendingMentionHints = new Map<number, Set<number>>()
   const generationAttemptsByGroup = new Map<number, Date[]>()
   const candidateArtifactsByGroup = new Map<number, Date[]>()
+  const judgeCallsByGroup = new Map<number, Date[]>()
   let passiveActive = false
   let passiveDispatchEnabled = false
 
@@ -313,11 +353,14 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
   const getProactiveGateReasons = (input: {
     groupId: number
     createdAt: Date
+    segments: ParsedSegment[]
     text: string
     triggerMessageRowId: number
     snapshot: RootRuntimeSnapshotRecord
   }): string[] => {
     const reasons: string[] = []
+    if (!hasConcreteAmbientAnchor({ segments: input.segments, text: input.text })) reasons.push('no_concrete_anchor')
+
     const nowMs = input.createdAt.getTime()
     const activeChatCount = input.snapshot.sessionSnapshot.unreadMessages.filter(
       (message) => nowMs - new Date(message.createdAt).getTime() <= proactivePolicy.activeChatWindowMs,
@@ -342,6 +385,94 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
     if (candidateArtifacts.length >= proactivePolicy.candidateBudgetPerDay) reasons.push('candidate_budget')
 
     return reasons
+  }
+
+  const canCallProactiveJudge = (input: {
+    groupId: number
+    createdAt: Date
+  }): boolean => {
+    const nowMs = input.createdAt.getTime()
+    const calls = (judgeCallsByGroup.get(input.groupId) ?? []).filter(
+      (date) => nowMs - date.getTime() < 60 * 60 * 1000,
+    )
+    judgeCallsByGroup.set(input.groupId, calls)
+    if (calls.length >= proactiveJudgePolicy.maxCallsPerHour) {
+      return false
+    }
+    calls.push(input.createdAt)
+    judgeCallsByGroup.set(input.groupId, calls)
+    return true
+  }
+
+  const persistProactiveJudgeAttempt = async (input: {
+    groupId: number
+    messageRowId: number
+    attemptedAt: Date
+  }) => {
+    const existing = snapshots.get(input.groupId)
+    if (!existing) return
+
+    const attemptedAt = input.attemptedAt.toISOString()
+    const judgeAttempts: RuntimeProactiveJudgeAttempt[] = [
+      ...(existing.sessionSnapshot.proactiveJudgeAttempts ?? []).filter(
+        (attempt) => attempt.messageRowId !== input.messageRowId,
+      ),
+      { messageRowId: input.messageRowId, attemptedAt },
+    ]
+    const persisted = await snapshotStore.upsert({
+      runtimeKey: existing.runtimeKey,
+      groupId: input.groupId,
+      schemaVersion: ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+      contextSnapshot: existing.contextSnapshot,
+      sessionSnapshot: {
+        ...existing.sessionSnapshot,
+        proactiveJudgeAttempts: judgeAttempts,
+      },
+      lastObservedMessageRowId: existing.lastObservedMessageRowId,
+    })
+    snapshots.set(input.groupId, persisted)
+  }
+
+  const evaluateProactiveJudge = async (input: {
+    message: PersistedGroupMessageIngress
+    replyProbability: number
+    gateReasons: string[]
+    snapshot: RootRuntimeSnapshotRecord
+  }) => {
+    if (!ambientDecisionEnabled) return undefined
+    if (input.replyProbability <= 0) return undefined
+    if (input.gateReasons.length > 0) return undefined
+
+    if (!proactiveJudgePolicy.enabled) {
+      return createDisabledProactiveJudgeAdvice()
+    }
+    if (!canCallProactiveJudge({
+      groupId: input.message.groupId,
+      createdAt: input.message.createdAt,
+    })) {
+      return createDisabledProactiveJudgeAdvice('proactive judge call budget exhausted')
+    }
+
+    try {
+      await persistProactiveJudgeAttempt({
+        groupId: input.message.groupId,
+        messageRowId: input.message.messageRowId,
+        attemptedAt: input.message.createdAt,
+      })
+      return await proactiveJudge.evaluate({
+        groupId: input.message.groupId,
+        messageRowId: input.message.messageRowId,
+        senderId: input.message.senderId,
+        senderNickname: input.message.senderNickname,
+        segments: input.message.segments,
+        recentMessages: buildProactiveJudgeRecentMessages(input.snapshot, input.message.messageRowId),
+        createdAt: input.message.createdAt,
+        replyProbability: input.replyProbability,
+      })
+    } catch (error) {
+      log.warn({ error, groupId: input.message.groupId }, 'proactive judge failed closed')
+      return createInvalidProactiveJudgeAdvice()
+    }
   }
 
   const persistWakeEvent = async (event: RuntimeEvent) => {
@@ -403,6 +534,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
     ? createReplyExecutor({
         decisionEngine: options.decisionEngine ?? createReplyDecisionEngine({
           ambientAuditEnabled: options.ambientAuditEnabled,
+          proactiveJudge: proactiveJudgePolicy,
         }),
         proactiveCandidateStore: { createOrReuse: persistProactiveCandidate },
         onProactiveGenerationAttempt: (opportunity) => persistProactiveGenerationAttempt({
@@ -445,6 +577,12 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
           (snapshot.sessionSnapshot.proactiveCandidateArtifacts ?? [])
             .filter((artifact) => artifact.status === 'candidate_generated')
             .map((artifact) => new Date(artifact.createdAt))
+            .filter((date) => Number.isFinite(date.getTime())),
+        )
+        judgeCallsByGroup.set(
+          snapshot.groupId,
+          (snapshot.sessionSnapshot.proactiveJudgeAttempts ?? [])
+            .map((attempt) => new Date(attempt.attemptedAt))
             .filter((date) => Number.isFinite(date.getTime())),
         )
       }
@@ -588,16 +726,33 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       const persisted = await snapshotStore.upsert(nextSnapshotInput)
       snapshots.set(input.groupId, persisted)
 
+      const executeDecisions = ingestOptions.executeDecisions ?? true
       const plainText = segmentsToPlainText(input.segments)
+      const replyProbability = mentionedSelf
+        ? 1
+        : scoreAmbientReplyProbability({
+            segments: input.segments,
+            baseProbability: ambientReplyBaseProbability,
+          })
       const gateReasons = !mentionedSelf
         ? getProactiveGateReasons({
             groupId: input.groupId,
             createdAt: input.createdAt,
+            segments: input.segments,
             text: plainText,
             triggerMessageRowId: input.messageRowId,
             snapshot: persisted,
           })
         : []
+      const judgeAdvice = !mentionedSelf
+        && executeDecisions
+        ? await evaluateProactiveJudge({
+            message: input,
+            replyProbability,
+            gateReasons,
+            snapshot: persisted,
+          })
+        : undefined
       const opportunity: ReplyOpportunity = mentionedSelf
         ? {
             opportunityId: `qq_group:${input.groupId}:message:${input.messageRowId}:mention`,
@@ -608,7 +763,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
             sourceKind: 'mention',
             cueStrength: 'strong',
             mustReplyOverride: true,
-            replyProbability: 1,
+            replyProbability,
             anchorMessageRowId: input.messageRowId,
             triggerMessageRowId: input.messageRowId,
             triggerMessageId: input.messageId,
@@ -629,10 +784,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
             sourceKind: 'ambient_message',
             cueStrength: 'weak',
             mustReplyOverride: false,
-            replyProbability: scoreAmbientReplyProbability({
-              segments: input.segments,
-              baseProbability: ambientReplyBaseProbability,
-            }),
+            replyProbability,
             triggerMessageRowId: input.messageRowId,
             triggerMessageId: input.messageId,
             triggerSenderId: input.senderId,
@@ -644,10 +796,9 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
               ? `ambient group message suppressed by gates: ${gateReasons.join(',')}`
               : 'ambient group message baseline weak opportunity; proactive candidate dry-run only',
             gateReasons,
+            judgeAdvice,
             createdAt: input.createdAt,
           }
-
-      const executeDecisions = ingestOptions.executeDecisions ?? true
 
       log.info(
         {
@@ -666,6 +817,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
           deliveryMode: opportunity.deliveryMode,
           replyProbability: opportunity.replyProbability,
           gateReasons: opportunity.gateReasons ?? [],
+          judgeAdvice: opportunity.judgeAdvice,
           executeDecisions,
           ...summarizeSegments(input.segments),
         },

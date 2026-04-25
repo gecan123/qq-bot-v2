@@ -121,6 +121,30 @@ describe('config', () => {
     assert.equal(invalid.botAmbientReplyBaseProbability, 0.02)
   })
 
+  test('parses proactive judge switches and clamps thresholds', () => {
+    const config = parseConfig(createBaseEnv({
+      PROACTIVE_JUDGE_ENABLED: 'true',
+      PROACTIVE_JUDGE_TIMEOUT_MS: '2500',
+      PROACTIVE_JUDGE_MAX_CALLS_PER_HOUR: '7',
+      PROACTIVE_JUDGE_MIN_CONFIDENCE: '2',
+      PROACTIVE_JUDGE_MIN_USEFULNESS: '-1',
+      PROACTIVE_JUDGE_MIN_NOVELTY: '0.25',
+      PROACTIVE_JUDGE_MAX_INTERRUPTION_COST: '0.5',
+      PROACTIVE_JUDGE_MAX_SOCIAL_RISK: '0.2',
+      PROACTIVE_JUDGE_MAX_SUGGESTED_DELAY_MS: '120000',
+    }))
+
+    assert.equal(config.proactiveJudge.enabled, true)
+    assert.equal(config.proactiveJudge.timeoutMs, 2500)
+    assert.equal(config.proactiveJudge.maxCallsPerHour, 7)
+    assert.equal(config.proactiveJudge.minConfidence, 1)
+    assert.equal(config.proactiveJudge.minUsefulness, 0)
+    assert.equal(config.proactiveJudge.minNovelty, 0.25)
+    assert.equal(config.proactiveJudge.maxInterruptionCost, 0.5)
+    assert.equal(config.proactiveJudge.maxSocialRisk, 0.2)
+    assert.equal(config.proactiveJudge.maxSuggestedDelayMs, 120000)
+  })
+
   test('throws when default provider is missing from registry', () => {
     assert.throws(
       () =>

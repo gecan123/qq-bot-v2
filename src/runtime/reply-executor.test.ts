@@ -89,6 +89,16 @@ describe('reply executor', () => {
     let generated = false
     let audited = false
     let storedText: string | undefined
+    const judgeAdvice = {
+      status: 'valid' as const,
+      shouldSpeak: true,
+      usefulness: 0.8,
+      novelty: 0.7,
+      confidence: 0.9,
+      interruptionCost: 0.1,
+      socialRisk: 0.1,
+      reason: '有明确锚点',
+    }
     const sender: MessageSender = {
       isReplyDryRunEnabled: () => false,
       isSendDryRunEnabled: () => true,
@@ -110,6 +120,8 @@ describe('reply executor', () => {
               artifactKind: 'proactive_candidate',
               auditKind: 'proactive_candidate',
               reason: 'test send_message dry-run producer',
+              policyReasons: [],
+              judgeAdvice,
             },
             replyIntentId: 'qq_group:1:message:42:send_message',
             deliveryMode: 'send_message',
@@ -143,12 +155,14 @@ describe('reply executor', () => {
         createOrReuse: async (input) => {
           audited = true
           assert.equal(input.auditKind, 'proactive_candidate')
+          assert.deepEqual((input.payload as { judgeAdvice?: unknown }).judgeAdvice, judgeAdvice)
         },
       },
       proactiveCandidateStore: {
         createOrReuse: async (artifact) => {
           storedText = artifact.candidateText
           assert.equal(artifact.status, 'candidate_generated')
+          assert.deepEqual(artifact.judgeAdvice, judgeAdvice)
         },
       },
       deliver: async () => fail('deliver'),

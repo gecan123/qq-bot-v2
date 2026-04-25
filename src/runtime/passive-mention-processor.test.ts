@@ -246,7 +246,7 @@ describe('passive mention processor', () => {
     assert.deepEqual(sent, [{ groupId: 1, replyToMessageId: 41, mentionUserId: 20, text: '已存文本' }])
   })
 
-  test.skip('reuses legacy reply intent ids to avoid duplicate sends during compatibility window', async () => {
+  test('does not reuse removed qq_group root legacy reply intent bridge', async () => {
     const first = makeEvent({ messageId: 71, senderId: 20, createdAt: 1 })
     const second = makeEvent({ messageId: 72, senderId: 20, createdAt: 2 })
     const { sent, sender } = fakeSender()
@@ -296,8 +296,8 @@ describe('passive mention processor', () => {
 
     await processor.run(makeBatch([first, second]))
 
-    assert.equal(generateReplyCalls, 0)
-    assert.deepEqual(sent, [{ groupId: 1, replyToMessageId: 71, mentionUserId: 20, text: '旧格式已存文本' }])
+    assert.equal(generateReplyCalls, 1)
+    assert.deepEqual(sent, [{ groupId: 1, replyToMessageId: 71, mentionUserId: 20, text: '新生成文本' }])
   })
 
   test('derives stable reply intent id from the anchored mention cue', async () => {

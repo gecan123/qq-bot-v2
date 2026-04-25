@@ -22,6 +22,7 @@ import { createReplyDecisionEngine, type ReplyDecisionEngine } from './reply-dec
 import type { ReplyDecision, ReplyExecutionResult, ReplyOpportunity } from './reply-decision-types.js'
 import type { ProactiveCandidateArtifact, ProactiveCandidateStatus } from './types.js'
 import { previewText, type BusinessLogDispatchMode, type BusinessLogSideEffect } from '../utils/business-log.js'
+import { createOrReuseActionIntent, createOrReuseActionRecord, markActionRecordDeliveryState } from './action-record-store.js'
 
 type StoredConversationMessage = NonNullable<Awaited<ReturnType<typeof getMessageById>>>
 
@@ -357,6 +358,27 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
 
       const deliveryPayload = buildDeliveryPayload(decision)
       const shouldDryRun = isDryRunEnabledForPayload(sender, deliveryPayload)
+      const actionType = deliveryPayload.type === 'reply_to_message' ? 'send_group_reply' : 'send_group_message'
+      const actionIntent = await createOrReuseActionIntent({
+        id: `${opportunity.opportunityId}:intent:${actionType}`,
+        opportunityId: opportunity.opportunityId,
+        actionType,
+        targetSceneId: opportunity.sceneId,
+        payload: { deliveryPayload, text: reply },
+        dryRun: shouldDryRun,
+        riskLevel: 'low',
+        status: shouldDryRun ? 'dry_run' : 'pending',
+        idempotencyKey: `${opportunity.opportunityId}:${actionType}`,
+      })
+      let actionRecord = await createOrReuseActionRecord({
+        id: `${actionIntent.id}:record`,
+        actionIntentId: actionIntent.id,
+        actionType,
+        targetSceneId: opportunity.sceneId,
+        deliveryState: shouldDryRun ? 'dry_run' : 'pending',
+        idempotencyKey: actionIntent.idempotencyKey,
+        resultPayload: { deliveryPayload, text: reply },
+      })
       const replyRecord = await replyRecordStore.createOrReuse({
         runtimeKey: opportunity.runtimeKey,
         groupId: opportunity.groupId,
@@ -409,7 +431,7 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
           },
           '回复已生成（未发送）',
         )
-        return { decision, replyRecord, deliveryResult: 'dry_run' }
+        return { decision, replyRecord, actionRecord, deliveryResult: 'dry_run' }
       }
 
       const deliveryResult = decision.policy.shouldDeliver
@@ -418,7 +440,10 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
       if (deliveryResult === 'sent') {
         await options.onReplyRecordSent?.(replyRecord)
       }
-      return { decision, replyRecord, deliveryResult }
+      if (deliveryResult === 'sent' || deliveryResult === 'failed') {
+        actionRecord = await markActionRecordDeliveryState(actionRecord.id, deliveryResult, { replyRecordId: replyRecord.id })
+      }
+      return { decision, replyRecord, actionRecord, deliveryResult }
     },
   }
 }

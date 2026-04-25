@@ -1,4 +1,5 @@
 import type { ReplyRecord } from '../conversation/reply-record-store.js'
+import type { ActionRecord } from './action-record-store.js'
 import type { ProactiveJudgeAdvice } from './proactive-judge.js'
 
 export type ReplyOpportunitySourceKind = 'mention' | 'ambient_message'
@@ -63,6 +64,7 @@ export interface ReplyDecision {
 export interface ReplyExecutionResult {
   decision: ReplyDecision
   replyRecord?: ReplyRecord
+  actionRecord?: ActionRecord
   artifact?: import('./types.js').ProactiveCandidateArtifact
   deliveryResult?: 'sent' | 'failed' | 'dry_run' | 'skipped'
 }

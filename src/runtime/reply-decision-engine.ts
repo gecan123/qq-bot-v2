@@ -21,7 +21,12 @@ export function createReplyDecisionEngine(options: ReplyDecisionEngineOptions = 
     decide(opportunity) {
       const replyProbability = clampProbability(opportunity.replyProbability)
 
-      if (opportunity.sourceKind === 'mention' || opportunity.mustReplyOverride) {
+      const isStrongAnchoredOpportunity =
+        opportunity.deliveryMode === 'reply_to_message' &&
+        opportunity.anchorMessageRowId != null &&
+        (opportunity.mustReplyOverride || replyProbability >= 1)
+
+      if (isStrongAnchoredOpportunity) {
         const anchorRowId = opportunity.anchorMessageRowId ?? opportunity.triggerMessageRowId
         return {
           opportunity: {
@@ -67,18 +72,29 @@ export function createReplyDecisionEngine(options: ReplyDecisionEngineOptions = 
       }
 
       const outcome = replyProbability > 0 ? 'opportunity_detected' : 'policy_suppressed'
+      const gateReasons = opportunity.gateReasons ?? []
+      const shouldGenerateProactiveCandidate = opportunity.deliveryMode === 'send_message' && replyProbability > 0 && gateReasons.length === 0
+      const proactiveSuppressed = opportunity.deliveryMode === 'send_message' && gateReasons.length > 0
       return {
-        opportunity: { ...opportunity, replyProbability, dryRun: true, deliveryMode: 'audit_only' },
-        outcome,
+        opportunity: {
+          ...opportunity,
+          replyProbability,
+          dryRun: true,
+          deliveryMode: shouldGenerateProactiveCandidate ? 'send_message' : 'audit_only',
+        },
+        outcome: shouldGenerateProactiveCandidate ? 'would_reply_dry_run' : outcome,
         policy: {
-          shouldGenerate: false,
+          shouldGenerate: shouldGenerateProactiveCandidate,
           shouldCreateReplyRecord: false,
           shouldDeliver: false,
           shouldAudit: true,
-          auditKind: outcome,
+          artifactKind: shouldGenerateProactiveCandidate ? 'proactive_candidate' : undefined,
+          auditKind: shouldGenerateProactiveCandidate || proactiveSuppressed ? 'proactive_candidate' : outcome,
           reason: opportunity.reason,
+          gateReasons,
         },
-        deliveryMode: 'audit_only',
+        replyIntentId: shouldGenerateProactiveCandidate ? opportunity.opportunityId : undefined,
+        deliveryMode: shouldGenerateProactiveCandidate ? 'send_message' : 'audit_only',
         dryRun: true,
         reason: opportunity.reason,
       }

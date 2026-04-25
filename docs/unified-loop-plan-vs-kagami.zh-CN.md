@@ -1,5 +1,13 @@
 # QQ Bot V2 统一 Loop 迁移计划与 Kagami 差异说明
 
+## 当前落地状态（2026-04-24）
+
+- 原计划中的统一事件入口、root runtime ownership、proactive dry-run convergence 已由 final convergence phase 落地。
+- 当前实现比本文早期设想更接近 persisted runtime：root runtime snapshot 已承担 live continuity，但 `messages` 仍是唯一 inbound user-fact ledger。
+- `@self` 和普通消息 proactive dry-run 共享统一 decision/executor surface；RootRuntime 不再拥有单独的 proactive executor 分派；`@self` 是 strong anchored opportunity，普通消息只生成 non-authoritative candidate。
+- Scheduler / manual wake 只 emit `RuntimeEvent`，不拥有 generation / send / recovery 语义。
+- 真实 ambient `send_message` 仍然不在本阶段开启；未来如果开启，需要单独 gated/canary ADR。
+
 ## 1. 这份文档是讲什么的
 
 这份文档回答两个问题：
@@ -137,6 +145,8 @@ while (!stopped) {
 
 也就是说，scheduler 从“执行中心”退化成“整形 / 生产事件的外围模块”。
 
+状态：已完成。NapCat 持久化后的群消息通过 `RuntimeEvent` 进入 root runtime；scheduler/manual wake 也只作为 runtime event producer。
+
 ## 4.5 Phase 4：把主动回复接进同一个 runtime，但只 dry-run
 
 主动回复会进入同一个 root runtime，但是第一阶段只允许产出：
@@ -169,6 +179,8 @@ while (!stopped) {
 
 除非未来单独开 ADR 明确放开。
 
+状态：已完成。proactive dry-run 只能写 non-authoritative candidate artifact / audit；不会创建 `ReplyRecord`，不会发送，失败输出也不会写 candidate artifact。
+
 ## 4.6 Phase 5：收口 bypass path
 
 最后才去清理剩余的一次性分叉：
@@ -183,6 +195,8 @@ while (!stopped) {
 - runtime 是单一执行中心
 - policy 仍然是独立的 policy
 - authoritative history 仍然只来自三张旧账本
+
+状态：本阶段已收口到统一 runtime / decision / executor surface，并完成单 `ReplyExecutor.execute(opportunity)` 执行面；真实普通消息 `send_message` 保持为未来 gated/canary phase。
 
 ---
 

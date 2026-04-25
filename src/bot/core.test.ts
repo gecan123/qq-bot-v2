@@ -19,6 +19,10 @@ describe('finalizePersistedGroupMessage', () => {
         async restore() {
           return { restoredCount: 0 }
         },
+        async emitRuntimeEvent(event) {
+          assert.equal(event.eventKind, 'group_message')
+          callOrder.push('event')
+        },
         async primeGroupCursor() {},
         requeuePendingPassiveMentions() {
           return 0
@@ -39,7 +43,7 @@ describe('finalizePersistedGroupMessage', () => {
       },
     })
 
-    assert.deepEqual(callOrder, ['ingest'])
+    assert.deepEqual(callOrder, ['event'])
   })
 
   test('uses persisted row metadata directly for runtime ingress without reread', async () => {
@@ -58,6 +62,14 @@ describe('finalizePersistedGroupMessage', () => {
         async restore() {
           return { restoredCount: 0 }
         },
+        async emitRuntimeEvent(event) {
+          assert.equal(event.eventKind, 'group_message')
+          assert.ok(event.message)
+          ingested.push({
+            messageRowId: event.message.messageRowId,
+            messageId: event.message.messageId,
+          })
+        },
         async primeGroupCursor() {},
         requeuePendingPassiveMentions() {
           return 0
@@ -66,12 +78,7 @@ describe('finalizePersistedGroupMessage', () => {
         dispatchPassiveMentionIfMentioned() {
           return true
         },
-        async ingestGroupMessage(input) {
-          ingested.push({
-            messageRowId: input.messageRowId,
-            messageId: input.messageId,
-          })
-        },
+        async ingestGroupMessage() {},
         getSnapshot() {
           return null
         },
@@ -82,5 +89,46 @@ describe('finalizePersistedGroupMessage', () => {
     })
 
     assert.deepEqual(ingested, [{ messageRowId: 10, messageId: 1001 }])
+  })
+
+  test('keeps backfilled messages as snapshot-only runtime ingress', async () => {
+    let executeDecisions: boolean | undefined
+
+    await finalizePersistedGroupMessage({
+      groupId: 1,
+      messageId: 1001,
+      messageRowId: 10,
+      senderId: 20,
+      senderNickname: '用户20',
+      createdAt: Date.now(),
+      segments: [{ type: 'at', targetId: '999' }],
+      dispatchMention: false,
+      persistedCreatedAt: new Date('2026-04-22T00:00:00Z'),
+      rootRuntime: {
+        async restore() {
+          return { restoredCount: 0 }
+        },
+        async emitRuntimeEvent(_event, options) {
+          executeDecisions = options?.executeDecisions
+        },
+        async primeGroupCursor() {},
+        requeuePendingPassiveMentions() {
+          return 0
+        },
+        async markPassiveReplyDelivered() {},
+        dispatchPassiveMentionIfMentioned() {
+          return true
+        },
+        async ingestGroupMessage() {},
+        getSnapshot() {
+          return null
+        },
+        enqueuePassiveMention() {},
+        startPassiveExecution() {},
+        stopPassiveExecution() {},
+      },
+    })
+
+    assert.equal(executeDecisions, false)
   })
 })

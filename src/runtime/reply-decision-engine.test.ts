@@ -46,6 +46,22 @@ describe('reply decision engine', () => {
     assert.equal(decision.replyIntentId, 'qq_group:1:message:10:reply_to_message')
   })
 
+  test('uses strong anchored opportunity semantics instead of source-specific mention branch', () => {
+    const decision = createReplyDecisionEngine().decide(opportunity({
+      sourceKind: 'ambient_message',
+      cueStrength: 'strong',
+      mustReplyOverride: true,
+      replyProbability: 1,
+      anchorMessageRowId: 10,
+      deliveryMode: 'reply_to_message',
+      dryRun: false,
+    }))
+
+    assert.equal(decision.outcome, 'sendable_reply')
+    assert.equal(decision.replyIntentId, 'qq_group:1:message:10:reply_to_message')
+    assert.equal(decision.deliveryMode, 'reply_to_message')
+  })
+
   test('turns ambient message into audit-only decision without generation or sendable record', () => {
     const decision = createReplyDecisionEngine().decide(opportunity())
 

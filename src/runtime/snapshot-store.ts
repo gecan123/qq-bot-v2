@@ -6,10 +6,67 @@ import type {
   RootRuntimeContextSnapshot,
   RuntimeCue,
   RuntimeContextMessage,
+  RuntimeProactiveGenerationAttempt,
   RuntimeSceneRecord,
   RootRuntimeSessionSnapshot,
   RootRuntimeSnapshotRecord,
+  ProactiveCandidateArtifact,
 } from './types.js'
+
+const MAX_PROACTIVE_CANDIDATE_ARTIFACTS = 50
+
+function isProactiveCandidateArtifact(item: unknown): item is ProactiveCandidateArtifact {
+  if (!item || typeof item !== 'object') return false
+  const artifact = item as Partial<ProactiveCandidateArtifact>
+  return (
+    artifact.artifactKind === 'proactive_candidate' &&
+    typeof artifact.opportunityId === 'string' &&
+    typeof artifact.runtimeKey === 'string' &&
+    typeof artifact.groupId === 'number' &&
+    typeof artifact.sceneId === 'string' &&
+    typeof artifact.sourceKind === 'string' &&
+    typeof artifact.triggerMessageRowId === 'number' &&
+    typeof artifact.incorporatedMessageRowId === 'number' &&
+    typeof artifact.createdAt === 'string' &&
+    typeof artifact.expiresAt === 'string' &&
+    typeof artifact.score === 'number' &&
+    Array.isArray(artifact.gateReasons) &&
+    artifact.gateReasons.every((reason) => typeof reason === 'string') &&
+    typeof artifact.termination === 'string' &&
+    (artifact.status === 'suppressed' || artifact.status === 'no_candidate' || artifact.status === 'candidate_generated') &&
+    (artifact.candidateText === undefined || typeof artifact.candidateText === 'string') &&
+    (artifact.model === undefined || typeof artifact.model === 'string')
+  )
+}
+
+function isProactiveGenerationAttempt(item: unknown): item is RuntimeProactiveGenerationAttempt {
+  if (!item || typeof item !== 'object') return false
+  const attempt = item as Partial<RuntimeProactiveGenerationAttempt>
+  return typeof attempt.opportunityId === 'string' && typeof attempt.attemptedAt === 'string'
+}
+
+function pruneProactiveCandidateArtifacts(
+  artifacts: ProactiveCandidateArtifact[],
+  now = new Date(),
+): ProactiveCandidateArtifact[] {
+  const nowMs = now.getTime()
+  const latestByKey = new Map<string, ProactiveCandidateArtifact>()
+
+  for (const artifact of artifacts) {
+    const expiresAt = Date.parse(artifact.expiresAt)
+    if (Number.isFinite(expiresAt) && expiresAt <= nowMs) continue
+
+    const key = `${artifact.runtimeKey}:${artifact.opportunityId}:${artifact.artifactKind}`
+    const existing = latestByKey.get(key)
+    if (!existing || artifact.createdAt.localeCompare(existing.createdAt) >= 0) {
+      latestByKey.set(key, artifact)
+    }
+  }
+
+  return [...latestByKey.values()]
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, MAX_PROACTIVE_CANDIDATE_ARTIFACTS)
+}
 
 function sanitizeJsonValue(value: unknown): Prisma.InputJsonValue | null | undefined {
   if (value === undefined) return undefined
@@ -95,6 +152,8 @@ function parseSessionSnapshot(value: unknown): RootRuntimeSessionSnapshot {
       ambientAuditCandidates: [],
       sceneRecords: [],
       outstandingCues: [],
+      proactiveCandidateArtifacts: [],
+      proactiveGenerationAttempts: [],
       recentObservedMessageRowIds: [],
       lastWakeAt: null,
     }
@@ -167,6 +226,14 @@ function parseSessionSnapshot(value: unknown): RootRuntimeSessionSnapshot {
       : Array.isArray(legacyParsed['proactive' + 'Candidates'])
         ? (legacyParsed['proactive' + 'Candidates'] as RootRuntimeSessionSnapshot['ambientAuditCandidates'])
         : [],
+    proactiveCandidateArtifacts: pruneProactiveCandidateArtifacts(
+      Array.isArray(parsed.proactiveCandidateArtifacts)
+        ? parsed.proactiveCandidateArtifacts.filter(isProactiveCandidateArtifact)
+        : [],
+    ),
+    proactiveGenerationAttempts: Array.isArray(parsed.proactiveGenerationAttempts)
+      ? parsed.proactiveGenerationAttempts.filter(isProactiveGenerationAttempt)
+      : [],
     sceneRecords,
     outstandingCues,
     recentObservedMessageRowIds: Array.isArray(parsed.recentObservedMessageRowIds)
@@ -221,6 +288,13 @@ export async function getRootRuntimeSnapshotByRuntimeKey(runtimeKey: string): Pr
 export async function upsertRootRuntimeSnapshot(
   input: CreateRootRuntimeSnapshotInput,
 ): Promise<RootRuntimeSnapshotRecord> {
+  const sessionSnapshot = {
+    ...input.sessionSnapshot,
+    proactiveCandidateArtifacts: pruneProactiveCandidateArtifacts(
+      input.sessionSnapshot.proactiveCandidateArtifacts ?? [],
+    ),
+    proactiveGenerationAttempts: input.sessionSnapshot.proactiveGenerationAttempts ?? [],
+  }
   const row = await prisma.rootRuntimeSnapshot.upsert({
     where: {
       runtimeKey: input.runtimeKey,
@@ -230,14 +304,14 @@ export async function upsertRootRuntimeSnapshot(
       groupId: BigInt(input.groupId),
       schemaVersion: input.schemaVersion,
       contextSnapshot: sanitizeJsonValue(input.contextSnapshot) ?? { messages: [] },
-      sessionSnapshot: sanitizeJsonValue(input.sessionSnapshot) ?? {},
+      sessionSnapshot: sanitizeJsonValue(sessionSnapshot) ?? {},
       lastObservedMessageRowId: input.lastObservedMessageRowId ?? null,
     },
     update: {
       groupId: BigInt(input.groupId),
       schemaVersion: input.schemaVersion,
       contextSnapshot: sanitizeJsonValue(input.contextSnapshot) ?? { messages: [] },
-      sessionSnapshot: sanitizeJsonValue(input.sessionSnapshot) ?? {},
+      sessionSnapshot: sanitizeJsonValue(sessionSnapshot) ?? {},
       lastObservedMessageRowId: input.lastObservedMessageRowId ?? null,
     },
   })

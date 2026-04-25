@@ -71,6 +71,24 @@ describe('config', () => {
     assert.equal(config.botProactiveDryRun, false)
     assert.equal(config.botAmbientAuditEnabled, true)
     assert.equal(config.botAmbientReplyBaseProbability, 0.02)
+    assert.equal(config.runtimeContextFallback, 'runtime')
+    assert.equal(config.runtimeSchedulerTickMs, 0)
+  })
+
+  test('parses runtime context fallback and scheduler tick interval', () => {
+    const config = parseConfig(createBaseEnv({
+      RUNTIME_CONTEXT_FALLBACK: 'ledger',
+      RUNTIME_SCHEDULER_TICK_MS: '30000',
+    }))
+    const invalid = parseConfig(createBaseEnv({
+      RUNTIME_CONTEXT_FALLBACK: 'unknown',
+      RUNTIME_SCHEDULER_TICK_MS: '-1',
+    }))
+
+    assert.equal(config.runtimeContextFallback, 'ledger')
+    assert.equal(config.runtimeSchedulerTickMs, 30000)
+    assert.equal(invalid.runtimeContextFallback, 'runtime')
+    assert.equal(invalid.runtimeSchedulerTickMs, 0)
   })
 
   test('parses BOT_REPLY_DRY_RUN and BOT_PROACTIVE_DRY_RUN as separate switches', () => {

@@ -23,6 +23,7 @@ export interface BuildContextResult {
 
 export interface ContextBuildOptions {
   mediaDeadlineAt?: number
+  runtimeContextFallback?: 'runtime' | 'ledger'
 }
 
 interface ContextBuildDependencies {
@@ -292,14 +293,15 @@ export async function buildContext(
     }
   }
 
-  const shouldUseSnapshot = await shouldUseRuntimeSnapshotContext({
-    groupId: msg.groupId,
-    messageId: msg.messageId,
-    scopeKey,
-    getStoredMessage,
-    getRuntimeSnapshot,
-    getLatestSentTurn,
-  })
+  const shouldUseSnapshot = (options.runtimeContextFallback ?? config.runtimeContextFallback) !== 'ledger' &&
+    await shouldUseRuntimeSnapshotContext({
+      groupId: msg.groupId,
+      messageId: msg.messageId,
+      scopeKey,
+      getStoredMessage,
+      getRuntimeSnapshot,
+      getLatestSentTurn,
+    })
   const renderRuntimeContextText = (messages: RuntimeContextMessage[]): string =>
     renderRuntimeContextMessages(
       selectRuntimeContextWindow(

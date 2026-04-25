@@ -33,14 +33,21 @@ type FinalizePersistedMessageOptions = {
 export async function finalizePersistedGroupMessage(
   options: FinalizePersistedMessageOptions,
 ): Promise<void> {
-  await options.rootRuntime?.ingestGroupMessage({
+  await options.rootRuntime?.emitRuntimeEvent({
+    eventKind: 'group_message',
     groupId: options.groupId,
-    messageRowId: options.messageRowId,
-    messageId: options.messageId,
-    senderId: options.senderId,
-    senderNickname: options.senderNickname,
-    segments: options.segments,
     createdAt: options.persistedCreatedAt,
+    message: {
+      groupId: options.groupId,
+      messageRowId: options.messageRowId,
+      messageId: options.messageId,
+      senderId: options.senderId,
+      senderNickname: options.senderNickname,
+      segments: options.segments,
+      createdAt: options.persistedCreatedAt,
+    },
+  }, {
+    executeDecisions: options.dispatchMention !== false,
   })
 }
 

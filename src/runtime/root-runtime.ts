@@ -4,9 +4,11 @@ import { createGroupMailbox, type GroupMailbox } from '../conversation/group-mai
 import { toSenderThreadKey } from '../conversation/thread-key.js'
 import type { ConversationWorkerResult, GroupConversationBatch, MentionEvent } from '../conversation/types.js'
 import { toSenderReplyScopeKey } from '../conversation/reply-scope.js'
-import { createReplyExecutor, type ReplyExecutor } from './reply-executor.js'
+import { createReplyExecutor, type ReplyExecutor, type ReplyExecutorOptions } from './reply-executor.js'
+import { createReplyDecisionEngine, type ReplyDecisionEngine } from './reply-decision-engine.js'
 import type { ReplyOpportunity } from './reply-decision-types.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
+import { config } from '../config/index.js'
 import {
   createDefaultRootRuntimeSnapshot,
   DEFAULT_ROOT_RUNTIME_SENDER_CONTINUITY_LIMIT,
@@ -18,6 +20,7 @@ import {
   type CreateRootRuntimeSnapshotInput,
   type RuntimeCue,
   type RuntimeContextMessage,
+  type ProactiveCandidateArtifact,
   type RuntimeSceneRecord,
   type RuntimeUnreadMessage,
   type RootRuntimeSnapshotRecord,
@@ -30,6 +33,15 @@ import {
 const log = createLogger('ROOT_RUNTIME')
 const ROOT_RUNTIME_CONTEXT_MESSAGE_LIMIT = 200
 const DEFAULT_AMBIENT_REPLY_BASE_PROBABILITY = 0.02
+
+export type RuntimeEventKind = 'group_message' | 'scheduler_tick' | 'manual_wake'
+
+export interface RuntimeEvent {
+  eventKind: RuntimeEventKind
+  groupId: number
+  createdAt: Date
+  message?: PersistedGroupMessageIngress
+}
 
 function clampProbability(value: number): number {
   if (!Number.isFinite(value)) return 0
@@ -47,6 +59,10 @@ function scoreAmbientReplyProbability(input: { segments: ParsedSegment[]; basePr
   return clampProbability(score)
 }
 
+function normalizeTextHash(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, '').trim()
+}
+
 export interface PersistedGroupMessageIngress {
   groupId: number
   messageRowId: number
@@ -57,9 +73,16 @@ export interface PersistedGroupMessageIngress {
   createdAt: Date
 }
 
+export interface PersistedGroupMessageIngressOptions {
+  executeDecisions?: boolean
+}
+
+export interface RuntimeEventOptions extends PersistedGroupMessageIngressOptions {}
+
 export interface RootRuntimeManager {
   restore(groupIds: number[]): Promise<{ restoredCount: number }>
-  ingestGroupMessage(input: PersistedGroupMessageIngress): Promise<void>
+  emitRuntimeEvent(event: RuntimeEvent, options?: RuntimeEventOptions): Promise<void>
+  ingestGroupMessage(input: PersistedGroupMessageIngress, options?: PersistedGroupMessageIngressOptions): Promise<void>
   getSnapshot(groupId: number): RootRuntimeSnapshotRecord | null
   primeGroupCursor(input: { groupId: number; lastObservedMessageRowId: number }): Promise<void>
   requeuePendingPassiveMentions(groupIds?: number[]): number
@@ -88,8 +111,12 @@ export interface RootRuntimeManagerOptions {
   passiveMergeWindowMs?: number
   passiveWorker?: (batch: GroupConversationBatch) => Promise<ConversationWorkerResult | void>
   replyExecutor?: ReplyExecutor
+  replyExecutionEnabled?: boolean
+  decisionEngine?: ReplyDecisionEngine
+  onReplyRecordSent?: ReplyExecutorOptions['onReplyRecordSent']
   ambientAuditEnabled?: boolean
   ambientReplyBaseProbability?: number
+  proactivePolicy?: typeof config.proactivePolicy
   now?: () => Date
   snapshotStore?: {
     listByGroupIds: typeof listRootRuntimeSnapshotsByGroupIds
@@ -187,10 +214,11 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
   const senderContinuityLimit = options.senderContinuityLimit ?? DEFAULT_ROOT_RUNTIME_SENDER_CONTINUITY_LIMIT
   const passiveMergeWindowMs = options.passiveMergeWindowMs ?? 1_000
   const now = options.now ?? (() => new Date())
-  const ambientDecisionEnabled = options.ambientAuditEnabled !== false && Boolean(options.replyExecutor)
-  const liveMentionDecisionEnabled = Boolean(options.replyExecutor)
+  const replyExecutionEnabled = options.replyExecutionEnabled ?? Boolean(options.replyExecutor)
+  const ambientDecisionEnabled = options.ambientAuditEnabled !== false && replyExecutionEnabled
+  const liveMentionDecisionEnabled = replyExecutionEnabled
   const ambientReplyBaseProbability = options.ambientReplyBaseProbability ?? DEFAULT_AMBIENT_REPLY_BASE_PROBABILITY
-  const replyExecutor = options.replyExecutor ?? createReplyExecutor()
+  const proactivePolicy = options.proactivePolicy ?? config.proactivePolicy
   const snapshotStore = options.snapshotStore ?? {
     listByGroupIds: listRootRuntimeSnapshotsByGroupIds,
     upsert: upsertRootRuntimeSnapshot,
@@ -198,6 +226,8 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
   const snapshots = new Map<number, RootRuntimeSnapshotRecord>()
   const passiveMailboxes = new Map<number, GroupMailbox>()
   const pendingMentionHints = new Map<number, Set<number>>()
+  const generationAttemptsByGroup = new Map<number, Date[]>()
+  const candidateArtifactsByGroup = new Map<number, Date[]>()
   let passiveActive = false
   let passiveDispatchEnabled = false
 
@@ -251,6 +281,151 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
     return mailbox
   }
 
+  const persistProactiveCandidate = async (artifact: ProactiveCandidateArtifact) => {
+    const existing = snapshots.get(artifact.groupId) ?? {
+      ...createDefaultRootRuntimeSnapshot(artifact.groupId),
+      id: 0,
+      createdAt: now(),
+      updatedAt: now(),
+    }
+    const persisted = await snapshotStore.upsert({
+      runtimeKey: existing.runtimeKey,
+      groupId: artifact.groupId,
+      schemaVersion: ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+      contextSnapshot: existing.contextSnapshot,
+      sessionSnapshot: {
+        ...existing.sessionSnapshot,
+        proactiveCandidateArtifacts: [
+          ...(existing.sessionSnapshot.proactiveCandidateArtifacts ?? []).filter(
+            (item) => !(item.runtimeKey === artifact.runtimeKey && item.opportunityId === artifact.opportunityId),
+          ),
+          artifact,
+        ],
+      },
+      lastObservedMessageRowId: existing.lastObservedMessageRowId,
+    })
+    snapshots.set(artifact.groupId, persisted)
+
+    if (artifact.status === 'candidate_generated') {
+      const bucket = candidateArtifactsByGroup.get(artifact.groupId) ?? []
+      bucket.push(new Date(artifact.createdAt))
+      candidateArtifactsByGroup.set(artifact.groupId, bucket)
+    }
+  }
+
+  const getProactiveGateReasons = (input: {
+    groupId: number
+    createdAt: Date
+    text: string
+    triggerMessageRowId: number
+    snapshot: RootRuntimeSnapshotRecord
+  }): string[] => {
+    const reasons: string[] = []
+    const nowMs = input.createdAt.getTime()
+    const activeChatCount = input.snapshot.sessionSnapshot.unreadMessages.filter(
+      (message) => nowMs - new Date(message.createdAt).getTime() <= proactivePolicy.activeChatWindowMs,
+    ).length
+    if (activeChatCount >= proactivePolicy.activeChatMessageThreshold) reasons.push('active_chat')
+
+    const normalized = normalizeTextHash(input.text)
+    if (normalized) {
+      const repeated = input.snapshot.contextSnapshot.messages
+        .filter((message) => message.role === 'user' && message.orderKey !== input.triggerMessageRowId)
+        .slice(-proactivePolicy.repetitionWindowMessages)
+        .some((message) => normalizeTextHash(message.content).includes(normalized))
+      if (repeated) reasons.push('repetition')
+    }
+
+    const lastSpokeAt = input.snapshot.sessionSnapshot.sceneRecords?.find(
+      (record) => record.sceneId === makeSceneId(input.groupId),
+    )?.lastSpokeAt
+    if (lastSpokeAt && nowMs - new Date(lastSpokeAt).getTime() < proactivePolicy.cooldownMs) reasons.push('cooldown')
+
+    const generationAttempts = (generationAttemptsByGroup.get(input.groupId) ?? []).filter(
+      (date) => nowMs - date.getTime() < 60 * 60 * 1000,
+    )
+    generationAttemptsByGroup.set(input.groupId, generationAttempts)
+    if (generationAttempts.length >= proactivePolicy.generationBudgetPerHour) reasons.push('generation_budget')
+
+    const candidateArtifacts = (candidateArtifactsByGroup.get(input.groupId) ?? []).filter(
+      (date) => nowMs - date.getTime() < 24 * 60 * 60 * 1000,
+    )
+    candidateArtifactsByGroup.set(input.groupId, candidateArtifacts)
+    if (candidateArtifacts.length >= proactivePolicy.candidateBudgetPerDay) reasons.push('candidate_budget')
+
+    return reasons
+  }
+
+  const persistWakeEvent = async (event: RuntimeEvent) => {
+    const existing = snapshots.get(event.groupId) ?? {
+      ...createDefaultRootRuntimeSnapshot(event.groupId),
+      id: 0,
+      createdAt: now(),
+      updatedAt: now(),
+    }
+
+    const persisted = await snapshotStore.upsert({
+      runtimeKey: existing.runtimeKey,
+      groupId: event.groupId,
+      schemaVersion: ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+      contextSnapshot: existing.contextSnapshot,
+      sessionSnapshot: {
+        ...existing.sessionSnapshot,
+        lastWakeAt: event.createdAt.toISOString(),
+      },
+      lastObservedMessageRowId: existing.lastObservedMessageRowId,
+    })
+    snapshots.set(event.groupId, persisted)
+  }
+
+  const persistProactiveGenerationAttempt = async (input: {
+    groupId: number
+    opportunityId: string
+    attemptedAt: Date
+  }) => {
+    const existing = snapshots.get(input.groupId)
+    if (!existing) return
+
+    const attemptedAt = input.attemptedAt.toISOString()
+    const generationAttempts = [
+      ...(existing.sessionSnapshot.proactiveGenerationAttempts ?? []).filter(
+        (attempt) => attempt.opportunityId !== input.opportunityId,
+      ),
+      { opportunityId: input.opportunityId, attemptedAt },
+    ]
+    const persisted = await snapshotStore.upsert({
+      runtimeKey: existing.runtimeKey,
+      groupId: input.groupId,
+      schemaVersion: ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+      contextSnapshot: existing.contextSnapshot,
+      sessionSnapshot: {
+        ...existing.sessionSnapshot,
+        proactiveGenerationAttempts: generationAttempts,
+      },
+      lastObservedMessageRowId: existing.lastObservedMessageRowId,
+    })
+    snapshots.set(input.groupId, persisted)
+
+    const bucket = generationAttemptsByGroup.get(input.groupId) ?? []
+    bucket.push(input.attemptedAt)
+    generationAttemptsByGroup.set(input.groupId, bucket)
+  }
+
+  const replyExecutor = options.replyExecutor ?? (replyExecutionEnabled
+    ? createReplyExecutor({
+        decisionEngine: options.decisionEngine ?? createReplyDecisionEngine({
+          ambientAuditEnabled: options.ambientAuditEnabled,
+        }),
+        proactiveCandidateStore: { createOrReuse: persistProactiveCandidate },
+        onProactiveGenerationAttempt: (opportunity) => persistProactiveGenerationAttempt({
+          groupId: opportunity.groupId,
+          opportunityId: opportunity.opportunityId,
+          attemptedAt: opportunity.createdAt,
+        }),
+        onReplyRecordSent: options.onReplyRecordSent,
+      })
+    : null)
+
   return {
     async restore(groupIds) {
       const restoredSnapshots = await snapshotStore.listByGroupIds(groupIds)
@@ -271,6 +446,19 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
           continue
         }
         snapshots.set(snapshot.groupId, snapshot)
+        generationAttemptsByGroup.set(
+          snapshot.groupId,
+          (snapshot.sessionSnapshot.proactiveGenerationAttempts ?? [])
+            .map((attempt) => new Date(attempt.attemptedAt))
+            .filter((date) => Number.isFinite(date.getTime())),
+        )
+        candidateArtifactsByGroup.set(
+          snapshot.groupId,
+          (snapshot.sessionSnapshot.proactiveCandidateArtifacts ?? [])
+            .filter((artifact) => artifact.status === 'candidate_generated')
+            .map((artifact) => new Date(artifact.createdAt))
+            .filter((date) => Number.isFinite(date.getTime())),
+        )
       }
 
       log.info(
@@ -287,7 +475,20 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       }
     },
 
-    async ingestGroupMessage(input) {
+    async emitRuntimeEvent(event, eventOptions = {}) {
+      if (event.eventKind === 'group_message') {
+        if (!event.message) {
+          log.warn({ eventKind: event.eventKind, groupId: event.groupId }, 'runtime event missing group message payload')
+          return
+        }
+        await this.ingestGroupMessage(event.message, eventOptions)
+        return
+      }
+
+      await persistWakeEvent(event)
+    },
+
+    async ingestGroupMessage(input, ingestOptions = {}) {
       const existing = snapshots.get(input.groupId)
       const current = existing ?? {
         ...createDefaultRootRuntimeSnapshot(input.groupId),
@@ -399,6 +600,16 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       const persisted = await snapshotStore.upsert(nextSnapshotInput)
       snapshots.set(input.groupId, persisted)
 
+      const plainText = segmentsToPlainText(input.segments)
+      const gateReasons = !mentionedSelf
+        ? getProactiveGateReasons({
+            groupId: input.groupId,
+            createdAt: input.createdAt,
+            text: plainText,
+            triggerMessageRowId: input.messageRowId,
+            snapshot: persisted,
+          })
+        : []
       const opportunity: ReplyOpportunity = mentionedSelf
         ? {
             opportunityId: `qq_group:${input.groupId}:message:${input.messageRowId}:mention`,
@@ -439,15 +650,22 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
             triggerSenderId: input.senderId,
             incorporatedMessageRowId: input.messageRowId,
             incorporatedMessageId: input.messageId,
-            deliveryMode: 'audit_only',
+            deliveryMode: 'send_message',
             dryRun: true,
-            reason: 'ambient group message baseline weak opportunity; audit-only',
+            reason: gateReasons.length > 0
+              ? `ambient group message suppressed by gates: ${gateReasons.join(',')}`
+              : 'ambient group message baseline weak opportunity; proactive candidate dry-run only',
+            gateReasons,
             createdAt: input.createdAt,
           }
 
-      if (mentionedSelf && liveMentionDecisionEnabled) {
-        await replyExecutor.execute(opportunity)
-      } else if (!mentionedSelf && ambientDecisionEnabled) {
+      const executeDecisions = ingestOptions.executeDecisions ?? true
+
+      if (!executeDecisions) {
+        return
+      }
+
+      if ((mentionedSelf ? liveMentionDecisionEnabled : ambientDecisionEnabled) && replyExecutor) {
         await replyExecutor.execute(opportunity)
       } else if (passiveDispatchEnabled && mentionedSelf) {
         getMailbox(input.groupId).addMention({

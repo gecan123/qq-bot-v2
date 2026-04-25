@@ -13,7 +13,6 @@ import { handleMediaReanalyze } from './server/media-reanalyze.js'
 import { createRootRuntimeManager } from './runtime/root-runtime.js'
 import { createPassiveMentionProcessor } from './runtime/passive-mention-processor.js'
 import { createReplyDecisionEngine } from './runtime/reply-decision-engine.js'
-import { createReplyExecutor } from './runtime/reply-executor.js'
 import { getGroupMessagesAfterRowId, getLatestGroupMessageRowId } from './database/messages.js'
 import { getMessageTimestamp } from './utils/message-time.js'
 import type { ParsedSegment } from './types/message-segments.js'
@@ -23,6 +22,7 @@ import { migrateLegacyAssistantTurnsToReplyRecords } from './conversation/reply-
 
 let httpServer: http.Server | null = null
 let rootRuntime: ReturnType<typeof createRootRuntimeManager> | null = null
+let runtimeSchedulerTimer: NodeJS.Timeout | null = null
 const log = createLogger('APP')
 
 function isGptModel(model: string): boolean {
@@ -101,6 +101,8 @@ export async function replayPersistedRootRuntimeDelta(params: {
         senderNickname: message.senderGroupNickname ?? message.senderNickname ?? String(message.senderId),
         segments,
         createdAt,
+      }, {
+        executeDecisions: false,
       })
     }
 
@@ -149,6 +151,26 @@ export async function recoverStartupAndStartPassiveRuntime(params: {
 
   params.rootRuntime.requeuePendingPassiveMentions(params.groupIds)
   params.rootRuntime.startPassiveExecution()
+}
+
+export function startRuntimeSchedulerTicks(params: {
+  groupIds: number[]
+  rootRuntime: ReturnType<typeof createRootRuntimeManager>
+  intervalMs: number
+  now?: () => Date
+}): NodeJS.Timeout | null {
+  if (params.intervalMs <= 0 || params.groupIds.length === 0) return null
+  const now = params.now ?? (() => new Date())
+  return setInterval(() => {
+    const createdAt = now()
+    for (const groupId of params.groupIds) {
+      void params.rootRuntime.emitRuntimeEvent({
+        eventKind: 'scheduler_tick',
+        groupId,
+        createdAt,
+      })
+    }
+  }, params.intervalMs)
 }
 
 async function main() {
@@ -231,7 +253,14 @@ async function main() {
   const replyDecisionEngine = createReplyDecisionEngine({
     ambientAuditEnabled: config.botAmbientAuditEnabled,
   })
-  const replyExecutor = createReplyExecutor({
+  const passiveMentionProcessor = createPassiveMentionProcessor({
+    decisionEngine: replyDecisionEngine,
+  })
+  rootRuntime = createRootRuntimeManager({
+    selfNumber: config.selfNumber,
+    passiveWorker: (batch) => passiveMentionProcessor.run(batch),
+    replyExecutionEnabled: true,
+    decisionEngine: replyDecisionEngine,
     onReplyRecordSent: async (record) => {
       const senderId = resolveReplyRecordSenderId(record)
       if (senderId != null && record.incorporatedMessageRowId != null) {
@@ -243,15 +272,6 @@ async function main() {
         })
       }
     },
-  })
-  const passiveMentionProcessor = createPassiveMentionProcessor({
-    decisionEngine: replyDecisionEngine,
-    executor: replyExecutor,
-  })
-  rootRuntime = createRootRuntimeManager({
-    selfNumber: config.selfNumber,
-    passiveWorker: (batch) => passiveMentionProcessor.run(batch),
-    replyExecutor,
     ambientAuditEnabled: config.botAmbientAuditEnabled,
     ambientReplyBaseProbability: config.botAmbientReplyBaseProbability,
   })
@@ -267,11 +287,23 @@ async function main() {
     groupIds: config.groupIds,
     rootRuntime,
   })
+  runtimeSchedulerTimer = startRuntimeSchedulerTicks({
+    groupIds: config.groupIds,
+    rootRuntime,
+    intervalMs: config.runtimeSchedulerTickMs,
+  })
+  if (runtimeSchedulerTimer) {
+    log.info({ intervalMs: config.runtimeSchedulerTickMs }, 'Root runtime scheduler ticks started')
+  }
   log.info('Root runtime passive mention execution started')
 }
 
 async function shutdown() {
   log.info('Shutting down...')
+  if (runtimeSchedulerTimer) {
+    clearInterval(runtimeSchedulerTimer)
+    runtimeSchedulerTimer = null
+  }
   rootRuntime?.stopPassiveExecution?.()
   jobQueue.stop()
   httpServer?.close()

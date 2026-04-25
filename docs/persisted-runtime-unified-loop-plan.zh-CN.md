@@ -1,5 +1,13 @@
 # QQ Bot V2 持久化 Runtime 统一 Loop 方案说明
 
+## 当前落地状态（2026-04-24）
+
+- Phase 1-7 的本阶段目标已由 final runtime proactive convergence 收敛完成。
+- 所有群消息先持久化到 `messages`，再以 `RuntimeEvent` 进入 root runtime；`scheduler_tick` / `manual_wake` 也只作为事件入口存在。
+- passive `@self` 和 proactive dry-run 共用 `ReplyOpportunity -> ReplyDecisionEngine -> ReplyExecutor`，RootRuntime 已不再按 mention / ambient 分派两个 executor；但普通消息真实 `send_message` 仍未开启。
+- runtime-native context assembly 已是默认路径，并保留 `RUNTIME_CONTEXT_FALLBACK=ledger` 作为一阶段临时回退开关。
+- proactive candidate 是 non-authoritative artifact/audit，不进入 `ReplyRecord`、上下文、compaction、recovery 或后续评分。
+
 ## 1. 这份文档讲什么
 
 这份文档说明的是 `qq-bot-v2` 接下来的新方向：
@@ -455,12 +463,16 @@ while (!stopped) {
 - proactive 进入统一 root runtime
 - candidate 可恢复、可审计、不可发送
 
+状态：已由 final convergence phase 完成。candidate 只写 snapshot artifact / `reply_audits` 观测面；失败、空输出、`implicit_text_disallowed` 只写 audit，不写 candidate artifact。
+
 ## Phase 7：切换默认 Context Assembly，并逐步退掉旧 Compatibility Path
 
 目标：
 
 - runtime-native context assembly 成为默认
 - 旧路径只在 parity proof 完成之后退场
+
+状态：runtime-native context assembly 已成为默认；旧 ledger rebuild 暂时通过 `RUNTIME_CONTEXT_FALLBACK=ledger` 保留一阶段，只允许影响 context assembly，不允许绕过 proactive artifact / recovery / candidate 边界。
 
 ---
 

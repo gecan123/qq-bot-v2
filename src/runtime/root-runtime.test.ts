@@ -850,6 +850,57 @@ describe('root runtime manager', () => {
     assert.deepEqual(batches, [])
   })
 
+  test('snapshot-only ingest records mention cues without executing reply decisions', async () => {
+    const opportunities: string[] = []
+    const manager = createRootRuntimeManager({
+      selfNumber: 999,
+      replyExecutor: {
+        async execute(opportunity) {
+          opportunities.push(opportunity.opportunityId)
+          return {
+            decision: {
+              opportunity,
+              outcome: 'sendable_reply',
+              policy: {
+                shouldGenerate: true,
+                shouldCreateReplyRecord: true,
+                shouldDeliver: true,
+                shouldAudit: false,
+                reason: opportunity.reason,
+              },
+              deliveryMode: opportunity.deliveryMode,
+              dryRun: false,
+              reason: opportunity.reason,
+            },
+            deliveryResult: 'skipped',
+          }
+        },
+      },
+      snapshotStore: {
+        listByGroupIds: async () => [],
+        upsert: async (input) => makeSnapshotRecord(input),
+      },
+    })
+
+    await manager.ingestGroupMessage({
+      groupId: 1,
+      messageRowId: 42,
+      messageId: 10042,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'at', targetId: '999' }],
+      createdAt: new Date('2026-04-22T00:00:00Z'),
+    }, { executeDecisions: false })
+
+    assert.deepEqual(opportunities, [])
+    const snapshot = manager.getSnapshot(1)
+    assert.ok(snapshot)
+    assert.deepEqual(
+      (snapshot.sessionSnapshot.outstandingCues ?? []).map((cue) => cue.cueId),
+      ['qq_group:1:message:42:reply_to_message'],
+    )
+  })
+
   test('scores ambient reply probability from configured baseline and message shape', async () => {
     const probabilities: number[] = []
     const manager = createRootRuntimeManager({
@@ -897,8 +948,9 @@ describe('root runtime manager', () => {
     assert.equal(probabilities.length, 1)
     assert.ok((probabilities[0] ?? 0) > 0.1)
   })
-  test('creates audit-only ambient opportunities for ordinary messages when ambient audit is enabled', async () => {
+  test('creates non-authoritative proactive candidate artifacts for ordinary messages when ambient audit is enabled', async () => {
     const opportunities: string[] = []
+    const persistedInputs: CreateRootRuntimeSnapshotInput[] = []
     const manager = createRootRuntimeManager({
       selfNumber: 999,
       ambientAuditEnabled: true,
@@ -908,13 +960,68 @@ describe('root runtime manager', () => {
           return {
             decision: {
               opportunity,
+              outcome: 'would_reply_dry_run',
+              policy: {
+                shouldGenerate: true,
+                shouldCreateReplyRecord: false,
+                shouldDeliver: false,
+                shouldAudit: true,
+                artifactKind: 'proactive_candidate',
+                auditKind: 'proactive_candidate',
+                reason: opportunity.reason,
+              },
+              deliveryMode: opportunity.deliveryMode,
+              dryRun: true,
+              reason: opportunity.reason,
+            },
+            deliveryResult: 'skipped',
+          }
+        },
+      },
+      snapshotStore: {
+        listByGroupIds: async () => [],
+        upsert: async (input) => {
+          persistedInputs.push(input)
+          return makeSnapshotRecord(input, persistedInputs.length)
+        },
+      },
+    })
+
+    await manager.ingestGroupMessage({
+      groupId: 1,
+      messageRowId: 42,
+      messageId: 10042,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'text', content: '普通消息' }],
+      createdAt: new Date('2026-04-22T00:00:00Z'),
+    })
+
+    assert.deepEqual(opportunities, ['ambient_message:qq_group:1:message:42:ambient:send_message'])
+    assert.deepEqual(
+      manager.getSnapshot(1)?.contextSnapshot.messages.map((message) => message.kind),
+      ['group_message'],
+    )
+    assert.deepEqual(manager.getSnapshot(1)?.sessionSnapshot.ambientAuditCandidates, [])
+  })
+
+  test('routes group message ingress through runtime event producer', async () => {
+    const opportunities: string[] = []
+    const manager = createRootRuntimeManager({
+      selfNumber: 999,
+      ambientAuditEnabled: true,
+      replyExecutor: {
+        async execute(opportunity) {
+          opportunities.push(opportunity.opportunityId)
+          return {
+            decision: {
+              opportunity,
               outcome: 'opportunity_detected',
               policy: {
                 shouldGenerate: false,
                 shouldCreateReplyRecord: false,
                 shouldDeliver: false,
                 shouldAudit: true,
-                auditKind: 'opportunity_detected',
                 reason: opportunity.reason,
               },
               deliveryMode: opportunity.deliveryMode,
@@ -931,16 +1038,133 @@ describe('root runtime manager', () => {
       },
     })
 
-    await manager.ingestGroupMessage({
+    await manager.emitRuntimeEvent({
+      eventKind: 'group_message',
       groupId: 1,
-      messageRowId: 42,
-      messageId: 10042,
-      senderId: 20,
-      senderNickname: '用户20',
-      segments: [{ type: 'text', content: '普通消息' }],
       createdAt: new Date('2026-04-22T00:00:00Z'),
+      message: {
+        groupId: 1,
+        messageRowId: 77,
+        messageId: 10077,
+        senderId: 20,
+        senderNickname: '用户20',
+        segments: [{ type: 'text', content: '怎么处理这个？' }],
+        createdAt: new Date('2026-04-22T00:00:00Z'),
+      },
     })
 
-    assert.deepEqual(opportunities, ['ambient_message:qq_group:1:message:42:ambient:audit_only'])
+    assert.deepEqual(opportunities, ['qq_group:1:message:77:ambient'])
+  })
+
+  test('manual wake event only updates runtime wake state', async () => {
+    const manager = createRootRuntimeManager({
+      selfNumber: 999,
+      replyExecutor: {
+        async execute() {
+          throw new Error('wake event must not execute replies')
+        },
+      },
+      snapshotStore: {
+        listByGroupIds: async () => [],
+        upsert: async (input) => makeSnapshotRecord(input),
+      },
+    })
+
+    await manager.emitRuntimeEvent({
+      eventKind: 'manual_wake',
+      groupId: 1,
+      createdAt: new Date('2026-04-22T00:01:00Z'),
+    })
+
+    assert.equal(manager.getSnapshot(1)?.sessionSnapshot.lastWakeAt, '2026-04-22T00:01:00.000Z')
+  })
+
+  test('restores proactive budget buckets from durable snapshot state', async () => {
+    const opportunities: Array<{ id: string; gates: string[] | undefined }> = []
+    const manager = createRootRuntimeManager({
+      selfNumber: 999,
+      ambientAuditEnabled: true,
+      proactivePolicy: {
+        activeChatMessageThreshold: 99,
+        activeChatWindowMs: 120_000,
+        repetitionWindowMessages: 20,
+        cooldownMs: 600_000,
+        generationBudgetPerHour: 1,
+        candidateBudgetPerDay: 1,
+      },
+      replyExecutor: {
+        async execute(opportunity) {
+          opportunities.push({ id: opportunity.opportunityId, gates: opportunity.gateReasons })
+          return {
+            decision: {
+              opportunity,
+              outcome: 'policy_suppressed',
+              policy: {
+                shouldGenerate: false,
+                shouldCreateReplyRecord: false,
+                shouldDeliver: false,
+                shouldAudit: true,
+                reason: opportunity.reason,
+                gateReasons: opportunity.gateReasons,
+              },
+              deliveryMode: opportunity.deliveryMode,
+              dryRun: true,
+              reason: opportunity.reason,
+            },
+            deliveryResult: 'skipped',
+          }
+        },
+      },
+      snapshotStore: {
+        listByGroupIds: async () => [makeSnapshotRecord({
+          runtimeKey: getGroupRuntimeKey(1),
+          groupId: 1,
+          schemaVersion: ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+          contextSnapshot: { messages: [] },
+          sessionSnapshot: {
+            focusedStateId: 'qq_group:1',
+            stateStack: ['qq_group:1'],
+            unreadMessages: [],
+            senderContinuities: [],
+            ambientAuditCandidates: [],
+            proactiveCandidateArtifacts: [{
+              artifactKind: 'proactive_candidate',
+              opportunityId: 'old-candidate',
+              runtimeKey: getGroupRuntimeKey(1),
+              groupId: 1,
+              sceneId: 'qq_group:1',
+              sourceKind: 'ambient_message',
+              triggerMessageRowId: 10,
+              incorporatedMessageRowId: 10,
+              createdAt: '2026-04-22T00:00:00.000Z',
+              expiresAt: '2026-04-29T00:00:00.000Z',
+              score: 0.2,
+              gateReasons: [],
+              candidateText: 'old',
+              termination: 'final_answer',
+              status: 'candidate_generated',
+            }],
+            proactiveGenerationAttempts: [{ opportunityId: 'old-attempt', attemptedAt: '2026-04-22T00:00:00.000Z' }],
+            recentObservedMessageRowIds: [],
+            lastWakeAt: null,
+          },
+          lastObservedMessageRowId: 10,
+        })],
+        upsert: async (input) => makeSnapshotRecord(input),
+      },
+    })
+
+    await manager.restore([1])
+    await manager.ingestGroupMessage({
+      groupId: 1,
+      messageRowId: 11,
+      messageId: 10011,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'text', content: '怎么处理这个？' }],
+      createdAt: new Date('2026-04-22T00:10:00Z'),
+    })
+
+    assert.deepEqual(opportunities[0]?.gates, ['generation_budget', 'candidate_budget'])
   })
 })

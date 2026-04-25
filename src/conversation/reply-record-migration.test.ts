@@ -59,6 +59,7 @@ describe('migrateLegacyAssistantTurnsToReplyRecords', () => {
         async restore() {
           return { restoredCount: 0 }
         },
+        async emitRuntimeEvent() {},
         async ingestGroupMessage() {},
         getSnapshot() {
           return null

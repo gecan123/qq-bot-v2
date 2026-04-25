@@ -134,6 +134,60 @@ describe('buildContext', () => {
     assert.deepEqual(result.recentMessages, [])
   })
 
+  test('uses ledger rebuild when runtime context fallback is ledger', async () => {
+    const result = await buildContext(
+      {
+        groupId: 1,
+        messageId: 1001,
+        senderId: 20,
+        senderNickname: '用户20',
+        segments: [{ type: 'text', content: '@bot 你好' }],
+      },
+      20,
+      { runtimeContextFallback: 'ledger' },
+      {
+        getConversationState: async () => ({
+          id: 1,
+          groupId: 1,
+          senderThreadKey: 'sender:20',
+          compactedBase: '',
+          compactedVersion: 1,
+          lastCompactedMessageRowId: undefined,
+          createdAt: new Date('2026-04-22T00:00:00Z'),
+          updatedAt: new Date('2026-04-22T00:00:00Z'),
+        }),
+        getStoredMessage: async (_groupId, messageId) =>
+          makeMessage({ id: 10, messageId: BigInt(messageId), resolvedText: '@bot 你好' }),
+        getLatestSentTurn: async () => null,
+        getRuntimeSnapshot: async () => ({
+          id: 1,
+          runtimeKey: 'qq_group:1',
+          groupId: 1,
+          schemaVersion: ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+          contextSnapshot: {
+            messages: [{ role: 'user', kind: 'group_message', orderKey: 10, senderId: 20, content: '[QQ消息]\n用户20: snapshot path' }],
+          },
+          sessionSnapshot: {
+            focusedStateId: 'qq_group:1',
+            stateStack: ['qq_group:1'],
+            unreadMessages: [],
+            senderContinuities: [],
+            ambientAuditCandidates: [],
+            recentObservedMessageRowIds: [10],
+            lastWakeAt: null,
+          },
+          lastObservedMessageRowId: 10,
+          createdAt: new Date('2026-04-22T00:00:00Z'),
+          updatedAt: new Date('2026-04-22T00:00:00Z'),
+        }),
+        getRecentMessages: async () => [makeMessage({ id: 10, messageId: BigInt(1001), resolvedText: 'ledger path' })],
+        listReplyRecords: async () => [],
+      },
+    )
+
+    assert.equal(result.contextText, '[QQ消息]\n用户20: ledger path')
+  })
+
   test('rebuilds runtime-native context when runtime snapshot has not observed current trigger message yet', async () => {
     const result = await buildContext(
       {

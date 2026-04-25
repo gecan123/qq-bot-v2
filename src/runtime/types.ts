@@ -60,6 +60,32 @@ export interface RuntimeAmbientAuditCandidate {
   status: 'dry_run'
 }
 
+export type ProactiveCandidateStatus = 'suppressed' | 'no_candidate' | 'candidate_generated'
+
+export interface ProactiveCandidateArtifact {
+  artifactKind: 'proactive_candidate'
+  opportunityId: string
+  runtimeKey: string
+  groupId: number
+  sceneId: string
+  sourceKind: string
+  triggerMessageRowId: number
+  incorporatedMessageRowId: number
+  createdAt: string
+  expiresAt: string
+  score: number
+  gateReasons: string[]
+  candidateText?: string
+  termination: string
+  model?: string
+  status: ProactiveCandidateStatus
+}
+
+export interface RuntimeProactiveGenerationAttempt {
+  opportunityId: string
+  attemptedAt: string
+}
+
 export interface RuntimeContextMessage {
   role: 'user' | 'model'
   kind: 'group_message' | 'assistant_turn'
@@ -79,6 +105,8 @@ export interface RootRuntimeSessionSnapshot {
   unreadMessages: RuntimeUnreadMessage[]
   senderContinuities: RuntimeSenderContinuity[]
   ambientAuditCandidates: RuntimeAmbientAuditCandidate[]
+  proactiveCandidateArtifacts?: ProactiveCandidateArtifact[]
+  proactiveGenerationAttempts?: RuntimeProactiveGenerationAttempt[]
   sceneRecords?: RuntimeSceneRecord[]
   outstandingCues?: RuntimeCue[]
   recentObservedMessageRowIds: number[]
@@ -139,6 +167,8 @@ export function createDefaultRootRuntimeSnapshot(groupId: number): CreateRootRun
       unreadMessages: [],
       senderContinuities: [],
       ambientAuditCandidates: [],
+      proactiveCandidateArtifacts: [],
+      proactiveGenerationAttempts: [],
       sceneRecords: [
         {
           sceneId,

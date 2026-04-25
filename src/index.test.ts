@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { recoverStartupAndStartPassiveRuntime, replayPersistedRootRuntimeDelta } from './index.js'
+import { recoverStartupAndStartPassiveRuntime, replayPersistedRootRuntimeDelta, startRuntimeSchedulerTicks } from './index.js'
 import type { RootRuntimeManager, PersistedGroupMessageIngress } from './runtime/root-runtime.js'
 import type { ParsedSegment } from './types/message-segments.js'
 
@@ -11,8 +11,9 @@ describe('replayPersistedRootRuntimeDelta', () => {
       async restore() {
         return { restoredCount: 0 }
       },
-      async ingestGroupMessage(input: PersistedGroupMessageIngress) {
-        calls.push(`ingest:${input.messageRowId}`)
+      async emitRuntimeEvent() {},
+      async ingestGroupMessage(input: PersistedGroupMessageIngress, options) {
+        calls.push(`ingest:${input.messageRowId}:${options?.executeDecisions === false ? 'snapshot-only' : 'live'}`)
       },
       async primeGroupCursor(input) {
         calls.push(`prime:${input.lastObservedMessageRowId}`)
@@ -88,8 +89,8 @@ describe('replayPersistedRootRuntimeDelta', () => {
     })
 
     assert.deepEqual(calls, [
-      'ingest:11',
-      'ingest:12',
+      'ingest:11:snapshot-only',
+      'ingest:12:snapshot-only',
     ])
   })
 
@@ -99,6 +100,7 @@ describe('replayPersistedRootRuntimeDelta', () => {
       async restore() {
         return { restoredCount: 0 }
       },
+      async emitRuntimeEvent() {},
       async ingestGroupMessage() {
         calls.push('ingest')
       },
@@ -145,6 +147,7 @@ describe('recoverStartupAndStartPassiveRuntime', () => {
       async restore() {
         return { restoredCount: 0 }
       },
+      async emitRuntimeEvent() {},
       async ingestGroupMessage() {},
       async primeGroupCursor() {},
       requeuePendingPassiveMentions() {
@@ -214,5 +217,57 @@ describe('recoverStartupAndStartPassiveRuntime', () => {
       'requeue',
       'start-passive',
     ])
+  })
+})
+
+describe('startRuntimeSchedulerTicks', () => {
+  test('emits scheduler_tick runtime events for each group and can be stopped', async () => {
+    const events: string[] = []
+    const rootRuntime: RootRuntimeManager = {
+      async restore() {
+        return { restoredCount: 0 }
+      },
+      async emitRuntimeEvent(event) {
+        events.push(`${event.eventKind}:${event.groupId}:${event.createdAt.toISOString()}`)
+      },
+      async ingestGroupMessage() {},
+      async primeGroupCursor() {},
+      requeuePendingPassiveMentions() {
+        return 0
+      },
+      async markPassiveReplyDelivered() {},
+      dispatchPassiveMentionIfMentioned() {
+        return false
+      },
+      getSnapshot() {
+        return null
+      },
+      enqueuePassiveMention() {},
+      startPassiveExecution() {},
+      stopPassiveExecution() {},
+    }
+
+    const timer = startRuntimeSchedulerTicks({
+      groupIds: [1, 2],
+      rootRuntime,
+      intervalMs: 1,
+      now: () => new Date('2026-04-22T00:00:00Z'),
+    })
+    assert.ok(timer)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    clearInterval(timer)
+
+    assert.ok(events.includes('scheduler_tick:1:2026-04-22T00:00:00.000Z'))
+    assert.ok(events.includes('scheduler_tick:2:2026-04-22T00:00:00.000Z'))
+  })
+
+  test('does not start when interval is disabled', () => {
+    const timer = startRuntimeSchedulerTicks({
+      groupIds: [1],
+      rootRuntime: {} as RootRuntimeManager,
+      intervalMs: 0,
+    })
+
+    assert.equal(timer, null)
   })
 })

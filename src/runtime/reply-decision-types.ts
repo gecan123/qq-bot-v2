@@ -23,6 +23,7 @@ export interface ReplyOpportunity {
   deliveryMode: ReplyDeliveryMode
   dryRun: boolean
   reason: string
+  gateReasons?: string[]
   createdAt: Date
 }
 
@@ -38,8 +39,10 @@ export interface ReplyPolicyResult {
   shouldCreateReplyRecord: boolean
   shouldDeliver: boolean
   shouldAudit: boolean
+  artifactKind?: 'proactive_candidate'
   auditKind?: string
   reason: string
+  gateReasons?: string[]
 }
 
 export interface ReplyDecision {
@@ -56,5 +59,6 @@ export interface ReplyDecision {
 export interface ReplyExecutionResult {
   decision: ReplyDecision
   replyRecord?: ReplyRecord
+  artifact?: import('./types.js').ProactiveCandidateArtifact
   deliveryResult?: 'sent' | 'failed' | 'dry_run' | 'skipped'
 }

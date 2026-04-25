@@ -50,6 +50,24 @@ function parseProbability(value: string | undefined, defaultValue: number): numb
   return Math.max(0, Math.min(1, parsed))
 }
 
+function parsePositiveInteger(value: string | undefined, defaultValue: number): number {
+  if (value == null || value.trim() === '') return defaultValue
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return defaultValue
+  return Math.floor(parsed)
+}
+
+function parseNonNegativeInteger(value: string | undefined, defaultValue: number): number {
+  if (value == null || value.trim() === '') return defaultValue
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < 0) return defaultValue
+  return Math.floor(parsed)
+}
+
+function parseRuntimeContextFallback(value: string | undefined): 'runtime' | 'ledger' {
+  return value?.trim().toLowerCase() === 'ledger' ? 'ledger' : 'runtime'
+}
+
 function parseProviderConfigs(env: EnvSource): Record<string, ProviderConfig> {
   const providers: Record<string, Partial<ProviderConfig>> = {}
 
@@ -159,6 +177,16 @@ export function parseConfig(env: EnvSource) {
     botProactiveDryRun: parseBoolean(env.BOT_PROACTIVE_DRY_RUN, false),
     botAmbientAuditEnabled: parseBoolean(env.BOT_AMBIENT_AUDIT_ENABLED, true),
     botAmbientReplyBaseProbability: parseProbability(env.BOT_AMBIENT_REPLY_BASE_PROBABILITY, 0.02),
+    runtimeContextFallback: parseRuntimeContextFallback(env.RUNTIME_CONTEXT_FALLBACK),
+    runtimeSchedulerTickMs: parseNonNegativeInteger(env.RUNTIME_SCHEDULER_TICK_MS, 0),
+    proactivePolicy: {
+      activeChatMessageThreshold: parsePositiveInteger(env.PROACTIVE_ACTIVE_CHAT_MESSAGE_THRESHOLD, 12),
+      activeChatWindowMs: parsePositiveInteger(env.PROACTIVE_ACTIVE_CHAT_WINDOW_MS, 120_000),
+      repetitionWindowMessages: parsePositiveInteger(env.PROACTIVE_REPETITION_WINDOW_MESSAGES, 20),
+      cooldownMs: parsePositiveInteger(env.PROACTIVE_COOLDOWN_MS, 600_000),
+      generationBudgetPerHour: parsePositiveInteger(env.PROACTIVE_GENERATION_BUDGET_PER_HOUR, 1000),
+      candidateBudgetPerDay: parsePositiveInteger(env.PROACTIVE_CANDIDATE_BUDGET_PER_DAY, 10000),
+    },
     nodeEnv: env.NODE_ENV || 'development',
     replyMediaTimeoutMs: Number(env.REPLY_MEDIA_TIMEOUT_MS ?? '15000'),
     jobInterDelayMs: Number(env.JOB_INTER_DELAY_MS ?? '200'),

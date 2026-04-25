@@ -3,7 +3,8 @@ import { getMessageById } from '../database/messages.js'
 import type { Message } from '../generated/prisma/client.js'
 import { resolveMessage } from '../media/message-resolver.js'
 import { messageSender, type MessageSender } from '../messaging/message-sender.js'
-import { generateMentionReply } from '../responder/reply-generator.js'
+import { generateMentionReply, generateProactiveCandidateReply } from '../responder/reply-generator.js'
+import type { ProactiveCandidateReplyResult } from '../responder/reply-generator.js'
 import type { IncomingMessage } from '../responder/pipeline.js'
 import { createReplyAudit, createOrReuseReplyAudit } from '../conversation/reply-audit-store.js'
 import { deliverReplyRecord } from '../conversation/reply-record-delivery.js'
@@ -14,18 +15,28 @@ import {
   markReplyRecordFailed,
   markReplyRecordSending,
   markReplyRecordSent,
+  type ReplyDeliveryPayload,
   type ReplyRecord,
 } from '../conversation/reply-record-store.js'
 import { createReplyDecisionEngine, type ReplyDecisionEngine } from './reply-decision-engine.js'
 import type { ReplyDecision, ReplyExecutionResult, ReplyOpportunity } from './reply-decision-types.js'
+import type { ProactiveCandidateArtifact, ProactiveCandidateStatus } from './types.js'
 
 type StoredConversationMessage = NonNullable<Awaited<ReturnType<typeof getMessageById>>>
 
 const log = createLogger('REPLY_EXECUTOR')
 
+function normalizeGeneratedReply(result: string | null | ProactiveCandidateReplyResult): ProactiveCandidateReplyResult {
+  if (typeof result === 'string' || result === null) {
+    return { text: result, termination: result?.trim() ? 'final_answer' : 'no_final_answer' }
+  }
+  return result
+}
+
 export interface ReplyExecutorOptions {
   decisionEngine?: ReplyDecisionEngine
-  generateReply?: (message: IncomingMessage, opportunity: ReplyOpportunity) => Promise<string | null>
+  generateReply?: (message: IncomingMessage, opportunity: ReplyOpportunity) => Promise<string | null | ProactiveCandidateReplyResult>
+  generateProactiveCandidateReply?: (message: IncomingMessage, opportunity: ReplyOpportunity) => Promise<ProactiveCandidateReplyResult>
   buildIncomingMessage?: (opportunity: ReplyOpportunity) => Promise<IncomingMessage | null>
   sender?: MessageSender
   replyRecordStore?: {
@@ -40,6 +51,10 @@ export interface ReplyExecutorOptions {
     create?: typeof createReplyAudit
     createOrReuse?: typeof createOrReuseReplyAudit
   }
+  proactiveCandidateStore?: {
+    createOrReuse: (artifact: ProactiveCandidateArtifact) => Promise<void>
+  }
+  onProactiveGenerationAttempt?: (opportunity: ReplyOpportunity) => Promise<void>
   deliver?: typeof deliverReplyRecord
   onReplyRecordSent?: (record: ReplyRecord) => Promise<void>
 }
@@ -67,9 +82,62 @@ function auditReplyIntentId(decision: ReplyDecision): string {
   return decision.replyIntentId ?? decision.opportunity.opportunityId
 }
 
+function buildDeliveryPayload(decision: ReplyDecision): ReplyDeliveryPayload {
+  if (decision.deliveryMode === 'send_message') {
+    return { type: 'send_message' }
+  }
+
+  return {
+    type: 'reply_to_message',
+    replyToMessageId: decision.opportunity.triggerMessageId,
+    mentionUserId: decision.opportunity.triggerSenderId,
+  }
+}
+
+function isDryRunEnabledForPayload(sender: MessageSender, payload: ReplyDeliveryPayload): boolean {
+  return payload.type === 'send_message'
+    ? (sender.isSendDryRunEnabled?.() ?? false)
+    : (sender.isReplyDryRunEnabled?.() ?? false)
+}
+
+function buildProactiveCandidateArtifact(input: {
+  decision: ReplyDecision
+  reply: string | null
+  termination: string
+  status: ProactiveCandidateStatus
+  now: Date
+}): ProactiveCandidateArtifact {
+  const opportunity = input.decision.opportunity
+  const expiresAt = new Date(input.now.getTime() + 7 * 24 * 60 * 60 * 1000)
+  return {
+    artifactKind: 'proactive_candidate',
+    opportunityId: opportunity.opportunityId,
+    runtimeKey: opportunity.runtimeKey,
+    groupId: opportunity.groupId,
+    sceneId: opportunity.sceneId,
+    sourceKind: opportunity.sourceKind,
+    triggerMessageRowId: opportunity.triggerMessageRowId,
+    incorporatedMessageRowId: opportunity.incorporatedMessageRowId,
+    createdAt: input.now.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+    score: opportunity.replyProbability,
+    gateReasons: input.decision.policy.gateReasons ?? [],
+    candidateText: input.status === 'candidate_generated' ? input.reply ?? undefined : undefined,
+    termination: input.termination,
+    status: input.status,
+  }
+}
+
+function isSupportedSendableGeneration(decision: ReplyDecision): boolean {
+  return decision.deliveryMode === 'reply_to_message' && decision.opportunity.sourceKind === 'mention'
+}
+
 export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyExecutor {
   const decisionEngine = options.decisionEngine ?? createReplyDecisionEngine()
-  const generateReply = options.generateReply ?? ((message: IncomingMessage) => generateMentionReply(message))
+  const generateMentionReplyFn = options.generateReply ?? ((message: IncomingMessage) => generateMentionReply(message))
+  const generateProactiveCandidateReplyFn =
+    options.generateProactiveCandidateReply ??
+    ((message: IncomingMessage) => generateProactiveCandidateReply(message))
   const sender = options.sender ?? messageSender
   const replyRecordStore = options.replyRecordStore ?? {
     findByReplyIntentId: findReplyRecordByReplyIntentId,
@@ -90,6 +158,67 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
     async execute(opportunity) {
       const decision = decisionEngine.decide(opportunity)
 
+      if (decision.policy.artifactKind === 'proactive_candidate') {
+        let reply: string | null = null
+        let termination = 'policy_suppressed'
+        let status: ProactiveCandidateStatus = 'suppressed'
+
+        if (decision.policy.shouldGenerate) {
+          const message = await (options.buildIncomingMessage ?? defaultBuildIncomingMessage)(decision.opportunity)
+          if (!message) {
+            termination = 'missing_incoming_message'
+            status = 'no_candidate'
+          } else {
+            await options.onProactiveGenerationAttempt?.(decision.opportunity)
+            const generated = normalizeGeneratedReply(await generateProactiveCandidateReplyFn(message, decision.opportunity))
+            reply = generated.text
+            termination = generated.termination
+            if (reply?.trim()) {
+              status = 'candidate_generated'
+            } else {
+              status = 'no_candidate'
+            }
+          }
+        }
+
+        const artifact = buildProactiveCandidateArtifact({
+          decision,
+          reply,
+          termination,
+          status,
+          now: new Date(),
+        })
+        log.info(
+          {
+            groupId: artifact.groupId,
+            sceneId: artifact.sceneId,
+            opportunityId: artifact.opportunityId,
+            status: artifact.status,
+            termination: artifact.termination,
+            gateReasons: artifact.gateReasons,
+            triggerMessageRowId: artifact.triggerMessageRowId,
+            incorporatedMessageRowId: artifact.incorporatedMessageRowId,
+            candidateText: artifact.candidateText ?? null,
+          },
+          'proactive_candidate_observed',
+        )
+
+        if (status === 'candidate_generated') {
+          await options.proactiveCandidateStore?.createOrReuse(artifact)
+        }
+        await replyAuditStore.createOrReuse({
+          opportunityId: opportunity.opportunityId,
+          runtimeKey: opportunity.runtimeKey,
+          groupId: opportunity.groupId,
+          scopeKey: opportunity.scopeKey,
+          replyIntentId: auditReplyIntentId(decision),
+          auditKind: 'proactive_candidate',
+          payload: artifact,
+        })
+
+        return { decision, artifact, deliveryResult: 'skipped' }
+      }
+
       if (decision.policy.shouldAudit && !decision.policy.shouldCreateReplyRecord) {
         await replyAuditStore.createOrReuse({
           opportunityId: opportunity.opportunityId,
@@ -105,6 +234,7 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
             deliveryMode: decision.deliveryMode,
             replyProbability: decision.opportunity.replyProbability,
             reason: decision.policy.reason,
+            gateReasons: decision.policy.gateReasons ?? [],
           },
         })
         return { decision, deliveryResult: 'skipped' }
@@ -128,12 +258,23 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
 
       let reply = existingRecord?.text ?? null
       if (!reply && decision.policy.shouldGenerate) {
+        if (!isSupportedSendableGeneration(decision)) {
+          log.warn(
+            {
+              opportunityId: opportunity.opportunityId,
+              sourceKind: opportunity.sourceKind,
+              deliveryMode: decision.deliveryMode,
+            },
+            'reply opportunity has unsupported sendable generation policy; skipping',
+          )
+          return { decision, deliveryResult: 'skipped' }
+        }
         const message = await (options.buildIncomingMessage ?? defaultBuildIncomingMessage)(opportunity)
         if (!message) {
           log.warn({ opportunityId: opportunity.opportunityId }, 'reply opportunity missing incoming message; skipping')
           return { decision, deliveryResult: 'skipped' }
         }
-        reply = await generateReply(message, opportunity)
+        reply = normalizeGeneratedReply(await generateMentionReplyFn(message, opportunity)).text
       }
 
       if (!reply) {
@@ -141,7 +282,8 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
         return { decision, deliveryResult: 'skipped' }
       }
 
-      const shouldDryRun = sender.isReplyDryRunEnabled?.() ?? false
+      const deliveryPayload = buildDeliveryPayload(decision)
+      const shouldDryRun = isDryRunEnabledForPayload(sender, deliveryPayload)
       const replyRecord = await replyRecordStore.createOrReuse({
         runtimeKey: opportunity.runtimeKey,
         groupId: opportunity.groupId,
@@ -150,11 +292,7 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
         sourceKind: opportunity.sourceKind,
         triggerMessageRowId: opportunity.triggerMessageRowId,
         incorporatedMessageRowId: opportunity.incorporatedMessageRowId,
-        deliveryPayload: {
-          type: 'reply_to_message',
-          replyToMessageId: opportunity.triggerMessageId,
-          mentionUserId: opportunity.triggerSenderId,
-        },
+        deliveryPayload,
         text: reply,
         executionState: shouldDryRun ? 'dry_run' : 'pending',
       })

@@ -42,6 +42,12 @@ describe('validateDbReadSql', () => {
     assert.equal(result.ok, false)
     if (!result.ok) assert.match(result.reason, /reply_audits/i)
   })
+
+  test('rejects proactive_evaluations reads even when group-scoped', () => {
+    const result = validateDbReadSql('select * from proactive_evaluations where group_id = :group_id')
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.match(result.reason, /proactive_evaluations/i)
+  })
 })
 
 describe('compileNamedSql', () => {

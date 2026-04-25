@@ -18,6 +18,17 @@ The description (after the colon) must be written in Chinese. The `type` prefix 
 
 QQ Bot V2 — a QQ group message storage bot. Connects to NapCat (QQ bridge) via WebSocket, listens for group messages, parses them into structured segments, and persists them to PostgreSQL.
 
+## Experimental Project Policy
+
+This repository is an experimental new-project implementation. Do not optimize plans or implementations around historical data compatibility, migration cost, or preserving old intermediate architecture.
+
+Default stance:
+- Everything may be redesigned or replaced when it helps reach the target architecture.
+- Destructive refactors are acceptable, including deleting or replacing old runtime, memory, proactive, reply, recovery, and admin surfaces.
+- Prefer the clean target model over compatibility bridges, dual-write paths, or long-lived legacy adapters.
+- Historical data migration/backfill is not a blocker unless the user explicitly asks for it.
+- Do not preserve stale concepts just because they currently work; if a concept conflicts with the target model, treat it as removable.
+
 ## Perpetual Context Contract
 
 Perpetual context here means the LLM history must be stable, replayable, and cheap to extend.

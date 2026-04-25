@@ -138,17 +138,110 @@ model ReplyAudit {
   @@map("reply_audits")
 }
 
-model RootRuntimeSnapshot {
-  id                   Int      @id @default(autoincrement())
-  runtimeKey           String   @unique @map("runtime_key") @db.VarChar(191)
-  groupId              BigInt   @map("group_id")
-  schemaVersion        Int      @map("schema_version")
-  contextSnapshot      Json     @map("context_snapshot")
-  sessionSnapshot      Json     @map("session_snapshot")
-  lastObservedMessageRowId Int? @map("last_observed_message_row_id")
-  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+model AgentRuntimeSnapshot {
+  id              Int      @id @default(autoincrement())
+  agentId         String   @map("agent_id") @db.VarChar(191)
+  schemaVersion   Int      @map("schema_version")
+  contextSnapshot Json     @map("context_snapshot")
+  sessionSnapshot Json     @map("session_snapshot")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  @@index([groupId, updatedAt(sort: Desc)])
-  @@map("root_runtime_snapshots")
+  @@unique([agentId])
+  @@map("agent_runtime_snapshots")
+}
+
+model Scene {
+  id          String   @id @db.VarChar(191)
+  agentId     String   @map("agent_id") @db.VarChar(191)
+  kind        String   @db.VarChar(32)
+  externalId  String   @map("external_id") @db.VarChar(191)
+  displayName String?  @map("display_name") @db.VarChar(255)
+  policy      Json?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([agentId, kind, externalId])
+  @@index([agentId, updatedAt(sort: Desc)])
+  @@map("scenes")
+}
+
+model RuntimeEvent {
+  id             String    @id @db.VarChar(191)
+  sceneId        String    @map("scene_id") @db.VarChar(191)
+  eventType      String    @map("event_type") @db.VarChar(64)
+  payload        Json
+  occurredAt     DateTime  @map("occurred_at") @db.Timestamptz(3)
+  idempotencyKey String    @map("idempotency_key") @db.VarChar(191)
+  consumedAt     DateTime? @map("consumed_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([sceneId, idempotencyKey])
+  @@index([sceneId, occurredAt(sort: Desc)])
+  @@map("runtime_events")
+}
+
+model Opportunity {
+  id                String    @id @db.VarChar(191)
+  sceneId           String    @map("scene_id") @db.VarChar(191)
+  runtimeEventId    String?   @map("runtime_event_id") @db.VarChar(191)
+  queueKind         String    @map("queue_kind") @db.VarChar(32)
+  opportunityType   String    @map("opportunity_type") @db.VarChar(64)
+  priority          Int       @default(0)
+  deadlineAt        DateTime? @map("deadline_at") @db.Timestamptz(3)
+  payload           Json
+  status            String    @default("pending") @db.VarChar(32)
+  idempotencyKey    String    @map("idempotency_key") @db.VarChar(191)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([sceneId, idempotencyKey])
+  @@index([sceneId, status, priority(sort: Desc), createdAt])
+  @@map("opportunities")
+}
+
+model ActionIntent {
+  id             String   @id @db.VarChar(191)
+  opportunityId  String   @map("opportunity_id") @db.VarChar(191)
+  actionType     String   @map("action_type") @db.VarChar(64)
+  targetSceneId  String   @map("target_scene_id") @db.VarChar(191)
+  payload        Json
+  dryRun         Boolean  @default(false) @map("dry_run")
+  riskLevel      String   @default("low") @map("risk_level") @db.VarChar(32)
+  status         String   @default("pending") @db.VarChar(32)
+  idempotencyKey String   @map("idempotency_key") @db.VarChar(191)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([opportunityId, idempotencyKey])
+  @@index([targetSceneId, status, createdAt])
+  @@map("action_intents")
+}
+
+model ActionRecord {
+  id             String   @id @db.VarChar(191)
+  actionIntentId String   @map("action_intent_id") @db.VarChar(191)
+  actionType     String   @map("action_type") @db.VarChar(64)
+  targetSceneId  String   @map("target_scene_id") @db.VarChar(191)
+  deliveryState  String   @map("delivery_state") @db.VarChar(32)
+  idempotencyKey String   @map("idempotency_key") @db.VarChar(191)
+  resultPayload  Json?    @map("result_payload")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([idempotencyKey])
+  @@index([targetSceneId, deliveryState, createdAt])
+  @@map("action_records")
+}
+
+model MemoryItem {
+  id        String   @id @db.VarChar(191)
+  agentId   String   @map("agent_id") @db.VarChar(191)
+  scope     String   @db.VarChar(64)
+  payload   Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([agentId, scope, updatedAt(sort: Desc)])
+  @@map("memory_items")
 }

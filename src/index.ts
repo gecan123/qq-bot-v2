@@ -103,6 +103,7 @@ export async function replayPersistedRootRuntimeDelta(params: {
         createdAt,
       }, {
         executeDecisions: false,
+        ingestSource: 'replay',
       })
     }
 

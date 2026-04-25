@@ -11,7 +11,7 @@ describe('logger', () => {
   test('prints scope prefix and small objects on a single line in pretty output', async () => {
     const script = `
       import { createLogger } from './src/logger.ts'
-      const log = createLogger('BOT')
+      const log = createLogger('INGRESS')
 
       void (async () => {
         log.info(
@@ -45,7 +45,7 @@ describe('logger', () => {
     assert.equal(lines.length, 1)
     assert.match(
       lines[0] ?? '',
-      /\[BOT\] \[image\].*"group":476109921.*"sender":"堂吉诃德".*"segments":1.*"mediaReferences":1/,
+      /\[INGRESS\] \[image\].*"group":476109921.*"sender":"堂吉诃德".*"segments":1.*"mediaReferences":1/,
     )
   })
 })

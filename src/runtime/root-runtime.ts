@@ -14,7 +14,7 @@ import {
   type ProactiveJudge,
 } from './proactive-judge.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
-import { summarizeSegments } from '../utils/business-log.js'
+import { summarizeSegments, type BusinessLogIngestSource } from '../utils/business-log.js'
 import { config } from '../config/index.js'
 import {
   createDefaultRootRuntimeSnapshot,
@@ -94,6 +94,7 @@ export interface PersistedGroupMessageIngress {
 
 export interface PersistedGroupMessageIngressOptions {
   executeDecisions?: boolean
+  ingestSource?: BusinessLogIngestSource
 }
 
 export interface RuntimeEventOptions extends PersistedGroupMessageIngressOptions {}
@@ -806,6 +807,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
           actor: 'system',
           category: mentionedSelf ? 'mention' : 'ambient_message',
           flow: 'runtime_classification',
+          ingestSource: ingestOptions.ingestSource,
           groupId: input.groupId,
           messageId: input.messageId,
           messageRowId: input.messageRowId,
@@ -819,6 +821,8 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
           gateReasons: opportunity.gateReasons ?? [],
           judgeAdvice: opportunity.judgeAdvice,
           executeDecisions,
+          dispatchMode: executeDecisions ? 'live' : 'snapshot_only',
+          sideEffect: 'snapshot_write',
           ...summarizeSegments(input.segments),
         },
         '消息归类完成',

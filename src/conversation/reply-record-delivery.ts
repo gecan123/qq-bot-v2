@@ -79,9 +79,12 @@ export async function deliverReplyRecord(
         replyIntentId: record.replyIntentId,
         sourceKind: record.sourceKind,
         deliveryType: record.deliveryPayload.type,
+        dispatchMode: 'dry_run',
+        sideEffect: 'audit_write',
+        deliveryResult: 'dry_run',
         textPreview: previewText(record.text),
       },
-      'Bot 投递跳过（dry run）',
+      '投递跳过（dry run）',
     )
     return 'dry_run'
   }
@@ -127,9 +130,12 @@ export async function deliverReplyRecord(
           deliveryType: record.deliveryPayload.type,
           providerMessageId: sendResult.providerMessageId,
           attempts: sendResult.attempts,
+          dispatchMode: 'live',
+          sideEffect: 'napcat_send',
+          deliveryResult: 'sent',
           textPreview: previewText(record.text),
         },
-        'Bot 投递成功',
+        '投递成功',
       )
     }
 

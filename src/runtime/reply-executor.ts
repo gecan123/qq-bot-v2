@@ -21,7 +21,7 @@ import {
 import { createReplyDecisionEngine, type ReplyDecisionEngine } from './reply-decision-engine.js'
 import type { ReplyDecision, ReplyExecutionResult, ReplyOpportunity } from './reply-decision-types.js'
 import type { ProactiveCandidateArtifact, ProactiveCandidateStatus } from './types.js'
-import { previewText } from '../utils/business-log.js'
+import { previewText, type BusinessLogDispatchMode, type BusinessLogSideEffect } from '../utils/business-log.js'
 
 type StoredConversationMessage = NonNullable<Awaited<ReturnType<typeof getMessageById>>>
 
@@ -141,6 +141,19 @@ function isSupportedSendableGeneration(decision: ReplyDecision): boolean {
   return decision.deliveryMode === 'reply_to_message' && decision.opportunity.sourceKind === 'mention'
 }
 
+function getDecisionDispatchMode(decision: ReplyDecision): BusinessLogDispatchMode {
+  if (decision.policy.artifactKind === 'proactive_candidate') return 'artifact_only'
+  if (decision.policy.shouldCreateReplyRecord) return decision.dryRun ? 'dry_run' : 'live'
+  return 'audit_only'
+}
+
+function getDecisionSideEffect(decision: ReplyDecision): BusinessLogSideEffect {
+  if (decision.policy.artifactKind === 'proactive_candidate') return 'artifact_write'
+  if (decision.policy.shouldCreateReplyRecord) return 'reply_record_write'
+  if (decision.policy.shouldAudit) return 'audit_write'
+  return 'none'
+}
+
 export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyExecutor {
   const decisionEngine = options.decisionEngine ?? createReplyDecisionEngine()
   const generateMentionReplyFn = options.generateReply ?? ((message: IncomingMessage) => generateMentionReply(message))
@@ -184,6 +197,9 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
           shouldCreateReplyRecord: decision.policy.shouldCreateReplyRecord,
           shouldDeliver: decision.policy.shouldDeliver,
           shouldAudit: decision.policy.shouldAudit,
+          dispatchMode: getDecisionDispatchMode(decision),
+          sideEffect: 'none',
+          plannedSideEffect: getDecisionSideEffect(decision),
           replyProbability: decision.opportunity.replyProbability,
           gateReasons: decision.policy.gateReasons ?? [],
           policyReasons: decision.policy.policyReasons ?? [],
@@ -245,12 +261,15 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
             sourceKind: artifact.sourceKind,
             status: artifact.status,
             termination: artifact.termination,
+            dispatchMode: 'artifact_only',
+            sideEffect: status === 'candidate_generated' ? 'artifact_write' : 'audit_write',
+            deliveryResult: 'skipped',
             gateReasons: artifact.gateReasons,
             triggerMessageRowId: artifact.triggerMessageRowId,
             incorporatedMessageRowId: artifact.incorporatedMessageRowId,
             textPreview: previewText(artifact.candidateText),
           },
-          'Bot 主动候选已生成',
+          status === 'candidate_generated' ? '主动候选已生成（未发送）' : '主动候选未生成（未发送）',
         )
 
         if (status === 'candidate_generated') {
@@ -382,9 +401,12 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
             replyIntentId: replyRecord.replyIntentId,
             sourceKind: replyRecord.sourceKind,
             deliveryType: replyRecord.deliveryPayload.type,
+            dispatchMode: 'dry_run',
+            sideEffect: 'audit_write',
+            deliveryResult: 'dry_run',
             textPreview: previewText(replyRecord.text),
           },
-          'Bot 回复已生成（dry run）',
+          '回复已生成（未发送）',
         )
         return { decision, replyRecord, deliveryResult: 'dry_run' }
       }

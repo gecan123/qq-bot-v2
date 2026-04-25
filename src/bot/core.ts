@@ -6,14 +6,16 @@ import { createLogger } from '../logger.js'
 import { persistMediaReferences } from '../media/media-cache.js'
 import type { ParsedSegment } from '../types/message-segments.js'
 import type { RootRuntimeManager } from '../runtime/root-runtime.js'
-import { summarizeSegments } from '../utils/business-log.js'
+import { summarizeSegments, type BusinessLogDispatchMode, type BusinessLogIngestSource } from '../utils/business-log.js'
 
-const log = createLogger('BOT')
+const ingressLog = createLogger('INGRESS')
+const napcatLog = createLogger('NAPCAT')
 
 const BACKFILL_COUNT = 50
 
 interface ProcessMessageOptions {
   dispatchMention?: boolean
+  ingestSource?: BusinessLogIngestSource
   rootRuntime?: RootRuntimeManager
 }
 
@@ -28,6 +30,7 @@ type FinalizePersistedMessageOptions = {
   dispatchMention?: boolean
   rootRuntime?: RootRuntimeManager
   persistedCreatedAt: Date
+  ingestSource?: BusinessLogIngestSource
 }
 
 export async function finalizePersistedGroupMessage(
@@ -48,14 +51,17 @@ export async function finalizePersistedGroupMessage(
     },
   }, {
     executeDecisions: options.dispatchMention !== false,
+    ingestSource: options.ingestSource,
   })
 }
 
 async function processMessage(groupId: number, messageId: number, options: ProcessMessageOptions = {}): Promise<void> {
+  const ingestSource = options.ingestSource ?? 'realtime'
+  const dispatchMode: BusinessLogDispatchMode = options.dispatchMention === false ? 'snapshot_only' : 'live'
   const qqMsg = await napcat.get_msg({ message_id: messageId })
   const parsed = parseMessage(qqMsg)
   if (parsed.senderId === config.selfNumber) {
-    log.debug({ groupId, messageId: parsed.messageId }, '忽略 bot 自身回灌消息')
+    ingressLog.debug({ groupId, messageId: parsed.messageId, ingestSource }, '忽略 bot 自身回灌消息')
     return
   }
   const groupName = await resolveGroupName({ group_id: groupId, ...qqMsg })
@@ -81,28 +87,19 @@ async function processMessage(groupId: number, messageId: number, options: Proce
     sentAt: parsed.time,
   })
 
-  await finalizePersistedGroupMessage({
-    groupId,
-    messageId: parsed.messageId,
-    messageRowId: persistedMessage.id,
-    senderId: parsed.senderId,
-    senderNickname: parsed.senderGroupNickname ?? parsed.senderNickname,
-    createdAt: parsed.time * 1000,
-    segments: mediaResult.content,
-    dispatchMention: options.dispatchMention,
-    rootRuntime: options.rootRuntime,
-    persistedCreatedAt: persistedMessage.sentAt ?? persistedMessage.createdAt,
-  })
   const mentionedSelf = mediaResult.content.some(
     (segment) => segment.type === 'at' && segment.targetId === String(config.selfNumber),
   )
-
-  log.info(
+  const logPersistedMessage = ingestSource === 'backfill' ? ingressLog.debug : ingressLog.info
+  logPersistedMessage(
     {
       direction: 'inbound',
       actor: 'member',
       category: mentionedSelf ? 'mention' : 'ambient_message',
-      flow: 'group_message_ingress',
+      flow: ingestSource === 'backfill' ? 'group_message_backfill' : 'group_message_ingress',
+      ingestSource,
+      dispatchMode,
+      sideEffect: 'db_write',
       groupId,
       groupName,
       messageId: parsed.messageId,
@@ -112,8 +109,22 @@ async function processMessage(groupId: number, messageId: number, options: Proce
       ...summarizeSegments(mediaResult.content),
       mediaReferences: mediaResult.mediaReferenceIds.length,
     },
-    '群友发言已入库',
+    ingestSource === 'backfill' ? '历史群消息已入库' : '群友消息已入库',
   )
+
+  await finalizePersistedGroupMessage({
+    groupId,
+    messageId: parsed.messageId,
+    messageRowId: persistedMessage.id,
+    senderId: parsed.senderId,
+    senderNickname: parsed.senderGroupNickname ?? parsed.senderNickname,
+    createdAt: parsed.time * 1000,
+    segments: mediaResult.content,
+    dispatchMention: options.dispatchMention,
+    ingestSource,
+    rootRuntime: options.rootRuntime,
+    persistedCreatedAt: persistedMessage.sentAt ?? persistedMessage.createdAt,
+  })
 }
 
 async function backfillGroupMessages(groupId: number, options: ProcessMessageOptions = {}): Promise<void> {
@@ -131,12 +142,37 @@ async function backfillGroupMessages(groupId: number, options: ProcessMessageOpt
       await processMessage(groupId, msg.message_id, {
         ...options,
         dispatchMention: false,
+        ingestSource: 'backfill',
       })
     } catch (error) {
-      log.warn({ error, groupId, msgId: msg.message_id }, '补拉消息处理失败，跳过')
+      ingressLog.warn(
+        {
+          error,
+          groupId,
+          msgId: msg.message_id,
+          ingestSource: 'backfill',
+          dispatchMode: 'snapshot_only',
+        },
+        '补拉消息处理失败，跳过',
+      )
     }
   }
-  log.info({ groupId, total: messages.length, skipped: existingIds.size }, '历史消息补拉完成')
+  ingressLog.info(
+    {
+      direction: 'inbound',
+      actor: 'system',
+      category: 'group_message',
+      flow: 'group_message_backfill',
+      ingestSource: 'backfill',
+      dispatchMode: 'snapshot_only',
+      sideEffect: 'db_write',
+      groupId,
+      total: messages.length,
+      skipped: existingIds.size,
+      inserted: messages.length - existingIds.size,
+    },
+    '历史消息补拉完成',
+  )
 }
 
 function getGroupNameFromEvent(context: { group_name?: string; groupName?: string }): string | undefined {
@@ -158,7 +194,7 @@ async function resolveGroupName(context: { group_id: number; group_name?: string
     const apiGroupName = groupInfo.group_name?.trim()
     return apiGroupName ? apiGroupName : undefined
   } catch (error) {
-    log.warn({ error, groupId: context.group_id }, '获取群名失败')
+    napcatLog.warn({ error, groupId: context.group_id }, '获取群名失败')
     return undefined
   }
 }
@@ -169,32 +205,32 @@ export interface StartBotOptions {
 
 export async function startBot(options: StartBotOptions = {}): Promise<void> {
   napcat.on('socket.open', () => {
-    log.info('WebSocket 开始连接')
+    napcatLog.info('WebSocket 开始连接')
   })
 
   napcat.on('socket.error', (ctx) => {
-    log.error({ errorType: ctx.error_type }, 'WebSocket 连接错误')
+    napcatLog.error({ errorType: ctx.error_type }, 'WebSocket 连接错误')
   })
 
   napcat.on('socket.close', (ctx) => {
-    log.warn({ code: ctx.code }, 'WebSocket 连接关闭')
+    napcatLog.warn({ code: ctx.code }, 'WebSocket 连接关闭')
   })
 
   napcat.on('meta_event.lifecycle', async (ctx) => {
     if (ctx.sub_type === 'connect') {
-      log.info('NapCat 连接成功')
+      napcatLog.info('NapCat 连接成功')
       for (const groupId of config.groupIds) {
         backfillGroupMessages(groupId, {
           rootRuntime: options.rootRuntime,
         }).catch((error) => {
-          log.error({ error, groupId }, '群历史消息补拉失败')
+          ingressLog.error({ error, groupId, ingestSource: 'backfill' }, '群历史消息补拉失败')
         })
       }
     }
   })
 
   napcat.on('api.response.failure', (ctx) => {
-    log.error({ status: ctx.status, message: ctx.message }, 'API 调用失败')
+    napcatLog.error({ status: ctx.status, message: ctx.message }, 'API 调用失败')
   })
 
   napcat.on('message.group', async (context) => {
@@ -203,13 +239,14 @@ export async function startBot(options: StartBotOptions = {}): Promise<void> {
     try {
       await processMessage(context.group_id, context.message_id, {
         dispatchMention: true,
+        ingestSource: 'realtime',
         rootRuntime: options.rootRuntime,
       })
     } catch (error) {
-      log.error({ error, group: context.group_id, msgId: context.message_id }, '处理群消息失败')
+      ingressLog.error({ error, group: context.group_id, msgId: context.message_id, ingestSource: 'realtime' }, '处理群消息失败')
     }
   })
 
   await napcat.connect()
-  log.info('机器人已启动')
+  napcatLog.info('NapCat 监听已启动')
 }

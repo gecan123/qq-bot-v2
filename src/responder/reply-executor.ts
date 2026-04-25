@@ -44,9 +44,12 @@ export async function sendGroupReply(groupId: number, segments: NapcatSegment[])
           providerMessageId: result.message_id,
           deliveryType,
           segmentTypes,
+          dispatchMode: 'live',
+          sideEffect: 'napcat_send',
+          deliveryResult: 'sent',
           textPreview,
         },
-        'Bot 消息发送成功',
+        '消息发送成功',
       )
       return {
         success: true,
@@ -65,9 +68,12 @@ export async function sendGroupReply(groupId: number, segments: NapcatSegment[])
           segmentTypes,
           textPreview,
           attempt,
+          dispatchMode: 'live',
+          sideEffect: 'napcat_send',
+          deliveryResult: 'failed_attempt',
           error,
         },
-        'Bot 消息发送失败',
+        '消息发送失败',
       )
       if (attempt < RETRY_LIMIT) await sleep(RETRY_DELAY_MS)
     }
@@ -81,9 +87,12 @@ export async function sendGroupReply(groupId: number, segments: NapcatSegment[])
       flow: 'napcat_send',
       groupId,
       deliveryType,
+      dispatchMode: 'live',
+      sideEffect: 'napcat_send',
+      deliveryResult: 'failed',
       textPreview,
     },
-    `Bot 消息发送失败，已重试 ${RETRY_LIMIT} 次`,
+    `消息发送失败，已重试 ${RETRY_LIMIT} 次`,
   )
   return { success: false, attempts: RETRY_LIMIT }
 }

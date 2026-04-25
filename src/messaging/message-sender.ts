@@ -58,9 +58,12 @@ class NapcatMessageSender implements MessageSender {
           replyToMessageId: params.replyToMessageId,
           mentionUserId: params.mentionUserId,
           deliveryType: 'reply_to_message',
+          dispatchMode: 'dry_run',
+          sideEffect: 'none',
+          deliveryResult: 'dry_run',
           textPreview: previewText(params.text),
         },
-        'Bot 回复发送跳过（dry run）',
+        '回复发送跳过（dry run）',
       )
       return { success: true, attempts: 0 }
     }
@@ -85,9 +88,12 @@ class NapcatMessageSender implements MessageSender {
           flow: 'napcat_send_dry_run',
           groupId: params.groupId,
           deliveryType: 'send_message',
+          dispatchMode: 'dry_run',
+          sideEffect: 'none',
+          deliveryResult: 'dry_run',
           textPreview: previewText(params.text),
         },
-        'Bot 独立消息发送跳过（dry run）',
+        '独立消息发送跳过（dry run）',
       )
       return { success: true, attempts: 0 }
     }

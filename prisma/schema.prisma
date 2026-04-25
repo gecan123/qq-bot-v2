@@ -214,7 +214,6 @@ model MemoryItem {
   agentId   String   @map("agent_id") @db.VarChar(191)
   scope     String   @db.VarChar(64)
   payload   Json
-  status    String   @default("dormant") @db.VarChar(32)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 

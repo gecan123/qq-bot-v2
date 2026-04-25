@@ -1,7 +1,5 @@
 -- Destructive Phase 0: agent:main is the only root runtime; qq_group is a Scene.
 DROP TABLE IF EXISTS "root_runtime_snapshots" CASCADE;
-DROP TABLE IF EXISTS "reply_records" CASCADE;
-ALTER TABLE IF EXISTS "reply_audits" DROP COLUMN IF EXISTS "reply_record_id";
 
 CREATE TABLE "agent_runtime_snapshots" (
   "id" SERIAL PRIMARY KEY,
@@ -92,7 +90,6 @@ CREATE TABLE "memory_items" (
   "agent_id" VARCHAR(191) NOT NULL,
   "scope" VARCHAR(64) NOT NULL,
   "payload" JSONB NOT NULL,
-  "status" VARCHAR(32) NOT NULL DEFAULT 'dormant',
   "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updated_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

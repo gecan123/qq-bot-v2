@@ -1,6 +1,7 @@
 import { getAgentProfile } from '../config/agent-profiles.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import { getCurrentTokenUsageTracker, runWithTokenUsageTracking } from '../llm/token-usage.js'
+import type { TokenUsageSummary } from '../llm/token-usage.js'
 import { createLogger } from '../logger.js'
 import type { IncomingMessage } from './pipeline.js'
 import { buildContext, extractResolvedTriggerText } from './context-builder.js'
@@ -14,6 +15,8 @@ const log = createLogger('REPLY')
 export interface ProactiveCandidateReplyResult {
   text: string | null
   termination: string
+  tokenUsage?: TokenUsageSummary
+  durationMs?: number
 }
 
 async function agentReply(
@@ -152,7 +155,7 @@ export async function generateProactiveCandidateReply(msg: IncomingMessage): Pro
       const profile = getAgentProfile(msg.groupId)
       const contextLimit = profile.replyContextMessages ?? 20
 
-      return agentReplyWithTermination(
+      const result = await agentReplyWithTermination(
         msg,
         profile.persona,
         contextLimit,
@@ -161,6 +164,12 @@ export async function generateProactiveCandidateReply(msg: IncomingMessage): Pro
         profile.agentMaxAnswerChars,
         false,
       )
+      const summary = getCurrentTokenUsageTracker()?.snapshot()
+      return {
+        ...result,
+        tokenUsage: summary && summary.total.calls > 0 ? summary : undefined,
+        durationMs: Date.now() - startedAt,
+      }
     } finally {
       const summary = getCurrentTokenUsageTracker()?.snapshot()
       if (summary) {

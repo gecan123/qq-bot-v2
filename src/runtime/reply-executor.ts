@@ -106,6 +106,9 @@ function buildProactiveCandidateArtifact(input: {
   reply: string | null
   termination: string
   status: ProactiveCandidateStatus
+  tokenUsage?: ProactiveCandidateReplyResult['tokenUsage']
+  tokenUsageState: NonNullable<ProactiveCandidateArtifact['tokenUsageState']>
+  durationMs?: number
   now: Date
 }): ProactiveCandidateArtifact {
   const opportunity = input.decision.opportunity
@@ -127,6 +130,9 @@ function buildProactiveCandidateArtifact(input: {
     judgeAdvice: input.decision.policy.judgeAdvice,
     candidateText: input.status === 'candidate_generated' ? input.reply ?? undefined : undefined,
     termination: input.termination,
+    tokenUsage: input.tokenUsage,
+    tokenUsageState: input.tokenUsageState,
+    durationMs: input.durationMs,
     status: input.status,
   }
 }
@@ -191,6 +197,9 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
         let reply: string | null = null
         let termination = 'policy_suppressed'
         let status: ProactiveCandidateStatus = 'suppressed'
+        let tokenUsage: ProactiveCandidateReplyResult['tokenUsage']
+        let durationMs: number | undefined
+        let generationAttempted = false
 
         if (decision.policy.shouldGenerate) {
           const message = await (options.buildIncomingMessage ?? defaultBuildIncomingMessage)(decision.opportunity)
@@ -199,9 +208,12 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
             status = 'no_candidate'
           } else {
             await options.onProactiveGenerationAttempt?.(decision.opportunity)
+            generationAttempted = true
             const generated = normalizeGeneratedReply(await generateProactiveCandidateReplyFn(message, decision.opportunity))
             reply = generated.text
             termination = generated.termination
+            tokenUsage = generated.tokenUsage
+            durationMs = generated.durationMs
             if (reply?.trim()) {
               status = 'candidate_generated'
             } else {
@@ -209,12 +221,16 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
             }
           }
         }
+        const tokenUsageState = tokenUsage ? 'captured' : generationAttempted ? 'unknown' : 'not_applicable'
 
         const artifact = buildProactiveCandidateArtifact({
           decision,
           reply,
           termination,
           status,
+          tokenUsage,
+          tokenUsageState,
+          durationMs,
           now: new Date(),
         })
         log.info(

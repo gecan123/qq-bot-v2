@@ -1,4 +1,5 @@
 import type { ProactiveJudgeAdvice } from './proactive-judge.js'
+import type { TokenUsageSummary } from '../llm/token-usage.js'
 
 export const ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION = 2
 export const DEFAULT_ROOT_RUNTIME_UNREAD_LIMIT = 50
@@ -82,6 +83,9 @@ export interface ProactiveCandidateArtifact {
   candidateText?: string
   termination: string
   model?: string
+  tokenUsage?: TokenUsageSummary
+  tokenUsageState?: 'captured' | 'not_applicable' | 'unknown'
+  durationMs?: number
   status: ProactiveCandidateStatus
 }
 

@@ -12,6 +12,7 @@
     "admin:dev": "node -e \"console.error('admin-web is temporarily disabled for perpetual-context P0'); process.exit(1)\"",
     "admin:build": "node -e \"console.error('admin-web is temporarily disabled for perpetual-context P0'); process.exit(1)\"",
     "admin:start": "node -e \"console.error('admin-web is temporarily disabled for perpetual-context P0'); process.exit(1)\"",
+    "proactive:report": "tsx scripts/proactive-candidate-report.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",

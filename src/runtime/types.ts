@@ -174,7 +174,7 @@ export function makeSceneId(groupId: number): SceneId {
 }
 
 export function makeMentionCueId(sceneId: SceneId, triggerMessageRowId: number): string {
-  return `${sceneId}:message:${triggerMessageRowId}`
+  return `${sceneId}:message:${triggerMessageRowId}:reply_to_message`
 }
 
 export function makeMentionReplyIntentId(groupId: number, triggerMessageRowId: number): string {

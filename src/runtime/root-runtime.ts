@@ -6,6 +6,7 @@ import {
   createOrReuseActionRecord,
   createOrReuseOpportunity,
   createOrReuseRuntimeEvent,
+  getAgentRuntimeSnapshot,
   getOrCreateMainAgentRuntime,
   getOrCreateScene,
   upsertAgentRuntimeSnapshot,
@@ -15,6 +16,7 @@ import {
   makeQqGroupSceneId,
   type SceneId,
 } from './agent-runtime-types.js'
+import type { GroupConversationBatch } from '../conversation/types.js'
 
 export type RuntimeEventKind = 'group_message' | 'scheduler_tick' | 'manual_wake'
 
@@ -57,11 +59,21 @@ export interface RootRuntimeManagerOptions {
   [key: string]: unknown
   selfNumber: number
   now?: () => Date
-  passiveWorker?: (batch: any) => Promise<any> | any
-  onReplyRecordSent?: (record: any) => Promise<void> | void
+  passiveWorker?: (batch: GroupConversationBatch) => Promise<any> | any
 }
 
 const snapshots = new Map<SceneId, Record<string, unknown>>()
+
+function readSceneCursors(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object') return {}
+  const raw = (value as { sceneCursors?: unknown }).sceneCursors
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out: Record<string, number> = {}
+  for (const [sceneId, cursor] of Object.entries(raw)) {
+    if (typeof cursor === 'number' && Number.isSafeInteger(cursor)) out[sceneId] = cursor
+  }
+  return out
+}
 
 function asNumber(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : Number(value)
@@ -132,31 +144,39 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
     })
 
     const text = segmentsToPlainText(input.segments).trim()
-    const intent = await createOrReuseActionIntent({
-      opportunityId: opportunity.id,
-      actionType: mentioned ? 'reply_to_message' : 'artifact_only',
-      targetSceneId: sceneId,
-      payload: {
-        ['groupId']: group,
-        messageId: message,
-        messageRowId: messageRow,
-        text,
-        opportunityType: mentioned ? 'reply_to_mention' : 'ambient_candidate',
-      },
-      dryRun: !mentioned,
-      riskLevel: mentioned ? 'medium' : 'low',
-      status: mentioned ? 'pending' : 'suppressed',
-      idempotencyKey: `${opportunity.id}:action`,
-    })
+    const shouldExecuteMention = mentioned && runtimeOptions.executeDecisions !== false && Boolean(options.passiveWorker)
+    if (!shouldExecuteMention) {
+      const suppressedMention = mentioned && runtimeOptions.executeDecisions === false
+      const intent = await createOrReuseActionIntent({
+        opportunityId: opportunity.id,
+        actionType: mentioned && !suppressedMention ? 'reply_to_message' : 'artifact_only',
+        targetSceneId: sceneId,
+        payload: {
+          ['groupId']: group,
+          messageId: message,
+          messageRowId: messageRow,
+          text,
+          opportunityType: mentioned ? 'reply_to_mention' : 'ambient_candidate',
+        },
+        dryRun: !mentioned || suppressedMention,
+        riskLevel: mentioned ? 'medium' : 'low',
+        status: mentioned && !suppressedMention ? 'pending' : 'suppressed',
+        idempotencyKey: `${opportunity.id}:action`,
+      })
 
-    await createOrReuseActionRecord({
-      actionIntentId: intent.id,
-      actionType: intent.actionType as 'reply_to_message' | 'artifact_only',
-      targetSceneId: sceneId,
-      deliveryState: mentioned ? 'pending' : 'dry_run',
-      idempotencyKey: intent.idempotencyKey,
-      resultPayload: mentioned ? null : { reason: 'ambient_candidate dryRun artifact-only' },
-    })
+      await createOrReuseActionRecord({
+        actionIntentId: intent.id,
+        actionType: intent.actionType as 'reply_to_message' | 'artifact_only',
+        targetSceneId: sceneId,
+        deliveryState: mentioned && !suppressedMention ? 'pending' : suppressedMention ? 'suppressed' : 'dry_run',
+        idempotencyKey: intent.idempotencyKey,
+        resultPayload: mentioned
+          ? suppressedMention
+            ? { reason: 'mention replay decisions disabled' }
+            : null
+          : { reason: 'ambient_candidate dryRun artifact-only' },
+      })
+    }
 
     const snapshot = {
       agentId: MAIN_AGENT_ID,
@@ -164,7 +184,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       contextSnapshot: {
         messages: [{ role: 'user', kind: 'group_message', orderKey: messageRow, senderId: asNumber(input['senderId']), content: text }],
       },
-      sessionSnapshot: { focusedTargetId: sceneId, scenes: [sceneId], lastObservedMessageRowId: messageRow },
+      sessionSnapshot: { focusedTargetId: sceneId, scenes: [sceneId], sceneCursors: { [sceneId]: messageRow }, lastObservedMessageRowId: messageRow },
       lastObservedMessageRowId: messageRow,
       updatedAt: createdAt,
     }
@@ -173,13 +193,41 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       contextSnapshot: snapshot.contextSnapshot,
       sessionSnapshot: snapshot.sessionSnapshot,
     })
+
+    if (shouldExecuteMention && options.passiveWorker) {
+      await options.passiveWorker({
+        ['groupId']: group,
+        events: [{
+          ['groupId']: group,
+          messageId: message,
+          messageRowId: messageRow,
+          senderId: asNumber(input['senderId']),
+          createdAt: createdAt.getTime(),
+        }],
+        openedAt: createdAt.getTime(),
+        closedAt: now().getTime(),
+      })
+    }
   }
 
   return {
     async restore(groups: number[]) {
       await getOrCreateMainAgentRuntime()
+      const persisted = await getAgentRuntimeSnapshot()
+      const sceneCursors = readSceneCursors(persisted?.sessionSnapshot)
       for (const group of groups) {
         await getOrCreateScene({ kind: 'qq_group', externalId: group })
+        const sceneId = makeQqGroupSceneId(group)
+        const cursor = sceneCursors[sceneId]
+        if (cursor !== undefined) {
+          snapshots.set(sceneId, {
+            agentId: MAIN_AGENT_ID,
+            schemaVersion: 1,
+            contextSnapshot: { messages: [] },
+            sessionSnapshot: { focusedTargetId: sceneId, scenes: [sceneId], sceneCursors: { [sceneId]: cursor }, lastObservedMessageRowId: cursor },
+            lastObservedMessageRowId: cursor,
+          })
+        }
       }
       return { restoredCount: groups.length }
     },
@@ -198,12 +246,17 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
     async primeGroupCursor(input) {
       const group = asNumber(input['groupId'])
       const sceneId = makeQqGroupSceneId(group)
+      const cursor = asNumber(input['lastObservedMessageRowId'])
       snapshots.set(sceneId, {
         agentId: MAIN_AGENT_ID,
         schemaVersion: 1,
         contextSnapshot: { messages: [] },
-        sessionSnapshot: { focusedTargetId: sceneId, scenes: [sceneId], lastObservedMessageRowId: input['lastObservedMessageRowId'] },
-        lastObservedMessageRowId: input['lastObservedMessageRowId'],
+        sessionSnapshot: { focusedTargetId: sceneId, scenes: [sceneId], sceneCursors: { [sceneId]: cursor }, lastObservedMessageRowId: cursor },
+        lastObservedMessageRowId: cursor,
+      })
+      await upsertAgentRuntimeSnapshot({
+        contextSnapshot: { messages: [] },
+        sessionSnapshot: { focusedTargetId: sceneId, scenes: [sceneId], sceneCursors: { [sceneId]: cursor }, lastObservedMessageRowId: cursor },
       })
     },
     requeuePendingPassiveMentions() {

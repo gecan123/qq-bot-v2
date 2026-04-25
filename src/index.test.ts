@@ -141,7 +141,7 @@ describe('replayPersistedRootRuntimeDelta', () => {
 })
 
 describe('recoverStartupAndStartPassiveRuntime', () => {
-  test('starts passive execution only after recoverable assistant turns are replayed', async () => {
+  test('starts passive execution only after action_records startup recovery', async () => {
     const calls: string[] = []
     const rootRuntime: RootRuntimeManager = {
       async restore() {
@@ -173,46 +173,22 @@ describe('recoverStartupAndStartPassiveRuntime', () => {
     await recoverStartupAndStartPassiveRuntime({
       groupIds: [1],
       rootRuntime,
-      migrateLegacyAssistantTurnsFn: async () => {
-        calls.push('migrate')
-        return { migratedCount: 0, projectedSentCount: 0 }
-      },
-      recoverReplyRecordStartupStateFn: async (options) => {
+      recoverConversationStartupStateFn: async (options) => {
+        assert.deepEqual(options.groupIds, [1])
         calls.push('recover:start')
-        await options.onReplyRecordRecovered?.({
-          id: 7,
-          runtimeKey: 'qq_group:1',
-          groupId: 1,
-          scopeKey: 'sender:20',
-          replyIntentId: 'intent-1',
-          sourceKind: 'mention',
-          triggerMessageRowId: 4,
-          incorporatedMessageRowId: 5,
-          deliveryPayload: {
-            type: 'reply_to_message',
-            replyToMessageId: 2001,
-            mentionUserId: 20,
-          },
-          text: '恢复发送的回复',
-          executionState: 'sent',
-          providerMessageId: undefined,
-          attemptCount: 1,
-          createdAt: new Date('2026-04-21T00:00:00Z'),
-          updatedAt: new Date('2026-04-21T00:00:00Z'),
-        })
+        assert.ok(options.sender)
         calls.push('recover:end')
 
         return {
-          recoveredReplyRecords: 1,
-          failedReplyRecords: 0,
+          recoveredActionRecords: 1,
+          failedActionRecords: 0,
+          enqueuedMentions: 0,
         }
       },
     })
 
     assert.deepEqual(calls, [
-      'migrate',
       'recover:start',
-      'mark:5',
       'recover:end',
       'requeue',
       'start-passive',

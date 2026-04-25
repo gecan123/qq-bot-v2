@@ -229,6 +229,143 @@ describe('reply executor', () => {
     assert.equal(stored, false)
   })
 
+  test('sendable mention delivery is owned by action record state', async () => {
+    const states: string[] = []
+    let sendCalls = 0
+    const sender: MessageSender = {
+      isReplyDryRunEnabled: () => false,
+      isSendDryRunEnabled: () => false,
+      replyToMessage: async (params) => {
+        sendCalls++
+        assert.equal(params.groupId, 1)
+        assert.equal(params.replyToMessageId, 10042)
+        assert.equal(params.mentionUserId, 20)
+        assert.equal(params.text, '收到')
+        return { success: true, providerMessageId: 9001, attempts: 1 }
+      },
+      sendMessage: async () => fail('sendMessage'),
+    }
+
+    const executor = createReplyExecutor({
+      decisionEngine: {
+        decide(opportunity) {
+          return {
+            opportunity: { ...opportunity, deliveryMode: 'reply_to_message', dryRun: false },
+            outcome: 'sendable_reply',
+            policy: {
+              shouldGenerate: true,
+              shouldCreateReplyRecord: true,
+              shouldDeliver: true,
+              shouldAudit: false,
+              reason: 'direct mention',
+            },
+            replyIntentId: 'mention-intent-42',
+            deliveryMode: 'reply_to_message',
+            dryRun: false,
+            reason: opportunity.reason,
+          }
+        },
+      },
+      sender,
+      buildIncomingMessage: async () => ({
+        groupId: 1,
+        messageId: 10042,
+        senderId: 20,
+        senderNickname: '用户20',
+        segments: [{ type: 'text', content: '@bot ping' }],
+      }),
+      generateReply: async () => '收到',
+      replyRecordStore: {
+        findByReplyIntentId: async () => null,
+        createOrReuse: async (input) => ({
+          id: 1,
+          runtimeKey: input.runtimeKey,
+          groupId: input.groupId,
+          scopeKey: input.scopeKey,
+          replyIntentId: input.replyIntentId,
+          sourceKind: input.sourceKind,
+          triggerMessageRowId: input.triggerMessageRowId,
+          incorporatedMessageRowId: input.incorporatedMessageRowId,
+          deliveryPayload: input.deliveryPayload,
+          text: input.text,
+          executionState: input.executionState ?? 'pending',
+          providerMessageId: null,
+          attemptCount: 0,
+          createdAt: new Date('2026-04-24T00:00:00Z'),
+          updatedAt: new Date('2026-04-24T00:00:00Z'),
+        }),
+        markAcked: async (_id, providerMessageId) => {
+          states.push(`reply:acked:${providerMessageId}`)
+        },
+        markSending: async () => {
+          states.push('reply:sending')
+        },
+        markSent: async () => {
+          states.push('reply:sent')
+        },
+        markFailed: async () => fail('markFailed'),
+      },
+      actionRecordStore: {
+        createOrReuseIntent: async (input) => ({
+          id: input.id,
+          opportunityId: input.opportunityId,
+          actionType: input.actionType,
+          targetSceneId: input.targetSceneId,
+          payload: input.payload,
+          dryRun: input.dryRun,
+          riskLevel: input.riskLevel ?? 'low',
+          status: input.status ?? 'pending',
+          idempotencyKey: input.idempotencyKey,
+        }),
+        createOrReuseRecord: async (input) => ({
+          id: input.id,
+          actionIntentId: input.actionIntentId,
+          actionType: input.actionType,
+          targetSceneId: input.targetSceneId,
+          deliveryState: input.deliveryState,
+          idempotencyKey: input.idempotencyKey,
+          resultPayload: input.resultPayload,
+          createdAt: new Date('2026-04-24T00:00:00Z'),
+          updatedAt: new Date('2026-04-24T00:00:00Z'),
+        }),
+        markDeliveryState: async (id, deliveryState, resultPayload) => {
+          states.push(`action:${deliveryState}`)
+          return {
+            id,
+            actionIntentId: 'mention-intent-42',
+            actionType: 'send_group_reply',
+            targetSceneId: 'qq_group:1',
+            deliveryState,
+            idempotencyKey: 'mention-intent-42',
+            resultPayload: resultPayload ?? null,
+            createdAt: new Date('2026-04-24T00:00:00Z'),
+            updatedAt: new Date('2026-04-24T00:00:00Z'),
+          }
+        },
+      },
+      deliver: async () => fail('deliverReplyRecord'),
+    })
+
+    const result = await executor.execute(ambientOpportunity({
+      sourceKind: 'mention',
+      cueStrength: 'strong',
+      mustReplyOverride: true,
+      deliveryMode: 'reply_to_message',
+      dryRun: false,
+    }))
+
+    assert.equal(result.deliveryResult, 'sent')
+    assert.equal(result.actionRecord?.deliveryState, 'sent')
+    assert.equal(sendCalls, 1)
+    assert.deepEqual(states, [
+      'action:sending',
+      'reply:sending',
+      'action:sent',
+      'reply:acked:9001',
+      'reply:sent',
+    ])
+  })
+
   test('unsupported sendable generation fails closed before creating reply record', async () => {
     let findCalls = 0
     let generateCalls = 0

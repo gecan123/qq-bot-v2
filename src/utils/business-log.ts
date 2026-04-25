@@ -11,7 +11,7 @@ export type BusinessLogSideEffect =
   | 'snapshot_write'
   | 'audit_write'
   | 'artifact_write'
-  | 'reply_record_write'
+  | 'action_record_write'
   | 'napcat_send'
 export type BusinessLogCategory =
   | 'group_message'

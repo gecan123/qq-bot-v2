@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { createPassiveMentionProcessor } from './passive-mention-processor.js'
+import type { ReplyExecutorOptions } from './reply-executor.js'
+import type { ActionDeliveryState } from './action-record-store.js'
 import type { GroupConversationBatch, MentionEvent } from '../conversation/types.js'
 import type { ParsedSegment } from '../types/message-segments.js'
 import type { Message } from '../generated/prisma/client.js'
@@ -87,6 +89,62 @@ function fakeReplyRecordStore(status: 'pending' | 'sent' | 'dry_run' | null = nu
   }
 }
 
+function fakeActionRecordStore(status: 'pending' | 'sent' | 'dry_run' | null = null, text?: string): NonNullable<ReplyExecutorOptions['actionRecordStore']> {
+  return {
+    createOrReuseIntent: async (input: {
+      id: string
+      opportunityId: string
+      actionType: string
+      targetSceneId: string
+      payload: Record<string, unknown>
+      dryRun: boolean
+      riskLevel?: string
+      status?: string
+      idempotencyKey: string
+    }) => ({
+      id: input.id,
+      opportunityId: input.opportunityId,
+      actionType: input.actionType,
+      targetSceneId: input.targetSceneId,
+      payload: input.payload,
+      dryRun: input.dryRun,
+      riskLevel: input.riskLevel ?? 'low',
+      status: input.status ?? 'pending',
+      idempotencyKey: input.idempotencyKey,
+    }),
+    createOrReuseRecord: async (input: {
+      id: string
+      actionIntentId: string
+      actionType: string
+      targetSceneId: string
+      deliveryState: ActionDeliveryState
+      idempotencyKey: string
+      resultPayload?: Record<string, unknown> | null
+    }) => ({
+      id: input.id,
+      actionIntentId: input.actionIntentId,
+      actionType: input.actionType,
+      targetSceneId: input.targetSceneId,
+      deliveryState: status ?? input.deliveryState,
+      idempotencyKey: input.idempotencyKey,
+      resultPayload: text && input.resultPayload ? { ...input.resultPayload, text } : input.resultPayload ?? null,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    }),
+    markDeliveryState: async (id: string, deliveryState: ActionDeliveryState, resultPayload?: Record<string, unknown> | null) => ({
+      id,
+      actionIntentId: 'intent',
+      actionType: 'send_group_reply',
+      targetSceneId: 'qq_group:1',
+      deliveryState,
+      idempotencyKey: 'intent',
+      resultPayload: resultPayload ?? null,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    }),
+  }
+}
+
 function fakeCompactor() {
   return async () => {}
 }
@@ -122,6 +180,7 @@ describe('passive mention processor', () => {
       generateReply: async () => '你好',
       sender,
       replyRecordStore: fakeReplyRecordStore(),
+      actionRecordStore: fakeActionRecordStore(),
       compactor: fakeCompactor(),
     })
 
@@ -155,6 +214,7 @@ describe('passive mention processor', () => {
       },
       sender,
       replyRecordStore: fakeReplyRecordStore(),
+      actionRecordStore: fakeActionRecordStore(),
       compactor: fakeCompactor(),
     })
 
@@ -188,6 +248,7 @@ describe('passive mention processor', () => {
       },
       sender,
       replyRecordStore: fakeReplyRecordStore(),
+      actionRecordStore: fakeActionRecordStore(),
       compactor: fakeCompactor(),
     })
 
@@ -210,6 +271,7 @@ describe('passive mention processor', () => {
       generateReply: async () => '你好',
       sender,
       replyRecordStore: fakeReplyRecordStore('sent'),
+      actionRecordStore: fakeActionRecordStore('sent'),
       compactor: fakeCompactor(),
       onReplyRecordSent: async (record) => {
         deliveredTurns.push(record.incorporatedMessageRowId ?? 0)
@@ -237,6 +299,7 @@ describe('passive mention processor', () => {
       },
       sender,
       replyRecordStore: fakeReplyRecordStore('pending', '已存文本'),
+      actionRecordStore: fakeActionRecordStore('pending', '已存文本'),
       compactor: fakeCompactor(),
     })
 
@@ -291,6 +354,7 @@ describe('passive mention processor', () => {
           }
         },
       },
+      actionRecordStore: fakeActionRecordStore(),
       compactor: fakeCompactor(),
     })
 
@@ -339,6 +403,7 @@ describe('passive mention processor', () => {
           }
         },
       },
+      actionRecordStore: fakeActionRecordStore(),
       compactor: fakeCompactor(),
     })
 
@@ -358,6 +423,7 @@ describe('passive mention processor', () => {
       generateReply: async () => '你好',
       sender,
       replyRecordStore: fakeReplyRecordStore(),
+      actionRecordStore: fakeActionRecordStore(),
       compactor: fakeCompactor(),
       onReplyRecordSent: async (record) => {
         deliveredTurns.push(record.incorporatedMessageRowId ?? 0)

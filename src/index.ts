@@ -6,7 +6,7 @@ import { setLlmProvider } from './llm/provider.js'
 import { OpenAIProvider } from './llm/openai-adapter.js'
 import { RoutingProvider } from './llm/routing-provider.js'
 import { config } from './config/index.js'
-import { recoverReplyRecordStartupState } from './conversation/reply-record-recovery.js'
+import { recoverConversationStartupState } from './conversation/recovery.js'
 import { startHttpServer, addRoute } from './server/http.js'
 import { handlePlaygroundReplay, handlePlaygroundRun, handleReplayTraceGet } from './server/playground.js'
 import { handleMediaReanalyze } from './server/media-reanalyze.js'
@@ -18,7 +18,7 @@ import { getMessageTimestamp } from './utils/message-time.js'
 import type { ParsedSegment } from './types/message-segments.js'
 import type http from 'node:http'
 import { pathToFileURL } from 'node:url'
-import { migrateLegacyAssistantTurnsToReplyRecords } from './conversation/reply-record-migration.js'
+import { messageSender } from './messaging/message-sender.js'
 
 let httpServer: http.Server | null = null
 let rootRuntime: ReturnType<typeof createRootRuntimeManager> | null = null
@@ -31,23 +31,6 @@ function isGptModel(model: string): boolean {
 
 function isDirectAtSelf(segments: ParsedSegment[]): boolean {
   return segments.some((segment) => segment.type === 'at' && segment.targetId === String(config.selfNumber))
-}
-
-function resolveReplyRecordSenderId(record: {
-  scopeKey: string
-  deliveryPayload: { type: string; mentionUserId?: number }
-}): number | null {
-  if (record.deliveryPayload.type === 'reply_to_message' && record.deliveryPayload.mentionUserId != null) {
-    return record.deliveryPayload.mentionUserId
-  }
-
-  const match = /^sender:(\d+)$/.exec(record.scopeKey)
-  if (!match) {
-    return null
-  }
-
-  const senderId = Number(match[1])
-  return Number.isSafeInteger(senderId) ? senderId : null
 }
 
 export async function replayPersistedRootRuntimeDelta(params: {
@@ -122,32 +105,14 @@ export async function replayPersistedRootRuntimeDelta(params: {
 export async function recoverStartupAndStartPassiveRuntime(params: {
   groupIds: number[]
   rootRuntime: ReturnType<typeof createRootRuntimeManager>
-  recoverReplyRecordStartupStateFn?: typeof recoverReplyRecordStartupState
-  migrateLegacyAssistantTurnsFn?: typeof migrateLegacyAssistantTurnsToReplyRecords
+  recoverConversationStartupStateFn?: typeof recoverConversationStartupState
 }): Promise<void> {
-  const recoverReplyRecordStartupStateFn =
-    params.recoverReplyRecordStartupStateFn ?? recoverReplyRecordStartupState
-  const migrateLegacyAssistantTurnsFn =
-    params.migrateLegacyAssistantTurnsFn ?? migrateLegacyAssistantTurnsToReplyRecords
+  const recoverConversationStartupStateFn =
+    params.recoverConversationStartupStateFn ?? recoverConversationStartupState
 
-  await migrateLegacyAssistantTurnsFn({
+  await recoverConversationStartupStateFn({
     groupIds: params.groupIds,
-    rootRuntime: params.rootRuntime,
-  })
-
-  await recoverReplyRecordStartupStateFn({
-    groupIds: params.groupIds,
-    onReplyRecordRecovered: async (record) => {
-      const senderId = resolveReplyRecordSenderId(record)
-      if (senderId != null && record.incorporatedMessageRowId != null) {
-        await params.rootRuntime.markPassiveReplyDelivered({
-          groupId: record.groupId,
-          senderId,
-          incorporatedMessageRowId: record.incorporatedMessageRowId,
-          text: record.text,
-        })
-      }
-    },
+    sender: messageSender,
   })
 
   params.rootRuntime.requeuePendingPassiveMentions(params.groupIds)
@@ -262,17 +227,6 @@ async function main() {
     passiveWorker: (batch) => passiveMentionProcessor.run(batch),
     replyExecutionEnabled: true,
     decisionEngine: replyDecisionEngine,
-    onReplyRecordSent: async (record) => {
-      const senderId = resolveReplyRecordSenderId(record)
-      if (senderId != null && record.incorporatedMessageRowId != null) {
-        await rootRuntime?.markPassiveReplyDelivered({
-          groupId: record.groupId,
-          senderId,
-          incorporatedMessageRowId: record.incorporatedMessageRowId,
-          text: record.text,
-        })
-      }
-    },
     ambientAuditEnabled: config.botAmbientAuditEnabled,
     ambientReplyBaseProbability: config.botAmbientReplyBaseProbability,
   })

@@ -1,5 +1,6 @@
 import { freezeResolvedTextIfUnset, getGroupMessagesAfterRowId } from '../database/messages.js'
-import { listSentReplyRecordsAfterMessageRowId, type ReplyRecord } from './reply-record-store.js'
+import { listSentActionRecordsForScene } from '../runtime/agent-runtime-store.js'
+import { makeQqGroupSceneId, type ActionRecord } from '../runtime/agent-runtime-types.js'
 import { compactConversationState, getOrCreateConversationState } from './conversation-state-store.js'
 import { resolveMessage } from '../media/message-resolver.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
@@ -12,7 +13,7 @@ const COMPACTION_KEEP_RECENT_USER_MESSAGES = 12
 interface CompactionDependencies {
   getConversationState?: typeof getOrCreateConversationState
   getMessagesAfterRowId?: typeof getGroupMessagesAfterRowId
-  getReplyRecordsAfterRowId?: typeof listSentReplyRecordsAfterMessageRowId
+  getActionRecordsForScene?: typeof listSentActionRecordsForScene
   resolveConversationMessage?: typeof resolveMessage
   freezeResolvedText?: typeof freezeResolvedTextIfUnset
   saveCompactedState?: typeof compactConversationState
@@ -34,13 +35,31 @@ async function getStableCompactionText(message: Message, dependencies: Compactio
   return resolvedText
 }
 
+function getActionRecordAnchor(actionRecord: ActionRecord): number | null {
+  const payload = actionRecord.resultPayload
+  const anchor = payload?.incorporatedMessageRowId ?? payload?.messageRowId
+  return typeof anchor === 'number' && Number.isSafeInteger(anchor) ? anchor : null
+}
+
+function getActionRecordText(actionRecord: ActionRecord): string | null {
+  const text = typeof actionRecord.resultPayload?.text === 'string'
+    ? actionRecord.resultPayload.text.trim()
+    : ''
+  return text || null
+}
+
 async function mergeLines(
   messages: Message[],
-  replyRecords: ReplyRecord[],
+  actionRecords: ActionRecord[],
   dependencies: CompactionDependencies,
 ): Promise<Array<{ anchor: number; text: string }>> {
   const lines: Array<{ anchor: number; text: string }> = []
-  let replyIndex = 0
+  const sortedActionRecords = [...actionRecords].sort((a, b) => {
+    const left = getActionRecordAnchor(a) ?? Number.MAX_SAFE_INTEGER
+    const right = getActionRecordAnchor(b) ?? Number.MAX_SAFE_INTEGER
+    return left - right || a.createdAt.getTime() - b.createdAt.getTime()
+  })
+  let actionIndex = 0
 
   for (const message of messages) {
     const text = await getStableCompactionText(message, dependencies)
@@ -52,15 +71,32 @@ async function mergeLines(
       })
     }
 
-    while (replyIndex < replyRecords.length) {
-      const record = replyRecords[replyIndex]
-      if (!record || (record.incorporatedMessageRowId ?? Number.MAX_SAFE_INTEGER) > message.id) break
-      lines.push({
-        anchor: record.incorporatedMessageRowId ?? message.id,
-        text: `[${formatTime(record.createdAt)}] BOT: ${record.text}`,
-      })
-      replyIndex++
+    while (actionIndex < sortedActionRecords.length) {
+      const record = sortedActionRecords[actionIndex]
+      const anchor = record ? getActionRecordAnchor(record) : null
+      if (!record || anchor == null || anchor > message.id) break
+      const actionText = getActionRecordText(record)
+      if (actionText) {
+        lines.push({
+          anchor,
+          text: `[${formatTime(record.createdAt)}] BOT: ${actionText}`,
+        })
+      }
+      actionIndex++
     }
+  }
+
+  while (actionIndex < sortedActionRecords.length) {
+    const record = sortedActionRecords[actionIndex]
+    const anchor = record ? getActionRecordAnchor(record) : null
+    const actionText = record ? getActionRecordText(record) : null
+    if (record && anchor != null && actionText) {
+      lines.push({
+        anchor,
+        text: `[${formatTime(record.createdAt)}] BOT: ${actionText}`,
+      })
+    }
+    actionIndex++
   }
 
   return lines
@@ -73,7 +109,7 @@ export async function compactConversationIfNeeded(
 ): Promise<void> {
   const getConversationState = dependencies.getConversationState ?? getOrCreateConversationState
   const getMessagesAfterRowId = dependencies.getMessagesAfterRowId ?? getGroupMessagesAfterRowId
-  const getReplyRecordsAfterRowId = dependencies.getReplyRecordsAfterRowId ?? listSentReplyRecordsAfterMessageRowId
+  const getActionRecordsForScene = dependencies.getActionRecordsForScene ?? listSentActionRecordsForScene
   const saveCompactedState = dependencies.saveCompactedState ?? compactConversationState
 
   const state = await getConversationState(groupId, senderThreadKey)
@@ -84,16 +120,15 @@ export async function compactConversationIfNeeded(
   const boundaryMessage = messages[messages.length - COMPACTION_KEEP_RECENT_USER_MESSAGES - 1]
   if (!boundaryMessage) return
 
-  const replyRecords = await getReplyRecordsAfterRowId(
-    groupId,
-    senderThreadKey,
-    lastCompactedMessageRowId,
-  )
+  const actionRecords = await getActionRecordsForScene(makeQqGroupSceneId(groupId))
   const compactedMessages = messages.filter((message) => message.id <= boundaryMessage.id)
-  const compactedReplyRecords = replyRecords.filter(
-    (record) => (record.incorporatedMessageRowId ?? Number.MAX_SAFE_INTEGER) <= boundaryMessage.id,
+  const compactedActionRecords = actionRecords.filter(
+    (record) => {
+      const anchor = getActionRecordAnchor(record)
+      return anchor != null && anchor > lastCompactedMessageRowId && anchor <= boundaryMessage.id
+    },
   )
-  const lines = await mergeLines(compactedMessages, compactedReplyRecords, dependencies)
+  const lines = await mergeLines(compactedMessages, compactedActionRecords, dependencies)
   if (lines.length === 0) return
 
   const nextBase = [state.compactedBase.trim(), lines.map((line) => line.text).join('\n')]

@@ -63,7 +63,7 @@ describe('conversation compaction', () => {
         updatedAt: new Date(0),
       }),
       getMessagesAfterRowId: async () => messages,
-      getReplyRecordsAfterRowId: async () => [],
+      getActionRecordsForScene: async () => [],
       resolveConversationMessage: async (message) => {
         resolveCalls.push(message.id)
         if (message.id === 1) {
@@ -89,5 +89,50 @@ describe('conversation compaction', () => {
     assert.match(savedStates[0]?.compactedBase ?? '', /解析后的媒体文本/)
     assert.match(savedStates[0]?.compactedBase ?? '', /已冻结文本/)
     assert.doesNotMatch(savedStates[0]?.compactedBase ?? '', /\[视频\]/)
+  })
+
+  test('compaction merges sent action_records as bot turns', async () => {
+    const savedStates: Array<{ compactedBase: string; lastCompactedMessageRowId: number }> = []
+    const messages = Array.from({ length: 41 }, (_, index) => makeMessage(index + 1))
+
+    await compactConversationIfNeeded(1, 'sender:20', {
+      getConversationState: async () => ({
+        id: 1,
+        groupId: 1,
+        senderThreadKey: 'sender:20',
+        compactedBase: '',
+        compactedVersion: 1,
+        lastCompactedMessageRowId: undefined,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      }),
+      getMessagesAfterRowId: async () => messages,
+      getActionRecordsForScene: async (sceneId) => {
+        assert.equal(sceneId, 'qq_group:1')
+        return [{
+          id: 'action-1',
+          actionIntentId: 'intent-1',
+          actionType: 'send_group_reply',
+          targetSceneId: 'qq_group:1',
+          deliveryState: 'sent',
+          idempotencyKey: 'intent-1',
+          resultPayload: {
+            incorporatedMessageRowId: 2,
+            text: '机器人回复',
+          },
+          createdAt: new Date('2026-04-21T00:02:30Z'),
+          updatedAt: new Date('2026-04-21T00:02:30Z'),
+        }]
+      },
+      saveCompactedState: async (params) => {
+        savedStates.push({
+          compactedBase: params.compactedBase,
+          lastCompactedMessageRowId: params.lastCompactedMessageRowId,
+        })
+      },
+    })
+
+    assert.equal(savedStates.length, 1)
+    assert.match(savedStates[0]?.compactedBase ?? '', /BOT: 机器人回复/)
   })
 })

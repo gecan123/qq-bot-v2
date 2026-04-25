@@ -7,17 +7,7 @@ import { generateMentionReply, generateProactiveCandidateReply } from '../respon
 import type { ProactiveCandidateReplyResult } from '../responder/reply-generator.js'
 import type { IncomingMessage } from '../responder/pipeline.js'
 import { createReplyAudit, createOrReuseReplyAudit } from '../conversation/reply-audit-store.js'
-import { deliverReplyRecord } from '../conversation/reply-record-delivery.js'
-import {
-  createOrReuseReplyRecord,
-  findReplyRecordByReplyIntentId,
-  markReplyRecordAcked,
-  markReplyRecordFailed,
-  markReplyRecordSending,
-  markReplyRecordSent,
-  type ReplyDeliveryPayload,
-  type ReplyRecord,
-} from '../conversation/reply-record-store.js'
+import type { ReplyDeliveryPayload, ReplyRecord } from '../conversation/reply-record-store.js'
 import { createReplyDecisionEngine, type ReplyDecisionEngine } from './reply-decision-engine.js'
 import type { ReplyDecision, ReplyExecutionResult, ReplyOpportunity } from './reply-decision-types.js'
 import type { ProactiveCandidateArtifact, ProactiveCandidateStatus } from './types.js'
@@ -42,22 +32,38 @@ export interface ReplyExecutorOptions {
   buildIncomingMessage?: (opportunity: ReplyOpportunity) => Promise<IncomingMessage | null>
   sender?: MessageSender
   replyRecordStore?: {
-    findByReplyIntentId: typeof findReplyRecordByReplyIntentId
-    createOrReuse: typeof createOrReuseReplyRecord
-    markAcked: typeof markReplyRecordAcked
-    markSending: typeof markReplyRecordSending
-    markSent: typeof markReplyRecordSent
-    markFailed: typeof markReplyRecordFailed
+    findByReplyIntentId: (runtimeKey: string, replyIntentId: string) => Promise<ReplyRecord | null>
+    createOrReuse: (input: {
+      runtimeKey: string
+      groupId: number
+      scopeKey: string
+      replyIntentId: string
+      sourceKind: string
+      triggerMessageRowId?: number | null
+      incorporatedMessageRowId?: number | null
+      deliveryPayload: ReplyDeliveryPayload
+      text: string
+      executionState?: ReplyRecord['executionState']
+    }) => Promise<ReplyRecord>
+    markAcked: (id: number, providerMessageId: number) => Promise<void>
+    markSending: (id: number) => Promise<void>
+    markSent: (id: number) => Promise<void>
+    markFailed: (id: number) => Promise<void>
   }
   replyAuditStore?: {
     create?: typeof createReplyAudit
     createOrReuse?: typeof createOrReuseReplyAudit
   }
+  actionRecordStore?: {
+    createOrReuseIntent: typeof createOrReuseActionIntent
+    createOrReuseRecord: typeof createOrReuseActionRecord
+    markDeliveryState: typeof markActionRecordDeliveryState
+  }
   proactiveCandidateStore?: {
     createOrReuse: (artifact: ProactiveCandidateArtifact) => Promise<void>
   }
   onProactiveGenerationAttempt?: (opportunity: ReplyOpportunity) => Promise<void>
-  deliver?: typeof deliverReplyRecord
+  deliver?: unknown
   onReplyRecordSent?: (record: ReplyRecord) => Promise<void>
 }
 
@@ -152,9 +158,38 @@ function getDecisionDispatchMode(decision: ReplyDecision): BusinessLogDispatchMo
 
 function getDecisionSideEffect(decision: ReplyDecision): BusinessLogSideEffect {
   if (decision.policy.artifactKind === 'proactive_candidate') return 'artifact_write'
-  if (decision.policy.shouldCreateReplyRecord) return 'reply_record_write'
+  if (decision.policy.shouldCreateReplyRecord) return 'action_record_write'
   if (decision.policy.shouldAudit) return 'audit_write'
   return 'none'
+}
+
+function buildActionResultPayload(input: {
+  opportunity: ReplyOpportunity
+  deliveryPayload: ReplyDeliveryPayload
+  text: string
+  replyIntentId: string
+}): Record<string, unknown> {
+  return {
+    deliveryPayload: input.deliveryPayload,
+    text: input.text,
+    replyIntentId: input.replyIntentId,
+    groupId: input.opportunity.groupId,
+    scopeKey: input.opportunity.scopeKey,
+    sourceKind: input.opportunity.sourceKind,
+    triggerMessageRowId: input.opportunity.triggerMessageRowId,
+    incorporatedMessageRowId: input.opportunity.incorporatedMessageRowId,
+  }
+}
+
+function getStoredActionText(payload: Record<string, unknown> | null | undefined): string | null {
+  const text = payload && typeof payload.text === 'string' ? payload.text.trim() : ''
+  return text || null
+}
+
+function getReplyTargetId(payload: ReplyDeliveryPayload): number | null {
+  if (payload.type !== 'reply_to_message') return null
+  const target = payload.replyToMessageId ?? payload.messageId
+  return typeof target === 'number' && Number.isSafeInteger(target) ? target : null
 }
 
 export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyExecutor {
@@ -164,20 +199,17 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
     options.generateProactiveCandidateReply ??
     ((message: IncomingMessage) => generateProactiveCandidateReply(message))
   const sender = options.sender ?? messageSender
-  const replyRecordStore = options.replyRecordStore ?? {
-    findByReplyIntentId: findReplyRecordByReplyIntentId,
-    createOrReuse: createOrReuseReplyRecord,
-    markAcked: markReplyRecordAcked,
-    markSending: markReplyRecordSending,
-    markSent: markReplyRecordSent,
-    markFailed: markReplyRecordFailed,
-  }
+  const replyRecordStore = options.replyRecordStore
   const configuredReplyAuditStore = options.replyAuditStore
   const replyAuditStore = {
     create: configuredReplyAuditStore?.create ?? createReplyAudit,
     createOrReuse: configuredReplyAuditStore?.createOrReuse ?? configuredReplyAuditStore?.create ?? createOrReuseReplyAudit,
   }
-  const deliver = options.deliver ?? deliverReplyRecord
+  const actionRecordStore = options.actionRecordStore ?? {
+    createOrReuseIntent: createOrReuseActionIntent,
+    createOrReuseRecord: createOrReuseActionRecord,
+    markDeliveryState: markActionRecordDeliveryState,
+  }
 
   return {
     async execute(opportunity) {
@@ -324,11 +356,12 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
       }
 
       const legacyReplyIntentId = decision.legacyReplyIntentId
-      const existingRecord =
-        (await replyRecordStore.findByReplyIntentId(opportunity.runtimeKey, replyIntentId)) ??
-        (legacyReplyIntentId && legacyReplyIntentId !== replyIntentId
-          ? await replyRecordStore.findByReplyIntentId(opportunity.runtimeKey, legacyReplyIntentId)
-          : null)
+      const existingRecord = replyRecordStore
+        ? (await replyRecordStore.findByReplyIntentId(opportunity.runtimeKey, replyIntentId)) ??
+          (legacyReplyIntentId && legacyReplyIntentId !== replyIntentId
+            ? await replyRecordStore.findByReplyIntentId(opportunity.runtimeKey, legacyReplyIntentId)
+            : null)
+        : null
 
       let reply = existingRecord?.text ?? null
       if (!reply && decision.policy.shouldGenerate) {
@@ -359,57 +392,63 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
       const deliveryPayload = buildDeliveryPayload(decision)
       const shouldDryRun = isDryRunEnabledForPayload(sender, deliveryPayload)
       const actionType = deliveryPayload.type === 'reply_to_message' ? 'send_group_reply' : 'send_group_message'
-      const actionIntent = await createOrReuseActionIntent({
+      const actionIntent = await actionRecordStore.createOrReuseIntent({
         id: `${opportunity.opportunityId}:intent:${actionType}`,
         opportunityId: opportunity.opportunityId,
         actionType,
         targetSceneId: opportunity.sceneId,
-        payload: { deliveryPayload, text: reply },
+        payload: buildActionResultPayload({ opportunity, deliveryPayload, text: reply, replyIntentId }),
         dryRun: shouldDryRun,
         riskLevel: 'low',
         status: shouldDryRun ? 'dry_run' : 'pending',
         idempotencyKey: `${opportunity.opportunityId}:${actionType}`,
       })
-      let actionRecord = await createOrReuseActionRecord({
+      let actionRecord = await actionRecordStore.createOrReuseRecord({
         id: `${actionIntent.id}:record`,
         actionIntentId: actionIntent.id,
         actionType,
         targetSceneId: opportunity.sceneId,
         deliveryState: shouldDryRun ? 'dry_run' : 'pending',
         idempotencyKey: actionIntent.idempotencyKey,
-        resultPayload: { deliveryPayload, text: reply },
+        resultPayload: buildActionResultPayload({ opportunity, deliveryPayload, text: reply, replyIntentId }),
       })
-      const replyRecord = await replyRecordStore.createOrReuse({
-        runtimeKey: opportunity.runtimeKey,
-        groupId: opportunity.groupId,
-        scopeKey: opportunity.scopeKey,
-        replyIntentId: existingRecord?.replyIntentId ?? replyIntentId,
-        sourceKind: opportunity.sourceKind,
-        triggerMessageRowId: opportunity.triggerMessageRowId,
-        incorporatedMessageRowId: opportunity.incorporatedMessageRowId,
-        deliveryPayload,
-        text: reply,
-        executionState: shouldDryRun ? 'dry_run' : 'pending',
-      })
+      const actionText = getStoredActionText(actionRecord.resultPayload) ?? reply
+      const replyRecord = replyRecordStore
+        ? await replyRecordStore.createOrReuse({
+            runtimeKey: opportunity.runtimeKey,
+            groupId: opportunity.groupId,
+            scopeKey: opportunity.scopeKey,
+            replyIntentId: existingRecord?.replyIntentId ?? replyIntentId,
+            sourceKind: opportunity.sourceKind,
+            triggerMessageRowId: opportunity.triggerMessageRowId,
+            incorporatedMessageRowId: opportunity.incorporatedMessageRowId,
+            deliveryPayload,
+            text: actionText,
+            executionState: shouldDryRun ? 'dry_run' : 'pending',
+          })
+        : undefined
 
-      if (replyRecord.executionState === 'sent') {
-        await options.onReplyRecordSent?.(replyRecord)
-        return { decision, replyRecord, deliveryResult: 'sent' }
+      if (actionRecord.deliveryState === 'sent' || actionRecord.deliveryState === 'acked') {
+        if (replyRecord) {
+          await replyRecordStore?.markSent(replyRecord.id)
+          await options.onReplyRecordSent?.(replyRecord)
+        }
+        return { decision, replyRecord, actionRecord, deliveryResult: 'sent' }
       }
 
-      if (replyRecord.executionState === 'dry_run') {
+      if (actionRecord.deliveryState === 'dry_run') {
         await replyAuditStore.createOrReuse({
           opportunityId: opportunity.opportunityId,
-          runtimeKey: replyRecord.runtimeKey,
-          groupId: replyRecord.groupId,
-          scopeKey: replyRecord.scopeKey,
-          replyIntentId: replyRecord.replyIntentId,
+          runtimeKey: opportunity.runtimeKey,
+          groupId: opportunity.groupId,
+          scopeKey: opportunity.scopeKey,
+          replyIntentId,
           auditKind: decision.policy.auditKind ?? 'dry_run_intent',
           payload: {
             outcome: decision.outcome,
-            sourceKind: replyRecord.sourceKind,
-            deliveryType: replyRecord.deliveryPayload.type,
-            text: replyRecord.text,
+            sourceKind: opportunity.sourceKind,
+            deliveryType: deliveryPayload.type,
+            text: actionText,
             reason: decision.policy.reason,
           },
         })
@@ -418,30 +457,89 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
             direction: 'outbound',
             actor: 'bot',
             category: 'mention_reply',
-            flow: 'reply_record_dry_run',
-            groupId: replyRecord.groupId,
-            scopeKey: replyRecord.scopeKey,
-            replyIntentId: replyRecord.replyIntentId,
-            sourceKind: replyRecord.sourceKind,
-            deliveryType: replyRecord.deliveryPayload.type,
+            flow: 'action_record_dry_run',
+            groupId: opportunity.groupId,
+            scopeKey: opportunity.scopeKey,
+            replyIntentId,
+            sourceKind: opportunity.sourceKind,
+            deliveryType: deliveryPayload.type,
             dispatchMode: 'dry_run',
             sideEffect: 'audit_write',
             deliveryResult: 'dry_run',
-            textPreview: previewText(replyRecord.text),
+            textPreview: previewText(actionText),
           },
           '回复已生成（未发送）',
         )
         return { decision, replyRecord, actionRecord, deliveryResult: 'dry_run' }
       }
 
-      const deliveryResult = decision.policy.shouldDeliver
-        ? await deliver(replyRecord, { sender, replyRecordStore, replyAuditStore })
-        : 'skipped'
-      if (deliveryResult === 'sent') {
-        await options.onReplyRecordSent?.(replyRecord)
+      if (!decision.policy.shouldDeliver) {
+        actionRecord = await actionRecordStore.markDeliveryState(actionRecord.id, 'skipped', actionRecord.resultPayload)
+        return { decision, replyRecord, actionRecord, deliveryResult: 'skipped' }
       }
-      if (deliveryResult === 'sent' || deliveryResult === 'failed') {
-        actionRecord = await markActionRecordDeliveryState(actionRecord.id, deliveryResult, { replyRecordId: replyRecord.id })
+
+      const actionPayload = buildActionResultPayload({ opportunity, deliveryPayload, text: actionText, replyIntentId })
+      actionRecord = await actionRecordStore.markDeliveryState(actionRecord.id, 'sending', actionPayload)
+      if (replyRecord) await replyRecordStore?.markSending(replyRecord.id)
+
+      let deliveryResult: ReplyExecutionResult['deliveryResult'] = 'failed'
+      const replyToMessageId = getReplyTargetId(deliveryPayload)
+      const sendResult = deliveryPayload.type === 'reply_to_message'
+        ? replyToMessageId == null
+          ? { success: false, attempts: 0 }
+          : await sender.replyToMessage({
+              groupId: opportunity.groupId,
+              replyToMessageId,
+              mentionUserId: deliveryPayload.mentionUserId,
+              text: actionText,
+            })
+        : await sender.sendMessage({
+            groupId: opportunity.groupId,
+            text: actionText,
+          })
+
+      if (sendResult.success) {
+        deliveryResult = 'sent'
+        actionRecord = await actionRecordStore.markDeliveryState(actionRecord.id, 'sent', {
+          ...actionPayload,
+          providerMessageId: sendResult.providerMessageId ?? null,
+          attempts: sendResult.attempts,
+        })
+        if (sendResult.providerMessageId != null) {
+          if (replyRecord) await replyRecordStore?.markAcked(replyRecord.id, sendResult.providerMessageId)
+        }
+        if (replyRecord) await replyRecordStore?.markSent(replyRecord.id)
+        log.info(
+          {
+            direction: 'outbound',
+            actor: 'bot',
+            category: 'reply_delivery',
+            flow: 'action_record_delivery',
+            groupId: opportunity.groupId,
+            scopeKey: opportunity.scopeKey,
+            replyIntentId,
+            actionRecordId: actionRecord.id,
+            sourceKind: opportunity.sourceKind,
+            deliveryType: deliveryPayload.type,
+            providerMessageId: sendResult.providerMessageId,
+            attempts: sendResult.attempts,
+            dispatchMode: 'live',
+            sideEffect: 'napcat_send',
+            deliveryResult: 'sent',
+            textPreview: previewText(actionText),
+          },
+          '动作投递成功',
+        )
+      } else {
+        actionRecord = await actionRecordStore.markDeliveryState(actionRecord.id, 'failed', {
+          ...actionPayload,
+          error: 'send failed',
+        })
+        if (replyRecord) await replyRecordStore?.markFailed(replyRecord.id)
+      }
+
+      if (deliveryResult === 'sent' && replyRecord) {
+        await options.onReplyRecordSent?.(replyRecord)
       }
       return { decision, replyRecord, actionRecord, deliveryResult }
     },

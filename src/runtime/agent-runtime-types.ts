@@ -9,9 +9,9 @@ export type SceneId = `${SceneKind}:${string}`
 export type RuntimeEventType = 'group_message' | 'scheduler_tick' | 'manual_wake'
 export type QueueKind = 'obligation' | 'social' | 'maintenance'
 export type OpportunityType = 'reply_to_mention' | 'ambient_candidate' | 'maintenance'
-export type ActionType = 'reply_to_message' | 'send_group_message' | 'artifact_only'
+export type ActionType = 'reply_to_message' | 'send_group_reply' | 'send_group_message' | 'artifact_only'
 export type ActionIntentStatus = 'pending' | 'executing' | 'completed' | 'failed' | 'suppressed'
-export type ActionDeliveryState = 'pending' | 'sending' | 'acked' | 'sent' | 'failed' | 'dry_run' | 'suppressed'
+export type ActionDeliveryState = 'pending' | 'sending' | 'acked' | 'sent' | 'failed' | 'dry_run' | 'suppressed' | 'skipped'
 
 export interface Agent {
   id: AgentId

@@ -1,7 +1,7 @@
 import { prisma } from '../database/client.js'
 import type { Prisma } from '../generated/prisma/client.js'
 
-export type ActionDeliveryState = 'pending' | 'sending' | 'acked' | 'sent' | 'failed' | 'dry_run' | 'skipped'
+export type ActionDeliveryState = 'pending' | 'sending' | 'acked' | 'sent' | 'failed' | 'dry_run' | 'suppressed' | 'skipped'
 
 export interface ActionIntentRecord {
   id: string
@@ -23,6 +23,8 @@ export interface ActionRecord {
   deliveryState: ActionDeliveryState
   idempotencyKey: string
   resultPayload?: Record<string, unknown> | null
+  createdAt?: Date
+  updatedAt?: Date
 }
 
 function sanitizeJsonValue(value: unknown): Prisma.InputJsonValue | null | undefined {
@@ -41,7 +43,17 @@ function mapIntent(row: Awaited<ReturnType<typeof prisma.actionIntent.findUnique
 }
 
 function mapRecord(row: Awaited<ReturnType<typeof prisma.actionRecord.findUnique>> extends infer T ? T extends null ? never : T : never): ActionRecord {
-  return { id: row.id, actionIntentId: row.actionIntentId, actionType: row.actionType, targetSceneId: row.targetSceneId, deliveryState: row.deliveryState as ActionDeliveryState, idempotencyKey: row.idempotencyKey, resultPayload: row.resultPayload as Record<string, unknown> | null }
+  return {
+    id: row.id,
+    actionIntentId: row.actionIntentId,
+    actionType: row.actionType,
+    targetSceneId: row.targetSceneId,
+    deliveryState: row.deliveryState as ActionDeliveryState,
+    idempotencyKey: row.idempotencyKey,
+    resultPayload: row.resultPayload as Record<string, unknown> | null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }
 }
 
 export async function createOrReuseActionIntent(input: {
@@ -90,6 +102,17 @@ export async function listRecoverableActionRecords(targetSceneIds?: string[]): P
     where: {
       deliveryState: { in: ['pending', 'sending', 'failed', 'acked'] },
       ...(targetSceneIds && targetSceneIds.length > 0 ? { targetSceneId: { in: targetSceneIds } } : {}),
+    },
+    orderBy: { createdAt: 'asc' },
+  })
+  return rows.map(mapRecord)
+}
+
+export async function listSentActionRecordsForScene(targetSceneId: string): Promise<ActionRecord[]> {
+  const rows = await prisma.actionRecord.findMany({
+    where: {
+      targetSceneId,
+      deliveryState: { in: ['sent', 'acked'] },
     },
     orderBy: { createdAt: 'asc' },
   })

@@ -1,4 +1,4 @@
-import { makeMentionReplyIntentId } from './types.js'
+import { makeMentionReplyIntentId, makePrivateReplyIntentId } from './types.js'
 import type { ReplyDecision, ReplyOpportunity } from './reply-decision-types.js'
 import { config } from '../config/index.js'
 import type { ProactiveJudgeAdvice, ProactiveJudgePolicy } from './proactive-judge.js'
@@ -75,6 +75,37 @@ export function createReplyDecisionEngine(options: ReplyDecisionEngineOptions = 
           replyIntentId: makeMentionReplyIntentId(opportunity.groupId, anchorRowId),
           legacyReplyIntentId: `${opportunity.runtimeKey}:${opportunity.scopeKey}:${anchorRowId}:${opportunity.incorporatedMessageRowId}`,
           deliveryMode: 'reply_to_message',
+          dryRun: opportunity.dryRun,
+          reason: opportunity.reason,
+        }
+      }
+
+      if (
+        opportunity.sourceKind === 'private_message' &&
+        opportunity.deliveryMode === 'send_private_message' &&
+        (opportunity.mustReplyOverride || replyProbability >= 1)
+      ) {
+        const anchorRowId = opportunity.anchorMessageRowId ?? opportunity.triggerMessageRowId
+        const userId = opportunity.targetUserId ?? opportunity.groupId
+        return {
+          opportunity: {
+            ...opportunity,
+            targetUserId: userId,
+            replyProbability: opportunity.mustReplyOverride ? 1 : replyProbability,
+            dryRun: opportunity.dryRun,
+            deliveryMode: 'send_private_message',
+          },
+          outcome: 'sendable_reply',
+          policy: {
+            shouldGenerate: true,
+            shouldCreateReplyRecord: true,
+            shouldDeliver: true,
+            shouldAudit: opportunity.dryRun,
+            auditKind: opportunity.dryRun ? 'dry_run_intent' : undefined,
+            reason: 'private message is sendable L2 private reply',
+          },
+          replyIntentId: makePrivateReplyIntentId(userId, anchorRowId),
+          deliveryMode: 'send_private_message',
           dryRun: opportunity.dryRun,
           reason: opportunity.reason,
         }

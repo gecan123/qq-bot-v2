@@ -1,14 +1,23 @@
 import type { IncomingMessage } from './pipeline.js'
 import type { ParsedSegment, ReplySegment } from '../types/message-segments.js'
 import type { Message } from '../generated/prisma/client.js'
-import { freezeResolvedTextIfUnset, getGroupMessagesAfterRowId, getRecentGroupMessages, getMessageById } from '../database/messages.js'
+import {
+  freezeResolvedTextIfUnset,
+  getGroupMessagesAfterRowId,
+  getRecentGroupMessages,
+  getMessageById,
+  getMessageBySceneMessageId,
+  getRecentSceneMessages,
+  getSceneMessagesAfterRowId,
+  type MessageSceneKind,
+} from '../database/messages.js'
 import { getOrCreateConversationState } from '../conversation/conversation-state-store.js'
-import { toSenderReplyScopeKey } from '../conversation/reply-scope.js'
+import { toSceneSenderReplyScopeKey, toSenderReplyScopeKey } from '../conversation/reply-scope.js'
 import { resolveMessage } from '../media/message-resolver.js'
 import { config } from '../config/index.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
 import { listSentActionRecordsForScene } from '../runtime/agent-runtime-store.js'
-import { makeQqGroupSceneId } from '../runtime/agent-runtime-types.js'
+import { makeQqGroupSceneId, makeQqPrivateSceneId, type SceneId } from '../runtime/agent-runtime-types.js'
 import type { ActionRecord } from '../runtime/agent-runtime-types.js'
 import { getActionRecordText } from '../runtime/action-record-payload.js'
 
@@ -27,10 +36,73 @@ interface ContextBuildDependencies {
   getConversationState?: typeof getOrCreateConversationState
   getRecentMessages?: typeof getRecentGroupMessages
   getMessagesAfterRowId?: typeof getGroupMessagesAfterRowId
+  getRecentSceneMessages?: typeof getRecentSceneMessages
+  getSceneMessagesAfterRowId?: typeof getSceneMessagesAfterRowId
   getStoredMessage?: typeof getMessageById
   resolveStoredMessage?: typeof resolveMessage
   freezeResolvedText?: typeof freezeResolvedTextIfUnset
   listActionRecords?: typeof listSentActionRecordsForScene
+}
+
+function resolveIncomingScene(msg: IncomingMessage): {
+  sceneKind: MessageSceneKind
+  sceneExternalId: string
+  sceneId: SceneId
+} {
+  if (msg.sceneKind === 'qq_private') {
+    const sceneExternalId = msg.sceneExternalId ?? String(msg.senderId)
+    return {
+      sceneKind: 'qq_private',
+      sceneExternalId,
+      sceneId: (msg.sceneId as SceneId | undefined) ?? makeQqPrivateSceneId(sceneExternalId),
+    }
+  }
+
+  const sceneExternalId = msg.sceneExternalId ?? String(msg.groupId)
+  return {
+    sceneKind: 'qq_group',
+    sceneExternalId,
+    sceneId: (msg.sceneId as SceneId | undefined) ?? makeQqGroupSceneId(sceneExternalId),
+  }
+}
+
+async function getStoredMessageForIncoming(
+  msg: IncomingMessage,
+  messageId: number,
+  dependencies: ContextBuildDependencies,
+): Promise<Message | null> {
+  const scene = resolveIncomingScene(msg)
+  if (scene.sceneKind === 'qq_group') {
+    const getStoredMessage = dependencies.getStoredMessage ?? getMessageById
+    return getStoredMessage(msg.groupId, messageId)
+  }
+  return getMessageBySceneMessageId({
+    sceneKind: scene.sceneKind,
+    sceneExternalId: scene.sceneExternalId,
+    messageId,
+  })
+}
+
+async function getRecentMessagesForIncoming(
+  msg: IncomingMessage,
+  contextLimit: number,
+  afterRowId: number | undefined,
+  dependencies: ContextBuildDependencies,
+): Promise<Message[]> {
+  const scene = resolveIncomingScene(msg)
+  if (scene.sceneKind === 'qq_group') {
+    const getRecentMessages = dependencies.getRecentMessages ?? getRecentGroupMessages
+    const getMessagesAfterRowId = dependencies.getMessagesAfterRowId ?? getGroupMessagesAfterRowId
+    return afterRowId
+      ? getMessagesAfterRowId(msg.groupId, afterRowId)
+      : getRecentMessages(msg.groupId, contextLimit)
+  }
+
+  const getRecentMessages = dependencies.getRecentSceneMessages ?? getRecentSceneMessages
+  const getMessagesAfterRowId = dependencies.getSceneMessagesAfterRowId ?? getSceneMessagesAfterRowId
+  return afterRowId
+    ? getMessagesAfterRowId(scene.sceneKind, scene.sceneExternalId, afterRowId)
+    : getRecentMessages(scene.sceneKind, scene.sceneExternalId, contextLimit)
 }
 
 function getRemainingBudget(deadlineAt?: number): number {
@@ -67,13 +139,14 @@ export async function buildContext(
   dependencies: ContextBuildDependencies = {},
 ): Promise<BuildContextResult> {
   const lines: string[] = []
-  const scopeKey = toSenderReplyScopeKey(msg.senderId)
+  const scene = resolveIncomingScene(msg)
+  const scopeKey = scene.sceneKind === 'qq_private'
+    ? toSceneSenderReplyScopeKey(scene.sceneId, msg.senderId)
+    : toSenderReplyScopeKey(msg.senderId)
+  const conversationStateGroupId = scene.sceneKind === 'qq_private' ? 0 : msg.groupId
   const getConversationState = dependencies.getConversationState ?? getOrCreateConversationState
-  const getStoredMessage = dependencies.getStoredMessage ?? getMessageById
-  const getRecentMessages = dependencies.getRecentMessages ?? getRecentGroupMessages
-  const getMessagesAfterRowId = dependencies.getMessagesAfterRowId ?? getGroupMessagesAfterRowId
   const listActionRecords = dependencies.listActionRecords ?? listSentActionRecordsForScene
-  const conversationState = await getConversationState(msg.groupId, scopeKey)
+  const conversationState = await getConversationState(conversationStateGroupId, scopeKey)
 
   if (conversationState.compactedBase.trim()) {
     lines.push('[压缩上下文]')
@@ -83,7 +156,7 @@ export async function buildContext(
 
   const quoted = msg.segments.find((segment): segment is ReplySegment => segment.type === 'reply')
   if (quoted) {
-    const quotedMessage = await getStoredMessage(msg.groupId, Number(quoted.messageId))
+    const quotedMessage = await getStoredMessageForIncoming(msg, Number(quoted.messageId), dependencies)
     if (quotedMessage) {
       const nickname = quotedMessage.senderGroupNickname ?? quotedMessage.senderNickname
       const text = await getStableResolvedText(quotedMessage, options, dependencies)
@@ -93,8 +166,8 @@ export async function buildContext(
   }
 
   const recentMessages = conversationState.lastCompactedMessageRowId
-    ? await getMessagesAfterRowId(msg.groupId, conversationState.lastCompactedMessageRowId)
-    : await getRecentMessages(msg.groupId, contextLimit)
+    ? await getRecentMessagesForIncoming(msg, contextLimit, conversationState.lastCompactedMessageRowId, dependencies)
+    : await getRecentMessagesForIncoming(msg, contextLimit, undefined, dependencies)
   const renderedMessages: string[] = []
   for (const dbMsg of recentMessages.slice(-contextLimit)) {
     const nickname = dbMsg.senderGroupNickname ?? dbMsg.senderNickname ?? String(dbMsg.senderId)
@@ -102,7 +175,7 @@ export async function buildContext(
     if (text.trim()) renderedMessages.push(`[QQ消息]\n${nickname}: ${text}`)
   }
 
-  const actionRecords = await listActionRecords(makeQqGroupSceneId(msg.groupId))
+  const actionRecords = await listActionRecords(scene.sceneId)
   const renderedActions = actionRecords
     .filter((actionRecord) => !conversationState.lastCompactedMessageRowId || actionRecord.createdAt.getTime() > 0)
     .map(actionRecordText)
@@ -123,8 +196,15 @@ export async function extractResolvedTriggerText(
   messageId: number,
   fallbackSegments: ParsedSegment[],
   options: ContextBuildOptions = {},
+  scene?: { sceneKind?: MessageSceneKind; sceneExternalId?: string | number },
 ): Promise<string> {
-  const dbMsg = await getMessageById(groupId, messageId)
+  const dbMsg = scene?.sceneKind === 'qq_private'
+    ? await getMessageBySceneMessageId({
+        sceneKind: scene.sceneKind,
+        sceneExternalId: scene.sceneExternalId ?? groupId,
+        messageId,
+      })
+    : await getMessageById(groupId, messageId)
   if (!dbMsg) return extractTriggerText(fallbackSegments)
   return getStableResolvedText(dbMsg, options)
 }

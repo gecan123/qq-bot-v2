@@ -1,5 +1,5 @@
 import { createLogger } from '../logger.js'
-import { getMessageById } from '../database/messages.js'
+import { getMessageById, getMessageBySceneMessageId } from '../database/messages.js'
 import type { Message } from '../generated/prisma/client.js'
 import { resolveMessage } from '../media/message-resolver.js'
 import { messageSender, type MessageSender } from '../messaging/message-sender.js'
@@ -73,11 +73,22 @@ export interface ReplyExecutor {
 
 
 async function defaultBuildIncomingMessage(opportunity: ReplyOpportunity): Promise<IncomingMessage | null> {
-  const stored = (await getMessageById(opportunity.groupId, opportunity.incorporatedMessageId)) as StoredConversationMessage | null
+  const stored = opportunity.sourceKind === 'private_message'
+    ? (await getMessageBySceneMessageId({
+        sceneKind: 'qq_private',
+        sceneExternalId: opportunity.targetUserId ?? opportunity.groupId,
+        messageId: opportunity.incorporatedMessageId,
+      })) as StoredConversationMessage | null
+    : (await getMessageById(opportunity.groupId, opportunity.incorporatedMessageId)) as StoredConversationMessage | null
   if (!stored) return null
   const segments = await resolveMessage(stored as Message, { timeoutMs: 0 })
   return {
     groupId: Number(stored.groupId),
+    sceneKind: opportunity.sourceKind === 'private_message' ? 'qq_private' : 'qq_group',
+    sceneExternalId: opportunity.sourceKind === 'private_message'
+      ? String(opportunity.targetUserId ?? opportunity.groupId)
+      : String(opportunity.groupId),
+    sceneId: opportunity.sceneId,
     groupName: stored.groupName ?? undefined,
     messageId: Number(stored.messageId),
     senderId: Number(stored.senderId),
@@ -91,6 +102,10 @@ function auditReplyIntentId(decision: ReplyDecision): string {
 }
 
 function buildDeliveryPayload(decision: ReplyDecision): ReplyDeliveryPayload {
+  if (decision.deliveryMode === 'send_private_message') {
+    return { type: 'send_private_message', userId: decision.opportunity.targetUserId ?? decision.opportunity.groupId }
+  }
+
   if (decision.deliveryMode === 'send_message') {
     return { type: 'send_message', groupId: decision.opportunity.groupId }
   }
@@ -105,6 +120,7 @@ function buildDeliveryPayload(decision: ReplyDecision): ReplyDeliveryPayload {
 }
 
 function isDryRunEnabledForPayload(sender: MessageSender, payload: ReplyDeliveryPayload): boolean {
+  if (payload.type === 'send_private_message') return sender.isReplyDryRunEnabled?.() ?? false
   return payload.type === 'send_message'
     ? (sender.isSendDryRunEnabled?.() ?? false)
     : (sender.isReplyDryRunEnabled?.() ?? false)
@@ -147,7 +163,10 @@ function buildProactiveCandidateArtifact(input: {
 }
 
 function isSupportedSendableGeneration(decision: ReplyDecision): boolean {
-  return decision.deliveryMode === 'reply_to_message' && decision.opportunity.sourceKind === 'mention'
+  return (
+    (decision.deliveryMode === 'reply_to_message' && decision.opportunity.sourceKind === 'mention') ||
+    (decision.deliveryMode === 'send_private_message' && decision.opportunity.sourceKind === 'private_message')
+  )
 }
 
 function getDecisionDispatchMode(decision: ReplyDecision): BusinessLogDispatchMode {
@@ -178,6 +197,7 @@ function buildActionResultPayload(input: {
     target: {
       sceneId: input.opportunity.sceneId,
       groupId: input.opportunity.groupId,
+      userId: input.opportunity.targetUserId,
     },
     decisionId: input.opportunity.decisionId,
     deliveryPayload: input.deliveryPayload,
@@ -232,7 +252,11 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
         {
           direction: 'internal',
           actor: 'system',
-          category: opportunity.sourceKind === 'mention' ? 'mention_reply' : 'ambient_candidate',
+          category: opportunity.sourceKind === 'private_message'
+            ? 'private_reply'
+            : opportunity.sourceKind === 'mention'
+              ? 'mention_reply'
+              : 'ambient_candidate',
           flow: 'reply_decision',
           groupId: opportunity.groupId,
           sceneId: opportunity.sceneId,
@@ -405,7 +429,11 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
 
       const deliveryPayload = buildDeliveryPayload(decision)
       const shouldDryRun = isDryRunEnabledForPayload(sender, deliveryPayload)
-      const actionType = deliveryPayload.type === 'reply_to_message' ? 'send_group_reply' : 'send_group_message'
+      const actionType = deliveryPayload.type === 'reply_to_message'
+        ? 'send_group_reply'
+        : deliveryPayload.type === 'send_private_message'
+          ? 'send_private_message'
+          : 'send_group_message'
       const actionIntent = await actionRecordStore.createOrReuseIntent({
         id: `${opportunity.opportunityId}:intent:${actionType}`,
         opportunityId: opportunity.opportunityId,
@@ -414,7 +442,7 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
         targetSceneId: opportunity.sceneId,
         payload: buildActionResultPayload({ opportunity, deliveryPayload, text: reply, replyIntentId }),
         dryRun: shouldDryRun,
-        riskLevel: 'L3',
+        riskLevel: actionType === 'send_private_message' ? 'L2' : 'L3',
         status: shouldDryRun ? 'skipped' : 'approved',
         idempotencyKey: `${opportunity.opportunityId}:${actionType}`,
       })
@@ -471,7 +499,7 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
           {
             direction: 'outbound',
             actor: 'bot',
-            category: 'mention_reply',
+            category: opportunity.sourceKind === 'private_message' ? 'private_reply' : 'mention_reply',
             flow: 'action_record_dry_run',
             groupId: opportunity.groupId,
             scopeKey: opportunity.scopeKey,
@@ -508,10 +536,17 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
               mentionUserId: deliveryPayload.mentionUserId,
               text: actionText,
             })
-        : await sender.sendMessage({
-            groupId: opportunity.groupId,
-            text: actionText,
-          })
+        : deliveryPayload.type === 'send_private_message'
+          ? sender.sendPrivateMessage
+            ? await sender.sendPrivateMessage({
+                userId: deliveryPayload.userId ?? opportunity.targetUserId ?? opportunity.groupId,
+                text: actionText,
+              })
+            : { success: false, attempts: 0 }
+          : await sender.sendMessage({
+              groupId: opportunity.groupId,
+              text: actionText,
+            })
 
       if (sendResult.success) {
         deliveryResult = 'sent'
@@ -528,7 +563,7 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
           {
             direction: 'outbound',
             actor: 'bot',
-            category: 'reply_delivery',
+            category: opportunity.sourceKind === 'private_message' ? 'private_reply_delivery' : 'reply_delivery',
             flow: 'action_record_delivery',
             groupId: opportunity.groupId,
             scopeKey: opportunity.scopeKey,

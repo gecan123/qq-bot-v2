@@ -102,4 +102,83 @@ describe('Phase 0 recovery contract', () => {
     assert.equal(result.failedActionRecords, 0)
     assert.deepEqual(states, ['sending', 'sent'])
   })
+
+  test('startup recovery can include private send actions without touching forum scenes', async () => {
+    const privateRecord: ActionRecord = {
+      id: 'private-record-1',
+      actionIntentId: 'private-intent-1',
+      actionType: 'send_private_message',
+      targetSceneId: 'qq_private:20',
+      deliveryState: 'pending',
+      idempotencyKey: 'private-intent-1:record',
+      resultPayload: {
+        target: {
+          sceneId: 'qq_private:20',
+          userId: 20,
+        },
+        deliveryPayload: {
+          type: 'send_private_message',
+          userId: 20,
+        },
+        proposedEffect: {
+          type: 'send_private_message',
+          text: '私聊恢复',
+        },
+      },
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    }
+    const forumRecord: ActionRecord = {
+      id: 'forum-record-1',
+      actionIntentId: 'forum-intent-1',
+      actionType: 'read_forum_post',
+      targetSceneId: 'forum:source:1',
+      deliveryState: 'pending',
+      idempotencyKey: 'forum-intent-1:record',
+      resultPayload: {
+        proposedEffect: {
+          type: 'read_forum_post',
+        },
+      },
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    }
+    const states: ActionDeliveryState[] = []
+
+    const result = await recoverConversationStartupState({
+      groupIds: [1],
+      includePrivateScenes: true,
+      sender: {
+        replyToMessage: async () => {
+          throw new Error('replyToMessage should not recover private records')
+        },
+        sendMessage: async () => {
+          throw new Error('sendMessage should not recover private records')
+        },
+        sendPrivateMessage: async (params) => {
+          assert.equal(params.userId, 20)
+          assert.equal(params.text, '私聊恢复')
+          return { success: true, attempts: 1, providerMessageId: 2002 }
+        },
+      },
+      actionRecordStore: {
+        listRecoverable: async (sceneIds) => {
+          assert.equal(sceneIds, undefined)
+          return [privateRecord, forumRecord]
+        },
+        markDeliveryState: async (id, state, resultPayload) => {
+          assert.equal(id, 'private-record-1')
+          states.push(state)
+          if (state === 'sent') {
+            assert.equal(resultPayload?.providerMessageId, 2002)
+            assert.equal(resultPayload?.attempts, 1)
+          }
+        },
+      },
+    })
+
+    assert.equal(result.recoveredActionRecords, 1)
+    assert.equal(result.failedActionRecords, 0)
+    assert.deepEqual(states, ['sending', 'sent'])
+  })
 })

@@ -164,12 +164,20 @@ export function makeSceneId(groupId: number): SceneId {
   return `qq_group:${groupId}` as SceneId
 }
 
+export function makePrivateSceneId(userId: number): SceneId {
+  return `qq_private:${userId}` as SceneId
+}
+
 export function makeMentionCueId(sceneId: SceneId, triggerMessageRowId: number): string {
   return `${sceneId}:message:${triggerMessageRowId}:reply_to_message`
 }
 
 export function makeMentionReplyIntentId(groupId: number, triggerMessageRowId: number): string {
   return makeMentionCueId(makeSceneId(groupId), triggerMessageRowId)
+}
+
+export function makePrivateReplyIntentId(userId: number, triggerMessageRowId: number): string {
+  return `${makePrivateSceneId(userId)}:message:${triggerMessageRowId}:send_private_message`
 }
 
 export function createDefaultRootRuntimeSnapshot(groupId = 0): CreateRootRuntimeSnapshotInput {

@@ -113,6 +113,7 @@ export async function recoverStartupAndStartPassiveRuntime(params: {
 
   await recoverConversationStartupStateFn({
     groupIds: params.groupIds,
+    includePrivateScenes: true,
     sender: messageSender,
   })
 
@@ -234,6 +235,7 @@ async function main() {
     decisionEngine: replyDecisionEngine,
     ambientAuditEnabled: config.botAmbientAuditEnabled,
     ambientReplyBaseProbability: config.botAmbientReplyBaseProbability,
+    replyDryRunEnabled: messageSender.isReplyDryRunEnabled?.() ?? config.botReplyDryRun,
   })
   const restoreResult = await rootRuntime.restore(config.groupIds)
   log.info(restoreResult, 'Root runtime restored')

@@ -1,4 +1,4 @@
-import { sendGroupReply, type SendGroupReplyResult } from '../responder/reply-executor.js'
+import { sendGroupReply, sendPrivateMessage, type SendGroupReplyResult } from '../responder/reply-executor.js'
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
 import { buildReplySegments } from './segment-builder.js'
@@ -22,12 +22,18 @@ export interface MessageSender {
     groupId: number
     text: string
   }): Promise<SendGroupReplyResult>
+
+  sendPrivateMessage?(params: {
+    userId: number
+    text: string
+  }): Promise<SendGroupReplyResult>
 }
 
 export interface MessageSenderOptions {
   replyDryRun?: boolean
   proactiveDryRun?: boolean
   sendGroupReplyFn?: typeof sendGroupReply
+  sendPrivateMessageFn?: typeof sendPrivateMessage
 }
 
 class NapcatMessageSender implements MessageSender {
@@ -100,6 +106,29 @@ class NapcatMessageSender implements MessageSender {
 
     return this.options.sendGroupReplyFn(params.groupId, [{ type: 'text', data: { text: params.text } }])
   }
+
+  async sendPrivateMessage(params: { userId: number; text: string }): Promise<SendGroupReplyResult> {
+    if (this.options.replyDryRun) {
+      log.info(
+        {
+          direction: 'outbound',
+          actor: 'bot',
+          category: 'reply_delivery',
+          flow: 'napcat_send_dry_run',
+          userId: params.userId,
+          deliveryType: 'send_private_message',
+          dispatchMode: 'dry_run',
+          sideEffect: 'none',
+          deliveryResult: 'dry_run',
+          textPreview: previewText(params.text),
+        },
+        '私聊回复发送跳过（dry run）',
+      )
+      return { success: true, attempts: 0 }
+    }
+
+    return this.options.sendPrivateMessageFn(params.userId, [{ type: 'text', data: { text: params.text } }])
+  }
 }
 
 export function createMessageSender(options: MessageSenderOptions = {}): MessageSender {
@@ -107,6 +136,7 @@ export function createMessageSender(options: MessageSenderOptions = {}): Message
     replyDryRun: options.replyDryRun ?? config.botReplyDryRun,
     proactiveDryRun: options.proactiveDryRun ?? config.botProactiveDryRun,
     sendGroupReplyFn: options.sendGroupReplyFn ?? sendGroupReply,
+    sendPrivateMessageFn: options.sendPrivateMessageFn ?? sendPrivateMessage,
   })
 }
 

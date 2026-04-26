@@ -7,7 +7,11 @@ import { createLogger } from '../logger.js'
 
 const log = createLogger('DB')
 
+export type MessageSceneKind = 'qq_group' | 'qq_private'
+
 export interface InsertMessageParams {
+  sceneKind?: MessageSceneKind
+  sceneExternalId?: string | number
   groupId: number
   groupName?: string
   mediaReferenceIds?: string[]
@@ -20,6 +24,12 @@ export interface InsertMessageParams {
   rawMessage?: string
   /** QQ 消息发送时间（Unix 秒） */
   sentAt?: number
+}
+
+function resolveMessageScene(params: { sceneKind?: MessageSceneKind; sceneExternalId?: string | number; groupId: number }) {
+  const sceneKind = params.sceneKind ?? 'qq_group'
+  const sceneExternalId = String(params.sceneExternalId ?? params.groupId)
+  return { sceneKind, sceneExternalId }
 }
 
 export interface PersistedMessageInsertResult {
@@ -40,7 +50,7 @@ export async function freezeResolvedTextIfUnset(messageId: number, resolvedText:
 
 export async function getGroupMessages(groupId: number, limit: number): Promise<Message[]> {
   return prisma.message.findMany({
-    where: { groupId: BigInt(groupId) },
+    where: { groupId: BigInt(groupId), sceneKind: 'qq_group' },
     orderBy: { messageId: 'desc' },
     take: limit,
   })
@@ -53,6 +63,7 @@ export async function getRecentGroupMessages(
 ): Promise<Message[]> {
   const where: Prisma.MessageWhereInput = {
     groupId: BigInt(groupId),
+    sceneKind: 'qq_group',
     ...(beforeMessageId !== undefined ? { messageId: { lt: BigInt(beforeMessageId) } } : {}),
   }
   const rows = await prisma.message.findMany({
@@ -70,16 +81,51 @@ export async function getGroupMessagesAfterRowId(
   return prisma.message.findMany({
     where: {
       groupId: BigInt(groupId),
+      sceneKind: 'qq_group',
       ...(afterRowId !== undefined ? { id: { gt: afterRowId } } : {}),
     },
     orderBy: { id: 'asc' },
   })
 }
 
+export async function getSceneMessagesAfterRowId(
+  sceneKind: MessageSceneKind,
+  sceneExternalId: string | number,
+  afterRowId?: number,
+): Promise<Message[]> {
+  return prisma.message.findMany({
+    where: {
+      sceneKind,
+      sceneExternalId: String(sceneExternalId),
+      ...(afterRowId !== undefined ? { id: { gt: afterRowId } } : {}),
+    },
+    orderBy: { id: 'asc' },
+  })
+}
+
+export async function getRecentSceneMessages(
+  sceneKind: MessageSceneKind,
+  sceneExternalId: string | number,
+  limit: number,
+  beforeMessageId?: number,
+): Promise<Message[]> {
+  const rows = await prisma.message.findMany({
+    where: {
+      sceneKind,
+      sceneExternalId: String(sceneExternalId),
+      ...(beforeMessageId !== undefined ? { messageId: { lt: BigInt(beforeMessageId) } } : {}),
+    },
+    orderBy: { messageId: 'desc' },
+    take: limit,
+  })
+  return rows.reverse()
+}
+
 export async function getLatestGroupMessageRowId(groupId: number): Promise<number | undefined> {
   const row = await prisma.message.findFirst({
     where: {
       groupId: BigInt(groupId),
+      sceneKind: 'qq_group',
     },
     orderBy: { id: 'desc' },
     select: { id: true },
@@ -89,12 +135,25 @@ export async function getLatestGroupMessageRowId(groupId: number): Promise<numbe
 }
 
 export async function getMessageById(groupId: number, messageId: number): Promise<Message | null> {
-  return prisma.message.findUnique({
+  return prisma.message.findFirst({
     where: {
-      groupId_messageId: {
-        groupId: BigInt(groupId),
-        messageId: BigInt(messageId),
-      },
+      sceneKind: 'qq_group',
+      sceneExternalId: String(groupId),
+      messageId: BigInt(messageId),
+    },
+  })
+}
+
+export async function getMessageBySceneMessageId(input: {
+  sceneKind: MessageSceneKind
+  sceneExternalId: string | number
+  messageId: number
+}): Promise<Message | null> {
+  return prisma.message.findFirst({
+    where: {
+      sceneKind: input.sceneKind,
+      sceneExternalId: String(input.sceneExternalId),
+      messageId: BigInt(input.messageId),
     },
   })
 }
@@ -103,6 +162,7 @@ export async function findExistingMessageIds(groupId: number, messageIds: number
   const rows = await prisma.message.findMany({
     where: {
       groupId: BigInt(groupId),
+      sceneKind: 'qq_group',
       messageId: { in: messageIds.map(BigInt) },
     },
     select: { messageId: true },
@@ -155,6 +215,7 @@ function sanitizeJsonValue(value: unknown): Prisma.InputJsonValue | null | undef
 }
 
 export function buildMessageUpsertSql(params: InsertMessageParams): Prisma.Sql {
+  const scene = resolveMessageScene(params)
   const mediaReferenceIds = params.mediaReferenceIds ?? []
   const searchText = segmentsToPlainText(params.content)
   const initialResolvedText = mediaReferenceIds.length > 0 ? null : searchText
@@ -183,6 +244,8 @@ export function buildMessageUpsertSql(params: InsertMessageParams): Prisma.Sql {
 
   return Prisma.sql`
     INSERT INTO "messages" (
+      "scene_kind",
+      "scene_external_id",
       "group_id",
       "group_name",
       "media_reference_ids",
@@ -198,6 +261,8 @@ export function buildMessageUpsertSql(params: InsertMessageParams): Prisma.Sql {
       "sent_at",
       "created_at"
     ) VALUES (
+      ${scene.sceneKind},
+      ${scene.sceneExternalId},
       ${BigInt(params.groupId)},
       ${params.groupName ?? null},
       ${mediaReferenceIds},
@@ -213,7 +278,7 @@ export function buildMessageUpsertSql(params: InsertMessageParams): Prisma.Sql {
       ${timestampSql(params.sentAt, Prisma.sql`NULL`)},
       ${timestampSql(params.sentAt, Prisma.sql`CURRENT_TIMESTAMP`)}
     )
-    ON CONFLICT ("group_id", "message_id") DO UPDATE SET
+    ON CONFLICT ("scene_kind", "scene_external_id", "message_id") DO UPDATE SET
     ${Prisma.join(updates, ', ')}
   `
 }

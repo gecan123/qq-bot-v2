@@ -142,14 +142,19 @@ function formatWebSearchResults(
   return truncate(JSON.stringify(payload, null, 2), WEB_SEARCH_MAX_OUTPUT_CHARS)
 }
 
-export function createAgentTools(groupId: number): AgentTools {
-  const declarations: AgentToolDeclaration[] = [dbSchemaDecl, dbReadDecl, finalAnswerDecl]
+export function createAgentTools(groupId: number, options: { dbToolsEnabled?: boolean } = {}): AgentTools {
+  const dbToolsEnabled = options.dbToolsEnabled ?? true
+  const declarations: AgentToolDeclaration[] = dbToolsEnabled
+    ? [dbSchemaDecl, dbReadDecl, finalAnswerDecl]
+    : [finalAnswerDecl]
   if (config.tavily?.apiKey) declarations.push(webSearchDecl)
 
-  const executors: Record<string, ToolExecutor> = {
-    db_schema: async () => JSON.stringify(buildDbSchemaPayload(), null, 2),
+  const executors: Record<string, ToolExecutor> = {}
 
-    db_read: async (args) => {
+  if (dbToolsEnabled) {
+    executors.db_schema = async () => JSON.stringify(buildDbSchemaPayload(), null, 2)
+
+    executors.db_read = async (args) => {
       const parsed = dbReadDecl.inputSchema.parse(args) as {
         sql: string
         params?: Record<string, unknown>
@@ -163,9 +168,11 @@ export function createAgentTools(groupId: number): AgentTools {
         maxOutputChars: DB_READ_MAX_OUTPUT_CHARS,
       })
       return JSON.stringify(result, null, 2)
-    },
+    }
+  }
 
-    web_search: async (args) => {
+  if (config.tavily?.apiKey) {
+    executors.web_search = async (args) => {
       const parsed = webSearchDecl.inputSchema.parse(args) as { query: string; maxResults?: number }
       const apiKey = config.tavily?.apiKey
       if (!apiKey) {
@@ -182,7 +189,7 @@ export function createAgentTools(groupId: number): AgentTools {
         const message = err instanceof Error ? err.message : String(err)
         return JSON.stringify({ error: `搜索失败: ${message}` })
       }
-    },
+    }
   }
 
   return { declarations, executors }

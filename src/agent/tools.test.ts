@@ -75,4 +75,15 @@ describe('createAgentTools', () => {
     assert.equal(mediaTable.columns.includes('description_raw'), true)
     assert.equal(mediaTable.columns.includes('description'), false)
   })
+
+  test('disabling DB tools removes both declarations and executors', () => {
+    const { declarations, executors } = createAgentTools(1, { dbToolsEnabled: false })
+    const names = declarations.map((d) => d.name)
+
+    assert.equal(names.includes('db_schema'), false)
+    assert.equal(names.includes('db_read'), false)
+    assert.equal(typeof executors.db_schema, 'undefined')
+    assert.equal(typeof executors.db_read, 'undefined')
+    assert.equal(names.includes('final_answer'), true)
+  })
 })

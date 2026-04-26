@@ -36,6 +36,10 @@ function getGroupId(payload: Record<string, unknown>): number | null {
   return getNumber(getNestedRecord(payload, 'target') ?? {}, 'groupId') ?? getNumber(payload, 'groupId')
 }
 
+function getUserId(payload: Record<string, unknown>): number | null {
+  return getNumber(getNestedRecord(payload, 'target') ?? {}, 'userId') ?? getNumber(payload, 'userId')
+}
+
 function getReplyToMessageId(payload: Record<string, unknown>): number | null {
   const deliveryPayload = getNestedRecord(payload, 'deliveryPayload')
   return getNumber(deliveryPayload ?? {}, 'replyToMessageId') ?? getNumber(deliveryPayload ?? {}, 'messageId') ?? getNumber(payload, 'messageId')
@@ -70,18 +74,23 @@ export function createActionExecutor(options: ActionExecutorOptions = {}) {
         return { intent, actionRecord, deliveryResult: 'failed' }
       }
 
-      const groupId = getGroupId(payload)
       const text = getText(payload)
-      if (groupId == null || !text) {
+      const groupId = getGroupId(payload)
+      const userId = getUserId(payload)
+      if (!text || (intent.actionType === 'send_private_message' ? userId == null : groupId == null)) {
         await store.markDeliveryState?.(actionRecord.id, 'failed', { reason: 'invalid payload' })
         return { intent, actionRecord, deliveryResult: 'failed' }
       }
 
       await store.markDeliveryState?.(actionRecord.id, 'sending')
       const messageId = isReplyAction(intent.actionType) ? getReplyToMessageId(payload) : null
-      const sendResult = messageId != null
-        ? await options.sender.replyToMessage({ groupId, replyToMessageId: messageId, text })
-        : await options.sender.sendMessage({ groupId, text })
+      const sendResult = intent.actionType === 'send_private_message'
+        ? options.sender.sendPrivateMessage
+          ? await options.sender.sendPrivateMessage({ userId: userId ?? 0, text })
+          : { success: false, attempts: 0 }
+        : messageId != null
+          ? await options.sender.replyToMessage({ groupId: groupId ?? 0, replyToMessageId: messageId, text })
+          : await options.sender.sendMessage({ groupId: groupId ?? 0, text })
 
       if (!sendResult.success) {
         await store.markDeliveryState?.(actionRecord.id, 'failed', { error: 'send failed' })

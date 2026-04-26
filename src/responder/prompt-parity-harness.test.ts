@@ -11,6 +11,8 @@ import type { ReplyRecord } from '../conversation/reply-record-store.js'
 function makeMessage(overrides: Partial<Message> & Pick<Message, 'id'>): Message {
   return {
     id: overrides.id,
+    sceneKind: overrides.sceneKind ?? 'qq_group',
+    sceneExternalId: overrides.sceneExternalId ?? '1',
     groupId: overrides.groupId ?? BigInt(1),
     groupName: overrides.groupName ?? '测试群',
     mediaReferenceIds: overrides.mediaReferenceIds ?? [],

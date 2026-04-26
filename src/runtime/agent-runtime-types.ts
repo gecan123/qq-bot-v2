@@ -63,6 +63,11 @@ export interface Actor {
 export interface ReferencePayload extends Record<string, Prisma.JsonValue | undefined> {
   messageRowId?: number
   messageId?: number
+  feedSourceId?: string
+  feedItemId?: string
+  contentHash?: string
+  readSessionId?: string
+  actionRecordId?: string
   ingestSource?: string
   source?: string
   idempotencyKey?: string
@@ -166,4 +171,8 @@ export function makeSceneId(kind: SceneKind, externalId: string | number): Scene
 
 export function makeQqGroupSceneId(external: number | string): SceneId {
   return makeSceneId('qq_group', external)
+}
+
+export function makeQqPrivateSceneId(external: number | string): SceneId {
+  return makeSceneId('qq_private', external)
 }

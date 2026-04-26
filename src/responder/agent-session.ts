@@ -6,6 +6,7 @@ import type { AgentLoopResult, AgentMessage } from '../agent/types.js'
 
 export interface AgentSessionParams {
   groupId: number
+  dbToolsEnabled?: boolean
   persona: string
   instruction: string
   initialHistory: AgentMessage[]
@@ -26,7 +27,9 @@ export function buildSystemPrompt(persona: string, instruction: string): string 
 }
 
 export async function runAgentSession(params: AgentSessionParams): Promise<AgentLoopResult> {
-  const { declarations, executors } = createAgentTools(params.groupId)
+  const { declarations, executors } = createAgentTools(params.groupId, {
+    dbToolsEnabled: params.dbToolsEnabled,
+  })
   const chatFn = withLlmTrace(createAgentChatFn({ reasoningEffort: 'medium' }), params.groupId)
   const systemPrompt = buildSystemPrompt(params.persona, params.instruction)
 

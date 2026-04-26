@@ -113,4 +113,56 @@ describe('action record contract', () => {
 
     assert.equal(result.deliveryResult, 'dry_run')
   })
+
+  it('routes send_private_message intents to private sender without group send', async () => {
+    const states: string[] = []
+    const result = await createActionExecutor({
+      sender: {
+        replyToMessage: async () => {
+          throw new Error('replyToMessage should not be called for send_private_message')
+        },
+        sendMessage: async () => {
+          throw new Error('sendMessage should not be called for send_private_message')
+        },
+        sendPrivateMessage: async (params) => {
+          assert.equal(params.userId, 20)
+          assert.equal(params.text, 'private ok')
+          return { success: true, attempts: 1, providerMessageId: 9001 }
+        },
+      },
+      actionStore: {
+        createOrReuseActionRecord: async (input) => ({
+          id: 'record-3',
+          actionIntentId: input.actionIntentId,
+          actionType: input.actionType,
+          targetSceneId: input.targetSceneId,
+          deliveryState: input.deliveryState ?? 'pending',
+          idempotencyKey: input.idempotencyKey,
+          resultPayload: input.resultPayload ?? null,
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+        }),
+        markDeliveryState: async (_id, state) => {
+          states.push(state)
+        },
+      },
+    }).execute({
+      id: 'intent-3',
+      opportunityId: 'opportunity-3',
+      decisionId: 'decision-3',
+      actionType: 'send_private_message',
+      targetSceneId: 'qq_private:20',
+      payload: {
+        target: { userId: 20, sceneId: 'qq_private:20' },
+        proposedEffect: { type: 'send_private_message', text: 'private ok' },
+      },
+      dryRun: false,
+      riskLevel: 'L2',
+      status: 'approved',
+      idempotencyKey: 'intent-3',
+    } satisfies ActionIntent)
+
+    assert.equal(result.deliveryResult, 'acked')
+    assert.deepEqual(states, ['sending', 'acked'])
+  })
 })

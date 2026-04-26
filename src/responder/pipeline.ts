@@ -2,6 +2,9 @@ import type { ParsedSegment } from '../types/message-segments.js'
 
 export interface IncomingMessage {
   groupId: number
+  sceneKind?: 'qq_group' | 'qq_private'
+  sceneExternalId?: string
+  sceneId?: string
   groupName?: string
   messageId: number
   senderId: number

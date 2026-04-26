@@ -9,6 +9,8 @@ datasource db {
 
 model Message {
   id                  Int      @id @default(autoincrement())
+  sceneKind           String   @default("qq_group") @map("scene_kind") @db.VarChar(32)
+  sceneExternalId     String   @default("") @map("scene_external_id") @db.VarChar(191)
   groupId             BigInt   @map("group_id")
   groupName           String?  @map("group_name") @db.VarChar(255)
   mediaReferenceIds   String[] @default([]) @map("media_reference_ids")
@@ -24,8 +26,9 @@ model Message {
   sentAt              DateTime? @map("sent_at") @db.Timestamptz(3)
   createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  @@unique([groupId, messageId])
+  @@unique([sceneKind, sceneExternalId, messageId])
   @@index([groupId, createdAt(sort: Desc)])
+  @@index([sceneKind, sceneExternalId, createdAt(sort: Desc)])
   @@map("messages")
 }
 
@@ -256,4 +259,88 @@ model MemoryProposal {
   @@unique([agentId, idempotencyKey])
   @@index([agentId, status, createdAt])
   @@map("memory_proposals")
+}
+
+model FeedSource {
+  id          String   @id @db.VarChar(191)
+  sceneId     String   @map("scene_id") @db.VarChar(191)
+  kind        String   @db.VarChar(32)
+  externalId  String   @map("external_id") @db.VarChar(191)
+  displayName String?  @map("display_name") @db.VarChar(255)
+  config      Json?
+  status      String   @default("active") @db.VarChar(32)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([kind, externalId])
+  @@index([sceneId, status])
+  @@map("feed_sources")
+}
+
+model FeedItem {
+  id           String    @id @db.VarChar(191)
+  feedSourceId String    @map("feed_source_id") @db.VarChar(191)
+  externalId   String    @map("external_id") @db.VarChar(191)
+  url          String?   @db.Text
+  title        String    @db.Text
+  author       String?   @db.VarChar(255)
+  rawContent   String?   @map("raw_content") @db.Text
+  contentHash  String?   @map("content_hash") @db.VarChar(64)
+  publishedAt  DateTime? @map("published_at") @db.Timestamptz(3)
+  seenAt       DateTime  @default(now()) @map("seen_at") @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([feedSourceId, externalId])
+  @@index([feedSourceId, seenAt(sort: Desc)])
+  @@map("feed_items")
+}
+
+model ReadSession {
+  id              String    @id @db.VarChar(191)
+  feedItemId      String    @map("feed_item_id") @db.VarChar(191)
+  contentHash     String?   @map("content_hash") @db.VarChar(64)
+  opportunityId   String    @map("opportunity_id") @db.VarChar(191)
+  actionRecordId  String?   @map("action_record_id") @db.VarChar(191)
+  selectionReason String    @map("selection_reason") @db.Text
+  status          String    @default("completed") @db.VarChar(32)
+  startedAt       DateTime  @default(now()) @map("started_at") @db.Timestamptz(3)
+  completedAt     DateTime? @map("completed_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([feedItemId, createdAt])
+  @@index([feedItemId, contentHash, createdAt])
+  @@index([opportunityId])
+  @@map("read_sessions")
+}
+
+model SourceSummary {
+  id            String   @id @db.VarChar(191)
+  readSessionId String   @map("read_session_id") @db.VarChar(191)
+  summary       String   @db.Text
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([readSessionId])
+  @@map("source_summaries")
+}
+
+model ThoughtArtifact {
+  id            String   @id @db.VarChar(191)
+  readSessionId String   @map("read_session_id") @db.VarChar(191)
+  thought       String   @db.Text
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([readSessionId])
+  @@map("thought_artifacts")
+}
+
+model RationaleArtifact {
+  id            String   @id @db.VarChar(191)
+  readSessionId String   @map("read_session_id") @db.VarChar(191)
+  rationale     String   @db.Text
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([readSessionId])
+  @@map("rationale_artifacts")
 }

@@ -98,4 +98,22 @@ describe('insertMessage update payload', () => {
 
     assert.match(sql.sql, /RETURNING id, created_at AS "createdAt", sent_at AS "sentAt"/)
   })
+
+  test('builds scene-aware upsert for private messages without a second ledger', () => {
+    const sql = buildMessageUpsertSql({
+      sceneKind: 'qq_private',
+      sceneExternalId: 20,
+      groupId: 20,
+      messageId: 20002,
+      senderId: 20,
+      senderNickname: 'Alice',
+      content: [{ type: 'text', content: 'private hello' }],
+    })
+
+    assert.match(sql.sql, /"scene_kind"/)
+    assert.match(sql.sql, /"scene_external_id"/)
+    assert.match(sql.sql, /ON CONFLICT \("scene_kind", "scene_external_id", "message_id"\)/)
+    assert.ok(sql.values.includes('qq_private'))
+    assert.ok(sql.values.includes('20'))
+  })
 })

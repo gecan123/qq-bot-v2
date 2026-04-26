@@ -30,11 +30,15 @@ async function agentReply(
 ): Promise<string | null> {
   const mediaDeadlineAt = Date.now() + 15_000
   const { contextText } = await buildContext(msg, contextLimit, { mediaDeadlineAt })
-  const triggerText = await extractResolvedTriggerText(msg.groupId, msg.messageId, msg.segments, { mediaDeadlineAt })
+  const triggerText = await extractResolvedTriggerText(msg.groupId, msg.messageId, msg.segments, { mediaDeadlineAt }, {
+    sceneKind: msg.sceneKind,
+    sceneExternalId: msg.sceneExternalId,
+  })
   const initialHistory = buildReplyHistory(contextText, triggerText)
 
   const result = await runAgentSession({
     groupId: msg.groupId,
+    dbToolsEnabled: msg.sceneKind !== 'qq_private',
     persona,
     instruction: REPLY_INSTRUCTION,
     initialHistory,
@@ -76,11 +80,15 @@ async function agentReplyWithTermination(
 ): Promise<ProactiveCandidateReplyResult> {
   const mediaDeadlineAt = Date.now() + 15_000
   const { contextText } = await buildContext(msg, contextLimit, { mediaDeadlineAt })
-  const triggerText = await extractResolvedTriggerText(msg.groupId, msg.messageId, msg.segments, { mediaDeadlineAt })
+  const triggerText = await extractResolvedTriggerText(msg.groupId, msg.messageId, msg.segments, { mediaDeadlineAt }, {
+    sceneKind: msg.sceneKind,
+    sceneExternalId: msg.sceneExternalId,
+  })
   const initialHistory = buildReplyHistory(contextText, triggerText)
 
   const result = await runAgentSession({
     groupId: msg.groupId,
+    dbToolsEnabled: msg.sceneKind !== 'qq_private',
     persona,
     instruction: REPLY_INSTRUCTION,
     initialHistory,

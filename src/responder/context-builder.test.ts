@@ -41,6 +41,8 @@ describe('Phase 0 responder context contract', () => {
   test('context reads proposedEffect text from runtime action records', async () => {
     const message: Message = {
       id: 1,
+      sceneKind: 'qq_group',
+      sceneExternalId: '1',
       groupId: BigInt(1),
       groupName: '测试群',
       mediaReferenceIds: [],
@@ -100,5 +102,55 @@ describe('Phase 0 responder context contract', () => {
     })
 
     assert.match(result.contextText, /\[BOT\] 机器人回复/)
+  })
+
+  test('private context state is keyed by scene instead of colliding with same-number group state', async () => {
+    let conversationStateArgs: { groupId: number; senderThreadKey: string } | null = null
+    let recentSceneArgs: { sceneKind: string; sceneExternalId: string; limit: number } | null = null
+    let actionSceneId: string | null = null
+
+    await buildContext({
+      groupId: 20,
+      sceneKind: 'qq_private',
+      sceneExternalId: '20',
+      sceneId: 'qq_private:20',
+      messageId: 2001,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'text', content: '私聊消息' }],
+    } satisfies IncomingMessage, 10, {}, {
+      getConversationState: async (groupId, senderThreadKey) => {
+        conversationStateArgs = { groupId, senderThreadKey }
+        return {
+          id: 1,
+          groupId,
+          senderThreadKey,
+          compactedBase: '',
+          compactedVersion: 1,
+          lastCompactedMessageRowId: undefined,
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+        }
+      },
+      getRecentSceneMessages: async (sceneKind, sceneExternalId, limit) => {
+        recentSceneArgs = { sceneKind, sceneExternalId: String(sceneExternalId), limit }
+        return []
+      },
+      listActionRecords: async (sceneId) => {
+        actionSceneId = sceneId
+        return []
+      },
+    })
+
+    assert.deepEqual(conversationStateArgs, {
+      groupId: 0,
+      senderThreadKey: 'qq_private:20:sender:20',
+    })
+    assert.deepEqual(recentSceneArgs, {
+      sceneKind: 'qq_private',
+      sceneExternalId: '20',
+      limit: 10,
+    })
+    assert.equal(actionSceneId, 'qq_private:20')
   })
 })

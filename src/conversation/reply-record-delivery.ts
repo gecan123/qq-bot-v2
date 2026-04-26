@@ -33,6 +33,12 @@ function isReplyPayload(
   return payload.type === 'reply_to_message'
 }
 
+function isPrivatePayload(
+  payload: ReplyRecord['deliveryPayload'],
+): payload is Extract<ReplyRecord['deliveryPayload'], { type: 'send_private_message' }> {
+  return payload.type === 'send_private_message'
+}
+
 export async function deliverReplyRecord(
   record: ReplyRecord,
   options: ReplyRecordDeliveryDependencies = {},
@@ -51,7 +57,7 @@ export async function deliverReplyRecord(
     create: createReplyAudit,
   }
 
-  const shouldDryRun = isReplyPayload(record.deliveryPayload)
+  const shouldDryRun = isReplyPayload(record.deliveryPayload) || isPrivatePayload(record.deliveryPayload)
     ? (sender.isReplyDryRunEnabled?.() ?? false)
     : (sender.isSendDryRunEnabled?.() ?? false)
 
@@ -101,10 +107,17 @@ export async function deliverReplyRecord(
             mentionUserId: record.deliveryPayload.mentionUserId,
             text: record.text,
           })
-        : await sender.sendMessage({
-            groupId: record.groupId,
-            text: record.text,
-          })
+        : isPrivatePayload(record.deliveryPayload)
+          ? sender.sendPrivateMessage
+            ? await sender.sendPrivateMessage({
+                userId: record.deliveryPayload.userId ?? record.groupId,
+                text: record.text,
+              })
+            : { success: false, attempts: 0 }
+          : await sender.sendMessage({
+              groupId: record.groupId,
+              text: record.text,
+            })
 
       if (!sendResult.success) {
         await replyRecordStore.markFailed(record.id)

@@ -117,4 +117,45 @@ describe('reply record delivery', () => {
     assert.equal(result, 'sent')
     assert.deepEqual(calls, ['send'])
   })
+
+  test('dispatches send_private_message payload through private adapter', async () => {
+    const calls: string[] = []
+
+    const result = await deliverReplyRecord(
+      makeReplyRecord({
+        id: 3,
+        groupId: 20,
+        scopeKey: 'qq_private:20',
+        sourceKind: 'private_message',
+        deliveryPayload: { type: 'send_private_message', userId: 20 },
+        text: '私聊恢复',
+      }),
+      {
+        sender: {
+          isReplyDryRunEnabled: () => false,
+          async replyToMessage() {
+            calls.push('reply')
+            return { success: true, attempts: 1 }
+          },
+          async sendMessage() {
+            calls.push('send')
+            return { success: true, attempts: 1 }
+          },
+          async sendPrivateMessage(params) {
+            calls.push(`private:${params.userId}:${params.text}`)
+            return { success: true, attempts: 1, providerMessageId: 9003 }
+          },
+        },
+        replyRecordStore: {
+          markAcked: async () => {},
+          markSending: async () => {},
+          markSent: async () => {},
+          markFailed: async () => {},
+        },
+      },
+    )
+
+    assert.equal(result, 'sent')
+    assert.deepEqual(calls, ['private:20:私聊恢复'])
+  })
 })

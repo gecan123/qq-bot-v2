@@ -11,6 +11,7 @@ import {
   type ActionType,
   type Decision,
   type DecisionVerdict,
+  type MemoryProposal,
   type OpportunityType,
   type QueueKind,
   type ReferencePayload,
@@ -21,7 +22,18 @@ import {
   type SceneKind,
 } from './agent-runtime-types.js'
 
-const ALLOWED_REFERENCE_KEYS = new Set(['messageRowId', 'messageId', 'ingestSource', 'source', 'idempotencyKey'])
+const ALLOWED_REFERENCE_KEYS = new Set([
+  'messageRowId',
+  'messageId',
+  'feedSourceId',
+  'feedItemId',
+  'contentHash',
+  'readSessionId',
+  'actionRecordId',
+  'ingestSource',
+  'source',
+  'idempotencyKey',
+])
 const FORBIDDEN_REFERENCE_KEYS = new Set([
   'segments',
   'plainText',
@@ -77,7 +89,7 @@ export function mergeRuntimeSessionSnapshot(
     sceneCursors: {
       ...existingCursors,
       ...nextCursors,
-    },
+    } as Prisma.JsonObject,
   }
 }
 
@@ -141,6 +153,23 @@ export function buildMessageReferencePayload(input: {
   }
   if (input.ingestSource) payload.ingestSource = input.ingestSource
   if (input.source) payload.source = input.source
+  assertReferenceOnlyPayload(payload)
+  return payload
+}
+
+export function buildFeedItemReferencePayload(input: {
+  feedSourceId: string
+  feedItemId: string
+  contentHash?: string | null
+  idempotencyKey: string
+}): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    feedSourceId: input.feedSourceId,
+    feedItemId: input.feedItemId,
+    source: 'feed_items',
+    idempotencyKey: input.idempotencyKey,
+  }
+  if (input.contentHash) payload.contentHash = input.contentHash
   assertReferenceOnlyPayload(payload)
   return payload
 }
@@ -437,4 +466,45 @@ export async function listRecoverableActionRecords(sceneIds?: SceneId[]): Promis
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }))
+}
+
+export async function createOrReuseMemoryProposal(input: {
+  agentId?: AgentId
+  sourceRef: Prisma.JsonObject
+  proposalType: string
+  payload: Prisma.JsonObject
+  confidence?: number | null
+  salience?: number | null
+  status?: string
+  idempotencyKey: string
+}): Promise<MemoryProposal> {
+  const agentId = input.agentId ?? MAIN_AGENT_ID
+  const row = await prisma.memoryProposal.upsert({
+    where: { agentId_idempotencyKey: { agentId, idempotencyKey: input.idempotencyKey } },
+    update: {},
+    create: {
+      id: makeId('memory-proposal', `${agentId}:${input.idempotencyKey}`),
+      agentId,
+      sourceRef: input.sourceRef,
+      proposalType: input.proposalType,
+      payload: input.payload,
+      confidence: input.confidence ?? null,
+      salience: input.salience ?? null,
+      status: input.status ?? 'proposed',
+      idempotencyKey: input.idempotencyKey,
+    },
+  })
+  return {
+    id: row.id,
+    agentId: row.agentId as AgentId,
+    sourceRef: asJsonObject(row.sourceRef),
+    proposalType: row.proposalType,
+    payload: asJsonObject(row.payload),
+    confidence: row.confidence,
+    salience: row.salience,
+    status: row.status as MemoryProposal['status'],
+    idempotencyKey: row.idempotencyKey,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }
 }

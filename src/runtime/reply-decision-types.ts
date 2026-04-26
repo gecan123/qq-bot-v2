@@ -2,15 +2,16 @@ import type { ReplyRecord } from '../conversation/reply-record-store.js'
 import type { ActionRecord } from './action-record-store.js'
 import type { ProactiveJudgeAdvice } from './proactive-judge.js'
 
-export type ReplyOpportunitySourceKind = 'mention' | 'ambient_message'
+export type ReplyOpportunitySourceKind = 'mention' | 'ambient_message' | 'private_message'
 export type ReplyCueStrength = 'strong' | 'weak'
-export type ReplyDeliveryMode = 'reply_to_message' | 'send_message' | 'audit_only'
+export type ReplyDeliveryMode = 'reply_to_message' | 'send_message' | 'send_private_message' | 'audit_only'
 
 export interface ReplyOpportunity {
   opportunityId: string
   decisionId?: string
   runtimeKey: string
   groupId: number
+  targetUserId?: number
   sceneId: string
   scopeKey: string
   sourceKind: ReplyOpportunitySourceKind

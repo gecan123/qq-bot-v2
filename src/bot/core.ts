@@ -33,6 +33,20 @@ type FinalizePersistedMessageOptions = {
   ingestSource?: BusinessLogIngestSource
 }
 
+type FinalizePersistedPrivateMessageOptions = {
+  userId: number
+  messageId: number
+  messageRowId: number
+  senderId: number
+  senderNickname: string
+  createdAt: number
+  segments: ParsedSegment[]
+  dispatchReply?: boolean
+  rootRuntime?: RootRuntimeManager
+  persistedCreatedAt: Date
+  ingestSource?: BusinessLogIngestSource
+}
+
 export async function finalizePersistedGroupMessage(
   options: FinalizePersistedMessageOptions,
 ): Promise<void> {
@@ -51,6 +65,30 @@ export async function finalizePersistedGroupMessage(
     },
   }, {
     executeDecisions: options.dispatchMention !== false,
+    ingestSource: options.ingestSource,
+  })
+}
+
+export async function finalizePersistedPrivateMessage(
+  options: FinalizePersistedPrivateMessageOptions,
+): Promise<void> {
+  await options.rootRuntime?.emitRuntimeEvent({
+    eventKind: 'private_message',
+    userId: options.userId,
+    createdAt: options.persistedCreatedAt,
+    message: {
+      sceneKind: 'qq_private',
+      sceneExternalId: String(options.userId),
+      userId: options.userId,
+      messageRowId: options.messageRowId,
+      messageId: options.messageId,
+      senderId: options.senderId,
+      senderNickname: options.senderNickname,
+      segments: options.segments,
+      createdAt: options.persistedCreatedAt,
+    },
+  }, {
+    executeDecisions: options.dispatchReply !== false,
     ingestSource: options.ingestSource,
   })
 }
@@ -121,6 +159,74 @@ async function processMessage(groupId: number, messageId: number, options: Proce
     createdAt: parsed.time * 1000,
     segments: mediaResult.content,
     dispatchMention: options.dispatchMention,
+    ingestSource,
+    rootRuntime: options.rootRuntime,
+    persistedCreatedAt: persistedMessage.sentAt ?? persistedMessage.createdAt,
+  })
+}
+
+async function processPrivateMessage(userId: number, messageId: number, options: ProcessMessageOptions = {}): Promise<void> {
+  const ingestSource = options.ingestSource ?? 'realtime'
+  const dispatchMode: BusinessLogDispatchMode = options.dispatchMention === false ? 'snapshot_only' : 'live'
+  const qqMsg = await napcat.get_msg({ message_id: messageId })
+  const parsed = parseMessage(qqMsg)
+  if (parsed.senderId === config.selfNumber) {
+    ingressLog.debug({ userId, messageId: parsed.messageId, ingestSource }, '忽略 bot 自身私聊回灌消息')
+    return
+  }
+
+  const mediaResult = await persistMediaReferences({
+    content: parsed.content,
+    groupId: userId,
+    messageId: parsed.messageId,
+    senderId: parsed.senderId,
+    napcat,
+  })
+
+  const persistedMessage = await insertMessage({
+    sceneKind: 'qq_private',
+    sceneExternalId: userId,
+    groupId: userId,
+    mediaReferenceIds: mediaResult.mediaReferenceIds,
+    messageId: parsed.messageId,
+    senderId: parsed.senderId,
+    senderNickname: parsed.senderNickname,
+    senderGroupNickname: parsed.senderGroupNickname,
+    content: mediaResult.content,
+    rawContent: qqMsg.message,
+    rawMessage: qqMsg.raw_message,
+    sentAt: parsed.time,
+  })
+
+  ingressLog.info(
+    {
+      direction: 'inbound',
+      actor: 'member',
+      category: 'private_message',
+      flow: 'private_message_ingress',
+      ingestSource,
+      dispatchMode,
+      sideEffect: 'db_write',
+      userId,
+      messageId: parsed.messageId,
+      messageRowId: persistedMessage.id,
+      senderId: parsed.senderId,
+      senderNickname: parsed.senderNickname,
+      ...summarizeSegments(mediaResult.content),
+      mediaReferences: mediaResult.mediaReferenceIds.length,
+    },
+    '私聊消息已入库',
+  )
+
+  await finalizePersistedPrivateMessage({
+    userId,
+    messageId: parsed.messageId,
+    messageRowId: persistedMessage.id,
+    senderId: parsed.senderId,
+    senderNickname: parsed.senderNickname,
+    createdAt: parsed.time * 1000,
+    segments: mediaResult.content,
+    dispatchReply: options.dispatchMention,
     ingestSource,
     rootRuntime: options.rootRuntime,
     persistedCreatedAt: persistedMessage.sentAt ?? persistedMessage.createdAt,
@@ -244,6 +350,18 @@ export async function startBot(options: StartBotOptions = {}): Promise<void> {
       })
     } catch (error) {
       ingressLog.error({ error, group: context.group_id, msgId: context.message_id, ingestSource: 'realtime' }, '处理群消息失败')
+    }
+  })
+
+  napcat.on('message.private', async (context) => {
+    try {
+      await processPrivateMessage(context.user_id, context.message_id, {
+        dispatchMention: true,
+        ingestSource: 'realtime',
+        rootRuntime: options.rootRuntime,
+      })
+    } catch (error) {
+      ingressLog.error({ error, userId: context.user_id, msgId: context.message_id, ingestSource: 'realtime' }, '处理私聊消息失败')
     }
   })
 

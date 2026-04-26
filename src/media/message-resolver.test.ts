@@ -11,6 +11,8 @@ const originalEnqueueAndWait = jobQueue.enqueueAndWait
 function makeMessage(content: unknown): Message {
   return {
     id: 1,
+    sceneKind: 'qq_group',
+    sceneExternalId: '1',
     groupId: BigInt(1),
     groupName: '测试群',
     mediaReferenceIds: ['42'],

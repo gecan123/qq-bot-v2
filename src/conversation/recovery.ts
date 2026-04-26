@@ -17,6 +17,7 @@ export interface ConversationRecoveryResult {
 
 export interface RecoverConversationStartupOptions {
   groupIds: number[]
+  includePrivateScenes?: boolean
   sender?: MessageSender
   actionRecordStore?: {
     listRecoverable: typeof listRecoverableActionRecords
@@ -49,6 +50,17 @@ function getGroupId(
   return getNumber(getRecord(resultPayload, 'target') ?? {}, 'groupId') ?? getNumber(deliveryPayload, 'groupId')
 }
 
+function getUserId(
+  resultPayload: Record<string, unknown>,
+  deliveryPayload: Record<string, unknown>,
+): number | null {
+  return getNumber(getRecord(resultPayload, 'target') ?? {}, 'userId') ?? getNumber(deliveryPayload, 'userId')
+}
+
+function isPrivateSceneId(sceneId: string): boolean {
+  return sceneId.startsWith('qq_private:')
+}
+
 async function recoverSendableActionRecord(input: {
   actionRecord: ActionRecord
   sender: MessageSender
@@ -57,8 +69,7 @@ async function recoverSendableActionRecord(input: {
   const resultPayload = input.actionRecord.resultPayload ?? {}
   const deliveryPayload = getDeliveryPayload(resultPayload)
   const text = getActionRecordText(input.actionRecord)
-  const groupId = deliveryPayload ? getGroupId(resultPayload, deliveryPayload) : null
-  if (!deliveryPayload || !text || groupId == null) {
+  if (!deliveryPayload || !text) {
     await input.markDeliveryState(input.actionRecord.id, 'failed', {
       ...resultPayload,
       recoveryError: 'invalid action result payload',
@@ -68,13 +79,51 @@ async function recoverSendableActionRecord(input: {
 
   await input.markDeliveryState(input.actionRecord.id, 'sending', resultPayload)
   const deliveryType = deliveryPayload.type
-  if (deliveryType !== 'reply_to_message' && deliveryType !== 'send_message') {
+  if (deliveryType !== 'reply_to_message' && deliveryType !== 'send_message' && deliveryType !== 'send_private_message') {
     await input.markDeliveryState(input.actionRecord.id, 'failed', {
       ...resultPayload,
       recoveryError: 'unsupported delivery type',
     })
     return false
   }
+
+  if (deliveryType === 'send_private_message') {
+    const userId = getUserId(resultPayload, deliveryPayload)
+    if (userId == null || !input.sender.sendPrivateMessage) {
+      await input.markDeliveryState(input.actionRecord.id, 'failed', {
+        ...resultPayload,
+        recoveryError: userId == null ? 'missing private target' : 'missing private sender',
+      })
+      return false
+    }
+
+    const sendResult = await input.sender.sendPrivateMessage({ userId, text })
+    if (!sendResult.success) {
+      await input.markDeliveryState(input.actionRecord.id, 'failed', {
+        ...resultPayload,
+        recoveryError: 'send failed',
+      })
+      return false
+    }
+
+    await input.markDeliveryState(input.actionRecord.id, 'sent', {
+      ...resultPayload,
+      providerMessageId: sendResult.providerMessageId ?? null,
+      attempts: sendResult.attempts,
+      recoveredAt: new Date().toISOString(),
+    })
+    return true
+  }
+
+  const groupId = getGroupId(resultPayload, deliveryPayload)
+  if (groupId == null) {
+    await input.markDeliveryState(input.actionRecord.id, 'failed', {
+      ...resultPayload,
+      recoveryError: 'missing group target',
+    })
+    return false
+  }
+
   const replyToMessageId = getNumber(deliveryPayload, 'replyToMessageId') ?? getNumber(deliveryPayload, 'messageId')
   if (deliveryType === 'reply_to_message' && replyToMessageId == null) {
     await input.markDeliveryState(input.actionRecord.id, 'failed', {
@@ -118,11 +167,16 @@ export async function recoverConversationStartupState(
     markDeliveryState: markActionRecordDeliveryState,
   }
   const sceneIds = options.groupIds.map((id) => makeQqGroupSceneId(id))
-  const recoverable = await actionRecordStore.listRecoverable(sceneIds)
+  const groupSceneIds = new Set<string>(sceneIds)
+  const recoverable = await actionRecordStore.listRecoverable(options.includePrivateScenes ? undefined : sceneIds)
+  const scopedRecoverable = recoverable.filter((actionRecord) =>
+    groupSceneIds.has(actionRecord.targetSceneId) ||
+    (options.includePrivateScenes === true && isPrivateSceneId(actionRecord.targetSceneId))
+  )
   let recoveredActionRecords = 0
   let failedActionRecords = 0
 
-  for (const actionRecord of recoverable) {
+  for (const actionRecord of scopedRecoverable) {
     if (actionRecord.deliveryState === 'acked') {
       await actionRecordStore.markDeliveryState(actionRecord.id, 'sent')
       recoveredActionRecords++

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { finalizePersistedGroupMessage } from './core.js'
+import { finalizePersistedGroupMessage, finalizePersistedPrivateMessage } from './core.js'
 
 describe('finalizePersistedGroupMessage', () => {
   test('advances root runtime cursor through persisted ingress without pre-dispatch side path', async () => {
@@ -130,5 +130,53 @@ describe('finalizePersistedGroupMessage', () => {
     })
 
     assert.equal(executeDecisions, false)
+  })
+})
+
+describe('finalizePersistedPrivateMessage', () => {
+  test('emits private runtime event with qq_private scene and live decision flag', async () => {
+    let seenEventKind: string | undefined
+    let seenSceneKind: string | undefined
+    let executeDecisions: boolean | undefined
+
+    await finalizePersistedPrivateMessage({
+      userId: 20,
+      messageId: 2001,
+      messageRowId: 30,
+      senderId: 20,
+      senderNickname: '用户20',
+      createdAt: Date.now(),
+      segments: [{ type: 'text', content: '你好' }],
+      persistedCreatedAt: new Date('2026-04-22T00:00:00Z'),
+      rootRuntime: {
+        async restore() {
+          return { restoredCount: 0 }
+        },
+        async emitRuntimeEvent(event, options) {
+          seenEventKind = event.eventKind
+          seenSceneKind = event.message?.sceneKind
+          executeDecisions = options?.executeDecisions
+        },
+        async ingestGroupMessage() {},
+        async primeGroupCursor() {},
+        requeuePendingPassiveMentions() {
+          return 0
+        },
+        async markPassiveReplyDelivered() {},
+        dispatchPassiveMentionIfMentioned() {
+          return false
+        },
+        getSnapshot() {
+          return null
+        },
+        enqueuePassiveMention() {},
+        startPassiveExecution() {},
+        stopPassiveExecution() {},
+      },
+    })
+
+    assert.equal(seenEventKind, 'private_message')
+    assert.equal(seenSceneKind, 'qq_private')
+    assert.equal(executeDecisions, true)
   })
 })

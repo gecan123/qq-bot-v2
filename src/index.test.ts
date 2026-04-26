@@ -52,6 +52,8 @@ describe('replayPersistedRootRuntimeDelta', () => {
         return [
           {
             id: 11,
+            sceneKind: 'qq_group',
+            sceneExternalId: '1',
             groupId: BigInt(1),
             groupName: '测试群',
             mediaReferenceIds: [],
@@ -69,6 +71,8 @@ describe('replayPersistedRootRuntimeDelta', () => {
           },
           {
             id: 12,
+            sceneKind: 'qq_group',
+            sceneExternalId: '1',
             groupId: BigInt(1),
             groupName: '测试群',
             mediaReferenceIds: [],
@@ -175,6 +179,7 @@ describe('recoverStartupAndStartPassiveRuntime', () => {
       rootRuntime,
       recoverConversationStartupStateFn: async (options) => {
         assert.deepEqual(options.groupIds, [1])
+        assert.equal(options.includePrivateScenes, true)
         calls.push('recover:start')
         assert.ok(options.sender)
         calls.push('recover:end')

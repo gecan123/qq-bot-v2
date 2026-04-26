@@ -90,12 +90,88 @@ ${rootRuntime}`, 'runtimeKey: `qq_group:', 'root runtime snapshot must not carry
   test('root runtime durable surfaces are reference-only and ambient uses executor policy', () => {
     const rootRuntime = readProjectFile('src/runtime/root-runtime.ts')
 
-    assertIncludes(rootRuntime, "eventType: 'qq_group_message_received'")
+    assertIncludes(rootRuntime, "'qq_group_message_received'")
     assertIncludes(rootRuntime, 'createOrReuseDecision')
     assertIncludes(rootRuntime, 'ambientExecutor.execute')
     assertIncludes(rootRuntime, "contextSnapshot: { messages: [] }")
     assertExcludes(rootRuntime, 'segmentsToPlainText')
     assertExcludes(rootRuntime, 'content: text')
     assertExcludes(rootRuntime, 'senderNickname:')
+  })
+
+  test('Phase 3 private scene shares runtime/action path without a private ledger', () => {
+    const rootRuntime = readProjectFile('src/runtime/root-runtime.ts')
+    const schema = readProjectFile('prisma/schema.prisma')
+    const core = readProjectFile('src/bot/core.ts')
+    const executor = readProjectFile('src/runtime/reply-executor.ts')
+
+    for (const token of [
+      "'private_message'",
+      "'qq_private_message_received'",
+      "'reply_private_message'",
+      "'send_private_message'",
+      "'L2'",
+      'ambientExecutor.execute(buildPrivateReplyOpportunity',
+    ]) {
+      assertIncludes(rootRuntime, token)
+    }
+    assertIncludes(core, "napcat.on('message.private'")
+    assertIncludes(core, "sceneKind: 'qq_private'")
+    assertIncludes(schema, 'sceneKind')
+    assertIncludes(schema, 'sceneExternalId')
+    assertIncludes(schema, '@@unique([sceneKind, sceneExternalId, messageId])')
+    assertIncludes(executor, 'sendPrivateMessage')
+    assertExcludes(schema, 'model PrivateMessage')
+  })
+
+  test('Phase 4 forum curiosity path is read-only and does not use message sender', () => {
+    const schema = readProjectFile('prisma/schema.prisma')
+    const forumExecutor = readProjectFile('src/curiosity/forum-read-executor.ts')
+
+    for (const token of [
+      'model FeedSource',
+      'model FeedItem',
+      'model ReadSession',
+      'model SourceSummary',
+      'model ThoughtArtifact',
+      'model RationaleArtifact',
+    ]) {
+      assertIncludes(schema, token)
+    }
+
+    for (const token of [
+      "'forum_item_seen'",
+      "'read_forum_post'",
+      "'curiosity'",
+      'forbiddenActions',
+      'reply',
+      'comment',
+      'like',
+      'public_outbound',
+    ]) {
+      assertIncludes(forumExecutor, token)
+    }
+
+    assertExcludes(forumExecutor, 'MessageSender')
+    assertExcludes(forumExecutor, 'sendMessage(')
+    assertExcludes(forumExecutor, 'sendPrivateMessage')
+    assertExcludes(forumExecutor, 'send_group_msg')
+    assertExcludes(forumExecutor, 'send_private_msg')
+    assertExcludes(forumExecutor, 'createOrReuseMemoryProposal')
+    assertExcludes(forumExecutor, 'memoryProposalId')
+  })
+
+  test('durable social barrier records dry-run when reply dry-run is enabled', () => {
+    const rootRuntime = readProjectFile('src/runtime/root-runtime.ts')
+    const index = readProjectFile('src/index.ts')
+
+    assertIncludes(rootRuntime, 'replyDryRunEnabled?: boolean')
+    assertIncludes(rootRuntime, 'const replyDryRunEnabled = options.replyDryRunEnabled === true')
+    assertIncludes(rootRuntime, "verdict: barrierVerdict")
+    assertIncludes(rootRuntime, 'allowedToSend')
+    assertIncludes(rootRuntime, "dispatchMode: allowedToSend ? 'live' : dryRun ? 'dry_run' : 'skipped'")
+    assertIncludes(rootRuntime, "sideEffect: allowedToSend ? 'napcat_send' : dryRun ? 'audit_write' : 'none'")
+    assertIncludes(rootRuntime, 'dryRun: replyDryRunEnabled')
+    assertIncludes(index, 'replyDryRunEnabled: messageSender.isReplyDryRunEnabled?.() ?? config.botReplyDryRun')
   })
 })

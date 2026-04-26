@@ -6,6 +6,8 @@ import { compactConversationIfNeeded } from './compaction.js'
 function makeMessage(id: number, overrides: Partial<Message> = {}): Message {
   return {
     id,
+    sceneKind: 'qq_group',
+    sceneExternalId: '1',
     groupId: BigInt(1),
     groupName: '测试群',
     mediaReferenceIds: [],

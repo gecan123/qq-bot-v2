@@ -366,6 +366,137 @@ describe('reply executor', () => {
     ])
   })
 
+  test('sendable private reply creates L2 action record and uses private sender', async () => {
+    const states: string[] = []
+    let privateSendCalls = 0
+    const sender: MessageSender = {
+      isReplyDryRunEnabled: () => false,
+      isSendDryRunEnabled: () => false,
+      replyToMessage: async () => fail('replyToMessage'),
+      sendMessage: async () => fail('sendMessage'),
+      sendPrivateMessage: async (params) => {
+        privateSendCalls++
+        assert.equal(params.userId, 20)
+        assert.equal(params.text, '私聊收到')
+        return { success: true, providerMessageId: 9002, attempts: 1 }
+      },
+    }
+
+    const executor = createReplyExecutor({
+      sender,
+      buildIncomingMessage: async () => ({
+        groupId: 20,
+        sceneKind: 'qq_private',
+        sceneExternalId: '20',
+        sceneId: 'qq_private:20',
+        messageId: 20042,
+        senderId: 20,
+        senderNickname: '用户20',
+        segments: [{ type: 'text', content: 'ping' }],
+      }),
+      generateReply: async () => '私聊收到',
+      replyRecordStore: {
+        findByReplyIntentId: async () => null,
+        createOrReuse: async (input) => ({
+          id: 2,
+          runtimeKey: input.runtimeKey,
+          groupId: input.groupId,
+          scopeKey: input.scopeKey,
+          replyIntentId: input.replyIntentId,
+          sourceKind: input.sourceKind,
+          triggerMessageRowId: input.triggerMessageRowId,
+          incorporatedMessageRowId: input.incorporatedMessageRowId,
+          deliveryPayload: input.deliveryPayload,
+          text: input.text,
+          executionState: input.executionState ?? 'pending',
+          providerMessageId: null,
+          attemptCount: 0,
+          createdAt: new Date('2026-04-24T00:00:00Z'),
+          updatedAt: new Date('2026-04-24T00:00:00Z'),
+        }),
+        markAcked: async (_id, providerMessageId) => {
+          states.push(`reply:acked:${providerMessageId}`)
+        },
+        markSending: async () => {
+          states.push('reply:sending')
+        },
+        markSent: async () => {
+          states.push('reply:sent')
+        },
+        markFailed: async () => fail('markFailed'),
+      },
+      actionRecordStore: {
+        createOrReuseIntent: async (input) => {
+          assert.equal(input.actionType, 'send_private_message')
+          assert.equal(input.targetSceneId, 'qq_private:20')
+          assert.equal(input.riskLevel, 'L2')
+          return {
+            id: input.id,
+            opportunityId: input.opportunityId,
+            actionType: input.actionType,
+            targetSceneId: input.targetSceneId,
+            payload: input.payload,
+            dryRun: input.dryRun,
+            riskLevel: input.riskLevel ?? 'L2',
+            status: input.status ?? 'approved',
+            idempotencyKey: input.idempotencyKey,
+          }
+        },
+        createOrReuseRecord: async (input) => ({
+          id: input.id,
+          actionIntentId: input.actionIntentId,
+          actionType: input.actionType,
+          targetSceneId: input.targetSceneId,
+          deliveryState: input.deliveryState,
+          idempotencyKey: input.idempotencyKey,
+          resultPayload: input.resultPayload,
+          createdAt: new Date('2026-04-24T00:00:00Z'),
+          updatedAt: new Date('2026-04-24T00:00:00Z'),
+        }),
+        markDeliveryState: async (id, deliveryState, resultPayload) => {
+          states.push(`action:${deliveryState}`)
+          return {
+            id,
+            actionIntentId: 'private-intent-42',
+            actionType: 'send_private_message',
+            targetSceneId: 'qq_private:20',
+            deliveryState,
+            idempotencyKey: 'private-intent-42',
+            resultPayload: resultPayload ?? null,
+            createdAt: new Date('2026-04-24T00:00:00Z'),
+            updatedAt: new Date('2026-04-24T00:00:00Z'),
+          }
+        },
+      },
+    })
+
+    const result = await executor.execute(ambientOpportunity({
+      opportunityId: 'qq_private:20:message:42:private_reply',
+      runtimeKey: 'agent:main',
+      groupId: 20,
+      targetUserId: 20,
+      sceneId: 'qq_private:20',
+      scopeKey: 'qq_private:20',
+      sourceKind: 'private_message',
+      cueStrength: 'strong',
+      mustReplyOverride: true,
+      replyProbability: 1,
+      anchorMessageRowId: 42,
+      deliveryMode: 'send_private_message',
+      dryRun: false,
+    }))
+
+    assert.equal(result.deliveryResult, 'sent')
+    assert.equal(privateSendCalls, 1)
+    assert.deepEqual(states, [
+      'action:sending',
+      'reply:sending',
+      'action:sent',
+      'reply:acked:9002',
+      'reply:sent',
+    ])
+  })
+
   test('unsupported sendable generation fails closed before creating reply record', async () => {
     let findCalls = 0
     let generateCalls = 0

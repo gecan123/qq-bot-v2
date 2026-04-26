@@ -15,6 +15,7 @@ import {
 import {
   MAIN_AGENT_ID,
   makeQqGroupSceneId,
+  makeQqPrivateSceneId,
   type ActionType,
   type ReferencePayload,
   type SceneId,
@@ -22,21 +23,37 @@ import {
 import type { GroupConversationBatch } from '../conversation/types.js'
 import type { ReplyExecutionResult, ReplyOpportunity } from './reply-decision-types.js'
 
-export type RuntimeEventKind = 'group_message' | 'scheduler_tick' | 'manual_wake'
+export type RuntimeEventKind = 'group_message' | 'private_message' | 'scheduler_tick' | 'manual_wake'
 const RUNTIME_POLICY_VERSION = 'runtime-os.phase1.v1'
 
 export interface PersistedGroupMessageIngress {
   [key: string]: unknown
+  sceneKind?: 'qq_group'
   messageRowId: number
   messageId: number
+  groupId: number
+  senderId: number
   segments: ParsedSegment[]
 }
+
+export interface PersistedPrivateMessageIngress {
+  [key: string]: unknown
+  sceneKind: 'qq_private'
+  sceneExternalId?: string
+  messageRowId: number
+  messageId: number
+  userId: number
+  senderId: number
+  segments: ParsedSegment[]
+}
+
+export type PersistedSocialMessageIngress = PersistedGroupMessageIngress | PersistedPrivateMessageIngress
 
 export interface RuntimeEvent {
   [key: string]: unknown
   eventKind?: RuntimeEventKind
   createdAt: Date
-  message?: PersistedGroupMessageIngress
+  message?: PersistedSocialMessageIngress
 }
 
 export interface PersistedGroupMessageIngressOptions {
@@ -50,6 +67,7 @@ export interface RootRuntimeManager {
   restore(groups: number[]): Promise<{ restoredCount: number }>
   emitRuntimeEvent(event: RuntimeEvent, options?: RuntimeEventOptions): Promise<void>
   ingestGroupMessage(input: PersistedGroupMessageIngress, options?: PersistedGroupMessageIngressOptions): Promise<void>
+  ingestPrivateMessage?(input: PersistedPrivateMessageIngress, options?: PersistedGroupMessageIngressOptions): Promise<void>
   getSnapshot(group: number): { lastObservedMessageRowId?: number; [key: string]: unknown } | null
   primeGroupCursor(input: Record<string, unknown>): Promise<void>
   requeuePendingPassiveMentions(groups?: number[]): number
@@ -67,6 +85,7 @@ export interface RootRuntimeManagerOptions {
   passiveWorker?: (batch: GroupConversationBatch) => Promise<any> | any
   ambientExecutor?: { execute(opportunity: ReplyOpportunity): Promise<ReplyExecutionResult> }
   ambientReplyBaseProbability?: number
+  replyDryRunEnabled?: boolean
 }
 
 const snapshots = new Map<SceneId, Record<string, unknown>>()
@@ -90,9 +109,9 @@ function asDate(value: unknown, fallback: Date): Date {
   return value instanceof Date ? value : fallback
 }
 
-function asMessage(input: Record<string, unknown>): PersistedGroupMessageIngress | null {
+function asMessage(input: Record<string, unknown>): PersistedSocialMessageIngress | null {
   const message = input.message
-  if (message && typeof message === 'object') return message as PersistedGroupMessageIngress
+  if (message && typeof message === 'object') return message as PersistedSocialMessageIngress
   return null
 }
 
@@ -117,6 +136,7 @@ function buildReferencePayload(input: {
 
 function buildBarrierPayload(input: {
   sceneId: SceneId
+  targetUserId?: number
   messageRowId: number
   messageId: number
   opportunityType: string
@@ -131,6 +151,7 @@ function buildBarrierPayload(input: {
     },
     target: {
       sceneId: input.sceneId,
+      userId: input.targetUserId,
     },
     opportunityType: input.opportunityType,
     actionType: input.actionType,
@@ -140,6 +161,7 @@ function buildBarrierPayload(input: {
 
 function buildActionIntentPayload(input: {
   sceneId: SceneId
+  targetUserId?: number
   messageRowId: number
   messageId: number
   decisionId: string
@@ -155,6 +177,7 @@ function buildActionIntentPayload(input: {
     },
     target: {
       sceneId: input.sceneId,
+      userId: input.targetUserId,
     },
     decisionId: input.decisionId,
     proposedEffect: {
@@ -163,6 +186,10 @@ function buildActionIntentPayload(input: {
     },
     dryRun: input.dryRun,
   }
+}
+
+function isPrivateMessageIngress(input: PersistedSocialMessageIngress): input is PersistedPrivateMessageIngress {
+  return input.sceneKind === 'qq_private'
 }
 
 function buildAmbientReplyOpportunity(input: {
@@ -199,59 +226,115 @@ function buildAmbientReplyOpportunity(input: {
   }
 }
 
+function buildPrivateReplyOpportunity(input: {
+  sceneId: SceneId
+  userId: number
+  messageRowId: number
+  messageId: number
+  senderId: number
+  opportunityId: string
+  decisionId: string
+  dryRun: boolean
+  createdAt: Date
+}): ReplyOpportunity {
+  return {
+    opportunityId: input.opportunityId,
+    decisionId: input.decisionId,
+    runtimeKey: MAIN_AGENT_ID,
+    groupId: input.userId,
+    targetUserId: input.userId,
+    sceneId: input.sceneId,
+    scopeKey: input.sceneId,
+    sourceKind: 'private_message',
+    cueStrength: 'strong',
+    mustReplyOverride: true,
+    replyProbability: 1,
+    anchorMessageRowId: input.messageRowId,
+    triggerMessageRowId: input.messageRowId,
+    triggerMessageId: input.messageId,
+    triggerSenderId: input.senderId,
+    incorporatedMessageRowId: input.messageRowId,
+    incorporatedMessageId: input.messageId,
+    deliveryMode: 'send_private_message',
+    dryRun: input.dryRun,
+    reason: 'direct QQ private message is an L2 private reply opportunity',
+    createdAt: input.createdAt,
+  }
+}
+
 export function createRootRuntimeManager(options: RootRuntimeManagerOptions): RootRuntimeManager {
   const now = options.now ?? (() => new Date())
 
-  async function materializeMessage(input: PersistedGroupMessageIngress, runtimeOptions: PersistedGroupMessageIngressOptions = {}) {
-    const group = asNumber(input['groupId'])
+  async function materializeMessage(input: PersistedSocialMessageIngress, runtimeOptions: PersistedGroupMessageIngressOptions = {}) {
+    const isPrivate = isPrivateMessageIngress(input)
+    const group = isPrivate ? asNumber(input.userId) : asNumber(input['groupId'])
+    const targetUserId = isPrivate ? asNumber(input.userId) : undefined
     const messageRow = asNumber(input['messageRowId'])
     const message = asNumber(input['messageId'])
     const createdAt = asDate(input['createdAt'], now())
     const source = runtimeOptions.ingestSource ?? 'realtime'
-    const sceneId = makeQqGroupSceneId(group)
+    const sceneId = isPrivate
+      ? makeQqPrivateSceneId(input.sceneExternalId ?? targetUserId ?? group)
+      : makeQqGroupSceneId(group)
     const idempotencyKey = `message:${messageRow}`
     const referencePayload = buildReferencePayload({ messageRow, message, source, idempotencyKey })
 
     await getOrCreateMainAgentRuntime()
-    await getOrCreateScene({ kind: 'qq_group', externalId: group })
+    await getOrCreateScene({
+      kind: isPrivate ? 'qq_private' : 'qq_group',
+      externalId: isPrivate ? input.sceneExternalId ?? targetUserId ?? group : group,
+    })
     const runtimeEvent = await createOrReuseRuntimeEvent({
       sceneId,
-      eventType: 'qq_group_message_received',
+      eventType: isPrivate ? 'qq_private_message_received' : 'qq_group_message_received',
       payload: referencePayload,
       occurredAt: createdAt,
       idempotencyKey,
     })
 
-    const mentioned = isMentionedSelf(input.segments, options.selfNumber)
-    const opportunityType = mentioned ? 'reply_to_mention' : 'proactive_candidate'
+    const mentioned = !isPrivate && isMentionedSelf(input.segments, options.selfNumber)
+    const opportunityType = isPrivate ? 'reply_private_message' : mentioned ? 'reply_to_mention' : 'proactive_candidate'
     const opportunity = await createOrReuseOpportunity({
       sceneId,
       runtimeEventId: runtimeEvent.id,
-      queueKind: mentioned ? 'obligation' : 'social',
+      queueKind: isPrivate || mentioned ? 'obligation' : 'social',
       opportunityType,
-      priority: mentioned ? 100 : 1,
+      priority: isPrivate ? 90 : mentioned ? 100 : 1,
       payload: referencePayload,
       status: 'pending',
-      idempotencyKey: `${idempotencyKey}:${mentioned ? 'reply' : 'ambient'}`,
+      idempotencyKey: `${idempotencyKey}:${isPrivate ? 'private_reply' : mentioned ? 'reply' : 'ambient'}`,
     })
 
     const shouldExecuteMention = mentioned && runtimeOptions.executeDecisions !== false && Boolean(options.passiveWorker)
-    const actionType: ActionType = mentioned ? 'reply_to_message' : 'send_group_message'
-    const dryRun = !mentioned || !shouldExecuteMention
+    const shouldExecutePrivate = isPrivate && runtimeOptions.executeDecisions !== false && Boolean(options.ambientExecutor)
+    const actionType: ActionType = isPrivate ? 'send_private_message' : mentioned ? 'reply_to_message' : 'send_group_message'
+    const sendableSocialOpportunity = isPrivate || mentioned
+    const replyDryRunEnabled = options.replyDryRunEnabled === true
+    const executorAvailable = shouldExecuteMention || shouldExecutePrivate
+    const dryRun = sendableSocialOpportunity ? replyDryRunEnabled || !executorAvailable : true
+    const allowedToSend = executorAvailable && !replyDryRunEnabled
+    const barrierVerdict = allowedToSend ? 'approved' : dryRun ? 'dry_run' : 'skipped'
     const decision = await createOrReuseDecision({
       opportunityId: opportunity.id,
       idempotencyKey: `${opportunity.id}:policy`,
       policyVersion: RUNTIME_POLICY_VERSION,
-      verdict: shouldExecuteMention ? 'approved' : dryRun ? 'dry_run' : 'skipped',
+      verdict: barrierVerdict,
       actionType,
-      riskLevel: 'L3',
-      reason: shouldExecuteMention
-        ? 'direct @self mention may execute anchored group reply'
-        : mentioned
-          ? 'mention replay decisions disabled or passive worker unavailable'
-          : 'ordinary group proactive is dry-run before Phase 10',
+      riskLevel: isPrivate ? 'L2' : 'L3',
+      reason: replyDryRunEnabled && executorAvailable
+        ? 'reply dry-run is enabled; generation may run but external send is disabled'
+        : shouldExecutePrivate
+          ? 'direct QQ private message may execute private reply'
+          : isPrivate
+            ? 'private reply decisions disabled or reply executor unavailable'
+            : shouldExecuteMention
+              ? 'direct @self mention may execute anchored group reply'
+              : mentioned
+                ? 'mention reply decisions disabled or passive worker unavailable'
+                : 'ordinary group proactive is dry-run before Phase 10',
       barrierInput: buildBarrierPayload({
         sceneId,
+        targetUserId,
         messageRowId: messageRow,
         messageId: message,
         opportunityType,
@@ -259,18 +342,28 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
         dryRun,
       }),
       barrierOutput: {
-        verdict: shouldExecuteMention ? 'approved' : dryRun ? 'dry_run' : 'skipped',
-        allowedToSend: shouldExecuteMention,
-        reason: shouldExecuteMention
-          ? 'anchored mention reply is allowed'
-          : mentioned
-            ? 'snapshot-only mention cannot send'
-            : 'ordinary group proactive send is disabled before Phase 10',
+        verdict: barrierVerdict,
+        allowedToSend,
+        dryRun,
+        dispatchMode: allowedToSend ? 'live' : dryRun ? 'dry_run' : 'skipped',
+        sideEffect: allowedToSend ? 'napcat_send' : dryRun ? 'audit_write' : 'none',
+        reason: replyDryRunEnabled && executorAvailable
+          ? 'reply dry-run is enabled; external send is disabled'
+          : shouldExecutePrivate
+            ? 'private reply is allowed'
+            : isPrivate
+              ? 'snapshot-only private message cannot send'
+              : shouldExecuteMention
+                ? 'anchored mention reply is allowed'
+                : mentioned
+                  ? 'snapshot-only mention cannot send'
+                  : 'ordinary group proactive send is disabled before Phase 10',
       },
     })
 
-    if (!shouldExecuteMention) {
+    if (!shouldExecuteMention && !shouldExecutePrivate) {
       const suppressedMention = mentioned && runtimeOptions.executeDecisions === false
+      const suppressedPrivate = isPrivate && runtimeOptions.executeDecisions === false
       const intent = await createOrReuseActionIntent({
         opportunityId: opportunity.id,
         decisionId: decision.id,
@@ -278,6 +371,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
         targetSceneId: sceneId,
         payload: buildActionIntentPayload({
           sceneId,
+          targetUserId,
           messageRowId: messageRow,
           messageId: message,
           decisionId: decision.id,
@@ -285,8 +379,8 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
           dryRun,
         }),
         dryRun,
-        riskLevel: 'L3',
-        status: mentioned && !suppressedMention ? 'proposed' : 'skipped',
+        riskLevel: isPrivate ? 'L2' : 'L3',
+        status: (mentioned && !suppressedMention) || (isPrivate && !suppressedPrivate) ? 'proposed' : 'skipped',
         idempotencyKey: `${opportunity.id}:action`,
       })
 
@@ -294,13 +388,15 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
         actionIntentId: intent.id,
         actionType: intent.actionType as ActionType,
         targetSceneId: sceneId,
-        deliveryState: suppressedMention ? 'suppressed' : 'dry_run',
+        deliveryState: suppressedMention || suppressedPrivate ? 'suppressed' : 'dry_run',
         idempotencyKey: intent.idempotencyKey,
         resultPayload: {
           decisionId: decision.id,
-          reason: mentioned
-            ? 'mention replay decisions disabled'
-            : 'ordinary group proactive dry-run only before Phase 10',
+          reason: isPrivate
+            ? 'private reply decisions disabled'
+            : mentioned
+              ? 'mention reply decisions disabled'
+              : 'ordinary group proactive dry-run only before Phase 10',
         },
       })
     }
@@ -318,6 +414,20 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       contextSnapshot: snapshot.contextSnapshot,
       sessionSnapshot: snapshot.sessionSnapshot,
     })
+
+    if (shouldExecutePrivate && options.ambientExecutor && targetUserId != null) {
+      await options.ambientExecutor.execute(buildPrivateReplyOpportunity({
+        sceneId,
+        userId: targetUserId,
+        messageRowId: messageRow,
+        messageId: message,
+        senderId: asNumber(input['senderId']),
+        opportunityId: opportunity.id,
+        decisionId: decision.id,
+        dryRun: replyDryRunEnabled,
+        createdAt,
+      }))
+    }
 
     if (shouldExecuteMention && options.passiveWorker) {
       await options.passiveWorker({
@@ -337,7 +447,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       })
     }
 
-    if (!mentioned && runtimeOptions.executeDecisions !== false && options.ambientExecutor) {
+    if (!isPrivate && !mentioned && runtimeOptions.executeDecisions !== false && options.ambientExecutor) {
       await options.ambientExecutor.execute(buildAmbientReplyOpportunity({
         sceneId,
         groupId: group,
@@ -374,12 +484,15 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       return { restoredCount: groups.length }
     },
     async emitRuntimeEvent(event, runtimeOptions = {}) {
-      if (event.eventKind !== 'group_message') return
+      if (event.eventKind !== 'group_message' && event.eventKind !== 'private_message') return
       const message = asMessage(event)
       if (!message) return
       await materializeMessage(message, runtimeOptions)
     },
     async ingestGroupMessage(input, runtimeOptions = {}) {
+      await materializeMessage(input, runtimeOptions)
+    },
+    async ingestPrivateMessage(input, runtimeOptions = {}) {
       await materializeMessage(input, runtimeOptions)
     },
     getSnapshot(group) {

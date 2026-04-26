@@ -89,6 +89,30 @@ describe('reply decision engine', () => {
     assert.equal(decision.policy.shouldAudit, true)
   })
 
+  test('turns private message into L2 sendable private reply decision', () => {
+    const decision = createReplyDecisionEngine().decide(opportunity({
+      opportunityId: 'qq_private:20:message:10:private_reply',
+      groupId: 20,
+      targetUserId: 20,
+      sceneId: 'qq_private:20',
+      scopeKey: 'qq_private:20',
+      sourceKind: 'private_message',
+      cueStrength: 'strong',
+      mustReplyOverride: true,
+      replyProbability: 1,
+      anchorMessageRowId: 10,
+      deliveryMode: 'send_private_message',
+      dryRun: false,
+    }))
+
+    assert.equal(decision.outcome, 'sendable_reply')
+    assert.equal(decision.deliveryMode, 'send_private_message')
+    assert.equal(decision.policy.shouldGenerate, true)
+    assert.equal(decision.policy.shouldCreateReplyRecord, true)
+    assert.equal(decision.policy.shouldDeliver, true)
+    assert.equal(decision.replyIntentId, 'qq_private:20:message:10:send_private_message')
+  })
+
   test('allows proactive candidate generation only with valid judge advice and dry-run policy', () => {
     const decision = createReplyDecisionEngine().decide(opportunity({
       deliveryMode: 'send_message',

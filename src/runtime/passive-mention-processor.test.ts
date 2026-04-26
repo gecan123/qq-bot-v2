@@ -182,6 +182,8 @@ function fakeCompactor() {
 function makeStoredMessage(event: MentionEvent, text: string): FakeStoredMessage {
   return {
     id: event.messageId,
+    sceneKind: 'qq_group',
+    sceneExternalId: String(event.groupId),
     groupId: BigInt(event.groupId),
     groupName: '测试群',
     mediaReferenceIds: [],

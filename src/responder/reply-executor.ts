@@ -96,3 +96,78 @@ export async function sendGroupReply(groupId: number, segments: NapcatSegment[])
   )
   return { success: false, attempts: RETRY_LIMIT }
 }
+
+export async function sendPrivateMessage(userId: number, segments: NapcatSegment[]): Promise<SendGroupReplyResult> {
+  const textPreview = previewText(
+    segments
+      .filter((s) => s.type === 'text')
+      .map((s) => String(s.data.text ?? ''))
+      .join(''),
+  )
+  const segmentTypes = segments.map((segment) => segment.type)
+
+  for (let attempt = 1; attempt <= RETRY_LIMIT; attempt++) {
+    try {
+      const result = await napcat.send_private_msg({ user_id: userId, message: segments as never })
+      log.info(
+        {
+          direction: 'outbound',
+          actor: 'bot',
+          category: 'reply_delivery',
+          flow: 'napcat_send',
+          userId,
+          providerMessageId: result.message_id,
+          deliveryType: 'send_private_message',
+          segmentTypes,
+          dispatchMode: 'live',
+          sideEffect: 'napcat_send',
+          deliveryResult: 'sent',
+          textPreview,
+        },
+        '私聊消息发送成功',
+      )
+      return {
+        success: true,
+        attempts: attempt,
+        providerMessageId: result.message_id,
+      }
+    } catch (error) {
+      log.warn(
+        {
+          direction: 'outbound',
+          actor: 'bot',
+          category: 'reply_delivery',
+          flow: 'napcat_send',
+          userId,
+          deliveryType: 'send_private_message',
+          segmentTypes,
+          textPreview,
+          attempt,
+          dispatchMode: 'live',
+          sideEffect: 'napcat_send',
+          deliveryResult: 'failed_attempt',
+          error,
+        },
+        '私聊消息发送失败',
+      )
+      if (attempt < RETRY_LIMIT) await sleep(RETRY_DELAY_MS)
+    }
+  }
+
+  log.error(
+    {
+      direction: 'outbound',
+      actor: 'bot',
+      category: 'reply_delivery',
+      flow: 'napcat_send',
+      userId,
+      deliveryType: 'send_private_message',
+      dispatchMode: 'live',
+      sideEffect: 'napcat_send',
+      deliveryResult: 'failed',
+      textPreview,
+    },
+    `私聊消息发送失败，已重试 ${RETRY_LIMIT} 次`,
+  )
+  return { success: false, attempts: RETRY_LIMIT }
+}

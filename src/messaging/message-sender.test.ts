@@ -64,4 +64,28 @@ describe('messageSender', () => {
     assert.deepEqual(calls, [{ groupId: 3 }])
     assert.deepEqual(result, { success: true, attempts: 1 })
   })
+
+  test('sendPrivateMessage uses reply dry-run switch and private transport', async () => {
+    const calls: Array<{ userId: number }> = []
+    const sender = createMessageSender({
+      replyDryRun: false,
+      proactiveDryRun: true,
+      sendGroupReplyFn: async () => {
+        throw new Error('sendGroupReplyFn should not send private replies')
+      },
+      sendPrivateMessageFn: async (userId) => {
+        calls.push({ userId })
+        return { success: true, attempts: 1, providerMessageId: 9001 }
+      },
+    })
+
+    assert.ok(sender.sendPrivateMessage)
+    const result = await sender.sendPrivateMessage({
+      userId: 20,
+      text: 'private reply',
+    })
+
+    assert.deepEqual(calls, [{ userId: 20 }])
+    assert.deepEqual(result, { success: true, attempts: 1, providerMessageId: 9001 })
+  })
 })

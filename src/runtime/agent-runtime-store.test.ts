@@ -2,9 +2,11 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   assertActionIntentPayloadSafe,
+  assertSelfSpineSourceCanMutate,
   assertReferenceOnlyPayload,
   assertRuntimeSnapshotReferenceOnly,
   buildMessageReferencePayload,
+  canAutoAcceptMemoryProposal,
   mergeRuntimeSessionSnapshot,
 } from './agent-runtime-store.js'
 
@@ -85,5 +87,78 @@ describe('agent runtime store payload policy', () => {
         lastObservedMessageRowId: 20,
       },
     )
+  })
+
+  it('only auto-accepts low-risk observation memory proposals when configured', () => {
+    assert.equal(
+      canAutoAcceptMemoryProposal(
+        { proposalType: 'observation', confidence: 0.8, salience: 0.2 },
+        { enabled: true },
+      ),
+      true,
+    )
+    assert.equal(
+      canAutoAcceptMemoryProposal(
+        { proposalType: 'preference', confidence: 0.9, salience: 0.1 },
+        { enabled: true },
+      ),
+      false,
+    )
+    assert.equal(
+      canAutoAcceptMemoryProposal(
+        { proposalType: 'preference', confidence: 0.9, salience: 0.1 },
+        { enabled: true, allowedTypes: ['preference'] },
+      ),
+      false,
+    )
+    assert.equal(
+      canAutoAcceptMemoryProposal(
+        { proposalType: 'observation', confidence: 0.4, salience: 0.2 },
+        { enabled: true },
+      ),
+      false,
+    )
+    assert.equal(
+      canAutoAcceptMemoryProposal(
+        { proposalType: 'observation', confidence: 0.9, salience: 0.7 },
+        { enabled: true },
+      ),
+      false,
+    )
+  })
+
+  it('blocks direct Self Spine mutation from a single message or forum post', () => {
+    assert.throws(
+      () => assertSelfSpineSourceCanMutate({ basis: 'single_message', sourceRefs: [{ messageRowId: 1 }] }),
+      /single-source single_message/,
+    )
+    assert.throws(
+      () => assertSelfSpineSourceCanMutate({ basis: 'single_forum_post', sourceRefs: [{ feedItemId: 'feed-1' }] }),
+      /single-source single_forum_post/,
+    )
+    assert.throws(
+      () => assertSelfSpineSourceCanMutate({ sourceRefs: [{ messageRowId: 1 }] }),
+      /single message or single forum post/,
+    )
+    assert.throws(
+      () => assertSelfSpineSourceCanMutate({ basis: 'aggregate_review', sourceRefs: [{ messageRowId: 1 }] }),
+      /multiple distinct source refs/,
+    )
+    assert.throws(
+      () => assertSelfSpineSourceCanMutate({ basis: 'aggregate_review', sourceRefs: [{ messageRowId: 1 }, { messageRowId: 1 }] }),
+      /multiple distinct source refs/,
+    )
+    assert.throws(
+      () => assertSelfSpineSourceCanMutate({ sourceRefs: [] }),
+      /requires review basis/,
+    )
+    assert.doesNotThrow(() => assertSelfSpineSourceCanMutate({
+      basis: 'aggregate_review',
+      sourceRefs: [{ messageRowId: 1 }, { feedItemId: 'feed-1' }],
+    }))
+    assert.doesNotThrow(() => assertSelfSpineSourceCanMutate({
+      basis: 'manual_review',
+      sourceRefs: [{ messageRowId: 1 }],
+    }))
   })
 })

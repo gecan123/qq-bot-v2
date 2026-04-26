@@ -42,6 +42,29 @@ export type ActionIntentStatus = 'proposed' | 'rejected' | 'approved' | 'executi
 export type ActionDeliveryState = 'pending' | 'sending' | 'acked' | 'sent' | 'failed' | 'dry_run' | 'suppressed' | 'skipped'
 export type RiskLevel = 'L0' | 'L1' | 'L2' | 'L3' | 'L4'
 export type DecisionVerdict = 'approved' | 'rejected' | 'dry_run' | 'skipped'
+export type MemoryType =
+  | 'observation'
+  | 'fact'
+  | 'hypothesis'
+  | 'interest'
+  | 'preference'
+  | 'commitment'
+  | 'reflection'
+  | 'relationship'
+export type MemoryProposalStatus = 'proposed' | 'accepted' | 'rejected' | 'edited' | 'expired'
+export type MemoryItemStatus = 'active' | 'superseded' | 'expired' | 'retracted'
+export type SelfSpineSection =
+  | 'identity'
+  | 'expression_style'
+  | 'long_term_interests'
+  | 'values'
+  | 'tool_boundaries'
+  | 'long_term_goals'
+  | 'important_memory_summary'
+  | 'scene_preferences'
+  | 'prohibitions'
+export type SelfSpineProposalStatus = 'proposed' | 'accepted' | 'rejected' | 'expired'
+export type SelfSpineVersionStatus = 'active' | 'superseded' | 'rolled_back'
 
 export interface Agent {
   id: AgentId
@@ -135,26 +158,71 @@ export interface ActionRecord {
   updatedAt: Date
 }
 
-export interface DormantMemoryContract {
+export interface MemoryItem {
   id: string
   agentId: AgentId
   scope: string
+  memoryType: MemoryType
+  sourceRef: Prisma.JsonObject
+  sourceProposalId?: string | null
   payload: Prisma.JsonObject
-  status?: 'dormant'
+  confidence?: number | null
+  salience?: number | null
+  status: MemoryItemStatus
+  decayPolicy?: Prisma.JsonObject | null
+  expiresAt?: Date | null
+  acceptedAt?: Date | null
+  createdAt: Date
+  updatedAt: Date
 }
 
 export interface MemoryProposal {
   id: string
   agentId: AgentId
   sourceRef: Prisma.JsonObject
-  proposalType: string
+  proposalType: MemoryType
   payload: Prisma.JsonObject
   confidence?: number | null
   salience?: number | null
-  status: 'proposed' | 'accepted' | 'rejected' | 'edited' | 'expired'
+  status: MemoryProposalStatus
+  decayPolicy?: Prisma.JsonObject | null
+  expiresAt?: Date | null
   idempotencyKey: string
   createdAt: Date
   updatedAt: Date
+}
+
+export interface MemoryAutoAcceptPolicy {
+  enabled: boolean
+  allowedTypes?: MemoryType[]
+  maxSalience?: number
+  minConfidence?: number
+}
+
+export interface SelfSpineUpdateProposal {
+  id: string
+  agentId: AgentId
+  sourceRef: Prisma.JsonObject
+  patch: Prisma.JsonObject
+  rationale: string
+  status: SelfSpineProposalStatus
+  idempotencyKey: string
+  reviewedBy?: string | null
+  reviewedAt?: Date | null
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface SelfSpineVersion {
+  id: string
+  agentId: AgentId
+  version: number
+  snapshot: Prisma.JsonObject
+  diff: Prisma.JsonObject
+  sourceProposalId?: string | null
+  rollbackOfVersion?: number | null
+  status: SelfSpineVersionStatus
+  createdAt: Date
 }
 
 export function getMainAgentId(): AgentId {

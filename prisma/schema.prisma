@@ -8,21 +8,21 @@ datasource db {
 }
 
 model Message {
-  id                  Int      @id @default(autoincrement())
-  sceneKind           String   @default("qq_group") @map("scene_kind") @db.VarChar(32)
-  sceneExternalId     String   @default("") @map("scene_external_id") @db.VarChar(191)
-  groupId             BigInt   @map("group_id")
-  groupName           String?  @map("group_name") @db.VarChar(255)
-  mediaReferenceIds   String[] @default([]) @map("media_reference_ids")
-  messageId           BigInt   @map("message_id")
-  senderId            BigInt   @map("sender_id")
-  senderNickname      String?  @map("sender_nickname") @db.VarChar(100)
-  senderGroupNickname String?  @map("sender_group_nickname") @db.VarChar(100)
-  content             Json     @map("content")
-  rawContent          Json?    @map("raw_content")
-  rawMessage          String?  @map("raw_message") @db.Text
-  searchText          String   @default("") @map("search_text") @db.Text
-  resolvedText        String?  @map("resolved_text") @db.Text
+  id                  Int       @id @default(autoincrement())
+  sceneKind           String    @default("qq_group") @map("scene_kind") @db.VarChar(32)
+  sceneExternalId     String    @default("") @map("scene_external_id") @db.VarChar(191)
+  groupId             BigInt    @map("group_id")
+  groupName           String?   @map("group_name") @db.VarChar(255)
+  mediaReferenceIds   String[]  @default([]) @map("media_reference_ids")
+  messageId           BigInt    @map("message_id")
+  senderId            BigInt    @map("sender_id")
+  senderNickname      String?   @map("sender_nickname") @db.VarChar(100)
+  senderGroupNickname String?   @map("sender_group_nickname") @db.VarChar(100)
+  content             Json      @map("content")
+  rawContent          Json?     @map("raw_content")
+  rawMessage          String?   @map("raw_message") @db.Text
+  searchText          String    @default("") @map("search_text") @db.Text
+  resolvedText        String?   @map("resolved_text") @db.Text
   sentAt              DateTime? @map("sent_at") @db.Timestamptz(3)
   createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
@@ -33,15 +33,15 @@ model Message {
 }
 
 model Media {
-  mediaId     Int      @id @default(autoincrement()) @map("media_id")
-  data        Bytes    @map("data")
-  dataHash    String?  @map("data_hash") @db.VarChar(64)
-  mediaType   String?  @map("media_type")
-  contentType String?  @map("content_type")
-  fileName    String?  @map("file_name")
-  fileSize    Int?     @map("file_size")
-  descriptionRaw Json? @map("description_raw")
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  mediaId        Int      @id @default(autoincrement()) @map("media_id")
+  data           Bytes    @map("data")
+  dataHash       String?  @map("data_hash") @db.VarChar(64)
+  mediaType      String?  @map("media_type")
+  contentType    String?  @map("content_type")
+  fileName       String?  @map("file_name")
+  fileSize       Int?     @map("file_size")
+  descriptionRaw Json?    @map("description_raw")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@unique([dataHash])
   @@map("media")
@@ -62,14 +62,14 @@ model LlmTrace {
 }
 
 model ConversationState {
-  id                     Int      @id @default(autoincrement())
-  groupId                BigInt   @map("group_id")
-  senderThreadKey        String   @map("sender_thread_key") @db.VarChar(128)
-  compactedBase          String   @default("") @map("compacted_base") @db.Text
-  compactedVersion       Int      @default(1) @map("compacted_version")
-  lastCompactedMessageRowId Int?  @map("last_compacted_message_row_id")
-  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id                        Int      @id @default(autoincrement())
+  groupId                   BigInt   @map("group_id")
+  senderThreadKey           String   @map("sender_thread_key") @db.VarChar(128)
+  compactedBase             String   @default("") @map("compacted_base") @db.Text
+  compactedVersion          Int      @default(1) @map("compacted_version")
+  lastCompactedMessageRowId Int?     @map("last_compacted_message_row_id")
+  createdAt                 DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                 DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([groupId, senderThreadKey])
   @@index([groupId, updatedAt(sort: Desc)])
@@ -77,21 +77,21 @@ model ConversationState {
 }
 
 model AssistantTurn {
-  id                     Int      @id @default(autoincrement())
-  groupId                BigInt   @map("group_id")
-  senderThreadKey        String   @map("sender_thread_key") @db.VarChar(128)
-  replyIntentId          String   @map("reply_intent_id") @db.VarChar(191)
-  triggerMessageRowId    Int      @map("trigger_message_row_id")
-  incorporatedMessageRowId Int    @map("incorporated_message_row_id")
-  sequence               Int      @map("sequence")
-  replyToMessageId       BigInt   @map("reply_to_message_id")
-  mentionUserId          BigInt?  @map("mention_user_id")
-  providerMessageId      BigInt?  @map("provider_message_id")
-  text                   String   @map("text") @db.Text
-  status                 String   @map("status") @db.VarChar(32)
-  attemptCount           Int      @default(0) @map("attempt_count")
-  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id                       Int      @id @default(autoincrement())
+  groupId                  BigInt   @map("group_id")
+  senderThreadKey          String   @map("sender_thread_key") @db.VarChar(128)
+  replyIntentId            String   @map("reply_intent_id") @db.VarChar(191)
+  triggerMessageRowId      Int      @map("trigger_message_row_id")
+  incorporatedMessageRowId Int      @map("incorporated_message_row_id")
+  sequence                 Int      @map("sequence")
+  replyToMessageId         BigInt   @map("reply_to_message_id")
+  mentionUserId            BigInt?  @map("mention_user_id")
+  providerMessageId        BigInt?  @map("provider_message_id")
+  text                     String   @map("text") @db.Text
+  status                   String   @map("status") @db.VarChar(32)
+  attemptCount             Int      @default(0) @map("attempt_count")
+  createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([groupId, senderThreadKey, replyIntentId])
   @@unique([groupId, senderThreadKey, sequence])
@@ -111,8 +111,8 @@ model ReplyAudit {
   payload       Json     @map("payload")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  @@index([groupId, scopeKey, createdAt(sort: Desc)])
   @@unique([runtimeKey, opportunityId, auditKind])
+  @@index([groupId, scopeKey, createdAt(sort: Desc)])
   @@map("reply_audits")
 }
 
@@ -160,18 +160,18 @@ model RuntimeEvent {
 }
 
 model Opportunity {
-  id                String    @id @db.VarChar(191)
-  sceneId           String    @map("scene_id") @db.VarChar(191)
-  runtimeEventId    String?   @map("runtime_event_id") @db.VarChar(191)
-  queueKind         String    @map("queue_kind") @db.VarChar(32)
-  opportunityType   String    @map("opportunity_type") @db.VarChar(64)
-  priority          Int       @default(0)
-  deadlineAt        DateTime? @map("deadline_at") @db.Timestamptz(3)
-  payload           Json
-  status            String    @default("pending") @db.VarChar(32)
-  idempotencyKey    String    @map("idempotency_key") @db.VarChar(191)
-  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id              String    @id @db.VarChar(191)
+  sceneId         String    @map("scene_id") @db.VarChar(191)
+  runtimeEventId  String?   @map("runtime_event_id") @db.VarChar(191)
+  queueKind       String    @map("queue_kind") @db.VarChar(32)
+  opportunityType String    @map("opportunity_type") @db.VarChar(64)
+  priority        Int       @default(0)
+  deadlineAt      DateTime? @map("deadline_at") @db.Timestamptz(3)
+  payload         Json
+  status          String    @default("pending") @db.VarChar(32)
+  idempotencyKey  String    @map("idempotency_key") @db.VarChar(191)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([sceneId, idempotencyKey])
   @@index([sceneId, status, priority(sort: Desc), createdAt])
@@ -232,33 +232,79 @@ model ActionRecord {
 }
 
 model MemoryItem {
-  id        String   @id @db.VarChar(191)
-  agentId   String   @map("agent_id") @db.VarChar(191)
-  scope     String   @db.VarChar(64)
-  payload   Json
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id               String    @id @db.VarChar(191)
+  agentId          String    @map("agent_id") @db.VarChar(191)
+  scope            String    @db.VarChar(64)
+  memoryType       String    @map("memory_type") @db.VarChar(64)
+  sourceRef        Json      @map("source_ref")
+  sourceProposalId String?   @unique @map("source_proposal_id") @db.VarChar(191)
+  payload          Json
+  confidence       Float?
+  salience         Float?
+  status           String    @default("active") @db.VarChar(32)
+  decayPolicy      Json?     @map("decay_policy")
+  expiresAt        DateTime? @map("expires_at") @db.Timestamptz(3)
+  acceptedAt       DateTime? @map("accepted_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@index([agentId, scope, updatedAt(sort: Desc)])
+  @@index([agentId, memoryType, status, updatedAt(sort: Desc)])
   @@map("memory_items")
 }
 
 model MemoryProposal {
-  id             String   @id @db.VarChar(191)
-  agentId        String   @map("agent_id") @db.VarChar(191)
-  sourceRef      Json     @map("source_ref")
-  proposalType   String   @map("proposal_type") @db.VarChar(64)
+  id             String    @id @db.VarChar(191)
+  agentId        String    @map("agent_id") @db.VarChar(191)
+  sourceRef      Json      @map("source_ref")
+  proposalType   String    @map("proposal_type") @db.VarChar(64)
   payload        Json
   confidence     Float?
   salience       Float?
-  status         String   @default("proposed") @db.VarChar(32)
-  idempotencyKey String   @map("idempotency_key") @db.VarChar(191)
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  status         String    @default("proposed") @db.VarChar(32)
+  decayPolicy    Json?     @map("decay_policy")
+  expiresAt      DateTime? @map("expires_at") @db.Timestamptz(3)
+  idempotencyKey String    @map("idempotency_key") @db.VarChar(191)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([agentId, idempotencyKey])
   @@index([agentId, status, createdAt])
   @@map("memory_proposals")
+}
+
+model SelfSpineUpdateProposal {
+  id             String    @id @db.VarChar(191)
+  agentId        String    @map("agent_id") @db.VarChar(191)
+  sourceRef      Json      @map("source_ref")
+  patch          Json
+  rationale      String    @db.Text
+  status         String    @default("proposed") @db.VarChar(32)
+  idempotencyKey String    @map("idempotency_key") @db.VarChar(191)
+  reviewedBy     String?   @map("reviewed_by") @db.VarChar(191)
+  reviewedAt     DateTime? @map("reviewed_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([agentId, idempotencyKey])
+  @@index([agentId, status, createdAt])
+  @@map("self_spine_update_proposals")
+}
+
+model SelfSpineVersion {
+  id                String   @id @db.VarChar(191)
+  agentId           String   @map("agent_id") @db.VarChar(191)
+  version           Int
+  snapshot          Json
+  diff              Json
+  sourceProposalId  String?  @unique @map("source_proposal_id") @db.VarChar(191)
+  rollbackOfVersion Int?     @map("rollback_of_version")
+  status            String   @default("active") @db.VarChar(32)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([agentId, version])
+  @@index([agentId, status, version])
+  @@map("self_spine_versions")
 }
 
 model FeedSource {

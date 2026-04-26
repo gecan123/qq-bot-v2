@@ -37,18 +37,24 @@ ${legacyTypes}`, 'runtimeKey: `qq_group:', 'qq_group:* must not be stored as roo
 ${rootRuntime}`, 'runtimeKey: `qq_group:', 'root runtime snapshot must not carry qq_group runtime keys')
   })
 
-  test('memory is represented only as dormant contract in Phase 0', () => {
+  test('Phase 5 memory items are only created through proposal governance', () => {
     const schema = readProjectFile('prisma/schema.prisma')
-    const allRuntime = ['src/runtime/agent-runtime-types.ts', 'src/runtime/root-runtime.ts', 'src/responder/reply-generator.ts', 'src/agent/tools.ts', 'src/database/agent-sql.ts']
+    const generationAndSql = ['src/runtime/root-runtime.ts', 'src/responder/reply-generator.ts', 'src/agent/tools.ts', 'src/database/agent-sql.ts']
       .filter(projectFileExists)
       .map(readProjectFile)
       .join('\n')
+    const store = readProjectFile('src/runtime/agent-runtime-store.ts')
 
     assertIncludes(schema, 'model MemoryItem')
     assertIncludes(schema, 'model MemoryProposal')
-    assertExcludes(allRuntime, 'write_memory', 'Phase 0 must not register a write_memory action')
-    assertExcludes(allRuntime, 'memoryItems', 'Phase 0 generation/SQL/runtime must not read MemoryItem rows')
-    assertExcludes(allRuntime, 'MemoryItem', 'MemoryItem must remain dormant outside schema/type declarations')
+    for (const token of ['memoryType', 'sourceProposalId', 'sourceRef', 'confidence', 'salience', 'expiresAt', 'decayPolicy']) {
+      assertIncludes(schema, token)
+    }
+    assertIncludes(store, 'reviewMemoryProposal')
+    assertIncludes(store, 'autoAcceptMemoryProposalIfAllowed')
+    assertExcludes(generationAndSql, 'write_memory', 'reply generation must not register a direct write_memory action')
+    assertExcludes(generationAndSql, 'memoryItems', 'reply generation/SQL/runtime must not read MemoryItem rows as a side effect')
+    assertExcludes(generationAndSql, 'memoryItem', 'reply generation/SQL/runtime must not write MemoryItem rows directly')
   })
 
   test('Phase 1 contract covers runtime OS surfaces and lifecycle', () => {
@@ -159,6 +165,40 @@ ${rootRuntime}`, 'runtimeKey: `qq_group:', 'root runtime snapshot must not carry
     assertExcludes(forumExecutor, 'send_private_msg')
     assertExcludes(forumExecutor, 'createOrReuseMemoryProposal')
     assertExcludes(forumExecutor, 'memoryProposalId')
+  })
+
+  test('Phase 6 Self Spine is versioned and not directly mutated by single source events', () => {
+    const schema = readProjectFile('prisma/schema.prisma')
+    const store = readProjectFile('src/runtime/agent-runtime-store.ts')
+    const rootRuntime = readProjectFile('src/runtime/root-runtime.ts')
+    const forumExecutor = readProjectFile('src/curiosity/forum-read-executor.ts')
+
+    for (const token of [
+      'model SelfSpineUpdateProposal',
+      'model SelfSpineVersion',
+      'sourceRef',
+      'patch',
+      'version',
+      'snapshot',
+      'diff',
+      'rollbackOfVersion',
+      '@unique @map("source_proposal_id")',
+    ]) {
+      assertIncludes(schema, token)
+    }
+    for (const token of [
+      'createOrReuseSelfSpineUpdateProposal',
+      'reviewSelfSpineUpdateProposal',
+      'rollbackSelfSpineVersion',
+      'assertSelfSpineSourceCanMutate',
+      'single_message',
+      'single_forum_post',
+    ]) {
+      assertIncludes(store, token)
+    }
+    assertExcludes(rootRuntime, 'selfSpineVersion')
+    assertExcludes(rootRuntime, 'reviewSelfSpineUpdateProposal')
+    assertExcludes(forumExecutor, 'reviewSelfSpineUpdateProposal')
   })
 
   test('durable social barrier records dry-run when reply dry-run is enabled', () => {

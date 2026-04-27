@@ -102,7 +102,7 @@ export function createReplyDecisionEngine(options: ReplyDecisionEngineOptions = 
             shouldDeliver: true,
             shouldAudit: opportunity.dryRun,
             auditKind: opportunity.dryRun ? 'dry_run_intent' : undefined,
-            reason: 'private message is sendable L2 private reply',
+            reason: 'private message is sendable private_reply action',
           },
           replyIntentId: makePrivateReplyIntentId(userId, anchorRowId),
           deliveryMode: 'send_private_message',

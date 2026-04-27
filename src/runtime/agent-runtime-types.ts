@@ -40,8 +40,14 @@ export type ActionType =
   | 'artifact_only'
 export type ActionIntentStatus = 'proposed' | 'rejected' | 'approved' | 'executing' | 'succeeded' | 'failed' | 'skipped'
 export type ActionDeliveryState = 'pending' | 'sending' | 'acked' | 'sent' | 'failed' | 'dry_run' | 'suppressed' | 'skipped'
-export type RiskLevel = 'L0' | 'L1' | 'L2' | 'L3' | 'L4'
-export type DecisionVerdict = 'approved' | 'rejected' | 'dry_run' | 'skipped'
+export type RiskLevel =
+  | 'internal'
+  | 'persistence'
+  | 'private_reply'
+  | 'anchored_group_reply'
+  | 'ambient_group_post'
+  | 'public_post'
+export type DecisionVerdict = 'approved' | 'rejected' | 'dry_run' | 'skipped' | 'requires_review' | 'blocked'
 export type MemoryType =
   | 'observation'
   | 'fact'
@@ -117,6 +123,8 @@ export interface Opportunity {
   payload: ReferencePayload
   status: string
   idempotencyKey: string
+  createdAt?: Date
+  updatedAt?: Date
 }
 
 export interface Decision {

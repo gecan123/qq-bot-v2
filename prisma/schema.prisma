@@ -186,7 +186,7 @@ model ActionIntent {
   targetSceneId  String   @map("target_scene_id") @db.VarChar(191)
   payload        Json
   dryRun         Boolean  @default(false) @map("dry_run")
-  riskLevel      String   @default("L1") @map("risk_level") @db.VarChar(32)
+  riskLevel      String   @default("persistence") @map("risk_level") @db.VarChar(32)
   status         String   @default("proposed") @db.VarChar(32)
   idempotencyKey String   @map("idempotency_key") @db.VarChar(191)
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)

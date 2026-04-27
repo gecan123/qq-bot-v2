@@ -14,6 +14,7 @@ const assertIncludes = (content: string, needle: string, message?: string): void
 const assertExcludes = (content: string, needle: string, message?: string): void => {
   assert.ok(!content.includes(needle), message ?? `expected file not to include ${needle}`)
 }
+const countIncludes = (content: string, needle: string): number => content.split(needle).length - 1
 
 describe('Runtime OS contract', () => {
   test('agent:main is the only root and qq_group is only a scene identity', () => {
@@ -74,7 +75,12 @@ ${rootRuntime}`, 'runtimeKey: `qq_group:', 'root runtime snapshot must not carry
       "'create_memory_proposal'",
       "'update_self_spine'",
       "'proposed' | 'rejected' | 'approved' | 'executing' | 'succeeded' | 'failed' | 'skipped'",
-      "'L0' | 'L1' | 'L2' | 'L3' | 'L4'",
+      "'internal'",
+      "'persistence'",
+      "'private_reply'",
+      "'anchored_group_reply'",
+      "'ambient_group_post'",
+      "'public_post'",
     ]) {
       assertIncludes(contracts, token)
     }
@@ -93,16 +99,51 @@ ${rootRuntime}`, 'runtimeKey: `qq_group:', 'root runtime snapshot must not carry
     }
   })
 
-  test('root runtime durable surfaces are reference-only and ambient uses executor policy', () => {
+  test('root runtime durable surfaces are reference-only and execution goes through arbiter candidates', () => {
     const rootRuntime = readProjectFile('src/runtime/root-runtime.ts')
 
     assertIncludes(rootRuntime, "'qq_group_message_received'")
     assertIncludes(rootRuntime, 'createOrReuseDecision')
-    assertIncludes(rootRuntime, 'ambientExecutor.execute')
+    assertIncludes(rootRuntime, 'buildArbiterCandidates')
+    assertIncludes(rootRuntime, 'acceptArbiterProposal')
+    assertIncludes(rootRuntime, 'chooseDeterministicCandidate')
+    assertIncludes(rootRuntime, 'arbitrateAndExecute')
+    assertIncludes(rootRuntime, "'scheduler_tick'")
+    assertIncludes(rootRuntime, "'manual_wake'")
+    assertIncludes(rootRuntime, 'const pendingOpportunities = await listPendingArbiterOpportunities({ limit: 50 })')
+    assertIncludes(rootRuntime, 'const arbiterOpportunities = pendingOpportunities.some')
     assertIncludes(rootRuntime, "contextSnapshot: { messages: [] }")
     assertExcludes(rootRuntime, 'segmentsToPlainText')
     assertExcludes(rootRuntime, 'content: text')
     assertExcludes(rootRuntime, 'senderNickname:')
+  })
+
+  test('opportunity status follows executor delivery result instead of assuming success', () => {
+    const rootRuntime = readProjectFile('src/runtime/root-runtime.ts')
+    const passiveProcessor = readProjectFile('src/runtime/passive-mention-processor.ts')
+
+    assertIncludes(rootRuntime, 'opportunityStatusFromDeliveryResult(result.deliveryResult)')
+    assertIncludes(rootRuntime, "case 'sent':")
+    assertIncludes(rootRuntime, "case 'failed':")
+    assertIncludes(rootRuntime, 'opportunityStatusFromPassiveResult(result)')
+    assertIncludes(passiveProcessor, 'deliveryResults.push(result.deliveryResult ??')
+  })
+
+  test('pending arbiter query samples each queue before candidate sorting', () => {
+    const store = readProjectFile('src/runtime/agent-runtime-store.ts')
+
+    assertIncludes(store, "const ARBITER_QUEUE_KINDS: readonly QueueKind[] = ['obligation', 'social', 'curiosity', 'maintenance']")
+    assertIncludes(store, 'Promise.all(ARBITER_QUEUE_KINDS.map')
+    assertIncludes(store, 'queueKind,')
+    assertIncludes(store, 'take: perQueueLimit')
+  })
+
+  test('Phase 7/8 migration keeps ambient group post distinct from anchored group reply', () => {
+    const migration = readProjectFile('prisma/migrations/20260426131854_runtime_phase7_8_arbiter_barrier/migration.sql')
+
+    assertIncludes(migration, `"action_type" = 'send_group_message' THEN 'ambient_group_post'`)
+    assertIncludes(migration, `"action_type" IN ('reply_to_message', 'send_group_reply') THEN 'anchored_group_reply'`)
+    assertIncludes(migration, `"barrier_input"->>'actionType' = 'send_group_message' THEN 'ambient_group_post'`)
   })
 
   test('Phase 3 private scene shares runtime/action path without a private ledger', () => {
@@ -116,7 +157,7 @@ ${rootRuntime}`, 'runtimeKey: `qq_group:', 'root runtime snapshot must not carry
       "'qq_private_message_received'",
       "'reply_private_message'",
       "'send_private_message'",
-      "'L2'",
+      "'private_reply'",
       'ambientExecutor.execute(buildPrivateReplyOpportunity',
     ]) {
       assertIncludes(rootRuntime, token)
@@ -165,6 +206,10 @@ ${rootRuntime}`, 'runtimeKey: `qq_group:', 'root runtime snapshot must not carry
     assertExcludes(forumExecutor, 'send_private_msg')
     assertExcludes(forumExecutor, 'createOrReuseMemoryProposal')
     assertExcludes(forumExecutor, 'memoryProposalId')
+    assert.ok(
+      countIncludes(forumExecutor, 'barrierVerdict: barrierOutput') >= 2,
+      'forum read ActionRecord must keep barrier verdict from creation through completion',
+    )
   })
 
   test('Phase 6 Self Spine is versioned and not directly mutated by single source events', () => {
@@ -207,11 +252,13 @@ ${rootRuntime}`, 'runtimeKey: `qq_group:', 'root runtime snapshot must not carry
 
     assertIncludes(rootRuntime, 'replyDryRunEnabled?: boolean')
     assertIncludes(rootRuntime, 'const replyDryRunEnabled = options.replyDryRunEnabled === true')
-    assertIncludes(rootRuntime, "verdict: barrierVerdict")
+    assertIncludes(rootRuntime, 'decideExecution')
+    assertIncludes(rootRuntime, 'riskBand')
+    assertIncludes(rootRuntime, 'effectMode')
     assertIncludes(rootRuntime, 'allowedToSend')
-    assertIncludes(rootRuntime, "dispatchMode: allowedToSend ? 'live' : dryRun ? 'dry_run' : 'skipped'")
+    assertIncludes(rootRuntime, 'dispatchMode: barrierVerdict.effectMode')
     assertIncludes(rootRuntime, "sideEffect: allowedToSend ? 'napcat_send' : dryRun ? 'audit_write' : 'none'")
-    assertIncludes(rootRuntime, 'dryRun: replyDryRunEnabled')
+    assertIncludes(rootRuntime, 'privateReplyDryRun: replyDryRunEnabled')
     assertIncludes(index, 'replyDryRunEnabled: messageSender.isReplyDryRunEnabled?.() ?? config.botReplyDryRun')
   })
 })

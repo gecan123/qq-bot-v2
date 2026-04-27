@@ -73,7 +73,7 @@ export async function createOrReuseActionIntent(input: {
   assertActionIntentPayloadSafe(input.payload as Prisma.JsonObject)
   const row = await prisma.actionIntent.upsert({
     where: { opportunityId_idempotencyKey: { opportunityId: input.opportunityId, idempotencyKey: input.idempotencyKey } },
-    create: { id: input.id, opportunityId: input.opportunityId, decisionId: input.decisionId ?? null, actionType: input.actionType, targetSceneId: input.targetSceneId, payload: sanitizeJsonValue(input.payload) as Prisma.InputJsonObject, dryRun: input.dryRun, riskLevel: input.riskLevel ?? 'L1', status: input.status ?? 'proposed', idempotencyKey: input.idempotencyKey },
+    create: { id: input.id, opportunityId: input.opportunityId, decisionId: input.decisionId ?? null, actionType: input.actionType, targetSceneId: input.targetSceneId, payload: sanitizeJsonValue(input.payload) as Prisma.InputJsonObject, dryRun: input.dryRun, riskLevel: input.riskLevel ?? 'persistence', status: input.status ?? 'proposed', idempotencyKey: input.idempotencyKey },
     update: {},
   })
   return mapIntent(row)

@@ -111,7 +111,7 @@ function fakeActionRecordStore(status: 'pending' | 'sent' | 'dry_run' | null = n
       targetSceneId: input.targetSceneId,
       payload: input.payload,
       dryRun: input.dryRun,
-      riskLevel: input.riskLevel ?? 'low',
+      riskLevel: input.riskLevel ?? 'anchored_group_reply',
       status: input.status ?? 'pending',
       idempotencyKey: input.idempotencyKey,
     }),
@@ -167,7 +167,7 @@ function capturingActionRecordStore(
         targetSceneId: input.targetSceneId,
         payload: input.payload,
         dryRun: input.dryRun,
-        riskLevel: input.riskLevel ?? 'L3',
+        riskLevel: input.riskLevel ?? 'anchored_group_reply',
         status: input.status ?? 'approved',
         idempotencyKey: input.idempotencyKey,
       }
@@ -220,6 +220,7 @@ describe('passive mention processor', () => {
 
     assert.deepEqual(sent, [{ groupId: 1, replyToMessageId: 10, mentionUserId: 20, text: '你好' }])
     assert.deepEqual(result.leftoverEvents, [])
+    assert.deepEqual(result.deliveryResults, ['sent'])
   })
 
   test('groups same-sender events, handles first two sender threads, and returns leftovers', async () => {
@@ -258,6 +259,7 @@ describe('passive mention processor', () => {
       { groupId: 1, replyToMessageId: 11, mentionUserId: 30, text: 'reply:11' },
     ])
     assert.deepEqual(result.leftoverEvents, [third])
+    assert.deepEqual(result.deliveryResults, ['sent', 'sent'])
   })
 
   test('uses batch order when same-sender events share the same timestamp', async () => {
@@ -315,6 +317,7 @@ describe('passive mention processor', () => {
     assert.deepEqual(sent, [])
     assert.deepEqual(deliveredTurns, [31])
     assert.deepEqual(result.leftoverEvents, [])
+    assert.deepEqual(result.deliveryResults, ['sent'])
   })
 
   test('reuses stored assistant turn text when reply intent already exists', async () => {

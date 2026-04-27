@@ -63,7 +63,7 @@ describe('action record contract', () => {
         proposedEffect: { type: 'reply_to_message', text: 'ok' },
       },
       dryRun: false,
-      riskLevel: 'L3',
+      riskLevel: 'anchored_group_reply',
       status: 'approved',
       idempotencyKey: 'intent-1',
     } satisfies ActionIntent)
@@ -106,12 +106,58 @@ describe('action record contract', () => {
         proposedEffect: { type: 'send_group_message', text: 'candidate' },
       },
       dryRun: true,
-      riskLevel: 'L3',
+      riskLevel: 'ambient_group_post',
       status: 'skipped',
       idempotencyKey: 'intent-2',
     } satisfies ActionIntent)
 
     assert.equal(result.deliveryResult, 'dry_run')
+  })
+
+  it('barrier keeps ambient send_group_message away from sender even when intent is not marked dry-run', async () => {
+    let sendCalls = 0
+    const result = await createActionExecutor({
+      sender: {
+        replyToMessage: async () => {
+          throw new Error('replyToMessage should not be called for ambient send_group_message')
+        },
+        sendMessage: async () => {
+          sendCalls++
+          throw new Error('sendMessage should not be called before proactive live-send canary')
+        },
+      },
+      actionStore: {
+        createOrReuseActionRecord: async (input) => ({
+          id: 'record-ambient-barrier',
+          actionIntentId: input.actionIntentId,
+          actionType: input.actionType,
+          targetSceneId: input.targetSceneId,
+          deliveryState: input.deliveryState ?? 'pending',
+          idempotencyKey: input.idempotencyKey,
+          resultPayload: input.resultPayload ?? null,
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+        }),
+      },
+    }).execute({
+      id: 'intent-ambient-barrier',
+      opportunityId: 'opportunity-ambient-barrier',
+      decisionId: 'decision-ambient-barrier',
+      actionType: 'send_group_message',
+      targetSceneId: 'qq_group:1',
+      payload: {
+        target: { groupId: 1, sceneId: 'qq_group:1' },
+        proposedEffect: { type: 'send_group_message', text: 'candidate' },
+      },
+      dryRun: false,
+      riskLevel: 'ambient_group_post',
+      status: 'approved',
+      idempotencyKey: 'intent-ambient-barrier',
+    } satisfies ActionIntent)
+
+    assert.equal(result.deliveryResult, 'dry_run')
+    assert.equal(sendCalls, 0)
+    assert.equal((result.actionRecord.resultPayload?.barrierVerdict as { riskBand?: string }).riskBand, 'ambient_group_post')
   })
 
   it('routes send_private_message intents to private sender without group send', async () => {
@@ -157,7 +203,7 @@ describe('action record contract', () => {
         proposedEffect: { type: 'send_private_message', text: 'private ok' },
       },
       dryRun: false,
-      riskLevel: 'L2',
+      riskLevel: 'private_reply',
       status: 'approved',
       idempotencyKey: 'intent-3',
     } satisfies ActionIntent)

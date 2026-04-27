@@ -18,4 +18,5 @@ export interface GroupConversationBatch {
 
 export interface ConversationWorkerResult {
   leftoverEvents: MentionEvent[]
+  deliveryResults?: Array<'sent' | 'failed' | 'dry_run' | 'skipped'>
 }

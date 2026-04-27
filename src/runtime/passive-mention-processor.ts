@@ -120,6 +120,7 @@ export function createPassiveMentionProcessor(
       const senderThreads = groupEventsBySender(batch.events)
       const activeThreads = senderThreads.slice(0, maxSenderThreadsPerRun)
       const leftoverEvents = senderThreads.slice(maxSenderThreadsPerRun).flatMap((thread) => thread.events)
+      const deliveryResults: NonNullable<ConversationWorkerResult['deliveryResults']> = []
 
       for (const thread of activeThreads) {
         const replyTarget = getFirstEvent(thread.events)
@@ -134,6 +135,7 @@ export function createPassiveMentionProcessor(
             { groupId: batch.groupId, messageId: latestEvent.messageId, senderId: thread.senderId },
             '被动 runtime 消息不存在，跳过本轮回复',
           )
+          deliveryResults.push('skipped')
           continue
         }
 
@@ -165,9 +167,10 @@ export function createPassiveMentionProcessor(
         if (result.deliveryResult === 'sent') {
           await compactor(batch.groupId, scopeKey)
         }
+        deliveryResults.push(result.deliveryResult ?? 'skipped')
       }
 
-      return { leftoverEvents }
+      return { leftoverEvents, deliveryResults }
     },
   }
 }

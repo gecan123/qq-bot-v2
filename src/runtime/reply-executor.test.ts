@@ -313,7 +313,7 @@ describe('reply executor', () => {
           targetSceneId: input.targetSceneId,
           payload: input.payload,
           dryRun: input.dryRun,
-          riskLevel: input.riskLevel ?? 'low',
+          riskLevel: input.riskLevel ?? 'anchored_group_reply',
           status: input.status ?? 'pending',
           idempotencyKey: input.idempotencyKey,
         }),
@@ -366,7 +366,7 @@ describe('reply executor', () => {
     ])
   })
 
-  test('sendable private reply creates L2 action record and uses private sender', async () => {
+  test('sendable private reply creates private_reply action record and uses private sender', async () => {
     const states: string[] = []
     let privateSendCalls = 0
     const sender: MessageSender = {
@@ -429,7 +429,7 @@ describe('reply executor', () => {
         createOrReuseIntent: async (input) => {
           assert.equal(input.actionType, 'send_private_message')
           assert.equal(input.targetSceneId, 'qq_private:20')
-          assert.equal(input.riskLevel, 'L2')
+          assert.equal(input.riskLevel, 'private_reply')
           return {
             id: input.id,
             opportunityId: input.opportunityId,
@@ -437,7 +437,7 @@ describe('reply executor', () => {
             targetSceneId: input.targetSceneId,
             payload: input.payload,
             dryRun: input.dryRun,
-            riskLevel: input.riskLevel ?? 'L2',
+            riskLevel: input.riskLevel ?? 'private_reply',
             status: input.status ?? 'approved',
             idempotencyKey: input.idempotencyKey,
           }

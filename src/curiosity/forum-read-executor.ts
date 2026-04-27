@@ -11,6 +11,7 @@ import {
   markActionRecordDeliveryState,
 } from '../runtime/agent-runtime-store.js'
 import { makeSceneId, type SceneId } from '../runtime/agent-runtime-types.js'
+import { buildBarrierOutput, decideExecution, verdictFromEffectMode } from '../runtime/action-barrier.js'
 import {
   createOrReuseRationaleArtifact,
   createOrReuseReadSession,
@@ -21,7 +22,6 @@ import {
 } from './forum-read-store.js'
 import { buildForumReadIdempotencyKey } from './forum-read-versioning.js'
 
-const FORUM_POLICY_VERSION = 'runtime-os.phase4.forum-readonly.v1'
 const FORUM_ALLOWED_ACTIONS = ['read_forum_post', 'artifact_only'] as const
 const FORUM_FORBIDDEN_ACTIONS = ['reply', 'comment', 'like', 'public_outbound'] as const
 
@@ -151,21 +151,23 @@ export async function ingestAndReadForumItem(input: ForumReadInput): Promise<For
     status: 'pending',
     idempotencyKey: `${idempotencyKey}:read`,
   })
+  const barrierVerdict = decideExecution({ actionType: 'read_forum_post', targetSceneId: sceneId })
+  const barrierOutput = buildBarrierOutput(barrierVerdict)
   const decision = await createOrReuseDecision({
     opportunityId: opportunity.id,
     idempotencyKey: `${opportunity.id}:policy`,
-    policyVersion: FORUM_POLICY_VERSION,
-    verdict: 'approved',
+    policyVersion: barrierVerdict.policyVersion,
+    verdict: verdictFromEffectMode(barrierVerdict.effectMode),
     actionType: 'read_forum_post',
-    riskLevel: 'L1',
+    riskLevel: barrierVerdict.riskBand,
     reason: 'read-only forum curiosity item may be summarized into local artifacts only',
     barrierInput: {
       sourceRefs: referencePayload,
       actionType: 'read_forum_post',
-      riskLevel: 'L1',
+      riskBand: barrierVerdict.riskBand,
     },
     barrierOutput: {
-      verdict: 'approved',
+      ...barrierOutput,
       allowedActions: [...FORUM_ALLOWED_ACTIONS],
       forbiddenActions: [...FORUM_FORBIDDEN_ACTIONS],
       reason: 'forum curiosity scene is read-only',
@@ -184,7 +186,7 @@ export async function ingestAndReadForumItem(input: ForumReadInput): Promise<For
       },
     },
     dryRun: false,
-    riskLevel: 'L1',
+    riskLevel: barrierVerdict.riskBand,
     status: 'approved',
     idempotencyKey: `${opportunity.id}:read_forum_post`,
   })
@@ -196,6 +198,7 @@ export async function ingestAndReadForumItem(input: ForumReadInput): Promise<For
     idempotencyKey: actionIntent.idempotencyKey,
     resultPayload: {
       sourceRefs: referencePayload,
+      barrierVerdict: barrierOutput,
       status: 'read_started',
     },
   })
@@ -226,6 +229,7 @@ export async function ingestAndReadForumItem(input: ForumReadInput): Promise<For
 
   await markActionRecordDeliveryState(actionRecord.id, 'sent', {
     sourceRefs: referencePayload,
+    barrierVerdict: barrierOutput,
     contentHash,
     readSessionId: readSession.id,
     summary,

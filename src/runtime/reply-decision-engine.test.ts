@@ -89,7 +89,7 @@ describe('reply decision engine', () => {
     assert.equal(decision.policy.shouldAudit, true)
   })
 
-  test('turns private message into L2 sendable private reply decision', () => {
+  test('turns private message into sendable private reply decision', () => {
     const decision = createReplyDecisionEngine().decide(opportunity({
       opportunityId: 'qq_private:20:message:10:private_reply',
       groupId: 20,

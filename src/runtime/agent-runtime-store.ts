@@ -15,6 +15,7 @@ import {
   type MemoryItem,
   type MemoryProposal,
   type MemoryType,
+  type Opportunity,
   type OpportunityType,
   type QueueKind,
   type ReferencePayload,
@@ -26,6 +27,8 @@ import {
   type SelfSpineUpdateProposal,
   type SelfSpineVersion,
 } from './agent-runtime-types.js'
+
+const ARBITER_QUEUE_KINDS: readonly QueueKind[] = ['obligation', 'social', 'curiosity', 'maintenance']
 
 export const MEMORY_TYPES: readonly MemoryType[] = [
   'observation',
@@ -437,6 +440,36 @@ function selfSpineVersionFromRow(row: {
   }
 }
 
+function opportunityFromRow(row: {
+  id: string
+  sceneId: string
+  runtimeEventId: string | null
+  queueKind: string
+  opportunityType: string
+  priority: number
+  deadlineAt: Date | null
+  payload: Prisma.JsonValue
+  status: string
+  idempotencyKey: string
+  createdAt: Date
+  updatedAt: Date
+}): Opportunity {
+  return {
+    id: row.id,
+    sceneId: row.sceneId as SceneId,
+    runtimeEventId: row.runtimeEventId,
+    queueKind: row.queueKind as QueueKind,
+    opportunityType: row.opportunityType as OpportunityType,
+    priority: row.priority,
+    deadlineAt: row.deadlineAt,
+    payload: asJsonObject(row.payload) as ReferencePayload,
+    status: row.status,
+    idempotencyKey: row.idempotencyKey,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }
+}
+
 export async function getOrCreateMainAgentRuntime() {
   return prisma.agentRuntimeSnapshot.upsert({
     where: { agentId: MAIN_AGENT_ID },
@@ -592,8 +625,8 @@ export async function createOrReuseOpportunity(input: {
   payload: ReferencePayload
   status?: string
   idempotencyKey: string
-}) {
-  return prisma.opportunity.upsert({
+}): Promise<Opportunity> {
+  const row = await prisma.opportunity.upsert({
     where: { sceneId_idempotencyKey: { sceneId: input.sceneId, idempotencyKey: input.idempotencyKey } },
     update: {},
     create: {
@@ -609,6 +642,33 @@ export async function createOrReuseOpportunity(input: {
       idempotencyKey: input.idempotencyKey,
     },
   })
+  return opportunityFromRow(row)
+}
+
+export async function listPendingArbiterOpportunities(input: {
+  limit?: number
+  sceneIds?: SceneId[]
+} = {}): Promise<Opportunity[]> {
+  const perQueueLimit = input.limit ?? 50
+  const rows = (await Promise.all(ARBITER_QUEUE_KINDS.map((queueKind) =>
+    prisma.opportunity.findMany({
+      where: {
+        status: 'pending',
+        queueKind,
+        ...(input.sceneIds?.length ? { sceneId: { in: input.sceneIds } } : {}),
+      },
+      orderBy: [
+        { priority: 'desc' },
+        { createdAt: 'asc' },
+      ],
+      take: perQueueLimit,
+    }),
+  ))).flat()
+  return rows.map(opportunityFromRow)
+}
+
+export async function markOpportunityStatus(id: string, status: string): Promise<void> {
+  await prisma.opportunity.update({ where: { id }, data: { status } })
 }
 
 export async function createOrReuseActionIntent(input: {
@@ -634,7 +694,7 @@ export async function createOrReuseActionIntent(input: {
       targetSceneId: input.targetSceneId,
       payload: input.payload,
       dryRun: input.dryRun ?? false,
-      riskLevel: input.riskLevel ?? 'L1',
+      riskLevel: input.riskLevel ?? 'persistence',
       status: input.status ?? 'proposed',
       idempotencyKey: input.idempotencyKey,
     },

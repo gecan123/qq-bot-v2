@@ -1,6 +1,12 @@
 import type { MessageSender } from '../messaging/message-sender.js'
 import type { ActionIntent, ActionRecord, ActionDeliveryState } from './agent-runtime-types.js'
 import { createOrReuseActionRecord } from './agent-runtime-store.js'
+import {
+  buildBarrierOutput,
+  DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG,
+  decideExecution,
+  deliveryStateFromEffectMode,
+} from './action-barrier.js'
 
 export interface ActionExecutorOptions {
   sender?: MessageSender
@@ -55,22 +61,42 @@ export function createActionExecutor(options: ActionExecutorOptions = {}) {
   return {
     async execute(intent: ActionIntent): Promise<ActionExecutorResult> {
       const payload = intent.payload as Record<string, unknown>
-      const initialState: ActionDeliveryState = intent.dryRun || intent.actionType === 'artifact_only' ? 'dry_run' : 'pending'
+      const barrierVerdict = decideExecution(
+        {
+          actionType: intent.actionType,
+          targetSceneId: intent.targetSceneId,
+          dryRunRequested: intent.dryRun,
+          executorAvailable: Boolean(options.sender),
+        },
+        {},
+        DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG,
+      )
+      const barrierOutput = buildBarrierOutput(barrierVerdict)
+      const initialState: ActionDeliveryState = intent.actionType === 'artifact_only'
+        ? 'dry_run'
+        : deliveryStateFromEffectMode(barrierVerdict.effectMode)
       const actionRecord = await store.createOrReuseActionRecord({
         actionIntentId: intent.id,
         actionType: intent.actionType,
         targetSceneId: intent.targetSceneId,
         deliveryState: initialState,
         idempotencyKey: intent.idempotencyKey,
-        resultPayload: initialState === 'dry_run' ? { reason: 'action intent is dry-run or artifact-only' } : null,
+        resultPayload: initialState === 'dry_run'
+          ? { reason: 'action intent is dry-run or artifact-only', barrierVerdict: barrierOutput }
+          : { barrierVerdict: barrierOutput },
       })
 
       if (actionRecord.deliveryState === 'sent' || actionRecord.deliveryState === 'acked' || actionRecord.deliveryState === 'dry_run') {
         return { intent, actionRecord, deliveryResult: actionRecord.deliveryState }
       }
 
+      if (barrierVerdict.effectMode !== 'live') {
+        await store.markDeliveryState?.(actionRecord.id, 'skipped', { reason: barrierVerdict.reason, barrierVerdict: barrierOutput })
+        return { intent, actionRecord, deliveryResult: 'skipped' }
+      }
+
       if (!options.sender) {
-        await store.markDeliveryState?.(actionRecord.id, 'failed', { reason: 'missing sender' })
+        await store.markDeliveryState?.(actionRecord.id, 'failed', { reason: 'missing sender', barrierVerdict: barrierOutput })
         return { intent, actionRecord, deliveryResult: 'failed' }
       }
 
@@ -78,7 +104,7 @@ export function createActionExecutor(options: ActionExecutorOptions = {}) {
       const groupId = getGroupId(payload)
       const userId = getUserId(payload)
       if (!text || (intent.actionType === 'send_private_message' ? userId == null : groupId == null)) {
-        await store.markDeliveryState?.(actionRecord.id, 'failed', { reason: 'invalid payload' })
+        await store.markDeliveryState?.(actionRecord.id, 'failed', { reason: 'invalid payload', barrierVerdict: barrierOutput })
         return { intent, actionRecord, deliveryResult: 'failed' }
       }
 
@@ -93,12 +119,15 @@ export function createActionExecutor(options: ActionExecutorOptions = {}) {
           : await options.sender.sendMessage({ groupId: groupId ?? 0, text })
 
       if (!sendResult.success) {
-        await store.markDeliveryState?.(actionRecord.id, 'failed', { error: 'send failed' })
+        await store.markDeliveryState?.(actionRecord.id, 'failed', { error: 'send failed', barrierVerdict: barrierOutput })
         return { intent, actionRecord, deliveryResult: 'failed' }
       }
 
       const deliveryResult: ActionDeliveryState = sendResult.providerMessageId == null ? 'sent' : 'acked'
-      await store.markDeliveryState?.(actionRecord.id, deliveryResult, { providerMessageId: sendResult.providerMessageId ?? null })
+      await store.markDeliveryState?.(actionRecord.id, deliveryResult, {
+        providerMessageId: sendResult.providerMessageId ?? null,
+        barrierVerdict: barrierOutput,
+      })
       return { intent, actionRecord, deliveryResult }
     },
   }

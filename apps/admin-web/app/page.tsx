@@ -1,102 +1,108 @@
-import { MessageSquare, Image, Users, Activity } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
+import Link from "next/link";
+import {
+  Activity,
+  BookOpen,
+  ClipboardList,
+  DatabaseZap,
+  GitBranch,
+  Inbox,
+  Route,
+} from "lucide-react";
 import { Header } from "@/components/layout/header";
-import { GroupCard } from "@/components/groups/group-card";
-import { getGroups, getMediaCount } from "@/lib/queries";
+import { MetricCard } from "@/components/runtime/metric-card";
+import { StatusBadge } from "@/components/runtime/status-badge";
+import { EmptyState } from "@/components/runtime/empty-state";
+import { Card, CardContent } from "@/components/ui/card";
+import { getRuntimeDashboard } from "@/lib/runtime-queries";
+import { compactId } from "@/lib/runtime-format";
+import { formatDateTime } from "@/lib/format-time";
 
-function StatCard({
-  label,
-  value,
-  icon: Icon,
-  accent,
-}: {
-  label: string;
-  value: string | number;
-  icon: React.ComponentType<{ className?: string }>;
-  accent: string;
-}) {
-  return (
-    <Card className="bg-white border-slate-200">
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs text-slate-400 mb-1">{label}</p>
-            <p className="text-2xl font-semibold text-slate-800">{value}</p>
-          </div>
-          <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${accent}`}>
-            <Icon className="h-5 w-5" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+const ICONS = [Activity, Route, ClipboardList, BookOpen, DatabaseZap, GitBranch];
 
 export default async function HomePage() {
-  const [groups, mediaCount] = await Promise.all([getGroups(), getMediaCount()]);
-  const totalMessages = groups.reduce((sum, g) => sum + g.messageCount, 0);
-
-  function formatCount(n: number) {
-    if (n >= 10000) return `${(n / 10000).toFixed(1)}w`;
-    if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-    return n.toString();
-  }
+  const dashboard = await getRuntimeDashboard();
 
   return (
     <>
-      <Header title="概览" description="QQ Bot 监控数据总览" />
+      <Header
+        title="Today"
+        description={`since ${formatDateTime(dashboard.todayStart)}`}
+      />
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 mb-8">
-        <StatCard
-          label="监控群组"
-          value={groups.length}
-          icon={Users}
-          accent="bg-indigo-50 text-indigo-600"
-        />
-        <StatCard
-          label="消息总数"
-          value={formatCount(totalMessages)}
-          icon={MessageSquare}
-          accent="bg-blue-50 text-blue-600"
-        />
-        <StatCard
-          label="活跃群组"
-          value={groups.filter((g) => {
-            const diffDays =
-              (Date.now() - new Date(g.lastMessageAt).getTime()) /
-              (1000 * 60 * 60 * 24);
-            return diffDays <= 7;
-          }).length}
-          icon={Activity}
-          accent="bg-emerald-50 text-emerald-600"
-        />
-        <StatCard
-          label="媒体文件"
-          value={formatCount(mediaCount)}
-          icon={Image}
-          accent="bg-violet-50 text-violet-600"
-        />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {dashboard.stats.map((stat, index) => (
+          <MetricCard
+            key={stat.label}
+            label={stat.label}
+            value={stat.value}
+            icon={ICONS[index] ?? Activity}
+            className="bg-slate-100 text-slate-700"
+          />
+        ))}
       </div>
 
-      {/* Groups list */}
-      <div>
-        <h2 className="text-xs font-medium text-slate-400 mb-3 uppercase tracking-wider">
-          群组列表
-        </h2>
-        {groups.length === 0 ? (
-          <Card className="bg-white border-slate-200">
-            <CardContent className="p-8 text-center text-slate-400 text-sm">
-              暂无群组数据
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {groups.map((group) => (
-              <GroupCard key={group.groupId} group={group} />
-            ))}
+      <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-900">Activity</h2>
+            <span className="text-xs text-slate-400">{dashboard.activity.length} rows</span>
           </div>
-        )}
+          {dashboard.activity.length === 0 ? (
+            <EmptyState>No runtime activity today</EmptyState>
+          ) : (
+            <div className="grid gap-2">
+              {dashboard.activity.map((item) => (
+                <Link key={`${item.type}:${item.id}`} href={item.href}>
+                  <Card className="border-slate-200 bg-white transition-colors hover:border-slate-300">
+                    <CardContent className="grid gap-3 p-4 sm:grid-cols-[120px_minmax(0,1fr)_auto] sm:items-center">
+                      <div className="text-xs font-medium uppercase text-slate-400">{item.type}</div>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-slate-900">{item.title}</div>
+                        <div className="mt-1 truncate text-xs text-slate-500">
+                          {item.subtitle} · {compactId(item.id, 8)}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 sm:justify-end">
+                        <span className="text-xs text-slate-400">{formatDateTime(item.createdAt)}</span>
+                        <StatusBadge value={item.status} />
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <h2 className="mb-3 text-sm font-semibold text-slate-900">Review Queue</h2>
+          <div className="grid gap-3">
+            <Link href="/memory-proposals">
+              <MetricCard
+                label="Pending Memory"
+                value={dashboard.reviewQueues.pendingMemoryProposals}
+                icon={DatabaseZap}
+                className="bg-amber-50 text-amber-700"
+              />
+            </Link>
+            <Link href="/self-spine">
+              <MetricCard
+                label="Pending Spine"
+                value={dashboard.reviewQueues.pendingSelfSpineProposals}
+                icon={GitBranch}
+                className="bg-sky-50 text-sky-700"
+              />
+            </Link>
+            <Link href="/reading-sessions">
+              <MetricCard
+                label="Unreviewed Reads"
+                value={dashboard.reviewQueues.unreviewedReadSessions}
+                icon={Inbox}
+                className="bg-rose-50 text-rose-700"
+              />
+            </Link>
+          </div>
+        </div>
       </div>
     </>
   );

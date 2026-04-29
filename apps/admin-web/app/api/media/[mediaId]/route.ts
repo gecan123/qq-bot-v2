@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 
 export async function GET(
   _req: NextRequest,
@@ -12,7 +12,7 @@ export async function GET(
     return new NextResponse("Invalid media ID", { status: 400 });
   }
 
-  const media = await prisma.media.findUnique({
+  const media = await getPrisma().media.findUnique({
     where: { mediaId: id },
     select: { data: true, contentType: true },
   });

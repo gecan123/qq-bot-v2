@@ -1,5 +1,5 @@
 import type { ParsedSegment } from "./message-segments";
-import { prisma } from "./prisma";
+import { getPrisma } from "./prisma";
 
 function serializeBigInt<T>(obj: T): T {
   return JSON.parse(
@@ -17,6 +17,7 @@ export interface GroupSummary {
 }
 
 export async function getGroups(): Promise<GroupSummary[]> {
+  const prisma = getPrisma();
   const rows = await prisma.message.groupBy({
     by: ["groupId", "groupName"],
     _count: { id: true },
@@ -51,6 +52,7 @@ export async function getGroupMessages(
   pageSize = 50,
   search?: string
 ): Promise<{ messages: MessageRow[]; total: number }> {
+  const prisma = getPrisma();
   const groupIdBig = BigInt(groupId);
   const where = search
     ? { groupId: groupIdBig, searchText: { contains: search, mode: "insensitive" as const } }
@@ -96,13 +98,14 @@ export interface MediaMeta {
 }
 
 export async function getMediaCount(): Promise<number> {
-  return prisma.media.count();
+  return getPrisma().media.count();
 }
 
 export async function getMediaList(
   page: number,
   pageSize = 48
 ): Promise<{ items: MediaMeta[]; total: number }> {
+  const prisma = getPrisma();
   const [items, total] = await Promise.all([
     prisma.media.findMany({
       orderBy: { createdAt: "desc" },

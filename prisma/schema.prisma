@@ -270,6 +270,7 @@ model MemoryProposal {
 
   @@unique([agentId, idempotencyKey])
   @@index([agentId, status, createdAt])
+  @@index([sourceRef(ops: JsonbPathOps)], type: Gin, map: "memory_proposals_source_ref_gin_idx")
   @@map("memory_proposals")
 }
 
@@ -288,6 +289,7 @@ model SelfSpineUpdateProposal {
 
   @@unique([agentId, idempotencyKey])
   @@index([agentId, status, createdAt])
+  @@index([status, createdAt], map: "self_spine_update_proposals_status_created_at_idx")
   @@map("self_spine_update_proposals")
 }
 
@@ -359,6 +361,20 @@ model ReadSession {
   @@index([feedItemId, contentHash, createdAt])
   @@index([opportunityId])
   @@map("read_sessions")
+}
+
+model ReadSessionReview {
+  id            String   @id @db.VarChar(191)
+  readSessionId String   @map("read_session_id") @db.VarChar(191)
+  reviewer      String   @default("admin") @db.VarChar(191)
+  score         Int?
+  notes         String?  @db.Text
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([readSessionId, reviewer])
+  @@index([readSessionId, updatedAt(sort: Desc)])
+  @@map("read_session_reviews")
 }
 
 model SourceSummary {

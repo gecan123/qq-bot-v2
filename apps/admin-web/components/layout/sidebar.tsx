@@ -7,6 +7,12 @@ import {
   LayoutDashboard,
   MessageSquare,
   Image,
+  BookOpen,
+  ClipboardList,
+  DatabaseZap,
+  GitBranch,
+  Layers3,
+  Route,
   ChevronLeft,
   ChevronRight,
   Bot,
@@ -15,7 +21,13 @@ import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 const navItems = [
-  { href: "/", icon: LayoutDashboard, label: "概览" },
+  { href: "/", icon: LayoutDashboard, label: "今日" },
+  { href: "/reading-sessions", icon: BookOpen, label: "阅读" },
+  { href: "/opportunities", icon: Route, label: "机会" },
+  { href: "/action-records", icon: ClipboardList, label: "动作" },
+  { href: "/memory-proposals", icon: DatabaseZap, label: "记忆" },
+  { href: "/self-spine", icon: GitBranch, label: "Self Spine" },
+  { href: "/scenes", icon: Layers3, label: "场景" },
   { href: "/groups", icon: MessageSquare, label: "群组" },
   { href: "/media", icon: Image, label: "媒体库" },
 ];

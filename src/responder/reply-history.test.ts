@@ -7,7 +7,7 @@ describe('buildReplyHistory', () => {
     const history = buildReplyHistory('上一轮消息', '@123 你是谁')
 
     assert.deepEqual(history, [
-      { role: 'user', content: '[群聊背景]\n上一轮消息' },
+      { role: 'user', content: '[近期会话背景]\n上一轮消息' },
       { role: 'user', content: '[当前要回复的消息]\n@123 你是谁' },
     ])
   })
@@ -16,7 +16,7 @@ describe('buildReplyHistory', () => {
     const history = buildReplyHistory('', '')
     const [contextMessage, currentMessage] = history
 
-    assert.deepEqual(contextMessage, { role: 'user', content: '[群聊背景]\n（暂无近期消息记录）' })
+    assert.deepEqual(contextMessage, { role: 'user', content: '[近期会话背景]\n（暂无近期消息记录）' })
     assert.deepEqual(currentMessage?.role, 'user')
     assert.match(currentMessage?.content ?? '', /消息文本暂不可用/)
   })

@@ -10,8 +10,8 @@ export function buildReplyHistory(contextText: string | null | undefined, incomi
   const normalizedIncoming = normalizeBlock(incomingText)
 
   const contextContent = normalizedContext
-    ? `[群聊背景]\n${normalizedContext}`
-    : '[群聊背景]\n（暂无近期消息记录）'
+    ? `[近期会话背景]\n${normalizedContext}`
+    : '[近期会话背景]\n（暂无近期消息记录）'
   const currentMessageContent = normalizedIncoming
     ? `[当前要回复的消息]\n${normalizedIncoming}`
     : '[当前要回复的消息]\n（消息文本暂不可用；若确实无法判断，再提一个最小必要澄清问题）'

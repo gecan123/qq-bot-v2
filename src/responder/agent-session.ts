@@ -18,7 +18,7 @@ export interface AgentSessionParams {
 
 export function buildSystemPrompt(persona: string, instruction: string): string {
   return [
-    '[群聊人格基座]',
+    '[统一认知基座]',
     persona,
     '',
     '[任务约束]',

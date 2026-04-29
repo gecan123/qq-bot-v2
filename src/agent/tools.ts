@@ -35,9 +35,9 @@ const finalAnswerDecl: AgentToolDeclaration = {
   name: 'final_answer',
   description: '当你准备好最终回复时调用。调用后循环立即终止。',
   inputSchema: z.object({
-    replyText: z.string().min(1).describe('最终发给群里的回复正文，不超过500字'),
+    replyText: z.string().min(1).describe('最终发出去的回复正文，不超过500字'),
     confidence: z.enum(['high', 'medium', 'low']).describe('你对这条回复是否站得住脚的主观置信度'),
-    shouldReferenceContext: z.boolean().describe('这条回复是否显式依赖了群聊上下文、数据库结果或搜索结果'),
+    shouldReferenceContext: z.boolean().describe('这条回复是否显式依赖了会话上下文、数据库结果或搜索结果'),
     shouldAskClarifyingQuestion: z.boolean().describe('如果信息不足，是否应该先澄清再继续'),
     contextCitations: z.array(z.string()).max(3).optional().describe('可选；列出你实际依赖的上下文要点，简短即可'),
   }),
@@ -45,7 +45,7 @@ const finalAnswerDecl: AgentToolDeclaration = {
 
 const webSearchDecl: AgentToolDeclaration = {
   name: 'web_search',
-  description: '搜索互联网获取实时信息。当群聊历史中找不到答案时使用。',
+  description: '搜索互联网获取实时信息。当会话历史中找不到答案时使用。',
   inputSchema: z.object({
     query: z.string().min(1).describe('搜索查询词'),
     maxResults: z.number().int().min(1).max(10).optional().describe('结果条数，默认5，最大10'),

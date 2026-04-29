@@ -6,7 +6,7 @@ describe('buildSystemPrompt', () => {
   test('contains persona and instruction in correct sections', () => {
     const result = buildSystemPrompt('我是一只猫', '简洁回复')
 
-    assert.ok(result.includes('[群聊人格基座]'), 'should contain persona section header')
+    assert.ok(result.includes('[统一认知基座]'), 'should contain persona section header')
     assert.ok(result.includes('我是一只猫'), 'should contain persona text')
     assert.ok(result.includes('[任务约束]'), 'should contain instruction section header')
     assert.ok(result.includes('简洁回复'), 'should contain instruction text')
@@ -30,7 +30,7 @@ describe('buildSystemPrompt', () => {
   test('sections are separated by blank lines', () => {
     const result = buildSystemPrompt('persona', 'instruction')
 
-    assert.ok(result.startsWith('[群聊人格基座]'), 'persona section should be first')
+    assert.ok(result.startsWith('[统一认知基座]'), 'persona section should be first')
     assert.ok(result.includes('\n\n[任务约束]'), 'blank line before instruction section')
   })
 })

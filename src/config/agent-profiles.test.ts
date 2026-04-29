@@ -14,17 +14,17 @@ describe('agent profiles', () => {
     fs.rmSync(CONFIG_PATH, { force: true })
   })
 
-  test('default profile exposes a richer group-chat persona baseline', async () => {
+  test('default profile exposes a richer unified persona baseline', async () => {
     const { getAgentProfile } = await loadProfilesModule()
     const profile = getAgentProfile(123)
     const expectedPersona = loadPrompt('./prompts/characters/default.md')
 
     assert.equal(profile.persona, expectedPersona)
-    assert.match(profile.persona, /你是群里的常驻 AI 搭子/)
+    assert.match(profile.persona, /长期在线的智能生命体/)
     assert.match(profile.persona, /你的整体气质：/)
     assert.match(profile.persona, /你的说话习惯：/)
     assert.match(profile.persona, /你的连续性：/)
-    assert.match(profile.persona, /群聊里的最低规则：/)
+    assert.match(profile.persona, /长期在线的最低规则：/)
   })
 
   test('group config can override the default persona baseline', async () => {
@@ -34,7 +34,7 @@ describe('agent profiles', () => {
         default: {},
         groups: {
           '123': {
-            persona: '你在这个群里偏克制，只在必要时插话。',
+            persona: '你偏克制，只在必要时插话。',
           },
         },
       }),
@@ -43,6 +43,6 @@ describe('agent profiles', () => {
     const { getAgentProfile } = await loadProfilesModule()
     const profile = getAgentProfile(123)
 
-    assert.equal(profile.persona, '你在这个群里偏克制，只在必要时插话。')
+    assert.equal(profile.persona, '你偏克制，只在必要时插话。')
   })
 })

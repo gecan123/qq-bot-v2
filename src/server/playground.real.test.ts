@@ -30,7 +30,7 @@ describe('runPlayground real api', () => {
     )
 
     assert.equal(result.state, 'final')
-    assert.match(result.llmContext.systemPrompt, /\[群聊人格基座\]/)
+    assert.match(result.llmContext.systemPrompt, /\[统一认知基座\]/)
     assert.match(result.llmContext.systemPrompt, /\[任务约束\]/)
     assert.ok(result.llmContext.systemPrompt.includes(defaultPersona))
     assert.ok(result.llmContext.systemPrompt.includes(replyInstruction))

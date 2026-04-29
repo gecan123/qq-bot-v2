@@ -33,7 +33,7 @@ describe('runPlayground', () => {
           if (chatCount === 1) {
             return {
               type: 'tool_calls',
-              content: '先检查群聊记录',
+              content: '先检查会话记录',
               calls: [{ id: 'call_1', name: 'db_read', args: { limit: 3 } }],
             }
           }
@@ -53,7 +53,7 @@ describe('runPlayground', () => {
     assert.ok(result.trace.events.some((event) => event.type === 'loop_started'))
     assert.match(result.llmContext.systemPrompt, /你是测试助手/)
     assert.equal(result.llmContext.messages[0]?.role, 'user')
-    assert.match(result.llmContext.messages[0]?.content ?? '', /群聊背景/)
+    assert.match(result.llmContext.messages[0]?.content ?? '', /近期会话背景/)
     assert.deepEqual(result.finalAnswerPayload, { replyText: '最终答案' })
   })
 

@@ -114,7 +114,7 @@ Key modules:
 - `src/config/prompt-loader.ts` — `loadPrompt(filePath)` reads and caches prompt files from `prompts/`
 - `src/utils/segment-text.ts` — `segmentsToPlainText(segments)` helper used across context-builder, format-messages, and insertMessage
 
-**Prompts:** All static prompt text lives in `prompts/` (not in source code). Key files: `default-persona.md`, `reply-instruction.md`, `describe-image.md`, `describe-video.md`, `describe-pdf.md`, `transcribe-audio.md`. Loaded via `loadPrompt()` at first use and cached. Agent persona baseline is loaded from `default-persona.md` by `src/config/agent-profiles.ts`, and can still be overridden per group.
+**Prompts:** All static prompt text lives in `prompts/` (not in source code). Key files: `characters/default.md`, `reply-instruction.md`, `proactive-judge.md`, `describe-image.md`, `describe-video.md`, `describe-pdf.md`, `transcribe-audio.md`. Loaded via `loadPrompt()` at first use and cached. Agent persona baseline is loaded from `prompts/characters/default.md` by `src/config/agent-profiles.ts`, and can still be overridden via `agent-config.json`.
 
 **Database:** Prisma 7 with PG driver adapter. Client is generated to `src/generated/prisma/` (not `node_modules`). Single `Message` model with BigInt IDs. After schema changes, run `pnpm db:generate`.
 
@@ -162,7 +162,7 @@ Multi-turn agent reasoning for @-mention replies. Triggered based on `AgentMode`
 - `src/agent/tools.ts` — `createAgentTools(groupId)` factory returning read-only tools with zod validation: `db_schema`, `db_read`, structured `final_answer`, and optionally `web_search` (requires `TAVILY_API_KEY`)
 - `src/agent/openai-agent-adapter.ts` — `OpenAIAgentAdapter` implementing `AgentLlmAdapter` via OpenAI function calling; `createOpenAIAgentAdapter()` factory using `LLM_AGENT_*` env vars (falls back to `OPENAI_*`)
 - `src/agent/loop.ts` — `runAgentLoop()` with maxSteps=4, maxTimeMs=30s, final/fallback/aborted states
-- `src/config/agent-profiles.ts` — `AgentProfile` supports `personaFile` (path to `.md`) or inline `persona` string; default persona baseline comes from `prompts/default-persona.md`, and `getAgentProfile()` merges default → config.default → group and resolves persona
+- `src/config/agent-profiles.ts` — `AgentProfile` supports `personaFile` (path to `.md`) or inline `persona` string; default persona baseline comes from `prompts/characters/default.md`, and `getAgentProfile()` merges default → config.default → group and resolves persona
 
 **At-mention routing:** `src/responder/handlers/at-mention.ts` always routes to the async agent reply pipeline. There is no single-turn reply fallback.
 

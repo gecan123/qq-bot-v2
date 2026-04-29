@@ -293,7 +293,7 @@ describe('runAgentLoop', () => {
     await runAgentLoop({
       systemPrompt: 'test',
       initialHistory: [
-        { role: 'user', content: '[群聊背景]\n消息记录' },
+        { role: 'user', content: '[近期会话背景]\n消息记录' },
         { role: 'user', content: '[当前要回复的消息]\n你好' },
       ],
       chatFn,
@@ -305,7 +305,7 @@ describe('runAgentLoop', () => {
     const firstHistory = receivedHistories[0] as Array<{ role: string; content: string }>
     assert.equal(firstHistory.length, 2)
     assert.equal(firstHistory[0]?.role, 'user')
-    assert.match(firstHistory[0]?.content ?? '', /群聊背景/)
+    assert.match(firstHistory[0]?.content ?? '', /近期会话背景/)
     assert.equal(firstHistory[1]?.role, 'user')
     assert.match(firstHistory[1]?.content ?? '', /当前要回复的消息/)
   })

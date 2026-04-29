@@ -53,11 +53,11 @@ describe('conversation compaction', () => {
       return makeMessage(id)
     })
 
-    await compactConversationIfNeeded(1, 'sender:20', {
+    await compactConversationIfNeeded(1, 'qq_group:1', {
       getConversationState: async () => ({
         id: 1,
         groupId: 1,
-        senderThreadKey: 'sender:20',
+        senderThreadKey: 'qq_group:1',
         compactedBase: '',
         compactedVersion: 1,
         lastCompactedMessageRowId: undefined,
@@ -97,11 +97,11 @@ describe('conversation compaction', () => {
     const savedStates: Array<{ compactedBase: string; lastCompactedMessageRowId: number }> = []
     const messages = Array.from({ length: 41 }, (_, index) => makeMessage(index + 1))
 
-    await compactConversationIfNeeded(1, 'sender:20', {
+    await compactConversationIfNeeded(1, 'qq_group:1', {
       getConversationState: async () => ({
         id: 1,
         groupId: 1,
-        senderThreadKey: 'sender:20',
+        senderThreadKey: 'qq_group:1',
         compactedBase: '',
         compactedVersion: 1,
         lastCompactedMessageRowId: undefined,

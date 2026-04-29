@@ -96,6 +96,7 @@ async function defaultBuildIncomingMessage(opportunity: ReplyOpportunity): Promi
       : String(opportunity.groupId),
     sceneId: opportunity.sceneId,
     groupName: stored.groupName ?? undefined,
+    messageRowId: stored.id,
     messageId: Number(stored.messageId),
     senderId: Number(stored.senderId),
     senderNickname: stored.senderGroupNickname ?? stored.senderNickname ?? String(stored.senderId),

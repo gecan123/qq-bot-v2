@@ -6,6 +6,7 @@ export interface IncomingMessage {
   sceneExternalId?: string
   sceneId?: string
   groupName?: string
+  messageRowId?: number
   messageId: number
   senderId: number
   senderNickname: string

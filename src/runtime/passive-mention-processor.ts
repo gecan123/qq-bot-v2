@@ -1,7 +1,7 @@
 import { getMessageById } from '../database/messages.js'
 import type { Message } from '../generated/prisma/client.js'
 import type { ConversationWorkerResult, GroupConversationBatch, MentionEvent } from '../conversation/types.js'
-import { toSenderReplyScopeKey } from '../conversation/reply-scope.js'
+import { toSceneReplyScopeKey } from '../conversation/reply-scope.js'
 import { compactConversationIfNeeded } from '../conversation/compaction.js'
 import { messageSender } from '../messaging/message-sender.js'
 import { createLogger } from '../logger.js'
@@ -74,6 +74,7 @@ async function loadIncomingMessage(
   return {
     groupId: Number(stored.groupId),
     groupName: stored.groupName ?? undefined,
+    messageRowId: stored.id,
     messageId: Number(stored.messageId),
     senderId: Number(stored.senderId),
     senderNickname: stored.senderGroupNickname ?? stored.senderNickname ?? String(stored.senderId),
@@ -139,14 +140,15 @@ export function createPassiveMentionProcessor(
           continue
         }
 
-        const scopeKey = toSenderReplyScopeKey(thread.senderId)
+        const sceneId = replyTarget.runtimeSceneId ?? makeSceneId(batch.groupId)
+        const scopeKey = toSceneReplyScopeKey(sceneId)
         const runtimeKey = makeMainAgentRuntimeKey()
         const result = await executor.execute({
           opportunityId: replyTarget.runtimeOpportunityId ?? makeMentionReplyIntentId(batch.groupId, replyTargetStored.id),
           decisionId: replyTarget.runtimeDecisionId,
           runtimeKey,
           groupId: batch.groupId,
-          sceneId: replyTarget.runtimeSceneId ?? makeSceneId(batch.groupId),
+          sceneId,
           scopeKey,
           sourceKind: 'mention',
           cueStrength: 'strong',

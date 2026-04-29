@@ -90,7 +90,7 @@ describe('Phase 0 responder context contract', () => {
       getConversationState: async () => ({
         id: 1,
         groupId: 1,
-        senderThreadKey: 'sender:20',
+        senderThreadKey: 'qq_group:1',
         compactedBase: '',
         compactedVersion: 1,
         lastCompactedMessageRowId: undefined,
@@ -102,6 +102,42 @@ describe('Phase 0 responder context contract', () => {
     })
 
     assert.match(result.contextText, /\[BOT\] 机器人回复/)
+  })
+
+  test('group context state is keyed by scene instead of sender thread', async () => {
+    let conversationStateArgs: { groupId: number; senderThreadKey: string } | null = null
+
+    await buildContext({
+      groupId: 1,
+      sceneKind: 'qq_group',
+      sceneExternalId: '1',
+      sceneId: 'qq_group:1',
+      messageId: 1001,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'text', content: '@bot 你好' }],
+    } satisfies IncomingMessage, 10, {}, {
+      getConversationState: async (groupId, senderThreadKey) => {
+        conversationStateArgs = { groupId, senderThreadKey }
+        return {
+          id: 1,
+          groupId,
+          senderThreadKey,
+          compactedBase: '',
+          compactedVersion: 1,
+          lastCompactedMessageRowId: undefined,
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+        }
+      },
+      getRecentMessages: async () => [],
+      listActionRecords: async () => [],
+    })
+
+    assert.deepEqual(conversationStateArgs, {
+      groupId: 1,
+      senderThreadKey: 'qq_group:1',
+    })
   })
 
   test('private context state is keyed by scene instead of colliding with same-number group state', async () => {
@@ -144,7 +180,7 @@ describe('Phase 0 responder context contract', () => {
 
     assert.deepEqual(conversationStateArgs, {
       groupId: 0,
-      senderThreadKey: 'qq_private:20:sender:20',
+      senderThreadKey: 'qq_private:20',
     })
     assert.deepEqual(recentSceneArgs, {
       sceneKind: 'qq_private',
@@ -152,5 +188,88 @@ describe('Phase 0 responder context contract', () => {
       limit: 10,
     })
     assert.equal(actionSceneId, 'qq_private:20')
+  })
+
+  test('private context interleaves bot replies and leaves current short message as current turn only', async () => {
+    const firstMessage: Message = {
+      id: 10,
+      sceneKind: 'qq_private',
+      sceneExternalId: '20',
+      groupId: BigInt(20),
+      groupName: null,
+      mediaReferenceIds: [],
+      messageId: BigInt(2001),
+      senderId: BigInt(20),
+      senderNickname: '用户20',
+      senderGroupNickname: null,
+      content: [{ type: 'text', content: '聊点暧昧的，你随便讲点' }] as Message['content'],
+      rawContent: null,
+      rawMessage: null,
+      searchText: '聊点暧昧的，你随便讲点',
+      resolvedText: '聊点暧昧的，你随便讲点',
+      sentAt: new Date('2026-04-21T13:40:00Z'),
+      createdAt: new Date('2026-04-21T13:40:00Z'),
+    }
+    const currentMessage: Message = {
+      ...firstMessage,
+      id: 12,
+      messageId: BigInt(2002),
+      content: [{ type: 'text', content: '来' }] as Message['content'],
+      searchText: '来',
+      resolvedText: '来',
+      sentAt: new Date('2026-04-21T13:41:00Z'),
+      createdAt: new Date('2026-04-21T13:41:00Z'),
+    }
+    const actionRecord: ActionRecord = {
+      id: 'action-1',
+      actionIntentId: 'intent-1',
+      actionType: 'send_private_message',
+      targetSceneId: 'qq_private:20',
+      deliveryState: 'sent',
+      idempotencyKey: 'intent-1',
+      resultPayload: {
+        sourceRefs: {
+          incorporatedMessageRowId: 10,
+          source: 'messages',
+        },
+        proposedEffect: {
+          type: 'send_private_message',
+          text: '可以聊暧昧氛围，但不展开露骨内容。',
+        },
+      },
+      createdAt: new Date('2026-04-21T13:40:20Z'),
+      updatedAt: new Date('2026-04-21T13:40:20Z'),
+    }
+
+    const result = await buildContext({
+      groupId: 20,
+      sceneKind: 'qq_private',
+      sceneExternalId: '20',
+      sceneId: 'qq_private:20',
+      messageRowId: 12,
+      messageId: 2002,
+      senderId: 20,
+      senderNickname: '用户20',
+      segments: [{ type: 'text', content: '来' }],
+    } satisfies IncomingMessage, 10, {}, {
+      getConversationState: async () => ({
+        id: 1,
+        groupId: 0,
+        senderThreadKey: 'qq_private:20',
+        compactedBase: '',
+        compactedVersion: 1,
+        lastCompactedMessageRowId: undefined,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      }),
+      getRecentSceneMessages: async () => [firstMessage, currentMessage],
+      listActionRecords: async () => [actionRecord],
+    })
+
+    assert.equal(
+      result.contextText,
+      '[QQ消息]\n用户20: 聊点暧昧的，你随便讲点\n[BOT] 可以聊暧昧氛围，但不展开露骨内容。',
+    )
+    assert.ok(!result.contextText.includes('用户20: 来'))
   })
 })

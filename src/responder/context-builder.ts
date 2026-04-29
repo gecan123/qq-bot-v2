@@ -12,14 +12,14 @@ import {
   type MessageSceneKind,
 } from '../database/messages.js'
 import { getOrCreateConversationState } from '../conversation/conversation-state-store.js'
-import { toSceneSenderReplyScopeKey, toSenderReplyScopeKey } from '../conversation/reply-scope.js'
+import { toSceneReplyScopeKey } from '../conversation/reply-scope.js'
 import { resolveMessage } from '../media/message-resolver.js'
 import { config } from '../config/index.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
 import { listSentActionRecordsForScene } from '../runtime/agent-runtime-store.js'
 import { makeQqGroupSceneId, makeQqPrivateSceneId, type SceneId } from '../runtime/agent-runtime-types.js'
 import type { ActionRecord } from '../runtime/agent-runtime-types.js'
-import { getActionRecordText } from '../runtime/action-record-payload.js'
+import { getActionRecordAnchor, getActionRecordText } from '../runtime/action-record-payload.js'
 
 export interface BuildContextResult {
   contextText: string
@@ -132,6 +132,59 @@ function actionRecordText(actionRecord: ActionRecord): string | null {
   return text ? `[BOT] ${text}` : null
 }
 
+async function renderConversationWindow(
+  messages: Message[],
+  actionRecords: ActionRecord[],
+  contextLimit: number,
+  options: ContextBuildOptions,
+  dependencies: ContextBuildDependencies,
+): Promise<string> {
+  const rendered: Array<{ anchor: number; createdAt: Date; text: string }> = []
+  const sortedActions = [...actionRecords].sort((a, b) => {
+    const left = getActionRecordAnchor(a) ?? Number.MAX_SAFE_INTEGER
+    const right = getActionRecordAnchor(b) ?? Number.MAX_SAFE_INTEGER
+    return left - right || a.createdAt.getTime() - b.createdAt.getTime()
+  })
+  let actionIndex = 0
+
+  for (const dbMsg of messages) {
+    const nickname = dbMsg.senderGroupNickname ?? dbMsg.senderNickname ?? String(dbMsg.senderId)
+    const text = await getStableResolvedText(dbMsg, options, dependencies)
+    if (text.trim()) {
+      rendered.push({
+        anchor: dbMsg.id,
+        createdAt: dbMsg.sentAt ?? dbMsg.createdAt,
+        text: `[QQ消息]\n${nickname}: ${text}`,
+      })
+    }
+
+    while (actionIndex < sortedActions.length) {
+      const actionRecord = sortedActions[actionIndex]
+      const anchor = actionRecord ? getActionRecordAnchor(actionRecord) : null
+      if (!actionRecord || anchor == null || anchor > dbMsg.id) break
+      const text = actionRecordText(actionRecord)
+      if (text) rendered.push({ anchor, createdAt: actionRecord.createdAt, text })
+      actionIndex++
+    }
+  }
+
+  while (actionIndex < sortedActions.length) {
+    const actionRecord = sortedActions[actionIndex]
+    const anchor = actionRecord ? getActionRecordAnchor(actionRecord) : null
+    const text = actionRecord ? actionRecordText(actionRecord) : null
+    if (actionRecord && anchor != null && text) {
+      rendered.push({ anchor, createdAt: actionRecord.createdAt, text })
+    }
+    actionIndex++
+  }
+
+  return rendered
+    .sort((a, b) => a.anchor - b.anchor || a.createdAt.getTime() - b.createdAt.getTime())
+    .slice(-contextLimit)
+    .map((entry) => entry.text)
+    .join('\n')
+}
+
 export async function buildContext(
   msg: IncomingMessage,
   contextLimit: number,
@@ -140,9 +193,7 @@ export async function buildContext(
 ): Promise<BuildContextResult> {
   const lines: string[] = []
   const scene = resolveIncomingScene(msg)
-  const scopeKey = scene.sceneKind === 'qq_private'
-    ? toSceneSenderReplyScopeKey(scene.sceneId, msg.senderId)
-    : toSenderReplyScopeKey(msg.senderId)
+  const scopeKey = toSceneReplyScopeKey(scene.sceneId)
   const conversationStateGroupId = scene.sceneKind === 'qq_private' ? 0 : msg.groupId
   const getConversationState = dependencies.getConversationState ?? getOrCreateConversationState
   const listActionRecords = dependencies.listActionRecords ?? listSentActionRecordsForScene
@@ -168,20 +219,25 @@ export async function buildContext(
   const recentMessages = conversationState.lastCompactedMessageRowId
     ? await getRecentMessagesForIncoming(msg, contextLimit, conversationState.lastCompactedMessageRowId, dependencies)
     : await getRecentMessagesForIncoming(msg, contextLimit, undefined, dependencies)
-  const renderedMessages: string[] = []
-  for (const dbMsg of recentMessages.slice(-contextLimit)) {
-    const nickname = dbMsg.senderGroupNickname ?? dbMsg.senderNickname ?? String(dbMsg.senderId)
-    const text = await getStableResolvedText(dbMsg, options, dependencies)
-    if (text.trim()) renderedMessages.push(`[QQ消息]\n${nickname}: ${text}`)
-  }
+  const contextMessages = msg.messageRowId == null
+    ? recentMessages
+    : recentMessages.filter((dbMsg) => dbMsg.id !== msg.messageRowId)
 
   const actionRecords = await listActionRecords(scene.sceneId)
-  const renderedActions = actionRecords
-    .filter((actionRecord) => !conversationState.lastCompactedMessageRowId || actionRecord.createdAt.getTime() > 0)
-    .map(actionRecordText)
-    .filter((text): text is string => Boolean(text))
+  const compactedBoundary = conversationState.lastCompactedMessageRowId ?? 0
+  const currentBoundary = msg.messageRowId ?? Number.MAX_SAFE_INTEGER
+  const windowActionRecords = actionRecords.filter((actionRecord) => {
+    const anchor = getActionRecordAnchor(actionRecord)
+    return anchor != null && anchor > compactedBoundary && anchor < currentBoundary
+  })
 
-  const windowText = [...renderedMessages, ...renderedActions].slice(-contextLimit).join('\n')
+  const windowText = await renderConversationWindow(
+    contextMessages.slice(-contextLimit),
+    windowActionRecords,
+    contextLimit,
+    options,
+    dependencies,
+  )
   if (windowText) lines.push(windowText)
 
   return { contextText: lines.join('\n'), recentMessages }

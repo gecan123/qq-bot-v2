@@ -1,9 +1,5 @@
-export function toSenderReplyScopeKey(senderId: number): string {
-  return `sender:${senderId}`
-}
-
-export function toSceneSenderReplyScopeKey(sceneId: string, senderId: number): string {
-  return `${sceneId}:sender:${senderId}`
+export function toSceneReplyScopeKey(sceneId: string): string {
+  return sceneId
 }
 
 export function toGroupReplyScopeKey(groupId: number): string {

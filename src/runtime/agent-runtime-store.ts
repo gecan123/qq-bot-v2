@@ -5,6 +5,8 @@ import {
   MAIN_AGENT_ID,
   makeSceneId,
   type AgentId,
+  type AgentRuntimeInternalExperience,
+  type AgentRuntimeInternalExperienceKind,
   type ActionDeliveryState,
   type ActionIntentStatus,
   type ActionRecord,
@@ -29,6 +31,7 @@ import {
 } from './agent-runtime-types.js'
 
 const ARBITER_QUEUE_KINDS: readonly QueueKind[] = ['obligation', 'social', 'curiosity', 'maintenance']
+const MAX_INTERNAL_EXPERIENCES = 50
 
 export const MEMORY_TYPES: readonly MemoryType[] = [
   'observation',
@@ -66,6 +69,9 @@ const ALLOWED_REFERENCE_KEYS = new Set([
   'feedItemId',
   'contentHash',
   'readSessionId',
+  'sourceSummaryId',
+  'thoughtArtifactId',
+  'rationaleArtifactId',
   'actionRecordId',
   'ingestSource',
   'source',
@@ -134,6 +140,31 @@ export function mergeRuntimeSessionSnapshot(
   }
 }
 
+export function mergeRuntimeContextSnapshot(
+  existing: Prisma.JsonObject | null | undefined,
+  next: Prisma.JsonObject,
+): Prisma.JsonObject {
+  const existingSnapshot = asRecord(existing)
+  const nextSnapshot = asRecord(next)
+  const experiencesByKey = new Map<string, AgentRuntimeInternalExperience>()
+  for (const experience of parseInternalExperiences(existingSnapshot.internalExperiences)) {
+    experiencesByKey.set(experience.idempotencyKey, experience)
+  }
+  for (const experience of parseInternalExperiences(nextSnapshot.internalExperiences)) {
+    experiencesByKey.set(experience.idempotencyKey, experience)
+  }
+  const internalExperiences = [...experiencesByKey.values()]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, MAX_INTERNAL_EXPERIENCES)
+  const merged = {
+    ...existingSnapshot,
+    ...nextSnapshot,
+    internalExperiences: internalExperiences as unknown as Prisma.JsonArray,
+  }
+  assertRuntimeSnapshotReferenceOnly(merged)
+  return merged
+}
+
 function toReferencePayload(payload: ReferencePayload): Prisma.JsonObject {
   const out: Prisma.JsonObject = {}
   for (const [key, value] of Object.entries(payload)) {
@@ -174,6 +205,42 @@ function assertNoForbiddenInboundCopies(value: unknown, path = 'payload'): void 
 
 export function assertRuntimeSnapshotReferenceOnly(contextSnapshot: Prisma.JsonObject): void {
   assertNoForbiddenInboundCopies(contextSnapshot, 'contextSnapshot')
+}
+
+function isInternalExperienceKind(value: unknown): value is AgentRuntimeInternalExperienceKind {
+  return value === 'curiosity_reading_note'
+}
+
+function parseInternalExperiences(value: unknown): AgentRuntimeInternalExperience[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is AgentRuntimeInternalExperience => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return false
+    const candidate = item as Partial<AgentRuntimeInternalExperience>
+    return (
+      isInternalExperienceKind(candidate.kind) &&
+      typeof candidate.body === 'string' &&
+      typeof candidate.createdAt === 'string' &&
+      typeof candidate.idempotencyKey === 'string' &&
+      Boolean(candidate.sourceRef && typeof candidate.sourceRef === 'object' && !Array.isArray(candidate.sourceRef))
+    )
+  })
+}
+
+function appendInternalExperience(
+  contextSnapshot: Prisma.JsonObject,
+  experience: AgentRuntimeInternalExperience,
+): Prisma.JsonObject {
+  const existing = parseInternalExperiences(contextSnapshot.internalExperiences)
+    .filter((item) => item.idempotencyKey !== experience.idempotencyKey)
+  const internalExperiences = [experience, ...existing]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, MAX_INTERNAL_EXPERIENCES)
+  const next = {
+    ...contextSnapshot,
+    internalExperiences: internalExperiences as unknown as Prisma.JsonArray,
+  }
+  assertRuntimeSnapshotReferenceOnly(next)
+  return next
 }
 
 export function assertActionIntentPayloadSafe(payload: Prisma.JsonObject): void {
@@ -494,8 +561,11 @@ export async function upsertAgentRuntimeSnapshot(input: {
   sessionSnapshot: Prisma.JsonObject
 }) {
   const agentId = input.agentId ?? MAIN_AGENT_ID
-  assertRuntimeSnapshotReferenceOnly(input.contextSnapshot)
   const existing = await prisma.agentRuntimeSnapshot.findUnique({ where: { agentId } })
+  const contextSnapshot = mergeRuntimeContextSnapshot(
+    existing ? asJsonObject(existing.contextSnapshot) : null,
+    input.contextSnapshot,
+  )
   const sessionSnapshot = mergeRuntimeSessionSnapshot(
     existing ? asJsonObject(existing.sessionSnapshot) : null,
     input.sessionSnapshot,
@@ -504,15 +574,41 @@ export async function upsertAgentRuntimeSnapshot(input: {
     where: { agentId },
     update: {
       schemaVersion: input.schemaVersion ?? AGENT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
-      contextSnapshot: input.contextSnapshot,
+      contextSnapshot,
       sessionSnapshot,
     },
     create: {
       agentId,
       schemaVersion: input.schemaVersion ?? AGENT_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
-      contextSnapshot: input.contextSnapshot,
+      contextSnapshot,
       sessionSnapshot,
     },
+  })
+}
+
+export async function appendAgentRuntimeInternalExperience(input: {
+  agentId?: AgentId
+  kind: AgentRuntimeInternalExperienceKind
+  sourceRef: ReferencePayload
+  body: string
+  createdAt?: Date
+  idempotencyKey: string
+}) {
+  const agentId = input.agentId ?? MAIN_AGENT_ID
+  const body = input.body.trim()
+  if (!body) return getOrCreateMainAgentRuntime()
+  const runtime = await getOrCreateMainAgentRuntime()
+  const contextSnapshot = asJsonObject(runtime.contextSnapshot)
+  const nextContextSnapshot = appendInternalExperience(contextSnapshot, {
+    kind: input.kind,
+    sourceRef: toReferencePayload(input.sourceRef),
+    body,
+    createdAt: (input.createdAt ?? new Date()).toISOString(),
+    idempotencyKey: input.idempotencyKey,
+  })
+  return prisma.agentRuntimeSnapshot.update({
+    where: { agentId },
+    data: { contextSnapshot: nextContextSnapshot },
   })
 }
 

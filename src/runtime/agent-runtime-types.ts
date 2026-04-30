@@ -96,10 +96,23 @@ export interface ReferencePayload extends Record<string, Prisma.JsonValue | unde
   feedItemId?: string
   contentHash?: string
   readSessionId?: string
+  sourceSummaryId?: string
+  thoughtArtifactId?: string
+  rationaleArtifactId?: string
   actionRecordId?: string
   ingestSource?: string
   source?: string
   idempotencyKey?: string
+}
+
+export type AgentRuntimeInternalExperienceKind = 'curiosity_reading_note'
+
+export interface AgentRuntimeInternalExperience {
+  kind: AgentRuntimeInternalExperienceKind
+  sourceRef: ReferencePayload
+  body: string
+  createdAt: string
+  idempotencyKey: string
 }
 
 export interface RuntimeEventRecord {

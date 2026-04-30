@@ -1,6 +1,7 @@
 import type { Prisma } from '../generated/prisma/client.js'
 import {
   buildFeedItemReferencePayload,
+  appendAgentRuntimeInternalExperience,
   createOrReuseActionIntent,
   createOrReuseActionRecord,
   createOrReuseDecision,
@@ -219,13 +220,32 @@ export async function ingestAndReadForumItem(input: ForumReadInput): Promise<For
     readSessionId: readSession.id,
     summary,
   })
+  const thought = buildThought({ title: input.item.title, summary })
   const thoughtArtifact = await createOrReuseThoughtArtifact({
     readSessionId: readSession.id,
-    thought: buildThought({ title: input.item.title, summary }),
+    thought,
   })
   const rationaleArtifact = await createOrReuseRationaleArtifact({
     readSessionId: readSession.id,
     rationale: buildRationale({ selectionReason: input.selectionReason, sourceKind: input.source.kind }),
+  })
+  await appendAgentRuntimeInternalExperience({
+    kind: 'curiosity_reading_note',
+    sourceRef: {
+      feedSourceId: feedSource.id,
+      feedItemId: feedItem.id,
+      contentHash,
+      readSessionId: readSession.id,
+      sourceSummaryId: sourceSummary.id,
+      thoughtArtifactId: thoughtArtifact.id,
+      rationaleArtifactId: rationaleArtifact.id,
+      actionRecordId: actionRecord.id,
+      source: 'forum_read',
+      idempotencyKey,
+    },
+    body: `[内部阅读经历]\n来源：${input.source.kind}:${input.source.externalId}\n标题：${input.item.title}\n读后感：${thought}`,
+    createdAt: now,
+    idempotencyKey: `${readSession.id}:curiosity_reading_note`,
   })
 
   await markActionRecordDeliveryState(actionRecord.id, 'sent', {

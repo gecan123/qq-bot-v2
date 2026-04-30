@@ -14,6 +14,7 @@ import { createRootRuntimeManager } from './runtime/root-runtime.js'
 import { createPassiveMentionProcessor } from './runtime/passive-mention-processor.js'
 import { createReplyDecisionEngine } from './runtime/reply-decision-engine.js'
 import { createReplyExecutor } from './runtime/reply-executor.js'
+import { createProactiveJudge } from './runtime/proactive-judge.js'
 import { getGroupMessagesAfterRowId, getLatestGroupMessageRowId } from './database/messages.js'
 import { getMessageTimestamp } from './utils/message-time.js'
 import type { ParsedSegment } from './types/message-segments.js'
@@ -233,6 +234,7 @@ async function main() {
     selfNumber: config.selfNumber,
     passiveWorker: (batch) => passiveMentionProcessor.run(batch),
     ambientExecutor: replyExecutor,
+    proactiveJudge: createProactiveJudge(),
     replyExecutionEnabled: true,
     decisionEngine: replyDecisionEngine,
     ambientAuditEnabled: config.botAmbientAuditEnabled,

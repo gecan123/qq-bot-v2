@@ -26,6 +26,7 @@ import {
 } from './agent-runtime-types.js'
 import type { ConversationWorkerResult, GroupConversationBatch } from '../conversation/types.js'
 import type { ReplyExecutionResult, ReplyOpportunity } from './reply-decision-types.js'
+import { createInvalidProactiveJudgeAdvice, type ProactiveJudge, type ProactiveJudgeAdvice } from './proactive-judge.js'
 import {
   buildBarrierOutput,
   DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG,
@@ -101,6 +102,7 @@ export interface RootRuntimeManagerOptions {
   now?: () => Date
   passiveWorker?: (batch: GroupConversationBatch) => Promise<ConversationWorkerResult | void> | ConversationWorkerResult | void
   ambientExecutor?: { execute(opportunity: ReplyOpportunity): Promise<ReplyExecutionResult> }
+  proactiveJudge?: ProactiveJudge
   ambientReplyBaseProbability?: number
   replyDryRunEnabled?: boolean
   arbiter?: { choose(candidates: readonly ArbiterCandidate[]): ArbiterProposal | Promise<ArbiterProposal> }
@@ -231,6 +233,8 @@ interface OpportunityExecutionContext {
   messageRow: number
   message: number
   senderId: number
+  senderDisplayName: string
+  segments: ParsedSegment[]
   createdAt: Date
 }
 
@@ -267,6 +271,7 @@ function buildAmbientReplyOpportunity(input: {
   opportunityId: string
   decisionId: string
   replyProbability: number
+  judgeAdvice?: ProactiveJudgeAdvice
   createdAt: Date
 }): ReplyOpportunity {
   return {
@@ -288,6 +293,7 @@ function buildAmbientReplyOpportunity(input: {
     deliveryMode: input.replyProbability > 0 ? 'send_message' : 'audit_only',
     dryRun: true,
     reason: 'ordinary group message is proactive candidate dry-run only before Phase 10',
+    judgeAdvice: input.judgeAdvice,
     createdAt: input.createdAt,
   }
 }
@@ -328,6 +334,10 @@ function buildPrivateReplyOpportunity(input: {
   }
 }
 
+function asParsedSegments(value: unknown): ParsedSegment[] {
+  return Array.isArray(value) ? value as ParsedSegment[] : []
+}
+
 export function createRootRuntimeManager(options: RootRuntimeManagerOptions): RootRuntimeManager {
   const now = options.now ?? (() => new Date())
 
@@ -355,7 +365,30 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       messageRow: row.id,
       message: Number(row.messageId),
       senderId: Number(row.senderId),
+      senderDisplayName: row.senderGroupNickname ?? row.senderNickname ?? String(row.senderId),
+      segments: asParsedSegments(row.content),
       createdAt: row.createdAt,
+    }
+  }
+
+  async function buildAmbientJudgeAdvice(
+    context: OpportunityExecutionContext,
+    replyProbability: number,
+  ): Promise<ProactiveJudgeAdvice | undefined> {
+    if (!options.proactiveJudge || replyProbability <= 0) return undefined
+
+    try {
+      return await options.proactiveJudge.evaluate({
+        groupId: context.group,
+        messageRowId: context.messageRow,
+        senderId: context.senderId,
+        ['senderNickname']: context.senderDisplayName,
+        segments: context.segments,
+        createdAt: context.createdAt,
+        replyProbability,
+      })
+    } catch {
+      return createInvalidProactiveJudgeAdvice('proactive judge threw before decision')
     }
   }
 
@@ -546,6 +579,8 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       }
 
       if (canDispatchToExecutor && !privateOpportunity && !mentionOpportunity && runtimeOptions.executeDecisions !== false && options.ambientExecutor) {
+        const replyProbability = typeof options.ambientReplyBaseProbability === 'number' ? options.ambientReplyBaseProbability : 0.02
+        const judgeAdvice = await buildAmbientJudgeAdvice(context, replyProbability)
         const result = await options.ambientExecutor.execute(buildAmbientReplyOpportunity({
           sceneId: context.sceneId,
           groupId: context.group,
@@ -554,7 +589,8 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
           senderId: context.senderId,
           opportunityId: opportunity.id,
           decisionId: decision.id,
-          replyProbability: typeof options.ambientReplyBaseProbability === 'number' ? options.ambientReplyBaseProbability : 0.02,
+          replyProbability,
+          judgeAdvice,
           createdAt: context.createdAt,
         }))
         await markOpportunityStatus(opportunity.id, opportunityStatusFromDeliveryResult(result.deliveryResult))
@@ -738,6 +774,8 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       messageRow,
       message,
       senderId: asNumber(input['senderId']),
+      senderDisplayName: String(input['senderId']),
+      segments: input.segments,
       createdAt,
     }
 

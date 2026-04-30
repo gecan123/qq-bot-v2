@@ -261,4 +261,15 @@ ${rootRuntime}`, 'runtimeKey: `qq_group:', 'root runtime snapshot must not carry
     assertIncludes(rootRuntime, 'privateReplyDryRun: replyDryRunEnabled')
     assertIncludes(index, 'replyDryRunEnabled: messageSender.isReplyDryRunEnabled?.() ?? config.botReplyDryRun')
   })
+
+  test('ambient proactive dry-run path attaches judge advice before reply decision', () => {
+    const rootRuntime = readProjectFile('src/runtime/root-runtime.ts')
+    const index = readProjectFile('src/index.ts')
+
+    assertIncludes(rootRuntime, 'proactiveJudge?: ProactiveJudge')
+    assertIncludes(rootRuntime, 'const judgeAdvice = await buildAmbientJudgeAdvice(context, replyProbability)')
+    assertIncludes(rootRuntime, 'judgeAdvice,')
+    assertIncludes(rootRuntime, 'options.proactiveJudge.evaluate')
+    assertIncludes(index, 'proactiveJudge: createProactiveJudge()')
+  })
 })

@@ -20,10 +20,12 @@ import type { ParsedSegment } from './types/message-segments.js'
 import type http from 'node:http'
 import { pathToFileURL } from 'node:url'
 import { messageSender } from './messaging/message-sender.js'
+import { parseV2exFeedTargets, startV2exForumPolling } from './curiosity/v2ex-connector.js'
 
 let httpServer: http.Server | null = null
 let rootRuntime: ReturnType<typeof createRootRuntimeManager> | null = null
 let runtimeSchedulerTimer: NodeJS.Timeout | null = null
+let v2exForumTimers: NodeJS.Timeout[] = []
 const log = createLogger('APP')
 
 function isGptModel(model: string): boolean {
@@ -257,6 +259,33 @@ async function main() {
   if (runtimeSchedulerTimer) {
     log.info({ intervalMs: config.runtimeSchedulerTickMs }, 'Root runtime scheduler ticks started')
   }
+  v2exForumTimers = startV2exForumPolling({
+    enabled: config.v2exForum.enabled,
+    feeds: parseV2exFeedTargets(config.v2exForum.feeds.join(',')),
+    intervalMs: config.v2exForum.pollIntervalMs,
+    maxItemsPerFeed: config.v2exForum.maxItemsPerFeed,
+    timeoutMs: config.v2exForum.timeoutMs,
+    userAgent: config.v2exForum.userAgent,
+    interestKeywords: config.v2exForum.interestKeywords,
+    fetchDetails: config.v2exForum.fetchDetails,
+    detailReplyLimit: config.v2exForum.detailReplyLimit,
+    onPoll: ({ target, itemCount, readCount }) => {
+      log.info({ target, itemCount, readCount }, 'V2EX read-only forum poll completed')
+    },
+    onError: (error, target) => {
+      log.warn({ err: error, target }, 'V2EX read-only forum poll failed')
+    },
+  })
+  if (v2exForumTimers.length > 0 || config.v2exForum.enabled) {
+    log.info(
+      {
+        feeds: config.v2exForum.feeds,
+        intervalMs: config.v2exForum.pollIntervalMs,
+        maxItemsPerFeed: config.v2exForum.maxItemsPerFeed,
+      },
+      'V2EX read-only forum polling started',
+    )
+  }
   log.info('Root runtime passive mention execution started')
 }
 
@@ -266,6 +295,10 @@ async function shutdown() {
     clearInterval(runtimeSchedulerTimer)
     runtimeSchedulerTimer = null
   }
+  for (const timer of v2exForumTimers) {
+    clearInterval(timer)
+  }
+  v2exForumTimers = []
   rootRuntime?.stopPassiveExecution?.()
   jobQueue.stop()
   httpServer?.close()

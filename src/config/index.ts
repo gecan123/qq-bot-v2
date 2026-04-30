@@ -68,6 +68,11 @@ function parseRuntimeContextFallback(value: string | undefined): 'runtime' | 'le
   return value?.trim().toLowerCase() === 'ledger' ? 'ledger' : 'runtime'
 }
 
+function parseCsv(value: string | undefined, defaultValue: string[]): string[] {
+  if (!value?.trim()) return defaultValue
+  return value.split(',').map((item) => item.trim()).filter(Boolean)
+}
+
 function parseProviderConfigs(env: EnvSource): Record<string, ProviderConfig> {
   const providers: Record<string, Partial<ProviderConfig>> = {}
 
@@ -179,6 +184,31 @@ export function parseConfig(env: EnvSource) {
     botAmbientReplyBaseProbability: parseProbability(env.BOT_AMBIENT_REPLY_BASE_PROBABILITY, 0.02),
     runtimeContextFallback: parseRuntimeContextFallback(env.RUNTIME_CONTEXT_FALLBACK),
     runtimeSchedulerTickMs: parseNonNegativeInteger(env.RUNTIME_SCHEDULER_TICK_MS, 0),
+    v2exForum: {
+      enabled: parseBoolean(env.V2EX_FORUM_ENABLED, false),
+      feeds: parseCsv(env.V2EX_FORUM_FEEDS, ['latest']),
+      pollIntervalMs: parseNonNegativeInteger(env.V2EX_FORUM_POLL_INTERVAL_MS, 30 * 60_000),
+      maxItemsPerFeed: parsePositiveInteger(env.V2EX_FORUM_MAX_ITEMS_PER_FEED, 20),
+      timeoutMs: parsePositiveInteger(env.V2EX_FORUM_TIMEOUT_MS, 15_000),
+      userAgent: env.V2EX_FORUM_USER_AGENT?.trim() || 'qq-bot-v2 read-only forum connector (+https://www.v2ex.com)',
+      interestKeywords: parseCsv(env.V2EX_FORUM_INTEREST_KEYWORDS, [
+        'ai',
+        'agent',
+        'claude',
+        'openai',
+        'llm',
+        'gpt',
+        '编程',
+        '程序员',
+        '开发',
+        '代码',
+        '产品',
+        '工具',
+        '效率',
+      ]),
+      fetchDetails: parseBoolean(env.V2EX_FORUM_FETCH_DETAILS, true),
+      detailReplyLimit: parseNonNegativeInteger(env.V2EX_FORUM_DETAIL_REPLY_LIMIT, 20),
+    },
     proactivePolicy: {
       activeChatMessageThreshold: parsePositiveInteger(env.PROACTIVE_ACTIVE_CHAT_MESSAGE_THRESHOLD, 12),
       activeChatWindowMs: parsePositiveInteger(env.PROACTIVE_ACTIVE_CHAT_WINDOW_MS, 120_000),

@@ -91,6 +91,30 @@ describe('config', () => {
     assert.equal(invalid.runtimeSchedulerTickMs, 0)
   })
 
+  test('parses V2EX read-only forum polling config', () => {
+    const config = parseConfig(createBaseEnv({
+      V2EX_FORUM_ENABLED: 'true',
+      V2EX_FORUM_FEEDS: 'latest,node:programmer,tab:tech,member:Livid',
+      V2EX_FORUM_POLL_INTERVAL_MS: '600000',
+      V2EX_FORUM_MAX_ITEMS_PER_FEED: '5',
+      V2EX_FORUM_TIMEOUT_MS: '2500',
+      V2EX_FORUM_USER_AGENT: 'qq-bot-v2 test',
+      V2EX_FORUM_INTEREST_KEYWORDS: 'claude,agent,编程',
+      V2EX_FORUM_FETCH_DETAILS: 'false',
+      V2EX_FORUM_DETAIL_REPLY_LIMIT: '3',
+    }))
+
+    assert.equal(config.v2exForum.enabled, true)
+    assert.deepEqual(config.v2exForum.feeds, ['latest', 'node:programmer', 'tab:tech', 'member:Livid'])
+    assert.equal(config.v2exForum.pollIntervalMs, 600000)
+    assert.equal(config.v2exForum.maxItemsPerFeed, 5)
+    assert.equal(config.v2exForum.timeoutMs, 2500)
+    assert.equal(config.v2exForum.userAgent, 'qq-bot-v2 test')
+    assert.deepEqual(config.v2exForum.interestKeywords, ['claude', 'agent', '编程'])
+    assert.equal(config.v2exForum.fetchDetails, false)
+    assert.equal(config.v2exForum.detailReplyLimit, 3)
+  })
+
   test('parses BOT_REPLY_DRY_RUN and BOT_PROACTIVE_DRY_RUN as separate switches', () => {
     const enabled = parseConfig(createBaseEnv({
       BOT_REPLY_DRY_RUN: 'true',

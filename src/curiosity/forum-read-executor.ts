@@ -9,6 +9,7 @@ import {
   getOrCreateMainAgentRuntime,
   getOrCreateScene,
   markActionRecordDeliveryState,
+  markOpportunityStatus,
 } from '../runtime/agent-runtime-store.js'
 import { makeSceneId, type SceneId } from '../runtime/agent-runtime-types.js'
 import { buildBarrierOutput, decideExecution, verdictFromEffectMode } from '../runtime/action-barrier.js'
@@ -239,6 +240,7 @@ export async function ingestAndReadForumItem(input: ForumReadInput): Promise<For
     readOnly: true,
     forbiddenActions: [...FORUM_FORBIDDEN_ACTIONS],
   })
+  await markOpportunityStatus(opportunity.id, 'succeeded')
 
   return {
     sceneId,

@@ -1,5 +1,5 @@
 import type { MessageSender } from '../messaging/message-sender.js'
-import { createOrReuseActionRecord } from './agent-runtime-store.js'
+import { createOrReuseActionRecord, markActionRecordDeliveryState } from './agent-runtime-store.js'
 import type { ActionRecord, ActionDeliveryState, ActionType, SceneId } from './agent-runtime-types.js'
 import {
   type EffectMode,
@@ -93,7 +93,12 @@ function computeBarrierVerdict(intent: ExecutableActionIntent, executorAvailable
 }
 
 export function createActionExecutor(options: ActionExecutorOptions = {}) {
-  const store = options.actionStore ?? { createOrReuseActionRecord }
+  const store = options.actionStore ?? {
+    createOrReuseActionRecord,
+    markDeliveryState: async (id: string, state: ActionDeliveryState, result?: Record<string, unknown>) => {
+      await markActionRecordDeliveryState(id, state, result as Prisma.JsonObject | undefined)
+    },
+  }
 
   return {
     async execute(intent: ExecutableActionIntent): Promise<ActionExecutorResult> {

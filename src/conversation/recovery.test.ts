@@ -78,9 +78,6 @@ describe('Phase 0 recovery contract', () => {
           assert.equal(params.text, '恢复回复')
           return { success: true, attempts: 1, providerMessageId: 1002 }
         },
-        sendMessage: async () => {
-          throw new Error('sendMessage should not recover send_group_reply records')
-        },
       },
       actionRecordStore: {
         listRecoverable: async (sceneIds) => {
@@ -151,9 +148,6 @@ describe('Phase 0 recovery contract', () => {
       sender: {
         replyToMessage: async () => {
           throw new Error('replyToMessage should not recover private records')
-        },
-        sendMessage: async () => {
-          throw new Error('sendMessage should not recover private records')
         },
         sendPrivateMessage: async (params) => {
           assert.equal(params.userId, 20)

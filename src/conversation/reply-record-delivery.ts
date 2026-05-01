@@ -57,9 +57,7 @@ export async function deliverReplyRecord(
     create: createReplyAudit,
   }
 
-  const shouldDryRun = isReplyPayload(record.deliveryPayload) || isPrivatePayload(record.deliveryPayload)
-    ? (sender.isReplyDryRunEnabled?.() ?? false)
-    : (sender.isSendDryRunEnabled?.() ?? false)
+  const shouldDryRun = sender.isReplyDryRunEnabled?.() ?? false
 
   if (shouldDryRun) {
     await replyAuditStore.create({

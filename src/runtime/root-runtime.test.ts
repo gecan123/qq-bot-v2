@@ -78,8 +78,6 @@ ${rootRuntime}`, 'runtimeKey: `qq_group:', 'root runtime snapshot must not carry
       "'persistence'",
       "'private_reply'",
       "'anchored_group_reply'",
-      "'ambient_group_post'",
-      "'public_post'",
     ]) {
       assertIncludes(contracts, token)
     }
@@ -157,7 +155,7 @@ ${rootRuntime}`, 'runtimeKey: `qq_group:', 'root runtime snapshot must not carry
       "'reply_private_message'",
       "'send_private_message'",
       "'private_reply'",
-      'ambientExecutor.execute(buildPrivateReplyOpportunity',
+      'replyExecutor.execute(buildPrivateReplyOpportunity',
     ]) {
       assertIncludes(rootRuntime, token)
     }

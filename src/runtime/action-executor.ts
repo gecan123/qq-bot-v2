@@ -147,7 +147,7 @@ export function createActionExecutor(options: ActionExecutorOptions = {}) {
           : { success: false, attempts: 0 }
         : messageId != null
           ? await options.sender.replyToMessage({ groupId: groupId ?? 0, replyToMessageId: messageId, text })
-          : await options.sender.sendMessage({ groupId: groupId ?? 0, text })
+          : { success: false, attempts: 0 }
 
       if (!sendResult.success) {
         await store.markDeliveryState?.(actionRecord.id, 'failed', { ...intent.payload, error: 'send failed', barrierVerdict: verdict.barrierOutput })

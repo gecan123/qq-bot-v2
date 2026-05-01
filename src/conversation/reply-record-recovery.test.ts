@@ -36,10 +36,6 @@ describe('reply record recovery', () => {
           sent.push('reply')
           return { success: true, attempts: 1 }
         },
-        async sendMessage() {
-          sent.push('send')
-          return { success: true, attempts: 1 }
-        },
       },
       replyRecordStore: {
         listRecoverable: async () => [

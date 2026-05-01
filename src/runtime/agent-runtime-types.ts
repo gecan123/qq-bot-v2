@@ -27,7 +27,6 @@ export type OpportunityType =
 export type ActionType =
   | 'reply_to_message'
   | 'send_group_reply'
-  | 'send_group_message'
   | 'send_private_message'
   | 'read_forum_post'
   | 'read_news_item'
@@ -41,8 +40,6 @@ export type RiskLevel =
   | 'persistence'
   | 'private_reply'
   | 'anchored_group_reply'
-  | 'ambient_group_post'
-  | 'public_post'
 export type DecisionVerdict = 'approved' | 'rejected' | 'dry_run' | 'skipped' | 'requires_review' | 'blocked'
 export type MemoryType =
   | 'observation'

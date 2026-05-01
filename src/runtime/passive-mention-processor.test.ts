@@ -40,7 +40,6 @@ function fakeSender() {
         sent.push(params)
         return { success: true, attempts: 1 }
       },
-      sendMessage: async () => ({ success: true, attempts: 1 }),
     },
   }
 }

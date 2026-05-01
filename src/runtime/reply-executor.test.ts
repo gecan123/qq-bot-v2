@@ -40,7 +40,6 @@ describe('reply executor', () => {
     let sendCalls = 0
     const sender: MessageSender = {
       isReplyDryRunEnabled: () => false,
-      isSendDryRunEnabled: () => false,
       replyToMessage: async (params) => {
         sendCalls++
         assert.equal(params.groupId, 1)
@@ -49,7 +48,6 @@ describe('reply executor', () => {
         assert.equal(params.text, '收到')
         return { success: true, providerMessageId: 9001, attempts: 1 }
       },
-      sendMessage: async () => fail('sendMessage'),
     }
 
     const executor = createReplyExecutor({
@@ -182,9 +180,7 @@ describe('reply executor', () => {
     let privateSendCalls = 0
     const sender: MessageSender = {
       isReplyDryRunEnabled: () => false,
-      isSendDryRunEnabled: () => false,
       replyToMessage: async () => fail('replyToMessage'),
-      sendMessage: async () => fail('sendMessage'),
       sendPrivateMessage: async (params) => {
         privateSendCalls++
         assert.equal(params.userId, 20)
@@ -313,9 +309,7 @@ describe('reply executor', () => {
     let generateCalls = 0
     const sender: MessageSender = {
       isReplyDryRunEnabled: () => false,
-      isSendDryRunEnabled: () => false,
       replyToMessage: async () => fail('replyToMessage'),
-      sendMessage: async () => fail('sendMessage'),
     }
 
     const executor = createReplyExecutor({

@@ -233,7 +233,7 @@ async function main() {
   rootRuntime = createRootRuntimeManager({
     selfNumber: config.selfNumber,
     passiveWorker: (batch) => passiveMentionProcessor.run(batch),
-    ambientExecutor: replyExecutor,
+    replyExecutor: replyExecutor,
     replyExecutionEnabled: true,
     decisionEngine: replyDecisionEngine,
     replyDryRunEnabled: messageSender.isReplyDryRunEnabled?.() ?? config.botReplyDryRun,

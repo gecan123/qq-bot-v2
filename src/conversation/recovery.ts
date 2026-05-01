@@ -133,14 +133,20 @@ async function recoverSendableActionRecord(input: {
     return false
   }
 
-  const sendResult = deliveryType === 'reply_to_message'
-    ? await input.sender.replyToMessage({
-        groupId,
-        replyToMessageId: replyToMessageId ?? 0,
-        mentionUserId: getNumber(deliveryPayload, 'mentionUserId') ?? undefined,
-        text,
-      })
-    : await input.sender.sendMessage({ groupId, text })
+  if (deliveryType !== 'reply_to_message') {
+    await input.markDeliveryState(input.actionRecord.id, 'failed', {
+      ...resultPayload,
+      recoveryError: `unsupported deliveryType for recovery: ${deliveryType}`,
+    })
+    return false
+  }
+
+  const sendResult = await input.sender.replyToMessage({
+    groupId,
+    replyToMessageId: replyToMessageId ?? 0,
+    mentionUserId: getNumber(deliveryPayload, 'mentionUserId') ?? undefined,
+    text,
+  })
 
   if (!sendResult.success) {
     await input.markDeliveryState(input.actionRecord.id, 'failed', {

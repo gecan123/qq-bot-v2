@@ -8,18 +8,11 @@ const log = createLogger('MESSAGE_SENDER')
 
 export interface MessageSender {
   isReplyDryRunEnabled?(): boolean
-  isSendDryRunEnabled?(): boolean
 
   replyToMessage(params: {
     groupId: number
     replyToMessageId: number
     mentionUserId?: number
-    text: string
-  }): Promise<SendGroupReplyResult>
-
-  /** 发送独立消息（不引用、不 @），用于主动回复 */
-  sendMessage(params: {
-    groupId: number
     text: string
   }): Promise<SendGroupReplyResult>
 
@@ -31,11 +24,6 @@ export interface MessageSender {
 
 export interface MessageSenderOptions {
   replyDryRun?: boolean
-  /**
-   * 主动发言 (sendMessage) 的 dry run 开关。
-   * 未来主动发言上线时, 跟 replyDryRun 用同一个 BOT_REPLY_DRY_RUN 控; 当前 sendMessage 几乎没有 caller。
-   */
-  sendDryRun?: boolean
   sendGroupReplyFn?: typeof sendGroupReply
   sendPrivateMessageFn?: typeof sendPrivateMessage
 }
@@ -45,10 +33,6 @@ class NapcatMessageSender implements MessageSender {
 
   isReplyDryRunEnabled(): boolean {
     return this.options.replyDryRun
-  }
-
-  isSendDryRunEnabled(): boolean {
-    return this.options.sendDryRun
   }
 
   async replyToMessage(params: {
@@ -88,29 +72,6 @@ class NapcatMessageSender implements MessageSender {
     )
   }
 
-  async sendMessage(params: { groupId: number; text: string }): Promise<SendGroupReplyResult> {
-    if (this.options.sendDryRun) {
-      log.info(
-        {
-          direction: 'outbound',
-          actor: 'bot',
-          category: 'reply_delivery',
-          flow: 'napcat_send_dry_run',
-          groupId: params.groupId,
-          deliveryType: 'send_message',
-          dispatchMode: 'dry_run',
-          sideEffect: 'none',
-          deliveryResult: 'dry_run',
-          textPreview: previewText(params.text),
-        },
-        '独立消息发送跳过（dry run）',
-      )
-      return { success: true, attempts: 0 }
-    }
-
-    return this.options.sendGroupReplyFn(params.groupId, [{ type: 'text', data: { text: params.text } }])
-  }
-
   async sendPrivateMessage(params: { userId: number; text: string }): Promise<SendGroupReplyResult> {
     if (this.options.replyDryRun) {
       log.info(
@@ -138,7 +99,6 @@ class NapcatMessageSender implements MessageSender {
 export function createMessageSender(options: MessageSenderOptions = {}): MessageSender {
   return new NapcatMessageSender({
     replyDryRun: options.replyDryRun ?? config.botReplyDryRun,
-    sendDryRun: options.sendDryRun ?? config.botReplyDryRun,
     sendGroupReplyFn: options.sendGroupReplyFn ?? sendGroupReply,
     sendPrivateMessageFn: options.sendPrivateMessageFn ?? sendPrivateMessage,
   })

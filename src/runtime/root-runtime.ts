@@ -100,7 +100,7 @@ export interface RootRuntimeManagerOptions {
   selfNumber: number
   now?: () => Date
   passiveWorker?: (batch: GroupConversationBatch) => Promise<ConversationWorkerResult | void> | ConversationWorkerResult | void
-  ambientExecutor?: { execute(opportunity: ReplyOpportunity): Promise<ReplyExecutionResult> }
+  replyExecutor?: { execute(opportunity: ReplyOpportunity): Promise<ReplyExecutionResult> }
   replyDryRunEnabled?: boolean
   arbiter?: { choose(candidates: readonly ArbiterCandidate[]): ArbiterProposal | Promise<ArbiterProposal> }
 }
@@ -342,7 +342,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
     const actionType = actionTypeForOpportunity(opportunity)
     const replyDryRunEnabled = options.replyDryRunEnabled === true
     const shouldExecuteMention = mentionOpportunity && runtimeOptions.executeDecisions !== false && Boolean(options.passiveWorker)
-    const shouldExecutePrivate = privateOpportunity && runtimeOptions.executeDecisions !== false && Boolean(options.ambientExecutor)
+    const shouldExecutePrivate = privateOpportunity && runtimeOptions.executeDecisions !== false && Boolean(options.replyExecutor)
     const barrierExecutorAvailable = privateOpportunity ? shouldExecutePrivate : shouldExecuteMention
     const barrierVerdict = decideExecution(
       {
@@ -474,8 +474,8 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
     const canDispatchToExecutor = barrierVerdict.effectMode === 'live' || barrierVerdict.effectMode === 'dry_run'
 
     try {
-      if (canDispatchToExecutor && privateOpportunity && runtimeOptions.executeDecisions !== false && options.ambientExecutor && context.targetUserId != null) {
-        const result = await options.ambientExecutor.execute(buildPrivateReplyOpportunity({
+      if (canDispatchToExecutor && privateOpportunity && runtimeOptions.executeDecisions !== false && options.replyExecutor && context.targetUserId != null) {
+        const result = await options.replyExecutor.execute(buildPrivateReplyOpportunity({
           sceneId: context.sceneId,
           userId: context.targetUserId,
           messageRowId: context.messageRow,
@@ -610,7 +610,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
     })
 
     const shouldExecuteMention = mentioned && runtimeOptions.executeDecisions !== false && Boolean(options.passiveWorker)
-    const shouldExecutePrivate = isPrivate && runtimeOptions.executeDecisions !== false && Boolean(options.ambientExecutor)
+    const shouldExecutePrivate = isPrivate && runtimeOptions.executeDecisions !== false && Boolean(options.replyExecutor)
     const actionType: ActionType = isPrivate ? 'send_private_message' : 'reply_to_message'
     const replyDryRunEnabled = options.replyDryRunEnabled === true
     const executorAvailable = shouldExecuteMention || shouldExecutePrivate

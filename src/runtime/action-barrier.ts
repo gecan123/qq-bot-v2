@@ -6,7 +6,7 @@ export type EffectMode = 'live' | 'dry_run' | 'suppressed' | 'requires_review' |
 export const ACTION_BARRIER_POLICY_VERSION = 'runtime-os.phase8.minimal-barrier.v1'
 
 export interface ActionBarrierAction {
-  actionType: ActionType | 'internal' | 'public_post'
+  actionType: ActionType | 'internal'
   sourceKind?: string
   deliveryMode?: string
   targetSceneId?: string
@@ -19,18 +19,13 @@ export interface ActionBarrierRuntimeConfig {
   allowPersistence?: boolean
   allowPrivateReplyLive?: boolean
   allowAnchoredGroupReplyLive?: boolean
-  allowAmbientGroupPostLive?: boolean
-  allowPublicPostLive?: boolean
   privateReplyDryRun?: boolean
   anchoredGroupReplyDryRun?: boolean
-  ambientGroupPostDryRun?: boolean
 }
 
 export const DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG = {
   allowPrivateReplyLive: true,
   allowAnchoredGroupReplyLive: true,
-  allowAmbientGroupPostLive: false,
-  ambientGroupPostDryRun: true,
 } satisfies ActionBarrierRuntimeConfig
 
 export interface ActionBarrierVerdict {
@@ -56,10 +51,6 @@ export function classifyAction(action: ActionBarrierAction): RiskLevel {
     case 'reply_to_message':
     case 'send_group_reply':
       return 'anchored_group_reply'
-    case 'send_group_message':
-      return 'ambient_group_post'
-    case 'public_post':
-      return 'public_post'
   }
 }
 
@@ -104,17 +95,6 @@ export function decideExecution(
     }
   }
 
-  if (riskBand === 'public_post') {
-    const liveAllowed = runtimeConfig.allowPublicPostLive === true
-    return {
-      riskBand,
-      allowedByPolicy: liveAllowed,
-      effectMode: liveAllowed && executorAvailable && !dryRunRequested ? 'live' : 'blocked',
-      reason: liveAllowed ? 'public post live execution is allowed by policy' : 'public post is blocked by default',
-      policyVersion: ACTION_BARRIER_POLICY_VERSION,
-    }
-  }
-
   if (!executorAvailable) {
     return {
       riskBand,
@@ -139,31 +119,16 @@ export function decideExecution(
     }
   }
 
-  if (riskBand === 'anchored_group_reply') {
-    const liveAllowed = runtimeConfig.allowAnchoredGroupReplyLive ?? true
-    const dryRun = dryRunRequested || runtimeConfig.anchoredGroupReplyDryRun === true
-    return {
-      riskBand,
-      allowedByPolicy: liveAllowed && !dryRun,
-      effectMode: liveAllowed ? dryRun ? 'dry_run' : 'live' : 'suppressed',
-      reason: liveAllowed
-        ? dryRun ? 'anchored group reply live execution is disabled by dry-run config' : 'anchored group reply live execution is allowed'
-        : 'anchored group reply live execution is disabled by policy',
-      policyVersion: ACTION_BARRIER_POLICY_VERSION,
-    }
-  }
-
-  const ambientLiveAllowed = runtimeConfig.allowAmbientGroupPostLive === true
-  const ambientDryRun = runtimeConfig.ambientGroupPostDryRun ?? true
+  // riskBand === 'anchored_group_reply' (剩下唯一情况)
+  const liveAllowed = runtimeConfig.allowAnchoredGroupReplyLive ?? true
+  const dryRun = dryRunRequested || runtimeConfig.anchoredGroupReplyDryRun === true
   return {
     riskBand,
-    allowedByPolicy: ambientLiveAllowed && !dryRunRequested,
-    effectMode: ambientLiveAllowed && !dryRunRequested ? 'live' : ambientDryRun ? 'dry_run' : 'blocked',
-    reason: ambientLiveAllowed && !dryRunRequested
-      ? 'ambient group post live execution is allowed by policy'
-      : ambientDryRun
-        ? 'ambient group post is dry-run before proactive live-send canary'
-        : 'ambient group post is blocked by policy',
+    allowedByPolicy: liveAllowed && !dryRun,
+    effectMode: liveAllowed ? dryRun ? 'dry_run' : 'live' : 'suppressed',
+    reason: liveAllowed
+      ? dryRun ? 'anchored group reply live execution is disabled by dry-run config' : 'anchored group reply live execution is allowed'
+      : 'anchored group reply live execution is disabled by policy',
     policyVersion: ACTION_BARRIER_POLICY_VERSION,
   }
 }

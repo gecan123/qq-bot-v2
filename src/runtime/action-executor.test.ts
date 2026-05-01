@@ -31,9 +31,6 @@ describe('action record contract', () => {
           assert.equal(params.text, 'ok')
           return { success: true, attempts: 1 }
         },
-        sendMessage: async () => {
-          throw new Error('sendMessage should not be called for send_group_reply')
-        },
       },
       actionStore: {
         createOrReuseActionRecord: async (input) => ({
@@ -72,103 +69,12 @@ describe('action record contract', () => {
     assert.deepEqual(states, ['sending', 'sent'])
   })
 
-  it('keeps dry-run send_group_message intents away from sender calls', async () => {
-    const result = await createActionExecutor({
-      sender: {
-        replyToMessage: async () => {
-          throw new Error('replyToMessage should not be called for dry-run send_group_message')
-        },
-        sendMessage: async () => {
-          throw new Error('sendMessage should not be called for dry-run send_group_message')
-        },
-      },
-      actionStore: {
-        createOrReuseActionRecord: async (input) => ({
-          id: 'record-2',
-          actionIntentId: input.actionIntentId,
-          actionType: input.actionType,
-          targetSceneId: input.targetSceneId,
-          deliveryState: input.deliveryState ?? 'pending',
-          idempotencyKey: input.idempotencyKey,
-          resultPayload: input.resultPayload ?? null,
-          createdAt: new Date(0),
-          updatedAt: new Date(0),
-        }),
-      },
-    }).execute({
-      id: 'intent-2',
-      opportunityId: 'opportunity-2',
-      decisionId: 'decision-2',
-      actionType: 'send_group_message',
-      targetSceneId: 'qq_group:1',
-      payload: {
-        target: { groupId: 1, sceneId: 'qq_group:1' },
-        proposedEffect: { type: 'send_group_message', text: 'candidate' },
-      },
-      dryRun: true,
-      riskLevel: 'ambient_group_post',
-      status: 'skipped',
-      idempotencyKey: 'intent-2',
-    } satisfies ActionIntent)
-
-    assert.equal(result.deliveryResult, 'dry_run')
-  })
-
-  it('barrier keeps ambient send_group_message away from sender even when intent is not marked dry-run', async () => {
-    let sendCalls = 0
-    const result = await createActionExecutor({
-      sender: {
-        replyToMessage: async () => {
-          throw new Error('replyToMessage should not be called for ambient send_group_message')
-        },
-        sendMessage: async () => {
-          sendCalls++
-          throw new Error('sendMessage should not be called before proactive live-send canary')
-        },
-      },
-      actionStore: {
-        createOrReuseActionRecord: async (input) => ({
-          id: 'record-ambient-barrier',
-          actionIntentId: input.actionIntentId,
-          actionType: input.actionType,
-          targetSceneId: input.targetSceneId,
-          deliveryState: input.deliveryState ?? 'pending',
-          idempotencyKey: input.idempotencyKey,
-          resultPayload: input.resultPayload ?? null,
-          createdAt: new Date(0),
-          updatedAt: new Date(0),
-        }),
-      },
-    }).execute({
-      id: 'intent-ambient-barrier',
-      opportunityId: 'opportunity-ambient-barrier',
-      decisionId: 'decision-ambient-barrier',
-      actionType: 'send_group_message',
-      targetSceneId: 'qq_group:1',
-      payload: {
-        target: { groupId: 1, sceneId: 'qq_group:1' },
-        proposedEffect: { type: 'send_group_message', text: 'candidate' },
-      },
-      dryRun: false,
-      riskLevel: 'ambient_group_post',
-      status: 'approved',
-      idempotencyKey: 'intent-ambient-barrier',
-    } satisfies ActionIntent)
-
-    assert.equal(result.deliveryResult, 'dry_run')
-    assert.equal(sendCalls, 0)
-    assert.equal((result.actionRecord.resultPayload?.barrierVerdict as { riskBand?: string }).riskBand, 'ambient_group_post')
-  })
-
   it('routes send_private_message intents to private sender without group send', async () => {
     const states: string[] = []
     const result = await createActionExecutor({
       sender: {
         replyToMessage: async () => {
           throw new Error('replyToMessage should not be called for send_private_message')
-        },
-        sendMessage: async () => {
-          throw new Error('sendMessage should not be called for send_private_message')
         },
         sendPrivateMessage: async (params) => {
           assert.equal(params.userId, 20)

@@ -36,9 +36,6 @@ describe('reply record delivery', () => {
           replyCalls++
           return { success: true, attempts: 1 }
         },
-        async sendMessage() {
-          return { success: true, attempts: 1 }
-        },
       },
       replyAuditStore: {
         create: async (input) => {
@@ -59,9 +56,6 @@ describe('reply record delivery', () => {
       sender: {
         async replyToMessage() {
           return { success: true, attempts: 1, providerMessageId: 9001 }
-        },
-        async sendMessage() {
-          return { success: true, attempts: 1 }
         },
       },
       replyRecordStore: {
@@ -101,10 +95,6 @@ describe('reply record delivery', () => {
           isReplyDryRunEnabled: () => false,
           async replyToMessage() {
             calls.push('reply')
-            return { success: true, attempts: 1 }
-          },
-          async sendMessage() {
-            calls.push('send')
             return { success: true, attempts: 1 }
           },
           async sendPrivateMessage(params) {

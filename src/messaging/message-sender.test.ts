@@ -7,7 +7,6 @@ describe('messageSender', () => {
     const calls: Array<{ groupId: number }> = []
     const sender = createMessageSender({
       replyDryRun: true,
-      sendDryRun: false,
       sendGroupReplyFn: async (groupId) => {
         calls.push({ groupId })
         return { success: true, attempts: 1 }
@@ -25,43 +24,23 @@ describe('messageSender', () => {
     assert.deepEqual(result, { success: true, attempts: 0 })
   })
 
-  test('sendMessage becomes dry run when proactive dry-run switch is enabled', async () => {
+  test('replyToMessage delivers via sendGroupReplyFn when not dry run', async () => {
     const calls: Array<{ groupId: number }> = []
     const sender = createMessageSender({
       replyDryRun: false,
-      sendDryRun: true,
       sendGroupReplyFn: async (groupId) => {
         calls.push({ groupId })
         return { success: true, attempts: 1 }
       },
     })
 
-    const result = await sender.sendMessage({
-      groupId: 2,
-      text: 'plain send',
+    const result = await sender.replyToMessage({
+      groupId: 5,
+      replyToMessageId: 5005,
+      text: 'live reply',
     })
 
-    assert.deepEqual(calls, [])
-    assert.deepEqual(result, { success: true, attempts: 0 })
-  })
-
-  test('reply and proactive dry-run switches do not affect each other', async () => {
-    const calls: Array<{ groupId: number }> = []
-    const sender = createMessageSender({
-      replyDryRun: true,
-      sendDryRun: false,
-      sendGroupReplyFn: async (groupId) => {
-        calls.push({ groupId })
-        return { success: true, attempts: 1 }
-      },
-    })
-
-    const result = await sender.sendMessage({
-      groupId: 3,
-      text: 'plain send',
-    })
-
-    assert.deepEqual(calls, [{ groupId: 3 }])
+    assert.deepEqual(calls, [{ groupId: 5 }])
     assert.deepEqual(result, { success: true, attempts: 1 })
   })
 
@@ -69,7 +48,6 @@ describe('messageSender', () => {
     const calls: Array<{ userId: number }> = []
     const sender = createMessageSender({
       replyDryRun: false,
-      sendDryRun: true,
       sendGroupReplyFn: async () => {
         throw new Error('sendGroupReplyFn should not send private replies')
       },

@@ -13,12 +13,8 @@ import type { ReplyDecision, ReplyExecutionResult, ReplyOpportunity } from './re
 import type { ProactiveCandidateArtifact, ProactiveCandidateStatus } from './types.js'
 import { previewText, type BusinessLogDispatchMode, type BusinessLogSideEffect } from '../utils/business-log.js'
 import { createOrReuseActionIntent, createOrReuseActionRecord, markActionRecordDeliveryState } from './action-record-store.js'
-import {
-  buildBarrierOutput,
-  DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG,
-  decideExecution,
-  deliveryStateFromEffectMode,
-} from './action-barrier.js'
+import { classifyAction, deliveryStateFromEffectMode } from './action-barrier.js'
+import type { ExecutableActionIntent, ActionExecutorResult } from './action-executor.js'
 
 type StoredConversationMessage = NonNullable<Awaited<ReturnType<typeof getMessageById>>>
 
@@ -64,6 +60,9 @@ export interface ReplyExecutorOptions {
     createOrReuseIntent: typeof createOrReuseActionIntent
     createOrReuseRecord: typeof createOrReuseActionRecord
     markDeliveryState: typeof markActionRecordDeliveryState
+  }
+  actionExecutor?: {
+    execute(intent: ExecutableActionIntent): Promise<ActionExecutorResult>
   }
   proactiveCandidateStore?: {
     createOrReuse: (artifact: ProactiveCandidateArtifact) => Promise<void>
@@ -233,6 +232,13 @@ function getReplyTargetId(payload: ReplyDeliveryPayload): number | null {
   return typeof target === 'number' && Number.isSafeInteger(target) ? target : null
 }
 
+function toReplyDeliveryResult(state: string): ReplyExecutionResult['deliveryResult'] {
+  if (state === 'sent' || state === 'acked') return 'sent'
+  if (state === 'dry_run') return 'dry_run'
+  if (state === 'failed') return 'failed'
+  return 'skipped'
+}
+
 export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyExecutor {
   const decisionEngine = options.decisionEngine ?? createReplyDecisionEngine()
   const generateMentionReplyFn = options.generateReply ?? ((message: IncomingMessage) => generateMentionReply(message))
@@ -400,15 +406,7 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
         throw new Error(`Reply decision requires replyIntentId for sendable outcome: ${opportunity.opportunityId}`)
       }
 
-      const legacyReplyIntentId = decision.legacyReplyIntentId
-      const existingRecord = replyRecordStore
-        ? (await replyRecordStore.findByReplyIntentId(opportunity.runtimeKey, replyIntentId)) ??
-          (legacyReplyIntentId && legacyReplyIntentId !== replyIntentId
-            ? await replyRecordStore.findByReplyIntentId(opportunity.runtimeKey, legacyReplyIntentId)
-            : null)
-        : null
-
-      let reply = existingRecord?.text ?? null
+      let reply: string | null = null
       if (!reply && decision.policy.shouldGenerate) {
         if (!isSupportedSendableGeneration(decision)) {
           log.warn(
@@ -435,33 +433,19 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
       }
 
       const deliveryPayload = buildDeliveryPayload(decision)
-      const senderDryRun = isDryRunEnabledForPayload(sender, deliveryPayload)
       const actionType = deliveryPayload.type === 'reply_to_message'
         ? 'send_group_reply'
         : deliveryPayload.type === 'send_private_message'
           ? 'send_private_message'
           : 'send_group_message'
-      const barrierVerdict = decideExecution(
-        {
-          actionType,
-          sourceKind: opportunity.sourceKind,
-          deliveryMode: deliveryPayload.type,
-          targetSceneId: opportunity.sceneId,
-          dryRunRequested: senderDryRun,
-          executorAvailable: decision.policy.shouldDeliver,
-      },
-      {},
-      {
-          ...DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG,
-          privateReplyDryRun: deliveryPayload.type === 'send_private_message' ? senderDryRun : false,
-          anchoredGroupReplyDryRun: deliveryPayload.type === 'reply_to_message' ? senderDryRun : false,
-        },
-      )
-      const barrierOutput = buildBarrierOutput(barrierVerdict)
-      const shouldDryRun = barrierVerdict.effectMode === 'dry_run'
+      const shouldDryRun = opportunity.dryRun
+      const storedBarrierVerdict = {
+        effectMode: shouldDryRun ? 'dry_run' : (decision.policy.shouldDeliver ? 'live' : 'suppressed'),
+        reason: shouldDryRun ? 'opportunity flagged as dry-run' : decision.policy.reason,
+      }
       const actionPayload = {
         ...buildActionResultPayload({ opportunity, deliveryPayload, text: reply, replyIntentId }),
-        barrierVerdict: barrierOutput,
+        barrierVerdict: storedBarrierVerdict,
       }
       const actionIntent = await actionRecordStore.createOrReuseIntent({
         id: `${opportunity.opportunityId}:intent:${actionType}`,
@@ -471,42 +455,110 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
         targetSceneId: opportunity.sceneId,
         payload: actionPayload,
         dryRun: shouldDryRun,
-        riskLevel: barrierVerdict.riskBand,
-        status: barrierVerdict.effectMode === 'live'
-          ? 'approved'
-          : barrierVerdict.effectMode === 'dry_run' || barrierVerdict.effectMode === 'suppressed'
-            ? 'skipped'
-            : 'rejected',
+        riskLevel: classifyAction({ actionType }),
+        status: shouldDryRun ? 'skipped' : decision.policy.shouldDeliver ? 'approved' : 'rejected',
         idempotencyKey: `${opportunity.opportunityId}:${actionType}`,
       })
-      let actionRecord = await actionRecordStore.createOrReuseRecord({
-        id: `${actionIntent.id}:record`,
-        actionIntentId: actionIntent.id,
-        actionType,
-        targetSceneId: opportunity.sceneId,
-        deliveryState: deliveryStateFromEffectMode(barrierVerdict.effectMode),
-        idempotencyKey: actionIntent.idempotencyKey,
-        resultPayload: actionPayload,
-      })
-      const actionText = getStoredActionText(actionRecord.resultPayload) ?? reply
-      const deliveryActionPayload = {
-        ...buildActionResultPayload({ opportunity, deliveryPayload, text: actionText, replyIntentId }),
-        barrierVerdict: barrierOutput,
-      }
       const replyRecord = replyRecordStore
         ? await replyRecordStore.createOrReuse({
             runtimeKey: opportunity.runtimeKey,
             groupId: opportunity.groupId,
             scopeKey: opportunity.scopeKey,
-            replyIntentId: existingRecord?.replyIntentId ?? replyIntentId,
+            replyIntentId,
             sourceKind: opportunity.sourceKind,
             triggerMessageRowId: opportunity.triggerMessageRowId,
             incorporatedMessageRowId: opportunity.incorporatedMessageRowId,
             deliveryPayload,
-            text: actionText,
+            text: reply,
             executionState: shouldDryRun ? 'dry_run' : 'pending',
           })
         : undefined
+
+      if (options.actionExecutor) {
+        const execResult = await options.actionExecutor.execute(actionIntent)
+        const deliveryResult = toReplyDeliveryResult(execResult.deliveryResult)
+
+        if (replyRecord) {
+          if (deliveryResult === 'sent') {
+            await replyRecordStore?.markSent(replyRecord.id)
+          } else if (deliveryResult === 'failed') {
+            await replyRecordStore?.markFailed(replyRecord.id)
+          }
+        }
+
+        if (deliveryResult === 'dry_run') {
+          await replyAuditStore.createOrReuse({
+            opportunityId: opportunity.opportunityId,
+            runtimeKey: opportunity.runtimeKey,
+            groupId: opportunity.groupId,
+            scopeKey: opportunity.scopeKey,
+            replyIntentId,
+            auditKind: decision.policy.auditKind ?? 'dry_run_intent',
+            payload: {
+              outcome: decision.outcome,
+              sourceKind: opportunity.sourceKind,
+              deliveryType: deliveryPayload.type,
+              text: reply,
+              reason: decision.policy.reason,
+              barrierVerdict: storedBarrierVerdict,
+            },
+          })
+          log.info(
+            {
+              direction: 'outbound',
+              actor: 'bot',
+              category: opportunity.sourceKind === 'private_message' ? 'private_reply' : 'mention_reply',
+              flow: 'action_record_dry_run',
+              groupId: opportunity.groupId,
+              scopeKey: opportunity.scopeKey,
+              replyIntentId,
+              sourceKind: opportunity.sourceKind,
+              deliveryType: deliveryPayload.type,
+              dispatchMode: 'dry_run',
+              sideEffect: 'audit_write',
+              deliveryResult: 'dry_run',
+              textPreview: previewText(reply),
+            },
+            '回复已生成（未发送）',
+          )
+        }
+
+        if (deliveryResult === 'sent' && replyRecord) {
+          await options.onReplyRecordSent?.(replyRecord)
+          log.info(
+            {
+              direction: 'outbound',
+              actor: 'bot',
+              category: opportunity.sourceKind === 'private_message' ? 'private_reply_delivery' : 'reply_delivery',
+              flow: 'action_record_delivery',
+              groupId: opportunity.groupId,
+              scopeKey: opportunity.scopeKey,
+              replyIntentId,
+              actionRecordId: execResult.actionRecord.id,
+              sourceKind: opportunity.sourceKind,
+              deliveryType: deliveryPayload.type,
+              dispatchMode: 'live',
+              sideEffect: 'napcat_send',
+              deliveryResult,
+              textPreview: previewText(reply),
+            },
+            '动作投递成功',
+          )
+        }
+
+        return { decision, replyRecord, actionRecord: execResult.actionRecord, deliveryResult }
+      }
+
+      // fallback: no actionExecutor, create record and send directly via sender
+      let actionRecord = await actionRecordStore.createOrReuseRecord({
+        id: `${actionIntent.id}:record`,
+        actionIntentId: actionIntent.id,
+        actionType,
+        targetSceneId: opportunity.sceneId,
+        deliveryState: deliveryStateFromEffectMode(shouldDryRun ? 'dry_run' : decision.policy.shouldDeliver ? 'live' : 'suppressed'),
+        idempotencyKey: actionIntent.idempotencyKey,
+        resultPayload: actionPayload,
+      })
 
       if (actionRecord.deliveryState === 'sent' || actionRecord.deliveryState === 'acked') {
         if (replyRecord) {
@@ -516,61 +568,17 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
         return { decision, replyRecord, actionRecord, deliveryResult: 'sent' }
       }
 
-      if (actionRecord.deliveryState === 'dry_run') {
-        await replyAuditStore.createOrReuse({
-          opportunityId: opportunity.opportunityId,
-          runtimeKey: opportunity.runtimeKey,
-          groupId: opportunity.groupId,
-          scopeKey: opportunity.scopeKey,
-          replyIntentId,
-          auditKind: decision.policy.auditKind ?? 'dry_run_intent',
-          payload: {
-            outcome: decision.outcome,
-            sourceKind: opportunity.sourceKind,
-            deliveryType: deliveryPayload.type,
-            text: actionText,
-            reason: decision.policy.reason,
-            barrierVerdict: barrierOutput,
-          },
-        })
-        log.info(
-          {
-            direction: 'outbound',
-            actor: 'bot',
-            category: opportunity.sourceKind === 'private_message' ? 'private_reply' : 'mention_reply',
-            flow: 'action_record_dry_run',
-            groupId: opportunity.groupId,
-            scopeKey: opportunity.scopeKey,
-            replyIntentId,
-            sourceKind: opportunity.sourceKind,
-            deliveryType: deliveryPayload.type,
-            dispatchMode: 'dry_run',
-            sideEffect: 'audit_write',
-            deliveryResult: 'dry_run',
-            textPreview: previewText(actionText),
-          },
-          '回复已生成（未发送）',
-        )
-        return { decision, replyRecord, actionRecord, deliveryResult: 'dry_run' }
+      if (actionRecord.deliveryState === 'dry_run' || shouldDryRun || !decision.policy.shouldDeliver) {
+        return { decision, replyRecord, actionRecord, deliveryResult: shouldDryRun ? 'dry_run' : 'skipped' }
       }
 
-      if (barrierVerdict.effectMode !== 'live') {
-        actionRecord = await actionRecordStore.markDeliveryState(actionRecord.id, 'skipped', {
-          ...deliveryActionPayload,
-          barrierVerdict: barrierOutput,
-        })
+      if (!sender) {
         return { decision, replyRecord, actionRecord, deliveryResult: 'skipped' }
       }
 
-      if (!decision.policy.shouldDeliver) {
-        actionRecord = await actionRecordStore.markDeliveryState(actionRecord.id, 'skipped', actionRecord.resultPayload)
-        return { decision, replyRecord, actionRecord, deliveryResult: 'skipped' }
-      }
-
-      actionRecord = await actionRecordStore.markDeliveryState(actionRecord.id, 'sending', deliveryActionPayload)
+      actionRecord = await actionRecordStore.markDeliveryState(actionRecord.id, 'sending', actionPayload)
       if (replyRecord) await replyRecordStore?.markSending(replyRecord.id)
 
-      let deliveryResult: ReplyExecutionResult['deliveryResult'] = 'failed'
       const replyToMessageId = getReplyTargetId(deliveryPayload)
       const sendResult = deliveryPayload.type === 'reply_to_message'
         ? replyToMessageId == null
@@ -579,62 +587,33 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
               groupId: opportunity.groupId,
               replyToMessageId,
               mentionUserId: deliveryPayload.mentionUserId,
-              text: actionText,
+              text: reply,
             })
         : deliveryPayload.type === 'send_private_message'
           ? sender.sendPrivateMessage
             ? await sender.sendPrivateMessage({
                 userId: deliveryPayload.userId ?? opportunity.targetUserId ?? opportunity.groupId,
-                text: actionText,
+                text: reply,
               })
             : { success: false, attempts: 0 }
-          : await sender.sendMessage({
-              groupId: opportunity.groupId,
-              text: actionText,
-            })
+          : await sender.sendMessage({ groupId: opportunity.groupId, text: reply })
 
+      let deliveryResult: ReplyExecutionResult['deliveryResult'] = 'failed'
       if (sendResult.success) {
         deliveryResult = 'sent'
         actionRecord = await actionRecordStore.markDeliveryState(actionRecord.id, 'sent', {
-          ...deliveryActionPayload,
+          ...actionPayload,
           providerMessageId: sendResult.providerMessageId ?? null,
           attempts: sendResult.attempts,
         })
-        if (sendResult.providerMessageId != null) {
-          if (replyRecord) await replyRecordStore?.markAcked(replyRecord.id, sendResult.providerMessageId)
+        if (replyRecord) {
+          if (sendResult.providerMessageId != null) await replyRecordStore?.markAcked(replyRecord.id, sendResult.providerMessageId)
+          await replyRecordStore?.markSent(replyRecord.id)
+          await options.onReplyRecordSent?.(replyRecord)
         }
-        if (replyRecord) await replyRecordStore?.markSent(replyRecord.id)
-        log.info(
-          {
-            direction: 'outbound',
-            actor: 'bot',
-            category: opportunity.sourceKind === 'private_message' ? 'private_reply_delivery' : 'reply_delivery',
-            flow: 'action_record_delivery',
-            groupId: opportunity.groupId,
-            scopeKey: opportunity.scopeKey,
-            replyIntentId,
-            actionRecordId: actionRecord.id,
-            sourceKind: opportunity.sourceKind,
-            deliveryType: deliveryPayload.type,
-            providerMessageId: sendResult.providerMessageId,
-            attempts: sendResult.attempts,
-            dispatchMode: 'live',
-            sideEffect: 'napcat_send',
-            deliveryResult: 'sent',
-            textPreview: previewText(actionText),
-          },
-          '动作投递成功',
-        )
       } else {
-        actionRecord = await actionRecordStore.markDeliveryState(actionRecord.id, 'failed', {
-          ...deliveryActionPayload,
-          error: 'send failed',
-        })
+        actionRecord = await actionRecordStore.markDeliveryState(actionRecord.id, 'failed', { ...actionPayload, error: 'send failed' })
         if (replyRecord) await replyRecordStore?.markFailed(replyRecord.id)
-      }
-
-      if (deliveryResult === 'sent' && replyRecord) {
-        await options.onReplyRecordSent?.(replyRecord)
       }
       return { decision, replyRecord, actionRecord, deliveryResult }
     },

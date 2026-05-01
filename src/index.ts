@@ -14,6 +14,7 @@ import { createRootRuntimeManager } from './runtime/root-runtime.js'
 import { createPassiveMentionProcessor } from './runtime/passive-mention-processor.js'
 import { createReplyDecisionEngine } from './runtime/reply-decision-engine.js'
 import { createReplyExecutor } from './runtime/reply-executor.js'
+import { createActionExecutor } from './runtime/action-executor.js'
 import { createProactiveJudge } from './runtime/proactive-judge.js'
 import { getGroupMessagesAfterRowId, getLatestGroupMessageRowId } from './database/messages.js'
 import { getMessageTimestamp } from './utils/message-time.js'
@@ -224,8 +225,10 @@ async function main() {
   const replyDecisionEngine = createReplyDecisionEngine({
     ambientAuditEnabled: config.botAmbientAuditEnabled,
   })
+  const actionExecutor = createActionExecutor({ sender: messageSender })
   const replyExecutor = createReplyExecutor({
     decisionEngine: replyDecisionEngine,
+    actionExecutor,
   })
   const passiveMentionProcessor = createPassiveMentionProcessor({
     executor: replyExecutor,

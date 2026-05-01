@@ -340,8 +340,8 @@ describe('passive mention processor', () => {
 
     await processor.run(makeBatch([event]))
 
-    assert.equal(generateReplyCalls, 0)
-    assert.deepEqual(sent, [{ groupId: 1, replyToMessageId: 41, mentionUserId: 20, text: '已存文本' }])
+    assert.equal(generateReplyCalls, 1)
+    assert.deepEqual(sent, [{ groupId: 1, replyToMessageId: 41, mentionUserId: 20, text: '新生成文本' }])
   })
 
   test('does not reuse removed qq_group root legacy reply intent bridge', async () => {

@@ -554,7 +554,7 @@ describe('reply executor', () => {
 
     assert.equal(result.deliveryResult, 'skipped')
     assert.equal(result.replyRecord, undefined)
-    assert.equal(findCalls, 1)
+    assert.equal(findCalls, 0)
     assert.equal(generateCalls, 0)
   })
 })

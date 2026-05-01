@@ -223,6 +223,7 @@ describe('createOpenAIChatFn', () => {
       type: 'tool_calls',
       calls: [{ id: 'call_1', name: 'final_answer', args: { replyText: 'ok' } }],
       model: 'gpt-5.1',
+      usage: { inputTokens: null, cachedTokens: null, outputTokens: null, tokenUsageState: 'unknown' },
     })
   })
 
@@ -245,6 +246,11 @@ describe('createOpenAIChatFn', () => {
     })
 
     assert.equal('reasoning_effort' in (calls[0] as any), false)
-    assert.deepEqual(result, { type: 'text', content: 'ok', model: 'gpt-5.1' })
+    assert.deepEqual(result, {
+      type: 'text',
+      content: 'ok',
+      model: 'gpt-5.1',
+      usage: { inputTokens: null, cachedTokens: null, outputTokens: null, tokenUsageState: 'unknown' },
+    })
   })
 })

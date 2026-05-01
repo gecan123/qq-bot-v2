@@ -18,17 +18,6 @@ export interface AssistantTurnRecord {
   updatedAt: Date
 }
 
-export interface CreateAssistantTurnInput {
-  groupId: number
-  senderThreadKey: string
-  replyIntentId: string
-  triggerMessageRowId: number
-  incorporatedMessageRowId: number
-  replyToMessageId: number
-  mentionUserId?: number
-  text: string
-}
-
 function mapRow(row: Awaited<ReturnType<typeof prisma.assistantTurn.findUnique>> extends infer T
   ? T extends null ? never : T
   : never): AssistantTurnRecord {
@@ -149,79 +138,12 @@ export async function findAssistantTurnByReplyIntentId(
   return row ? mapRow(row) : null
 }
 
-export async function createOrReusePendingAssistantTurn(input: CreateAssistantTurnInput): Promise<AssistantTurnRecord> {
-  return prisma.$transaction(async (tx) => {
-    const existing = await tx.assistantTurn.findUnique({
-      where: {
-        groupId_senderThreadKey_replyIntentId: {
-          groupId: BigInt(input.groupId),
-          senderThreadKey: input.senderThreadKey,
-          replyIntentId: input.replyIntentId,
-        },
-      },
-    })
-    if (existing) return mapRow(existing)
-
-    const latest = await tx.assistantTurn.findFirst({
-      where: {
-        groupId: BigInt(input.groupId),
-        senderThreadKey: input.senderThreadKey,
-      },
-      orderBy: { sequence: 'desc' },
-      select: { sequence: true },
-    })
-
-    const created = await tx.assistantTurn.create({
-      data: {
-        groupId: BigInt(input.groupId),
-        senderThreadKey: input.senderThreadKey,
-        replyIntentId: input.replyIntentId,
-        triggerMessageRowId: input.triggerMessageRowId,
-        incorporatedMessageRowId: input.incorporatedMessageRowId,
-        sequence: (latest?.sequence ?? 0) + 1,
-        replyToMessageId: BigInt(input.replyToMessageId),
-        mentionUserId: input.mentionUserId == null ? null : BigInt(input.mentionUserId),
-        providerMessageId: null,
-        text: input.text,
-        status: 'pending',
-        attemptCount: 0,
-      },
-    })
-
-    return mapRow(created)
-  })
-}
-
-export async function markAssistantTurnSending(id: number): Promise<void> {
-  await prisma.assistantTurn.update({
-    where: { id },
-    data: {
-      status: 'sending',
-      attemptCount: { increment: 1 },
-    },
-  })
-}
-
-export async function markAssistantTurnAcked(id: number, providerMessageId: number): Promise<void> {
-  await prisma.assistantTurn.update({
-    where: { id },
-    data: {
-      status: 'acked',
-      providerMessageId: BigInt(providerMessageId),
-    },
-  })
-}
-
-export async function markAssistantTurnSent(id: number): Promise<void> {
-  await prisma.assistantTurn.update({
-    where: { id },
-    data: { status: 'sent' },
-  })
-}
-
-export async function markAssistantTurnFailed(id: number): Promise<void> {
-  await prisma.assistantTurn.update({
-    where: { id },
-    data: { status: 'failed' },
-  })
-}
+/**
+ * Phase 1.5 清理:
+ * - 历史上 assistant_turns 是 bot 回复的 ledger, 但 reply-executor / action-executor
+ *   早已切到 action_records, assistant_turns 没有 live writer。
+ * - 此文件只保留 legacy 迁移相关的 reader (listLegacyAssistantTurns 等),
+ *   给 reply-record-migration 用; writer (createOrReusePendingAssistantTurn /
+ *   markAssistantTurnSending / Acked / Sent / Failed) 已删除。
+ * - assistantTurn schema 仍保留, 因为旧数据可能存在, migration 路径还在用它。
+ */

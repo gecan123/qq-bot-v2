@@ -202,6 +202,30 @@ function makeStoredMessage(event: MentionEvent, text: string): FakeStoredMessage
 }
 
 describe('passive mention processor', () => {
+  test('Phase 1.5 P1.2: compactor 抛错不污染已 sent 的 deliveryResult', async () => {
+    const event = makeEvent({ messageId: 10, senderId: 20, createdAt: 1 })
+    const { sent, sender } = fakeSender()
+    const failingCompactor = async () => {
+      throw new Error('LLM summarizer timeout')
+    }
+
+    const processor = createPassiveMentionProcessor({
+      getMessage: async () => makeStoredMessage(event, '@bot 你好'),
+      resolveSegments: async (message): Promise<ParsedSegment[]> => message.content as unknown as ParsedSegment[],
+      generateReply: async () => '你好',
+      sender,
+      replyRecordStore: fakeReplyRecordStore(),
+      actionRecordStore: fakeActionRecordStore(),
+      compactor: failingCompactor,
+    })
+
+    // 不应抛错; 已 sent 的 deliveryResult 仍是 'sent'
+    const result = await processor.run(makeBatch([event]))
+
+    assert.deepEqual(sent, [{ groupId: 1, replyToMessageId: 10, mentionUserId: 20, text: '你好' }])
+    assert.deepEqual(result.deliveryResults, ['sent'])
+  })
+
   test('generates one reply for a simple single-user batch', async () => {
     const event = makeEvent({ messageId: 10, senderId: 20, createdAt: 1 })
     const { sent, sender } = fakeSender()

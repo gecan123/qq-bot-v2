@@ -274,7 +274,12 @@ describe('reply executor', () => {
         senderNickname: '用户20',
         segments: [{ type: 'text', content: '@bot ping' }],
       }),
-      generateReply: async () => '收到',
+      generateReply: async (_message, opportunity) => {
+        assert.equal(opportunity.opportunityId, 'qq_group:1:message:42:ambient')
+        assert.equal(opportunity.sceneId, 'qq_group:1')
+        assert.equal(opportunity.triggerMessageRowId, 42)
+        return '收到'
+      },
       replyRecordStore: {
         findByReplyIntentId: async () => null,
         createOrReuse: async (input) => ({

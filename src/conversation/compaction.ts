@@ -5,11 +5,19 @@ import { getActionRecordAnchor, getActionRecordText } from '../runtime/action-re
 import { compactConversationState, getOrCreateConversationState } from './conversation-state-store.js'
 import { resolveMessage } from '../media/message-resolver.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
-import { getMessageTimestamp } from '../utils/message-time.js'
+import { createLogger } from '../logger.js'
 import type { Message } from '../generated/prisma/client.js'
+import type { AgentMessage } from '../agent/types.js'
+import type { ConversationSummarizer } from './summarizer.js'
 
-const COMPACTION_TRIGGER_USER_MESSAGES = 40
-const COMPACTION_KEEP_RECENT_USER_MESSAGES = 12
+/**
+ * Phase 1.5: 阈值上调, 让 perpetual append + cache 撑得更久。
+ * compaction 是计划性破坏前缀的"昂贵操作", 频率越低越好。
+ */
+const COMPACTION_TRIGGER_USER_MESSAGES = 80
+const COMPACTION_KEEP_RECENT_USER_MESSAGES = 20
+
+const log = createLogger('COMPACTION')
 
 interface CompactionDependencies {
   getConversationState?: typeof getOrCreateConversationState
@@ -18,10 +26,18 @@ interface CompactionDependencies {
   resolveConversationMessage?: typeof resolveMessage
   freezeResolvedText?: typeof freezeResolvedTextIfUnset
   saveCompactedState?: typeof compactConversationState
-}
-
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+  /**
+   * Phase 1.5: 必须由调用方注入。compaction 不再做 text concat,
+   * 而是把要压的真多轮 history 喂给 summarizer 产生新 summary,
+   * 一次性 replace conversationState.compactedBase。
+   *
+   * 测试里可注入 stub: { summarize: async () => 'mock summary' }。
+   * 生产侧用 src/conversation/openai-summarizer.ts 的 createOpenAISummarizer()。
+   */
+  summarizer?: ConversationSummarizer
+  /** 测试覆盖阈值。生产默认 80 条触发, 保留最近 20 条。 */
+  triggerThreshold?: number
+  keepRecentCount?: number
 }
 
 async function getStableCompactionText(message: Message, dependencies: CompactionDependencies): Promise<string> {
@@ -36,58 +52,49 @@ async function getStableCompactionText(message: Message, dependencies: Compactio
   return resolvedText
 }
 
-async function mergeLines(
+/**
+ * Phase 1.5: 把要压的 messages + actionRecords 渲染成真多轮 AgentMessage[],
+ * 然后喂给 summarizer。
+ *
+ * 跟 context-builder.renderWindowAsMessages 同构, 但这里不限制 contextLimit
+ * (compaction 处理的是历史全段, 不是 window)。
+ */
+async function renderHistoryToCompress(
   messages: Message[],
   actionRecords: ActionRecord[],
   dependencies: CompactionDependencies,
-): Promise<Array<{ anchor: number; text: string }>> {
-  const lines: Array<{ anchor: number; text: string }> = []
-  const sortedActionRecords = [...actionRecords].sort((a, b) => {
-    const left = getActionRecordAnchor(a) ?? Number.MAX_SAFE_INTEGER
-    const right = getActionRecordAnchor(b) ?? Number.MAX_SAFE_INTEGER
-    return left - right || a.createdAt.getTime() - b.createdAt.getTime()
-  })
-  let actionIndex = 0
+): Promise<AgentMessage[]> {
+  type Entry = { anchor: number; createdAt: Date; message: AgentMessage }
+  const entries: Entry[] = []
 
   for (const message of messages) {
     const text = await getStableCompactionText(message, dependencies)
     const nickname = message.senderGroupNickname ?? message.senderNickname ?? String(message.senderId)
     if (text) {
-      lines.push({
+      entries.push({
         anchor: message.id,
-        text: `[${formatTime(getMessageTimestamp(message))}] ${nickname}: ${text}`,
+        createdAt: message.sentAt ?? message.createdAt,
+        message: { role: 'user', content: `${nickname}: ${text}` },
       })
-    }
-
-    while (actionIndex < sortedActionRecords.length) {
-      const record = sortedActionRecords[actionIndex]
-      const anchor = record ? getActionRecordAnchor(record) : null
-      if (!record || anchor == null || anchor > message.id) break
-      const actionText = getActionRecordText(record)
-      if (actionText) {
-        lines.push({
-          anchor,
-          text: `[${formatTime(record.createdAt)}] BOT: ${actionText}`,
-        })
-      }
-      actionIndex++
     }
   }
 
-  while (actionIndex < sortedActionRecords.length) {
-    const record = sortedActionRecords[actionIndex]
-    const anchor = record ? getActionRecordAnchor(record) : null
-    const actionText = record ? getActionRecordText(record) : null
-    if (record && anchor != null && actionText) {
-      lines.push({
-        anchor,
-        text: `[${formatTime(record.createdAt)}] BOT: ${actionText}`,
-      })
-    }
-    actionIndex++
+  for (const actionRecord of actionRecords) {
+    const anchor = getActionRecordAnchor(actionRecord)
+    if (anchor == null) continue
+    if (actionRecord.deliveryState !== 'sent' && actionRecord.deliveryState !== 'acked') continue
+    const text = getActionRecordText(actionRecord)
+    if (!text) continue
+    entries.push({
+      anchor,
+      createdAt: actionRecord.createdAt,
+      message: { role: 'model', content: text },
+    })
   }
 
-  return lines
+  return entries
+    .sort((a, b) => a.anchor - b.anchor || a.createdAt.getTime() - b.createdAt.getTime())
+    .map((entry) => entry.message)
 }
 
 export async function compactConversationIfNeeded(
@@ -99,34 +106,52 @@ export async function compactConversationIfNeeded(
   const getMessagesAfterRowId = dependencies.getMessagesAfterRowId ?? getGroupMessagesAfterRowId
   const getActionRecordsForScene = dependencies.getActionRecordsForScene ?? listSentActionRecordsForScene
   const saveCompactedState = dependencies.saveCompactedState ?? compactConversationState
+  const triggerThreshold = dependencies.triggerThreshold ?? COMPACTION_TRIGGER_USER_MESSAGES
+  const keepRecentCount = dependencies.keepRecentCount ?? COMPACTION_KEEP_RECENT_USER_MESSAGES
 
   const state = await getConversationState(groupId, senderThreadKey)
   const lastCompactedMessageRowId = state.lastCompactedMessageRowId ?? 0
   const messages = await getMessagesAfterRowId(groupId, lastCompactedMessageRowId)
-  if (messages.length <= COMPACTION_TRIGGER_USER_MESSAGES) return
+  if (messages.length <= triggerThreshold) return
 
-  const boundaryMessage = messages[messages.length - COMPACTION_KEEP_RECENT_USER_MESSAGES - 1]
+  const boundaryMessage = messages[messages.length - keepRecentCount - 1]
   if (!boundaryMessage) return
 
   const actionRecords = await getActionRecordsForScene(makeQqGroupSceneId(groupId))
   const compactedMessages = messages.filter((message) => message.id <= boundaryMessage.id)
-  const compactedActionRecords = actionRecords.filter(
-    (record) => {
-      const anchor = getActionRecordAnchor(record)
-      return anchor != null && anchor > lastCompactedMessageRowId && anchor <= boundaryMessage.id
-    },
-  )
-  const lines = await mergeLines(compactedMessages, compactedActionRecords, dependencies)
-  if (lines.length === 0) return
+  const compactedActionRecords = actionRecords.filter((record) => {
+    const anchor = getActionRecordAnchor(record)
+    return anchor != null && anchor > lastCompactedMessageRowId && anchor <= boundaryMessage.id
+  })
 
-  const nextBase = [state.compactedBase.trim(), lines.map((line) => line.text).join('\n')]
-    .filter((part) => part.length > 0)
-    .join('\n')
+  const historyToCompress = await renderHistoryToCompress(
+    compactedMessages,
+    compactedActionRecords,
+    dependencies,
+  )
+  if (historyToCompress.length === 0) return
+
+  if (!dependencies.summarizer) {
+    log.warn(
+      { groupId, senderThreadKey, historyLen: historyToCompress.length },
+      'compaction_skipped_no_summarizer',
+    )
+    return
+  }
+
+  const newSummary = await dependencies.summarizer.summarize({
+    previousSummary: state.compactedBase.trim() || null,
+    historyToCompress,
+  })
+  if (!newSummary.trim()) {
+    log.warn({ groupId, senderThreadKey }, 'compaction_skipped_empty_summary')
+    return
+  }
 
   await saveCompactedState({
     groupId,
     senderThreadKey,
-    compactedBase: nextBase,
+    compactedBase: newSummary,
     lastCompactedMessageRowId: boundaryMessage.id,
   })
 }

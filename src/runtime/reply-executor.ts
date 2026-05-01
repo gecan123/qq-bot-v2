@@ -241,10 +241,10 @@ function toReplyDeliveryResult(state: string): ReplyExecutionResult['deliveryRes
 
 export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyExecutor {
   const decisionEngine = options.decisionEngine ?? createReplyDecisionEngine()
-  const generateMentionReplyFn = options.generateReply ?? ((message: IncomingMessage) => generateMentionReply(message))
+  const generateMentionReplyFn = options.generateReply ?? ((message: IncomingMessage, opportunity: ReplyOpportunity) => generateMentionReply(message, opportunity))
   const generateProactiveCandidateReplyFn =
     options.generateProactiveCandidateReply ??
-    ((message: IncomingMessage) => generateProactiveCandidateReply(message))
+    ((message: IncomingMessage, opportunity: ReplyOpportunity) => generateProactiveCandidateReply(message, opportunity))
   const sender = options.sender ?? messageSender
   const replyRecordStore = options.replyRecordStore
   const configuredReplyAuditStore = options.replyAuditStore

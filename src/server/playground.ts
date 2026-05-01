@@ -118,13 +118,17 @@ export async function runPlayground(body: PlaygroundBody, deps: PlaygroundDeps =
 
   traceRecorder.phaseStarted('load_context', 'building context')
   const mediaDeadlineAt = Date.now() + 15_000
-  const { contextText: context } = await (deps.buildContext ?? buildContext)(fakeMsg, contextLimit, { mediaDeadlineAt })
+  const contextResult = await (deps.buildContext ?? buildContext)(fakeMsg, contextLimit, { mediaDeadlineAt })
   traceRecorder.phaseFinished({
     phase: 'load_context',
-    summary: context ? 'context loaded' : 'no context available',
-    raw: context,
+    summary: contextResult.history.length > 0 ? 'context loaded' : 'no context available',
+    raw: { historyLen: contextResult.history.length, hasSummary: Boolean(contextResult.compactedSummary) },
   })
-  const initialHistory: AgentMessage[] = buildReplyHistory(context, message)
+  const initialHistory: AgentMessage[] = buildReplyHistory({
+    windowHistory: contextResult.history,
+    compactedSummary: contextResult.compactedSummary,
+    trigger: message,
+  })
 
   const { declarations, executors } = (deps.createAgentTools ?? createAgentTools)(groupIdNum)
   const chatFn = deps.chatFn ?? createOpenAIChatFn(_agentClient, _agentModel)

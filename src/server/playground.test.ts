@@ -13,7 +13,7 @@ describe('runPlayground', () => {
         senderName: '测试用户',
       },
       {
-        buildContext: async () => ({ contextText: '上下文', recentMessages: [] }),
+        buildContext: async () => ({ contextText: '上下文', history: [], recentMessages: [] }),
         getAgentProfile: () => ({
           persona: '你是测试助手',
           replyContextMessages: 20,
@@ -52,8 +52,10 @@ describe('runPlayground', () => {
     assert.equal(result.trace.terminationReason, 'final_answer')
     assert.ok(result.trace.events.some((event) => event.type === 'loop_started'))
     assert.match(result.llmContext.systemPrompt, /你是测试助手/)
-    assert.equal(result.llmContext.messages[0]?.role, 'user')
-    assert.match(result.llmContext.messages[0]?.content ?? '', /近期会话背景/)
+    // Phase 1.5: history 是真多轮, trigger 永远是最后一条 user message
+    const lastMessage = result.llmContext.messages[result.llmContext.messages.length - 1]
+    assert.equal(lastMessage?.role, 'user')
+    assert.match(lastMessage?.content ?? '', /当前要回复的消息/)
     assert.deepEqual(result.finalAnswerPayload, { replyText: '最终答案' })
   })
 
@@ -65,7 +67,7 @@ describe('runPlayground', () => {
         senderName: '测试用户',
       },
       {
-        buildContext: async () => ({ contextText: '上下文', recentMessages: [] }),
+        buildContext: async () => ({ contextText: '上下文', history: [], recentMessages: [] }),
         getAgentProfile: () => ({
           persona: '你是测试助手',
           replyContextMessages: 20,

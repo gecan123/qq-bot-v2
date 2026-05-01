@@ -7,6 +7,7 @@ type ChatFn = (params: {
   systemPrompt: string
   history: AgentMessage[]
   tools: AgentToolDeclaration[]
+  loopIndex?: number
 }) => Promise<AgentTurnResult>
 
 const log = createLogger('AGENT')
@@ -90,7 +91,7 @@ async function executeLoop(params: AgentLoopParams, startTime: number): Promise<
     log.debug({ step }, 'agent_loop_step_start')
     traceRecorder?.loopStarted(loopIndex, `loop #${loopIndex} started`)
 
-    const turnResult = await chatFn({ systemPrompt, history, tools })
+    const turnResult = await chatFn({ systemPrompt, history, tools, loopIndex })
 
     if (turnResult.type === 'empty') {
       log.warn({ step }, 'agent_loop_empty_response')

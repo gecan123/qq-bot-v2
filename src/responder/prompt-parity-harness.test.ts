@@ -65,14 +65,25 @@ async function buildPromptEnvelope(dependencies: Parameters<typeof buildContext>
     senderNickname: '用户20',
     segments: [{ type: 'text' as const, content: '@bot 你好' }],
   }
-  const { contextText } = await buildContext(
+  const result = await buildContext(
     msg,
     20,
     {},
     dependencies,
   )
-  const history = buildReplyHistory(contextText, '@bot 你好')
+  const history = buildReplyHistory({
+    windowHistory: result.history,
+    compactedSummary: result.compactedSummary,
+    trigger: '@bot 你好',
+  })
   const systemPrompt = buildSystemPrompt('你是测试助手', loadPrompt('./prompts/reply-instruction.md'))
+
+  // Phase 1.5: 把 history 序列化成可对比文本, 兼容 harness 的 diff 逻辑。
+  // [压缩上下文] / [被引用消息] 字面量仍在 (前者在 summary 头, 后者在 quoted 元素里)。
+  const contextText = [
+    result.compactedSummary ? `[压缩上下文]\n${result.compactedSummary}` : '',
+    ...result.history.map((m) => ('content' in m ? m.content : '')),
+  ].filter(Boolean).join('\n')
 
   return {
     contextText,
@@ -330,9 +341,17 @@ describe('prompt parity harness', () => {
       },
     )
 
-    assert.match(snapshot.contextText, /\[压缩上下文\]\n已压缩前缀/)
-    assert.match(fallback.contextText, /\[压缩上下文\]\n已压缩前缀/)
-    assert.match(snapshot.contextText, /\[被引用消息\] 用户A: 被引用内容/)
-    assert.match(fallback.contextText, /\[被引用消息\] 用户A: 被引用内容/)
+    // Phase 1.5: compaction summary 单独字段 (不再混进 contextText)
+    assert.match(snapshot.compactedSummary ?? '', /已压缩前缀/)
+    assert.match(fallback.compactedSummary ?? '', /已压缩前缀/)
+    // 被引用消息以 user role message 出现在 history
+    const snapshotHasQuoted = snapshot.history.some(
+      (m) => 'content' in m && m.content.includes('[被引用消息] 用户A: 被引用内容'),
+    )
+    const fallbackHasQuoted = fallback.history.some(
+      (m) => 'content' in m && m.content.includes('[被引用消息] 用户A: 被引用内容'),
+    )
+    assert.ok(snapshotHasQuoted, 'snapshot history should contain quoted message')
+    assert.ok(fallbackHasQuoted, 'fallback history should contain quoted message')
   })
 })

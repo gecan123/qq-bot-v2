@@ -1,4 +1,5 @@
 import type { ZodType } from 'zod'
+import type { ContextFrameTokenUsage } from './context-frame.js'
 import type { RunTrace } from './trace.js'
 
 export interface ToolCall {
@@ -27,9 +28,9 @@ export type AgentMessage =
   | { role: 'tool_results'; results: ToolResult[] }
 
 export type AgentTurnResult =
-  | { type: 'tool_calls'; calls: ToolCall[]; model?: string; content?: string }
-  | { type: 'text'; content: string; model?: string }
-  | { type: 'empty' }
+  | { type: 'tool_calls'; calls: ToolCall[]; model?: string; content?: string; usage?: ContextFrameTokenUsage }
+  | { type: 'text'; content: string; model?: string; usage?: ContextFrameTokenUsage }
+  | { type: 'empty'; usage?: ContextFrameTokenUsage }
 
 export type AgentLoopResult =
   | {

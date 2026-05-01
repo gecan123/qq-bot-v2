@@ -2,6 +2,7 @@ import OpenAI from 'openai'
 import { z } from 'zod'
 import { recordCurrentTokenUsage, toTokenUsage } from '../llm/token-usage.js'
 import { createLogger } from '../logger.js'
+import { normalizeContextFrameTokenUsage } from './context-frame.js'
 import type { AgentMessage, AgentToolDeclaration, AgentTurnResult, ToolCall } from './types.js'
 
 const log = createLogger('AGENT')
@@ -118,9 +119,10 @@ export function createOpenAIChatFn(
       tool_choice: 'auto',
     })
     recordCurrentTokenUsage('agent.chat', toTokenUsage(response.usage))
+    const usage = normalizeContextFrameTokenUsage(response.usage)
 
     const choice = response.choices[0]
-    if (!choice) return { type: 'empty' }
+    if (!choice) return { type: 'empty', usage }
 
     const message = choice.message
     const responseModel = response.model
@@ -130,13 +132,13 @@ export function createOpenAIChatFn(
       const calls = parseToolCalls(message.tool_calls)
       log.debug({ calls: calls.map((call) => call.name) }, 'agent_tool_calls')
       return messageContent
-        ? { type: 'tool_calls', calls, model: responseModel, content: messageContent }
-        : { type: 'tool_calls', calls, model: responseModel }
+        ? { type: 'tool_calls', calls, model: responseModel, content: messageContent, usage }
+        : { type: 'tool_calls', calls, model: responseModel, usage }
     }
 
     const content = messageContent
-    if (!content) return { type: 'empty' }
+    if (!content) return { type: 'empty', usage }
 
-    return { type: 'text', content, model: responseModel }
+    return { type: 'text', content, model: responseModel, usage }
   }
 }

@@ -87,7 +87,7 @@ function readBarrierVerdict(intent: ExecutableActionIntent, executorAvailable: b
   }
   // fallback for legacy intents without barrierVerdict: re-evaluate barrier policy
   const verdict = decideExecution(
-    { actionType: intent.actionType, targetSceneId: intent.targetSceneId, dryRunRequested: intent.dryRun, executorAvailable },
+    { actionType: intent.actionType as ActionType, targetSceneId: intent.targetSceneId, dryRunRequested: intent.dryRun, executorAvailable },
     {},
     DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG,
   )
@@ -114,8 +114,8 @@ export function createActionExecutor(options: ActionExecutorOptions = {}) {
         deliveryState: initialState,
         idempotencyKey: intent.idempotencyKey,
         resultPayload: (initialState === 'dry_run'
-          ? { reason: 'action intent is dry-run or artifact-only', barrierVerdict: verdict.barrierOutput }
-          : { barrierVerdict: verdict.barrierOutput }) as Prisma.JsonObject,
+          ? { ...intent.payload, reason: 'action intent is dry-run or artifact-only', barrierVerdict: verdict.barrierOutput }
+          : { ...intent.payload, barrierVerdict: verdict.barrierOutput }) as Prisma.JsonObject,
       })
 
       if (actionRecord.deliveryState === 'sent' || actionRecord.deliveryState === 'acked' || actionRecord.deliveryState === 'dry_run') {
@@ -123,12 +123,12 @@ export function createActionExecutor(options: ActionExecutorOptions = {}) {
       }
 
       if (verdict.effectMode !== 'live') {
-        await store.markDeliveryState?.(actionRecord.id, 'skipped', { reason: verdict.reason, barrierVerdict: verdict.barrierOutput })
+        await store.markDeliveryState?.(actionRecord.id, 'skipped', { ...intent.payload, reason: verdict.reason, barrierVerdict: verdict.barrierOutput })
         return { intent, actionRecord, deliveryResult: 'skipped' }
       }
 
       if (!options.sender) {
-        await store.markDeliveryState?.(actionRecord.id, 'failed', { reason: 'missing sender', barrierVerdict: verdict.barrierOutput })
+        await store.markDeliveryState?.(actionRecord.id, 'failed', { ...intent.payload, reason: 'missing sender', barrierVerdict: verdict.barrierOutput })
         return { intent, actionRecord, deliveryResult: 'failed' }
       }
 
@@ -136,7 +136,7 @@ export function createActionExecutor(options: ActionExecutorOptions = {}) {
       const groupId = getGroupId(intent.payload)
       const userId = getUserId(intent.payload)
       if (!text || (intent.actionType === 'send_private_message' ? userId == null : groupId == null)) {
-        await store.markDeliveryState?.(actionRecord.id, 'failed', { reason: 'invalid payload', barrierVerdict: verdict.barrierOutput })
+        await store.markDeliveryState?.(actionRecord.id, 'failed', { ...intent.payload, reason: 'invalid payload', barrierVerdict: verdict.barrierOutput })
         return { intent, actionRecord, deliveryResult: 'failed' }
       }
 
@@ -151,12 +151,13 @@ export function createActionExecutor(options: ActionExecutorOptions = {}) {
           : await options.sender.sendMessage({ groupId: groupId ?? 0, text })
 
       if (!sendResult.success) {
-        await store.markDeliveryState?.(actionRecord.id, 'failed', { error: 'send failed', barrierVerdict: verdict.barrierOutput })
+        await store.markDeliveryState?.(actionRecord.id, 'failed', { ...intent.payload, error: 'send failed', barrierVerdict: verdict.barrierOutput })
         return { intent, actionRecord, deliveryResult: 'failed' }
       }
 
       const deliveryResult: ActionDeliveryState = sendResult.providerMessageId == null ? 'sent' : 'acked'
       await store.markDeliveryState?.(actionRecord.id, deliveryResult, {
+        ...intent.payload,
         providerMessageId: sendResult.providerMessageId ?? null,
         barrierVerdict: verdict.barrierOutput,
       })

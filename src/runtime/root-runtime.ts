@@ -270,6 +270,7 @@ function buildAmbientReplyOpportunity(input: {
   senderId: number
   opportunityId: string
   decisionId: string
+  barrierOutput: Record<string, unknown>
   replyProbability: number
   judgeAdvice?: ProactiveJudgeAdvice
   createdAt: Date
@@ -293,6 +294,7 @@ function buildAmbientReplyOpportunity(input: {
     deliveryMode: input.replyProbability > 0 ? 'send_message' : 'audit_only',
     dryRun: true,
     reason: 'ordinary group message is proactive candidate dry-run only before Phase 10',
+    barrierOutput: input.barrierOutput,
     judgeAdvice: input.judgeAdvice,
     createdAt: input.createdAt,
   }
@@ -306,6 +308,7 @@ function buildPrivateReplyOpportunity(input: {
   senderId: number
   opportunityId: string
   decisionId: string
+  barrierOutput: Record<string, unknown>
   dryRun: boolean
   createdAt: Date
 }): ReplyOpportunity {
@@ -330,6 +333,7 @@ function buildPrivateReplyOpportunity(input: {
     deliveryMode: 'send_private_message',
     dryRun: input.dryRun,
     reason: 'direct QQ private message is a private_reply opportunity',
+    barrierOutput: input.barrierOutput,
     createdAt: input.createdAt,
   }
 }
@@ -551,6 +555,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
           senderId: context.senderId,
           opportunityId: opportunity.id,
           decisionId: decision.id,
+          barrierOutput: barrierOutput as Record<string, unknown>,
           dryRun: options.replyDryRunEnabled === true,
           createdAt: context.createdAt,
         }))
@@ -589,6 +594,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
           senderId: context.senderId,
           opportunityId: opportunity.id,
           decisionId: decision.id,
+          barrierOutput: barrierOutput as Record<string, unknown>,
           replyProbability,
           judgeAdvice,
           createdAt: context.createdAt,

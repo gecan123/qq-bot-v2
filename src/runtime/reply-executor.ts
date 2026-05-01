@@ -439,7 +439,7 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
           ? 'send_private_message'
           : 'send_group_message'
       const shouldDryRun = opportunity.dryRun
-      const storedBarrierVerdict = {
+      const storedBarrierVerdict = opportunity.barrierOutput ?? {
         effectMode: shouldDryRun ? 'dry_run' : (decision.policy.shouldDeliver ? 'live' : 'suppressed'),
         reason: shouldDryRun ? 'opportunity flagged as dry-run' : decision.policy.reason,
       }

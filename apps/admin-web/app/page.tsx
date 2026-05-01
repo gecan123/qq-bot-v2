@@ -3,8 +3,7 @@ import {
   Activity,
   BookOpen,
   ClipboardList,
-  DatabaseZap,
-  GitBranch,
+  Gauge,
   Inbox,
   Route,
 } from "lucide-react";
@@ -17,7 +16,7 @@ import { getRuntimeDashboard } from "@/lib/runtime-queries";
 import { compactId } from "@/lib/runtime-format";
 import { formatDateTime } from "@/lib/format-time";
 
-const ICONS = [Activity, Route, ClipboardList, BookOpen, DatabaseZap, GitBranch];
+const ICONS = [Activity, Route, ClipboardList, BookOpen, Gauge, Gauge];
 
 export default async function HomePage() {
   const dashboard = await getRuntimeDashboard();
@@ -75,21 +74,21 @@ export default async function HomePage() {
         </div>
 
         <div>
-          <h2 className="mb-3 text-sm font-semibold text-slate-900">Review Queue</h2>
+          <h2 className="mb-3 text-sm font-semibold text-slate-900">Cache Health (24h)</h2>
           <div className="grid gap-3">
-            <Link href="/memory-proposals">
+            <Link href="/llm-traces">
               <MetricCard
-                label="Pending Memory"
-                value={dashboard.reviewQueues.pendingMemoryProposals}
-                icon={DatabaseZap}
-                className="bg-amber-50 text-amber-700"
+                label="Cache Hit Calls"
+                value={`${dashboard.cacheHealth.cacheHitCalls} / ${dashboard.cacheHealth.totalCalls}`}
+                icon={Gauge}
+                className="bg-emerald-50 text-emerald-700"
               />
             </Link>
-            <Link href="/self-spine">
+            <Link href="/llm-traces">
               <MetricCard
-                label="Pending Spine"
-                value={dashboard.reviewQueues.pendingSelfSpineProposals}
-                icon={GitBranch}
+                label="Cached / Input Tokens"
+                value={`${dashboard.cacheHealth.totalCachedTokens.toLocaleString()} / ${dashboard.cacheHealth.totalInputTokens.toLocaleString()}`}
+                icon={Gauge}
                 className="bg-sky-50 text-sky-700"
               />
             </Link>

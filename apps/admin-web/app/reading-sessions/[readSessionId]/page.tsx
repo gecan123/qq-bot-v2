@@ -3,7 +3,6 @@ import { notFound } from "next/navigation";
 import { ChevronRight, ExternalLink } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { JsonBlock } from "@/components/runtime/json-block";
-import { MemoryProposalReview } from "@/components/runtime/memory-proposal-review";
 import { ReadSessionReviewForm } from "@/components/runtime/read-session-review-form";
 import { StatusBadge } from "@/components/runtime/status-badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -83,31 +82,6 @@ export default async function ReadingSessionDetailPage({ params }: Props) {
             </CardContent>
           </Card>
 
-          <Card className="border-slate-200 bg-white">
-            <CardContent className="p-5">
-              <h2 className="mb-3 text-sm font-semibold text-slate-900">Memory Proposals</h2>
-              {session.memoryProposals.length === 0 ? (
-                <p className="text-sm text-slate-400">No linked proposals</p>
-              ) : (
-                <div className="grid gap-4">
-                  {session.memoryProposals.map((proposal) => (
-                    <div key={proposal.id} className="grid gap-3 border-t border-slate-100 pt-4 first:border-t-0 first:pt-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-medium text-slate-900">{proposal.proposalType}</span>
-                        <StatusBadge value={proposal.status} />
-                      </div>
-                      <JsonBlock value={JSON.parse(proposal.payloadText)} />
-                      <MemoryProposalReview
-                        proposalId={proposal.id}
-                        payloadText={proposal.payloadText}
-                        disabled={proposal.status !== "proposed"}
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
         </div>
 
         <div className="grid content-start gap-4">

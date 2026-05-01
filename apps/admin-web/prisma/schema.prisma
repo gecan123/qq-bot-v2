@@ -48,16 +48,30 @@ model Media {
 }
 
 model LlmTrace {
-  id         Int      @id @default(autoincrement())
-  groupId    BigInt   @map("group_id")
-  model      String?  @db.VarChar(128)
-  input      Json     @map("input")
-  output     Json?    @map("output")
-  durationMs Int      @map("duration_ms")
-  error      String?  @map("error") @db.Text
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  id              Int      @id @default(autoincrement())
+  groupId         BigInt   @map("group_id")
+  model           String?  @db.VarChar(128)
+  input           Json     @map("input")
+  output          Json?    @map("output")
+  durationMs      Int      @map("duration_ms")
+  error           String?  @map("error") @db.Text
+  frameId         String?  @map("frame_id") @db.VarChar(191)
+  sceneId         String?  @map("scene_id") @db.VarChar(191)
+  opportunityId   String?  @map("opportunity_id") @db.VarChar(191)
+  loopIndex       Int?     @map("loop_index")
+  inputHash       String?  @map("input_hash") @db.VarChar(64)
+  prefixHash      String?  @map("prefix_hash") @db.VarChar(64)
+  tailHash        String?  @map("tail_hash") @db.VarChar(64)
+  contextFrame    Json?    @map("context_frame")
+  inputTokens     Int?     @map("input_tokens")
+  cachedTokens    Int?     @map("cached_tokens")
+  outputTokens    Int?     @map("output_tokens")
+  tokenUsageState String?  @map("token_usage_state") @db.VarChar(32)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@index([groupId, createdAt(sort: Desc)])
+  @@index([frameId, loopIndex])
+  @@index([sceneId, opportunityId])
   @@map("llm_traces")
 }
 

@@ -1,10 +1,6 @@
-import { Prisma } from "./generated/prisma/client";
 import { getPrisma } from "./prisma";
 import {
-  asRecord,
-  getStringPath,
   jsonPreview,
-  percentLabel,
   previewText,
   startOfShanghaiDay,
 } from "./runtime-format";
@@ -16,7 +12,7 @@ export interface DashboardStat {
 
 export interface ActivityItem {
   id: string;
-  type: "event" | "opportunity" | "action" | "read" | "memory" | "spine";
+  type: "event" | "opportunity" | "action" | "read";
   title: string;
   subtitle: string;
   status: string;
@@ -24,15 +20,24 @@ export interface ActivityItem {
   createdAt: Date;
 }
 
+export interface CacheHealth24h {
+  totalCalls: number;
+  capturedCalls: number;
+  cacheHitCalls: number;
+  capturedRatio: number;
+  cacheHitRatio: number;
+  totalInputTokens: number;
+  totalCachedTokens: number;
+}
+
 export interface RuntimeDashboard {
   todayStart: Date;
   stats: DashboardStat[];
   activity: ActivityItem[];
   reviewQueues: {
-    pendingMemoryProposals: number;
-    pendingSelfSpineProposals: number;
     unreviewedReadSessions: number;
   };
+  cacheHealth: CacheHealth24h;
 }
 
 export interface ReadSessionListItem {
@@ -64,7 +69,6 @@ export interface ReadSessionDetail extends ReadSessionListItem {
   opportunityId: string;
   actionRecordId: string | null;
   actionRecord: RuntimeActionRecordRow | null;
-  memoryProposals: MemoryProposalRow[];
 }
 
 export interface RuntimeOpportunityRow {
@@ -98,59 +102,6 @@ export interface RuntimeActionRecordRow {
   updatedAt: Date;
 }
 
-export interface MemoryProposalRow {
-  id: string;
-  agentId: string;
-  proposalType: string;
-  status: string;
-  confidence: number | null;
-  salience: number | null;
-  sourcePreview: string;
-  payloadPreview: string;
-  payloadText: string;
-  memoryItemId: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-interface MemoryProposalQueryRow {
-  id: string;
-  agentId: string;
-  sourceRef: unknown;
-  proposalType: string;
-  payload: unknown;
-  confidence: number | null;
-  salience: number | null;
-  status: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface SelfSpineOverview {
-  versions: Array<{
-    id: string;
-    agentId: string;
-    version: number;
-    status: string;
-    sourceProposalId: string | null;
-    changedSections: string[];
-    snapshotPreview: string;
-    diffPreview: string;
-    createdAt: Date;
-  }>;
-  proposals: Array<{
-    id: string;
-    agentId: string;
-    status: string;
-    rationale: string;
-    patchPreview: string;
-    sourcePreview: string;
-    reviewedBy: string | null;
-    reviewedAt: Date | null;
-    createdAt: Date;
-  }>;
-}
-
 export interface SceneStateRow {
   id: string;
   kind: string;
@@ -163,85 +114,106 @@ export interface SceneStateRow {
   lastUpdatedAt: Date;
 }
 
+/**
+ * Phase 1.5 观测页面用的聚合结构。
+ * 一个 sceneId 一行, 显示这个 scene 在最近窗口里 LLM 调用的 cache 健康度。
+ */
+export interface LlmTraceSceneSummary {
+  sceneId: string;
+  callCount: number;
+  capturedCount: number;
+  cacheHitCount: number;
+  totalInputTokens: number;
+  totalCachedTokens: number;
+  avgCacheHitRatio: number;
+  uniquePrefixHashes: number;
+  lastCallAt: Date;
+}
+
+export interface LlmTraceCallRow {
+  id: number;
+  loopIndex: number | null;
+  prefixHash: string | null;
+  inputHash: string | null;
+  inputTokens: number | null;
+  cachedTokens: number | null;
+  outputTokens: number | null;
+  tokenUsageState: string | null;
+  model: string | null;
+  durationMs: number;
+  error: string | null;
+  createdAt: Date;
+}
+
+export interface LlmTraceSceneDetail {
+  sceneId: string;
+  summary: LlmTraceSceneSummary;
+  /** 时间倒序 */
+  recentCalls: LlmTraceCallRow[];
+  /** P0 验证三件套 */
+  verdict: {
+    prefixStable: boolean;
+    cacheHit: boolean;
+    captured: boolean;
+  };
+}
+
 function sceneLabel(scene: { displayName: string | null; kind: string; externalId: string } | undefined): string {
   if (!scene) return "unknown scene";
   return scene.displayName ?? `${scene.kind}:${scene.externalId}`;
 }
 
 function barrierField(payload: unknown, key: "riskBand" | "effectMode" | "reason"): string | null {
-  const direct = getStringPath(payload, ["barrierVerdict", key]);
-  if (direct) return direct;
-  return getStringPath(payload, [key]);
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const obj = payload as Record<string, unknown>;
+  const verdict = obj.barrierVerdict;
+  if (verdict && typeof verdict === "object" && !Array.isArray(verdict)) {
+    const v = (verdict as Record<string, unknown>)[key];
+    if (typeof v === "string") return v;
+  }
+  const direct = obj[key];
+  return typeof direct === "string" ? direct : null;
 }
 
 function activityStatus(status: string | null | undefined): string {
   return status ?? "recorded";
 }
 
-function memoryProposalSourceRefCondition(refs: {
-  readSessionId: string;
-  feedItemId: string;
-  contentHash: string | null;
-}): Prisma.Sql {
-  const conditions: Prisma.Sql[] = [];
-
-  const addReference = (key: "readSessionId" | "feedItemId" | "contentHash", value: string | null | undefined) => {
-    if (!value) return;
-    const direct = JSON.stringify({ [key]: value });
-    const nestedObject = JSON.stringify({ sourceRefs: { [key]: value } });
-    const nestedArray = JSON.stringify({ sourceRefs: [{ [key]: value }] });
-
-    conditions.push(Prisma.sql`source_ref @> CAST(${direct} AS jsonb)`);
-    conditions.push(Prisma.sql`source_ref @> CAST(${nestedObject} AS jsonb)`);
-    conditions.push(Prisma.sql`source_ref @> CAST(${nestedArray} AS jsonb)`);
-  };
-
-  addReference("readSessionId", refs.readSessionId);
-  addReference("feedItemId", refs.feedItemId);
-  addReference("contentHash", refs.contentHash);
-
-  return Prisma.join(conditions, " OR ");
-}
-
 export async function getRuntimeDashboard(): Promise<RuntimeDashboard> {
   const prisma = getPrisma();
   const todayStart = startOfShanghaiDay();
+  const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
   const [
     eventCount,
     opportunityCount,
     actionCount,
     readCount,
-    memoryProposalCount,
-    spineVersionCount,
-    pendingMemoryProposals,
-    pendingSelfSpineProposals,
     totalReadSessions,
     reviewedReadSessions,
     events,
     opportunities,
     actions,
     reads,
-    memoryProposals,
-    spineVersions,
+    cacheStats,
   ] = await Promise.all([
     prisma.runtimeEvent.count({ where: { createdAt: { gte: todayStart } } }),
     prisma.opportunity.count({ where: { createdAt: { gte: todayStart } } }),
     prisma.actionRecord.count({ where: { createdAt: { gte: todayStart } } }),
     prisma.readSession.count({ where: { createdAt: { gte: todayStart } } }),
-    prisma.memoryProposal.count({ where: { createdAt: { gte: todayStart } } }),
-    prisma.selfSpineVersion.count({ where: { createdAt: { gte: todayStart } } }),
-    prisma.memoryProposal.count({ where: { status: "proposed" } }),
-    prisma.selfSpineUpdateProposal.count({ where: { status: "proposed" } }),
     prisma.readSession.count(),
     prisma.readSessionReview.groupBy({ by: ["readSessionId"] }),
     prisma.runtimeEvent.findMany({ where: { createdAt: { gte: todayStart } }, orderBy: { createdAt: "desc" }, take: 8 }),
     prisma.opportunity.findMany({ where: { createdAt: { gte: todayStart } }, orderBy: { createdAt: "desc" }, take: 8 }),
     prisma.actionRecord.findMany({ where: { createdAt: { gte: todayStart } }, orderBy: { createdAt: "desc" }, take: 8 }),
     prisma.readSession.findMany({ where: { createdAt: { gte: todayStart } }, orderBy: { createdAt: "desc" }, take: 8 }),
-    prisma.memoryProposal.findMany({ where: { createdAt: { gte: todayStart } }, orderBy: { createdAt: "desc" }, take: 8 }),
-    prisma.selfSpineVersion.findMany({ where: { createdAt: { gte: todayStart } }, orderBy: { createdAt: "desc" }, take: 8 }),
+    prisma.llmTrace.findMany({
+      where: { createdAt: { gte: last24h } },
+      select: { tokenUsageState: true, inputTokens: true, cachedTokens: true },
+    }),
   ]);
+
+  const cacheHealth = computeCacheHealth(cacheStats);
 
   const activity: ActivityItem[] = [
     ...events.map((event) => ({
@@ -280,24 +252,6 @@ export async function getRuntimeDashboard(): Promise<RuntimeDashboard> {
       href: `/reading-sessions/${read.id}`,
       createdAt: read.createdAt,
     })),
-    ...memoryProposals.map((proposal) => ({
-      id: proposal.id,
-      type: "memory" as const,
-      title: proposal.proposalType,
-      subtitle: percentLabel(proposal.confidence),
-      status: activityStatus(proposal.status),
-      href: "/memory-proposals",
-      createdAt: proposal.createdAt,
-    })),
-    ...spineVersions.map((version) => ({
-      id: version.id,
-      type: "spine" as const,
-      title: `Self Spine v${version.version}`,
-      subtitle: version.agentId,
-      status: activityStatus(version.status),
-      href: "/self-spine",
-      createdAt: version.createdAt,
-    })),
   ]
     .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
     .slice(0, 18);
@@ -309,15 +263,46 @@ export async function getRuntimeDashboard(): Promise<RuntimeDashboard> {
       { label: "Opportunities", value: opportunityCount },
       { label: "Action Records", value: actionCount },
       { label: "Reading Sessions", value: readCount },
-      { label: "Memory Proposals", value: memoryProposalCount },
-      { label: "Spine Versions", value: spineVersionCount },
+      { label: "LLM Calls (24h)", value: cacheHealth.totalCalls },
+      {
+        label: "Cache Hit %",
+        value: Math.round(cacheHealth.cacheHitRatio * 100),
+      },
     ],
     activity,
     reviewQueues: {
-      pendingMemoryProposals,
-      pendingSelfSpineProposals,
       unreviewedReadSessions: Math.max(0, totalReadSessions - reviewedReadSessions.length),
     },
+    cacheHealth,
+  };
+}
+
+function computeCacheHealth(
+  rows: Array<{
+    tokenUsageState: string | null;
+    inputTokens: number | null;
+    cachedTokens: number | null;
+  }>,
+): CacheHealth24h {
+  let capturedCalls = 0;
+  let cacheHitCalls = 0;
+  let totalInputTokens = 0;
+  let totalCachedTokens = 0;
+  for (const row of rows) {
+    if (row.tokenUsageState === "captured") capturedCalls++;
+    if ((row.cachedTokens ?? 0) > 0) cacheHitCalls++;
+    totalInputTokens += row.inputTokens ?? 0;
+    totalCachedTokens += row.cachedTokens ?? 0;
+  }
+  const totalCalls = rows.length;
+  return {
+    totalCalls,
+    capturedCalls,
+    cacheHitCalls,
+    capturedRatio: totalCalls === 0 ? 0 : capturedCalls / totalCalls,
+    cacheHitRatio: totalCalls === 0 ? 0 : cacheHitCalls / totalCalls,
+    totalInputTokens,
+    totalCachedTokens,
   };
 }
 
@@ -375,35 +360,13 @@ export async function getReadSessionDetail(id: string): Promise<ReadSessionDetai
 
   const [base] = await hydrateReadSessions([id]);
   if (!base) return null;
-  const sourceRefCondition = memoryProposalSourceRefCondition({
-    readSessionId: id,
-    feedItemId: session.feedItemId,
-    contentHash: session.contentHash,
-  });
 
-  const [feedItem, summary, thought, rationale, review, actionRecord, memoryProposals] = await Promise.all([
+  const [feedItem, thought, rationale, review, actionRecord] = await Promise.all([
     prisma.feedItem.findUnique({ where: { id: session.feedItemId } }),
-    prisma.sourceSummary.findFirst({ where: { readSessionId: id }, orderBy: { createdAt: "desc" } }),
     prisma.thoughtArtifact.findFirst({ where: { readSessionId: id }, orderBy: { createdAt: "desc" } }),
     prisma.rationaleArtifact.findFirst({ where: { readSessionId: id }, orderBy: { createdAt: "desc" } }),
     prisma.readSessionReview.findFirst({ where: { readSessionId: id }, orderBy: { updatedAt: "desc" } }),
     session.actionRecordId ? prisma.actionRecord.findUnique({ where: { id: session.actionRecordId } }) : Promise.resolve(null),
-    prisma.$queryRaw<MemoryProposalQueryRow[]>(Prisma.sql`
-      SELECT
-        id,
-        agent_id AS "agentId",
-        source_ref AS "sourceRef",
-        proposal_type AS "proposalType",
-        payload,
-        confidence,
-        salience,
-        status,
-        created_at AS "createdAt",
-        updated_at AS "updatedAt"
-      FROM memory_proposals
-      WHERE ${sourceRefCondition}
-      ORDER BY created_at DESC
-    `),
   ]);
 
   return {
@@ -427,7 +390,6 @@ export async function getReadSessionDetail(id: string): Promise<ReadSessionDetai
     opportunityId: session.opportunityId,
     actionRecordId: session.actionRecordId,
     actionRecord: actionRecord ? mapActionRecord(actionRecord, undefined) : null,
-    memoryProposals: memoryProposals.map((proposal) => mapMemoryProposal(proposal, null)),
   };
 }
 
@@ -500,84 +462,6 @@ export async function getActionRecords(): Promise<RuntimeActionRecordRow[]> {
   return actions.map((action) => mapActionRecord(action, sceneById.get(action.targetSceneId)));
 }
 
-function mapMemoryProposal(
-  proposal: {
-    id: string;
-    agentId: string;
-    sourceRef: unknown;
-    proposalType: string;
-    payload: unknown;
-    confidence: number | null;
-    salience: number | null;
-    status: string;
-    createdAt: Date;
-    updatedAt: Date;
-  },
-  memoryItemId: string | null,
-): MemoryProposalRow {
-  return {
-    id: proposal.id,
-    agentId: proposal.agentId,
-    proposalType: proposal.proposalType,
-    status: proposal.status,
-    confidence: proposal.confidence,
-    salience: proposal.salience,
-    sourcePreview: jsonPreview(proposal.sourceRef),
-    payloadPreview: jsonPreview(proposal.payload, 260),
-    payloadText: JSON.stringify(proposal.payload, null, 2),
-    memoryItemId,
-    createdAt: proposal.createdAt,
-    updatedAt: proposal.updatedAt,
-  };
-}
-
-export async function getMemoryProposals(): Promise<MemoryProposalRow[]> {
-  const prisma = getPrisma();
-  const proposals = await prisma.memoryProposal.findMany({ orderBy: { createdAt: "desc" }, take: 80 });
-  const proposalIds = proposals.map((proposal) => proposal.id);
-  const items = await prisma.memoryItem.findMany({
-    where: { sourceProposalId: { in: proposalIds } },
-    select: { id: true, sourceProposalId: true },
-  });
-  const itemByProposal = new Map(items.map((item) => [item.sourceProposalId, item.id]));
-  return proposals.map((proposal) => mapMemoryProposal(proposal, itemByProposal.get(proposal.id) ?? null));
-}
-
-export async function getSelfSpineOverview(): Promise<SelfSpineOverview> {
-  const prisma = getPrisma();
-  const [versions, proposals] = await Promise.all([
-    prisma.selfSpineVersion.findMany({ orderBy: [{ agentId: "asc" }, { version: "desc" }], take: 50 }),
-    prisma.selfSpineUpdateProposal.findMany({ orderBy: { createdAt: "desc" }, take: 80 }),
-  ]);
-
-  return {
-    versions: versions.map((version) => ({
-      id: version.id,
-      agentId: version.agentId,
-      version: version.version,
-      status: version.status,
-      sourceProposalId: version.sourceProposalId,
-      changedSections: Array.isArray(asRecord(version.diff).changedSections)
-        ? (asRecord(version.diff).changedSections as unknown[]).filter((item): item is string => typeof item === "string")
-        : Object.keys(asRecord(asRecord(version.diff).patch)),
-      snapshotPreview: jsonPreview(version.snapshot, 260),
-      diffPreview: jsonPreview(version.diff, 260),
-      createdAt: version.createdAt,
-    })),
-    proposals: proposals.map((proposal) => ({
-      id: proposal.id,
-      agentId: proposal.agentId,
-      status: proposal.status,
-      rationale: proposal.rationale,
-      patchPreview: jsonPreview(proposal.patch, 260),
-      sourcePreview: jsonPreview(proposal.sourceRef, 180),
-      reviewedBy: proposal.reviewedBy,
-      reviewedAt: proposal.reviewedAt,
-      createdAt: proposal.createdAt,
-    })),
-  };
-}
-
 export async function getSceneStates(): Promise<SceneStateRow[]> {
   const prisma = getPrisma();
   const scenes = await prisma.scene.findMany({ orderBy: { updatedAt: "desc" }, take: 100 });
@@ -612,4 +496,269 @@ export async function getSceneStates(): Promise<SceneStateRow[]> {
       lastUpdatedAt: scene.updatedAt,
     };
   });
+}
+
+/**
+ * Phase 1.5 LLM trace 观测查询。
+ * 列表: 按 sceneId 聚合最近 7 天的调用; 详情: 单 scene 最近 N 次调用 + verdict。
+ */
+
+export type TraceMessageRole = "user" | "model" | "tool_calls" | "tool_results" | "unknown";
+
+export interface TraceMessage {
+  role: TraceMessageRole;
+  /** user/model 直接是 content; tool_* 是序列化预览 */
+  content: string;
+  /** 标记: summary head ([历史摘要] 开头的 user) / trigger ([当前要回复的消息] 开头) / window / system */
+  marker: "summary_head" | "trigger" | "quoted" | "window" | "raw";
+}
+
+export interface LlmTraceDetail {
+  id: number;
+  sceneId: string | null;
+  opportunityId: string | null;
+  frameId: string | null;
+  loopIndex: number | null;
+  prefixHash: string | null;
+  tailHash: string | null;
+  inputHash: string | null;
+  inputTokens: number | null;
+  cachedTokens: number | null;
+  outputTokens: number | null;
+  tokenUsageState: string | null;
+  model: string | null;
+  durationMs: number;
+  error: string | null;
+  createdAt: Date;
+  systemPrompt: string;
+  /** 按位置切分的 history, 第 0 段是 prefix (system + summary head), 第 1 段是 tail */
+  prefixMessages: TraceMessage[];
+  tailMessages: TraceMessage[];
+  /** 输出 (model 回的最终文本 / tool calls 序列化), 若有 */
+  outputPreview: string | null;
+}
+
+function classifyMessage(message: { role?: unknown; content?: unknown }): TraceMessage {
+  const rawRole = typeof message.role === "string" ? message.role : "unknown";
+  const role: TraceMessageRole = rawRole === "user" || rawRole === "model" || rawRole === "tool_calls" || rawRole === "tool_results"
+    ? rawRole
+    : "unknown";
+  const rawContent = typeof message.content === "string" ? message.content : JSON.stringify(message);
+  let marker: TraceMessage["marker"] = "window";
+  if (role === "user") {
+    if (rawContent.startsWith("[历史摘要]")) marker = "summary_head";
+    else if (rawContent.startsWith("[当前要回复的消息]")) marker = "trigger";
+    else if (rawContent.startsWith("[被引用消息]")) marker = "quoted";
+    else marker = "window";
+  } else if (role === "model") {
+    marker = "window";
+  } else {
+    marker = "raw";
+  }
+  return { role, content: rawContent, marker };
+}
+
+function parseHistory(input: unknown): TraceMessage[] {
+  if (!input || typeof input !== "object") return [];
+  const obj = input as Record<string, unknown>;
+  const history = obj.history;
+  if (!Array.isArray(history)) return [];
+  return history.map((item) => classifyMessage((item ?? {}) as { role?: unknown; content?: unknown }));
+}
+
+function extractSystemPrompt(input: unknown): string {
+  if (!input || typeof input !== "object") return "";
+  const obj = input as Record<string, unknown>;
+  return typeof obj.systemPrompt === "string" ? obj.systemPrompt : "";
+}
+
+function extractOutputPreview(output: unknown): string | null {
+  if (!output) return null;
+  if (typeof output === "string") return output;
+  try {
+    return JSON.stringify(output, null, 2);
+  } catch {
+    return String(output);
+  }
+}
+
+export async function getLlmTraceById(traceId: number): Promise<LlmTraceDetail | null> {
+  const prisma = getPrisma();
+  const trace = await prisma.llmTrace.findUnique({ where: { id: traceId } });
+  if (!trace) return null;
+
+  const allMessages = parseHistory(trace.input);
+  // prefix = system + 0 或 1 条 summary_head, tail = 剩余
+  const firstNonSummaryIdx = allMessages.findIndex((m) => m.marker !== "summary_head");
+  const splitIdx = firstNonSummaryIdx === -1 ? allMessages.length : firstNonSummaryIdx;
+  const prefixMessages = allMessages.slice(0, splitIdx);
+  const tailMessages = allMessages.slice(splitIdx);
+
+  return {
+    id: trace.id,
+    sceneId: trace.sceneId,
+    opportunityId: trace.opportunityId,
+    frameId: trace.frameId,
+    loopIndex: trace.loopIndex,
+    prefixHash: trace.prefixHash,
+    tailHash: trace.tailHash,
+    inputHash: trace.inputHash,
+    inputTokens: trace.inputTokens,
+    cachedTokens: trace.cachedTokens,
+    outputTokens: trace.outputTokens,
+    tokenUsageState: trace.tokenUsageState,
+    model: trace.model,
+    durationMs: trace.durationMs,
+    error: trace.error,
+    createdAt: trace.createdAt,
+    systemPrompt: extractSystemPrompt(trace.input),
+    prefixMessages,
+    tailMessages,
+    outputPreview: extractOutputPreview(trace.output),
+  };
+}
+const LLM_TRACE_WINDOW_DAYS = 7;
+const LLM_TRACE_DETAIL_LIMIT = 30;
+
+export async function getLlmTraceSceneList(): Promise<LlmTraceSceneSummary[]> {
+  const prisma = getPrisma();
+  const since = new Date(Date.now() - LLM_TRACE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const traces = await prisma.llmTrace.findMany({
+    where: { createdAt: { gte: since }, sceneId: { not: null } },
+    select: {
+      sceneId: true,
+      prefixHash: true,
+      tokenUsageState: true,
+      inputTokens: true,
+      cachedTokens: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const bySceneId = new Map<string, {
+    callCount: number;
+    capturedCount: number;
+    cacheHitCount: number;
+    totalInputTokens: number;
+    totalCachedTokens: number;
+    prefixHashes: Set<string>;
+    lastCallAt: Date;
+  }>();
+
+  for (const trace of traces) {
+    if (!trace.sceneId) continue;
+    let bucket = bySceneId.get(trace.sceneId);
+    if (!bucket) {
+      bucket = {
+        callCount: 0,
+        capturedCount: 0,
+        cacheHitCount: 0,
+        totalInputTokens: 0,
+        totalCachedTokens: 0,
+        prefixHashes: new Set(),
+        lastCallAt: trace.createdAt,
+      };
+      bySceneId.set(trace.sceneId, bucket);
+    }
+    bucket.callCount += 1;
+    if (trace.tokenUsageState === "captured") bucket.capturedCount += 1;
+    if ((trace.cachedTokens ?? 0) > 0) bucket.cacheHitCount += 1;
+    bucket.totalInputTokens += trace.inputTokens ?? 0;
+    bucket.totalCachedTokens += trace.cachedTokens ?? 0;
+    if (trace.prefixHash) bucket.prefixHashes.add(trace.prefixHash);
+    if (trace.createdAt > bucket.lastCallAt) bucket.lastCallAt = trace.createdAt;
+  }
+
+  return [...bySceneId.entries()]
+    .map(([sceneId, bucket]) => ({
+      sceneId,
+      callCount: bucket.callCount,
+      capturedCount: bucket.capturedCount,
+      cacheHitCount: bucket.cacheHitCount,
+      totalInputTokens: bucket.totalInputTokens,
+      totalCachedTokens: bucket.totalCachedTokens,
+      avgCacheHitRatio: bucket.totalInputTokens === 0
+        ? 0
+        : bucket.totalCachedTokens / bucket.totalInputTokens,
+      uniquePrefixHashes: bucket.prefixHashes.size,
+      lastCallAt: bucket.lastCallAt,
+    }))
+    .sort((a, b) => b.lastCallAt.getTime() - a.lastCallAt.getTime());
+}
+
+export async function getLlmTraceSceneDetail(sceneId: string): Promise<LlmTraceSceneDetail | null> {
+  const prisma = getPrisma();
+  const traces = await prisma.llmTrace.findMany({
+    where: { sceneId },
+    orderBy: { createdAt: "desc" },
+    take: LLM_TRACE_DETAIL_LIMIT,
+    select: {
+      id: true,
+      loopIndex: true,
+      prefixHash: true,
+      inputHash: true,
+      inputTokens: true,
+      cachedTokens: true,
+      outputTokens: true,
+      tokenUsageState: true,
+      model: true,
+      durationMs: true,
+      error: true,
+      createdAt: true,
+    },
+  });
+  if (traces.length === 0) return null;
+
+  const recentCalls: LlmTraceCallRow[] = traces.map((trace) => ({
+    id: trace.id,
+    loopIndex: trace.loopIndex,
+    prefixHash: trace.prefixHash,
+    inputHash: trace.inputHash,
+    inputTokens: trace.inputTokens,
+    cachedTokens: trace.cachedTokens,
+    outputTokens: trace.outputTokens,
+    tokenUsageState: trace.tokenUsageState,
+    model: trace.model,
+    durationMs: trace.durationMs,
+    error: trace.error,
+    createdAt: trace.createdAt,
+  }));
+
+  // 聚合 summary (跟列表用同样口径)
+  let capturedCount = 0;
+  let cacheHitCount = 0;
+  let totalInputTokens = 0;
+  let totalCachedTokens = 0;
+  const prefixHashes = new Set<string>();
+  for (const trace of traces) {
+    if (trace.tokenUsageState === "captured") capturedCount++;
+    if ((trace.cachedTokens ?? 0) > 0) cacheHitCount++;
+    totalInputTokens += trace.inputTokens ?? 0;
+    totalCachedTokens += trace.cachedTokens ?? 0;
+    if (trace.prefixHash) prefixHashes.add(trace.prefixHash);
+  }
+  const summary: LlmTraceSceneSummary = {
+    sceneId,
+    callCount: traces.length,
+    capturedCount,
+    cacheHitCount,
+    totalInputTokens,
+    totalCachedTokens,
+    avgCacheHitRatio: totalInputTokens === 0 ? 0 : totalCachedTokens / totalInputTokens,
+    uniquePrefixHashes: prefixHashes.size,
+    lastCallAt: traces[0]?.createdAt ?? new Date(0),
+  };
+
+  // P0 verdict: 在最近 N 次调用范围内
+  // - prefixStable: 不同的 prefix_hash 数 ≤ 2 (允许 1 次 compaction)
+  // - cacheHit: 至少有一次 cached_tokens > 0
+  // - captured: 至少一半的调用 token_usage_state = 'captured'
+  const verdict = {
+    prefixStable: prefixHashes.size > 0 && prefixHashes.size <= 2,
+    cacheHit: cacheHitCount > 0,
+    captured: traces.length > 0 && capturedCount * 2 >= traces.length,
+  };
+
+  return { sceneId, summary, recentCalls, verdict };
 }

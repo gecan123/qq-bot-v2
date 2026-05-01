@@ -277,6 +277,51 @@ export type AgentMessage =
 
 测试状态 (二次落地后): 299 pass / 0 fail / 3 skipped。
 
+**Admin-web 观测落地 (2026-05-01 三次落地):**
+
+把 Phase 1.5 观测从 SQL 命令行升级成 admin-web 内置页面, 形成 P0 可视化 dashboard。
+
+新增页面:
+- `/llm-traces` 列表页: 最近 7 天按 sceneId 聚合, 每行显示调用次数 / cache 命中数 / 累计 cached 与 input tokens / cached % / unique prefix 数 / captured 调用数 / 最近一次调用时间。表格列含色彩提示 (cache hit > 0 绿色; uniquePrefixHashes ≤ 2 绿色)。
+- `/llm-traces/[sceneId]` 详情页: 顶部 P0 验证三件套 verdict 卡 (prefix 稳定 / cache 命中 / token usage captured), 三个聚合指标 (cached/input tokens, cached %, 调用总数, unique prefixes), 时间倒序的最近 30 次调用表 (prefix hash 切换标黄, cached_tokens > 0 标绿)。
+
+新增 query:
+- `getLlmTraceSceneList()` / `getLlmTraceSceneDetail(sceneId)` 在 `apps/admin-web/lib/runtime-queries.ts`
+- `LlmTraceSceneSummary` / `LlmTraceCallRow` / `LlmTraceSceneDetail` 接口
+- `getRuntimeDashboard` 加 `cacheHealth: CacheHealth24h` 字段 (24h cache hit 健康)
+
+Home page 改造:
+- 删 "Pending Memory" / "Pending Spine" review queue card (死表)
+- 加 "Cache Hit Calls" + "Cached / Input Tokens" 两张卡 (链到 /llm-traces)
+- "Unreviewed Reads" 卡保留
+- stats 加 "LLM Calls (24h)" 和 "Cache Hit %"
+
+死代码清理:
+- 删 `app/memory-proposals/` + `app/self-spine/` + `app/playground/` (空目录)
+- 删 `components/runtime/memory-proposal-review.tsx` + `components/runtime/self-spine-proposal-review.tsx`
+- 删 lib 里 `getMemoryProposals` / `getSelfSpineOverview` / `mapMemoryProposal` / `MemoryProposalRow` / `MemoryProposalQueryRow` / `SelfSpineOverview` / `memoryProposalSourceRefCondition`
+- 删 `runtime-actions.ts` 的 `reviewMemoryProposalAction` / `reviewSelfSpineProposalAction` / `assertSelfSpinePatch` / `assertSelfSpineSourceCanMutate` 等所有 spine 相关 helper
+- `ReadSessionDetail.memoryProposals` 字段删除 + 详情页 Memory Proposals card 删除
+- `getRuntimeDashboard` 不再 query memoryProposal/selfSpine count
+- ActivityItem.type 删 `'memory'` / `'spine'`
+- Sidebar nav 删 "记忆" / "Self Spine" 项, 加 "观测" 项 (icon: Gauge, href: /llm-traces)
+
+Schema mirror 同步: `apps/admin-web/prisma/schema.prisma` 的 `LlmTrace` model 落后于 backend, 加上 phase 9 的 11 个字段 (frameId/sceneId/opportunityId/loopIndex/inputHash/prefixHash/tailHash/contextFrame/inputTokens/cachedTokens/outputTokens/tokenUsageState) + 两个新索引。schema mirror 漂移问题应该后续单独 ticket 收敛 (P3)。
+
+DB 验证 (在改造前直接 count):
+- memory_proposals: 0 → 死表
+- memory_items: 0 → 死表
+- self_spine_update_proposals: 0 → 死表
+- self_spine_versions: 0 → 死表
+- read_sessions: 11 → 保留
+- llm_traces: 125 → 观测页面有数据可看
+- action_records (sent + acked): 28 → 保留
+
+测试状态 (admin-web 观测落地后):
+- admin-web typecheck: ✅
+- backend typecheck: ✅
+- backend test: 299 pass / 0 fail / 3 skipped (无变化)
+
 **仍未触动 (符合方案):**
 - `messages` schema, `media` 契约, `freezeResolvedText`
 - `Opportunity / Decision / ActionIntent / ActionRecord / ReplyAudit / Barrier / ActionExecutor` 全部链路

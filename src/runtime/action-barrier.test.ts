@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { classifyAction, decideExecution } from './action-barrier.js'
+import { classifyAction, decideExecution, DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG } from './action-barrier.js'
 
 describe('minimal action barrier', () => {
   test('classifies actions into behavior semantic risk bands', () => {
@@ -50,4 +50,47 @@ describe('minimal action barrier', () => {
     assert.equal(verdict.effectMode, 'blocked')
     assert.equal(verdict.allowedByPolicy, false)
   })
+})
+
+// ActionExecutor always recomputes the barrier from (actionType, targetSceneId, dryRun, executorAvailable)
+// using DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG. root-runtime adds privateReplyDryRun/anchoredGroupReplyDryRun
+// but encodes the same decision into intent.dryRun before dispatch, so both paths must agree.
+describe('barrier verdict consistency: DEFAULT config + intent.dryRun == root-runtime config + replyDryRunEnabled', () => {
+  const rootRuntimeConfig = (replyDryRunEnabled: boolean) => ({
+    ...DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG,
+    privateReplyDryRun: replyDryRunEnabled,
+    anchoredGroupReplyDryRun: replyDryRunEnabled,
+  })
+
+  for (const replyDryRunEnabled of [false, true]) {
+    const label = replyDryRunEnabled ? 'dry-run enabled' : 'dry-run disabled'
+
+    test(`private_reply effectMode agrees when ${label}`, () => {
+      const rootVerdict = decideExecution(
+        { actionType: 'send_private_message', dryRunRequested: replyDryRunEnabled, executorAvailable: true },
+        {},
+        rootRuntimeConfig(replyDryRunEnabled),
+      )
+      const executorVerdict = decideExecution(
+        { actionType: 'send_private_message', dryRunRequested: replyDryRunEnabled, executorAvailable: true },
+        {},
+        DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG,
+      )
+      assert.equal(executorVerdict.effectMode, rootVerdict.effectMode)
+    })
+
+    test(`anchored_group_reply effectMode agrees when ${label}`, () => {
+      const rootVerdict = decideExecution(
+        { actionType: 'send_group_reply', dryRunRequested: replyDryRunEnabled, executorAvailable: true },
+        {},
+        rootRuntimeConfig(replyDryRunEnabled),
+      )
+      const executorVerdict = decideExecution(
+        { actionType: 'send_group_reply', dryRunRequested: replyDryRunEnabled, executorAvailable: true },
+        {},
+        DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG,
+      )
+      assert.equal(executorVerdict.effectMode, rootVerdict.effectMode)
+    })
+  }
 })

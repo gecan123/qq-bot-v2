@@ -27,7 +27,6 @@ export interface ReplyOpportunity {
   deliveryMode: ReplyDeliveryMode
   dryRun: boolean
   reason: string
-  barrierOutput?: Record<string, unknown>
   gateReasons?: string[]
   judgeAdvice?: ProactiveJudgeAdvice
   createdAt: Date

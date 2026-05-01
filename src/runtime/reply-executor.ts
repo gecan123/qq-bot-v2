@@ -439,14 +439,7 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
           ? 'send_private_message'
           : 'send_group_message'
       const shouldDryRun = opportunity.dryRun
-      const storedBarrierVerdict = opportunity.barrierOutput ?? {
-        effectMode: shouldDryRun ? 'dry_run' : (decision.policy.shouldDeliver ? 'live' : 'suppressed'),
-        reason: shouldDryRun ? 'opportunity flagged as dry-run' : decision.policy.reason,
-      }
-      const actionPayload = {
-        ...buildActionResultPayload({ opportunity, deliveryPayload, text: reply, replyIntentId }),
-        barrierVerdict: storedBarrierVerdict,
-      }
+      const actionPayload = buildActionResultPayload({ opportunity, deliveryPayload, text: reply, replyIntentId })
       const actionIntent = await actionRecordStore.createOrReuseIntent({
         id: `${opportunity.opportunityId}:intent:${actionType}`,
         opportunityId: opportunity.opportunityId,
@@ -500,7 +493,6 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
               deliveryType: deliveryPayload.type,
               text: reply,
               reason: decision.policy.reason,
-              barrierVerdict: storedBarrierVerdict,
             },
           })
           log.info(

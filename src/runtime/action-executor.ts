@@ -76,16 +76,10 @@ interface StoredBarrierVerdict {
   barrierOutput: Record<string, unknown>
 }
 
-function readBarrierVerdict(intent: ExecutableActionIntent, executorAvailable: boolean): StoredBarrierVerdict {
-  const stored = getNestedRecord(intent.payload, 'barrierVerdict')
-  if (stored && typeof stored.effectMode === 'string') {
-    return {
-      effectMode: stored.effectMode as EffectMode,
-      reason: typeof stored.reason === 'string' ? stored.reason : 'stored barrier verdict',
-      barrierOutput: stored,
-    }
-  }
-  // fallback for legacy intents without barrierVerdict: re-evaluate barrier policy
+// Deterministic safety gate recomputed from intent facts before any side effect.
+// intent.dryRun already encodes the dispatch-time dry-run decision, so DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG
+// produces the same verdict as the one stored in Decision.barrierOutput.
+function computeBarrierVerdict(intent: ExecutableActionIntent, executorAvailable: boolean): StoredBarrierVerdict {
   const verdict = decideExecution(
     { actionType: intent.actionType as ActionType, targetSceneId: intent.targetSceneId, dryRunRequested: intent.dryRun, executorAvailable },
     {},
@@ -103,7 +97,7 @@ export function createActionExecutor(options: ActionExecutorOptions = {}) {
 
   return {
     async execute(intent: ExecutableActionIntent): Promise<ActionExecutorResult> {
-      const verdict = readBarrierVerdict(intent, Boolean(options.sender))
+      const verdict = computeBarrierVerdict(intent, Boolean(options.sender))
       const initialState: ActionDeliveryState = intent.actionType === 'artifact_only'
         ? 'dry_run'
         : deliveryStateFromEffectMode(verdict.effectMode)

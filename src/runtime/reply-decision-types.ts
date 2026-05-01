@@ -1,10 +1,9 @@
 import type { ReplyRecord } from '../conversation/reply-record-store.js'
 import type { ActionRecord } from './action-record-store.js'
-import type { ProactiveJudgeAdvice } from './proactive-judge.js'
 
-export type ReplyOpportunitySourceKind = 'mention' | 'ambient_message' | 'private_message'
-export type ReplyCueStrength = 'strong' | 'weak'
-export type ReplyDeliveryMode = 'reply_to_message' | 'send_message' | 'send_private_message' | 'audit_only'
+export type ReplyOpportunitySourceKind = 'mention' | 'private_message'
+export type ReplyCueStrength = 'strong'
+export type ReplyDeliveryMode = 'reply_to_message' | 'send_private_message' | 'audit_only'
 
 export interface ReplyOpportunity {
   opportunityId: string
@@ -28,28 +27,23 @@ export interface ReplyOpportunity {
   dryRun: boolean
   reason: string
   gateReasons?: string[]
-  judgeAdvice?: ProactiveJudgeAdvice
   createdAt: Date
 }
 
 export type ReplyDecisionOutcome =
   | 'sendable_reply'
-  | 'opportunity_detected'
   | 'policy_suppressed'
   | 'no_intent'
-  | 'would_reply_dry_run'
 
 export interface ReplyPolicyResult {
   shouldGenerate: boolean
   shouldCreateReplyRecord: boolean
   shouldDeliver: boolean
   shouldAudit: boolean
-  artifactKind?: 'proactive_candidate'
   auditKind?: string
   reason: string
   gateReasons?: string[]
   policyReasons?: string[]
-  judgeAdvice?: ProactiveJudgeAdvice
 }
 
 export interface ReplyDecision {
@@ -67,6 +61,5 @@ export interface ReplyExecutionResult {
   decision: ReplyDecision
   replyRecord?: ReplyRecord
   actionRecord?: ActionRecord
-  artifact?: import('./types.js').ProactiveCandidateArtifact
   deliveryResult?: 'sent' | 'failed' | 'dry_run' | 'skipped'
 }

@@ -3,14 +3,12 @@ import { getMessageById, getMessageBySceneMessageId } from '../database/messages
 import type { Message } from '../generated/prisma/client.js'
 import { resolveMessage } from '../media/message-resolver.js'
 import { messageSender, type MessageSender } from '../messaging/message-sender.js'
-import { generateMentionReply, generateProactiveCandidateReply } from '../responder/reply-generator.js'
-import type { ProactiveCandidateReplyResult } from '../responder/reply-generator.js'
+import { generateMentionReply } from '../responder/reply-generator.js'
 import type { IncomingMessage } from '../responder/pipeline.js'
 import { createReplyAudit, createOrReuseReplyAudit } from '../conversation/reply-audit-store.js'
 import type { ReplyDeliveryPayload, ReplyRecord } from '../conversation/reply-record-store.js'
 import { createReplyDecisionEngine, type ReplyDecisionEngine } from './reply-decision-engine.js'
 import type { ReplyDecision, ReplyExecutionResult, ReplyOpportunity } from './reply-decision-types.js'
-import type { ProactiveCandidateArtifact, ProactiveCandidateStatus } from './types.js'
 import { previewText, type BusinessLogDispatchMode, type BusinessLogSideEffect } from '../utils/business-log.js'
 import { createOrReuseActionIntent, createOrReuseActionRecord, markActionRecordDeliveryState } from './action-record-store.js'
 import { classifyAction, deliveryStateFromEffectMode } from './action-barrier.js'
@@ -20,17 +18,9 @@ type StoredConversationMessage = NonNullable<Awaited<ReturnType<typeof getMessag
 
 const log = createLogger('REPLY_EXECUTOR')
 
-function normalizeGeneratedReply(result: string | null | ProactiveCandidateReplyResult): ProactiveCandidateReplyResult {
-  if (typeof result === 'string' || result === null) {
-    return { text: result, termination: result?.trim() ? 'final_answer' : 'no_final_answer' }
-  }
-  return result
-}
-
 export interface ReplyExecutorOptions {
   decisionEngine?: ReplyDecisionEngine
-  generateReply?: (message: IncomingMessage, opportunity: ReplyOpportunity) => Promise<string | null | ProactiveCandidateReplyResult>
-  generateProactiveCandidateReply?: (message: IncomingMessage, opportunity: ReplyOpportunity) => Promise<ProactiveCandidateReplyResult>
+  generateReply?: (message: IncomingMessage, opportunity: ReplyOpportunity) => Promise<string | null>
   buildIncomingMessage?: (opportunity: ReplyOpportunity) => Promise<IncomingMessage | null>
   sender?: MessageSender
   replyRecordStore?: {
@@ -64,10 +54,6 @@ export interface ReplyExecutorOptions {
   actionExecutor?: {
     execute(intent: ExecutableActionIntent): Promise<ActionExecutorResult>
   }
-  proactiveCandidateStore?: {
-    createOrReuse: (artifact: ProactiveCandidateArtifact) => Promise<void>
-  }
-  onProactiveGenerationAttempt?: (opportunity: ReplyOpportunity) => Promise<void>
   deliver?: unknown
   onReplyRecordSent?: (record: ReplyRecord) => Promise<void>
 }
@@ -75,7 +61,6 @@ export interface ReplyExecutorOptions {
 export interface ReplyExecutor {
   execute(opportunity: ReplyOpportunity): Promise<ReplyExecutionResult>
 }
-
 
 async function defaultBuildIncomingMessage(opportunity: ReplyOpportunity): Promise<IncomingMessage | null> {
   const stored = opportunity.sourceKind === 'private_message'
@@ -112,59 +97,12 @@ function buildDeliveryPayload(decision: ReplyDecision): ReplyDeliveryPayload {
     return { type: 'send_private_message', userId: decision.opportunity.targetUserId ?? decision.opportunity.groupId }
   }
 
-  if (decision.deliveryMode === 'send_message') {
-    return { type: 'send_message', groupId: decision.opportunity.groupId }
-  }
-
   return {
     type: 'reply_to_message',
     groupId: decision.opportunity.groupId,
     messageId: decision.opportunity.triggerMessageId,
     replyToMessageId: decision.opportunity.triggerMessageId,
     mentionUserId: decision.opportunity.triggerSenderId,
-  }
-}
-
-function isDryRunEnabledForPayload(sender: MessageSender, payload: ReplyDeliveryPayload): boolean {
-  if (payload.type === 'send_private_message') return sender.isReplyDryRunEnabled?.() ?? false
-  return payload.type === 'send_message'
-    ? (sender.isSendDryRunEnabled?.() ?? false)
-    : (sender.isReplyDryRunEnabled?.() ?? false)
-}
-
-function buildProactiveCandidateArtifact(input: {
-  decision: ReplyDecision
-  reply: string | null
-  termination: string
-  status: ProactiveCandidateStatus
-  tokenUsage?: ProactiveCandidateReplyResult['tokenUsage']
-  tokenUsageState: NonNullable<ProactiveCandidateArtifact['tokenUsageState']>
-  durationMs?: number
-  now: Date
-}): ProactiveCandidateArtifact {
-  const opportunity = input.decision.opportunity
-  const expiresAt = new Date(input.now.getTime() + 7 * 24 * 60 * 60 * 1000)
-  return {
-    artifactKind: 'proactive_candidate',
-    opportunityId: opportunity.opportunityId,
-    runtimeKey: opportunity.runtimeKey,
-    groupId: opportunity.groupId,
-    sceneId: opportunity.sceneId,
-    sourceKind: opportunity.sourceKind,
-    triggerMessageRowId: opportunity.triggerMessageRowId,
-    incorporatedMessageRowId: opportunity.incorporatedMessageRowId,
-    createdAt: input.now.toISOString(),
-    expiresAt: expiresAt.toISOString(),
-    score: opportunity.replyProbability,
-    gateReasons: input.decision.policy.gateReasons ?? [],
-    policyReasons: input.decision.policy.policyReasons ?? [],
-    judgeAdvice: input.decision.policy.judgeAdvice,
-    candidateText: input.status === 'candidate_generated' ? input.reply ?? undefined : undefined,
-    termination: input.termination,
-    tokenUsage: input.tokenUsage,
-    tokenUsageState: input.tokenUsageState,
-    durationMs: input.durationMs,
-    status: input.status,
   }
 }
 
@@ -176,13 +114,11 @@ function isSupportedSendableGeneration(decision: ReplyDecision): boolean {
 }
 
 function getDecisionDispatchMode(decision: ReplyDecision): BusinessLogDispatchMode {
-  if (decision.policy.artifactKind === 'proactive_candidate') return 'artifact_only'
   if (decision.policy.shouldCreateReplyRecord) return decision.dryRun ? 'dry_run' : 'live'
   return 'audit_only'
 }
 
 function getDecisionSideEffect(decision: ReplyDecision): BusinessLogSideEffect {
-  if (decision.policy.artifactKind === 'proactive_candidate') return 'artifact_write'
   if (decision.policy.shouldCreateReplyRecord) return 'action_record_write'
   if (decision.policy.shouldAudit) return 'audit_write'
   return 'none'
@@ -216,16 +152,6 @@ function buildActionResultPayload(input: {
   }
 }
 
-function getStoredActionText(payload: Record<string, unknown> | null | undefined): string | null {
-  const proposedEffect = payload?.proposedEffect
-  const text =
-    proposedEffect && typeof proposedEffect === 'object' && !Array.isArray(proposedEffect) &&
-    typeof (proposedEffect as Record<string, unknown>).text === 'string'
-      ? ((proposedEffect as Record<string, unknown>).text as string).trim()
-      : ''
-  return text || null
-}
-
 function getReplyTargetId(payload: ReplyDeliveryPayload): number | null {
   if (payload.type !== 'reply_to_message') return null
   const target = payload.replyToMessageId ?? payload.messageId
@@ -242,9 +168,6 @@ function toReplyDeliveryResult(state: string): ReplyExecutionResult['deliveryRes
 export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyExecutor {
   const decisionEngine = options.decisionEngine ?? createReplyDecisionEngine()
   const generateMentionReplyFn = options.generateReply ?? ((message: IncomingMessage, opportunity: ReplyOpportunity) => generateMentionReply(message, opportunity))
-  const generateProactiveCandidateReplyFn =
-    options.generateProactiveCandidateReply ??
-    ((message: IncomingMessage, opportunity: ReplyOpportunity) => generateProactiveCandidateReply(message, opportunity))
   const sender = options.sender ?? messageSender
   const replyRecordStore = options.replyRecordStore
   const configuredReplyAuditStore = options.replyAuditStore
@@ -265,11 +188,7 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
         {
           direction: 'internal',
           actor: 'system',
-          category: opportunity.sourceKind === 'private_message'
-            ? 'private_reply'
-            : opportunity.sourceKind === 'mention'
-              ? 'mention_reply'
-              : 'ambient_candidate',
+          category: opportunity.sourceKind === 'private_message' ? 'private_reply' : 'mention_reply',
           flow: 'reply_decision',
           groupId: opportunity.groupId,
           sceneId: opportunity.sceneId,
@@ -289,90 +208,10 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
           replyProbability: decision.opportunity.replyProbability,
           gateReasons: decision.policy.gateReasons ?? [],
           policyReasons: decision.policy.policyReasons ?? [],
-          judgeAdvice: decision.policy.judgeAdvice,
           reason: decision.policy.reason,
         },
         '回复决策完成',
       )
-
-      if (decision.policy.artifactKind === 'proactive_candidate') {
-        let reply: string | null = null
-        let termination = 'policy_suppressed'
-        let status: ProactiveCandidateStatus = 'suppressed'
-        let tokenUsage: ProactiveCandidateReplyResult['tokenUsage']
-        let durationMs: number | undefined
-        let generationAttempted = false
-
-        if (decision.policy.shouldGenerate) {
-          const message = await (options.buildIncomingMessage ?? defaultBuildIncomingMessage)(decision.opportunity)
-          if (!message) {
-            termination = 'missing_incoming_message'
-            status = 'no_candidate'
-          } else {
-            await options.onProactiveGenerationAttempt?.(decision.opportunity)
-            generationAttempted = true
-            const generated = normalizeGeneratedReply(await generateProactiveCandidateReplyFn(message, decision.opportunity))
-            reply = generated.text
-            termination = generated.termination
-            tokenUsage = generated.tokenUsage
-            durationMs = generated.durationMs
-            if (reply?.trim()) {
-              status = 'candidate_generated'
-            } else {
-              status = 'no_candidate'
-            }
-          }
-        }
-        const tokenUsageState = tokenUsage ? 'captured' : generationAttempted ? 'unknown' : 'not_applicable'
-
-        const artifact = buildProactiveCandidateArtifact({
-          decision,
-          reply,
-          termination,
-          status,
-          tokenUsage,
-          tokenUsageState,
-          durationMs,
-          now: new Date(),
-        })
-        log.info(
-          {
-            direction: 'outbound',
-            actor: 'bot',
-            category: 'ambient_candidate',
-            flow: 'proactive_candidate_generation',
-            groupId: artifact.groupId,
-            sceneId: artifact.sceneId,
-            opportunityId: artifact.opportunityId,
-            sourceKind: artifact.sourceKind,
-            status: artifact.status,
-            termination: artifact.termination,
-            dispatchMode: 'artifact_only',
-            sideEffect: status === 'candidate_generated' ? 'artifact_write' : 'audit_write',
-            deliveryResult: 'skipped',
-            gateReasons: artifact.gateReasons,
-            triggerMessageRowId: artifact.triggerMessageRowId,
-            incorporatedMessageRowId: artifact.incorporatedMessageRowId,
-            textPreview: previewText(artifact.candidateText),
-          },
-          status === 'candidate_generated' ? '主动候选已生成（未发送）' : '主动候选未生成（未发送）',
-        )
-
-        if (status === 'candidate_generated') {
-          await options.proactiveCandidateStore?.createOrReuse(artifact)
-        }
-        await replyAuditStore.createOrReuse({
-          opportunityId: opportunity.opportunityId,
-          runtimeKey: opportunity.runtimeKey,
-          groupId: opportunity.groupId,
-          scopeKey: opportunity.scopeKey,
-          replyIntentId: auditReplyIntentId(decision),
-          auditKind: 'proactive_candidate',
-          payload: artifact,
-        })
-
-        return { decision, artifact, deliveryResult: 'skipped' }
-      }
 
       if (decision.policy.shouldAudit && !decision.policy.shouldCreateReplyRecord) {
         await replyAuditStore.createOrReuse({
@@ -391,7 +230,6 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
             reason: decision.policy.reason,
             gateReasons: decision.policy.gateReasons ?? [],
             policyReasons: decision.policy.policyReasons ?? [],
-            judgeAdvice: decision.policy.judgeAdvice,
           },
         })
         return { decision, deliveryResult: 'skipped' }
@@ -424,7 +262,7 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
           log.warn({ opportunityId: opportunity.opportunityId }, 'reply opportunity missing incoming message; skipping')
           return { decision, deliveryResult: 'skipped' }
         }
-        reply = normalizeGeneratedReply(await generateMentionReplyFn(message, opportunity)).text
+        reply = await generateMentionReplyFn(message, opportunity)
       }
 
       if (!reply) {
@@ -433,11 +271,7 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
       }
 
       const deliveryPayload = buildDeliveryPayload(decision)
-      const actionType = deliveryPayload.type === 'reply_to_message'
-        ? 'send_group_reply'
-        : deliveryPayload.type === 'send_private_message'
-          ? 'send_private_message'
-          : 'send_group_message'
+      const actionType = deliveryPayload.type === 'reply_to_message' ? 'send_group_reply' : 'send_private_message'
       const shouldDryRun = opportunity.dryRun
       const actionPayload = buildActionResultPayload({ opportunity, deliveryPayload, text: reply, replyIntentId })
       const actionIntent = await actionRecordStore.createOrReuseIntent({
@@ -581,14 +415,12 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
               mentionUserId: deliveryPayload.mentionUserId,
               text: reply,
             })
-        : deliveryPayload.type === 'send_private_message'
-          ? sender.sendPrivateMessage
-            ? await sender.sendPrivateMessage({
-                userId: deliveryPayload.userId ?? opportunity.targetUserId ?? opportunity.groupId,
-                text: reply,
-              })
-            : { success: false, attempts: 0 }
-          : await sender.sendMessage({ groupId: opportunity.groupId, text: reply })
+        : deliveryPayload.type === 'send_private_message' && sender.sendPrivateMessage
+          ? await sender.sendPrivateMessage({
+              userId: deliveryPayload.userId ?? opportunity.targetUserId ?? opportunity.groupId,
+              text: reply,
+            })
+          : { success: false, attempts: 0 }
 
       let deliveryResult: ReplyExecutionResult['deliveryResult'] = 'failed'
       if (sendResult.success) {

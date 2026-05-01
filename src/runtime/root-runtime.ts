@@ -26,7 +26,6 @@ import {
 } from './agent-runtime-types.js'
 import type { ConversationWorkerResult, GroupConversationBatch } from '../conversation/types.js'
 import type { ReplyExecutionResult, ReplyOpportunity } from './reply-decision-types.js'
-import { createInvalidProactiveJudgeAdvice, type ProactiveJudge, type ProactiveJudgeAdvice } from './proactive-judge.js'
 import {
   buildBarrierOutput,
   DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG,
@@ -102,8 +101,6 @@ export interface RootRuntimeManagerOptions {
   now?: () => Date
   passiveWorker?: (batch: GroupConversationBatch) => Promise<ConversationWorkerResult | void> | ConversationWorkerResult | void
   ambientExecutor?: { execute(opportunity: ReplyOpportunity): Promise<ReplyExecutionResult> }
-  proactiveJudge?: ProactiveJudge
-  ambientReplyBaseProbability?: number
   replyDryRunEnabled?: boolean
   arbiter?: { choose(candidates: readonly ArbiterCandidate[]): ArbiterProposal | Promise<ArbiterProposal> }
 }
@@ -223,7 +220,7 @@ function isMentionOpportunity(opportunity: Opportunity): boolean {
 function actionTypeForOpportunity(opportunity: Opportunity): ActionType {
   if (isPrivateOpportunity(opportunity)) return 'send_private_message'
   if (isMentionOpportunity(opportunity)) return 'reply_to_message'
-  return 'send_group_message'
+  throw new Error(`unsupported opportunity type for actionType resolution: ${opportunity.opportunityType}`)
 }
 
 interface OpportunityExecutionContext {
@@ -260,42 +257,6 @@ function opportunityStatusFromPassiveResult(result: ConversationWorkerResult | v
   if (deliveryResults.includes('failed')) return 'failed'
   if (deliveryResults.includes('sent')) return 'succeeded'
   return 'skipped'
-}
-
-function buildAmbientReplyOpportunity(input: {
-  sceneId: SceneId
-  groupId: number
-  messageRowId: number
-  messageId: number
-  senderId: number
-  opportunityId: string
-  decisionId: string
-  replyProbability: number
-  judgeAdvice?: ProactiveJudgeAdvice
-  createdAt: Date
-}): ReplyOpportunity {
-  return {
-    opportunityId: input.opportunityId,
-    decisionId: input.decisionId,
-    runtimeKey: MAIN_AGENT_ID,
-    groupId: input.groupId,
-    sceneId: input.sceneId,
-    scopeKey: input.sceneId,
-    sourceKind: 'ambient_message',
-    cueStrength: 'weak',
-    mustReplyOverride: false,
-    replyProbability: input.replyProbability,
-    triggerMessageRowId: input.messageRowId,
-    triggerMessageId: input.messageId,
-    triggerSenderId: input.senderId,
-    incorporatedMessageRowId: input.messageRowId,
-    incorporatedMessageId: input.messageId,
-    deliveryMode: input.replyProbability > 0 ? 'send_message' : 'audit_only',
-    dryRun: true,
-    reason: 'ordinary group message is proactive candidate dry-run only before Phase 10',
-    judgeAdvice: input.judgeAdvice,
-    createdAt: input.createdAt,
-  }
 }
 
 function buildPrivateReplyOpportunity(input: {
@@ -371,27 +332,6 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
     }
   }
 
-  async function buildAmbientJudgeAdvice(
-    context: OpportunityExecutionContext,
-    replyProbability: number,
-  ): Promise<ProactiveJudgeAdvice | undefined> {
-    if (!options.proactiveJudge || replyProbability <= 0) return undefined
-
-    try {
-      return await options.proactiveJudge.evaluate({
-        groupId: context.group,
-        messageRowId: context.messageRow,
-        senderId: context.senderId,
-        ['senderNickname']: context.senderDisplayName,
-        segments: context.segments,
-        createdAt: context.createdAt,
-        replyProbability,
-      })
-    } catch {
-      return createInvalidProactiveJudgeAdvice('proactive judge threw before decision')
-    }
-  }
-
   async function createDecisionForOpportunity(
     opportunity: Opportunity,
     context: OpportunityExecutionContext,
@@ -403,17 +343,13 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
     const replyDryRunEnabled = options.replyDryRunEnabled === true
     const shouldExecuteMention = mentionOpportunity && runtimeOptions.executeDecisions !== false && Boolean(options.passiveWorker)
     const shouldExecutePrivate = privateOpportunity && runtimeOptions.executeDecisions !== false && Boolean(options.ambientExecutor)
-    const barrierExecutorAvailable = privateOpportunity
-      ? shouldExecutePrivate
-      : mentionOpportunity
-        ? shouldExecuteMention
-        : runtimeOptions.executeDecisions !== false
+    const barrierExecutorAvailable = privateOpportunity ? shouldExecutePrivate : shouldExecuteMention
     const barrierVerdict = decideExecution(
       {
         actionType,
-        sourceKind: privateOpportunity ? 'private_message' : mentionOpportunity ? 'mention' : 'ambient_message',
+        sourceKind: privateOpportunity ? 'private_message' : 'mention',
         targetSceneId: context.sceneId,
-        dryRunRequested: replyDryRunEnabled || (!privateOpportunity && !mentionOpportunity),
+        dryRunRequested: replyDryRunEnabled,
         executorAvailable: barrierExecutorAvailable,
       },
       {},
@@ -441,9 +377,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
             ? 'private reply decisions disabled or reply executor unavailable'
             : shouldExecuteMention
               ? 'direct @self mention may execute anchored group reply'
-              : mentionOpportunity
-                ? 'mention reply decisions disabled or passive worker unavailable'
-                : 'ordinary group proactive is dry-run before Phase 10',
+              : 'mention reply decisions disabled or passive worker unavailable',
       barrierInput: buildBarrierPayload({
         sceneId: context.sceneId,
         targetUserId: context.targetUserId,
@@ -467,9 +401,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
               ? 'snapshot-only private message cannot send'
               : shouldExecuteMention
                 ? 'anchored mention reply is allowed'
-                : mentionOpportunity
-                  ? 'snapshot-only mention cannot send'
-                  : 'ordinary group proactive send is disabled before Phase 10',
+                : 'snapshot-only mention cannot send',
       },
     })
     return { decision, barrierVerdict, barrierOutput, dryRun, actionType }
@@ -577,25 +509,6 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
         await markOpportunityStatus(opportunity.id, opportunityStatusFromPassiveResult(result))
         return
       }
-
-      if (canDispatchToExecutor && !privateOpportunity && !mentionOpportunity && runtimeOptions.executeDecisions !== false && options.ambientExecutor) {
-        const replyProbability = typeof options.ambientReplyBaseProbability === 'number' ? options.ambientReplyBaseProbability : 0.02
-        const judgeAdvice = await buildAmbientJudgeAdvice(context, replyProbability)
-        const result = await options.ambientExecutor.execute(buildAmbientReplyOpportunity({
-          sceneId: context.sceneId,
-          groupId: context.group,
-          messageRowId: context.messageRow,
-          messageId: context.message,
-          senderId: context.senderId,
-          opportunityId: opportunity.id,
-          decisionId: decision.id,
-          replyProbability,
-          judgeAdvice,
-          createdAt: context.createdAt,
-        }))
-        await markOpportunityStatus(opportunity.id, opportunityStatusFromDeliveryResult(result.deliveryResult))
-        return
-      }
     } catch (error) {
       await markOpportunityStatus(opportunity.id, 'failed')
       throw error
@@ -610,11 +523,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
       riskLevel: barrierVerdict.riskBand,
       deliveryState: deliveryStateFromEffectMode(barrierVerdict.effectMode),
       barrierOutput,
-      reason: privateOpportunity
-        ? 'private reply decisions disabled'
-        : mentionOpportunity
-          ? 'mention reply decisions disabled'
-          : 'ordinary group proactive dry-run only before Phase 10',
+      reason: privateOpportunity ? 'private reply decisions disabled' : 'mention reply decisions disabled',
     })
     await markOpportunityStatus(opportunity.id, 'skipped')
   }
@@ -666,34 +575,52 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
     })
 
     const mentioned = !isPrivate && isMentionedSelf(input.segments, options.selfNumber)
-    const opportunityType = isPrivate ? 'reply_private_message' : mentioned ? 'reply_to_mention' : 'proactive_candidate'
+
+    // Phase 1.5 砍 proactive 后: 群消息只在 mention 时进 runtime 链路。
+    // 普通群消息只 ingest 到 messages 表 + 写一条 RuntimeEvent (用于事件审计),
+    // 不再生成 proactive_candidate opportunity / decision / suppressed action_record。
+    if (!isPrivate && !mentioned) {
+      const snapshotOnly = {
+        agentId: MAIN_AGENT_ID,
+        schemaVersion: 1,
+        contextSnapshot: { messages: [] },
+        sessionSnapshot: { focusedTargetId: sceneId, scenes: [sceneId], sceneCursors: { [sceneId]: messageRow }, lastObservedMessageRowId: messageRow },
+        lastObservedMessageRowId: messageRow,
+        updatedAt: createdAt,
+      }
+      snapshots.set(sceneId, snapshotOnly)
+      await upsertAgentRuntimeSnapshot({
+        contextSnapshot: snapshotOnly.contextSnapshot,
+        sessionSnapshot: snapshotOnly.sessionSnapshot,
+      })
+      void runtimeEvent
+      return
+    }
+
+    const opportunityType = isPrivate ? 'reply_private_message' : 'reply_to_mention'
     const opportunity = await createOrReuseOpportunity({
       sceneId,
       runtimeEventId: runtimeEvent.id,
-      queueKind: isPrivate || mentioned ? 'obligation' : 'social',
+      queueKind: 'obligation',
       opportunityType,
-      priority: isPrivate ? 90 : mentioned ? 100 : 1,
+      priority: isPrivate ? 90 : 100,
       payload: referencePayload,
       status: 'pending',
-      idempotencyKey: `${idempotencyKey}:${isPrivate ? 'private_reply' : mentioned ? 'reply' : 'ambient'}`,
+      idempotencyKey: `${idempotencyKey}:${isPrivate ? 'private_reply' : 'reply'}`,
     })
 
     const shouldExecuteMention = mentioned && runtimeOptions.executeDecisions !== false && Boolean(options.passiveWorker)
     const shouldExecutePrivate = isPrivate && runtimeOptions.executeDecisions !== false && Boolean(options.ambientExecutor)
-    const actionType: ActionType = isPrivate ? 'send_private_message' : mentioned ? 'reply_to_message' : 'send_group_message'
+    const actionType: ActionType = isPrivate ? 'send_private_message' : 'reply_to_message'
     const replyDryRunEnabled = options.replyDryRunEnabled === true
     const executorAvailable = shouldExecuteMention || shouldExecutePrivate
-    const barrierExecutorAvailable = isPrivate
-      ? shouldExecutePrivate
-      : mentioned
-        ? shouldExecuteMention
-        : runtimeOptions.executeDecisions !== false
+    const barrierExecutorAvailable = isPrivate ? shouldExecutePrivate : shouldExecuteMention
     const barrierVerdict = decideExecution(
       {
         actionType,
-        sourceKind: isPrivate ? 'private_message' : mentioned ? 'mention' : 'ambient_message',
+        sourceKind: isPrivate ? 'private_message' : 'mention',
         targetSceneId: sceneId,
-        dryRunRequested: replyDryRunEnabled || (!isPrivate && !mentioned),
+        dryRunRequested: replyDryRunEnabled,
         executorAvailable: barrierExecutorAvailable,
       },
       {},
@@ -721,9 +648,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
             ? 'private reply decisions disabled or reply executor unavailable'
             : shouldExecuteMention
               ? 'direct @self mention may execute anchored group reply'
-              : mentioned
-                ? 'mention reply decisions disabled or passive worker unavailable'
-                : 'ordinary group proactive is dry-run before Phase 10',
+              : 'mention reply decisions disabled or passive worker unavailable',
       barrierInput: buildBarrierPayload({
         sceneId,
         targetUserId,
@@ -747,9 +672,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
               ? 'snapshot-only private message cannot send'
               : shouldExecuteMention
                 ? 'anchored mention reply is allowed'
-                : mentioned
-                  ? 'snapshot-only mention cannot send'
-                  : 'ordinary group proactive send is disabled before Phase 10',
+                : 'snapshot-only mention cannot send',
       },
     })
 
@@ -791,11 +714,7 @@ export function createRootRuntimeManager(options: RootRuntimeManagerOptions): Ro
         riskLevel: barrierVerdict.riskBand,
         deliveryState: 'suppressed',
         barrierOutput,
-        reason: isPrivate
-          ? 'private reply decisions disabled'
-          : mentioned
-            ? 'mention reply decisions disabled'
-            : 'ordinary group proactive dry-run only before Phase 10',
+        reason: isPrivate ? 'private reply decisions disabled' : 'mention reply decisions disabled',
       })
       await markOpportunityStatus(opportunity.id, 'skipped')
       return

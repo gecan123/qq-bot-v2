@@ -1,6 +1,3 @@
-import type { ProactiveJudgeAdvice } from './proactive-judge.js'
-import type { TokenUsageSummary } from '../llm/token-usage.js'
-
 export const ROOT_RUNTIME_SNAPSHOT_SCHEMA_VERSION = 2
 export const DEFAULT_ROOT_RUNTIME_UNREAD_LIMIT = 50
 export const DEFAULT_ROOT_RUNTIME_SENDER_CONTINUITY_LIMIT = 32
@@ -57,50 +54,6 @@ export interface RuntimeSenderContinuity {
   updatedAt: string
 }
 
-export interface RuntimeAmbientAuditCandidate {
-  id: string
-  createdAt: string
-  text: string
-  triggerMessageRowId?: number
-  status: 'dry_run'
-}
-
-export type ProactiveCandidateStatus = 'suppressed' | 'no_candidate' | 'candidate_generated'
-
-export interface ProactiveCandidateArtifact {
-  artifactKind: 'proactive_candidate'
-  opportunityId: string
-  runtimeKey: string
-  groupId: number
-  sceneId: string
-  sourceKind: string
-  triggerMessageRowId: number
-  incorporatedMessageRowId: number
-  createdAt: string
-  expiresAt: string
-  score: number
-  gateReasons: string[]
-  policyReasons?: string[]
-  judgeAdvice?: ProactiveJudgeAdvice
-  candidateText?: string
-  termination: string
-  model?: string
-  tokenUsage?: TokenUsageSummary
-  tokenUsageState?: 'captured' | 'not_applicable' | 'unknown'
-  durationMs?: number
-  status: ProactiveCandidateStatus
-}
-
-export interface RuntimeProactiveGenerationAttempt {
-  opportunityId: string
-  attemptedAt: string
-}
-
-export interface RuntimeProactiveJudgeAttempt {
-  messageRowId: number
-  attemptedAt: string
-}
-
 export interface RuntimeContextMessage {
   role: 'user' | 'model'
   kind: 'group_message' | 'assistant_turn'
@@ -119,10 +72,6 @@ export interface RootRuntimeSessionSnapshot {
   focusedTargetId?: FocusTargetId
   unreadMessages: RuntimeUnreadMessage[]
   senderContinuities: RuntimeSenderContinuity[]
-  ambientAuditCandidates: RuntimeAmbientAuditCandidate[]
-  proactiveCandidateArtifacts?: ProactiveCandidateArtifact[]
-  proactiveGenerationAttempts?: RuntimeProactiveGenerationAttempt[]
-  proactiveJudgeAttempts?: RuntimeProactiveJudgeAttempt[]
   sceneRecords?: RuntimeSceneRecord[]
   outstandingCues?: RuntimeCue[]
   recentObservedMessageRowIds: number[]
@@ -197,10 +146,6 @@ export function createDefaultRootRuntimeSnapshot(groupId = 0): CreateRootRuntime
       focusedTargetId: sceneId,
       unreadMessages: [],
       senderContinuities: [],
-      ambientAuditCandidates: [],
-      proactiveCandidateArtifacts: [],
-      proactiveGenerationAttempts: [],
-      proactiveJudgeAttempts: [],
       sceneRecords: [
         {
           sceneId,

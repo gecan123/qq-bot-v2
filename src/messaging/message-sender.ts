@@ -31,7 +31,11 @@ export interface MessageSender {
 
 export interface MessageSenderOptions {
   replyDryRun?: boolean
-  proactiveDryRun?: boolean
+  /**
+   * 主动发言 (sendMessage) 的 dry run 开关。
+   * 未来主动发言上线时, 跟 replyDryRun 用同一个 BOT_REPLY_DRY_RUN 控; 当前 sendMessage 几乎没有 caller。
+   */
+  sendDryRun?: boolean
   sendGroupReplyFn?: typeof sendGroupReply
   sendPrivateMessageFn?: typeof sendPrivateMessage
 }
@@ -44,7 +48,7 @@ class NapcatMessageSender implements MessageSender {
   }
 
   isSendDryRunEnabled(): boolean {
-    return this.options.proactiveDryRun
+    return this.options.sendDryRun
   }
 
   async replyToMessage(params: {
@@ -85,7 +89,7 @@ class NapcatMessageSender implements MessageSender {
   }
 
   async sendMessage(params: { groupId: number; text: string }): Promise<SendGroupReplyResult> {
-    if (this.options.proactiveDryRun) {
+    if (this.options.sendDryRun) {
       log.info(
         {
           direction: 'outbound',
@@ -134,7 +138,7 @@ class NapcatMessageSender implements MessageSender {
 export function createMessageSender(options: MessageSenderOptions = {}): MessageSender {
   return new NapcatMessageSender({
     replyDryRun: options.replyDryRun ?? config.botReplyDryRun,
-    proactiveDryRun: options.proactiveDryRun ?? config.botProactiveDryRun,
+    sendDryRun: options.sendDryRun ?? config.botReplyDryRun,
     sendGroupReplyFn: options.sendGroupReplyFn ?? sendGroupReply,
     sendPrivateMessageFn: options.sendPrivateMessageFn ?? sendPrivateMessage,
   })

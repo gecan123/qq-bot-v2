@@ -1,7 +1,6 @@
 import { getAgentProfile } from '../config/agent-profiles.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import { getCurrentTokenUsageTracker, runWithTokenUsageTracking } from '../llm/token-usage.js'
-import type { TokenUsageSummary } from '../llm/token-usage.js'
 import { createLogger } from '../logger.js'
 import { buildContextFrame, type ContextFrame, type ContextFrameSourceRefs } from '../agent/context-frame.js'
 import { agentModel } from '../agent/runtime.js'
@@ -16,13 +15,6 @@ import { buildSystemPrompt, runAgentSession } from './agent-session.js'
 const REPLY_INSTRUCTION = loadPrompt('./prompts/reply-instruction.md')
 const log = createLogger('REPLY')
 const REPLY_SYSTEM_PROMPT_VERSION = 'reply-system-prompt:v1'
-
-export interface ProactiveCandidateReplyResult {
-  text: string | null
-  termination: string
-  tokenUsage?: TokenUsageSummary
-  durationMs?: number
-}
 
 export type ReplyGenerationContext = Pick<
   ReplyOpportunity,
@@ -146,72 +138,6 @@ async function agentReply(
   return null
 }
 
-async function agentReplyWithTermination(
-  msg: IncomingMessage,
-  persona: string,
-  contextLimit: number,
-  maxSteps?: number,
-  warningTimeMs?: number,
-  maxAnswerChars?: number,
-  allowImplicitText = true,
-  generationContext?: ReplyGenerationContext,
-): Promise<ProactiveCandidateReplyResult> {
-  const mediaDeadlineAt = Date.now() + 15_000
-  const contextResult = await buildContext(msg, contextLimit, { mediaDeadlineAt })
-  const triggerText = await extractResolvedTriggerText(msg.groupId, msg.messageId, msg.segments, { mediaDeadlineAt }, {
-    sceneKind: msg.sceneKind,
-    sceneExternalId: msg.sceneExternalId,
-  })
-  const initialHistory = buildReplyHistory({
-    windowHistory: contextResult.history,
-    compactedSummary: contextResult.compactedSummary,
-    trigger: triggerText,
-  })
-  const systemPrompt = buildSystemPrompt(persona, REPLY_INSTRUCTION)
-  const contextFrame = buildMentionContextFrame({
-    msg,
-    generationContext,
-    contextResult,
-    systemPrompt,
-    initialHistory,
-  })
-
-  const result = await runAgentSession({
-    groupId: msg.groupId,
-    dbToolsEnabled: msg.sceneKind !== 'qq_private',
-    persona,
-    instruction: REPLY_INSTRUCTION,
-    initialHistory,
-    maxSteps,
-    allowImplicitText,
-    warningTimeMs,
-    maxAnswerChars,
-    contextFrame,
-  })
-
-  log.info(
-    {
-      direction: 'internal',
-      actor: 'bot',
-      category: 'mention_reply',
-      flow: 'reply_generation',
-      groupId: msg.groupId,
-      messageId: msg.messageId,
-      senderId: msg.senderId,
-      senderNickname: msg.senderNickname,
-      state: result.state,
-      termination: result.state === 'final' ? result.termination : undefined,
-      reason: 'reason' in result ? result.reason : undefined,
-    },
-    'at_mention_agent_result',
-  )
-
-  if (result.state === 'final') {
-    return { text: result.answer, termination: result.termination }
-  }
-  return { text: null, termination: result.reason }
-}
-
 export async function generateMentionReply(
   msg: IncomingMessage,
   generationContext?: ReplyGenerationContext,
@@ -250,45 +176,3 @@ export async function generateMentionReply(
   })
 }
 
-export async function generateProactiveCandidateReply(
-  msg: IncomingMessage,
-  generationContext?: ReplyGenerationContext,
-): Promise<ProactiveCandidateReplyResult> {
-  return runWithTokenUsageTracking(async () => {
-    const startedAt = Date.now()
-    const mode: 'agent' = 'agent'
-
-    try {
-      const profile = getAgentProfile(msg.groupId)
-      const contextLimit = profile.replyContextMessages ?? 20
-
-      const result = await agentReplyWithTermination(
-        msg,
-        profile.persona,
-        contextLimit,
-        profile.agentMaxSteps,
-        profile.agentWarningTimeMs ?? profile.agentMaxTimeMs,
-        profile.agentMaxAnswerChars,
-        false,
-        generationContext,
-      )
-      const summary = getCurrentTokenUsageTracker()?.snapshot()
-      return {
-        ...result,
-        tokenUsage: summary && summary.total.calls > 0 ? summary : undefined,
-        durationMs: Date.now() - startedAt,
-      }
-    } finally {
-      const summary = getCurrentTokenUsageTracker()?.snapshot()
-      if (summary) {
-        logMentionReplyTokenUsage({
-          groupId: msg.groupId,
-          messageId: msg.messageId,
-          mode,
-          durationMs: Date.now() - startedAt,
-          summary,
-        })
-      }
-    }
-  })
-}

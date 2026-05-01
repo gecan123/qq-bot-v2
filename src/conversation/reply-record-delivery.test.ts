@@ -84,40 +84,6 @@ describe('reply record delivery', () => {
     assert.deepEqual(mutations, ['sending:1', 'acked:1:9001', 'sent:1'])
   })
 
-  test('dispatches send_message payload through sendMessage adapter', async () => {
-    const calls: string[] = []
-
-    const result = await deliverReplyRecord(
-      makeReplyRecord({
-        id: 2,
-        scopeKey: 'group:1',
-        deliveryPayload: { type: 'send_message' },
-      }),
-      {
-        sender: {
-          isSendDryRunEnabled: () => false,
-          async replyToMessage() {
-            calls.push('reply')
-            return { success: true, attempts: 1 }
-          },
-          async sendMessage() {
-            calls.push('send')
-            return { success: true, attempts: 1, providerMessageId: 9002 }
-          },
-        },
-        replyRecordStore: {
-          markAcked: async () => {},
-          markSending: async () => {},
-          markSent: async () => {},
-          markFailed: async () => {},
-        },
-      },
-    )
-
-    assert.equal(result, 'sent')
-    assert.deepEqual(calls, ['send'])
-  })
-
   test('dispatches send_private_message payload through private adapter', async () => {
     const calls: string[] = []
 

@@ -71,7 +71,6 @@ ${rootRuntime}`, 'runtimeKey: `qq_group:', 'root runtime snapshot must not carry
       'memory_maintenance_due',
       'self_spine_review_due',
       "'curiosity'",
-      "'proactive_candidate'",
       "'create_memory_proposal'",
       "'update_self_spine'",
       "'proposed' | 'rejected' | 'approved' | 'executing' | 'succeeded' | 'failed' | 'skipped'",
@@ -262,14 +261,14 @@ ${rootRuntime}`, 'runtimeKey: `qq_group:', 'root runtime snapshot must not carry
     assertIncludes(index, 'replyDryRunEnabled: messageSender.isReplyDryRunEnabled?.() ?? config.botReplyDryRun')
   })
 
-  test('ambient proactive dry-run path attaches judge advice before reply decision', () => {
+  test('Phase 1.5 后: 群消息只在 mention 时进 runtime 链路, 不再生成 proactive_candidate opportunity', () => {
     const rootRuntime = readProjectFile('src/runtime/root-runtime.ts')
-    const index = readProjectFile('src/index.ts')
 
-    assertIncludes(rootRuntime, 'proactiveJudge?: ProactiveJudge')
-    assertIncludes(rootRuntime, 'const judgeAdvice = await buildAmbientJudgeAdvice(context, replyProbability)')
-    assertIncludes(rootRuntime, 'judgeAdvice,')
-    assertIncludes(rootRuntime, 'options.proactiveJudge.evaluate')
-    assertIncludes(index, 'proactiveJudge: createProactiveJudge()')
+    // 砍 proactive judge / ambient candidate 之后, root-runtime 不应再引用这些
+    assertExcludes(rootRuntime, 'proactiveJudge', 'proactive judge integration was removed')
+    assertExcludes(rootRuntime, 'buildAmbientReplyOpportunity', 'ambient reply opportunity factory was removed')
+    assertExcludes(rootRuntime, 'buildAmbientJudgeAdvice', 'ambient judge advice helper was removed')
+    // 普通群消息进入 runtime 时只 ingest 和写 RuntimeEvent, 不再生成 opportunity
+    assertIncludes(rootRuntime, "if (!isPrivate && !mentioned)")
   })
 })

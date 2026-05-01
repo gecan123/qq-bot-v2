@@ -5,7 +5,6 @@ export type ReplyRecordExecutionState = 'pending' | 'sending' | 'acked' | 'sent'
 
 export type ReplyDeliveryPayload =
   | { type: 'reply_to_message'; groupId?: number; messageId?: number; replyToMessageId?: number; mentionUserId?: number }
-  | { type: 'send_message'; groupId?: number }
   | { type: 'send_private_message'; userId?: number }
   | { type: 'audit_only'; groupId?: number }
 

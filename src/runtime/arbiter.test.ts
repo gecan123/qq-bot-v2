@@ -11,7 +11,7 @@ function opportunity(input: Partial<Opportunity> & Pick<Opportunity, 'id' | 'que
   return {
     sceneId: 'qq_group:1',
     runtimeEventId: null,
-    opportunityType: 'proactive_candidate',
+    opportunityType: 'reply_to_mention',
     deadlineAt: null,
     payload: { source: 'messages', messageRowId: 1, messageId: 1, idempotencyKey: input.id },
     status: 'pending',
@@ -38,7 +38,7 @@ describe('runtime arbiter', () => {
 
   test('deterministic arbiter chooses an existing candidate or rests', () => {
     const choice = chooseDeterministicCandidate([
-      { opportunityId: 'social-1', queueKind: 'social', opportunityType: 'proactive_candidate', priority: 1 },
+      { opportunityId: 'social-1', queueKind: 'social', opportunityType: 'reply_to_mention', priority: 1 },
       { opportunityId: 'obligation-1', queueKind: 'obligation', opportunityType: 'reply_to_mention', priority: 1 },
     ])
 
@@ -52,7 +52,7 @@ describe('runtime arbiter', () => {
 
   test('LLM proposal can only select a candidate opportunity or rest', () => {
     const candidates = [
-      { opportunityId: 'known-1', queueKind: 'social' as const, opportunityType: 'proactive_candidate', priority: 1 },
+      { opportunityId: 'known-1', queueKind: 'social' as const, opportunityType: 'reply_to_mention', priority: 1 },
     ]
 
     assert.deepEqual(acceptArbiterProposal(candidates, { kind: 'opportunity', opportunityId: 'known-1' }), {

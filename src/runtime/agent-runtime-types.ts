@@ -19,14 +19,10 @@ export type RuntimeEventType =
 export type QueueKind = 'obligation' | 'social' | 'curiosity' | 'maintenance'
 export type OpportunityType =
   | 'reply_to_mention'
-  | 'observe_group'
-  | 'proactive_candidate'
   | 'reply_private_message'
   | 'read_forum_post'
   | 'read_news_item'
   | 'run_task'
-  | 'review_memory_proposal'
-  | 'review_self_spine_update'
   | 'maintenance'
 export type ActionType =
   | 'reply_to_message'

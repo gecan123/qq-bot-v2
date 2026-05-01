@@ -12,7 +12,6 @@
     "admin:dev": "pnpm --dir apps/admin-web dev",
     "admin:build": "pnpm --dir apps/admin-web build",
     "admin:start": "pnpm --dir apps/admin-web start",
-    "proactive:report": "tsx scripts/proactive-candidate-report.ts",
     "forum:v2ex:poll": "tsx scripts/poll-v2ex-forum.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

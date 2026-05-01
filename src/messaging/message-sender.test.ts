@@ -7,7 +7,7 @@ describe('messageSender', () => {
     const calls: Array<{ groupId: number }> = []
     const sender = createMessageSender({
       replyDryRun: true,
-      proactiveDryRun: false,
+      sendDryRun: false,
       sendGroupReplyFn: async (groupId) => {
         calls.push({ groupId })
         return { success: true, attempts: 1 }
@@ -29,7 +29,7 @@ describe('messageSender', () => {
     const calls: Array<{ groupId: number }> = []
     const sender = createMessageSender({
       replyDryRun: false,
-      proactiveDryRun: true,
+      sendDryRun: true,
       sendGroupReplyFn: async (groupId) => {
         calls.push({ groupId })
         return { success: true, attempts: 1 }
@@ -49,7 +49,7 @@ describe('messageSender', () => {
     const calls: Array<{ groupId: number }> = []
     const sender = createMessageSender({
       replyDryRun: true,
-      proactiveDryRun: false,
+      sendDryRun: false,
       sendGroupReplyFn: async (groupId) => {
         calls.push({ groupId })
         return { success: true, attempts: 1 }
@@ -69,7 +69,7 @@ describe('messageSender', () => {
     const calls: Array<{ userId: number }> = []
     const sender = createMessageSender({
       replyDryRun: false,
-      proactiveDryRun: true,
+      sendDryRun: true,
       sendGroupReplyFn: async () => {
         throw new Error('sendGroupReplyFn should not send private replies')
       },

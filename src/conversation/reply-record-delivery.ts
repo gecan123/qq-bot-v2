@@ -114,10 +114,7 @@ export async function deliverReplyRecord(
                 text: record.text,
               })
             : { success: false, attempts: 0 }
-          : await sender.sendMessage({
-              groupId: record.groupId,
-              text: record.text,
-            })
+          : { success: false, attempts: 0 }
 
       if (!sendResult.success) {
         await replyRecordStore.markFailed(record.id)

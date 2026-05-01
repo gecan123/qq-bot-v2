@@ -6,17 +6,13 @@ import {
   type AgentId,
   type CreateRootRuntimeSnapshotInput,
   type FocusTargetId,
-  type ProactiveCandidateArtifact,
   type RootRuntimeContextSnapshot,
   type RootRuntimeSessionSnapshot,
   type RootRuntimeSnapshotRecord,
   type RuntimeContextMessage,
   type RuntimeCue,
-  type RuntimeProactiveGenerationAttempt,
   type RuntimeSceneRecord,
 } from './types.js'
-
-const MAX_PROACTIVE_CANDIDATE_ARTIFACTS = 50
 
 function sanitizeJsonValue(value: unknown): Prisma.InputJsonValue | null | undefined {
   if (value === undefined) return undefined
@@ -33,43 +29,6 @@ function sanitizeJsonValue(value: unknown): Prisma.InputJsonValue | null | undef
     )
   }
   return String(value)
-}
-
-function isProactiveCandidateArtifact(item: unknown): item is ProactiveCandidateArtifact {
-  if (!item || typeof item !== 'object') return false
-  const artifact = item as Partial<ProactiveCandidateArtifact>
-  return (
-    artifact.artifactKind === 'proactive_candidate' &&
-    typeof artifact.opportunityId === 'string' &&
-    artifact.runtimeKey === MAIN_AGENT_ID &&
-    typeof artifact.groupId === 'number' &&
-    typeof artifact.sceneId === 'string' &&
-    typeof artifact.createdAt === 'string' &&
-    typeof artifact.expiresAt === 'string' &&
-    typeof artifact.score === 'number' &&
-    Array.isArray(artifact.gateReasons) &&
-    typeof artifact.termination === 'string' &&
-    (artifact.status === 'suppressed' || artifact.status === 'no_candidate' || artifact.status === 'candidate_generated')
-  )
-}
-
-function isProactiveGenerationAttempt(item: unknown): item is RuntimeProactiveGenerationAttempt {
-  if (!item || typeof item !== 'object') return false
-  const attempt = item as Partial<RuntimeProactiveGenerationAttempt>
-  return typeof attempt.opportunityId === 'string' && typeof attempt.attemptedAt === 'string'
-}
-
-function pruneProactiveCandidateArtifacts(artifacts: ProactiveCandidateArtifact[], now = new Date()): ProactiveCandidateArtifact[] {
-  const nowMs = now.getTime()
-  const latestByKey = new Map<string, ProactiveCandidateArtifact>()
-  for (const artifact of artifacts) {
-    const expiresAt = Date.parse(artifact.expiresAt)
-    if (Number.isFinite(expiresAt) && expiresAt <= nowMs) continue
-    const key = `${artifact.runtimeKey}:${artifact.opportunityId}:${artifact.artifactKind}`
-    const existing = latestByKey.get(key)
-    if (!existing || artifact.createdAt.localeCompare(existing.createdAt) >= 0) latestByKey.set(key, artifact)
-  }
-  return [...latestByKey.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, MAX_PROACTIVE_CANDIDATE_ARTIFACTS)
 }
 
 function parseContextSnapshot(value: unknown): RootRuntimeContextSnapshot {
@@ -114,11 +73,8 @@ function parseSessionSnapshot(value: unknown): RootRuntimeSessionSnapshot {
     focusedTargetId: parsed.focusedTargetId === 'portal' || typeof parsed.focusedTargetId === 'string' ? (parsed.focusedTargetId as FocusTargetId) : 'portal',
     unreadMessages: Array.isArray(parsed.unreadMessages) ? parsed.unreadMessages : [],
     senderContinuities: Array.isArray(parsed.senderContinuities) ? parsed.senderContinuities : [],
-    ambientAuditCandidates: Array.isArray(parsed.ambientAuditCandidates) ? parsed.ambientAuditCandidates : [],
     sceneRecords,
     outstandingCues,
-    proactiveCandidateArtifacts: pruneProactiveCandidateArtifacts(Array.isArray(parsed.proactiveCandidateArtifacts) ? parsed.proactiveCandidateArtifacts.filter(isProactiveCandidateArtifact) : []),
-    proactiveGenerationAttempts: Array.isArray(parsed.proactiveGenerationAttempts) ? parsed.proactiveGenerationAttempts.filter(isProactiveGenerationAttempt) : [],
     recentObservedMessageRowIds: Array.isArray(parsed.recentObservedMessageRowIds) ? parsed.recentObservedMessageRowIds.filter((i): i is number => typeof i === 'number' && Number.isInteger(i)) : [],
     lastWakeAt: typeof parsed.lastWakeAt === 'string' || parsed.lastWakeAt === null ? parsed.lastWakeAt : null,
   }

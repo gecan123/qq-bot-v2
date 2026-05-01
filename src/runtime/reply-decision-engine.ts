@@ -1,7 +1,5 @@
 import { makeMentionReplyIntentId, makePrivateReplyIntentId } from './types.js'
 import type { ReplyDecision, ReplyOpportunity } from './reply-decision-types.js'
-import { config } from '../config/index.js'
-import type { ProactiveJudgeAdvice, ProactiveJudgePolicy } from './proactive-judge.js'
 
 function clampProbability(value: number): number {
   if (!Number.isFinite(value)) return 0
@@ -13,36 +11,17 @@ export interface ReplyDecisionEngine {
 }
 
 export interface ReplyDecisionEngineOptions {
-  ambientAuditEnabled?: boolean
-  proactiveJudge?: Pick<
-    ProactiveJudgePolicy,
-    | 'minConfidence'
-    | 'minUsefulness'
-    | 'minNovelty'
-    | 'maxInterruptionCost'
-    | 'maxSocialRisk'
-  >
+  // 占位, 当前没用; 保留是为了未来加 policy switch 不破坏调用方签名
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 }
 
-export function createReplyDecisionEngine(options: ReplyDecisionEngineOptions = {}): ReplyDecisionEngine {
-  const ambientAuditEnabled = options.ambientAuditEnabled ?? true
-  const proactiveJudge = options.proactiveJudge ?? config.proactiveJudge
-
-  const getJudgePolicyReasons = (advice: ProactiveJudgeAdvice | undefined): string[] => {
-    if (!advice) return ['judge_missing']
-    if (advice.status !== 'valid') return [`judge_${advice.status}`]
-
-    const reasons: string[] = []
-    if (!advice.shouldSpeak) reasons.push('judge_veto')
-    if (advice.confidence < proactiveJudge.minConfidence) reasons.push('judge_low_confidence')
-    if (advice.usefulness < proactiveJudge.minUsefulness) reasons.push('judge_low_usefulness')
-    if (advice.novelty < proactiveJudge.minNovelty) reasons.push('judge_low_novelty')
-    if (advice.interruptionCost > proactiveJudge.maxInterruptionCost) reasons.push('judge_high_interruption_cost')
-    if (advice.socialRisk > proactiveJudge.maxSocialRisk) reasons.push('judge_high_social_risk')
-    if ((advice.suggestedDelayMs ?? 0) > 0) reasons.push('judge_suggested_delay_unsupported')
-    return reasons
-  }
-
+/**
+ * Phase 1.5 之后简化版: 只处理 mention (强锚点) + private_message。
+ * 主动发言路径已砍 (proactive-judge / candidate / ambient 的整套链路)。
+ * 未来要做主动发言, 走"trigger → agent 自己用 send_message tool"的路径,
+ * 不再走 ReplyOpportunity 这一套。
+ */
+export function createReplyDecisionEngine(_options: ReplyDecisionEngineOptions = {}): ReplyDecisionEngine {
   return {
     decide(opportunity) {
       const replyProbability = clampProbability(opportunity.replyProbability)
@@ -111,58 +90,18 @@ export function createReplyDecisionEngine(options: ReplyDecisionEngineOptions = 
         }
       }
 
-      if (!ambientAuditEnabled) {
-        return {
-          opportunity: { ...opportunity, replyProbability, dryRun: true, deliveryMode: 'audit_only' },
-          outcome: 'policy_suppressed',
-          policy: {
-            shouldGenerate: false,
-            shouldCreateReplyRecord: false,
-            shouldDeliver: false,
-            shouldAudit: false,
-            reason: 'ambient audit disabled',
-          },
-          deliveryMode: 'audit_only',
-          dryRun: true,
-          reason: 'ambient audit disabled',
-        }
-      }
-
-      const outcome = replyProbability > 0 ? 'opportunity_detected' : 'policy_suppressed'
-      const gateReasons = opportunity.gateReasons ?? []
-      const judgePolicyReasons =
-        opportunity.deliveryMode === 'send_message' && replyProbability > 0 && gateReasons.length === 0
-          ? getJudgePolicyReasons(opportunity.judgeAdvice)
-          : []
-      const policyReasons = [...gateReasons, ...judgePolicyReasons]
-      const shouldGenerateProactiveCandidate =
-        opportunity.deliveryMode === 'send_message' &&
-        replyProbability > 0 &&
-        gateReasons.length === 0 &&
-        judgePolicyReasons.length === 0
-      const proactiveSuppressed = opportunity.deliveryMode === 'send_message' && policyReasons.length > 0
+      // 不是 mention 也不是私聊, 直接 no_intent 不做任何事
       return {
-        opportunity: {
-          ...opportunity,
-          replyProbability,
-          dryRun: true,
-          deliveryMode: shouldGenerateProactiveCandidate ? 'send_message' : 'audit_only',
-        },
-        outcome: shouldGenerateProactiveCandidate ? 'would_reply_dry_run' : outcome,
+        opportunity: { ...opportunity, replyProbability, dryRun: true, deliveryMode: 'audit_only' },
+        outcome: 'no_intent',
         policy: {
-          shouldGenerate: shouldGenerateProactiveCandidate,
+          shouldGenerate: false,
           shouldCreateReplyRecord: false,
           shouldDeliver: false,
-          shouldAudit: true,
-          artifactKind: shouldGenerateProactiveCandidate ? 'proactive_candidate' : undefined,
-          auditKind: shouldGenerateProactiveCandidate || proactiveSuppressed ? 'proactive_candidate' : outcome,
-          reason: opportunity.reason,
-          gateReasons,
-          policyReasons,
-          judgeAdvice: opportunity.judgeAdvice,
+          shouldAudit: false,
+          reason: 'no actionable reply opportunity',
         },
-        replyIntentId: shouldGenerateProactiveCandidate ? opportunity.opportunityId : undefined,
-        deliveryMode: shouldGenerateProactiveCandidate ? 'send_message' : 'audit_only',
+        deliveryMode: 'audit_only',
         dryRun: true,
         reason: opportunity.reason,
       }

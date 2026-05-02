@@ -143,6 +143,19 @@ model AgentRuntimeSnapshot {
   @@map("agent_runtime_snapshots")
 }
 
+/// 永续上下文的真身。每个 scene 一个对象,持有 LLM 可见的 messages 数组。
+/// 持久形态 == 运行时形态:snapshot 字段就是 LLM 调用时直接喂的历史。
+/// 详见 src/agent/agent-context.ts 和 README 「核心要义:永续上下文」。
+model SceneAgentContext {
+  sceneId       String   @id @map("scene_id") @db.VarChar(191)
+  schemaVersion Int      @default(1) @map("schema_version")
+  snapshot      Json
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("scene_agent_contexts")
+}
+
 model Scene {
   id          String   @id @db.VarChar(191)
   agentId     String   @map("agent_id") @db.VarChar(191)

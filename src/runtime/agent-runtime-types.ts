@@ -24,10 +24,12 @@ export type OpportunityType =
   | 'read_news_item'
   | 'run_task'
   | 'maintenance'
+  | 'speak_proactively'
 export type ActionType =
   | 'reply_to_message'
   | 'send_group_reply'
   | 'send_private_message'
+  | 'send_group_message'
   | 'read_forum_post'
   | 'read_news_item'
   | 'create_memory_proposal'

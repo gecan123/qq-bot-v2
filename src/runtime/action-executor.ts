@@ -134,7 +134,9 @@ export function createActionExecutor(options: ActionExecutorOptions = {}) {
       const text = getText(intent.payload)
       const groupId = getGroupId(intent.payload)
       const userId = getUserId(intent.payload)
-      if (!text || (intent.actionType === 'send_private_message' ? userId == null : groupId == null)) {
+      const requiresGroupId = intent.actionType !== 'send_private_message'
+      const requiresUserId = intent.actionType === 'send_private_message'
+      if (!text || (requiresGroupId && groupId == null) || (requiresUserId && userId == null)) {
         await store.markDeliveryState?.(actionRecord.id, 'failed', { ...intent.payload, reason: 'invalid payload', barrierVerdict: verdict.barrierOutput })
         return { intent, actionRecord, deliveryResult: 'failed' }
       }
@@ -145,9 +147,13 @@ export function createActionExecutor(options: ActionExecutorOptions = {}) {
         ? options.sender.sendPrivateMessage
           ? await options.sender.sendPrivateMessage({ userId: userId ?? 0, text })
           : { success: false, attempts: 0 }
-        : messageId != null
-          ? await options.sender.replyToMessage({ groupId: groupId ?? 0, replyToMessageId: messageId, text })
-          : { success: false, attempts: 0 }
+        : intent.actionType === 'send_group_message'
+          ? options.sender.sendGroupMessage
+            ? await options.sender.sendGroupMessage({ groupId: groupId ?? 0, text })
+            : { success: false, attempts: 0 }
+          : messageId != null
+            ? await options.sender.replyToMessage({ groupId: groupId ?? 0, replyToMessageId: messageId, text })
+            : { success: false, attempts: 0 }
 
       if (!sendResult.success) {
         await store.markDeliveryState?.(actionRecord.id, 'failed', { ...intent.payload, error: 'send failed', barrierVerdict: verdict.barrierOutput })

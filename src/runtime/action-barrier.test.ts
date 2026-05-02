@@ -8,6 +8,9 @@ describe('minimal action barrier', () => {
     assert.equal(classifyAction({ actionType: 'send_private_message' }), 'private_reply')
     assert.equal(classifyAction({ actionType: 'reply_to_message' }), 'anchored_group_reply')
     assert.equal(classifyAction({ actionType: 'send_group_reply' }), 'anchored_group_reply')
+    // Phase 0: send_group_message 暂时复用 anchored_group_reply 的 riskBand,
+    // 区分由 actionType 在 decideExecution 中处理。
+    assert.equal(classifyAction({ actionType: 'send_group_message' }), 'anchored_group_reply')
     assert.equal(classifyAction({ actionType: 'internal' }), 'internal')
   })
 
@@ -28,6 +31,53 @@ describe('minimal action barrier', () => {
 
     assert.equal(verdict.riskBand, 'persistence')
     assert.equal(verdict.effectMode, 'requires_review')
+    assert.equal(verdict.allowedByPolicy, false)
+  })
+
+  test('Phase 0: send_group_message default-suppresses live execution', () => {
+    // DEFAULT config: allowSendGroupMessageLive = false
+    const verdict = decideExecution(
+      { actionType: 'send_group_message', executorAvailable: true },
+      {},
+      DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG,
+    )
+
+    assert.equal(verdict.riskBand, 'anchored_group_reply')
+    assert.equal(verdict.effectMode, 'suppressed')
+    assert.equal(verdict.allowedByPolicy, false)
+    assert.match(verdict.reason, /Phase 10 gate/)
+  })
+
+  test('Phase 0: send_group_message with allowSendGroupMessageLive=true and no dry-run goes live', () => {
+    const verdict = decideExecution(
+      { actionType: 'send_group_message', executorAvailable: true },
+      {},
+      { ...DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG, allowSendGroupMessageLive: true },
+    )
+
+    assert.equal(verdict.effectMode, 'live')
+    assert.equal(verdict.allowedByPolicy, true)
+  })
+
+  test('Phase 0: send_group_message with allowSendGroupMessageLive=true and dry-run flag goes dry_run', () => {
+    const verdict = decideExecution(
+      { actionType: 'send_group_message', executorAvailable: true, dryRunRequested: true },
+      {},
+      { ...DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG, allowSendGroupMessageLive: true },
+    )
+
+    assert.equal(verdict.effectMode, 'dry_run')
+    assert.equal(verdict.allowedByPolicy, false)
+  })
+
+  test('Phase 0: send_group_message remains suppressed when executor missing', () => {
+    const verdict = decideExecution(
+      { actionType: 'send_group_message', executorAvailable: false },
+      {},
+      { ...DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG, allowSendGroupMessageLive: true },
+    )
+
+    assert.equal(verdict.effectMode, 'suppressed')
     assert.equal(verdict.allowedByPolicy, false)
   })
 })

@@ -154,9 +154,18 @@ const waitDecl: AgentToolDeclaration = {
   }),
 }
 
+export type ProactiveSendOutcome = 'sent' | 'dry_run' | 'suppressed' | 'failed'
+
 export interface ProactiveToolsOptions {
-  sendGroupMessage: (text: string) => Promise<void>
-  appendAssistantTurn: (text: string) => Promise<void>
+  /**
+   * 调用方负责完整的「dispatch + 必要时落 assistant-turn」语义。
+   * 返回结果的字符串会作为 tool_result 给 LLM,告诉它 send 实际发生了什么
+   * (sent / dry_run / suppressed / failed)。
+   *
+   * CLAUDE.md 不变量 #3:只有 outcome === 'sent' 时调用方才能 appendAssistantTurn,
+   * 其它 outcome 不进 history。
+   */
+  sendGroupMessage: (text: string) => Promise<{ outcome: ProactiveSendOutcome; toolResultText: string }>
   onWait?: (reason?: string) => void
 }
 
@@ -173,9 +182,8 @@ export function createProactiveAgentTools(groupId: number, proactiveOptions: Pro
       ...base.executors,
       proactive_send: async (args) => {
         const parsed = proactiveSendDecl.inputSchema.parse(args) as { text: string }
-        await proactiveOptions.sendGroupMessage(parsed.text)
-        await proactiveOptions.appendAssistantTurn(parsed.text)
-        return '消息已发送'
+        const result = await proactiveOptions.sendGroupMessage(parsed.text)
+        return result.toolResultText
       },
       wait: async (args) => {
         const parsed = waitDecl.inputSchema.parse(args) as { reason?: string }

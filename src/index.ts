@@ -303,6 +303,7 @@ async function main() {
     intervalMs: config.proactive.intervalMs,
     initialDelayMs: config.proactive.initialDelayMs,
     getForumDigest: () => buildProactiveDigest(proactiveDigestBuffer),
+    actionExecutor,
   })
   if (proactiveSchedulerTimers.length > 0) {
     log.info(

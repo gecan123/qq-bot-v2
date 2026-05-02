@@ -19,13 +19,20 @@ export interface ActionBarrierRuntimeConfig {
   allowPersistence?: boolean
   allowPrivateReplyLive?: boolean
   allowAnchoredGroupReplyLive?: boolean
+  /**
+   * 主动群发（无 anchor message 的 send_group_message）默认 false——Phase 10 之前
+   * barrier 永远把它压成 dry_run/suppressed，防止 LLM 直接驱动外部副作用。
+   */
+  allowSendGroupMessageLive?: boolean
   privateReplyDryRun?: boolean
   anchoredGroupReplyDryRun?: boolean
+  sendGroupMessageDryRun?: boolean
 }
 
 export const DEFAULT_ACTION_BARRIER_RUNTIME_CONFIG = {
   allowPrivateReplyLive: true,
   allowAnchoredGroupReplyLive: true,
+  allowSendGroupMessageLive: false,
 } satisfies ActionBarrierRuntimeConfig
 
 export interface ActionBarrierVerdict {
@@ -50,6 +57,7 @@ export function classifyAction(action: ActionBarrierAction): RiskLevel {
       return 'private_reply'
     case 'reply_to_message':
     case 'send_group_reply':
+    case 'send_group_message':
       return 'anchored_group_reply'
   }
 }
@@ -119,7 +127,23 @@ export function decideExecution(
     }
   }
 
-  // riskBand === 'anchored_group_reply' (剩下唯一情况)
+  // riskBand === 'anchored_group_reply'
+  // 这里要按 actionType 进一步分流: send_group_message (无 anchor 的主动外发) 比
+  // anchored reply 风险更高,Phase 10 之前默认压成 suppressed/dry_run。
+  if (action.actionType === 'send_group_message') {
+    const liveAllowed = runtimeConfig.allowSendGroupMessageLive ?? false
+    const dryRun = dryRunRequested || runtimeConfig.sendGroupMessageDryRun === true
+    return {
+      riskBand,
+      allowedByPolicy: liveAllowed && !dryRun,
+      effectMode: liveAllowed ? dryRun ? 'dry_run' : 'live' : 'suppressed',
+      reason: liveAllowed
+        ? dryRun ? 'ambient group post live execution is disabled by dry-run config' : 'ambient group post live execution is explicitly allowed'
+        : 'ambient group post live execution is disabled by policy (Phase 10 gate)',
+      policyVersion: ACTION_BARRIER_POLICY_VERSION,
+    }
+  }
+
   const liveAllowed = runtimeConfig.allowAnchoredGroupReplyLive ?? true
   const dryRun = dryRunRequested || runtimeConfig.anchoredGroupReplyDryRun === true
   return {

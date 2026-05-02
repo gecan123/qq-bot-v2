@@ -1,4 +1,5 @@
 import { runProactiveGroupSession } from '../responder/proactive-session.js'
+import type { ProactiveSendActionExecutor } from './proactive-send-dispatcher.js'
 import { createLogger } from '../logger.js'
 
 const log = createLogger('PROACTIVE_SCHEDULER')
@@ -10,6 +11,8 @@ export interface ProactiveSchedulerOptions {
   initialDelayMs?: number
   /** 由调用方决定本次唤醒附带的论坛/外部摘要。null 表示没有外部输入。 */
   getForumDigest: () => string | null
+  /** Phase 0: proactive_send 必须经过 ActionIntent + Barrier 链, 由调用方注入 actionExecutor。 */
+  actionExecutor: ProactiveSendActionExecutor
   now?: () => Date
 }
 
@@ -24,7 +27,12 @@ export function startProactiveScheduler(options: ProactiveSchedulerOptions): Nod
     const digest = options.getForumDigest()
     for (const groupId of options.groupIds) {
       try {
-        await runProactiveGroupSession({ groupId, forumDigest: digest, triggeredAt })
+        await runProactiveGroupSession({
+          groupId,
+          forumDigest: digest,
+          triggeredAt,
+          actionExecutor: options.actionExecutor,
+        })
       } catch (err) {
         log.warn({ err, groupId }, 'proactive group session crashed')
       }

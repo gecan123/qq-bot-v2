@@ -20,6 +20,15 @@ export interface MessageSender {
     userId: number
     text: string
   }): Promise<SendGroupReplyResult>
+
+  /**
+   * 主动群发(无 anchor message)。区别于 replyToMessage:不带 replyToMessageId,
+   * 不引用任何用户消息。给 ActionType: 'send_group_message' 用。
+   */
+  sendGroupMessage?(params: {
+    groupId: number
+    text: string
+  }): Promise<SendGroupReplyResult>
 }
 
 export interface MessageSenderOptions {
@@ -93,6 +102,29 @@ class NapcatMessageSender implements MessageSender {
     }
 
     return this.options.sendPrivateMessageFn(params.userId, [{ type: 'text', data: { text: params.text } }])
+  }
+
+  async sendGroupMessage(params: { groupId: number; text: string }): Promise<SendGroupReplyResult> {
+    if (this.options.replyDryRun) {
+      log.info(
+        {
+          direction: 'outbound',
+          actor: 'bot',
+          category: 'ambient_post',
+          flow: 'napcat_send_dry_run',
+          groupId: params.groupId,
+          deliveryType: 'send_group_message',
+          dispatchMode: 'dry_run',
+          sideEffect: 'none',
+          deliveryResult: 'dry_run',
+          textPreview: previewText(params.text),
+        },
+        '主动群发跳过（dry run）',
+      )
+      return { success: true, attempts: 0 }
+    }
+
+    return this.options.sendGroupReplyFn(params.groupId, [{ type: 'text', data: { text: params.text } }])
   }
 }
 

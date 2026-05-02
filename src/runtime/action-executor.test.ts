@@ -117,4 +117,58 @@ describe('action record contract', () => {
     assert.equal(result.deliveryResult, 'acked')
     assert.deepEqual(states, ['sending', 'acked'])
   })
+
+  it('Phase 0: send_group_message default barrier suppresses live send', async () => {
+    let replyCalled = false
+    let sendGroupCalled = false
+    const states: string[] = []
+    const result = await createActionExecutor({
+      sender: {
+        replyToMessage: async () => {
+          replyCalled = true
+          return { success: false, attempts: 0 }
+        },
+        sendGroupMessage: async () => {
+          sendGroupCalled = true
+          return { success: false, attempts: 0 }
+        },
+      },
+      actionStore: {
+        createOrReuseActionRecord: async (input) => ({
+          id: 'record-4',
+          actionIntentId: input.actionIntentId,
+          actionType: input.actionType,
+          targetSceneId: input.targetSceneId,
+          deliveryState: input.deliveryState ?? 'pending',
+          idempotencyKey: input.idempotencyKey,
+          resultPayload: input.resultPayload ?? null,
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+        }),
+        markDeliveryState: async (_id, state) => {
+          states.push(state)
+        },
+      },
+    }).execute({
+      id: 'intent-4',
+      opportunityId: 'opportunity-4',
+      decisionId: 'decision-4',
+      actionType: 'send_group_message',
+      targetSceneId: 'qq_group:42',
+      payload: {
+        target: { groupId: 42, sceneId: 'qq_group:42' },
+        proposedEffect: { type: 'send_group_message', text: 'hi everyone' },
+      },
+      dryRun: false,
+      riskLevel: 'anchored_group_reply',
+      status: 'approved',
+      idempotencyKey: 'intent-4',
+    } satisfies ActionIntent)
+
+    // Default barrier 把它压成 suppressed (Phase 10 之前不允许 live)。
+    // ActionRecord 的初始 deliveryState 应该是 'suppressed',然后 markDeliveryState('skipped')。
+    assert.equal(result.deliveryResult, 'skipped')
+    assert.equal(replyCalled, false, 'replyToMessage 不应该被调用')
+    assert.equal(sendGroupCalled, false, 'sendGroupMessage 也不应该被调用 (barrier 压住了)')
+  })
 })

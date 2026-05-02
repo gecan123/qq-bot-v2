@@ -9,7 +9,10 @@ import { makeQqGroupSceneId } from '../runtime/agent-runtime-types.js'
 import { maybeCompactConversation } from '../conversation/compaction.js'
 import { withLlmTrace } from '../agent/llm-trace.js'
 import { buildContextFrame, type ContextFrameSourceRefs } from '../agent/context-frame.js'
-import { sendGroupReply } from './reply-executor.js'
+import {
+  dispatchProactiveSend,
+  type ProactiveSendActionExecutor,
+} from '../runtime/proactive-send-dispatcher.js'
 import { createLogger } from '../logger.js'
 
 const PROACTIVE_INSTRUCTION = loadPrompt('./prompts/proactive-wakeup.md')
@@ -22,6 +25,11 @@ export interface ProactiveGroupSessionParams {
   forumDigest: string | null
   /** 触发本次唤醒的时刻,作为 opportunityId 的一部分,保证去重。 */
   triggeredAt: Date
+  /**
+   * Phase 0:proactive_send 必须经过 ActionIntent + Barrier + Executor + ActionRecord
+   * 链路。actionExecutor 由 index.ts 注入(同一个实例,同一个 messageSender)。
+   */
+  actionExecutor: ProactiveSendActionExecutor
 }
 
 export async function runProactiveGroupSession(params: ProactiveGroupSessionParams): Promise<void> {
@@ -39,20 +47,57 @@ export async function runProactiveGroupSession(params: ProactiveGroupSessionPara
 
   let sendAttempts = 0
   let sendSuccesses = 0
+  let sendDryRuns = 0
+  let sendSuppressed = 0
   let waitInvoked = false
+
+  const opportunityId = `proactive:${sceneId}:${params.triggeredAt.getTime()}`
 
   const tools = createProactiveAgentTools(params.groupId, {
     sendGroupMessage: async (text) => {
       sendAttempts += 1
-      const segments = [{ type: 'text', data: { text } }]
-      const result = await sendGroupReply(params.groupId, segments)
-      if (!result.success) {
-        throw new Error(`proactive send failed after ${result.attempts} attempts`)
+      // Phase 0: 不再直调 sendGroupReply。走完整的 ActionIntent + Barrier 链。
+      // Barrier 默认对 send_group_message 压成 dry_run/suppressed (Phase 10 前)。
+      const result = await dispatchProactiveSend(
+        {
+          groupId: params.groupId,
+          text,
+          wakeupAt: params.triggeredAt,
+          proactiveSessionId: opportunityId,
+        },
+        { actionExecutor: params.actionExecutor },
+      )
+      switch (result.deliveryResult) {
+        case 'sent':
+        case 'acked':
+          sendSuccesses += 1
+          // CLAUDE.md 不变量 #3:只有真发出去才落 model role 历史
+          await context.appendAssistantTurn({ role: 'model', content: text })
+          return { outcome: 'sent', toolResultText: '消息已发送' }
+        case 'dry_run':
+          sendDryRuns += 1
+          return {
+            outcome: 'dry_run',
+            toolResultText: '消息进入 dry-run (barrier policy)；未真正发送，未写入历史。本轮唤醒可视为已表态。',
+          }
+        case 'suppressed':
+        case 'skipped':
+          sendSuppressed += 1
+          return {
+            outcome: 'suppressed',
+            toolResultText: `消息被 barrier 抑制 (${result.reason})；未发送，未写入历史。`,
+          }
+        case 'failed':
+          return {
+            outcome: 'failed',
+            toolResultText: `发送失败: ${result.reason}`,
+          }
+        default:
+          return {
+            outcome: 'failed',
+            toolResultText: `unexpected delivery state: ${result.deliveryResult}`,
+          }
       }
-      sendSuccesses += 1
-    },
-    appendAssistantTurn: async (text) => {
-      await context.appendAssistantTurn({ role: 'model', content: text })
     },
     onWait: () => {
       waitInvoked = true
@@ -65,7 +110,6 @@ export async function runProactiveGroupSession(params: ProactiveGroupSessionPara
     includedActionRecordIds: [],
     compactionSegmentIds: [],
   }
-  const opportunityId = `proactive:${sceneId}:${params.triggeredAt.getTime()}`
   const contextFrame = buildContextFrame({
     sceneId,
     opportunityId,
@@ -94,8 +138,13 @@ export async function runProactiveGroupSession(params: ProactiveGroupSessionPara
   })
 
   // outcome 由 closure 计数器决定,而不是 result.state——proactive 路径没有终止工具,
-  // result.state 永远是 'fallback' 或 'aborted',无法区分"成功发出去"和"什么都没做"。
-  const outcome = sendSuccesses > 0 ? 'sent' : waitInvoked ? 'waited' : 'idle'
+  // result.state 永远是 'fallback' 或 'aborted',无法区分各种情况。
+  const outcome: 'sent' | 'dry_run' | 'suppressed' | 'waited' | 'idle' =
+    sendSuccesses > 0 ? 'sent'
+    : sendDryRuns > 0 ? 'dry_run'
+    : sendSuppressed > 0 ? 'suppressed'
+    : waitInvoked ? 'waited'
+    : 'idle'
 
   log.info(
     {
@@ -108,6 +157,8 @@ export async function runProactiveGroupSession(params: ProactiveGroupSessionPara
       outcome,
       sendAttempts,
       sendSuccesses,
+      sendDryRuns,
+      sendSuppressed,
       waitInvoked,
       loopState: result.state,
       loopReason: 'reason' in result ? result.reason : undefined,

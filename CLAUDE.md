@@ -31,24 +31,29 @@ Default stance:
 
 ## Perpetual Context Contract
 
-Perpetual context here means the LLM history must be stable, replayable, and cheap to extend.
+「Perpetual context」 here means: keep the LLM history prefix bit-stable across calls so the provider's prompt cache hits, and use that low marginal cost to extend conversation lifetime indefinitely. This is the project's central design contract — not a "long context window" optimization. README has a 中文 version of this section under 「核心要义：永续上下文」; this is the engineering-side restatement with file pointers.
 
-Core intent:
-- Keep the LLM history prefix as stable as possible across runs.
-- Preserve Claude-style prompt-cache hit rate by avoiding needless rewrites of earlier turns.
-- Use the low marginal cost of cached prefixes to let the bot work for longer and more often.
+**Why it matters.** Claude/OpenAI prompt cache hits are prefix-matched. A hit makes cached input tokens near-free and TTFT near-zero; a miss re-bills and re-attends the whole prefix. If any reply path rewrites earlier turns (reordering messages, refreshing a media description, swapping the system prompt), cache hit rate collapses and the bot's economics break. A stable prefix is what makes 24/7 always-on agents financially viable.
 
-Hard requirements:
-- `messages` is the only inbound user-fact ledger. Do not introduce a second inbound user append ledger.
-- The full conversation ledger is reconstructed deterministically from:
-  - inbound user facts in `messages`
-  - bot-local assistant turns
-  - conversation state / compaction metadata
+**Hard invariants** — treat any violation as a regression unless explicitly justified in the PR description:
 
-Design implications:
-- Optimize for deterministic history reconstruction, not for making every late-arriving fact backfill older turns.
-- Treat cache stability as a product feature, not as an incidental optimization.
-- If a design would make the already-appended prompt prefix differ between equivalent reruns, treat that as a regression unless there is a strong reason otherwise.
+1. **Prefix / tail split.** `src/agent/context-frame.ts` carves the request into a stable prefix (system + compacted summary head) and a volatile tail (window + current trigger). `prefixHash` and `tailHash` are recorded on every `LlmTrace` for cache-hit verification. Do not collapse them back into a single hash.
+
+2. **Append-only history.** `messages` is the only inbound user-fact ledger; never introduce a second one. Bot-emitted content enters history as `model` role (not as `[BOT] xxx` text concat) so multi-turn semantics survive compaction. The full conversation ledger reconstructs deterministically from `messages` + sent `action_records` (rendered as `model` role) + `conversation_state` compaction metadata.
+
+3. **Frozen media text.** First-time media resolution writes into `messages.resolvedText`. Compaction reads `resolvedText` if present and only re-resolves if absent (`src/conversation/compaction.ts` `getStableCompactionText`); the freeze prevents a later resolver upgrade from rewriting historical prefixes.
+
+4. **Compaction is a planned prefix-breaking operation.** `maybeCompactConversation()` in `src/conversation/compaction.ts` is the only path that replaces raw history with an LLM summary. The trigger threshold is deliberately high (80 messages, keep last 20) to keep the prefix alive as long as possible. `previousSummary` is a merge input, not an append target — the system prompt forbids string concatenation. Empty / whitespace summaries do not write back. Post-send compaction failures must not poison sent replies; the caller wraps in try/catch (see `src/runtime/passive-mention-processor.ts`).
+
+5. **Deterministic replay.** The history reconstructed for the same scope at any time must be byte-identical given the same inputs. This is the mathematical precondition for cache hits, not a stylistic nicety. Designs that make equivalent reruns produce different prefixes are treated as regressions.
+
+**Implications for plans / refactors:**
+
+- Optimize for deterministic reconstruction, not for backfilling old turns with late-arriving facts.
+- Cache stability is a product feature with directly measurable cost impact — the admin-web `/llm-traces` page is the canonical observation surface (prefix-hash switch count, `cached_tokens` ratio per scene).
+- New side-effect paths must specify whether they touch the prefix; if yes, justify it.
+- Late-binding facts (e.g. media descriptions arriving after the message was already in history) belong in tail-only fields or behind the `resolvedText` freeze barrier — never injected back into prefix turns.
+- Before introducing a new field that influences prefix rendering, check whether it is bit-stable across reruns of the same scope. If not, gate it behind a frozen / append-only structure.
 
 ## Commands
 

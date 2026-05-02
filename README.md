@@ -10,6 +10,24 @@
 - 通过已配置的 OpenAI-compatible LLM provider 生成媒体描述和 `@bot` 回复
 - 对普通群消息做 runtime 归类、审计和主动候选观测，但默认不真实主动发言
 
+## 核心要义：永续上下文
+
+「永续上下文」是这个项目的设计中枢，不是「上下文窗口很长」的修辞。
+
+**定义**：让 LLM 历史 prefix 在多次调用之间保持位级稳定，最大化 prompt cache 命中率，把对话的有效寿命无限延长。
+
+**为什么重要**：Claude/OpenAI 的 prompt cache 按 prefix 前缀匹配命中——命中时 cached input token 计费极低、首 token 极快；未命中则整段重新计费、重新 attention。如果每轮都让历史前缀漂移（重排消息、重写媒体描述、改 system prompt），命中率被砸到 0，成本和延迟同步爆炸。反之只要前缀稳，bot 可以「越聊越便宜」，24/7 长开线和高频触发才在经济上可行。
+
+**架构上的五条不变量**（破坏其中任何一条都视为回归）：
+
+1. **prefix / tail 二分**。prefix = system prompt + 已压缩的历史摘要头部（稳定）；tail = 滚动 window + 当轮 trigger（每次变）。`src/agent/context-frame.ts` 分别记录 `prefixHash` / `tailHash`，便于事后核对命中。
+2. **append-only 历史**。`messages` 表是唯一的入站用户事实账本，不允许改写已落盘的历史；bot 自己说过的话以 `model` role 进入历史，不做文本拼接。
+3. **媒体文本冻结**。图片 / 视频 / 语音 / PDF 描述第一次解析后写入 `messages.resolvedText`，之后即使解析器升级也不重写——否则一个旧媒体被重新理解就会让所有后续 prompt 前缀整体漂移。
+4. **compaction 是计划性的破坏性操作**。摘要必然把一段 raw history 替换成一段 LLM 摘要文本，前缀 hash 必然变。所以触发阈值上调到 80 条，频率越低越好；摘要本身是合并写法（`previousSummary + new history → newSummary`），不允许 append 累积。具体落点见 `src/conversation/compaction.ts` 的 `maybeCompactConversation()`。
+5. **决定性重放**。同一个 scope 在任意时刻重建出来的 history 必须 byte-identical（输入相同时）——这是 cache 命中的数学前提，不是好习惯。
+
+观测面在 admin-web 的 `/llm-traces` 里，按 sceneId 聚合 `prefixHash` 切换次数和 `cached_tokens` 占比；扩展规则同步写在 `CLAUDE.md` 的 *Perpetual Context Contract* 章节，做出影响 prefix 的改动时务必先读那一节。
+
 ## 功能概览
 
 - 监听指定群消息并写入 PostgreSQL

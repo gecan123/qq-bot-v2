@@ -2,8 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import type { Message } from '../generated/prisma/client.js'
 import type { AgentMessage } from '../agent/types.js'
-import type { ConversationSummarizer } from './summarizer.js'
-import { compactConversationIfNeeded } from './compaction.js'
+import { maybeCompactConversation, type SummarizeFn, type SummarizeInput } from './compaction.js'
 
 function makeMessage(id: number, overrides: Partial<Message> = {}): Message {
   return {
@@ -28,27 +27,24 @@ function makeMessage(id: number, overrides: Partial<Message> = {}): Message {
   }
 }
 
-function makeMockSummarizer(opts: {
+function captureSummarize(opts: {
   output: string
-  capture?: { calls: Array<{ previousSummary: string | null; historyToCompress: AgentMessage[] }> }
-}): ConversationSummarizer {
-  return {
-    async summarize(input) {
-      opts.capture?.calls.push(input)
-      return opts.output
-    },
+  capture?: { calls: SummarizeInput[] }
+}): SummarizeFn {
+  return async (input) => {
+    opts.capture?.calls.push(input)
+    return opts.output
   }
 }
 
-// 测试用旧阈值 (40/12) 让现有 41 条 message case 仍能 trigger compaction
 const TEST_DEPS_LEGACY_THRESHOLDS = { triggerThreshold: 40, keepRecentCount: 12 } as const
 
 describe('conversation compaction (Phase 1.5)', () => {
-  test('compaction freezes unresolved text before invoking summarizer', async () => {
+  test('compaction freezes unresolved text before invoking summarize', async () => {
     const frozenWrites: Array<{ id: number; text: string }> = []
     const resolveCalls: number[] = []
     const savedStates: Array<{ compactedBase: string; lastCompactedMessageRowId: number }> = []
-    const summarizerCalls: Array<{ previousSummary: string | null; historyToCompress: AgentMessage[] }> = []
+    const summarizeCalls: SummarizeInput[] = []
 
     const messages = Array.from({ length: 41 }, (_, index) => {
       const id = index + 1
@@ -71,7 +67,7 @@ describe('conversation compaction (Phase 1.5)', () => {
       return makeMessage(id)
     })
 
-    await compactConversationIfNeeded(1, 'qq_group:1', {
+    await maybeCompactConversation(1, 'qq_group:1', {
       ...TEST_DEPS_LEGACY_THRESHOLDS,
       getConversationState: async () => ({
         id: 1,
@@ -101,26 +97,23 @@ describe('conversation compaction (Phase 1.5)', () => {
           lastCompactedMessageRowId: params.lastCompactedMessageRowId,
         })
       },
-      summarizer: makeMockSummarizer({
+      summarize: captureSummarize({
         output: 'LLM 摘要: 群里聊了 41 条消息, 有视频和文本',
-        capture: { calls: summarizerCalls },
+        capture: { calls: summarizeCalls },
       }),
     })
 
-    // freezeResolvedText 仍然在 compaction 内部跑 (媒体解析行为不变)
     assert.deepEqual(resolveCalls, [1])
     assert.deepEqual(frozenWrites, [{ id: 1, text: '解析后的媒体文本' }])
 
-    // compactedBase 是 LLM 摘要 (不是文本拼接)
     assert.equal(savedStates.length, 1)
     assert.equal(savedStates[0]?.compactedBase, 'LLM 摘要: 群里聊了 41 条消息, 有视频和文本')
     assert.equal(savedStates[0]?.lastCompactedMessageRowId, 29)
 
-    // summarizer 收到的 historyToCompress 是真多轮, 包含解析后的媒体文本
-    assert.equal(summarizerCalls.length, 1)
-    const sentToSummarizer = summarizerCalls[0]?.historyToCompress ?? []
-    assert.ok(sentToSummarizer.length > 0)
-    const allContent = sentToSummarizer
+    assert.equal(summarizeCalls.length, 1)
+    const sentToSummarize = summarizeCalls[0]?.history ?? []
+    assert.ok(sentToSummarize.length > 0)
+    const allContent = sentToSummarize
       .map((m) => 'content' in m ? m.content : '')
       .join('|')
     assert.match(allContent, /解析后的媒体文本/)
@@ -128,12 +121,12 @@ describe('conversation compaction (Phase 1.5)', () => {
     assert.doesNotMatch(allContent, /\[视频\]/)
   })
 
-  test('已 sent action_records 作为 model role 进 summarizer', async () => {
-    const summarizerCalls: Array<{ previousSummary: string | null; historyToCompress: AgentMessage[] }> = []
+  test('已 sent action_records 作为 model role 进 summarize', async () => {
+    const summarizeCalls: SummarizeInput[] = []
     const savedStates: Array<{ compactedBase: string; lastCompactedMessageRowId: number }> = []
     const messages = Array.from({ length: 41 }, (_, index) => makeMessage(index + 1))
 
-    await compactConversationIfNeeded(1, 'qq_group:1', {
+    await maybeCompactConversation(1, 'qq_group:1', {
       ...TEST_DEPS_LEGACY_THRESHOLDS,
       getConversationState: async () => ({
         id: 1,
@@ -169,24 +162,23 @@ describe('conversation compaction (Phase 1.5)', () => {
           lastCompactedMessageRowId: params.lastCompactedMessageRowId,
         })
       },
-      summarizer: makeMockSummarizer({
+      summarize: captureSummarize({
         output: '摘要',
-        capture: { calls: summarizerCalls },
+        capture: { calls: summarizeCalls },
       }),
     })
 
-    // summarizer 看到的 history 包含 model role 条目 (干净 text, 不是 [BOT] xxx)
-    const sent = summarizerCalls[0]?.historyToCompress ?? []
-    const modelMessages = sent.filter((m) => 'role' in m && m.role === 'model')
+    const sent = summarizeCalls[0]?.history ?? []
+    const modelMessages = sent.filter((m): m is Extract<AgentMessage, { role: 'model' }> => 'role' in m && m.role === 'model')
     assert.equal(modelMessages.length, 1)
-    assert.equal((modelMessages[0] as { role: 'model'; content: string }).content, '机器人回复')
+    assert.equal(modelMessages[0]?.content, '机器人回复')
   })
 
-  test('previousSummary 被透传给 summarizer (合并不是简单 append)', async () => {
-    const summarizerCalls: Array<{ previousSummary: string | null; historyToCompress: AgentMessage[] }> = []
+  test('previousSummary 被透传给 summarize (合并不是简单 append)', async () => {
+    const summarizeCalls: SummarizeInput[] = []
     const messages = Array.from({ length: 41 }, (_, index) => makeMessage(index + 1))
 
-    await compactConversationIfNeeded(1, 'qq_group:1', {
+    await maybeCompactConversation(1, 'qq_group:1', {
       ...TEST_DEPS_LEGACY_THRESHOLDS,
       getConversationState: async () => ({
         id: 1,
@@ -201,20 +193,20 @@ describe('conversation compaction (Phase 1.5)', () => {
       getMessagesAfterRowId: async () => messages,
       getActionRecordsForScene: async () => [],
       saveCompactedState: async () => {},
-      summarizer: makeMockSummarizer({
+      summarize: captureSummarize({
         output: '新摘要',
-        capture: { calls: summarizerCalls },
+        capture: { calls: summarizeCalls },
       }),
     })
 
-    assert.equal(summarizerCalls[0]?.previousSummary, '上次的摘要内容')
+    assert.equal(summarizeCalls[0]?.previousSummary, '上次的摘要内容')
   })
 
-  test('不传 summarizer 时跳过 (不做 text concat)', async () => {
+  test('summarize 返回空字符串时跳过写入', async () => {
     const savedStates: Array<unknown> = []
     const messages = Array.from({ length: 41 }, (_, index) => makeMessage(index + 1))
 
-    await compactConversationIfNeeded(1, 'qq_group:1', {
+    await maybeCompactConversation(1, 'qq_group:1', {
       ...TEST_DEPS_LEGACY_THRESHOLDS,
       getConversationState: async () => ({
         id: 1,
@@ -231,35 +223,7 @@ describe('conversation compaction (Phase 1.5)', () => {
       saveCompactedState: async (params) => {
         savedStates.push(params)
       },
-      // 故意不传 summarizer
-    })
-
-    // 没注入 summarizer → 不写状态, 不做文本拼接
-    assert.equal(savedStates.length, 0)
-  })
-
-  test('summarizer 返回空字符串时跳过写入', async () => {
-    const savedStates: Array<unknown> = []
-    const messages = Array.from({ length: 41 }, (_, index) => makeMessage(index + 1))
-
-    await compactConversationIfNeeded(1, 'qq_group:1', {
-      ...TEST_DEPS_LEGACY_THRESHOLDS,
-      getConversationState: async () => ({
-        id: 1,
-        groupId: 1,
-        senderThreadKey: 'qq_group:1',
-        compactedBase: '',
-        compactedVersion: 1,
-        lastCompactedMessageRowId: undefined,
-        createdAt: new Date(0),
-        updatedAt: new Date(0),
-      }),
-      getMessagesAfterRowId: async () => messages,
-      getActionRecordsForScene: async () => [],
-      saveCompactedState: async (params) => {
-        savedStates.push(params)
-      },
-      summarizer: makeMockSummarizer({ output: '   ' }),
+      summarize: captureSummarize({ output: '   ' }),
     })
 
     assert.equal(savedStates.length, 0)
@@ -268,8 +232,7 @@ describe('conversation compaction (Phase 1.5)', () => {
   test('生产默认阈值 (80/20): 41 条不触发, 81 条触发', async () => {
     const savedStates: Array<unknown> = []
 
-    // 41 条: 默认阈值 80, 不触发
-    await compactConversationIfNeeded(1, 'qq_group:1', {
+    await maybeCompactConversation(1, 'qq_group:1', {
       getConversationState: async () => ({
         id: 1,
         groupId: 1,
@@ -285,12 +248,11 @@ describe('conversation compaction (Phase 1.5)', () => {
       saveCompactedState: async (params) => {
         savedStates.push(params)
       },
-      summarizer: makeMockSummarizer({ output: '摘要' }),
+      summarize: captureSummarize({ output: '摘要' }),
     })
     assert.equal(savedStates.length, 0)
 
-    // 81 条: 默认阈值 80, 触发
-    await compactConversationIfNeeded(1, 'qq_group:1', {
+    await maybeCompactConversation(1, 'qq_group:1', {
       getConversationState: async () => ({
         id: 1,
         groupId: 1,
@@ -306,7 +268,7 @@ describe('conversation compaction (Phase 1.5)', () => {
       saveCompactedState: async (params) => {
         savedStates.push(params)
       },
-      summarizer: makeMockSummarizer({ output: '摘要' }),
+      summarize: captureSummarize({ output: '摘要' }),
     })
     assert.equal(savedStates.length, 1)
   })

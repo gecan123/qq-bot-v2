@@ -2,9 +2,7 @@ import { getMessageById } from '../database/messages.js'
 import type { Message } from '../generated/prisma/client.js'
 import type { ConversationWorkerResult, GroupConversationBatch, MentionEvent } from '../conversation/types.js'
 import { toSceneReplyScopeKey } from '../conversation/reply-scope.js'
-import { compactConversationIfNeeded } from '../conversation/compaction.js'
-import { createOpenAISummarizer } from '../conversation/openai-summarizer.js'
-import type { ConversationSummarizer } from '../conversation/summarizer.js'
+import { maybeCompactConversation } from '../conversation/compaction.js'
 import { messageSender } from '../messaging/message-sender.js'
 import { createLogger } from '../logger.js'
 import { resolveMessage } from '../media/message-resolver.js'
@@ -27,8 +25,8 @@ export interface PassiveMentionProcessorOptions extends ReplyExecutorOptions {
   getMessage?: (groupId: number, messageId: number) => Promise<StoredConversationMessage | null>
   resolveSegments?: (message: StoredConversationMessage) => Promise<ParsedSegment[]>
   onReplyRecordSent?: (record: ReplyRecord) => Promise<void>
+  /** 测试覆盖。生产默认走 maybeCompactConversation, 失败 try/catch 不污染 sent reply。 */
   compactor?: (groupId: number, senderThreadKey: string) => Promise<void>
-  summarizer?: ConversationSummarizer
   executor?: ReplyExecutor
 }
 
@@ -100,13 +98,7 @@ export function createPassiveMentionProcessor(
   const getMessage = options.getMessage ?? defaultGetMessage
   const resolveSegments = options.resolveSegments ?? defaultResolveSegments
   const sender = options.sender ?? messageSender
-  const summarizer = options.summarizer
-  const compactor = options.compactor
-    ?? (async (groupId, senderThreadKey) => {
-      // 生产默认: lazy 构造 summarizer (避免 import-time 副作用)
-      const sum = summarizer ?? createOpenAISummarizer()
-      await compactConversationIfNeeded(groupId, senderThreadKey, { summarizer: sum })
-    })
+  const compactor = options.compactor ?? maybeCompactConversation
   const executor = options.executor ?? createReplyExecutor({
     ...options,
     buildIncomingMessage: async (opportunity) => {

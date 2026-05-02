@@ -5,10 +5,12 @@ import { getActionRecordAnchor, getActionRecordText } from '../runtime/action-re
 import { compactConversationState, getOrCreateConversationState } from './conversation-state-store.js'
 import { resolveMessage } from '../media/message-resolver.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
+import { agentClient, agentModel } from '../agent/runtime.js'
+import { toOpenAIMessages } from '../agent/openai-compat.js'
+import { recordCurrentTokenUsage, toTokenUsage } from '../llm/token-usage.js'
 import { createLogger } from '../logger.js'
 import type { Message } from '../generated/prisma/client.js'
 import type { AgentMessage } from '../agent/types.js'
-import type { ConversationSummarizer } from './summarizer.js'
 
 /**
  * Phase 1.5: 阈值上调, 让 perpetual append + cache 撑得更久。
@@ -19,64 +21,86 @@ const COMPACTION_KEEP_RECENT_USER_MESSAGES = 20
 
 const log = createLogger('COMPACTION')
 
-interface CompactionDependencies {
+const SUMMARIZER_SYSTEM_PROMPT = `
+你是一个对话摘要助手。接下来会喂给你一段历史对话片段, 由群聊用户消息 (user role) 和你过去发出去的回复 (assistant role) 组成。
+
+你的任务: 把这段对话压缩成简洁的中文摘要, 只保留:
+- 已被讨论的话题和结论
+- 重要事实、意图、情绪
+- 你自己 (assistant 角色) 说过 / 承诺过的事
+
+忽略: 客套、口水、未展开的玩笑、被覆盖的旧话题。
+
+如果给你了 [上次摘要], 把它和新对话合并成新摘要, 不要简单 append。
+
+输出: 仅一段连贯的中文文本, 不要标题不要列表, 控制在 400 字以内。
+不要回应或继续对话。直接输出摘要。
+`.trim()
+
+const SUMMARIZER_TRIGGER_INSTRUCTION = '请把以上历史对话压缩成中文摘要。'
+
+export interface SummarizeInput {
+  previousSummary: string | null
+  history: AgentMessage[]
+}
+
+export type SummarizeFn = (input: SummarizeInput) => Promise<string>
+
+export interface MaybeCompactOptions {
+  /**
+   * 测试可注入。生产默认走内嵌 OpenAI-compatible 调用 (复用 agentClient/agentModel)。
+   * 不引入 ConversationSummarizer 接口 —— 当前没有第二实现, 函数注入足够。
+   */
+  summarize?: SummarizeFn
+  /** 测试覆盖阈值。生产默认 80 条触发, 保留最近 20 条。 */
+  triggerThreshold?: number
+  keepRecentCount?: number
+  // 下面的 hooks 留给单测覆盖 IO; 生产不需要传。
   getConversationState?: typeof getOrCreateConversationState
   getMessagesAfterRowId?: typeof getGroupMessagesAfterRowId
   getActionRecordsForScene?: typeof listSentActionRecordsForScene
   resolveConversationMessage?: typeof resolveMessage
   freezeResolvedText?: typeof freezeResolvedTextIfUnset
   saveCompactedState?: typeof compactConversationState
-  /**
-   * Phase 1.5: 必须由调用方注入。compaction 不再做 text concat,
-   * 而是把要压的真多轮 history 喂给 summarizer 产生新 summary,
-   * 一次性 replace conversationState.compactedBase。
-   *
-   * 测试里可注入 stub: { summarize: async () => 'mock summary' }。
-   * 生产侧用 src/conversation/openai-summarizer.ts 的 createOpenAISummarizer()。
-   */
-  summarizer?: ConversationSummarizer
-  /** 测试覆盖阈值。生产默认 80 条触发, 保留最近 20 条。 */
-  triggerThreshold?: number
-  keepRecentCount?: number
 }
 
-async function getStableCompactionText(message: Message, dependencies: CompactionDependencies): Promise<string> {
+async function getStableCompactionText(
+  message: Message,
+  resolveFn: typeof resolveMessage,
+  freezeFn: typeof freezeResolvedTextIfUnset,
+): Promise<string> {
   const frozen = message.resolvedText?.trim()
   if (frozen) return frozen
 
-  const resolveConversationMessage = dependencies.resolveConversationMessage ?? resolveMessage
-  const freezeResolvedText = dependencies.freezeResolvedText ?? freezeResolvedTextIfUnset
-  const resolvedSegments = await resolveConversationMessage(message, { timeoutMs: 0 })
+  const resolvedSegments = await resolveFn(message, { timeoutMs: 0 })
   const resolvedText = segmentsToPlainText(resolvedSegments).trim()
-  await freezeResolvedText(message.id, resolvedText)
+  await freezeFn(message.id, resolvedText)
   return resolvedText
 }
 
 /**
- * Phase 1.5: 把要压的 messages + actionRecords 渲染成真多轮 AgentMessage[],
- * 然后喂给 summarizer。
- *
- * 跟 context-builder.renderWindowAsMessages 同构, 但这里不限制 contextLimit
- * (compaction 处理的是历史全段, 不是 window)。
+ * 把要压的 messages + actionRecords 渲染成真多轮 AgentMessage[]。
+ * 跟 context-builder.renderWindowAsMessages 同构, 但不限 contextLimit。
+ * bot 已发送内容必须以 model role 进入摘要, 不做 [BOT] xxx 文本拼接。
  */
 async function renderHistoryToCompress(
   messages: Message[],
   actionRecords: ActionRecord[],
-  dependencies: CompactionDependencies,
+  resolveFn: typeof resolveMessage,
+  freezeFn: typeof freezeResolvedTextIfUnset,
 ): Promise<AgentMessage[]> {
   type Entry = { anchor: number; createdAt: Date; message: AgentMessage }
   const entries: Entry[] = []
 
   for (const message of messages) {
-    const text = await getStableCompactionText(message, dependencies)
+    const text = await getStableCompactionText(message, resolveFn, freezeFn)
+    if (!text) continue
     const nickname = message.senderGroupNickname ?? message.senderNickname ?? String(message.senderId)
-    if (text) {
-      entries.push({
-        anchor: message.id,
-        createdAt: message.sentAt ?? message.createdAt,
-        message: { role: 'user', content: `${nickname}: ${text}` },
-      })
-    }
+    entries.push({
+      anchor: message.id,
+      createdAt: message.sentAt ?? message.createdAt,
+      message: { role: 'user', content: `${nickname}: ${text}` },
+    })
   }
 
   for (const actionRecord of actionRecords) {
@@ -97,17 +121,56 @@ async function renderHistoryToCompress(
     .map((entry) => entry.message)
 }
 
-export async function compactConversationIfNeeded(
+/**
+ * 默认 summarize 实现: 复用 agentClient / agentModel 直接发一次 OpenAI-compatible 请求。
+ * previousSummary 是合并输入, 不是 append; 由 system prompt 指令保证。
+ */
+async function defaultSummarize(input: SummarizeInput): Promise<string> {
+  const messages: AgentMessage[] = []
+  const previous = input.previousSummary?.trim()
+  if (previous) messages.push({ role: 'user', content: `[上次摘要]\n${previous}` })
+  messages.push(...input.history)
+  messages.push({ role: 'user', content: SUMMARIZER_TRIGGER_INSTRUCTION })
+
+  const response = await agentClient.chat.completions.create({
+    model: agentModel,
+    temperature: 0.3,
+    messages: toOpenAIMessages(SUMMARIZER_SYSTEM_PROMPT, messages),
+  })
+  recordCurrentTokenUsage('compaction.summarize', toTokenUsage(response.usage))
+
+  const content = response.choices[0]?.message?.content
+  if (typeof content !== 'string') {
+    log.warn({ choices: response.choices.length }, 'summarizer_empty_response')
+    return ''
+  }
+  return content.trim()
+}
+
+/**
+ * 仅当新消息累计超过阈值时, 用 LLM 把旧片段压成一段摘要并写回 conversation_state。
+ *
+ * 不变量 (修改时务必保留):
+ *   1. 摘要前先 resolve + freeze 媒体文本, 防止之后媒体描述变化重写历史前缀。
+ *   2. bot 已发送内容以 model role 进入 summarizer, 不退化成 [BOT] 文本拼接。
+ *   3. previousSummary 是合并输入, 不是 append (由 system prompt 约束 + 单测验证)。
+ *   4. summarize 返回空白时不写回状态。
+ *   5. post-send 调用方需 try/catch, compaction 失败不能污染已 sent reply。
+ */
+export async function maybeCompactConversation(
   groupId: number,
   senderThreadKey: string,
-  dependencies: CompactionDependencies = {},
+  options: MaybeCompactOptions = {},
 ): Promise<void> {
-  const getConversationState = dependencies.getConversationState ?? getOrCreateConversationState
-  const getMessagesAfterRowId = dependencies.getMessagesAfterRowId ?? getGroupMessagesAfterRowId
-  const getActionRecordsForScene = dependencies.getActionRecordsForScene ?? listSentActionRecordsForScene
-  const saveCompactedState = dependencies.saveCompactedState ?? compactConversationState
-  const triggerThreshold = dependencies.triggerThreshold ?? COMPACTION_TRIGGER_USER_MESSAGES
-  const keepRecentCount = dependencies.keepRecentCount ?? COMPACTION_KEEP_RECENT_USER_MESSAGES
+  const getConversationState = options.getConversationState ?? getOrCreateConversationState
+  const getMessagesAfterRowId = options.getMessagesAfterRowId ?? getGroupMessagesAfterRowId
+  const getActionRecordsForScene = options.getActionRecordsForScene ?? listSentActionRecordsForScene
+  const resolveFn = options.resolveConversationMessage ?? resolveMessage
+  const freezeFn = options.freezeResolvedText ?? freezeResolvedTextIfUnset
+  const saveCompactedState = options.saveCompactedState ?? compactConversationState
+  const summarize = options.summarize ?? defaultSummarize
+  const triggerThreshold = options.triggerThreshold ?? COMPACTION_TRIGGER_USER_MESSAGES
+  const keepRecentCount = options.keepRecentCount ?? COMPACTION_KEEP_RECENT_USER_MESSAGES
 
   const state = await getConversationState(groupId, senderThreadKey)
   const lastCompactedMessageRowId = state.lastCompactedMessageRowId ?? 0
@@ -124,24 +187,17 @@ export async function compactConversationIfNeeded(
     return anchor != null && anchor > lastCompactedMessageRowId && anchor <= boundaryMessage.id
   })
 
-  const historyToCompress = await renderHistoryToCompress(
+  const history = await renderHistoryToCompress(
     compactedMessages,
     compactedActionRecords,
-    dependencies,
+    resolveFn,
+    freezeFn,
   )
-  if (historyToCompress.length === 0) return
+  if (history.length === 0) return
 
-  if (!dependencies.summarizer) {
-    log.warn(
-      { groupId, senderThreadKey, historyLen: historyToCompress.length },
-      'compaction_skipped_no_summarizer',
-    )
-    return
-  }
-
-  const newSummary = await dependencies.summarizer.summarize({
+  const newSummary = await summarize({
     previousSummary: state.compactedBase.trim() || null,
-    historyToCompress,
+    history,
   })
   if (!newSummary.trim()) {
     log.warn({ groupId, senderThreadKey }, 'compaction_skipped_empty_summary')

@@ -12,6 +12,14 @@ export const CONTROL_TOOL_NAMES: ReadonlySet<string> = new Set(['final_answer'])
 
 export interface AgentContextSnapshot {
   messages: AgentMessage[]
+  /**
+   * 已经摄入到 messages 数组里的群消息中最大的 messageRowId。
+   * 增量摄入用 (Phase C):每次 @ 触发时 ingestor 拉取 cursor 之后的群消息和
+   * sent action_records, append 进 messages, 然后推进 cursor。
+   *
+   * 这是元数据, 不影响 LLM 看到的 messages 字节, 也不进入 prefix hash 计算。
+   */
+  lastObservedMessageRowId?: number
 }
 
 export interface AgentContext {
@@ -43,19 +51,25 @@ export interface AgentContext {
   restoreFromSnapshot(snapshot: AgentContextSnapshot): Promise<void>
   /** 清空。仅用于测试。 */
   reset(): Promise<void>
+  /** 推进增量摄入游标。新值必须大于等于当前值,否则忽略。 */
+  setLastObservedMessageRowId(rowId: number): Promise<void>
+  /** 读当前游标。无记录时返回 0。 */
+  getLastObservedMessageRowId(): number
 }
 
 interface CreateAgentContextOptions {
   /** 初始 messages。restoreFromSnapshot 的便捷构造形式。 */
   initialMessages?: AgentMessage[]
+  initialLastObservedMessageRowId?: number
 }
 
 export function createAgentContext(options: CreateAgentContextOptions = {}): AgentContext {
   let messages: AgentMessage[] = options.initialMessages ? cloneMessages(options.initialMessages) : []
+  let lastObservedMessageRowId: number = options.initialLastObservedMessageRowId ?? 0
 
   return {
     async getSnapshot() {
-      return { messages: cloneMessages(messages) }
+      return { messages: cloneMessages(messages), lastObservedMessageRowId }
     },
     async appendUserMessage(message) {
       messages.push(cloneMessage(message))
@@ -88,13 +102,21 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
       messages = cloneMessages(next)
     },
     async exportSnapshot() {
-      return { messages: cloneMessages(messages) }
+      return { messages: cloneMessages(messages), lastObservedMessageRowId }
     },
     async restoreFromSnapshot(snapshot) {
       messages = cloneMessages(snapshot.messages)
+      lastObservedMessageRowId = snapshot.lastObservedMessageRowId ?? 0
     },
     async reset() {
       messages = []
+      lastObservedMessageRowId = 0
+    },
+    async setLastObservedMessageRowId(rowId) {
+      if (rowId > lastObservedMessageRowId) lastObservedMessageRowId = rowId
+    },
+    getLastObservedMessageRowId() {
+      return lastObservedMessageRowId
     },
   }
 }

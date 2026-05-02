@@ -5,12 +5,14 @@ import { createLogger } from '../logger.js'
 import { buildContextFrame, type ContextFrame, type ContextFrameSourceRefs } from '../agent/context-frame.js'
 import { agentModel } from '../agent/runtime.js'
 import type { ReplyOpportunity } from '../runtime/reply-decision-types.js'
-import { makeQqGroupSceneId, makeQqPrivateSceneId } from '../runtime/agent-runtime-types.js'
+import { makeQqGroupSceneId, makeQqPrivateSceneId, type SceneId } from '../runtime/agent-runtime-types.js'
+import type { AgentContext } from '../agent/agent-context.js'
+import { ingestSceneMessages } from '../agent/scene-message-ingestor.js'
 import type { IncomingMessage } from './pipeline.js'
-import { buildContext, extractResolvedTriggerText } from './context-builder.js'
-import { buildReplyHistory } from './reply-history.js'
+import { extractResolvedTriggerText } from './context-builder.js'
 import { logMentionReplyTokenUsage } from './reply-token-usage.js'
 import { buildSystemPrompt, runAgentSession } from './agent-session.js'
+import type { AgentMessage } from '../agent/types.js'
 
 const REPLY_INSTRUCTION = loadPrompt('./prompts/reply-instruction.md')
 const log = createLogger('REPLY')
@@ -43,9 +45,13 @@ function fallbackOpportunityId(msg: IncomingMessage, sceneId: string): string {
 export function buildMentionContextFrame(input: {
   msg: IncomingMessage
   generationContext?: ReplyGenerationContext
-  contextResult: Awaited<ReturnType<typeof buildContext>>
   systemPrompt: string
-  initialHistory: ReturnType<typeof buildReplyHistory>
+  /** 取自 agentContext.getSnapshot().messages, 反映本轮 LLM 看到的真实历史 */
+  initialHistory: AgentMessage[]
+  messageCursorStart?: number
+  messageCursorEnd?: number
+  includedActionRecordIds?: string[]
+  maxActionAnchor?: number
 }): ContextFrame {
   const sceneId = input.generationContext?.sceneId ?? fallbackSceneId(input.msg)
   const sourceRefs: ContextFrameSourceRefs = {
@@ -55,11 +61,11 @@ export function buildMentionContextFrame(input: {
     incorporatedMessageRowId: input.generationContext?.incorporatedMessageRowId ?? input.msg.messageRowId,
     triggerMessageId: input.generationContext?.triggerMessageId ?? input.msg.messageId,
     incorporatedMessageId: input.generationContext?.incorporatedMessageId ?? input.msg.messageId,
-    messageCursorStart: input.contextResult.messageCursorStart,
-    messageCursorEnd: input.contextResult.messageCursorEnd,
-    includedActionRecordIds: input.contextResult.includedActionRecordIds ?? [],
-    maxActionAnchor: input.contextResult.maxActionAnchor,
-    compactionSegmentIds: input.contextResult.compactionSegmentIds ?? [],
+    messageCursorStart: input.messageCursorStart,
+    messageCursorEnd: input.messageCursorEnd,
+    includedActionRecordIds: input.includedActionRecordIds ?? [],
+    maxActionAnchor: input.maxActionAnchor,
+    compactionSegmentIds: [],
   }
 
   return buildContextFrame({
@@ -77,7 +83,7 @@ export function buildMentionContextFrame(input: {
 async function agentReply(
   msg: IncomingMessage,
   persona: string,
-  contextLimit: number,
+  context: AgentContext,
   maxSteps?: number,
   warningTimeMs?: number,
   maxAnswerChars?: number,
@@ -85,23 +91,42 @@ async function agentReply(
   generationContext?: ReplyGenerationContext,
 ): Promise<string | null> {
   const mediaDeadlineAt = Date.now() + 15_000
-  const contextResult = await buildContext(msg, contextLimit, { mediaDeadlineAt })
-  const triggerText = await extractResolvedTriggerText(msg.groupId, msg.messageId, msg.segments, { mediaDeadlineAt }, {
-    sceneKind: msg.sceneKind,
-    sceneExternalId: msg.sceneExternalId,
+
+  // Phase C: 把 cursor 之后、当前 trigger 之前的群消息和已 sent action_records
+  // 一次性 append 进 context (增量摄入)。当前 trigger 自身随后单独以带 prefix
+  // 的 user message 入账, 让模型清楚知道要回复的是哪一条。
+  await ingestSceneMessages({
+    context,
+    sceneKind: msg.sceneKind ?? 'qq_group',
+    sceneExternalId: msg.sceneExternalId ?? msg.groupId,
+    sceneId: (generationContext?.sceneId ?? fallbackSceneId(msg)) as SceneId,
+    groupId: msg.groupId,
+    upToExclusiveRowId: msg.messageRowId,
   })
-  const initialHistory = buildReplyHistory({
-    windowHistory: contextResult.history,
-    compactedSummary: contextResult.compactedSummary,
-    trigger: triggerText,
+
+  const triggerText = await extractResolvedTriggerText(
+    msg.groupId,
+    msg.messageId,
+    msg.segments,
+    { mediaDeadlineAt },
+    { sceneKind: msg.sceneKind, sceneExternalId: msg.sceneExternalId },
+  )
+  const triggerNickname = msg.senderNickname ?? String(msg.senderId)
+  await context.appendUserMessage({
+    role: 'user',
+    content: `[当前要回复的消息]\n${triggerNickname}: ${triggerText}`,
   })
+  if (msg.messageRowId != null) {
+    await context.setLastObservedMessageRowId(msg.messageRowId)
+  }
+
+  const snapshot = await context.getSnapshot()
   const systemPrompt = buildSystemPrompt(persona, REPLY_INSTRUCTION)
   const contextFrame = buildMentionContextFrame({
     msg,
     generationContext,
-    contextResult,
     systemPrompt,
-    initialHistory,
+    initialHistory: snapshot.messages,
   })
 
   const result = await runAgentSession({
@@ -109,7 +134,7 @@ async function agentReply(
     dbToolsEnabled: msg.sceneKind !== 'qq_private',
     persona,
     instruction: REPLY_INSTRUCTION,
-    initialHistory,
+    context,
     maxSteps,
     allowImplicitText,
     warningTimeMs,
@@ -138,8 +163,15 @@ async function agentReply(
   return null
 }
 
+export interface GenerateMentionReplyOptions {
+  /** 必传:已 load 好的 scene AgentContext。
+   *  passive-mention-processor 装配并传入,reply 链路只在这上面 append/run。 */
+  context: AgentContext
+}
+
 export async function generateMentionReply(
   msg: IncomingMessage,
+  options: GenerateMentionReplyOptions,
   generationContext?: ReplyGenerationContext,
 ): Promise<string | null> {
   return runWithTokenUsageTracking(async () => {
@@ -148,12 +180,11 @@ export async function generateMentionReply(
 
     try {
       const profile = getAgentProfile(msg.groupId)
-      const contextLimit = profile.replyContextMessages ?? 20
 
       const reply = await agentReply(
         msg,
         profile.persona,
-        contextLimit,
+        options.context,
         profile.agentMaxSteps,
         profile.agentWarningTimeMs ?? profile.agentMaxTimeMs,
         profile.agentMaxAnswerChars,

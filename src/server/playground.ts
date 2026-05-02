@@ -2,6 +2,7 @@ import OpenAI from 'openai'
 import { createTraceRecorder, type RunTrace } from '../agent/trace.js'
 import { createAgentTools } from '../agent/tools.js'
 import { runAgentLoop } from '../agent/loop.js'
+import { createAgentContext } from '../agent/agent-context.js'
 import { createAgentOpenAIConfig, createOpenAIChatFn } from '../agent/openai-compat.js'
 import { getAgentProfile } from '../config/agent-profiles.js'
 import { loadPrompt } from '../config/prompt-loader.js'
@@ -161,9 +162,12 @@ export async function runPlayground(body: PlaygroundBody, deps: PlaygroundDeps =
     ]),
   )
 
+  // Playground 不使用持久 AgentContext;每次 replay 起一个临时 in-memory ctx,
+  // 把拼好的 initialHistory 灌进去当起点。
+  const playgroundContext = createAgentContext({ initialMessages: initialHistory })
   const result = await runAgentLoop({
     systemPrompt,
-    initialHistory,
+    context: playgroundContext,
     chatFn,
     tools: declarations,
     executors: tracedExecutors,
@@ -428,9 +432,10 @@ export async function runStrictReplay(body: ReplayBody): Promise<PlaygroundResul
     ]),
   )
 
+  const replayContext = createAgentContext({ initialMessages: initialHistory })
   const result = await runAgentLoop({
     systemPrompt,
-    initialHistory,
+    context: replayContext,
     chatFn,
     tools: selectedDeclarations,
     executors: tracedExecutors,

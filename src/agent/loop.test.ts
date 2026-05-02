@@ -1,6 +1,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { runAgentLoop } from './loop.js'
+import { createAgentContext } from './agent-context.js'
 import type { AgentTurnResult } from './types.js'
 import { createTraceRecorder } from './trace.js'
 
@@ -280,7 +281,7 @@ describe('runAgentLoop', () => {
     }
   })
 
-  test('uses initialHistory as starting history when provided', async () => {
+  test('uses initial AgentContext history as starting history when provided', async () => {
     const receivedHistories: unknown[][] = []
     const chatFn = async ({ history }: { history: unknown[] }) => {
       receivedHistories.push([...history])
@@ -290,12 +291,16 @@ describe('runAgentLoop', () => {
       }
     }
 
-    await runAgentLoop({
-      systemPrompt: 'test',
-      initialHistory: [
+    const context = createAgentContext({
+      initialMessages: [
         { role: 'user', content: '[近期会话背景]\n消息记录' },
         { role: 'user', content: '[当前要回复的消息]\n你好' },
       ],
+    })
+
+    await runAgentLoop({
+      systemPrompt: 'test',
+      context,
       chatFn,
       tools: noopTools.declarations,
       executors: noopTools.executors,

@@ -5,6 +5,8 @@ import { resolveMessage } from '../media/message-resolver.js'
 import { messageSender, type MessageSender } from '../messaging/message-sender.js'
 import { generateMentionReply } from '../responder/reply-generator.js'
 import type { IncomingMessage } from '../responder/pipeline.js'
+import type { AgentContext } from '../agent/agent-context.js'
+import { createSceneAgentContext } from '../agent/scene-agent-context-store.js'
 import { createReplyAudit, createOrReuseReplyAudit } from '../conversation/reply-audit-store.js'
 import type { ReplyDeliveryPayload, ReplyRecord } from '../conversation/reply-record-store.js'
 import { createReplyDecisionEngine, type ReplyDecisionEngine } from './reply-decision-engine.js'
@@ -20,8 +22,14 @@ const log = createLogger('REPLY_EXECUTOR')
 
 export interface ReplyExecutorOptions {
   decisionEngine?: ReplyDecisionEngine
-  generateReply?: (message: IncomingMessage, opportunity: ReplyOpportunity) => Promise<string | null>
+  generateReply?: (
+    message: IncomingMessage,
+    opportunity: ReplyOpportunity,
+    context: AgentContext,
+  ) => Promise<string | null>
   buildIncomingMessage?: (opportunity: ReplyOpportunity) => Promise<IncomingMessage | null>
+  /** 注入 scene → AgentContext 的加载器, 测试用。生产默认走 createSceneAgentContext。 */
+  loadAgentContext?: (sceneId: string) => Promise<AgentContext>
   sender?: MessageSender
   replyRecordStore?: {
     findByReplyIntentId: (runtimeKey: string, replyIntentId: string) => Promise<ReplyRecord | null>
@@ -167,7 +175,11 @@ function toReplyDeliveryResult(state: string): ReplyExecutionResult['deliveryRes
 
 export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyExecutor {
   const decisionEngine = options.decisionEngine ?? createReplyDecisionEngine()
-  const generateMentionReplyFn = options.generateReply ?? ((message: IncomingMessage, opportunity: ReplyOpportunity) => generateMentionReply(message, opportunity))
+  const generateMentionReplyFn = options.generateReply
+    ?? ((message: IncomingMessage, opportunity: ReplyOpportunity, context: AgentContext) =>
+      generateMentionReply(message, { context }, opportunity))
+  const loadAgentContext = options.loadAgentContext
+    ?? ((sceneId: string) => createSceneAgentContext({ sceneId }))
   const sender = options.sender ?? messageSender
   const replyRecordStore = options.replyRecordStore
   const configuredReplyAuditStore = options.replyAuditStore
@@ -245,6 +257,7 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
       }
 
       let reply: string | null = null
+      let agentContext: AgentContext | null = null
       if (!reply && decision.policy.shouldGenerate) {
         if (!isSupportedSendableGeneration(decision)) {
           log.warn(
@@ -262,7 +275,8 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
           log.warn({ opportunityId: opportunity.opportunityId }, 'reply opportunity missing incoming message; skipping')
           return { decision, deliveryResult: 'skipped' }
         }
-        reply = await generateMentionReplyFn(message, opportunity)
+        agentContext = await loadAgentContext(opportunity.sceneId)
+        reply = await generateMentionReplyFn(message, opportunity, agentContext)
       }
 
       if (!reply) {
@@ -350,6 +364,19 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
         }
 
         if (deliveryResult === 'sent' && replyRecord) {
+          // Phase C: 投递成功才把 final answer 作为 model role 写进 AgentContext。
+          // 失败 / dry_run 时不写, 历史里就不会出现「假回复」, 下次 @ 时模型也不会
+          // 误以为自己已经说过这话。
+          if (agentContext) {
+            try {
+              await agentContext.appendAssistantTurn({ role: 'model', content: reply })
+            } catch (err) {
+              log.warn(
+                { err, sceneId: opportunity.sceneId, replyIntentId },
+                'agent_context_append_assistant_turn_failed',
+              )
+            }
+          }
           await options.onReplyRecordSent?.(replyRecord)
           log.info(
             {
@@ -434,6 +461,16 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
           if (sendResult.providerMessageId != null) await replyRecordStore?.markAcked(replyRecord.id, sendResult.providerMessageId)
           await replyRecordStore?.markSent(replyRecord.id)
           await options.onReplyRecordSent?.(replyRecord)
+        }
+        if (agentContext) {
+          try {
+            await agentContext.appendAssistantTurn({ role: 'model', content: reply })
+          } catch (err) {
+            log.warn(
+              { err, sceneId: opportunity.sceneId, replyIntentId },
+              'agent_context_append_assistant_turn_failed',
+            )
+          }
         }
       } else {
         actionRecord = await actionRecordStore.markDeliveryState(actionRecord.id, 'failed', { ...actionPayload, error: 'send failed' })

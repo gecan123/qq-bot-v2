@@ -19,11 +19,10 @@ export const defaultSceneAgentContextStore: SceneAgentContextStore = {
   async loadByScene(sceneId) {
     const row = await prisma.sceneAgentContext.findUnique({ where: { sceneId } })
     if (!row) return null
-    const messages = parseMessagesFromJson(row.snapshot)
-    return { messages }
+    return parseSnapshotJson(row.snapshot)
   },
   async saveByScene(sceneId, snapshot) {
-    const data = { messages: snapshot.messages } as unknown as Prisma.InputJsonObject
+    const data = serializeSnapshot(snapshot) as unknown as Prisma.InputJsonObject
     await prisma.sceneAgentContext.upsert({
       where: { sceneId },
       create: {
@@ -37,6 +36,14 @@ export const defaultSceneAgentContextStore: SceneAgentContextStore = {
       },
     })
   },
+}
+
+function serializeSnapshot(snapshot: AgentContextSnapshot): Record<string, unknown> {
+  const out: Record<string, unknown> = { messages: snapshot.messages }
+  if (snapshot.lastObservedMessageRowId != null) {
+    out['lastObservedMessageRowId'] = snapshot.lastObservedMessageRowId
+  }
+  return out
 }
 
 /**
@@ -59,6 +66,7 @@ export async function createSceneAgentContext(
   const initial = await store.loadByScene(options.sceneId)
   const inner = createAgentContext({
     initialMessages: initial?.messages ?? [],
+    initialLastObservedMessageRowId: initial?.lastObservedMessageRowId,
   })
 
   return wrapWithPersistence(inner, options.sceneId, store)
@@ -77,6 +85,7 @@ function wrapWithPersistence(
   return {
     getSnapshot: inner.getSnapshot,
     exportSnapshot: inner.exportSnapshot,
+    getLastObservedMessageRowId: inner.getLastObservedMessageRowId,
     async appendUserMessage(message) {
       await inner.appendUserMessage(message)
       await persist()
@@ -105,14 +114,22 @@ function wrapWithPersistence(
       await inner.reset()
       await persist()
     },
+    async setLastObservedMessageRowId(rowId) {
+      await inner.setLastObservedMessageRowId(rowId)
+      await persist()
+    },
   }
 }
 
-function parseMessagesFromJson(value: Prisma.JsonValue): AgentMessage[] {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
-  const messages = (value as Record<string, unknown>)['messages']
-  if (!Array.isArray(messages)) return []
-  // 解析时不做严格校验:写入侧已经是 typed AgentMessage,读出来的形状受 schemaVersion 保护。
-  // schemaVersion 升级时再加 migration; 当前 v1 直接 cast。
-  return messages as AgentMessage[]
+function parseSnapshotJson(value: Prisma.JsonValue): AgentContextSnapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { messages: [] }
+  const obj = value as Record<string, unknown>
+  const messagesRaw = obj['messages']
+  const messages: AgentMessage[] = Array.isArray(messagesRaw) ? (messagesRaw as AgentMessage[]) : []
+  const cursor = obj['lastObservedMessageRowId']
+  const out: AgentContextSnapshot = { messages }
+  if (typeof cursor === 'number' && Number.isSafeInteger(cursor)) {
+    out.lastObservedMessageRowId = cursor
+  }
+  return out
 }

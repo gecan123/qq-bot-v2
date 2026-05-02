@@ -3,14 +3,16 @@ import { runAgentLoop } from '../agent/loop.js'
 import { createAgentChatFn } from '../agent/runtime.js'
 import { withLlmTrace } from '../agent/llm-trace.js'
 import type { ContextFrame } from '../agent/context-frame.js'
-import type { AgentLoopResult, AgentMessage } from '../agent/types.js'
+import type { AgentContext } from '../agent/agent-context.js'
+import type { AgentLoopResult } from '../agent/types.js'
 
 export interface AgentSessionParams {
   groupId: number
   dbToolsEnabled?: boolean
   persona: string
   instruction: string
-  initialHistory: AgentMessage[]
+  /** 永续上下文真身。loop 在 context 上每轮 chat、append tool_calls/results。 */
+  context: AgentContext
   maxSteps?: number
   allowImplicitText?: boolean
   warningTimeMs?: number
@@ -37,7 +39,7 @@ export async function runAgentSession(params: AgentSessionParams): Promise<Agent
 
   return runAgentLoop({
     systemPrompt,
-    initialHistory: params.initialHistory,
+    context: params.context,
     chatFn,
     tools: declarations,
     executors,

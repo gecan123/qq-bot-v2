@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, describe, mock, test } from 'node:test'
 import { log } from '../logger.js'
-import { buildReplyHistory } from './reply-history.js'
+import type { AgentMessage } from '../agent/types.js'
 import { buildMentionContextFrame } from './reply-generator.js'
 import { logMentionReplyTokenUsage } from './reply-token-usage.js'
 
@@ -65,8 +65,11 @@ describe('generateMentionReply token usage logging', () => {
 })
 
 describe('mention reply context frame', () => {
+  const initialHistory: AgentMessage[] = [
+    { role: 'user', content: '[当前要回复的消息]\n用户30: @bot ping' },
+  ]
+
   test('uses deterministic legacy fallback identity outside runtime opportunities', () => {
-    const initialHistory = buildReplyHistory({ windowHistory: [], trigger: '@bot ping' })
     const left = buildMentionContextFrame({
       msg: {
         groupId: 1001,
@@ -79,16 +82,11 @@ describe('mention reply context frame', () => {
         senderNickname: '用户30',
         segments: [{ type: 'text', content: '@bot ping' }],
       },
-      contextResult: {
-        history: [],
-        recentMessages: [],
-        messageCursorStart: 1,
-        messageCursorEnd: 19,
-        includedActionRecordIds: [],
-        compactionSegmentIds: [],
-      },
       systemPrompt: 'system',
       initialHistory,
+      messageCursorStart: 1,
+      messageCursorEnd: 19,
+      includedActionRecordIds: [],
     })
     const right = buildMentionContextFrame({
       msg: {
@@ -102,16 +100,11 @@ describe('mention reply context frame', () => {
         senderNickname: '用户30',
         segments: [{ type: 'text', content: '@bot ping' }],
       },
-      contextResult: {
-        history: [],
-        recentMessages: [],
-        messageCursorStart: 1,
-        messageCursorEnd: 19,
-        includedActionRecordIds: [],
-        compactionSegmentIds: [],
-      },
       systemPrompt: 'system',
       initialHistory,
+      messageCursorStart: 1,
+      messageCursorEnd: 19,
+      includedActionRecordIds: [],
     })
 
     assert.equal(left.opportunityId, 'legacy:qq_group:1001:20:mention')
@@ -142,16 +135,11 @@ describe('mention reply context frame', () => {
         incorporatedMessageRowId: 20,
         incorporatedMessageId: 2002,
       },
-      contextResult: {
-        history: [],
-        recentMessages: [],
-        messageCursorStart: 1,
-        messageCursorEnd: 19,
-        includedActionRecordIds: [],
-        compactionSegmentIds: [],
-      },
       systemPrompt: 'system',
-      initialHistory: buildReplyHistory({ windowHistory: [], trigger: '@bot ping' }),
+      initialHistory,
+      messageCursorStart: 1,
+      messageCursorEnd: 19,
+      includedActionRecordIds: [],
     })
 
     assert.equal(frame.opportunityId, 'runtime-opp')

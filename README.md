@@ -20,13 +20,13 @@
 
 **架构上的五条不变量**（破坏其中任何一条都视为回归）：
 
-1. **prefix / tail 二分**。prefix = system prompt + 已压缩的历史摘要头部（稳定）；tail = 滚动 window + 当轮 trigger（每次变）。`src/agent/context-frame.ts` 分别记录 `prefixHash` / `tailHash`，便于事后核对命中。
-2. **append-only 历史**。`messages` 表是唯一的入站用户事实账本，不允许改写已落盘的历史；bot 自己说过的话以 `model` role 进入历史，不做文本拼接。
-3. **媒体文本冻结**。图片 / 视频 / 语音 / PDF 描述第一次解析后写入 `messages.resolvedText`，之后即使解析器升级也不重写——否则一个旧媒体被重新理解就会让所有后续 prompt 前缀整体漂移。
-4. **compaction 是计划性的破坏性操作**。摘要必然把一段 raw history 替换成一段 LLM 摘要文本，前缀 hash 必然变。所以触发阈值上调到 80 条，频率越低越好；摘要本身是合并写法（`previousSummary + new history → newSummary`），不允许 append 累积。具体落点见 `src/conversation/compaction.ts` 的 `maybeCompactConversation()`。
-5. **决定性重放**。同一个 scope 在任意时刻重建出来的 history 必须 byte-identical（输入相同时）——这是 cache 命中的数学前提，不是好习惯。
+1. **owned AgentContext 是历史的真身**。`src/agent/agent-context.ts` 的 `AgentContext` 持有 scene 的 `AgentMessage[]`，LLM 每次调用看到的就是 `getSnapshot().messages`。持久形态 == 运行时形态：`scene_agent_contexts.snapshot` 直接序列化这个数组，重启 = 把数组 splice 回内存。`messages` 表保留为入站事实账本（审计 / 媒体 resolve / 引用查找 / 恢复源），不双写、不投影。
+2. **prefix / tail 二分用于观测**。`src/agent/context-frame.ts` 在每次 LLM 调用时把当轮 history 切成稳定 prefix（system + 摘要头部）和易变 tail（窗口 + trigger），分别记录 `prefixHash` / `tailHash` 写入 `LlmTrace`，事后能在 admin-web 上核对 cache 命中。
+3. **append-only + append-time 冻结**。摄入入站消息走 `src/agent/scene-message-ingestor.ts`：append 时刻按 `messages.resolvedText` 当时的形态渲染成 `AgentMessage`，之后即使 messages 行被回填也不重写 AgentContext。bot 已发送回复以 `model` role append，不做文本拼接。控制工具（`final_answer`）不入账，由发送成功路径写 model role，发送失败时历史不会出现「假回复」。
+4. **compaction 是计划性的破坏性操作**。`src/conversation/compaction.ts` 的 `maybeCompactConversation(context)` 是唯一改写历史的路径：在 AgentContext 上 `replaceMessages([summaryHead, ...keptTail])` 原子替换，kept 部分字节保持不变，前缀 hash 切换一次后再次稳定。token-based 阈值（默认 12k token），`previousSummary` 是合并输入而非 append，cut 边界不切开 `tool_calls + tool_results` 三元组。post-send 触发，try/catch wrap 不污染已 sent reply。
+5. **决定性重放**。同一个 scene 在任意时刻 `getSnapshot()` 出来的 messages 必须 byte-identical（输入相同时）——这是 cache 命中的数学前提，不是好习惯。
 
-观测面在 admin-web 的 `/llm-traces` 里，按 sceneId 聚合 `prefixHash` 切换次数和 `cached_tokens` 占比；扩展规则同步写在 `CLAUDE.md` 的 *Perpetual Context Contract* 章节，做出影响 prefix 的改动时务必先读那一节。
+观测面在 admin-web 的 `/llm-traces` 里，按 sceneId 聚合 `prefixHash` 切换次数和 `cached_tokens` 占比；持久形态在 `scene_agent_contexts` 表（一条记录 = 一个 scene 的全部 LLM 可见历史）。扩展规则同步写在 `CLAUDE.md` 的 *Perpetual Context Contract* 章节，做出影响 prefix 的改动时务必先读那一节。
 
 ## 功能概览
 
@@ -167,12 +167,12 @@ pnpm db:generate
 
 - `messages`: 入站群消息事实账本
 - `media`: 媒体二进制缓存和描述结果
-- `llm_traces`: LLM 调用 trace
-- `conversation_states`: 旧会话压缩状态，仍用于兼容/压缩路径
-- `assistant_turns`: 旧 assistant turn 表，启动时可迁移到 reply record
+- `llm_traces`: LLM 调用 trace（含 prefix/tail hash 用于 cache 观测）
+- `scene_agent_contexts`: 永续上下文真身。每个 scene 一条记录, `snapshot.messages` 就是 LLM 可见的 `AgentMessage[]`
+- `assistant_turns`: 旧 assistant turn 表，启动时迁移到 reply record（即将退役）
 - `reply_records`: 当前回复意图、生成文本、发送状态和幂等记录
 - `reply_audits`: 回复/主动候选审计记录
-- `root_runtime_snapshots`: root runtime 的稳定上下文和会话状态
+- `agent_runtime_snapshots`: agent runtime 全局 session snapshot（cursors、未读等，与 scene_agent_contexts 职责区分）
 
 ## 启动方式
 

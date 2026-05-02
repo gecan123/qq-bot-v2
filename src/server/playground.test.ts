@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { runPlayground } from './playground.js'
+import { createAgentContext } from '../agent/agent-context.js'
 import type { AgentTurnResult } from '../agent/types.js'
 
 describe('runPlayground', () => {
@@ -13,7 +14,7 @@ describe('runPlayground', () => {
         senderName: '测试用户',
       },
       {
-        buildContext: async () => ({ contextText: '上下文', history: [], recentMessages: [] }),
+        buildAgentContext: async () => createAgentContext(),
         getAgentProfile: () => ({
           persona: '你是测试助手',
           replyContextMessages: 20,
@@ -67,7 +68,7 @@ describe('runPlayground', () => {
         senderName: '测试用户',
       },
       {
-        buildContext: async () => ({ contextText: '上下文', history: [], recentMessages: [] }),
+        buildAgentContext: async () => createAgentContext(),
         getAgentProfile: () => ({
           persona: '你是测试助手',
           replyContextMessages: 20,

@@ -75,21 +75,6 @@ model LlmTrace {
   @@map("llm_traces")
 }
 
-model ConversationState {
-  id                        Int      @id @default(autoincrement())
-  groupId                   BigInt   @map("group_id")
-  senderThreadKey           String   @map("sender_thread_key") @db.VarChar(128)
-  compactedBase             String   @default("") @map("compacted_base") @db.Text
-  compactedVersion          Int      @default(1) @map("compacted_version")
-  lastCompactedMessageRowId Int?     @map("last_compacted_message_row_id")
-  createdAt                 DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt                 DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
-
-  @@unique([groupId, senderThreadKey])
-  @@index([groupId, updatedAt(sort: Desc)])
-  @@map("conversation_states")
-}
-
 model AssistantTurn {
   id                       Int      @id @default(autoincrement())
   groupId                  BigInt   @map("group_id")

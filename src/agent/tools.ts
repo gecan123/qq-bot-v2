@@ -88,12 +88,8 @@ function buildDbSchemaPayload() {
         columns: ['media_id', 'media_type', 'content_type', 'file_name', 'description_raw', 'created_at'],
       },
       {
-        name: 'conversation_states',
-        columns: ['group_id', 'sender_thread_key', 'compacted_base', 'compacted_version', 'last_compacted_message_row_id', 'updated_at'],
-      },
-      {
-        name: 'assistant_turns',
-        columns: ['group_id', 'sender_thread_key', 'reply_intent_id', 'trigger_message_row_id', 'incorporated_message_row_id', 'sequence', 'reply_to_message_id', 'mention_user_id', 'status', 'attempt_count', 'created_at', 'updated_at'],
+        name: 'scene_agent_contexts',
+        columns: ['scene_id', 'schema_version', 'snapshot', 'created_at', 'updated_at'],
       },
       {
         name: 'action_records',

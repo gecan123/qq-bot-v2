@@ -2,9 +2,19 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { loadPrompt } from '../config/prompt-loader.js'
 import { runPlayground } from './playground.js'
+import { createAgentContext } from '../agent/agent-context.js'
 
 const RUN_REAL_API_TESTS = process.env.RUN_REAL_API_TESTS === '1'
 const realTest = RUN_REAL_API_TESTS ? test : test.skip
+
+function makeStubContext() {
+  return createAgentContext({
+    initialMessages: [
+      { role: 'user', content: '[12:20] zzz: @Luna 我看他在搞芯片啊' },
+      { role: 'model', content: '@zzz 对，他确实在往"芯片/算力"方向布局，主要围绕 AI 芯片和算力基础设施。' },
+    ],
+  })
+}
 
 describe('runPlayground real api', () => {
   realTest('uses real repository prompts in system prompt while db context is mocked', { timeout: 120_000 }, async () => {
@@ -19,14 +29,7 @@ describe('runPlayground real api', () => {
         message: '@Luna 你找找新闻',
       },
       {
-        buildContext: async () => ({
-          contextText: [
-            '[12:20] zzz: @Luna 我看他在搞芯片啊',
-            '[12:21] Luna: @zzz 对，他确实在往“芯片/算力”方向布局，主要围绕 AI 芯片和算力基础设施。',
-          ].join('\n'),
-          history: [],
-          recentMessages: [],
-        }),
+        buildAgentContext: async () => makeStubContext(),
       },
     )
 
@@ -46,14 +49,7 @@ describe('runPlayground real api', () => {
         message: '@Luna 你找找新闻',
       },
       {
-        buildContext: async () => ({
-          contextText: [
-            '[12:20] zzz: @Luna 我看他在搞芯片啊',
-            '[12:21] Luna: @zzz 对，他确实在往“芯片/算力”方向布局，主要围绕 AI 芯片和算力基础设施。',
-          ].join('\n'),
-          history: [],
-          recentMessages: [],
-        }),
+        buildAgentContext: async () => makeStubContext(),
       },
     )
 

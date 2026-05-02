@@ -2,15 +2,15 @@ import OpenAI from 'openai'
 import { createTraceRecorder, type RunTrace } from '../agent/trace.js'
 import { createAgentTools } from '../agent/tools.js'
 import { runAgentLoop } from '../agent/loop.js'
-import { createAgentContext } from '../agent/agent-context.js'
+import { createAgentContext, type AgentContext } from '../agent/agent-context.js'
+import { ingestSceneMessages } from '../agent/scene-message-ingestor.js'
 import { createAgentOpenAIConfig, createOpenAIChatFn } from '../agent/openai-compat.js'
 import { getAgentProfile } from '../config/agent-profiles.js'
 import { loadPrompt } from '../config/prompt-loader.js'
-import { buildContext } from '../responder/context-builder.js'
 import { buildSystemPrompt } from '../responder/agent-session.js'
-import { buildReplyHistory } from '../responder/reply-history.js'
 import type { RouteHandler } from './http.js'
 import type { AgentMessage, AgentTurnResult, ToolCall, ToolResult } from '../agent/types.js'
+import { makeQqGroupSceneId, type SceneId } from '../runtime/agent-runtime-types.js'
 import { prisma } from '../database/client.js'
 
 const REPLY_INSTRUCTION = loadPrompt('./prompts/reply-instruction.md')
@@ -59,7 +59,12 @@ interface PlaygroundProfile {
 }
 
 interface PlaygroundDeps {
-  buildContext?: typeof buildContext
+  /**
+   * Phase E: playground 现在用 transient (in-memory) AgentContext 做预览, 不落库,
+   * 不污染线上 scene_agent_contexts。测试可注入完整 ctx; 否则默认现场摄入 scene
+   * 的近期消息。
+   */
+  buildAgentContext?: (groupId: number) => Promise<AgentContext>
   getAgentProfile?: (groupId: number) => PlaygroundProfile
   createAgentTools?: typeof createAgentTools
   chatFn?: (params: {
@@ -68,6 +73,19 @@ interface PlaygroundDeps {
     tools: import('../agent/types.js').AgentToolDeclaration[]
   }) => Promise<AgentTurnResult>
   nowFactory?: () => string
+}
+
+async function defaultBuildPlaygroundContext(groupId: number): Promise<AgentContext> {
+  // transient 内存 ctx, 不持久化。Ingest 拉取最近 20 条作为冷启动起点。
+  const ctx = createAgentContext()
+  await ingestSceneMessages({
+    context: ctx,
+    sceneKind: 'qq_group',
+    sceneExternalId: groupId,
+    sceneId: makeQqGroupSceneId(groupId) as SceneId,
+    groupId,
+  })
+  return ctx
 }
 
 interface ReplayPayload {
@@ -107,7 +125,6 @@ export async function runPlayground(body: PlaygroundBody, deps: PlaygroundDeps =
   })
 
   const profile = (deps.getAgentProfile ?? getAgentProfile)(groupIdNum)
-  const contextLimit = profile.replyContextMessages ?? 20
 
   const fakeMsg = {
     groupId: groupIdNum,
@@ -118,17 +135,17 @@ export async function runPlayground(body: PlaygroundBody, deps: PlaygroundDeps =
   }
 
   traceRecorder.phaseStarted('load_context', 'building context')
-  const mediaDeadlineAt = Date.now() + 15_000
-  const contextResult = await (deps.buildContext ?? buildContext)(fakeMsg, contextLimit, { mediaDeadlineAt })
+  const playgroundContext = await (deps.buildAgentContext ?? defaultBuildPlaygroundContext)(groupIdNum)
+  const triggerNickname = senderName
+  await playgroundContext.appendUserMessage({
+    role: 'user',
+    content: `[当前要回复的消息]\n${triggerNickname}: ${message}`,
+  })
+  const initialHistory: AgentMessage[] = (await playgroundContext.getSnapshot()).messages
   traceRecorder.phaseFinished({
     phase: 'load_context',
-    summary: contextResult.history.length > 0 ? 'context loaded' : 'no context available',
-    raw: { historyLen: contextResult.history.length, hasSummary: Boolean(contextResult.compactedSummary) },
-  })
-  const initialHistory: AgentMessage[] = buildReplyHistory({
-    windowHistory: contextResult.history,
-    compactedSummary: contextResult.compactedSummary,
-    trigger: message,
+    summary: initialHistory.length > 0 ? 'context loaded' : 'no context available',
+    raw: { historyLen: initialHistory.length },
   })
 
   const { declarations, executors } = (deps.createAgentTools ?? createAgentTools)(groupIdNum)
@@ -162,9 +179,8 @@ export async function runPlayground(body: PlaygroundBody, deps: PlaygroundDeps =
     ]),
   )
 
-  // Playground 不使用持久 AgentContext;每次 replay 起一个临时 in-memory ctx,
-  // 把拼好的 initialHistory 灌进去当起点。
-  const playgroundContext = createAgentContext({ initialMessages: initialHistory })
+  // playgroundContext 已经在前面装配好了 (含 ingest 后的历史 + 当轮 trigger),
+  // 直接交给 loop 使用。
   const result = await runAgentLoop({
     systemPrompt,
     context: playgroundContext,

@@ -1,5 +1,5 @@
 import { createAgentTools } from '../agent/tools.js'
-import { runAgentLoop } from '../agent/loop.js'
+import { runAgentLoop, type EphemeralSuffixProvider } from '../agent/loop.js'
 import { createAgentChatFn } from '../agent/runtime.js'
 import { withLlmTrace } from '../agent/llm-trace.js'
 import type { ContextFrame } from '../agent/context-frame.js'
@@ -18,6 +18,11 @@ export interface AgentSessionParams {
   warningTimeMs?: number
   maxAnswerChars?: number
   contextFrame?: ContextFrame
+  /**
+   * Phase 1d: per-call 临时附加消息(volatile tail)。reactive @ 路径用来注入
+   * 最近 1h 内的 inner_journal。永远不写回 AgentContext。
+   */
+  ephemeralSuffix?: EphemeralSuffixProvider
 }
 
 export function buildSystemPrompt(persona: string, instruction: string): string {
@@ -47,5 +52,6 @@ export async function runAgentSession(params: AgentSessionParams): Promise<Agent
     allowImplicitText: params.allowImplicitText,
     warningTimeMs: params.warningTimeMs,
     maxAnswerChars: params.maxAnswerChars,
+    ephemeralSuffix: params.ephemeralSuffix,
   })
 }

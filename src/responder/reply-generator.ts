@@ -13,6 +13,7 @@ import { extractResolvedTriggerText } from './context-builder.js'
 import { logMentionReplyTokenUsage } from './reply-token-usage.js'
 import { buildSystemPrompt, runAgentSession } from './agent-session.js'
 import type { AgentMessage } from '../agent/types.js'
+import { innerJournalStore } from '../world-model/inner-journal-store.js'
 
 const REPLY_INSTRUCTION = loadPrompt('./prompts/reply-instruction.md')
 const log = createLogger('REPLY')
@@ -129,6 +130,13 @@ async function agentReply(
     initialHistory: snapshot.messages,
   })
 
+  // Phase 1d: 注入最近 1h 内的 inner_journal (如果有)。每个 step 都用同一段 suffix。
+  // 不写回 AgentContext,符合 perpetual context 不变量。
+  // 只取 1h 内的:避免老 journal 反复污染新回复;1h 没新 journal 说明 scene 不活跃,
+  // 那次 reactive @ 直接走纯 prefix 即可。
+  const reactiveSceneId = (generationContext?.sceneId ?? fallbackSceneId(msg)) as string
+  const ephemeralSuffix = await buildInnerJournalSuffix(reactiveSceneId)
+
   const result = await runAgentSession({
     groupId: msg.groupId,
     dbToolsEnabled: msg.sceneKind !== 'qq_private',
@@ -140,6 +148,7 @@ async function agentReply(
     warningTimeMs,
     maxAnswerChars,
     contextFrame,
+    ephemeralSuffix,
   })
 
   log.info(
@@ -161,6 +170,28 @@ async function agentReply(
 
   if (result.state === 'final') return result.answer
   return null
+}
+
+/**
+ * Phase 1d: 取最近 1h 内的最新 inner_journal,构造 ephemeralSuffix 给 reactive @ 用。
+ * 1h 没新 journal → 返回空数组(等价于不注入,reactive @ 走纯 prefix)。
+ *
+ * 故意不抛错: journal store 出问题不应该阻塞 reactive @。
+ */
+async function buildInnerJournalSuffix(sceneId: string): Promise<AgentMessage[]> {
+  try {
+    const recent = await innerJournalStore.last({ sceneId, limit: 1, withinHours: 1 })
+    if (recent.length === 0) return []
+    const entry = recent[0]
+    if (!entry) return []
+    return [{
+      role: 'user',
+      content: `[内部状态]\n${entry.content}`,
+    }]
+  } catch (err) {
+    log.warn({ err, sceneId }, 'inner_journal_suffix_failed')
+    return []
+  }
 }
 
 export interface GenerateMentionReplyOptions {

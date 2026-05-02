@@ -369,4 +369,149 @@ describe('runAgentLoop', () => {
     assert.ok(result.trace?.events.some((event) => event.type === 'tool_call'))
     assert.ok(result.trace?.events.some((event) => event.phase === 'finalize'))
   })
+
+  describe('ephemeralSuffix', () => {
+    test('without ephemeralSuffix: history equals snapshot.messages (backwards compat)', async () => {
+      const histories: { length: number; lastContent: string }[] = []
+      const chatFn = async ({ history }: { history: import('./types.js').AgentMessage[] }) => {
+        const last = history[history.length - 1]
+        const lastContent = last && 'content' in last && typeof last.content === 'string' ? last.content : ''
+        histories.push({ length: history.length, lastContent })
+        return { type: 'tool_calls' as const, calls: [{ id: 'c1', name: 'final_answer', args: { replyText: 'done' } }] }
+      }
+
+      const ctx = createAgentContext()
+      await ctx.appendUserMessage({ role: 'user', content: 'hi' })
+
+      await runAgentLoop({
+        systemPrompt: 'test',
+        context: ctx,
+        chatFn,
+        tools: noopTools.declarations,
+        executors: noopTools.executors,
+      })
+
+      assert.equal(histories.length, 1)
+      assert.equal(histories[0]?.length, 1)
+      assert.equal(histories[0]?.lastContent, 'hi')
+    })
+
+    test('static array suffix: appended to history each step, never persisted to context', async () => {
+      const histories: { content: string }[][] = []
+      const chatFn = async ({ history }: { history: import('./types.js').AgentMessage[] }) => {
+        histories.push(history.map((m) => ({
+          content: 'content' in m && typeof m.content === 'string' ? m.content : '',
+        })))
+        // 第一步 db_read,第二步 final_answer (走完两步,验证 suffix 在每步都注入)
+        if (histories.length === 1) {
+          return { type: 'tool_calls' as const, calls: [{ id: 'c1', name: 'noop', args: {} }] }
+        }
+        return { type: 'tool_calls' as const, calls: [{ id: 'c2', name: 'final_answer', args: { replyText: 'ok' } }] }
+      }
+
+      const ctx = createAgentContext()
+      await ctx.appendUserMessage({ role: 'user', content: 'q' })
+
+      await runAgentLoop({
+        systemPrompt: 'test',
+        context: ctx,
+        chatFn,
+        tools: noopTools.declarations,
+        executors: { noop: async () => 'noop_result' },
+        ephemeralSuffix: [{ role: 'user', content: '[transient note]' }],
+      })
+
+      // 两次 chatFn 都该看到 suffix 在末尾
+      assert.equal(histories.length, 2)
+      assert.equal(histories[0]?.[histories[0].length - 1]?.content, '[transient note]')
+      assert.equal(histories[1]?.[histories[1].length - 1]?.content, '[transient note]')
+
+      // 但 context.snapshot 永远不该有 suffix——它只记录真实 message 流转
+      const snapshot = await ctx.getSnapshot()
+      const hasSuffixInSnapshot = snapshot.messages.some(
+        (m) => m.role === 'user' && m.content === '[transient note]',
+      )
+      assert.equal(hasSuffixInSnapshot, false, 'suffix 不应该被持久化到 AgentContext')
+    })
+
+    test('function suffix: receives loopIndex, can return different content per step', async () => {
+      const histories: { length: number; suffixSeen: string | undefined }[] = []
+      const chatFn = async ({ history }: { history: import('./types.js').AgentMessage[] }) => {
+        const last = history[history.length - 1]
+        const lastContent = last && 'content' in last && typeof last.content === 'string' ? last.content : ''
+        histories.push({
+          length: history.length,
+          suffixSeen: lastContent.startsWith('[step-') ? lastContent : undefined,
+        })
+        if (histories.length === 1) {
+          return { type: 'tool_calls' as const, calls: [{ id: 'c1', name: 'noop', args: {} }] }
+        }
+        return { type: 'tool_calls' as const, calls: [{ id: 'c2', name: 'final_answer', args: { replyText: 'ok' } }] }
+      }
+
+      const ctx = createAgentContext()
+      await ctx.appendUserMessage({ role: 'user', content: 'q' })
+
+      await runAgentLoop({
+        systemPrompt: 'test',
+        context: ctx,
+        chatFn,
+        tools: noopTools.declarations,
+        executors: { noop: async () => 'noop_result' },
+        ephemeralSuffix: (loopIndex) => [{ role: 'user', content: `[step-${loopIndex}]` }],
+      })
+
+      assert.equal(histories[0]?.suffixSeen, '[step-1]', 'loopIndex 应从 1 开始')
+      assert.equal(histories[1]?.suffixSeen, '[step-2]', '第二步应看到不同的 suffix')
+    })
+
+    test('async function suffix is awaited', async () => {
+      const histories: { lastContent: string | undefined }[] = []
+      const chatFn = async ({ history }: { history: import('./types.js').AgentMessage[] }) => {
+        const last = history[history.length - 1]
+        const lastContent = last && 'content' in last && typeof last.content === 'string' ? last.content : undefined
+        histories.push({ lastContent })
+        return { type: 'tool_calls' as const, calls: [{ id: 'c1', name: 'final_answer', args: { replyText: 'ok' } }] }
+      }
+
+      const ctx = createAgentContext()
+      await ctx.appendUserMessage({ role: 'user', content: 'q' })
+
+      await runAgentLoop({
+        systemPrompt: 'test',
+        context: ctx,
+        chatFn,
+        tools: noopTools.declarations,
+        executors: noopTools.executors,
+        ephemeralSuffix: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5))
+          return [{ role: 'user', content: '[awaited]' }]
+        },
+      })
+
+      assert.equal(histories[0]?.lastContent, '[awaited]')
+    })
+
+    test('function suffix returning empty array is treated as no suffix', async () => {
+      const histories: { length: number }[] = []
+      const chatFn = async ({ history }: { history: unknown[] }) => {
+        histories.push({ length: history.length })
+        return { type: 'tool_calls' as const, calls: [{ id: 'c1', name: 'final_answer', args: { replyText: 'ok' } }] }
+      }
+
+      const ctx = createAgentContext()
+      await ctx.appendUserMessage({ role: 'user', content: 'q' })
+
+      await runAgentLoop({
+        systemPrompt: 'test',
+        context: ctx,
+        chatFn,
+        tools: noopTools.declarations,
+        executors: noopTools.executors,
+        ephemeralSuffix: () => [],
+      })
+
+      assert.equal(histories[0]?.length, 1, 'empty 数组不应该往 history 加东西')
+    })
+  })
 })

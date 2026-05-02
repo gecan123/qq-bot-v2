@@ -3,7 +3,10 @@ import type { ToolExecutor } from './tools.js'
 import type { TraceRecorder, TraceTerminationReason } from './trace.js'
 import type { AgentContext } from './agent-context.js'
 import { CONTROL_TOOL_NAMES, createAgentContext } from './agent-context.js'
+import { buildLlmRequest } from './build-llm-request.js'
 import { createLogger } from '../logger.js'
+
+export type EphemeralSuffixProvider = AgentMessage[] | ((loopIndex: number) => AgentMessage[] | Promise<AgentMessage[]>)
 
 type ChatFn = (params: {
   systemPrompt: string
@@ -38,6 +41,16 @@ export interface AgentLoopParams {
   maxTimeMs?: number
   maxAnswerChars?: number
   traceRecorder?: TraceRecorder
+  /**
+   * 每个 loop step 临时附加到 history 末尾的消息(per-call,不写回 AgentContext)。
+   *
+   * - 数组:每步都用同一段 suffix
+   * - 函数:接收 loopIndex,可以每步生成不同 suffix(例:第 1 步注入「内部状态」,后续步只用裸 history)
+   *
+   * 详见 `build-llm-request.ts`:此参数通过 buildLlmRequest 拼接到 snapshot.messages
+   * 之后,**永远不进** scene_agent_contexts.snapshot——保 perpetual context 不变量。
+   */
+  ephemeralSuffix?: EphemeralSuffixProvider
 }
 
 interface StepDetail {
@@ -66,6 +79,7 @@ async function executeLoop(params: AgentLoopParams, startTime: number): Promise<
     maxAnswerChars = 500,
     allowImplicitText = true,
     traceRecorder,
+    ephemeralSuffix,
   } = params
 
   // 没传 context 的简化路径:临时 in-memory context,把 userMessage 作为入口 user message。
@@ -113,8 +127,10 @@ async function executeLoop(params: AgentLoopParams, startTime: number): Promise<
     log.debug({ step }, 'agent_loop_step_start')
     traceRecorder?.loopStarted(loopIndex, `loop #${loopIndex} started`)
 
-    const snapshotMessages = (await context.getSnapshot()).messages
-    const turnResult = await chatFn({ systemPrompt, history: snapshotMessages, tools, loopIndex })
+    const snapshot = await context.getSnapshot()
+    const suffix = await resolveEphemeralSuffix(ephemeralSuffix, loopIndex)
+    const { messages: history } = buildLlmRequest(snapshot, suffix)
+    const turnResult = await chatFn({ systemPrompt, history, tools, loopIndex })
 
     if (turnResult.type === 'empty') {
       log.warn({ step }, 'agent_loop_empty_response')
@@ -259,6 +275,18 @@ async function executeLoop(params: AgentLoopParams, startTime: number): Promise<
   traceRecorder?.phaseStarted('finalize', 'finalize started')
   traceRecorder?.phaseFinished({ phase: 'finalize', summary: 'maximum loop count exceeded' })
   return finish({ state: 'aborted', reason: 'max_steps_exceeded' }, 'max_steps_exceeded')
+}
+
+async function resolveEphemeralSuffix(
+  provider: EphemeralSuffixProvider | undefined,
+  loopIndex: number,
+): Promise<AgentMessage[]> {
+  if (!provider) return []
+  if (typeof provider === 'function') {
+    const result = await provider(loopIndex)
+    return result ?? []
+  }
+  return provider
 }
 
 export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopResult> {

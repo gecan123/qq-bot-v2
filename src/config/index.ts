@@ -211,6 +211,13 @@ export function parseConfig(env: EnvSource) {
       initialDelayMs: parseNonNegativeInteger(env.PROACTIVE_SCHEDULER_INITIAL_DELAY_MS, 30_000),
       maxDigestItems: parsePositiveInteger(env.PROACTIVE_DIGEST_MAX_ITEMS, 12),
     },
+    idleThread: {
+      // Phase 1c: bot 空闲反思,默认关闭。建议起步 30 min (1800000) 看效果再调
+      intervalMs: parseNonNegativeInteger(env.IDLE_THREAD_INTERVAL_MS, 0),
+      initialDelayMs: parseNonNegativeInteger(env.IDLE_THREAD_INITIAL_DELAY_MS, 60_000),
+      activeWithinHours: parsePositiveInteger(env.IDLE_THREAD_ACTIVE_HOURS, 24),
+      recentJournalLimit: parsePositiveInteger(env.IDLE_THREAD_RECENT_JOURNAL_LIMIT, 3),
+    },
     nodeEnv: env.NODE_ENV || 'development',
     replyMediaTimeoutMs: Number(env.REPLY_MEDIA_TIMEOUT_MS ?? '15000'),
     jobInterDelayMs: Number(env.JOB_INTER_DELAY_MS ?? '200'),

@@ -24,12 +24,14 @@ import { messageSender } from './messaging/message-sender.js'
 import { parseV2exFeedTargets, startV2exForumPolling } from './curiosity/v2ex-connector.js'
 import type { ForumReadItemInput } from './curiosity/forum-read-executor.js'
 import { startProactiveScheduler } from './runtime/proactive-scheduler.js'
+import { startIdleThread } from './runtime/idle-thread.js'
 
 let httpServer: http.Server | null = null
 let rootRuntime: ReturnType<typeof createRootRuntimeManager> | null = null
 let runtimeSchedulerTimer: NodeJS.Timeout | null = null
 let v2exForumTimers: NodeJS.Timeout[] = []
 let proactiveSchedulerTimers: NodeJS.Timeout[] = []
+let idleThreadTimers: NodeJS.Timeout[] = []
 const proactiveDigestBuffer: ForumReadItemInput[] = []
 const log = createLogger('APP')
 
@@ -315,6 +317,13 @@ async function main() {
       'Proactive scheduler started',
     )
   }
+  idleThreadTimers = startIdleThread({
+    groupIds: config.groupIds,
+    intervalMs: config.idleThread.intervalMs,
+    initialDelayMs: config.idleThread.initialDelayMs,
+    activeWithinHours: config.idleThread.activeWithinHours,
+    recentJournalLimit: config.idleThread.recentJournalLimit,
+  })
   log.info('Root runtime passive mention execution started')
 }
 
@@ -338,6 +347,11 @@ async function shutdown() {
     clearInterval(timer)
   }
   v2exForumTimers = []
+  for (const timer of idleThreadTimers) {
+    clearTimeout(timer)
+    clearInterval(timer)
+  }
+  idleThreadTimers = []
   for (const timer of proactiveSchedulerTimers) {
     clearTimeout(timer)
     clearInterval(timer)

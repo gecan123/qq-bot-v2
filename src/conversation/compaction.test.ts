@@ -1,31 +1,8 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import type { Message } from '../generated/prisma/client.js'
+import { createAgentContext } from '../agent/agent-context.js'
 import type { AgentMessage } from '../agent/types.js'
 import { maybeCompactConversation, type SummarizeFn, type SummarizeInput } from './compaction.js'
-
-function makeMessage(id: number, overrides: Partial<Message> = {}): Message {
-  return {
-    id,
-    sceneKind: 'qq_group',
-    sceneExternalId: '1',
-    groupId: BigInt(1),
-    groupName: '测试群',
-    mediaReferenceIds: [],
-    messageId: BigInt(1000 + id),
-    senderId: BigInt(200 + id),
-    senderNickname: `用户${id}`,
-    senderGroupNickname: null,
-    content: [{ type: 'text', content: `原始文本${id}` }] as Message['content'],
-    rawContent: null,
-    rawMessage: null,
-    searchText: `原始文本${id}`,
-    resolvedText: `原始文本${id}`,
-    sentAt: new Date(`2026-04-21T00:${String(id % 60).padStart(2, '0')}:00Z`),
-    createdAt: new Date(`2026-04-21T00:${String(id % 60).padStart(2, '0')}:00Z`),
-    ...overrides,
-  }
-}
 
 function captureSummarize(opts: {
   output: string
@@ -37,239 +14,162 @@ function captureSummarize(opts: {
   }
 }
 
-const TEST_DEPS_LEGACY_THRESHOLDS = { triggerThreshold: 40, keepRecentCount: 12 } as const
+function makeUserMessage(text: string): AgentMessage {
+  return { role: 'user', content: text }
+}
 
-describe('conversation compaction (Phase 1.5)', () => {
-  test('compaction freezes unresolved text before invoking summarize', async () => {
-    const frozenWrites: Array<{ id: number; text: string }> = []
-    const resolveCalls: number[] = []
-    const savedStates: Array<{ compactedBase: string; lastCompactedMessageRowId: number }> = []
+function makeModelMessage(text: string): AgentMessage {
+  return { role: 'model', content: text }
+}
+
+describe('compaction (Phase D, AgentContext-based)', () => {
+  test('低于阈值时不动 context', async () => {
+    const ctx = createAgentContext({
+      initialMessages: Array.from({ length: 5 }, (_, i) => makeUserMessage(`短消息${i}`)),
+    })
+    const before = JSON.stringify((await ctx.getSnapshot()).messages)
+
+    await maybeCompactConversation(ctx, {
+      summarize: captureSummarize({ output: '不应该被调用' }),
+      triggerTokens: 100_000,
+    })
+
+    const after = JSON.stringify((await ctx.getSnapshot()).messages)
+    assert.equal(after, before)
+  })
+
+  test('超过阈值时 replaceMessages 写入 [历史摘要] 头 + 保留尾部', async () => {
+    const messages = Array.from({ length: 20 }, (_, i) => makeUserMessage(`长消息${i}`.repeat(50)))
+    const ctx = createAgentContext({ initialMessages: messages })
     const summarizeCalls: SummarizeInput[] = []
 
-    const messages = Array.from({ length: 41 }, (_, index) => {
-      const id = index + 1
-      if (id === 1) {
-        return makeMessage(id, {
-          mediaReferenceIds: ['77'],
-          content: [{ type: 'video', referenceId: '77' }] as Message['content'],
-          resolvedText: null,
-          searchText: '[视频]',
-        })
-      }
-
-      if (id === 2) {
-        return makeMessage(id, {
-          resolvedText: '已冻结文本',
-          searchText: '已冻结文本',
-        })
-      }
-
-      return makeMessage(id)
-    })
-
-    await maybeCompactConversation(1, 'qq_group:1', {
-      ...TEST_DEPS_LEGACY_THRESHOLDS,
-      getConversationState: async () => ({
-        id: 1,
-        groupId: 1,
-        senderThreadKey: 'qq_group:1',
-        compactedBase: '',
-        compactedVersion: 1,
-        lastCompactedMessageRowId: undefined,
-        createdAt: new Date(0),
-        updatedAt: new Date(0),
-      }),
-      getMessagesAfterRowId: async () => messages,
-      getActionRecordsForScene: async () => [],
-      resolveConversationMessage: async (message) => {
-        resolveCalls.push(message.id)
-        if (message.id === 1) {
-          return [{ type: 'text', content: '解析后的媒体文本' }]
-        }
-        return message.content as any
-      },
-      freezeResolvedText: async (id, text) => {
-        frozenWrites.push({ id, text })
-      },
-      saveCompactedState: async (params) => {
-        savedStates.push({
-          compactedBase: params.compactedBase,
-          lastCompactedMessageRowId: params.lastCompactedMessageRowId,
-        })
-      },
+    await maybeCompactConversation(ctx, {
       summarize: captureSummarize({
-        output: 'LLM 摘要: 群里聊了 41 条消息, 有视频和文本',
+        output: '群里聊了 20 条长消息',
         capture: { calls: summarizeCalls },
       }),
+      triggerTokens: 100,
+      keepRatio: 0.1,
     })
 
-    assert.deepEqual(resolveCalls, [1])
-    assert.deepEqual(frozenWrites, [{ id: 1, text: '解析后的媒体文本' }])
+    const after = (await ctx.getSnapshot()).messages
+    // 头部是新 summary, 后面是 keep 部分 (ceil(20*0.1) = 2)
+    assert.equal(after.length, 1 + 2)
+    const head = after[0] as { role: string; content: string }
+    assert.equal(head.role, 'user')
+    assert.match(head.content, /^\[历史摘要\]\n群里聊了 20 条长消息/)
 
-    assert.equal(savedStates.length, 1)
-    assert.equal(savedStates[0]?.compactedBase, 'LLM 摘要: 群里聊了 41 条消息, 有视频和文本')
-    assert.equal(savedStates[0]?.lastCompactedMessageRowId, 29)
+    // kept tail 必须 byte-identical 原 messages 的最后 2 条
+    assert.deepEqual(after.slice(1), messages.slice(-2))
+
+    // summarize 收到的 history 不含已被 replace 的部分,且 previousSummary 为 null
+    assert.equal(summarizeCalls.length, 1)
+    assert.equal(summarizeCalls[0]?.previousSummary, null)
+    assert.equal(summarizeCalls[0]?.history.length, 18)
+  })
+
+  test('已有 [历史摘要] 头时, 抽出来作为 previousSummary 合并输入', async () => {
+    const initial: AgentMessage[] = [
+      makeUserMessage('[历史摘要]\n上次摘要的内容'),
+      ...Array.from({ length: 30 }, (_, i) => makeUserMessage(`新消息${i}`.repeat(30))),
+    ]
+    const ctx = createAgentContext({ initialMessages: initial })
+    const summarizeCalls: SummarizeInput[] = []
+
+    await maybeCompactConversation(ctx, {
+      summarize: captureSummarize({
+        output: '合并后的新摘要',
+        capture: { calls: summarizeCalls },
+      }),
+      triggerTokens: 100,
+      keepRatio: 0.1,
+    })
 
     assert.equal(summarizeCalls.length, 1)
-    const sentToSummarize = summarizeCalls[0]?.history ?? []
-    assert.ok(sentToSummarize.length > 0)
-    const allContent = sentToSummarize
-      .map((m) => 'content' in m ? m.content : '')
-      .join('|')
-    assert.match(allContent, /解析后的媒体文本/)
-    assert.match(allContent, /已冻结文本/)
-    assert.doesNotMatch(allContent, /\[视频\]/)
+    assert.equal(summarizeCalls[0]?.previousSummary, '上次摘要的内容')
+    // history 不含旧 summary head, 只是新消息的前 N 条
+    const sentHistory = summarizeCalls[0]?.history ?? []
+    assert.ok(sentHistory.every((m) => !('content' in m && typeof m.content === 'string' && m.content.startsWith('[历史摘要]'))))
   })
 
-  test('已 sent action_records 作为 model role 进 summarize', async () => {
-    const summarizeCalls: SummarizeInput[] = []
-    const savedStates: Array<{ compactedBase: string; lastCompactedMessageRowId: number }> = []
-    const messages = Array.from({ length: 41 }, (_, index) => makeMessage(index + 1))
+  test('summarize 返回空白时不修改 context', async () => {
+    const messages = Array.from({ length: 30 }, (_, i) => makeUserMessage(`消息${i}`.repeat(50)))
+    const ctx = createAgentContext({ initialMessages: messages })
+    const before = JSON.stringify((await ctx.getSnapshot()).messages)
 
-    await maybeCompactConversation(1, 'qq_group:1', {
-      ...TEST_DEPS_LEGACY_THRESHOLDS,
-      getConversationState: async () => ({
-        id: 1,
-        groupId: 1,
-        senderThreadKey: 'qq_group:1',
-        compactedBase: '',
-        compactedVersion: 1,
-        lastCompactedMessageRowId: undefined,
-        createdAt: new Date(0),
-        updatedAt: new Date(0),
-      }),
-      getMessagesAfterRowId: async () => messages,
-      getActionRecordsForScene: async (sceneId) => {
-        assert.equal(sceneId, 'qq_group:1')
-        return [{
-          id: 'action-1',
-          actionIntentId: 'intent-1',
-          actionType: 'send_group_reply',
-          targetSceneId: 'qq_group:1',
-          deliveryState: 'sent',
-          idempotencyKey: 'intent-1',
-          resultPayload: {
-            sourceRefs: { incorporatedMessageRowId: 2, source: 'messages' },
-            proposedEffect: { type: 'reply_to_message', text: '机器人回复' },
-          },
-          createdAt: new Date('2026-04-21T00:02:30Z'),
-          updatedAt: new Date('2026-04-21T00:02:30Z'),
-        }]
-      },
-      saveCompactedState: async (params) => {
-        savedStates.push({
-          compactedBase: params.compactedBase,
-          lastCompactedMessageRowId: params.lastCompactedMessageRowId,
-        })
-      },
-      summarize: captureSummarize({
-        output: '摘要',
-        capture: { calls: summarizeCalls },
-      }),
-    })
-
-    const sent = summarizeCalls[0]?.history ?? []
-    const modelMessages = sent.filter((m): m is Extract<AgentMessage, { role: 'model' }> => 'role' in m && m.role === 'model')
-    assert.equal(modelMessages.length, 1)
-    assert.equal(modelMessages[0]?.content, '机器人回复')
-  })
-
-  test('previousSummary 被透传给 summarize (合并不是简单 append)', async () => {
-    const summarizeCalls: SummarizeInput[] = []
-    const messages = Array.from({ length: 41 }, (_, index) => makeMessage(index + 1))
-
-    await maybeCompactConversation(1, 'qq_group:1', {
-      ...TEST_DEPS_LEGACY_THRESHOLDS,
-      getConversationState: async () => ({
-        id: 1,
-        groupId: 1,
-        senderThreadKey: 'qq_group:1',
-        compactedBase: '上次的摘要内容',
-        compactedVersion: 1,
-        lastCompactedMessageRowId: undefined,
-        createdAt: new Date(0),
-        updatedAt: new Date(0),
-      }),
-      getMessagesAfterRowId: async () => messages,
-      getActionRecordsForScene: async () => [],
-      saveCompactedState: async () => {},
-      summarize: captureSummarize({
-        output: '新摘要',
-        capture: { calls: summarizeCalls },
-      }),
-    })
-
-    assert.equal(summarizeCalls[0]?.previousSummary, '上次的摘要内容')
-  })
-
-  test('summarize 返回空字符串时跳过写入', async () => {
-    const savedStates: Array<unknown> = []
-    const messages = Array.from({ length: 41 }, (_, index) => makeMessage(index + 1))
-
-    await maybeCompactConversation(1, 'qq_group:1', {
-      ...TEST_DEPS_LEGACY_THRESHOLDS,
-      getConversationState: async () => ({
-        id: 1,
-        groupId: 1,
-        senderThreadKey: 'qq_group:1',
-        compactedBase: '',
-        compactedVersion: 1,
-        lastCompactedMessageRowId: undefined,
-        createdAt: new Date(0),
-        updatedAt: new Date(0),
-      }),
-      getMessagesAfterRowId: async () => messages,
-      getActionRecordsForScene: async () => [],
-      saveCompactedState: async (params) => {
-        savedStates.push(params)
-      },
+    await maybeCompactConversation(ctx, {
       summarize: captureSummarize({ output: '   ' }),
+      triggerTokens: 100,
     })
 
-    assert.equal(savedStates.length, 0)
+    const after = JSON.stringify((await ctx.getSnapshot()).messages)
+    assert.equal(after, before)
   })
 
-  test('生产默认阈值 (80/20): 41 条不触发, 81 条触发', async () => {
-    const savedStates: Array<unknown> = []
+  test('cut 边界不切开 tool_calls 和 tool_results', async () => {
+    // 构造形态:5 user + (tool_calls + tool_results 紧邻) + 4 user
+    // 阈值低 + keepRatio 让 cutIndex 落在 tool_calls 之后, 应该被推到 tool_results 之后
+    const messages: AgentMessage[] = [
+      ...Array.from({ length: 5 }, (_, i) => makeUserMessage(`u${i}`.repeat(50))),
+      { role: 'tool_calls', calls: [{ id: 'c1', name: 'db_read', args: { sql: 'select 1' } }] },
+      { role: 'tool_results', results: [{ callId: 'c1', name: 'db_read', output: 'X=42' }] },
+      ...Array.from({ length: 4 }, (_, i) => makeUserMessage(`v${i}`.repeat(50))),
+    ]
+    // 总数 11; ceil(11*0.5) = 6, keep 6; cutIndex = 5 → 落在 user5 之后, 在 tool_calls 之前。OK 这种情况不需要修正。
+    // 我换一个: keepRatio = 0.4 → keep 5; cutIndex = 6 → 落在 tool_calls 之后,要被推到 tool_results 之后 → cutIndex = 7
+    const ctx = createAgentContext({ initialMessages: messages })
 
-    await maybeCompactConversation(1, 'qq_group:1', {
-      getConversationState: async () => ({
-        id: 1,
-        groupId: 1,
-        senderThreadKey: 'qq_group:1',
-        compactedBase: '',
-        compactedVersion: 1,
-        lastCompactedMessageRowId: undefined,
-        createdAt: new Date(0),
-        updatedAt: new Date(0),
-      }),
-      getMessagesAfterRowId: async () => Array.from({ length: 41 }, (_, i) => makeMessage(i + 1)),
-      getActionRecordsForScene: async () => [],
-      saveCompactedState: async (params) => {
-        savedStates.push(params)
-      },
+    await maybeCompactConversation(ctx, {
       summarize: captureSummarize({ output: '摘要' }),
+      triggerTokens: 100,
+      keepRatio: 0.4,
     })
-    assert.equal(savedStates.length, 0)
 
-    await maybeCompactConversation(1, 'qq_group:1', {
-      getConversationState: async () => ({
-        id: 1,
-        groupId: 1,
-        senderThreadKey: 'qq_group:1',
-        compactedBase: '',
-        compactedVersion: 1,
-        lastCompactedMessageRowId: undefined,
-        createdAt: new Date(0),
-        updatedAt: new Date(0),
-      }),
-      getMessagesAfterRowId: async () => Array.from({ length: 81 }, (_, i) => makeMessage(i + 1)),
-      getActionRecordsForScene: async () => [],
-      saveCompactedState: async (params) => {
-        savedStates.push(params)
-      },
-      summarize: captureSummarize({ output: '摘要' }),
+    const after = (await ctx.getSnapshot()).messages
+    // 新结构:[summary, ...tail]; tail 至少包含 4 个尾部 user, 不应该 leading 是 tool_results (孤立 result)
+    assert.equal(after[0]?.role, 'user') // summary head
+    // 第二条不能是孤立的 tool_results (没有对应的 tool_calls)
+    assert.notEqual(after[1]?.role, 'tool_results')
+  })
+
+  test('调用方需 try/catch: summarize 抛错时 context 不变', async () => {
+    const messages = Array.from({ length: 30 }, (_, i) => makeUserMessage(`消息${i}`.repeat(50)))
+    const ctx = createAgentContext({ initialMessages: messages })
+    const before = JSON.stringify((await ctx.getSnapshot()).messages)
+
+    await assert.rejects(async () => {
+      await maybeCompactConversation(ctx, {
+        summarize: async () => {
+          throw new Error('LLM summarizer down')
+        },
+        triggerTokens: 100,
+      })
     })
-    assert.equal(savedStates.length, 1)
+
+    const after = JSON.stringify((await ctx.getSnapshot()).messages)
+    assert.equal(after, before)
+  })
+
+  test('messages 包含 model role 时也走压缩,不退化为文本拼接', async () => {
+    const initial: AgentMessage[] = []
+    for (let i = 0; i < 15; i++) {
+      initial.push(makeUserMessage(`用户${i}: 你好你好你好你好你好你好你好你好`))
+      initial.push(makeModelMessage(`回复${i}: 嗯嗯嗯嗯嗯嗯嗯嗯嗯嗯嗯嗯嗯嗯`))
+    }
+    const ctx = createAgentContext({ initialMessages: initial })
+    const summarizeCalls: SummarizeInput[] = []
+
+    await maybeCompactConversation(ctx, {
+      summarize: captureSummarize({ output: '聊了 15 轮', capture: { calls: summarizeCalls } }),
+      triggerTokens: 100,
+      keepRatio: 0.2,
+    })
+
+    // summarize 收到的 history 里 user/model 形态保留 (不是文本拼接)
+    const history = summarizeCalls[0]?.history ?? []
+    const userCount = history.filter((m) => m.role === 'user').length
+    const modelCount = history.filter((m) => m.role === 'model').length
+    assert.ok(userCount > 0)
+    assert.ok(modelCount > 0)
   })
 })

@@ -215,7 +215,7 @@ describe('passive mention processor', () => {
       sender,
       replyRecordStore: fakeReplyRecordStore(),
       actionRecordStore: fakeActionRecordStore(),
-      compactor: failingCompactor,
+      compactConversation: failingCompactor,
     })
 
     // 不应抛错; 已 sent 的 deliveryResult 仍是 'sent'
@@ -236,7 +236,7 @@ describe('passive mention processor', () => {
       sender,
       replyRecordStore: fakeReplyRecordStore(),
       actionRecordStore: fakeActionRecordStore(),
-      compactor: fakeCompactor(),
+      compactConversation: fakeCompactor(),
     })
 
     const result = await processor.run(makeBatch([event]))
@@ -271,7 +271,7 @@ describe('passive mention processor', () => {
       sender,
       replyRecordStore: fakeReplyRecordStore(),
       actionRecordStore: fakeActionRecordStore(),
-      compactor: fakeCompactor(),
+      compactConversation: fakeCompactor(),
     })
 
     const result = await processor.run(makeBatch([first, second, third, fourth]))
@@ -306,7 +306,7 @@ describe('passive mention processor', () => {
       sender,
       replyRecordStore: fakeReplyRecordStore(),
       actionRecordStore: fakeActionRecordStore(),
-      compactor: fakeCompactor(),
+      compactConversation: fakeCompactor(),
     })
 
     await processor.run(makeBatch([first, second]))
@@ -329,7 +329,7 @@ describe('passive mention processor', () => {
       sender,
       replyRecordStore: fakeReplyRecordStore('sent'),
       actionRecordStore: fakeActionRecordStore('sent'),
-      compactor: fakeCompactor(),
+      compactConversation: fakeCompactor(),
       onReplyRecordSent: async (record) => {
         deliveredTurns.push(record.incorporatedMessageRowId ?? 0)
       },
@@ -358,7 +358,7 @@ describe('passive mention processor', () => {
       sender,
       replyRecordStore: fakeReplyRecordStore('pending', '已存文本'),
       actionRecordStore: fakeActionRecordStore('pending', '已存文本'),
-      compactor: fakeCompactor(),
+      compactConversation: fakeCompactor(),
     })
 
     await processor.run(makeBatch([event]))
@@ -413,7 +413,7 @@ describe('passive mention processor', () => {
         },
       },
       actionRecordStore: fakeActionRecordStore(),
-      compactor: fakeCompactor(),
+      compactConversation: fakeCompactor(),
     })
 
     await processor.run(makeBatch([first, second]))
@@ -462,7 +462,7 @@ describe('passive mention processor', () => {
         },
       },
       actionRecordStore: fakeActionRecordStore(),
-      compactor: fakeCompactor(),
+      compactConversation: fakeCompactor(),
     })
 
     await processor.run(makeBatch([first, second]))
@@ -489,7 +489,7 @@ describe('passive mention processor', () => {
       sender,
       replyRecordStore: fakeReplyRecordStore(),
       actionRecordStore: capturingActionRecordStore(intents),
-      compactor: fakeCompactor(),
+      compactConversation: fakeCompactor(),
     })
 
     await processor.run(makeBatch([event]))
@@ -513,7 +513,7 @@ describe('passive mention processor', () => {
       sender,
       replyRecordStore: fakeReplyRecordStore(),
       actionRecordStore: fakeActionRecordStore(),
-      compactor: fakeCompactor(),
+      compactConversation: fakeCompactor(),
       onReplyRecordSent: async (record) => {
         deliveredTurns.push(record.incorporatedMessageRowId ?? 0)
       },

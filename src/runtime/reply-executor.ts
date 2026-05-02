@@ -7,6 +7,7 @@ import { generateMentionReply } from '../responder/reply-generator.js'
 import type { IncomingMessage } from '../responder/pipeline.js'
 import type { AgentContext } from '../agent/agent-context.js'
 import { createSceneAgentContext } from '../agent/scene-agent-context-store.js'
+import { maybeCompactConversation } from '../conversation/compaction.js'
 import { createReplyAudit, createOrReuseReplyAudit } from '../conversation/reply-audit-store.js'
 import type { ReplyDeliveryPayload, ReplyRecord } from '../conversation/reply-record-store.js'
 import { createReplyDecisionEngine, type ReplyDecisionEngine } from './reply-decision-engine.js'
@@ -30,6 +31,8 @@ export interface ReplyExecutorOptions {
   buildIncomingMessage?: (opportunity: ReplyOpportunity) => Promise<IncomingMessage | null>
   /** 注入 scene → AgentContext 的加载器, 测试用。生产默认走 createSceneAgentContext。 */
   loadAgentContext?: (sceneId: string) => Promise<AgentContext>
+  /** post-send compaction; 测试可注入 noop, 生产默认走 maybeCompactConversation。 */
+  compactConversation?: (context: AgentContext) => Promise<void>
   sender?: MessageSender
   replyRecordStore?: {
     findByReplyIntentId: (runtimeKey: string, replyIntentId: string) => Promise<ReplyRecord | null>
@@ -180,6 +183,7 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
       generateMentionReply(message, { context }, opportunity))
   const loadAgentContext = options.loadAgentContext
     ?? ((sceneId: string) => createSceneAgentContext({ sceneId }))
+  const compactConversation = options.compactConversation ?? maybeCompactConversation
   const sender = options.sender ?? messageSender
   const replyRecordStore = options.replyRecordStore
   const configuredReplyAuditStore = options.replyAuditStore
@@ -367,6 +371,7 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
           // Phase C: 投递成功才把 final answer 作为 model role 写进 AgentContext。
           // 失败 / dry_run 时不写, 历史里就不会出现「假回复」, 下次 @ 时模型也不会
           // 误以为自己已经说过这话。
+          // Phase D: 在同一个 try 之外起独立 try, 让 compaction 失败不影响 model role 落账。
           if (agentContext) {
             try {
               await agentContext.appendAssistantTurn({ role: 'model', content: reply })
@@ -374,6 +379,14 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
               log.warn(
                 { err, sceneId: opportunity.sceneId, replyIntentId },
                 'agent_context_append_assistant_turn_failed',
+              )
+            }
+            try {
+              await compactConversation(agentContext)
+            } catch (err) {
+              log.warn(
+                { err, sceneId: opportunity.sceneId, replyIntentId },
+                'compaction_failed_post_send',
               )
             }
           }
@@ -469,6 +482,14 @@ export function createReplyExecutor(options: ReplyExecutorOptions = {}): ReplyEx
             log.warn(
               { err, sceneId: opportunity.sceneId, replyIntentId },
               'agent_context_append_assistant_turn_failed',
+            )
+          }
+          try {
+            await compactConversation(agentContext)
+          } catch (err) {
+            log.warn(
+              { err, sceneId: opportunity.sceneId, replyIntentId },
+              'compaction_failed_post_send',
             )
           }
         }

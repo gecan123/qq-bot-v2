@@ -2,7 +2,6 @@ import { getMessageById } from '../database/messages.js'
 import type { Message } from '../generated/prisma/client.js'
 import type { ConversationWorkerResult, GroupConversationBatch, MentionEvent } from '../conversation/types.js'
 import { toSceneReplyScopeKey } from '../conversation/reply-scope.js'
-import { maybeCompactConversation } from '../conversation/compaction.js'
 import { messageSender } from '../messaging/message-sender.js'
 import { createLogger } from '../logger.js'
 import { resolveMessage } from '../media/message-resolver.js'
@@ -25,8 +24,6 @@ export interface PassiveMentionProcessorOptions extends ReplyExecutorOptions {
   getMessage?: (groupId: number, messageId: number) => Promise<StoredConversationMessage | null>
   resolveSegments?: (message: StoredConversationMessage) => Promise<ParsedSegment[]>
   onReplyRecordSent?: (record: ReplyRecord) => Promise<void>
-  /** 测试覆盖。生产默认走 maybeCompactConversation, 失败 try/catch 不污染 sent reply。 */
-  compactor?: (groupId: number, senderThreadKey: string) => Promise<void>
   executor?: ReplyExecutor
 }
 
@@ -98,7 +95,6 @@ export function createPassiveMentionProcessor(
   const getMessage = options.getMessage ?? defaultGetMessage
   const resolveSegments = options.resolveSegments ?? defaultResolveSegments
   const sender = options.sender ?? messageSender
-  const compactor = options.compactor ?? maybeCompactConversation
   const executor = options.executor ?? createReplyExecutor({
     ...options,
     buildIncomingMessage: async (opportunity) => {
@@ -167,18 +163,8 @@ export function createPassiveMentionProcessor(
           createdAt: new Date(latestEvent.createdAt),
         })
 
-        if (result.deliveryResult === 'sent') {
-          // Phase 1.5 P1.2: compaction 是 post-send best-effort, 不能让 LLM summary 失败
-          // 污染已 sent 的 deliveryResult。catch / log 即可。
-          try {
-            await compactor(batch.groupId, scopeKey)
-          } catch (err) {
-            log.warn(
-              { err, groupId: batch.groupId, senderThreadKey: scopeKey },
-              'compaction_failed_post_send',
-            )
-          }
-        }
+        // Phase D: compaction 已迁移到 reply-executor 内部 (在它持有 AgentContext 的位置).
+        // passive-mention-processor 不再 post-send 触发 compaction。
         deliveryResults.push(result.deliveryResult ?? 'skipped')
       }
 

@@ -155,6 +155,8 @@ Multi-turn agent reasoning for @-mention replies. Triggered based on `AgentMode`
 
 ## Skill routing
 
+<!-- 以下 skill 均为 GStack 提供的专用技能，需安装 GStack 后方可使用 -->
+
 When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
 
 Key routing rules:

@@ -22,11 +22,15 @@ import type http from 'node:http'
 import { pathToFileURL } from 'node:url'
 import { messageSender } from './messaging/message-sender.js'
 import { parseV2exFeedTargets, startV2exForumPolling } from './curiosity/v2ex-connector.js'
+import type { ForumReadItemInput } from './curiosity/forum-read-executor.js'
+import { startProactiveScheduler } from './runtime/proactive-scheduler.js'
 
 let httpServer: http.Server | null = null
 let rootRuntime: ReturnType<typeof createRootRuntimeManager> | null = null
 let runtimeSchedulerTimer: NodeJS.Timeout | null = null
 let v2exForumTimers: NodeJS.Timeout[] = []
+let proactiveSchedulerTimers: NodeJS.Timeout[] = []
+const proactiveDigestBuffer: ForumReadItemInput[] = []
 const log = createLogger('APP')
 
 function isGptModel(model: string): boolean {
@@ -268,8 +272,17 @@ async function main() {
     interestKeywords: config.v2exForum.interestKeywords,
     fetchDetails: config.v2exForum.fetchDetails,
     detailReplyLimit: config.v2exForum.detailReplyLimit,
-    onPoll: ({ target, itemCount, readCount }) => {
+    onPoll: ({ target, itemCount, readCount, items }) => {
       log.info({ target, itemCount, readCount }, 'V2EX read-only forum poll completed')
+      if (items.length === 0) return
+      const seen = new Set(proactiveDigestBuffer.map((i) => i.externalId))
+      const fresh = items.filter((i) => !seen.has(i.externalId))
+      if (fresh.length === 0) return
+      proactiveDigestBuffer.unshift(...fresh)
+      const limit = config.proactive.maxDigestItems
+      if (proactiveDigestBuffer.length > limit) {
+        proactiveDigestBuffer.length = limit
+      }
     },
     onError: (error, target) => {
       log.warn({ err: error, target }, 'V2EX read-only forum poll failed')
@@ -285,7 +298,33 @@ async function main() {
       'V2EX read-only forum polling started',
     )
   }
+  proactiveSchedulerTimers = startProactiveScheduler({
+    groupIds: config.groupIds,
+    intervalMs: config.proactive.intervalMs,
+    initialDelayMs: config.proactive.initialDelayMs,
+    getForumDigest: () => buildProactiveDigest(proactiveDigestBuffer),
+  })
+  if (proactiveSchedulerTimers.length > 0) {
+    log.info(
+      {
+        groupIds: config.groupIds,
+        intervalMs: config.proactive.intervalMs,
+        initialDelayMs: config.proactive.initialDelayMs,
+      },
+      'Proactive scheduler started',
+    )
+  }
   log.info('Root runtime passive mention execution started')
+}
+
+function buildProactiveDigest(items: ForumReadItemInput[]): string | null {
+  if (items.length === 0) return null
+  const lines = items.map((item) => {
+    const author = item.author ? ` (by ${item.author})` : ''
+    const url = item.url ? ` ${item.url}` : ''
+    return `- ${item.title}${author}${url}`
+  })
+  return lines.join('\n')
 }
 
 async function shutdown() {
@@ -298,6 +337,11 @@ async function shutdown() {
     clearInterval(timer)
   }
   v2exForumTimers = []
+  for (const timer of proactiveSchedulerTimers) {
+    clearTimeout(timer)
+    clearInterval(timer)
+  }
+  proactiveSchedulerTimers = []
   rootRuntime?.stopPassiveExecution?.()
   jobQueue.stop()
   httpServer?.close()

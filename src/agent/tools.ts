@@ -138,6 +138,54 @@ function formatWebSearchResults(
   return truncate(JSON.stringify(payload, null, 2), WEB_SEARCH_MAX_OUTPUT_CHARS)
 }
 
+const proactiveSendDecl: AgentToolDeclaration = {
+  name: 'proactive_send',
+  description: '主动向群发送消息，不需要被 @ 触发。你觉得有值得分享的内容就调用，不确定则用 wait。',
+  inputSchema: z.object({
+    text: z.string().min(1).max(500).describe('要发送的消息内容'),
+  }),
+}
+
+const waitDecl: AgentToolDeclaration = {
+  name: 'wait',
+  description: '暂时不发言。内容不够有趣、或刚刚已发过类似内容时使用。',
+  inputSchema: z.object({
+    reason: z.string().optional().describe('等待原因（可选）'),
+  }),
+}
+
+export interface ProactiveToolsOptions {
+  sendGroupMessage: (text: string) => Promise<void>
+  appendAssistantTurn: (text: string) => Promise<void>
+  onWait?: (reason?: string) => void
+}
+
+export function createProactiveAgentTools(groupId: number, proactiveOptions: ProactiveToolsOptions): AgentTools {
+  const base = createAgentTools(groupId, { dbToolsEnabled: true })
+  const declarations = [
+    ...base.declarations.filter((d) => d.name !== 'final_answer'),
+    proactiveSendDecl,
+    waitDecl,
+  ]
+  return {
+    declarations,
+    executors: {
+      ...base.executors,
+      proactive_send: async (args) => {
+        const parsed = proactiveSendDecl.inputSchema.parse(args) as { text: string }
+        await proactiveOptions.sendGroupMessage(parsed.text)
+        await proactiveOptions.appendAssistantTurn(parsed.text)
+        return '消息已发送'
+      },
+      wait: async (args) => {
+        const parsed = waitDecl.inputSchema.parse(args) as { reason?: string }
+        proactiveOptions.onWait?.(parsed.reason)
+        return 'acknowledged'
+      },
+    },
+  }
+}
+
 export function createAgentTools(groupId: number, options: { dbToolsEnabled?: boolean } = {}): AgentTools {
   const dbToolsEnabled = options.dbToolsEnabled ?? true
   const declarations: AgentToolDeclaration[] = dbToolsEnabled

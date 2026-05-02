@@ -206,6 +206,11 @@ export function parseConfig(env: EnvSource) {
       fetchDetails: parseBoolean(env.V2EX_FORUM_FETCH_DETAILS, true),
       detailReplyLimit: parseNonNegativeInteger(env.V2EX_FORUM_DETAIL_REPLY_LIMIT, 20),
     },
+    proactive: {
+      intervalMs: parseNonNegativeInteger(env.PROACTIVE_SCHEDULER_INTERVAL_MS, 0),
+      initialDelayMs: parseNonNegativeInteger(env.PROACTIVE_SCHEDULER_INITIAL_DELAY_MS, 30_000),
+      maxDigestItems: parsePositiveInteger(env.PROACTIVE_DIGEST_MAX_ITEMS, 12),
+    },
     nodeEnv: env.NODE_ENV || 'development',
     replyMediaTimeoutMs: Number(env.REPLY_MEDIA_TIMEOUT_MS ?? '15000'),
     jobInterDelayMs: Number(env.JOB_INTER_DELAY_MS ?? '200'),

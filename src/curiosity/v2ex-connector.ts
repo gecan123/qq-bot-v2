@@ -42,7 +42,7 @@ export interface V2exPollingOptions extends PollForumConnectorOptions {
   fetchDetails: boolean
   detailReplyLimit: number
   onError?: (error: unknown, target: V2exFeedTarget) => void
-  onPoll?: (result: { target: V2exFeedTarget; itemCount: number; readCount: number }) => void
+  onPoll?: (result: { target: V2exFeedTarget; itemCount: number; readCount: number; items: ForumReadItemInput[] }) => void
 }
 
 const V2EX_BASE_URL = 'https://www.v2ex.com'
@@ -380,7 +380,7 @@ export function startV2exForumPolling(options: V2exPollingOptions): NodeJS.Timeo
         readForumItem: options.readForumItem,
         selectionReason: options.selectionReason ?? `read-only V2EX RSS poll from ${connector.source.externalId}`,
       })
-      options.onPoll?.({ target, itemCount: items.length, readCount: results.length })
+      options.onPoll?.({ target, itemCount: items.length, readCount: results.length, items })
     } catch (error) {
       options.onError?.(error, target)
     }

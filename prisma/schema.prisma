@@ -418,3 +418,17 @@ model RationaleArtifact {
   @@index([readSessionId])
   @@map("rationale_artifacts")
 }
+
+// Phase 1b: bot 私下笔记。IdleThread 写入,reactive @ 只读取(注入 ephemeralSuffix)。
+// 不走 MemoryProposal / SelfSpine 治理——MVP 阶段是 bot 私域 transient 笔记,
+// 不是「认定为事实」的内容。如果污染行为,直接停 IdleThread。
+model InnerJournal {
+  id             Int      @id @default(autoincrement())
+  sceneId        String   @map("scene_id") @db.VarChar(191)
+  content        String   @db.Text
+  sourceEventIds Json     @default("[]") @map("source_event_ids")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([sceneId, createdAt(sort: Desc)], map: "inner_journal_scene_id_created_at_idx")
+  @@map("inner_journal")
+}

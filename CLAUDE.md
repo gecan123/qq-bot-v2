@@ -8,15 +8,13 @@ Commit message format: `<type>: <中文描述>`
 
 The description (after the colon) must be written in Chinese. The `type` prefix stays in English (feat, fix, refactor, docs, test, chore, perf, ci).
 
-## Monorepo Scope Routing
-- First classify the task scope before reading files.
-- If the task explicitly involves admin WebUI design or implementation, read and modify only `apps/admin-web/**` first.
-- If the task is bot/backend related, do not read or modify `apps/admin-web/**`.
-- When working inside admin WebUI, follow `apps/admin-web/CLAUDE.md`.
-
 ## Project Overview
 
-QQ Bot V2 — a QQ group message storage bot. Connects to NapCat (QQ bridge) via WebSocket, listens for group messages, parses them into structured segments, and persists them to PostgreSQL.
+qq-bot-v2 是一个**单上下文 + 主动 + 被动**的 QQ 群 Agent。它接 NapCat 听一个 QQ 群,把消息存进 Postgres,跑一个 Kagami-style 的 BotLoopAgent: LLM 通过 wait 工具决定何时休息,通过 send_group_message 工具决定何时说话。整个 bot 持有**单一**永续 AgentContext (一个 messages 数组),不再有 per-scene 区分。
+
+MVP 阶段只服务 1 个测试群 (`BOT_TARGET_GROUP_ID`),验证 single-context 路线在多源事件下的体感和 cache 经济性。
+
+参考: `docs/single-context-mvp.zh-CN.md`。
 
 ## Experimental Project Policy
 
@@ -31,131 +29,159 @@ Default stance:
 
 ## Perpetual Context Contract
 
-「Perpetual context」 here means: keep the LLM history prefix bit-stable across calls so the provider's prompt cache hits, and use that low marginal cost to extend conversation lifetime indefinitely. This is the project's central design contract — not a "long context window" optimization. README has a 中文 version of this section under 「核心要义：永续上下文」; this is the engineering-side restatement with file pointers.
+「Perpetual context」 here means: keep the LLM history prefix bit-stable across calls so the provider's prompt cache hits, and use that low marginal cost to extend conversation lifetime indefinitely. This is the project's central design contract — not a "long context window" optimization.
 
-**Why it matters.** Claude/OpenAI prompt cache hits are prefix-matched. A hit makes cached input tokens near-free and TTFT near-zero; a miss re-bills and re-attends the whole prefix. If any reply path rewrites earlier turns (reordering messages, refreshing a media description, swapping the system prompt), cache hit rate collapses and the bot's economics break. A stable prefix is what makes 24/7 always-on agents financially viable.
+**Why it matters.** Claude / OpenAI prompt cache hits are prefix-matched. A hit makes cached input tokens near-free and TTFT near-zero; a miss re-bills and re-attends the whole prefix. If any path rewrites earlier turns (reordering messages, refreshing a media description, swapping the system prompt), cache hit rate collapses and the bot's economics break. A stable prefix is what makes 24/7 always-on agents financially viable.
 
 **Hard invariants** — treat any violation as a regression unless explicitly justified in the PR description:
 
-1. **Owned AgentContext is the source of truth.** `src/agent/agent-context.ts` defines `AgentContext`, an object that holds a scene's `AgentMessage[]`. The LLM only ever sees `getSnapshot().messages`. Persistence layer is `scene_agent_contexts.snapshot` (`src/agent/scene-agent-context-store.ts`) — persisted form == runtime form. Don't reintroduce "context as a render product assembled from N tables." If a new feature wants to influence what the LLM sees, it must do so by appending into AgentContext, not by re-rendering.
+1. **Owned `BotAgentContext` is the source of truth.** `src/agent/agent-context.ts` defines `AgentContext`,持有唯一一份 `AgentMessage[]`. The LLM only ever sees `getSnapshot().messages`. Persistence layer is `bot_agent_snapshot.context_snapshot` (single row, `id=1`) via `src/agent/snapshot-repo.ts`. Persisted form == runtime form. Don't reintroduce "context as a render product assembled from N tables." If a new feature wants to influence what the LLM sees, it must do so by appending into AgentContext, not by re-rendering.
 
-2. **`messages` table is for inbound facts, not the LLM ledger.** `messages` remains the canonical audit log of what users sent (used by `db_read` agent tool, media resolution target, quoted-message lookup, recovery source). It is **not** double-written into AgentContext, and AgentContext is **not** rebuilt from it on every turn. Ingestion is one-way and append-time-frozen via `src/agent/scene-message-ingestor.ts`: when `ingestSceneMessages` appends, it captures the message's `resolvedText` *at that moment*; later upserts of `resolvedText` do not rewrite AgentContext.
+2. **`messages` table is for inbound facts, not the LLM ledger.** `messages` 仍是入站事实的审计源 (用于 `db_read` 工具 / 媒体描述目标 / 引用消息查询 / 启动重放). 它**不**双写进 AgentContext, AgentContext 也**不**每轮从它重建. 入库一次性写入,媒体描述就绪后通过 `src/media/ensure-message-ready.ts` 把 `resolved_text` **一次冻结** (once-frozen);后续如果 `description_raw` 更新也**不**重写 `resolved_text`。
 
-3. **Bot replies as `model` role; control tools omitted.** Successful sends append `{role:'model', content: replyText}` via `agentContext.appendAssistantTurn` in `src/runtime/reply-executor.ts`. Failed / dry-run sends do **not** append — history must not contain replies that never went out. Control tools (currently just `final_answer`, see `CONTROL_TOOL_NAMES` in `src/agent/agent-context.ts`) are filtered out of `appendToolCalls` so they never persist as `tool_calls` turns. Normal tool calls (`db_read`, `web_search`, etc.) and their results **do** persist, so the model can see what it queried last turn.
+3. **Bot 通过 `send_group_message` 工具说话,不通过 assistant content。** `src/agent/tools/send-group-message.ts` 是真正的发消息路径。assistant message 的 content 是模型的内部"思考",用于让它跨轮 chain-of-thought,但不会发出去。tool 调用成功才有真发送;失败的 send 不影响 context (tool 自己返回 `{ok:false}`),保证「history 里出现的发言一定真发出去过」这条不变量。
 
-4. **Compaction is the only path that breaks the prefix.** `maybeCompactConversation(context)` in `src/conversation/compaction.ts` is the sole writer that mutates existing messages. It does `replaceMessages([summaryHead, ...keptTail])` in-place on AgentContext: kept tail is byte-identical to its previous form, only the head changes. Trigger is token-based (default 12k token estimate); `keepRatio` defaults to 0.1; cut boundary is extended to never split a `tool_calls` turn from its matching `tool_results` turn. `previousSummary` is a merge input (the system prompt forbids string concatenation). Empty summaries do not write back. Post-send compaction is wrapped in try/catch in `src/runtime/reply-executor.ts` so a compaction failure cannot poison a successful send.
+4. **Compaction 是唯一允许重写前缀的路径。** `src/agent/compaction.ts` 的 `maybeCompactConversation` 是唯一调用 `replaceMessages` 的地方。trigger 是 token 估算 > 12k (默认),`keepRatio` = 0.1。cut 边界不能切开 `assistant.toolCalls` 与对应 `tool` result (锚 toolCallId 检测)。`previousSummary` 作为合并输入,不简单 append。空摘要不写回。post-round compaction 用 try/catch 包,失败不影响已 sent 的消息。
 
-5. **Deterministic replay.** Given the same inputs, `getSnapshot().messages` must be byte-identical across runs. This is the mathematical precondition for prompt-cache hits, not a stylistic preference. `src/agent/context-frame.ts` records `prefixHash` and `tailHash` on every `LlmTrace` so drift is observable in admin-web `/llm-traces`. Designs that make equivalent reruns produce different prefixes are treated as regressions.
+5. **Deterministic replay。** Given the same inputs, `getSnapshot().messages` must be byte-identical across runs. This is the mathematical precondition for prompt-cache hits, not a stylistic preference. `llm_traces` 表的 `prefix_hash` / `tail_hash` / `cached_tokens` 用来观测 cache 命中率。Designs that make equivalent reruns produce different prefixes are treated as regressions.
 
 **Implications for plans / refactors:**
 
-- New side-effect paths must specify whether they touch the prefix. Anything appending to AgentContext (even just a `user` role facts message) is a prefix touch on the next turn.
-- Cache stability is a product feature with directly measurable cost impact — admin-web `/llm-traces` is the canonical observation surface (prefix-hash switch count, `cached_tokens` ratio per scene).
-- Late-binding facts (media descriptions arriving after the message was already in history) belong in tail-only fields or behind the `resolvedText` freeze barrier — never injected back into already-committed AgentContext entries.
-- Before introducing a new field that influences `getSnapshot().messages`, check whether it is bit-stable across reruns of the same scope. If not, keep it out of AgentContext entirely or gate it behind a frozen / append-only structure.
-- Don't add `appendXxx` methods to AgentContext that don't have a clear "what does the LLM see" answer. If a feature needs structured metadata (cursors, indexes), put it in `AgentContextSnapshot` outside the `messages` array (see `lastObservedMessageRowId` for the precedent).
+- 新事件源 (forum / RSS / 系统通知) 必须明确说明:它怎么渲染成一条 `user`-role AgentMessage,然后 `appendUserMessage` 进 AgentContext。**不**改写已有 messages,**不**插入到 prefix 中段。
+- 跨"会话"知识流 (LLM 在群 A 听到, 想在群 B 用) 在 single-context 模型下天然拥有,不需要额外 inner_journal / RAG 桥。MVP 阶段单群,这个能力等到扩多群时再回来重新评估。
+- system prompt 在启动后**不变** (`src/agent/bot-system-prompt.ts` 启动时一次拼装). 修改 system prompt = 整段 cache 失效, 这是有意为之, 提醒只能集中改。
+- 工具描述同上,集中改,不小步频改。
+- 大块原始数据 (web 抓页 / 长文件) 走子 TaskAgent 模式 (现 MVP 暂未实现),**只回摘要给主 context**,不要让原始 token 进 messages 数组。
+- Late-binding 信息 (媒体描述在消息已入库后才返回) 走 `resolved_text` 一次冻结。如果某条消息的描述在它进入 BotEvent 之前还没好,`ensureMessageReadyForAgent` 会等待最多 `REPLY_MEDIA_TIMEOUT_MS`,然后用当前最佳值冻结,后续不再变。
 
 ## Commands
 
 ```bash
-pnpm dev              # Run with tsx watch (hot reload)
-pnpm build            # TypeScript compile to dist/
-pnpm start            # Run compiled output (node dist/index.js)
-pnpm db:generate      # Generate Prisma client (after schema changes)
-pnpm db:migrate       # Create and apply migrations
-pnpm db:push          # Push schema directly (no migration files)
+pnpm dev              # tsx watch (hot reload)
+pnpm build            # rm -rf dist && tsc
+pnpm start            # node dist/index.js
+pnpm db:generate      # prisma generate (after schema changes)
+pnpm db:migrate       # prisma migrate dev
+pnpm db:push          # prisma db push (no migration files)
+pnpm test             # tsx --test src/**/*.test.ts
 ```
 
 ## Required Environment Variables
 
-See `.env.example`. All are required at startup:
+See `.env.example`. All required at startup:
 - `DATABASE_URL` — PostgreSQL connection string
 - `NAPCAT_WS_URL` — NapCat WebSocket endpoint
 - `NAPCAT_ACCESS_TOKEN` — NapCat auth token
-- `GROUP_IDS` — comma-separated group IDs to monitor
-- `SELF_NUMBER` — bot's own QQ number (used to ignore self-messages)
+- `BOT_TARGET_GROUP_ID` — MVP 单群 bot 监听并响应的唯一 QQ 群
+- `SELF_NUMBER` — bot 自身 QQ 号 (过滤自身消息)
+
+可选:
+- `TAVILY_API_KEY` — Tavily web search,设置则 web_search 工具自动注册
+- `LLM_PROVIDER_*_URL` / `_API_KEY` — provider 注册表,默认 provider 由 `LLM_DEFAULT_PROVIDER` 选
+- `LLM_SCENARIO_*` — 媒体描述各场景的 provider/model 覆盖
 
 ## Architecture
 
 **ESM-only** (`"type": "module"` in package.json). All local imports use `.js` extensions.
 
-**Flow:** `src/index.ts` → connects Prisma → calls `startBot()` → NapCat WebSocket listens for `message.group` events → parses message segments → upserts to PostgreSQL.
+**启动流程** (`src/index.ts`):
 
-Key modules:
-- `src/bot/napcat.ts` — NCWebsocket client instance (from `node-napcat-ts`)
-- `src/bot/core.ts` — event handlers; filters by group ID and self-number
-- `src/bot/message-parser.ts` — converts NapCat message segments into typed `ParsedSegment` discriminated union (text, image, face, at, reply, raw)
-- `src/database/client.ts` — Prisma client with `@prisma/adapter-pg` driver adapter
-- `src/database/messages.ts` — `insertMessage()` upserts parsed messages; writes `searchText`
-- `src/database/search.ts` — `searchMessages()`, `getUserProfile()`, `getGroupSummary()` for agent tool use
-- `src/types/message-segments.ts` — `ParsedSegment` union type definitions
-- `src/config/index.ts` — env validation (fails fast on missing vars)
-- `src/config/prompt-loader.ts` — `loadPrompt(filePath)` reads and caches prompt files from `prompts/`
-- `src/utils/segment-text.ts` — `segmentsToPlainText(segments)` helper used across context-builder, format-messages, and insertMessage
+1. 连 Prisma → 注册媒体 RoutingProvider → jobQueue 启动
+2. `createLlmClient()` 给 BotLoopAgent 用 (默认 provider/model,与媒体路由独立)
+3. `BotSnapshotRepo.load()` 从 `bot_agent_snapshot` 单行表恢复 AgentContext
+4. `replayMissedMessages(lastWakeAt)` 把关机期间漏掉的 target group 消息一次性 enqueue
+5. `buildBotTools()` 装配 wait / send_group_message / db_schema / db_read / web_search
+6. `createBotLoopAgent({...})` + `startBot({onMessageReady})` 接 NapCat
+7. `agent.start()` — 进入 while 循环
 
-**Prompts:** All static prompt text lives in `prompts/` (not in source code). Key files: `characters/default.md`, `reply-instruction.md`, `proactive-judge.md`, `describe-image.md`, `describe-video.md`, `describe-pdf.md`, `transcribe-audio.md`. Loaded via `loadPrompt()` at first use and cached. Agent persona baseline is loaded from `prompts/characters/default.md` by `src/config/agent-profiles.ts`, and can still be overridden via `agent-config.json`.
+**主循环** (`src/agent/bot-loop-agent.ts`):
 
-**Database:** Prisma 7 with PG driver adapter. Client is generated to `src/generated/prisma/` (not `node_modules`). Single `Message` model with BigInt IDs. After schema changes, run `pnpm db:generate`.
+```
+while (!stopRequested) {
+  drainEvents()          // BotEvent → context.appendUserMessage(renderedText)
+  if (context 是空) await waitForEvent(); continue
+  runRound()             // LLM call + execute tool calls
+  persistSnapshot()      // 写 bot_agent_snapshot
+  maybeCompact()         // token 阈值触发
+  if (queue 空) await waitForEvent()  // 守 LLM 不空跑
+}
+```
 
-**Logging:** pino with pino-pretty. Import `log` from `src/logger.ts`.
+**关键模块**:
+- `src/bot/napcat.ts` — NCWebsocket client
+- `src/bot/core.ts` — NapCat 事件入口,过滤目标群,持久化 + 媒体就绪 + onMessageReady
+- `src/bot/message-parser.ts` — NapCat segments → `ParsedSegment` 联合类型
+- `src/database/messages.ts` — `insertMessage()` upsert + `freezeResolvedTextIfUnset` 一次冻结
+- `src/database/agent-sql.ts` — agent `db_read` 的安全只读 SQL 校验 + 执行
+- `src/media/ensure-message-ready.ts` — 等媒体描述 + 渲染 + 冻结 resolved_text
+- `src/media/message-resolver.ts` — `resolveMessage` 把 segments 跑到带 mediaDescription 的形态
+- `src/agent/agent-context.ts` — single-bot AgentContext (red line 1)
+- `src/agent/event-queue.ts` — `InMemoryEventQueue<BotEvent>`
+- `src/agent/event.ts` — `BotEvent = napcat_message | wake`
+- `src/agent/render-event.ts` — 纯函数 `BotEvent → string` (red line 5)
+- `src/agent/llm-client.ts` — `AgentMessage <-> OpenAI ChatCompletion` 翻译
+- `src/agent/bot-system-prompt.ts` — 启动时一次拼装 (red line 5)
+- `src/agent/snapshot-repo.ts` — `bot_agent_snapshot` 单行持久化
+- `src/agent/compaction.ts` — `maybeCompactConversation` (red line 4 唯一前缀写口)
+- `src/agent/bot-loop-agent.ts` — 主循环
+- `src/agent/replay-missed.ts` — 启动时回放关机期间漏掉的消息
+- `src/agent/tool.ts` — Tool / ToolExecutor 接口
+- `src/agent/tools/*` — wait / send_group_message / db_schema / db_read / web_search
+- `src/messaging/message-sender.ts` + `napcat-sender.ts` — 底层 NapCat 发送 + 重试
+- `src/llm/*` — 媒体描述用的 provider routing (与 agent LLM 独立)
 
-**LLM:** 双 provider 架构，支持按场景路由。
+**Database** (Prisma 7,PG driver adapter): 4 个 model — `Message` / `Media` / `LlmTrace` / `BotAgentSnapshot`. 永续上下文唯一持久化点就是 `bot_agent_snapshot` 单行表 (`id=1`)。
 
-- `src/llm/types.ts` — `LlmProvider` 接口（媒体理解 + 记忆生成）
-- `src/llm/gemini-adapter.ts` — Gemini provider（OAuth 凭证自动检测）
-- `src/llm/openai-adapter.ts` — OpenAI-compatible provider（`openai` SDK，支持自定义 `baseURL`）
-- `src/llm/routing-provider.ts` — 路由层，按场景分发到不同 provider / model
-- `src/llm/provider.ts` — 全局单例 getter/setter
+**Logging**: pino + pino-pretty。`createLogger(scope)` from `src/logger.ts`。
 
-本地部署了 **CLIProxyAPI**（OpenAI-compatible proxy），运行在 `http://127.0.0.1:8317`，暴露 GPT 系列模型。通过以下环境变量接入：
+## LLM 配置
+
+双 provider routing,但 agent 自身的 LLM 调用走 default provider/model,媒体描述按场景路由。
 
 ```
 LLM_DEFAULT_PROVIDER=claude
-LLM_DEFAULT_MODEL=claude-sonnet-4-6
+LLM_DEFAULT_MODEL=gpt-5.1
 
 LLM_PROVIDER_CLAUDE_URL=http://127.0.0.1:8317/v1
 LLM_PROVIDER_CLAUDE_API_KEY=sk-local
-
 LLM_PROVIDER_OPENAI_URL=http://127.0.0.1:8317/v1
 LLM_PROVIDER_OPENAI_API_KEY=sk-local
-
-LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_PROVIDER=openai
-LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_MODEL=gpt-5.4
 ```
 
-即使 `claude` 和 `openai` 暂时都指向同一个本地统一网关，也建议保留两个独立 provider key，后续切换真实上游时只需要改对应 provider 的 URL / API_KEY。
+每个媒体场景可覆盖:
 
-每个场景可单独覆盖 provider 和 model（详见 `.env.example`）：
+| 前缀 | 用途 |
+|---|---|
+| `LLM_SCENARIO_DESCRIBE_IMAGE_*` | 图片/表情包描述 |
+| `LLM_SCENARIO_DESCRIBE_VIDEO_*` | 视频描述 |
+| `LLM_SCENARIO_DESCRIBE_PDF_*` | PDF 描述 |
+| `LLM_SCENARIO_TRANSCRIBE_AUDIO_*` | 音频转写 |
 
-| 场景环境变量前缀 | 对应方法 | 用途 |
-|---|---|---|
-| `LLM_DESCRIBE_IMAGE_*` | `describeImage` | 图片/表情包描述 |
-| `LLM_TRANSCRIBE_AUDIO_*` | `transcribeAudio` | 音频转写 |
+详见 `.env.example`。
 
-## Agent Loop
+## Agent 行为
 
-Multi-turn agent reasoning for @-mention replies. Triggered based on `AgentMode` in agent profiles.
+bot 通过工具自主决定:
+- `wait`: 没事可做时调用,阻塞到下个 BotEvent
+- `send_group_message`: 真发到 `BOT_TARGET_GROUP_ID`,可 reply 或 ambient
+- `db_schema` / `db_read`: 查历史聊天 / 媒体描述 (只读 SQL,自动注入 `:group_id`)
+- `web_search`: 仅在 `TAVILY_API_KEY` 配置时注册
 
-- `src/agent/types.ts` — `AgentLlmAdapter` interface, `ToolCall`, `ToolResult`, `AgentMessage`, `TurnResult`, `LoopResult` types
-- `src/agent/heuristic.ts` — `shouldUseAgent(text)` regex heuristic for deciding when to use agent mode
-- `src/agent/tools.ts` — `createAgentTools(groupId)` factory returning read-only tools with zod validation: `db_schema`, `db_read`, structured `final_answer`, and optionally `web_search` (requires `TAVILY_API_KEY`)
-- `src/agent/openai-agent-adapter.ts` — `OpenAIAgentAdapter` implementing `AgentLlmAdapter` via OpenAI function calling; `createOpenAIAgentAdapter()` factory using `LLM_AGENT_*` env vars (falls back to `OPENAI_*`)
-- `src/agent/loop.ts` — `runAgentLoop()` with maxSteps=4, maxTimeMs=30s, final/fallback/aborted states
-- `src/config/agent-profiles.ts` — `AgentProfile` supports `personaFile` (path to `.md`) or inline `persona` string; default persona baseline comes from `prompts/characters/default.md`, and `getAgentProfile()` merges default → config.default → group and resolves persona
+system prompt (`src/agent/bot-system-prompt.ts`) 明示 LLM:
+- 主动发也走工具,assistant content 只是内心想法
+- 优先 wait,质量比频率重要
+- 群消息会以 `[昵称(QQ:id) [@bot]] text` 形式作为 user message 进 history
 
-**At-mention routing:** `src/responder/handlers/at-mention.ts` always routes to the async agent reply pipeline. There is no single-turn reply fallback.
+## Prompts
 
-**Message schema:** `prisma/schema.prisma` added `searchText String @default("")` to Message model for agent search tool. Backfill with `scripts/backfill-search-text.ts`.
+所有静态 prompt 文本在 `prompts/`。当前用到:
+- `prompts/characters/default.md` — bot 人设基座 (`bot-system-prompt.ts` 通过 `loadPrompt` 加载)
 
-**Agent env vars:**
-- `LLM_AGENT_BASE_URL` — OpenAI-compatible base URL for agent (falls back to `OPENAI_BASE_URL`)
-- `LLM_AGENT_API_KEY` — API key for agent (falls back to `OPENAI_API_KEY`)
-- `LLM_AGENT_MODEL` — model for agent (falls back to `OPENAI_MODEL`)
-- `TAVILY_API_KEY` — (optional) Tavily web search API key; enables `web_search` tool in agent loop when set
+旧的 reply-instruction / proactive-judge / 媒体描述 prompts 保留在 `prompts/` 目录,但当前 single-context MVP 不再使用 (媒体描述还在用图/视频/PDF/音频几个)。
 
 ## Skill routing
 
-<!-- 以下 skill 均为 GStack 提供的专用技能，需安装 GStack 后方可使用 -->
+<!-- 以下 skill 均为 GStack 提供的专用技能,需安装 GStack 后方可使用 -->
 
 When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
 

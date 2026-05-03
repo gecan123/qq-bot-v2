@@ -1,6 +1,7 @@
 import { prisma } from '../database/client.js'
 import type { BotEvent } from './event.js'
-import { ensureMessageReadyForAgent } from '../media/ensure-message-ready.js'
+import type { Message } from '../generated/prisma/client.js'
+import { ensureMessageReadyForAgent as defaultEnsureReady } from '../media/ensure-message-ready.js'
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
 
@@ -28,6 +29,10 @@ export interface ReplayMissedDeps {
    */
   enqueueMessageEvent: (event: BotEvent) => boolean
   selfNumber: number
+  /**
+   * 测试可注入. 默认走 src/media/ensure-message-ready.ts 的实现 (等待媒体描述 + 冻结 resolved_text).
+   */
+  ensureReady?: (message: Message) => Promise<{ renderedText: string; fromFrozen: boolean }>
 }
 
 export async function replayMissedMessages(
@@ -59,10 +64,11 @@ export async function replayMissedMessages(
     orderBy: { createdAt: 'asc' },
   })
 
+  const ensureReady = deps.ensureReady ?? defaultEnsureReady
   let enqueued = 0
   let skipped = 0
   for (const row of rows) {
-    const ready = await ensureMessageReadyForAgent(row)
+    const ready = await ensureReady(row)
     const segments = row.content as unknown as Array<{ type: string; targetId?: string }>
     const mentionedSelf = segments.some(
       (seg) => seg.type === 'at' && seg.targetId === String(deps.selfNumber),

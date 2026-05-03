@@ -14,6 +14,10 @@ describe('createAgentContext', () => {
   })
 
   test('appendUserMessage / appendAssistantTurn / appendToolResult build sane history', () => {
+    // Note: 'send_group_message' here is the historical (MVP-1) tool name, retained in this
+    // fixture to represent a snapshot persisted under the old name. After MVP-2 rename, real
+    // bot snapshots will store 'send_message' instead, but already-persisted history is
+    // immutable (red line 5 byte stability) so the old name stays in production rows too.
     const ctx = createAgentContext()
     ctx.appendUserMessage('张三: 在吗')
     ctx.appendAssistantTurn({

@@ -14,7 +14,10 @@ export type SqlValidationResult =
 export interface ExecuteDbReadParams {
   sql: string
   params?: Record<string, SqlParamValue>
-  groupId: number
+  /** 群消息白名单. 若 SQL 出现 :group_id 占位符, params.group_id 必须在该白名单内. */
+  groupIdWhitelist: readonly number[]
+  /** 私聊白名单. 若 SQL 出现 :peer_id 占位符, params.peer_id 必须在该白名单内. */
+  peerIdWhitelist: readonly number[]
   maxRows?: number
   statementTimeoutMs?: number
   maxOutputChars?: number
@@ -29,9 +32,6 @@ export interface DbReadResult {
 }
 
 const DANGEROUS_SQL_KEYWORDS = /\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|vacuum|analyze|refresh|merge|call|do|copy)\b/i
-const GROUP_PARAM_RE = /(^|[^a-zA-Z0-9_]):group_id\b/
-const GROUP_FILTER_RE = /\b(?:[a-zA-Z_][a-zA-Z0-9_]*\.)?group_id\s*=\s*:group_id\b/i
-const DENIED_AGENT_READ_TABLE_RE = /\b(reply_records|reply_audits|proactive_evaluations)\b/i
 
 function normalizeSql(sql: string): string {
   return sql.replace(/;+\s*$/, '').trim()
@@ -53,19 +53,6 @@ export function validateDbReadSql(sql: string): SqlValidationResult {
 
   if (DANGEROUS_SQL_KEYWORDS.test(normalizedSql)) {
     return { ok: false, reason: 'SQL contains disallowed keyword for read-only execution' }
-  }
-
-  const deniedTable = normalizedSql.match(DENIED_AGENT_READ_TABLE_RE)?.[1]
-  if (deniedTable) {
-    return { ok: false, reason: `${deniedTable} is not available to agent db_read` }
-  }
-
-  if (!GROUP_PARAM_RE.test(normalizedSql)) {
-    return { ok: false, reason: 'SQL must include :group_id parameter' }
-  }
-
-  if (!GROUP_FILTER_RE.test(normalizedSql)) {
-    return { ok: false, reason: 'SQL must include an explicit group filter predicate' }
   }
 
   return { ok: true, normalizedSql }
@@ -137,6 +124,15 @@ function limitRowsByOutputSize(
   return { rows: trimmed, truncatedByOutput }
 }
 
+function asNumber(value: SqlParamValue): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
 export async function executeDbRead(params: ExecuteDbReadParams): Promise<DbReadResult> {
   const validation = validateDbReadSql(params.sql)
   if (!validation.ok) {
@@ -146,9 +142,30 @@ export async function executeDbRead(params: ExecuteDbReadParams): Promise<DbRead
   const maxRows = params.maxRows ?? 200
   const timeoutMs = params.statementTimeoutMs ?? 8_000
   const maxOutputChars = params.maxOutputChars ?? 8_000
-  const namedParams: Record<string, SqlParamValue> = {
-    ...(params.params ?? {}),
-    group_id: params.groupId,
+
+  // LLM displays params explicitly. We do NOT auto-inject — multi-source means
+  // queries can be cross-source (no group filter), group-only, private-only, or
+  // mixed. But if the SQL uses :group_id / :peer_id, that value must be whitelisted.
+  const namedParams: Record<string, SqlParamValue> = { ...(params.params ?? {}) }
+
+  if ('group_id' in namedParams) {
+    const value = namedParams.group_id
+    const num = value == null ? null : asNumber(value as SqlParamValue)
+    if (num == null || !params.groupIdWhitelist.includes(num)) {
+      throw new Error(
+        `params.group_id (${String(value)}) is not in BOT_TARGET_GROUP_IDS whitelist`,
+      )
+    }
+  }
+
+  if ('peer_id' in namedParams) {
+    const value = namedParams.peer_id
+    const num = value == null ? null : asNumber(value as SqlParamValue)
+    if (num == null || !params.peerIdWhitelist.includes(num)) {
+      throw new Error(
+        `params.peer_id (${String(value)}) is not in BOT_TARGET_PRIVATE_USER_IDS whitelist`,
+      )
+    }
   }
 
   const compiled = compileNamedSql(validation.normalizedSql, namedParams)

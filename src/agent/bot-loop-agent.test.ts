@@ -45,6 +45,10 @@ function makeMockSnapshotRepo(): { repo: BotSnapshotRepo; saved: PersistedAgentS
   return { repo, saved }
 }
 
+// Note: 'send_group_message' references in fixtures below are intentionally retained as the
+// historical (MVP-1) tool name, mirroring how persisted bot snapshots from before the MVP-2
+// rename look on disk. New code calls the tool 'send_message' (see src/agent/tools/send-message.ts);
+// already-persisted history stays as-is (red line 5: byte stability of historical turns).
 describe('BotLoopAgent.runOnceForTest', () => {
   test('drains napcat events into context as user messages, runs LLM, executes tools', async () => {
     const ctx = createAgentContext()

@@ -21,6 +21,7 @@ import { createBotLoopAgent } from './agent/bot-loop-agent.js'
 import { renderBotEvent } from './agent/render-event.js'
 import { replayMissedMessages } from './agent/replay-missed.js'
 import { resolveTargetMetadataMaps } from './agent/resolve-target-meta.js'
+import { createDedupEnqueue } from './agent/dedup-enqueue.js'
 
 const log = createLogger('APP')
 
@@ -125,17 +126,9 @@ async function main() {
     log.info('AgentContext 从空启动 (无 snapshot)')
   }
 
-  // 5. 事件队列 + messageRowId 去重 (replay-missed × live event 重叠时去重)
+  // 5. 事件队列 + messageRowId 去重 (replay-missed × live event 重叠时去重, 见 dedup-enqueue.ts)
   const eventQueue = new InMemoryEventQueue<BotEvent>()
-  const enqueuedMessageRowIds = new Set<number>()
-  const enqueueMessageEvent = (event: BotEvent): boolean => {
-    if (event.type === 'napcat_message' || event.type === 'napcat_private_message') {
-      if (enqueuedMessageRowIds.has(event.messageRowId)) return false
-      enqueuedMessageRowIds.add(event.messageRowId)
-    }
-    eventQueue.enqueue(event)
-    return true
-  }
+  const enqueueMessageEvent = createDedupEnqueue(eventQueue)
 
   // 6. NapCat: register handlers (sync). 实时消息会进 onMessageReady → enqueueMessageEvent.
   const onMessageReady = async (input: IngestedMessage) => {

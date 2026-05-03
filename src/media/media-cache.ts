@@ -63,8 +63,12 @@ function resolveContentType(headerContentType: string | undefined, fileName: str
   return MIME_BY_EXT[ext] ?? headerContentType
 }
 
+type MediaScope =
+  | { kind: 'group'; groupId: number }
+  | { kind: 'private'; peerId: number }
+
 interface CacheInput {
-  groupId: number
+  scope: MediaScope
   messageId: number
   senderId: number
   segment: MediaSegment
@@ -123,6 +127,7 @@ function parseFileSize(fileSize?: string): number | undefined {
 
 async function cacheMediaSegment(input: CacheInput): Promise<string | undefined> {
   const { segment, napcat } = input
+  void input.scope
 
   const fileSizeBytes = parseFileSize(segment.fileSize)
 
@@ -209,7 +214,7 @@ async function cacheMediaSegment(input: CacheInput): Promise<string | undefined>
 
 export async function persistMediaReferences(params: {
   content: ParsedSegment[]
-  groupId: number
+  scope: MediaScope
   messageId: number
   senderId: number
   napcat: NCWebsocket
@@ -226,7 +231,7 @@ export async function persistMediaReferences(params: {
     try {
       const referenceId = await cacheMediaSegment({
         segment,
-        groupId: params.groupId,
+        scope: params.scope,
         messageId: params.messageId,
         senderId: params.senderId,
         napcat: params.napcat,

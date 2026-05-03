@@ -12,7 +12,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test --import tsx 'src/**/*.test.ts'"
   },
   "keywords": [],
   "author": "",

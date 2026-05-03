@@ -1,5 +1,6 @@
 import { prisma } from './database/client.js'
-import { startBot, type IngestedMessage } from './bot/core.js'
+import { connectNapcat, registerNapcatHandlers, type IngestedMessage } from './bot/core.js'
+import { napcat } from './bot/napcat.js'
 import { createLogger } from './logger.js'
 import { jobQueue } from './queue/index.js'
 import { setLlmProvider } from './llm/provider.js'
@@ -19,6 +20,7 @@ import { buildBotTools } from './agent/tools/index.js'
 import { createBotLoopAgent } from './agent/bot-loop-agent.js'
 import { renderBotEvent } from './agent/render-event.js'
 import { replayMissedMessages } from './agent/replay-missed.js'
+import { resolveTargetMetadataMaps } from './agent/resolve-target-meta.js'
 
 const log = createLogger('APP')
 
@@ -84,7 +86,7 @@ async function main() {
       groupIds: config.botTargetGroupIds,
       privateUserIds: config.botTargetPrivateUserIds,
     },
-    'qq-bot-v2 single-context MVP 启动',
+    'qq-bot-v2 single-context MVP-2 启动',
   )
   await prisma.$connect()
   log.info('数据库已连接')
@@ -123,20 +125,84 @@ async function main() {
     log.info('AgentContext 从空启动 (无 snapshot)')
   }
 
-  // 5. 事件队列 + 关机期间消息回放
+  // 5. 事件队列 + messageRowId 去重 (replay-missed × live event 重叠时去重)
   const eventQueue = new InMemoryEventQueue<BotEvent>()
+  const enqueuedMessageRowIds = new Set<number>()
+  const enqueueMessageEvent = (event: BotEvent): boolean => {
+    if (event.type === 'napcat_message' || event.type === 'napcat_private_message') {
+      if (enqueuedMessageRowIds.has(event.messageRowId)) return false
+      enqueuedMessageRowIds.add(event.messageRowId)
+    }
+    eventQueue.enqueue(event)
+    return true
+  }
+
+  // 6. NapCat: register handlers (sync). 实时消息会进 onMessageReady → enqueueMessageEvent.
+  const onMessageReady = async (input: IngestedMessage) => {
+    if (input.kind === 'group') {
+      enqueueMessageEvent({
+        type: 'napcat_message',
+        messageRowId: input.messageRowId,
+        groupId: input.groupId,
+        groupName: input.groupName,
+        messageId: input.messageId,
+        senderId: input.senderId,
+        senderNickname: input.senderNickname,
+        mentionedSelf: input.mentionedSelf,
+        sentAt: input.sentAt,
+        renderedText: input.renderedText,
+      })
+    } else {
+      enqueueMessageEvent({
+        type: 'napcat_private_message',
+        messageRowId: input.messageRowId,
+        peerId: input.peerId,
+        messageId: input.messageId,
+        senderId: input.senderId,
+        senderNickname: input.senderNickname,
+        mentionedSelf: true,
+        sentAt: input.sentAt,
+        renderedText: input.renderedText,
+      })
+    }
+  }
+  registerNapcatHandlers({ onMessageReady })
+
+  // 7. NapCat connect (D2: must be before resolveTargetMetadataMaps)
+  await connectNapcat()
+
+  // 8. 启动元数据 (群名 / 私聊昵称) — 用于拼 system prompt
+  const targetMetadata = await resolveTargetMetadataMaps({
+    napcat,
+    groupIds: config.botTargetGroupIds,
+    privateUserIds: config.botTargetPrivateUserIds,
+  })
+
+  // 9. 关机期间消息回放. 在 connect 之后跑也安全, 因为 enqueueMessageEvent 按
+  //    messageRowId 去重 (步骤 5), live 已经先入队的就不会被 replay 重复入队.
   const replayResult = await replayMissedMessages(persisted?.lastWakeAt ?? null, {
-    eventQueue,
+    enqueueMessageEvent,
     selfNumber: config.selfNumber,
   })
   log.info({ enqueued: replayResult.enqueued }, 'replay-missed 完成')
 
-  // 6. 工具集
-  const tools = createToolExecutor(buildBotTools({ sender: messageSender }))
+  // 10. 工具集 + bot system prompt (启动后定型, 进程内不变)
+  const tools = createToolExecutor(
+    buildBotTools({
+      sender: messageSender,
+      groupIdWhitelist: config.botTargetGroupIds,
+      privateUserIdWhitelist: config.botTargetPrivateUserIds,
+    }),
+  )
+  const systemPrompt = buildBotSystemPrompt({
+    groupIds: config.botTargetGroupIds,
+    privateUserIds: config.botTargetPrivateUserIds,
+    metadata: targetMetadata,
+  })
 
-  // 7. BotLoopAgent
+  // 11. BotLoopAgent
   const agent = createBotLoopAgent({
-    systemPrompt: buildBotSystemPrompt(),
+    systemPrompt,
     context,
     eventQueue,
     llm,
@@ -145,23 +211,7 @@ async function main() {
     renderEvent: renderBotEvent,
   })
 
-  // 8. NapCat 接入: 真消息 → ingest → enqueue
-  const onMessageReady = async (input: IngestedMessage) => {
-    eventQueue.enqueue({
-      type: 'napcat_message',
-      messageRowId: input.messageRowId,
-      groupId: input.groupId,
-      messageId: input.messageId,
-      senderId: input.senderId,
-      senderNickname: input.senderNickname,
-      mentionedSelf: input.mentionedSelf,
-      sentAt: input.sentAt,
-      renderedText: input.renderedText,
-    })
-  }
-  await startBot({ onMessageReady })
-
-  // 9. 进入主循环
+  // 12. 进入主循环
   log.info('BotLoopAgent 进入主循环')
   await agent.start()
 }

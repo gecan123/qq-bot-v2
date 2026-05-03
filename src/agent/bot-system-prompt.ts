@@ -1,43 +1,91 @@
 import { loadPrompt } from '../config/prompt-loader.js'
-import { config } from '../config/index.js'
+import type { TargetMetadataMaps } from './resolve-target-meta.js'
 
 /**
- * 启动时构建一次 system prompt,之后整个进程生命周期不再变。
+ * 启动时构建一次 system prompt, 之后整个进程生命周期不再变。
  *
  * 红线 5: system prompt 字节变化 = 整段 cache 失效。绝对不能在运行时拼接动态状态、
- * 时间戳、计数器进 system prompt。
+ * 时间戳、计数器进 system prompt。多源场景下进程启动时元数据不同 (群名 / 昵称变了)
+ * 会导致 prompt 字节变, cache 整段失效 —— 这是设计预期, 不是 bug。
  */
-export function buildBotSystemPrompt(): string {
+export interface BuildBotSystemPromptInput {
+  groupIds: readonly number[]
+  privateUserIds: readonly number[]
+  metadata: TargetMetadataMaps
+}
+
+function renderSourceList(input: BuildBotSystemPromptInput): string {
+  const lines: string[] = []
+  if (input.groupIds.length > 0) {
+    lines.push('你监听这些 QQ 群:')
+    for (const groupId of input.groupIds) {
+      const name = input.metadata.groupNames.get(groupId)
+      if (name) lines.push(`  - 群 ${name} (id=${groupId})`)
+      else lines.push(`  - 群 (id=${groupId})`)
+    }
+  }
+  if (input.privateUserIds.length > 0) {
+    if (lines.length > 0) lines.push('以及这些私聊:')
+    else lines.push('你监听这些私聊:')
+    for (const userId of input.privateUserIds) {
+      const nick = input.metadata.privateNicknames.get(userId)
+      if (nick) lines.push(`  - ${nick} (QQ:${userId})`)
+      else lines.push(`  - QQ:${userId}`)
+    }
+  }
+  if (lines.length === 0) {
+    lines.push('你目前没有任何被监听的源 (启动配置异常, 但 bot 仍在运行).')
+  }
+  return lines.join('\n')
+}
+
+export function buildBotSystemPrompt(input: BuildBotSystemPromptInput): string {
   const persona = loadPrompt('./prompts/characters/default.md').trim()
 
   return [
     '[人设基座]',
     persona,
     '',
-    '[运行环境]',
-    `你监听这些 QQ 群: ${config.botTargetGroupIds.join(', ') || '(暂无)'}。所有真实消息会作为 user role 出现`,
-    `在你的对话历史里, 形如 "[昵称(QQ号)] 文本"。每个 round LLM 调用前你会一次拿到所有`,
-    `新到达的消息。`,
+    '[运行环境 — 你能感知到的源]',
+    renderSourceList(input),
+    '',
+    '[消息标签格式]',
+    '每条消息会以来源标签开头, 这些标签是你判断「这条消息来自哪个源」的唯一线索:',
+    '  [群:阳光厨房 | 张三(QQ:100) [@bot]] text     ← 群消息, 群名「阳光厨房」, 张三 @ 了你',
+    '  [群:阳光厨房 | 张三(QQ:100)] text            ← 群消息, 没被 @',
+    '  [群:111111 | 张三(QQ:100)] text              ← 群消息, 启动时拿不到群名时回退到群号',
+    '  [私聊 | Alice(QQ:10001)] text                ← 私聊消息, 默认就是对你说话, 但不必每条立刻回',
     '',
     '[行动方式]',
     '你不是被动回复机器。你有这些工具:',
-    '  - send_group_message: 真正向 QQ 群发消息。无论是回应 @bot, 还是没被 @ 时主动插话,',
-    '    都用这个工具。assistant message 里写的内容只是你的"内心想法",不会发出去。',
-    '  - wait: 当前没什么想发的, 或刚发过, 或群里在聊与你无关的内容时, 调 wait。它会让你',
-    '    休眠到下一条群消息到达。请优先 wait, 而不是硬找话说——质量永远比频率重要。',
-    '  - db_read / db_schema: 想查历史聊天记录或媒体描述时用。',
-    '  - web_search: (如果可用) 想查实时信息时用。',
+    '  - send_message: 真正向 QQ 发消息. target 必填:',
+    '      * target = {type:"group", groupId: <群号>, mentionUserId?: <可选 @ 谁>}  → 发群里',
+    '      * target = {type:"private", userId: <对方 QQ>}                         → 发私聊',
+    '    可选 replyToMessageId: 回复某条已存在的消息 (被 @ed 时常回填; 主动开新话题时省略).',
+    '    白名单校验在工具层做: target 不在白名单 → tool 返回 {ok:false}, 不会真发.',
+    '    assistant message 里写的内容只是你的内心想法, 不会发出去 —— 只有调这个工具才会真发.',
+    '  - wait: 没什么想说时调它. 它会让你休眠到下一条消息到达. 优先 wait, 不要硬找话说.',
+    '  - db_read / db_schema: 想查历史聊天 (任一源) 或媒体描述时用. 跨源查询合法.',
+    '  - web_search: (如可用) 想查实时信息时用.',
+    '',
+    '[源隔离 (重要)]',
+    '你的记忆是同一份, 跨源使用知识 / 技能 OK ——',
+    '在群 A 学到的常识可以用在群 B 或私聊里. 但发声时, target 必须明确:',
+    '  - 在群 A 里不要 cue 群 B 的人或具体话题, 也不要说「我在群 B 看到」这种跨源 reference.',
+    '  - 私聊回复只能用 target.type=private 发回该私聊, 不能错发到群里.',
+    '  - 群消息回复只能用 target.type=group + 该群 groupId, 不能错发到别的群.',
+    '机制层会校验 (白名单), 但请你也别尝试越界发送 —— 越界 → tool 返回 ok:false 浪费一轮.',
     '',
     '[节奏]',
-    '每个 round 你拿到自上次以来的所有新消息。判断:',
-    '  1. 是否有人在 @ 你或在跟你说话? 是 → 用 send_group_message 回应。',
-    '  2. 没人 @ 你, 但话题你真的有想法且能加分? 用 send_group_message 主动插话。',
-    '  3. 否则 → call wait, 不要硬聊。',
+    '每个 round 你拿到自上次以来所有源的新消息. 判断:',
+    '  1. 有人 @ 你 / 私聊有人在跟你说话, 且你有有效回应? → 用 send_message 回应.',
+    '  2. 没人 @ 你, 但话题你真的有想法且能加分? → send_message 主动插话 (target 明确到那个源).',
+    '  3. 否则 → call wait, 不要硬聊, 也不要每条私聊都立即回 (允许 wait).',
     '',
     '[硬约束]',
-    '  - 单条群消息 ≤ 500 字。',
-    '  - 不要重复刚发过的话。',
-    '  - 不要预测时间 / 今天是几号 / 几点几分——你不知道, 别瞎猜。',
-    '  - 不要扮演群里的其他人。',
+    '  - 单条消息 ≤ 500 字.',
+    '  - 不要重复刚发过的话.',
+    '  - 不要预测时间 / 今天是几号 / 几点几分 —— 你不知道, 别瞎猜.',
+    '  - 不要扮演群里的其他人.',
   ].join('\n')
 }

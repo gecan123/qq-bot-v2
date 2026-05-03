@@ -13,80 +13,135 @@ const napcatLog = createLogger('NAPCAT')
 
 const BACKFILL_COUNT = 50
 
-export interface IngestedMessage {
-  messageRowId: number
-  groupId: number
-  messageId: number
-  senderId: number
-  senderNickname: string
-  mentionedSelf: boolean
-  sentAt: Date
-  renderedText: string
-}
+export type IngestedMessage =
+  | {
+      kind: 'group'
+      messageRowId: number
+      groupId: number
+      groupName?: string
+      messageId: number
+      senderId: number
+      senderNickname: string
+      mentionedSelf: boolean
+      sentAt: Date
+      renderedText: string
+    }
+  | {
+      kind: 'private'
+      messageRowId: number
+      peerId: number
+      messageId: number
+      senderId: number
+      senderNickname: string
+      sentAt: Date
+      renderedText: string
+    }
 
-export interface StartBotOptions {
+export interface NapcatHandlerOptions {
   /**
    * 真消息从持久化 + 媒体描述 ready 之后由 ingest 调用。
-   * Phase 2 wiring 把它接到 BotEventQueue.enqueue。
    * 不传 (例如 backfill 阶段) 表示「只入库, 不进 LLM 视野」。
    */
   onMessageReady?: (input: IngestedMessage) => void | Promise<void>
 }
 
-async function processGroupMessage(
-  groupId: number,
+type Scope =
+  | { kind: 'group'; groupId: number }
+  | { kind: 'private'; peerId: number }
+
+async function processMessage(
+  scope: Scope,
   messageId: number,
-  options: StartBotOptions,
+  options: NapcatHandlerOptions,
 ): Promise<void> {
   const qqMsg = await napcat.get_msg({ message_id: messageId })
   const parsed = parseMessage(qqMsg)
   if (parsed.senderId === config.selfNumber) {
-    ingressLog.debug({ groupId, messageId: parsed.messageId }, '忽略 bot 自身回灌消息')
+    ingressLog.debug({ scope, messageId: parsed.messageId }, '忽略 bot 自身回灌消息')
     return
   }
-  const groupName = await resolveGroupName({ group_id: groupId, ...qqMsg })
+
+  const groupName =
+    scope.kind === 'group'
+      ? await resolveGroupName({ group_id: scope.groupId, ...qqMsg })
+      : undefined
+
   const mediaResult = await persistMediaReferences({
     content: parsed.content,
-    groupId,
+    scope,
     messageId: parsed.messageId,
     senderId: parsed.senderId,
     napcat,
   })
 
-  const persisted = await insertMessage({
-    groupId,
-    groupName,
-    mediaReferenceIds: mediaResult.mediaReferenceIds,
-    messageId: parsed.messageId,
-    senderId: parsed.senderId,
-    senderNickname: parsed.senderNickname,
-    senderGroupNickname: parsed.senderGroupNickname,
-    content: mediaResult.content,
-    rawContent: qqMsg.message,
-    rawMessage: qqMsg.raw_message,
-    sentAt: parsed.time,
-  })
+  const persisted = await insertMessage(
+    scope.kind === 'group'
+      ? {
+          sceneKind: 'qq_group',
+          groupId: scope.groupId,
+          groupName,
+          mediaReferenceIds: mediaResult.mediaReferenceIds,
+          messageId: parsed.messageId,
+          senderId: parsed.senderId,
+          senderNickname: parsed.senderNickname,
+          senderGroupNickname: parsed.senderGroupNickname,
+          content: mediaResult.content,
+          rawContent: qqMsg.message,
+          rawMessage: qqMsg.raw_message,
+          sentAt: parsed.time,
+        }
+      : {
+          sceneKind: 'qq_private',
+          sceneExternalId: String(scope.peerId),
+          groupId: null,
+          mediaReferenceIds: mediaResult.mediaReferenceIds,
+          messageId: parsed.messageId,
+          senderId: parsed.senderId,
+          senderNickname: parsed.senderNickname,
+          content: mediaResult.content,
+          rawContent: qqMsg.message,
+          rawMessage: qqMsg.raw_message,
+          sentAt: parsed.time,
+        },
+  )
 
   const mentionedSelf = mediaResult.content.some(
     (segment) => segment.type === 'at' && segment.targetId === String(config.selfNumber),
   )
 
-  ingressLog.info(
-    {
-      direction: 'inbound',
-      flow: 'group_message_ingress',
-      groupId,
-      groupName,
-      messageId: parsed.messageId,
-      messageRowId: persisted.id,
-      senderId: parsed.senderId,
-      senderNickname: parsed.senderGroupNickname ?? parsed.senderNickname,
-      mentionedSelf,
-      ...summarizeSegments(mediaResult.content),
-      mediaReferences: mediaResult.mediaReferenceIds.length,
-    },
-    '群消息已入库',
-  )
+  if (scope.kind === 'group') {
+    ingressLog.info(
+      {
+        direction: 'inbound',
+        flow: 'group_message_ingress',
+        groupId: scope.groupId,
+        groupName,
+        messageId: parsed.messageId,
+        messageRowId: persisted.id,
+        senderId: parsed.senderId,
+        senderNickname: parsed.senderGroupNickname ?? parsed.senderNickname,
+        mentionedSelf,
+        ...summarizeSegments(mediaResult.content),
+        mediaReferences: mediaResult.mediaReferenceIds.length,
+      },
+      '群消息已入库',
+    )
+  } else {
+    ingressLog.info(
+      {
+        direction: 'inbound',
+        flow: 'private_message_ingress',
+        peerId: scope.peerId,
+        messageId: parsed.messageId,
+        messageRowId: persisted.id,
+        senderId: parsed.senderId,
+        senderNickname: parsed.senderNickname,
+        ...summarizeSegments(mediaResult.content),
+        mediaReferences: mediaResult.mediaReferenceIds.length,
+      },
+      '私聊消息已入库',
+    )
+  }
 
   if (!options.onMessageReady) return
 
@@ -95,16 +150,31 @@ async function processGroupMessage(
   if (!messageRow) return
   const ready = await ensureMessageReadyForAgent(messageRow)
 
-  await options.onMessageReady({
-    messageRowId: persisted.id,
-    groupId,
-    messageId: parsed.messageId,
-    senderId: parsed.senderId,
-    senderNickname: parsed.senderGroupNickname ?? parsed.senderNickname,
-    mentionedSelf,
-    sentAt: persisted.sentAt ?? persisted.createdAt,
-    renderedText: ready.renderedText,
-  })
+  if (scope.kind === 'group') {
+    await options.onMessageReady({
+      kind: 'group',
+      messageRowId: persisted.id,
+      groupId: scope.groupId,
+      groupName,
+      messageId: parsed.messageId,
+      senderId: parsed.senderId,
+      senderNickname: parsed.senderGroupNickname ?? parsed.senderNickname,
+      mentionedSelf,
+      sentAt: persisted.sentAt ?? persisted.createdAt,
+      renderedText: ready.renderedText,
+    })
+  } else {
+    await options.onMessageReady({
+      kind: 'private',
+      messageRowId: persisted.id,
+      peerId: scope.peerId,
+      messageId: parsed.messageId,
+      senderId: parsed.senderId,
+      senderNickname: parsed.senderNickname,
+      sentAt: persisted.sentAt ?? persisted.createdAt,
+      renderedText: ready.renderedText,
+    })
+  }
 }
 
 async function backfillGroupMessages(groupId: number): Promise<void> {
@@ -120,7 +190,7 @@ async function backfillGroupMessages(groupId: number): Promise<void> {
     try {
       // backfill 不传 onMessageReady, 历史消息只入库, 不进 LLM 视野。
       // 启动恢复路径 (replay-missed) 已经覆盖了 lastWakeAt 之后该入 LLM 的部分。
-      await processGroupMessage(groupId, msg.message_id, {})
+      await processMessage({ kind: 'group', groupId }, msg.message_id, {})
     } catch (error) {
       ingressLog.warn({ error, groupId, msgId: msg.message_id }, '补拉消息处理失败,跳过')
     }
@@ -158,7 +228,18 @@ async function resolveGroupName(context: { group_id: number; group_name?: string
   }
 }
 
-export async function startBot(options: StartBotOptions = {}): Promise<void> {
+/**
+ * 注册 NapCat 事件 handler. 同步, 不做 I/O, 不发起 connect.
+ * 调用方必须随后调 connectNapcat() 才会真正开 WebSocket.
+ *
+ * 拆 register / connect 两步是为了让 index.ts 可以:
+ *   register handlers → connect → resolve metadata → replay missed (按 rowId 去重) →
+ *   build system prompt → start agent.
+ *
+ * 关键: connect 之后, NapCat 收到的实时消息会立刻走 onMessageReady (经过去重).
+ *       replay-missed 在 connect 之后跑也安全, 因为它们共享 messageRowId 去重.
+ */
+export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): void {
   napcat.on('socket.open', () => napcatLog.info('WebSocket 开始连接'))
   napcat.on('socket.error', (ctx) => napcatLog.error({ errorType: ctx.error_type }, 'WebSocket 连接错误'))
   napcat.on('socket.close', (ctx) => napcatLog.warn({ code: ctx.code }, 'WebSocket 连接关闭'))
@@ -181,12 +262,28 @@ export async function startBot(options: StartBotOptions = {}): Promise<void> {
   napcat.on('message.group', async (context) => {
     if (!config.botTargetGroupIds.includes(context.group_id)) return
     try {
-      await processGroupMessage(context.group_id, context.message_id, options)
+      await processMessage({ kind: 'group', groupId: context.group_id }, context.message_id, options)
     } catch (error) {
       ingressLog.error({ error, group: context.group_id, msgId: context.message_id }, '处理群消息失败')
     }
   })
 
+  napcat.on('message.private', async (context) => {
+    if (!config.botTargetPrivateUserIds.includes(context.user_id)) return
+    try {
+      await processMessage({ kind: 'private', peerId: context.user_id }, context.message_id, options)
+    } catch (error) {
+      ingressLog.error({ error, peer: context.user_id, msgId: context.message_id }, '处理私聊消息失败')
+    }
+  })
+}
+
+/**
+ * 真正打开 NapCat WebSocket. 必须在 registerNapcatHandlers() 之后调.
+ *
+ * 在此之后才能调用任何 NapCat API (get_group_info / get_stranger_info 等).
+ */
+export async function connectNapcat(): Promise<void> {
   await napcat.connect()
   napcatLog.info(
     {

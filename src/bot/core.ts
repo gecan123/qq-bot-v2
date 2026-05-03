@@ -1,14 +1,11 @@
-// NapCat ingress + ingest. Phase 2 wiring 会改成:
-//   持久化进 messages 表 → ensureMediaDescriptions → enqueue 到 BotEventQueue
-//
-// 当前 (Phase 0 删除完毕,Phase 1 等 BotEventQueue 类型就位后接) 暂时空,build 通过。
-
 import { napcat } from './napcat.js'
 import { parseMessage } from './message-parser.js'
 import { findExistingMessageIds, insertMessage } from '../database/messages.js'
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
 import { persistMediaReferences } from '../media/media-cache.js'
+import { ensureMessageReadyForAgent } from '../media/ensure-message-ready.js'
+import { prisma } from '../database/client.js'
 import { summarizeSegments } from '../utils/business-log.js'
 
 const ingressLog = createLogger('INGRESS')
@@ -16,22 +13,31 @@ const napcatLog = createLogger('NAPCAT')
 
 const BACKFILL_COUNT = 50
 
-type StartBotOptions = {
-  /**
-   * Phase 2 wiring 注入: 持久化 + 媒体描述 ready 之后调用,把消息推进 BotEventQueue。
-   * Phase 0/1 阶段 startBot 不被 main() 调用,这里保留接口形态。
-   */
-  onMessageReady?: (input: {
-    messageRowId: number
-    groupId: number
-    senderId: number
-    senderNickname: string
-    mentionedSelf: boolean
-    sentAt: Date
-  }) => void | Promise<void>
+export interface IngestedMessage {
+  messageRowId: number
+  groupId: number
+  messageId: number
+  senderId: number
+  senderNickname: string
+  mentionedSelf: boolean
+  sentAt: Date
+  renderedText: string
 }
 
-async function processGroupMessage(groupId: number, messageId: number, options: StartBotOptions): Promise<void> {
+export interface StartBotOptions {
+  /**
+   * 真消息从持久化 + 媒体描述 ready 之后由 ingest 调用。
+   * Phase 2 wiring 把它接到 BotEventQueue.enqueue。
+   * 不传 (例如 backfill 阶段) 表示「只入库, 不进 LLM 视野」。
+   */
+  onMessageReady?: (input: IngestedMessage) => void | Promise<void>
+}
+
+async function processGroupMessage(
+  groupId: number,
+  messageId: number,
+  options: StartBotOptions,
+): Promise<void> {
   const qqMsg = await napcat.get_msg({ message_id: messageId })
   const parsed = parseMessage(qqMsg)
   if (parsed.senderId === config.selfNumber) {
@@ -82,17 +88,26 @@ async function processGroupMessage(groupId: number, messageId: number, options: 
     '群消息已入库',
   )
 
-  await options.onMessageReady?.({
+  if (!options.onMessageReady) return
+
+  // 等媒体描述就绪 + 渲染成 LLM 可见文本 + 冻结 resolved_text
+  const messageRow = await prisma.message.findUnique({ where: { id: persisted.id } })
+  if (!messageRow) return
+  const ready = await ensureMessageReadyForAgent(messageRow)
+
+  await options.onMessageReady({
     messageRowId: persisted.id,
     groupId,
+    messageId: parsed.messageId,
     senderId: parsed.senderId,
     senderNickname: parsed.senderGroupNickname ?? parsed.senderNickname,
     mentionedSelf,
     sentAt: persisted.sentAt ?? persisted.createdAt,
+    renderedText: ready.renderedText,
   })
 }
 
-async function backfillGroupMessages(groupId: number, options: StartBotOptions): Promise<void> {
+async function backfillGroupMessages(groupId: number): Promise<void> {
   const { messages } = await napcat.get_group_msg_history({
     group_id: groupId,
     count: BACKFILL_COUNT,
@@ -103,7 +118,9 @@ async function backfillGroupMessages(groupId: number, options: StartBotOptions):
   for (const msg of messages) {
     if (existingIds.has(msg.message_id)) continue
     try {
-      await processGroupMessage(groupId, msg.message_id, { onMessageReady: undefined })
+      // backfill 不传 onMessageReady, 历史消息只入库, 不进 LLM 视野。
+      // 启动恢复路径 (replay-missed) 已经覆盖了 lastWakeAt 之后该入 LLM 的部分。
+      await processGroupMessage(groupId, msg.message_id, {})
     } catch (error) {
       ingressLog.warn({ error, groupId, msgId: msg.message_id }, '补拉消息处理失败,跳过')
     }
@@ -149,7 +166,7 @@ export async function startBot(options: StartBotOptions = {}): Promise<void> {
   napcat.on('meta_event.lifecycle', async (ctx) => {
     if (ctx.sub_type === 'connect') {
       napcatLog.info('NapCat 连接成功')
-      backfillGroupMessages(config.botTargetGroupId, options).catch((error) => {
+      backfillGroupMessages(config.botTargetGroupId).catch((error) => {
         ingressLog.error({ error, groupId: config.botTargetGroupId }, '群历史消息补拉失败')
       })
     }

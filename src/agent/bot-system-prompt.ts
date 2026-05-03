@@ -15,7 +15,7 @@ export function buildBotSystemPrompt(): string {
     persona,
     '',
     '[运行环境]',
-    `你监听一个 QQ 群 (group_id=${config.botTargetGroupId})。所有真实消息会作为 user role 出现`,
+    `你监听这些 QQ 群: ${config.botTargetGroupIds.join(', ') || '(暂无)'}。所有真实消息会作为 user role 出现`,
     `在你的对话历史里, 形如 "[昵称(QQ号)] 文本"。每个 round LLM 调用前你会一次拿到所有`,
     `新到达的消息。`,
     '',

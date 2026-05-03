@@ -10,12 +10,12 @@ import { createLogger } from '../logger.js'
  * Compaction 是「计划性破坏 prefix」的唯一路径 (CLAUDE.md 红线 4)。
  * 别处不允许调 replaceMessages。
  *
- * 触发: 估算 token 总数 > triggerTokens, 默认 12k。
+ * 触发: 估算 token 总数 > triggerTokens, 默认 16k (MVP-2 多源场景, 可由 COMPACTION_TRIGGER_TOKENS env 覆盖).
  * 保留: 尾部 keepRatio (默认 0.1) 条, 但不切开 assistant.toolCalls 和它的 tool result。
  * 输出: replaceMessages([summaryHead, ...keptTail]), 头部一条 user message
  *      "[历史摘要] ..." 包住摘要文本。
  */
-const DEFAULT_COMPACTION_TRIGGER_TOKENS = 12_000
+const DEFAULT_COMPACTION_TRIGGER_TOKENS = 16_000
 const DEFAULT_COMPACTION_KEEP_RATIO = 0.1
 const SUMMARY_HEAD_PREFIX = '[历史摘要]\n'
 
@@ -152,7 +152,7 @@ export async function maybeCompactConversation(
   options: MaybeCompactOptions = {},
 ): Promise<void> {
   const summarize = options.summarize ?? defaultSummarize
-  const triggerTokens = options.triggerTokens ?? DEFAULT_COMPACTION_TRIGGER_TOKENS
+  const triggerTokens = options.triggerTokens ?? config.compactionTriggerTokens ?? DEFAULT_COMPACTION_TRIGGER_TOKENS
   const keepRatio = options.keepRatio ?? DEFAULT_COMPACTION_KEEP_RATIO
 
   const snapshot = context.getSnapshot()

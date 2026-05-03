@@ -7,13 +7,17 @@ datasource db {
   provider = "postgresql"
 }
 
-/// 群消息（含私聊）事实账本。NapCat 入站 → upsert。bot 永远只读不改写。
+/// 群消息 + 私聊事实账本。NapCat 入站 → upsert。bot 永远只读不改写。
 /// resolvedText 在媒体描述完成后回填一次（一次性冻结）。
+///
+/// sceneKind = 'qq_group':   groupId 必填, sceneExternalId = ''
+/// sceneKind = 'qq_private': groupId = null, sceneExternalId = String(peerId)
+/// 见 src/database/messages.ts 入库前 invariant assert。
 model Message {
   id                  Int       @id @default(autoincrement())
   sceneKind           String    @default("qq_group") @map("scene_kind") @db.VarChar(32)
   sceneExternalId     String    @default("") @map("scene_external_id") @db.VarChar(191)
-  groupId             BigInt    @map("group_id")
+  groupId             BigInt?   @map("group_id")
   groupName           String?   @map("group_name") @db.VarChar(255)
   mediaReferenceIds   String[]  @default([]) @map("media_reference_ids")
   messageId           BigInt    @map("message_id")
@@ -48,29 +52,6 @@ model Media {
 
   @@unique([dataHash])
   @@map("media")
-}
-
-/// LLM 调用观测。prefixHash + cachedTokens 用来验证永续上下文 cache 命中率。
-model LlmTrace {
-  id              Int      @id @default(autoincrement())
-  groupId         BigInt   @map("group_id")
-  model           String?  @db.VarChar(128)
-  input           Json     @map("input")
-  output          Json?    @map("output")
-  durationMs      Int      @map("duration_ms")
-  error           String?  @map("error") @db.Text
-  loopIndex       Int?     @map("loop_index")
-  inputHash       String?  @map("input_hash") @db.VarChar(64)
-  prefixHash      String?  @map("prefix_hash") @db.VarChar(64)
-  tailHash        String?  @map("tail_hash") @db.VarChar(64)
-  inputTokens     Int?     @map("input_tokens")
-  cachedTokens    Int?     @map("cached_tokens")
-  outputTokens    Int?     @map("output_tokens")
-  tokenUsageState String?  @map("token_usage_state") @db.VarChar(32)
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-
-  @@index([groupId, createdAt(sort: Desc)])
-  @@map("llm_traces")
 }
 
 /// 单上下文 bot 的 AgentContext 持久化。永远只有 id=1 这一行。

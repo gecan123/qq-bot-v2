@@ -99,11 +99,11 @@ describe('insertMessage update payload', () => {
     assert.match(sql.sql, /RETURNING id, created_at AS "createdAt", sent_at AS "sentAt"/)
   })
 
-  test('builds scene-aware upsert for private messages without a second ledger', () => {
+  test('builds scene-aware upsert for private messages with null groupId and peerId in sceneExternalId', () => {
     const sql = buildMessageUpsertSql({
       sceneKind: 'qq_private',
       sceneExternalId: 20,
-      groupId: 20,
+      groupId: null,
       messageId: 20002,
       senderId: 20,
       senderNickname: 'Alice',
@@ -115,5 +115,70 @@ describe('insertMessage update payload', () => {
     assert.match(sql.sql, /ON CONFLICT \("scene_kind", "scene_external_id", "message_id"\)/)
     assert.ok(sql.values.includes('qq_private'))
     assert.ok(sql.values.includes('20'))
+    // groupId column gets the literal null sentinel (not a BigInt)
+    assert.ok(sql.values.includes(null))
+  })
+
+  test('insertMessage invariant: qq_group requires non-null groupId', () => {
+    assert.throws(
+      () =>
+        buildMessageUpsertSql({
+          sceneKind: 'qq_group',
+          groupId: null,
+          messageId: 1,
+          senderId: 1,
+          senderNickname: 'x',
+          content: [],
+        } as unknown as Parameters<typeof buildMessageUpsertSql>[0]),
+      /sceneKind=qq_group requires non-null groupId/,
+    )
+  })
+
+  test('insertMessage invariant: qq_group requires sceneExternalId="" (not peerId)', () => {
+    assert.throws(
+      () =>
+        buildMessageUpsertSql({
+          sceneKind: 'qq_group',
+          sceneExternalId: '999',
+          groupId: 111,
+          messageId: 1,
+          senderId: 1,
+          senderNickname: 'x',
+          content: [],
+        }),
+      /sceneKind=qq_group requires sceneExternalId=""/,
+    )
+  })
+
+  test('insertMessage invariant: qq_private requires null groupId', () => {
+    assert.throws(
+      () =>
+        buildMessageUpsertSql({
+          sceneKind: 'qq_private',
+          sceneExternalId: '20',
+          groupId: 111,
+          messageId: 1,
+          senderId: 1,
+          senderNickname: 'x',
+          content: [],
+        }),
+      /sceneKind=qq_private requires groupId=null/,
+    )
+  })
+
+  test('insertMessage invariant: qq_private requires non-empty sceneExternalId (peerId)', () => {
+    assert.throws(
+      () =>
+        buildMessageUpsertSql({
+          sceneKind: 'qq_private',
+          sceneExternalId: '',
+          groupId: null,
+          messageId: 1,
+          senderId: 1,
+          senderNickname: 'x',
+          content: [],
+        }),
+      /sceneKind=qq_private requires non-empty sceneExternalId/,
+    )
   })
 })

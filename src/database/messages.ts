@@ -12,7 +12,11 @@ export type MessageSceneKind = 'qq_group' | 'qq_private'
 export interface InsertMessageParams {
   sceneKind?: MessageSceneKind
   sceneExternalId?: string | number
-  groupId: number
+  /**
+   * 群消息: QQ 群号 (必填). 私聊: 必须传 null (持久化 group_id 列也是 null).
+   * 历史/默认 sceneKind='qq_group' 时仍要求非 null.
+   */
+  groupId: number | null
   groupName?: string
   mediaReferenceIds?: string[]
   messageId: number
@@ -26,10 +30,43 @@ export interface InsertMessageParams {
   sentAt?: number
 }
 
-function resolveMessageScene(params: { sceneKind?: MessageSceneKind; sceneExternalId?: string | number; groupId: number }) {
-  const sceneKind = params.sceneKind ?? 'qq_group'
-  const sceneExternalId = String(params.sceneExternalId ?? params.groupId)
-  return { sceneKind, sceneExternalId }
+interface ResolvedScene {
+  sceneKind: MessageSceneKind
+  sceneExternalId: string
+  groupIdValue: bigint | null
+}
+
+function resolveMessageScene(params: InsertMessageParams): ResolvedScene {
+  const sceneKind: MessageSceneKind = params.sceneKind ?? 'qq_group'
+
+  if (sceneKind === 'qq_group') {
+    if (params.groupId == null) {
+      throw new Error('insertMessage invariant: sceneKind=qq_group requires non-null groupId')
+    }
+    const externalIdInput = params.sceneExternalId
+    const sceneExternalId = externalIdInput == null ? '' : String(externalIdInput)
+    if (sceneExternalId !== '') {
+      throw new Error('insertMessage invariant: sceneKind=qq_group requires sceneExternalId="" (got non-empty)')
+    }
+    return {
+      sceneKind,
+      sceneExternalId,
+      groupIdValue: BigInt(params.groupId),
+    }
+  }
+
+  // qq_private
+  if (params.groupId != null) {
+    throw new Error('insertMessage invariant: sceneKind=qq_private requires groupId=null')
+  }
+  if (params.sceneExternalId == null || String(params.sceneExternalId).trim() === '') {
+    throw new Error('insertMessage invariant: sceneKind=qq_private requires non-empty sceneExternalId (peerId)')
+  }
+  return {
+    sceneKind,
+    sceneExternalId: String(params.sceneExternalId),
+    groupIdValue: null,
+  }
 }
 
 export interface PersistedMessageInsertResult {
@@ -263,7 +300,7 @@ export function buildMessageUpsertSql(params: InsertMessageParams): Prisma.Sql {
     ) VALUES (
       ${scene.sceneKind},
       ${scene.sceneExternalId},
-      ${BigInt(params.groupId)},
+      ${scene.groupIdValue},
       ${params.groupName ?? null},
       ${mediaReferenceIds},
       ${BigInt(params.messageId)},

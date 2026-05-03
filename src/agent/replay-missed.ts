@@ -30,11 +30,13 @@ export async function replayMissedMessages(
     return { enqueued: 0 }
   }
 
-  const groupId = config.botTargetGroupId
+  const groupIds = config.botTargetGroupIds.map((id) => BigInt(id))
+  if (groupIds.length === 0) return { enqueued: 0 }
+
   const rows = await prisma.message.findMany({
     where: {
       sceneKind: 'qq_group',
-      groupId: BigInt(groupId),
+      groupId: { in: groupIds },
       createdAt: { gt: lastWakeAt },
       senderId: { not: BigInt(deps.selfNumber) },
     },
@@ -47,10 +49,11 @@ export async function replayMissedMessages(
     const mentionedSelf = segments.some(
       (seg) => seg.type === 'at' && seg.targetId === String(deps.selfNumber),
     )
+    const groupIdNum = row.groupId == null ? 0 : Number(row.groupId)
     deps.eventQueue.enqueue({
       type: 'napcat_message',
       messageRowId: row.id,
-      groupId,
+      groupId: groupIdNum,
       messageId: Number(row.messageId),
       senderId: Number(row.senderId),
       senderNickname: row.senderGroupNickname ?? row.senderNickname ?? String(row.senderId),

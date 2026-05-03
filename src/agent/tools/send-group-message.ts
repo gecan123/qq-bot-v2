@@ -24,7 +24,7 @@ export function createSendGroupMessageTool(deps: SendGroupMessageDeps): Tool<{
       mentionUserId: z.number().int().optional().describe('要 @ 的群成员 QQ 号'),
     }),
     async execute(args) {
-      const groupId = config.botTargetGroupId
+      const groupId = config.botTargetGroupIds[0] ?? 0
 
       if (args.replyToMessageId !== undefined) {
         const result = await deps.sender.replyToMessage({

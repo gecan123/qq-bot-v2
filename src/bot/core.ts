@@ -166,9 +166,11 @@ export async function startBot(options: StartBotOptions = {}): Promise<void> {
   napcat.on('meta_event.lifecycle', async (ctx) => {
     if (ctx.sub_type === 'connect') {
       napcatLog.info('NapCat 连接成功')
-      backfillGroupMessages(config.botTargetGroupId).catch((error) => {
-        ingressLog.error({ error, groupId: config.botTargetGroupId }, '群历史消息补拉失败')
-      })
+      for (const groupId of config.botTargetGroupIds) {
+        backfillGroupMessages(groupId).catch((error) => {
+          ingressLog.error({ error, groupId }, '群历史消息补拉失败')
+        })
+      }
     }
   })
 
@@ -177,7 +179,7 @@ export async function startBot(options: StartBotOptions = {}): Promise<void> {
   })
 
   napcat.on('message.group', async (context) => {
-    if (context.group_id !== config.botTargetGroupId) return
+    if (!config.botTargetGroupIds.includes(context.group_id)) return
     try {
       await processGroupMessage(context.group_id, context.message_id, options)
     } catch (error) {
@@ -186,5 +188,11 @@ export async function startBot(options: StartBotOptions = {}): Promise<void> {
   })
 
   await napcat.connect()
-  napcatLog.info({ targetGroup: config.botTargetGroupId }, 'NapCat 监听已启动')
+  napcatLog.info(
+    {
+      groupIds: config.botTargetGroupIds,
+      privateUserIds: config.botTargetPrivateUserIds,
+    },
+    'NapCat 监听已启动',
+  )
 }

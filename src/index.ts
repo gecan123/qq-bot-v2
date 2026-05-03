@@ -79,7 +79,13 @@ function buildMediaProvider(): RoutingProvider {
 }
 
 async function main() {
-  log.info({ targetGroup: config.botTargetGroupId }, 'qq-bot-v2 single-context MVP 启动')
+  log.info(
+    {
+      groupIds: config.botTargetGroupIds,
+      privateUserIds: config.botTargetPrivateUserIds,
+    },
+    'qq-bot-v2 single-context MVP 启动',
+  )
   await prisma.$connect()
   log.info('数据库已连接')
 

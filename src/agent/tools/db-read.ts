@@ -22,7 +22,7 @@ export const dbReadTool: Tool<{ sql: string; params?: Record<string, SqlParamVal
     const result = await executeDbRead({
       sql: args.sql,
       params: args.params,
-      groupId: config.botTargetGroupId,
+      groupId: config.botTargetGroupIds[0] ?? 0,
       maxRows: DB_READ_MAX_ROWS,
       statementTimeoutMs: DB_READ_TIMEOUT_MS,
       maxOutputChars: DB_READ_MAX_OUTPUT_CHARS,

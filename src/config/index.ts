@@ -44,6 +44,34 @@ function parsePositiveInteger(value: string | undefined, defaultValue: number): 
   return Math.floor(parsed)
 }
 
+/**
+ * Parse a comma-separated ID list (`123,456` 之类) used for whitelist envs like
+ * `BOT_TARGET_GROUP_IDS` / `BOT_TARGET_PRIVATE_USER_IDS`.
+ *
+ * Rules (deterministic — affects system prompt byte stability):
+ *  1. split on `,`
+ *  2. trim each segment
+ *  3. drop empty segments
+ *  4. parse each as a number; non-numeric segments throw
+ *  5. dedupe + ascending sort (same whitelist always produces same prompt text)
+ *  6. empty after parsing → []  (caller decides if that's an error)
+ */
+export function parseIdList(name: string, raw: string | undefined): number[] {
+  if (raw == null) return []
+  const segments = raw.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
+  const ids: number[] = []
+  for (const seg of segments) {
+    const parsed = Number(seg)
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+      throw new Error(`Invalid id "${seg}" in env ${name} (must be integer)`)
+    }
+    ids.push(parsed)
+  }
+  const unique = Array.from(new Set(ids))
+  unique.sort((a, b) => a - b)
+  return unique
+}
+
 function parseProviderConfigs(env: EnvSource): Record<string, ProviderConfig> {
   const providers: Record<string, Partial<ProviderConfig>> = {}
 
@@ -141,18 +169,32 @@ function parseLlmConfig(env: EnvSource) {
 }
 
 export function parseConfig(env: EnvSource) {
+  const groupIds = parseIdList('BOT_TARGET_GROUP_IDS', env.BOT_TARGET_GROUP_IDS)
+  const privateUserIds = parseIdList('BOT_TARGET_PRIVATE_USER_IDS', env.BOT_TARGET_PRIVATE_USER_IDS)
+  if (groupIds.length === 0 && privateUserIds.length === 0) {
+    throw new Error('BOT_TARGET_GROUP_IDS and BOT_TARGET_PRIVATE_USER_IDS are both empty; bot has no source to listen to')
+  }
+
+  const compactionTriggerTokens = parsePositiveInteger(env.COMPACTION_TRIGGER_TOKENS, 16_000)
+
   return {
     databaseUrl: requireEnv(env, 'DATABASE_URL'),
     napcat: {
       wsUrl: requireEnv(env, 'NAPCAT_WS_URL'),
       accessToken: requireEnv(env, 'NAPCAT_ACCESS_TOKEN'),
     },
-    /** MVP 单群 bot 的目标群。bot 只对该群响应,只能向该群发消息。 */
-    botTargetGroupId: Number(requireEnv(env, 'BOT_TARGET_GROUP_ID')),
+    /** Multi-source whitelists. Bot listens + replies only within these IDs. */
+    botTargetGroupIds: groupIds,
+    botTargetPrivateUserIds: privateUserIds,
     selfNumber: Number(requireEnv(env, 'SELF_NUMBER')),
     nodeEnv: env.NODE_ENV || 'development',
     replyMediaTimeoutMs: parsePositiveInteger(env.REPLY_MEDIA_TIMEOUT_MS, 15_000),
     jobInterDelayMs: parsePositiveInteger(env.JOB_INTER_DELAY_MS, 200),
+    /**
+     * Compaction trigger token threshold (estimated). Default 16k bumped from 12k for
+     * multi-source token-velocity. Override via COMPACTION_TRIGGER_TOKENS env.
+     */
+    compactionTriggerTokens,
     tavily: env.TAVILY_API_KEY
       ? { apiKey: env.TAVILY_API_KEY }
       : undefined,

@@ -7,7 +7,7 @@ interface NapcatSegment {
   data: Record<string, string | number | boolean>
 }
 
-export interface SendGroupReplyResult {
+export interface SendNapcatResult {
   success: boolean
   attempts: number
   providerMessageId?: number
@@ -21,7 +21,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-export async function sendGroupReply(groupId: number, segments: NapcatSegment[]): Promise<SendGroupReplyResult> {
+export async function sendGroupReply(groupId: number, segments: NapcatSegment[]): Promise<SendNapcatResult> {
   const textPreview = previewText(
     segments
       .filter((s) => s.type === 'text')
@@ -38,14 +38,11 @@ export async function sendGroupReply(groupId: number, segments: NapcatSegment[])
         {
           direction: 'outbound',
           actor: 'bot',
-          category: 'reply_delivery',
           flow: 'napcat_send',
           groupId,
           providerMessageId: result.message_id,
           deliveryType,
           segmentTypes,
-          dispatchMode: 'live',
-          sideEffect: 'napcat_send',
           deliveryResult: 'sent',
           textPreview,
         },
@@ -61,15 +58,12 @@ export async function sendGroupReply(groupId: number, segments: NapcatSegment[])
         {
           direction: 'outbound',
           actor: 'bot',
-          category: 'reply_delivery',
           flow: 'napcat_send',
           groupId,
           deliveryType,
           segmentTypes,
           textPreview,
           attempt,
-          dispatchMode: 'live',
-          sideEffect: 'napcat_send',
           deliveryResult: 'failed_attempt',
           error,
         },
@@ -83,12 +77,9 @@ export async function sendGroupReply(groupId: number, segments: NapcatSegment[])
     {
       direction: 'outbound',
       actor: 'bot',
-      category: 'reply_delivery',
       flow: 'napcat_send',
       groupId,
       deliveryType,
-      dispatchMode: 'live',
-      sideEffect: 'napcat_send',
       deliveryResult: 'failed',
       textPreview,
     },
@@ -97,7 +88,7 @@ export async function sendGroupReply(groupId: number, segments: NapcatSegment[])
   return { success: false, attempts: RETRY_LIMIT }
 }
 
-export async function sendPrivateMessage(userId: number, segments: NapcatSegment[]): Promise<SendGroupReplyResult> {
+export async function sendPrivateMessage(userId: number, segments: NapcatSegment[]): Promise<SendNapcatResult> {
   const textPreview = previewText(
     segments
       .filter((s) => s.type === 'text')
@@ -113,14 +104,11 @@ export async function sendPrivateMessage(userId: number, segments: NapcatSegment
         {
           direction: 'outbound',
           actor: 'bot',
-          category: 'reply_delivery',
           flow: 'napcat_send',
           userId,
           providerMessageId: result.message_id,
           deliveryType: 'send_private_message',
           segmentTypes,
-          dispatchMode: 'live',
-          sideEffect: 'napcat_send',
           deliveryResult: 'sent',
           textPreview,
         },
@@ -136,15 +124,12 @@ export async function sendPrivateMessage(userId: number, segments: NapcatSegment
         {
           direction: 'outbound',
           actor: 'bot',
-          category: 'reply_delivery',
           flow: 'napcat_send',
           userId,
           deliveryType: 'send_private_message',
           segmentTypes,
           textPreview,
           attempt,
-          dispatchMode: 'live',
-          sideEffect: 'napcat_send',
           deliveryResult: 'failed_attempt',
           error,
         },
@@ -158,12 +143,9 @@ export async function sendPrivateMessage(userId: number, segments: NapcatSegment
     {
       direction: 'outbound',
       actor: 'bot',
-      category: 'reply_delivery',
       flow: 'napcat_send',
       userId,
       deliveryType: 'send_private_message',
-      dispatchMode: 'live',
-      sideEffect: 'napcat_send',
       deliveryResult: 'failed',
       textPreview,
     },

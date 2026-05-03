@@ -7,7 +7,7 @@ function createBaseEnv(overrides: Record<string, string | undefined> = {}): Node
     DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',
     NAPCAT_WS_URL: 'ws://localhost:3001',
     NAPCAT_ACCESS_TOKEN: 'token',
-    GROUP_IDS: '123,456',
+    BOT_TARGET_GROUP_ID: '123',
     SELF_NUMBER: '789',
     LLM_DEFAULT_PROVIDER: 'claude',
     LLM_DEFAULT_MODEL: 'claude-sonnet-4-6',
@@ -40,10 +40,6 @@ describe('config', () => {
       url: 'http://127.0.0.1:8317/v1',
       apiKey: 'sk-local',
     })
-    assert.deepEqual(config.llm.providers.openai, {
-      url: 'http://127.0.0.1:8317/v1',
-      apiKey: 'sk-local',
-    })
     assert.deepEqual(config.llm.providers.gemini, {
       url: 'https://generativelanguage.googleapis.com/v1beta/openai/',
       apiKey: 'gemini-key',
@@ -56,10 +52,6 @@ describe('config', () => {
       fallbackGptStreamMode: 'on',
       streamMode: 'fallback',
     })
-    assert.deepEqual(config.llm.scenarios.transcribeAudio, {
-      provider: 'gemini',
-      model: 'gemini-3-flash-preview',
-    })
   })
 
   test('defaults image stream mode to off and omits unconfigured scenarios', () => {
@@ -67,57 +59,8 @@ describe('config', () => {
 
     assert.deepEqual(config.llm.scenarios.describeImage, { streamMode: 'off' })
     assert.deepEqual(config.llm.scenarios.describeVideo, {})
-    assert.equal(config.botReplyDryRun, false)
-    assert.equal(config.runtimeContextFallback, 'runtime')
-    assert.equal(config.runtimeSchedulerTickMs, 0)
-  })
-
-  test('parses runtime context fallback and scheduler tick interval', () => {
-    const config = parseConfig(createBaseEnv({
-      RUNTIME_CONTEXT_FALLBACK: 'ledger',
-      RUNTIME_SCHEDULER_TICK_MS: '30000',
-    }))
-    const invalid = parseConfig(createBaseEnv({
-      RUNTIME_CONTEXT_FALLBACK: 'unknown',
-      RUNTIME_SCHEDULER_TICK_MS: '-1',
-    }))
-
-    assert.equal(config.runtimeContextFallback, 'ledger')
-    assert.equal(config.runtimeSchedulerTickMs, 30000)
-    assert.equal(invalid.runtimeContextFallback, 'runtime')
-    assert.equal(invalid.runtimeSchedulerTickMs, 0)
-  })
-
-  test('parses V2EX read-only forum polling config', () => {
-    const config = parseConfig(createBaseEnv({
-      V2EX_FORUM_ENABLED: 'true',
-      V2EX_FORUM_FEEDS: 'latest,node:programmer,tab:tech,member:Livid',
-      V2EX_FORUM_POLL_INTERVAL_MS: '600000',
-      V2EX_FORUM_MAX_ITEMS_PER_FEED: '5',
-      V2EX_FORUM_TIMEOUT_MS: '2500',
-      V2EX_FORUM_USER_AGENT: 'qq-bot-v2 test',
-      V2EX_FORUM_INTEREST_KEYWORDS: 'claude,agent,编程',
-      V2EX_FORUM_FETCH_DETAILS: 'false',
-      V2EX_FORUM_DETAIL_REPLY_LIMIT: '3',
-    }))
-
-    assert.equal(config.v2exForum.enabled, true)
-    assert.deepEqual(config.v2exForum.feeds, ['latest', 'node:programmer', 'tab:tech', 'member:Livid'])
-    assert.equal(config.v2exForum.pollIntervalMs, 600000)
-    assert.equal(config.v2exForum.maxItemsPerFeed, 5)
-    assert.equal(config.v2exForum.timeoutMs, 2500)
-    assert.equal(config.v2exForum.userAgent, 'qq-bot-v2 test')
-    assert.deepEqual(config.v2exForum.interestKeywords, ['claude', 'agent', '编程'])
-    assert.equal(config.v2exForum.fetchDetails, false)
-    assert.equal(config.v2exForum.detailReplyLimit, 3)
-  })
-
-  test('parses BOT_REPLY_DRY_RUN', () => {
-    const enabled = parseConfig(createBaseEnv({ BOT_REPLY_DRY_RUN: 'true' }))
-    const disabled = parseConfig(createBaseEnv({ BOT_REPLY_DRY_RUN: 'false' }))
-
-    assert.equal(enabled.botReplyDryRun, true)
-    assert.equal(disabled.botReplyDryRun, false)
+    assert.equal(config.botTargetGroupId, 123)
+    assert.equal(config.selfNumber, 789)
   })
 
   test('throws when default provider is missing from registry', () => {
@@ -140,13 +83,13 @@ describe('config', () => {
     )
   })
 
-  test('throws when image fallback points to an unknown provider', () => {
+  test('throws when BOT_TARGET_GROUP_ID is missing', () => {
     assert.throws(
       () =>
         parseConfig(createBaseEnv({
-          LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_PROVIDER: 'gemini',
+          BOT_TARGET_GROUP_ID: undefined,
         })),
-      /Missing fallback provider configuration for scenario describeImage: gemini/,
+      /Missing required environment variable: BOT_TARGET_GROUP_ID/,
     )
   })
 })

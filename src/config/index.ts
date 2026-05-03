@@ -37,40 +37,11 @@ function requireEnv(env: EnvSource, name: string): string {
   return value
 }
 
-function parseBoolean(value: string | undefined, defaultValue = false): boolean {
-  if (value == null) return defaultValue
-  const normalized = value.trim().toLowerCase()
-  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
-}
-
-function parseProbability(value: string | undefined, defaultValue: number): number {
-  if (value == null || value.trim() === '') return defaultValue
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed)) return defaultValue
-  return Math.max(0, Math.min(1, parsed))
-}
-
 function parsePositiveInteger(value: string | undefined, defaultValue: number): number {
   if (value == null || value.trim() === '') return defaultValue
   const parsed = Number(value)
   if (!Number.isFinite(parsed) || parsed <= 0) return defaultValue
   return Math.floor(parsed)
-}
-
-function parseNonNegativeInteger(value: string | undefined, defaultValue: number): number {
-  if (value == null || value.trim() === '') return defaultValue
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed) || parsed < 0) return defaultValue
-  return Math.floor(parsed)
-}
-
-function parseRuntimeContextFallback(value: string | undefined): 'runtime' | 'ledger' {
-  return value?.trim().toLowerCase() === 'ledger' ? 'ledger' : 'runtime'
-}
-
-function parseCsv(value: string | undefined, defaultValue: string[]): string[] {
-  if (!value?.trim()) return defaultValue
-  return value.split(',').map((item) => item.trim()).filter(Boolean)
 }
 
 function parseProviderConfigs(env: EnvSource): Record<string, ProviderConfig> {
@@ -176,51 +147,12 @@ export function parseConfig(env: EnvSource) {
       wsUrl: requireEnv(env, 'NAPCAT_WS_URL'),
       accessToken: requireEnv(env, 'NAPCAT_ACCESS_TOKEN'),
     },
-    groupIds: requireEnv(env, 'GROUP_IDS').split(',').map(Number),
+    /** MVP 单群 bot 的目标群。bot 只对该群响应,只能向该群发消息。 */
+    botTargetGroupId: Number(requireEnv(env, 'BOT_TARGET_GROUP_ID')),
     selfNumber: Number(requireEnv(env, 'SELF_NUMBER')),
-    botReplyDryRun: parseBoolean(env.BOT_REPLY_DRY_RUN, false),
-    runtimeContextFallback: parseRuntimeContextFallback(env.RUNTIME_CONTEXT_FALLBACK),
-    runtimeSchedulerTickMs: parseNonNegativeInteger(env.RUNTIME_SCHEDULER_TICK_MS, 0),
-    v2exForum: {
-      enabled: parseBoolean(env.V2EX_FORUM_ENABLED, false),
-      feeds: parseCsv(env.V2EX_FORUM_FEEDS, ['latest']),
-      pollIntervalMs: parseNonNegativeInteger(env.V2EX_FORUM_POLL_INTERVAL_MS, 30 * 60_000),
-      maxItemsPerFeed: parsePositiveInteger(env.V2EX_FORUM_MAX_ITEMS_PER_FEED, 20),
-      timeoutMs: parsePositiveInteger(env.V2EX_FORUM_TIMEOUT_MS, 15_000),
-      userAgent: env.V2EX_FORUM_USER_AGENT?.trim() || 'qq-bot-v2 read-only forum connector (+https://www.v2ex.com)',
-      interestKeywords: parseCsv(env.V2EX_FORUM_INTEREST_KEYWORDS, [
-        'ai',
-        'agent',
-        'claude',
-        'openai',
-        'llm',
-        'gpt',
-        '编程',
-        '程序员',
-        '开发',
-        '代码',
-        '产品',
-        '工具',
-        '效率',
-      ]),
-      fetchDetails: parseBoolean(env.V2EX_FORUM_FETCH_DETAILS, true),
-      detailReplyLimit: parseNonNegativeInteger(env.V2EX_FORUM_DETAIL_REPLY_LIMIT, 20),
-    },
-    proactive: {
-      intervalMs: parseNonNegativeInteger(env.PROACTIVE_SCHEDULER_INTERVAL_MS, 0),
-      initialDelayMs: parseNonNegativeInteger(env.PROACTIVE_SCHEDULER_INITIAL_DELAY_MS, 30_000),
-      maxDigestItems: parsePositiveInteger(env.PROACTIVE_DIGEST_MAX_ITEMS, 12),
-    },
-    idleThread: {
-      // Phase 1c: bot 空闲反思,默认关闭。建议起步 30 min (1800000) 看效果再调
-      intervalMs: parseNonNegativeInteger(env.IDLE_THREAD_INTERVAL_MS, 0),
-      initialDelayMs: parseNonNegativeInteger(env.IDLE_THREAD_INITIAL_DELAY_MS, 60_000),
-      activeWithinHours: parsePositiveInteger(env.IDLE_THREAD_ACTIVE_HOURS, 24),
-      recentJournalLimit: parsePositiveInteger(env.IDLE_THREAD_RECENT_JOURNAL_LIMIT, 3),
-    },
     nodeEnv: env.NODE_ENV || 'development',
-    replyMediaTimeoutMs: Number(env.REPLY_MEDIA_TIMEOUT_MS ?? '15000'),
-    jobInterDelayMs: Number(env.JOB_INTER_DELAY_MS ?? '200'),
+    replyMediaTimeoutMs: parsePositiveInteger(env.REPLY_MEDIA_TIMEOUT_MS, 15_000),
+    jobInterDelayMs: parsePositiveInteger(env.JOB_INTER_DELAY_MS, 200),
     tavily: env.TAVILY_API_KEY
       ? { apiKey: env.TAVILY_API_KEY }
       : undefined,

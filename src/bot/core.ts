@@ -1,105 +1,41 @@
+// NapCat ingress + ingest. Phase 2 wiring 会改成:
+//   持久化进 messages 表 → ensureMediaDescriptions → enqueue 到 BotEventQueue
+//
+// 当前 (Phase 0 删除完毕,Phase 1 等 BotEventQueue 类型就位后接) 暂时空,build 通过。
+
 import { napcat } from './napcat.js'
 import { parseMessage } from './message-parser.js'
 import { findExistingMessageIds, insertMessage } from '../database/messages.js'
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
 import { persistMediaReferences } from '../media/media-cache.js'
-import type { ParsedSegment } from '../types/message-segments.js'
-import type { RootRuntimeManager } from '../runtime/root-runtime.js'
-import { summarizeSegments, type BusinessLogDispatchMode, type BusinessLogIngestSource } from '../utils/business-log.js'
+import { summarizeSegments } from '../utils/business-log.js'
 
 const ingressLog = createLogger('INGRESS')
 const napcatLog = createLogger('NAPCAT')
 
 const BACKFILL_COUNT = 50
 
-interface ProcessMessageOptions {
-  dispatchMention?: boolean
-  ingestSource?: BusinessLogIngestSource
-  rootRuntime?: RootRuntimeManager
+type StartBotOptions = {
+  /**
+   * Phase 2 wiring 注入: 持久化 + 媒体描述 ready 之后调用,把消息推进 BotEventQueue。
+   * Phase 0/1 阶段 startBot 不被 main() 调用,这里保留接口形态。
+   */
+  onMessageReady?: (input: {
+    messageRowId: number
+    groupId: number
+    senderId: number
+    senderNickname: string
+    mentionedSelf: boolean
+    sentAt: Date
+  }) => void | Promise<void>
 }
 
-type FinalizePersistedMessageOptions = {
-  groupId: number
-  messageId: number
-  messageRowId: number
-  senderId: number
-  senderNickname: string
-  createdAt: number
-  segments: ParsedSegment[]
-  dispatchMention?: boolean
-  rootRuntime?: RootRuntimeManager
-  persistedCreatedAt: Date
-  ingestSource?: BusinessLogIngestSource
-}
-
-type FinalizePersistedPrivateMessageOptions = {
-  userId: number
-  messageId: number
-  messageRowId: number
-  senderId: number
-  senderNickname: string
-  createdAt: number
-  segments: ParsedSegment[]
-  dispatchReply?: boolean
-  rootRuntime?: RootRuntimeManager
-  persistedCreatedAt: Date
-  ingestSource?: BusinessLogIngestSource
-}
-
-export async function finalizePersistedGroupMessage(
-  options: FinalizePersistedMessageOptions,
-): Promise<void> {
-  await options.rootRuntime?.emitRuntimeEvent({
-    eventKind: 'group_message',
-    groupId: options.groupId,
-    createdAt: options.persistedCreatedAt,
-    message: {
-      groupId: options.groupId,
-      messageRowId: options.messageRowId,
-      messageId: options.messageId,
-      senderId: options.senderId,
-      senderNickname: options.senderNickname,
-      segments: options.segments,
-      createdAt: options.persistedCreatedAt,
-    },
-  }, {
-    executeDecisions: options.dispatchMention !== false,
-    ingestSource: options.ingestSource,
-  })
-}
-
-export async function finalizePersistedPrivateMessage(
-  options: FinalizePersistedPrivateMessageOptions,
-): Promise<void> {
-  await options.rootRuntime?.emitRuntimeEvent({
-    eventKind: 'private_message',
-    userId: options.userId,
-    createdAt: options.persistedCreatedAt,
-    message: {
-      sceneKind: 'qq_private',
-      sceneExternalId: String(options.userId),
-      userId: options.userId,
-      messageRowId: options.messageRowId,
-      messageId: options.messageId,
-      senderId: options.senderId,
-      senderNickname: options.senderNickname,
-      segments: options.segments,
-      createdAt: options.persistedCreatedAt,
-    },
-  }, {
-    executeDecisions: options.dispatchReply !== false,
-    ingestSource: options.ingestSource,
-  })
-}
-
-async function processMessage(groupId: number, messageId: number, options: ProcessMessageOptions = {}): Promise<void> {
-  const ingestSource = options.ingestSource ?? 'realtime'
-  const dispatchMode: BusinessLogDispatchMode = options.dispatchMention === false ? 'snapshot_only' : 'live'
+async function processGroupMessage(groupId: number, messageId: number, options: StartBotOptions): Promise<void> {
   const qqMsg = await napcat.get_msg({ message_id: messageId })
   const parsed = parseMessage(qqMsg)
   if (parsed.senderId === config.selfNumber) {
-    ingressLog.debug({ groupId, messageId: parsed.messageId, ingestSource }, '忽略 bot 自身回灌消息')
+    ingressLog.debug({ groupId, messageId: parsed.messageId }, '忽略 bot 自身回灌消息')
     return
   }
   const groupName = await resolveGroupName({ group_id: groupId, ...qqMsg })
@@ -111,7 +47,7 @@ async function processMessage(groupId: number, messageId: number, options: Proce
     napcat,
   })
 
-  const persistedMessage = await insertMessage({
+  const persisted = await insertMessage({
     groupId,
     groupName,
     mediaReferenceIds: mediaResult.mediaReferenceIds,
@@ -128,150 +64,53 @@ async function processMessage(groupId: number, messageId: number, options: Proce
   const mentionedSelf = mediaResult.content.some(
     (segment) => segment.type === 'at' && segment.targetId === String(config.selfNumber),
   )
-  const logPersistedMessage = ingestSource === 'backfill' ? ingressLog.debug : ingressLog.info
-  logPersistedMessage(
-    {
-      direction: 'inbound',
-      actor: 'member',
-      category: mentionedSelf ? 'mention' : 'ambient_message',
-      flow: ingestSource === 'backfill' ? 'group_message_backfill' : 'group_message_ingress',
-      ingestSource,
-      dispatchMode,
-      sideEffect: 'db_write',
-      groupId,
-      groupName,
-      messageId: parsed.messageId,
-      messageRowId: persistedMessage.id,
-      senderId: parsed.senderId,
-      senderNickname: parsed.senderGroupNickname ?? parsed.senderNickname,
-      ...summarizeSegments(mediaResult.content),
-      mediaReferences: mediaResult.mediaReferenceIds.length,
-    },
-    ingestSource === 'backfill' ? '历史群消息已入库' : '群友消息已入库',
-  )
-
-  await finalizePersistedGroupMessage({
-    groupId,
-    messageId: parsed.messageId,
-    messageRowId: persistedMessage.id,
-    senderId: parsed.senderId,
-    senderNickname: parsed.senderGroupNickname ?? parsed.senderNickname,
-    createdAt: parsed.time * 1000,
-    segments: mediaResult.content,
-    dispatchMention: options.dispatchMention,
-    ingestSource,
-    rootRuntime: options.rootRuntime,
-    persistedCreatedAt: persistedMessage.sentAt ?? persistedMessage.createdAt,
-  })
-}
-
-async function processPrivateMessage(userId: number, messageId: number, options: ProcessMessageOptions = {}): Promise<void> {
-  const ingestSource = options.ingestSource ?? 'realtime'
-  const dispatchMode: BusinessLogDispatchMode = options.dispatchMention === false ? 'snapshot_only' : 'live'
-  const qqMsg = await napcat.get_msg({ message_id: messageId })
-  const parsed = parseMessage(qqMsg)
-  if (parsed.senderId === config.selfNumber) {
-    ingressLog.debug({ userId, messageId: parsed.messageId, ingestSource }, '忽略 bot 自身私聊回灌消息')
-    return
-  }
-
-  const mediaResult = await persistMediaReferences({
-    content: parsed.content,
-    groupId: userId,
-    messageId: parsed.messageId,
-    senderId: parsed.senderId,
-    napcat,
-  })
-
-  const persistedMessage = await insertMessage({
-    sceneKind: 'qq_private',
-    sceneExternalId: userId,
-    groupId: userId,
-    mediaReferenceIds: mediaResult.mediaReferenceIds,
-    messageId: parsed.messageId,
-    senderId: parsed.senderId,
-    senderNickname: parsed.senderNickname,
-    senderGroupNickname: parsed.senderGroupNickname,
-    content: mediaResult.content,
-    rawContent: qqMsg.message,
-    rawMessage: qqMsg.raw_message,
-    sentAt: parsed.time,
-  })
 
   ingressLog.info(
     {
       direction: 'inbound',
-      actor: 'member',
-      category: 'private_message',
-      flow: 'private_message_ingress',
-      ingestSource,
-      dispatchMode,
-      sideEffect: 'db_write',
-      userId,
+      flow: 'group_message_ingress',
+      groupId,
+      groupName,
       messageId: parsed.messageId,
-      messageRowId: persistedMessage.id,
+      messageRowId: persisted.id,
       senderId: parsed.senderId,
-      senderNickname: parsed.senderNickname,
+      senderNickname: parsed.senderGroupNickname ?? parsed.senderNickname,
+      mentionedSelf,
       ...summarizeSegments(mediaResult.content),
       mediaReferences: mediaResult.mediaReferenceIds.length,
     },
-    '私聊消息已入库',
+    '群消息已入库',
   )
 
-  await finalizePersistedPrivateMessage({
-    userId,
-    messageId: parsed.messageId,
-    messageRowId: persistedMessage.id,
+  await options.onMessageReady?.({
+    messageRowId: persisted.id,
+    groupId,
     senderId: parsed.senderId,
-    senderNickname: parsed.senderNickname,
-    createdAt: parsed.time * 1000,
-    segments: mediaResult.content,
-    dispatchReply: options.dispatchMention,
-    ingestSource,
-    rootRuntime: options.rootRuntime,
-    persistedCreatedAt: persistedMessage.sentAt ?? persistedMessage.createdAt,
+    senderNickname: parsed.senderGroupNickname ?? parsed.senderNickname,
+    mentionedSelf,
+    sentAt: persisted.sentAt ?? persisted.createdAt,
   })
 }
 
-async function backfillGroupMessages(groupId: number, options: ProcessMessageOptions = {}): Promise<void> {
+async function backfillGroupMessages(groupId: number, options: StartBotOptions): Promise<void> {
   const { messages } = await napcat.get_group_msg_history({
     group_id: groupId,
     count: BACKFILL_COUNT,
   })
-
   const allMessageIds = messages.map((m) => m.message_id)
   const existingIds = await findExistingMessageIds(groupId, allMessageIds)
 
   for (const msg of messages) {
     if (existingIds.has(msg.message_id)) continue
     try {
-      await processMessage(groupId, msg.message_id, {
-        ...options,
-        dispatchMention: false,
-        ingestSource: 'backfill',
-      })
+      await processGroupMessage(groupId, msg.message_id, { onMessageReady: undefined })
     } catch (error) {
-      ingressLog.warn(
-        {
-          error,
-          groupId,
-          msgId: msg.message_id,
-          ingestSource: 'backfill',
-          dispatchMode: 'snapshot_only',
-        },
-        '补拉消息处理失败，跳过',
-      )
+      ingressLog.warn({ error, groupId, msgId: msg.message_id }, '补拉消息处理失败,跳过')
     }
   }
   ingressLog.info(
     {
-      direction: 'inbound',
-      actor: 'system',
-      category: 'group_message',
       flow: 'group_message_backfill',
-      ingestSource: 'backfill',
-      dispatchMode: 'snapshot_only',
-      sideEffect: 'db_write',
       groupId,
       total: messages.length,
       skipped: existingIds.size,
@@ -283,9 +122,7 @@ async function backfillGroupMessages(groupId: number, options: ProcessMessageOpt
 
 function getGroupNameFromEvent(context: { group_name?: string; groupName?: string }): string | undefined {
   if (!context || typeof context !== 'object') return undefined
-
   const candidate = context.group_name ?? context.groupName
-
   if (typeof candidate !== 'string') return undefined
   const normalized = candidate.trim()
   return normalized.length > 0 ? normalized : undefined
@@ -294,7 +131,6 @@ function getGroupNameFromEvent(context: { group_name?: string; groupName?: strin
 async function resolveGroupName(context: { group_id: number; group_name?: string; groupName?: string }): Promise<string | undefined> {
   const eventGroupName = getGroupNameFromEvent(context)
   if (eventGroupName) return eventGroupName
-
   try {
     const groupInfo = await napcat.get_group_info({ group_id: context.group_id })
     const apiGroupName = groupInfo.group_name?.trim()
@@ -305,33 +141,17 @@ async function resolveGroupName(context: { group_id: number; group_name?: string
   }
 }
 
-export interface StartBotOptions {
-  rootRuntime?: RootRuntimeManager
-}
-
 export async function startBot(options: StartBotOptions = {}): Promise<void> {
-  napcat.on('socket.open', () => {
-    napcatLog.info('WebSocket 开始连接')
-  })
-
-  napcat.on('socket.error', (ctx) => {
-    napcatLog.error({ errorType: ctx.error_type }, 'WebSocket 连接错误')
-  })
-
-  napcat.on('socket.close', (ctx) => {
-    napcatLog.warn({ code: ctx.code }, 'WebSocket 连接关闭')
-  })
+  napcat.on('socket.open', () => napcatLog.info('WebSocket 开始连接'))
+  napcat.on('socket.error', (ctx) => napcatLog.error({ errorType: ctx.error_type }, 'WebSocket 连接错误'))
+  napcat.on('socket.close', (ctx) => napcatLog.warn({ code: ctx.code }, 'WebSocket 连接关闭'))
 
   napcat.on('meta_event.lifecycle', async (ctx) => {
     if (ctx.sub_type === 'connect') {
       napcatLog.info('NapCat 连接成功')
-      for (const groupId of config.groupIds) {
-        backfillGroupMessages(groupId, {
-          rootRuntime: options.rootRuntime,
-        }).catch((error) => {
-          ingressLog.error({ error, groupId, ingestSource: 'backfill' }, '群历史消息补拉失败')
-        })
-      }
+      backfillGroupMessages(config.botTargetGroupId, options).catch((error) => {
+        ingressLog.error({ error, groupId: config.botTargetGroupId }, '群历史消息补拉失败')
+      })
     }
   })
 
@@ -340,31 +160,14 @@ export async function startBot(options: StartBotOptions = {}): Promise<void> {
   })
 
   napcat.on('message.group', async (context) => {
-    if (!config.groupIds.includes(context.group_id)) return
-
+    if (context.group_id !== config.botTargetGroupId) return
     try {
-      await processMessage(context.group_id, context.message_id, {
-        dispatchMention: true,
-        ingestSource: 'realtime',
-        rootRuntime: options.rootRuntime,
-      })
+      await processGroupMessage(context.group_id, context.message_id, options)
     } catch (error) {
-      ingressLog.error({ error, group: context.group_id, msgId: context.message_id, ingestSource: 'realtime' }, '处理群消息失败')
-    }
-  })
-
-  napcat.on('message.private', async (context) => {
-    try {
-      await processPrivateMessage(context.user_id, context.message_id, {
-        dispatchMention: true,
-        ingestSource: 'realtime',
-        rootRuntime: options.rootRuntime,
-      })
-    } catch (error) {
-      ingressLog.error({ error, userId: context.user_id, msgId: context.message_id, ingestSource: 'realtime' }, '处理私聊消息失败')
+      ingressLog.error({ error, group: context.group_id, msgId: context.message_id }, '处理群消息失败')
     }
   })
 
   await napcat.connect()
-  napcatLog.info('NapCat 监听已启动')
+  napcatLog.info({ targetGroup: config.botTargetGroupId }, 'NapCat 监听已启动')
 }

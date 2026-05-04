@@ -176,6 +176,12 @@ export function parseConfig(env: EnvSource) {
   }
 
   const compactionTriggerTokens = parsePositiveInteger(env.COMPACTION_TRIGGER_TOKENS, 16_000)
+  const idleHintMs = parsePositiveInteger(env.BOT_IDLE_HINT_MS, 1_800_000)
+  const fetchRedditTimeoutMs = parsePositiveInteger(env.BOT_FETCH_REDDIT_TIMEOUT_MS, 8_000)
+  const fetchUrlTimeoutMs = parsePositiveInteger(env.BOT_FETCH_URL_TIMEOUT_MS, 12_000)
+  const fetchLogPath = env.BOT_FETCH_LOG_PATH && env.BOT_FETCH_LOG_PATH.trim().length > 0
+    ? env.BOT_FETCH_LOG_PATH.trim()
+    : 'logs/fetch.ndjson'
 
   return {
     databaseUrl: requireEnv(env, 'DATABASE_URL'),
@@ -195,6 +201,18 @@ export function parseConfig(env: EnvSource) {
      * multi-source token-velocity. Override via COMPACTION_TRIGGER_TOKENS env.
      */
     compactionTriggerTokens,
+    /**
+     * Idle hint threshold for the wait tool. After this many ms with no real event,
+     * wait returns an `[空闲提示]` tool result instead of blocking forever, giving
+     * the LLM a chance to fetch something or start a topic. Default 30min.
+     */
+    idleHintMs,
+    /** Hard timeout for fetch_reddit (AbortController). */
+    fetchRedditTimeoutMs,
+    /** Hard timeout for fetch_url (AbortController). */
+    fetchUrlTimeoutMs,
+    /** NDJSON sidecar log path. Not a Prisma table — operations data only. */
+    fetchLogPath,
     tavily: env.TAVILY_API_KEY
       ? { apiKey: env.TAVILY_API_KEY }
       : undefined,

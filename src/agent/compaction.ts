@@ -77,31 +77,37 @@ function estimateTokens(messages: AgentMessage[]): number {
 
 /**
  * 切割位置: 保留尾部 keep 条, 把前面的压缩。
- * 修正: 不能切在 assistant(toolCalls) 和它对应的 tool result 之间。
- * 如果 cut 之前一条是 assistant + toolCalls, 把 cut 推到对应 tool result 之后。
+ *
+ * 不变量 (违反任一会让 OpenAI API 拒掉下一轮请求):
+ *   1. kept tail 不能以 tool 消息开头 (没有锚 assistant)。
+ *   2. kept tail 不能切在 assistant(toolCalls) 和它的 tool results 之间
+ *      —— 要么整个 block 在 kept, 要么整个 block 在 compressed。
+ *
+ * 策略: 从初始 cut 向前 (向小 index) 走, 把不安全的边界吞进 tail。
+ *   - 若 messages[cut] 是 tool, cut-- (tail 不能以 tool 起头)。
+ *   - 若 messages[cut-1] 是 assistant(toolCalls), cut-- (整 block 进 tail)。
+ *   - 否则 break, cut 已经是安全边界。
+ *
+ * 走到 cut=0 表示无法压缩 (整段都是粘连的 tool 序列), maybeCompactConversation
+ * 会因为 cutIndex<=0 跳过这一轮。
  */
-function findSafeCutIndex(messages: AgentMessage[], keepCount: number): number {
+export function findSafeCutIndex(messages: AgentMessage[], keepCount: number): number {
   if (messages.length <= keepCount) return 0
   let cut = messages.length - keepCount
   if (cut <= 0) return 0
 
-  const before = messages[cut - 1]
-  if (before?.role === 'assistant' && before.toolCalls.length > 0) {
-    const expectedToolCallIds = new Set(before.toolCalls.map((c) => c.id))
-    let i = cut
-    while (i < messages.length) {
-      const m = messages[i]
-      if (m && m.role === 'tool' && expectedToolCallIds.has(m.toolCallId)) {
-        expectedToolCallIds.delete(m.toolCallId)
-        i++
-        if (expectedToolCallIds.size === 0) {
-          cut = i
-          break
-        }
-      } else {
-        i++
-      }
+  while (cut > 0) {
+    const headOfTail = messages[cut]
+    if (headOfTail?.role === 'tool') {
+      cut--
+      continue
     }
+    const before = messages[cut - 1]
+    if (before?.role === 'assistant' && before.toolCalls.length > 0) {
+      cut--
+      continue
+    }
+    break
   }
   return cut
 }

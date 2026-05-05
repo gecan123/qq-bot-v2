@@ -69,7 +69,7 @@ describe('wait tool — idle race', () => {
     assert.equal(timer.cleared(), 1)
   })
 
-  test('idle timeout fires first → returns idle hint and enqueues a wake event', async () => {
+  test('idle timeout fires first → returns idle hint, does NOT enqueue wake (Guard 2 keys on hadToolCalls)', async () => {
     const timer = makeFakeTimer()
     const tool = createWaitTool({ idleHintMs: 1_800_000, timer })
     const { ctx, queue } = makeCtx()
@@ -83,9 +83,8 @@ describe('wait tool — idle race', () => {
 
     assert.match(result.content, /\[空闲提示\]/)
     assert.match(result.content, /30 分钟/)
-    assert.equal(queue.size(), 1, 'wake must be enqueued so Guard 2 does not block')
-    const event = queue.dequeue()
-    assert.deepEqual(event, { type: 'wake' })
+    // 关键: wait 是一次 toolCall, 主循环看 hadToolCalls=true 自动跑下一轮, 不用 wake 戳.
+    assert.equal(queue.size(), 0, 'no wake enqueue — Guard 2 reads hadToolCalls now')
   })
 
   test('idle hint includes minute value derived from idleHintMs', async () => {

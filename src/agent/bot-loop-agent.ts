@@ -41,26 +41,23 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let lastWakeAt: Date | null = null
   let roundIndex = 0
 
-  async function drainEvents(): Promise<{ consumed: number }> {
+  async function drainEvents(): Promise<number> {
     let consumed = 0
     while (true) {
       const event = deps.eventQueue.dequeue()
       if (!event) break
       consumed++
-
-      if (event.type === 'wake') {
-        // wake 是控制信号 (stop / 未来 timer), 不进 context
-        continue
-      }
+      // wake 是控制信号 (stop / 未来 timer), 不进 context
+      if (event.type === 'wake') continue
       const rendered = await deps.renderEvent(event)
       if (rendered == null || rendered.length === 0) continue
       deps.context.appendUserMessage(rendered)
       lastWakeAt = new Date()
     }
-    return { consumed }
+    return consumed
   }
 
-  async function runRound(): Promise<void> {
+  async function runRound(): Promise<{ hadToolCalls: boolean }> {
     roundIndex++
     const snapshot = deps.context.getSnapshot()
     const tools = deps.tools.list()
@@ -100,11 +97,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       })
       deps.context.appendToolResult({ toolCallId: call.id, content: result.content })
     }
-  }
 
-  async function persistSnapshot(): Promise<void> {
-    const persisted = deps.context.exportPersistedSnapshot()
-    await deps.snapshotRepo.save({ snapshot: persisted, lastWakeAt })
+    return { hadToolCalls: completion.toolCalls.length > 0 }
   }
 
   async function maybeCompact(): Promise<void> {
@@ -115,33 +109,30 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     }
   }
 
-  async function runOnceCore(): Promise<{ ranRound: boolean }> {
-    const drainResult = await drainEvents()
-    log.debug({ roundIndex: roundIndex + 1, eventsConsumed: drainResult.consumed }, 'round_start')
+  async function step(): Promise<{ hadToolCalls: boolean }> {
+    const consumed = await drainEvents()
+    log.debug({ roundIndex: roundIndex + 1, eventsConsumed: consumed }, 'round_start')
 
-    const snapshot = deps.context.getSnapshot()
-    if (snapshot.messages.length === 0) {
-      return { ranRound: false }
+    if (deps.context.getSnapshot().messages.length === 0) {
+      return { hadToolCalls: false }
     }
 
-    await runRound()
-    await persistSnapshot()
+    const { hadToolCalls } = await runRound()
+    await deps.snapshotRepo.save({
+      snapshot: deps.context.exportPersistedSnapshot(),
+      lastWakeAt,
+    })
     await maybeCompact()
-    return { ranRound: true }
+    return { hadToolCalls }
   }
 
+  // 节奏 = LLM 意图 (跟文章版 stop_reason != tool_use 同形):
+  //   有 toolCall (含 wait): 立即跑下一轮让 LLM 看 tool result.
+  //   无 toolCall (纯 text / context 空): LLM 没事做 → 阻塞等事件, 不烧 token.
+  // waitForEvent 在队列非空时立即 resolve, stop 时手动 enqueue wake 也能解开.
   async function runOnce(): Promise<void> {
-    const { ranRound } = await runOnceCore()
-
-    // 守护 1: context 还空(首次启动 + 没有真消息),阻塞等首条事件
-    if (!ranRound) {
-      await deps.eventQueue.waitForEvent()
-      return
-    }
-
-    // 守护 2: round 结束后队列为空(LLM 没 call wait 或 wait 已结束),block 等下个事件,
-    // 避免无新输入的情况下 LLM 持续循环烧 token。
-    if (deps.eventQueue.size() === 0 && !stopRequested) {
+    const { hadToolCalls } = await step()
+    if (!hadToolCalls && !stopRequested) {
       await deps.eventQueue.waitForEvent()
     }
   }
@@ -165,14 +156,14 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     },
     async stop() {
       stopRequested = true
-      // 唤醒可能阻塞在 wait tool 里的 round, 让 stopRequested 检查能跑到
+      // 唤醒任何阻塞中的 waitForEvent (主循环的 / wait tool 内部的), 让 while 顶部能跑到 stopRequested 检查.
       deps.eventQueue.enqueue({ type: 'wake' })
       log.info('bot_loop_stop_requested')
     },
     async runOnceForTest() {
-      // 测试用: 跑核心逻辑 (drain + round + persist + compact),跳过外层的 waitForEvent 守护,
-      // 否则空 context 测试会阻塞等事件。
-      await runOnceCore()
+      // 测试用: 跑一次 step (drain + round + persist + compact), 跳过 runOnce 的 waitForEvent
+      // 守护, 否则空 context 测试会阻塞.
+      await step()
     },
   }
 }

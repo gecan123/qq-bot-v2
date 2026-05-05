@@ -5,8 +5,8 @@ import type { Tool } from '../tool.js'
 /**
  * wait 工具: bot 没事可做时挂在这里, 直到有新事件 — 或者直到 IDLE_HINT_MS 到点。
  *
- * 关键: idle 触发后 enqueue 一个 {type:'wake'} 让主 loop Guard 2 不阻塞、立即跑下一轮。
- * 下一轮 LLM 看到 history 末尾的 `[空闲提示]...` tool result, 自己决定要 fetch 还是继续 wait。
+ * 节奏: wait 是一次 toolCall, 主循环看到 hadToolCalls=true → 立即跑下一轮.
+ * idle 触发只需返回 [空闲提示] tool result, 不必额外 enqueue wake — 下一轮 LLM 自然看到.
  *
  * 红线 5: idle hint 文本是常量, 同样 trigger 输出同样字节; 一旦 append 进 messages 数组就冻结,
  * snapshot 持久化里就有, 重启后 LLM 看到的 prefix 完全一致。idle 引信不重放 — 重启后第一次
@@ -63,8 +63,7 @@ export function createWaitTool(deps: WaitToolDeps = {}): Tool<WaitArgs> {
         ])
 
         if (result === 'idle') {
-          // 戳一下 Guard 2 不阻塞, 让下一轮立即跑 (drainEvents 看 wake 跳过)
-          ctx.eventQueue.enqueue({ type: 'wake' })
+          // wait 是一次 toolCall → 主循环 hadToolCalls=true → 立即跑下一轮看 tool result, 不用额外戳.
           const minutes = Math.round(idleHintMs / 60_000)
           return {
             content: `[空闲提示] 已闲置约 ${minutes} 分钟. 你处于自由时段, 可以 fetch_reddit 看看有啥值得分享的 / 主动找谁聊 / 或者继续 wait. 别每次空闲都硬刷, 你的判断比频率重要.`,

@@ -138,6 +138,92 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(ctx.getSnapshot().messages.length, 0, 'wake events must not enter context')
   })
 
+  test('LLM call 非 wait tool 后立即跑下一轮消化 result (Guard 2 keys on hadToolCalls)', async () => {
+    // 双轮意图: round 1 LLM call fetch_reddit → tool result 进 context → 主循环立即跑 round 2 →
+    // LLM 看到 result 决定 send_message → 真发出去. 旧实现 Guard 2 看 eventQueue 空就阻塞,
+    // round 2 永远跑不到. 新实现 Guard 2 看 hadToolCalls, 这条链路天然贯通.
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({
+      type: 'napcat_message',
+      messageRowId: 1,
+      groupId: 999,
+      messageId: 12345,
+      senderId: 100,
+      senderNickname: '张三',
+      mentionedSelf: true,
+      sentAt: new Date('2026-01-01T00:00:00Z'),
+      renderedText: 'hello',
+    })
+
+    let llmCallCount = 0
+    const llm: LlmClient = {
+      async chat() {
+        llmCallCount++
+        if (llmCallCount === 1) {
+          return {
+            content: '让我看看 reddit 有啥',
+            toolCalls: [{ id: 'c1', name: 'fetch_reddit', args: {} }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+            model: 'mock',
+          }
+        }
+        if (llmCallCount === 2) {
+          return {
+            content: '看到了, 分享一下',
+            toolCalls: [{ id: 'c2', name: 'send_message', args: {} }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+            model: 'mock',
+          }
+        }
+        // round 3+ 让 LLM 显式 wait, 这样测试可以稳定停下来 (wait 内部阻塞队列, 不烧 token)
+        return {
+          content: '说完了, 等下条',
+          toolCalls: [{ id: 'c3', name: 'wait', args: {} }],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+          model: 'mock',
+        }
+      },
+    }
+
+    let sendMessageCalled = false
+    const tools = makeMockTools({
+      fetch_reddit: async () => ({ content: '[reddit] r/programming top: foo bar' }),
+      send_message: async () => {
+        sendMessageCalled = true
+        return { content: '{"ok":true}' }
+      },
+      wait: async () => {
+        // 简化: 测试里 wait 直接返回 ok, 不挂. 真实 wait 会 race 队列, 这里不需要.
+        return { content: 'ok' }
+      },
+    })
+    const { repo } = makeMockSnapshotRepo()
+
+    const agent = createBotLoopAgent({
+      systemPrompt: 'you are a bot',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools,
+      snapshotRepo: repo,
+      renderEvent: async (event) => {
+        if (event.type !== 'napcat_message') return null
+        return `[${event.senderNickname}] hello`
+      },
+    })
+
+    const startPromise = agent.start()
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    // 双轮意图贯通: LLM 至少跑了 2 次, send_message 真的执行了
+    assert.ok(llmCallCount >= 2, `expected LLM ≥2 calls, got ${llmCallCount}`)
+    assert.equal(sendMessageCalled, true, 'send_message 拿到 fetch_reddit result 后真发出去了')
+
+    await agent.stop()
+    await startPromise
+  })
+
   test('renderEvent returning null skips appending', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()

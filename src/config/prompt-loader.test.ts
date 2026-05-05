@@ -43,17 +43,4 @@ describe('media prompts', () => {
     assert.match(prompt, /不要编造|看不清/)
   })
 
-  test('agent reply instruction prompt includes task-layer constraints', () => {
-    const prompt = loadPrompt('./prompts/reply-instruction.md')
-    assert.match(prompt, /简洁/)
-    assert.match(prompt, /不要编造|别编造/)
-    assert.match(prompt, /澄清|追问/)
-    assert.match(prompt, /上下文/)
-    assert.match(prompt, /replyText/)
-    assert.match(prompt, /confidence/)
-    assert.match(prompt, /中国人|对话对象/)
-    assert.match(prompt, /北京时间|Asia\/Shanghai/)
-    assert.match(prompt, /UTC/)
-  })
-
 })

@@ -283,28 +283,6 @@ export class OpenAIProvider implements LlmProvider {
         return params.formatter ? params.formatter(content) : { description: content }
     }
 
-    private async generateStructuredJson<T>(params: {
-        systemInstruction: string
-        prompt: string
-        responseFormat: any
-        operation: string
-    }): Promise<T> {
-        const response = await this.client.chat.completions.create({
-            model: this.model,
-            temperature: 0.3,
-            response_format: params.responseFormat,
-            messages: [
-                { role: 'system', content: params.systemInstruction },
-                { role: 'user', content: params.prompt },
-            ],
-        })
-        recordCurrentTokenUsage(params.operation, toTokenUsage(response.usage))
-
-        const raw = response.choices[0]?.message.content?.trim() ?? ''
-        assertStructuredContentNotEmpty(raw, params.operation, response)
-        return parseStructuredContent<T>(raw)
-    }
-
     private formatStructuredImageDescription(content: string): string {
         if (!content) return ''
 

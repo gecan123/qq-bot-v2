@@ -76,7 +76,6 @@ async function fetchBody(
     const reader = response.body.getReader()
     const chunks: Uint8Array[] = []
     let total = 0
-    let truncated = false
     try {
       while (true) {
         const { done, value } = await reader.read()
@@ -85,7 +84,6 @@ async function fetchBody(
         chunks.push(value)
         total += value.byteLength
         if (total >= RESPONSE_BODY_CAP_BYTES) {
-          truncated = true
           await reader.cancel().catch(() => {})
           break
         }

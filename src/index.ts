@@ -25,10 +25,6 @@ import { createDedupEnqueue } from './agent/dedup-enqueue.js'
 
 const log = createLogger('APP')
 
-function isGptModel(model: string): boolean {
-  return model.toLowerCase().startsWith('gpt')
-}
-
 function buildMediaProvider(): RoutingProvider {
   const { defaultProvider: defaultProviderName, defaultModel, providers, scenarios } = config.llm
   const defaultProviderConfig = providers[defaultProviderName]
@@ -39,9 +35,6 @@ function buildMediaProvider(): RoutingProvider {
     defaultProviderConfig.url,
     defaultProviderConfig.apiKey,
     defaultModel,
-    {
-      imageStreamMode: scenarios.describeImage.streamMode,
-    },
   )
 
   const routes: ConstructorParameters<typeof RoutingProvider>[1] = {}
@@ -54,28 +47,7 @@ function buildMediaProvider(): RoutingProvider {
       providerConfig.url,
       providerConfig.apiKey,
       s.model ?? defaultModel,
-      {
-        imageStreamMode: key === 'describeImage' ? scenarios.describeImage.streamMode : undefined,
-      },
     )
-  }
-
-  if (scenarios.describeImage.fallbackProvider || scenarios.describeImage.fallbackModel) {
-    const fallbackProviderName = scenarios.describeImage.fallbackProvider ?? defaultProviderName
-    const fallbackProviderConfig = providers[fallbackProviderName]
-    const fallbackModel = scenarios.describeImage.fallbackModel ?? defaultModel
-    if (fallbackProviderConfig) {
-      routes.describeImageFallback = new OpenAIProvider(
-        fallbackProviderConfig.url,
-        fallbackProviderConfig.apiKey,
-        fallbackModel,
-        {
-          imageStreamMode: isGptModel(fallbackModel)
-            ? scenarios.describeImage.fallbackGptStreamMode ?? 'off'
-            : 'off',
-        },
-      )
-    }
   }
 
   return new RoutingProvider(defaultProvider, routes)

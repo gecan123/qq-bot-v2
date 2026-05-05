@@ -110,12 +110,6 @@ function parseStructuredContent<T>(content: string): T {
     }
 }
 
-type ImageStreamMode = 'off' | 'fallback' | 'on'
-
-interface OpenAIProviderOptions {
-    imageStreamMode?: ImageStreamMode
-}
-
 function assertValidBaseURL(baseURL: string): void {
     let parsed: URL
     try {
@@ -132,14 +126,12 @@ function assertValidBaseURL(baseURL: string): void {
 export class OpenAIProvider implements LlmProvider {
     private client: OpenAI
     readonly model: string
-    private imageStreamMode: ImageStreamMode
     private static readonly MAX_VIDEO_BYTES = 5 * 1024 * 1024
 
-    constructor(baseURL: string, apiKey: string, model: string, options: OpenAIProviderOptions = {}) {
+    constructor(baseURL: string, apiKey: string, model: string) {
         assertValidBaseURL(baseURL)
         this.client = new OpenAI({ baseURL, apiKey })
         this.model = model
-        this.imageStreamMode = options.imageStreamMode ?? 'off'
     }
 
     async describeImage(params: { image: Buffer; contentType: string; mediaType?: string }): Promise<string> {
@@ -154,7 +146,7 @@ export class OpenAIProvider implements LlmProvider {
         const base64 = prepared.image.toString('base64')
         const mediaLabel = params.mediaType === 'sticker' ? '表情包/贴纸' : params.mediaType === 'video' ? '视频截图' : '图片'
 
-        const request = {
+        const response = await this.client.chat.completions.create({
             model: this.model,
             temperature: 0.3,
             response_format: IMAGE_DESCRIPTION_RESPONSE_FORMAT as any,
@@ -171,12 +163,9 @@ export class OpenAIProvider implements LlmProvider {
                     ],
                 },
             ],
-        }
-        const content = await this.createTextCompletionWithStreamFallback(
-            request,
-            'describeImage',
-            this.imageStreamMode,
-        )
+        })
+        recordCurrentTokenUsage('describeImage', toTokenUsage(response.usage))
+        const content = response.choices[0]?.message.content?.trim() ?? ''
         return {
             description: this.formatStructuredImageDescription(content),
             raw: this.tryParseStructuredContent(content),
@@ -359,48 +348,6 @@ export class OpenAIProvider implements LlmProvider {
         } catch {
             return undefined
         }
-    }
-
-    private async createTextCompletionWithStreamFallback(
-        request: any,
-        operation: string,
-        mode: ImageStreamMode,
-    ): Promise<string> {
-        if (mode === 'on') {
-            const streamed = await this.createStreamingTextCompletion(request, operation)
-            return streamed.trim()
-        }
-
-        const response = await this.client.chat.completions.create(request)
-        const content = response.choices[0]?.message.content?.trim() ?? ''
-        if (content || mode !== 'fallback') {
-            recordCurrentTokenUsage(operation, toTokenUsage(response.usage))
-            return content
-        }
-
-        return this.createStreamingTextCompletion(request, operation)
-    }
-
-    private async createStreamingTextCompletion(request: any, operation: string): Promise<string> {
-        const stream = await this.client.chat.completions.create({
-            ...request,
-            stream: true,
-            stream_options: { include_usage: true },
-        } as any) as unknown as AsyncIterable<any>
-
-        let streamedContent = ''
-        let usage: any
-        for await (const chunk of stream) {
-            usage = chunk.usage ?? usage
-            const delta = chunk.choices?.[0]?.delta?.content
-            if (typeof delta === 'string') streamedContent += delta
-        }
-
-        if (usage) {
-            recordCurrentTokenUsage(operation, toTokenUsage(usage))
-        }
-
-        return streamedContent.trim()
     }
 
     private async prepareImageForRequest(

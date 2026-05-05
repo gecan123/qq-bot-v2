@@ -2,7 +2,6 @@ import type { LlmProvider, MediaDescriptionResult } from './types.js'
 
 type ScenarioProviders = {
     describeImage?: LlmProvider
-    describeImageFallback?: LlmProvider
     describeVideo?: LlmProvider
     describePdf?: LlmProvider
     transcribeAudio?: LlmProvider
@@ -31,15 +30,8 @@ export class RoutingProvider implements LlmProvider {
         params: Parameters<NonNullable<LlmProvider['describeImageDetailed']>>[0],
     ): Promise<MediaDescriptionResult> {
         const p = this.getProviderForScenario('describeImage')
-        try {
-            if (p.describeImageDetailed) return await p.describeImageDetailed(params)
-            return { description: await p.describeImage(params) }
-        } catch (error) {
-            const fallback = this.routes.describeImageFallback
-            if (!fallback) throw error
-            if (fallback.describeImageDetailed) return await fallback.describeImageDetailed(params)
-            return { description: await fallback.describeImage(params) }
-        }
+        if (p.describeImageDetailed) return p.describeImageDetailed(params)
+        return { description: await p.describeImage(params) }
     }
 
     async describeVideo(params: Parameters<NonNullable<LlmProvider['describeVideo']>>[0]): Promise<string> {

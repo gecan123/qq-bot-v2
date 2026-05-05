@@ -139,9 +139,6 @@ LLM_PROVIDER_CLAUDE_API_KEY=sk-local
 
 LLM_PROVIDER_OPENAI_URL=http://127.0.0.1:8317/v1
 LLM_PROVIDER_OPENAI_API_KEY=sk-local
-
-LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_PROVIDER=openai
-LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_MODEL=gpt-5.4
 ```
 
 即使 `claude` 和 `openai` 暂时都指向同一个本地统一网关，也建议保留两个独立 provider key，后续切换真实上游时只需要改对应 provider 的 URL / API_KEY。
@@ -160,7 +157,6 @@ Multi-turn agent reasoning for @-mention replies. Triggered based on `AgentMode`
 - `src/agent/types.ts` — `AgentLlmAdapter` interface, `ToolCall`, `ToolResult`, `AgentMessage`, `TurnResult`, `LoopResult` types
 - `src/agent/heuristic.ts` — `shouldUseAgent(text)` regex heuristic for deciding when to use agent mode
 - `src/agent/tools.ts` — `createAgentTools(groupId)` factory returning read-only tools with zod validation: `db_schema`, `db_read`, structured `final_answer`, and optionally `web_search` (requires `TAVILY_API_KEY`)
-- `src/agent/openai-agent-adapter.ts` — `OpenAIAgentAdapter` implementing `AgentLlmAdapter` via OpenAI function calling; `createOpenAIAgentAdapter()` factory using `LLM_AGENT_*` env vars (falls back to `OPENAI_*`)
 - `src/agent/loop.ts` — `runAgentLoop()` with maxSteps=4, maxTimeMs=30s, final/fallback/aborted states
 - `src/config/agent-profiles.ts` — `AgentProfile` supports `personaFile` (path to `.md`) or inline `persona` string; default persona baseline comes from `prompts/characters/default.md`, and `getAgentProfile()` merges default → config.default → group and resolves persona
 
@@ -169,7 +165,4 @@ Multi-turn agent reasoning for @-mention replies. Triggered based on `AgentMode`
 **Message schema:** `prisma/schema.prisma` added `searchText String @default("")` to Message model for agent search tool. Backfill with `scripts/backfill-search-text.ts`.
 
 **Agent env vars:**
-- `LLM_AGENT_BASE_URL` — OpenAI-compatible base URL for agent (falls back to `OPENAI_BASE_URL`)
-- `LLM_AGENT_API_KEY` — API key for agent (falls back to `OPENAI_API_KEY`)
-- `LLM_AGENT_MODEL` — model for agent (falls back to `OPENAI_MODEL`)
 - `TAVILY_API_KEY` — (optional) Tavily web search API key; enables `web_search` tool in agent loop when set

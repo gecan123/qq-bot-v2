@@ -125,72 +125,9 @@ describe('OpenAIProvider media file inputs', () => {
     assert.doesNotMatch(result, /^```/)
   })
 
-  test('describeImage falls back to streaming when stream mode is fallback and non-stream content is empty', async () => {
+  test('describeImage returns empty string when provider returns null content', async () => {
     const calls: any[] = []
-    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.4-mini', {
-      imageStreamMode: 'fallback',
-    })
-    ;(provider as any).client = {
-      chat: {
-        completions: {
-          create: async (request: any) => {
-            calls.push(request)
-            if (!request.stream) {
-              return {
-                choices: [{
-                  message: {
-                    content: null,
-                  },
-                }],
-                usage: {
-                  prompt_tokens: 10,
-                  completion_tokens: 0,
-                  total_tokens: 10,
-                },
-              }
-            }
-
-            async function* chunks() {
-              yield {
-                choices: [{
-                  delta: {
-                    content: '```json\n{\n  "detectedType": "sticker",\n  "summary": "一张害羞表情贴纸。",'
-                  },
-                }],
-              }
-              yield {
-                choices: [{
-                  delta: {
-                    content: '\n  "description": "一个动漫角色抱着枕头，神情害羞。",\n  "extractedText": []\n}\n```'
-                  },
-                }],
-              }
-            }
-
-            return chunks()
-          },
-        },
-      },
-    }
-
-    const result = await provider.describeImage({
-      image: Buffer.from('image-bytes'),
-      contentType: 'image/gif',
-      mediaType: 'sticker',
-    })
-
-    assert.equal(calls.length, 2)
-    assert.equal(calls[0].stream, undefined)
-    assert.equal(calls[1].stream, true)
-    assert.match(result, /一张害羞表情贴纸/)
-    assert.match(result, /一个动漫角色抱着枕头，神情害羞/)
-  })
-
-  test('describeImage does not fall back to streaming when stream mode is off', async () => {
-    const calls: any[] = []
-    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.4-mini', {
-      imageStreamMode: 'off',
-    })
+    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.4-mini')
     ;(provider as any).client = {
       chat: {
         completions: {
@@ -221,56 +158,6 @@ describe('OpenAIProvider media file inputs', () => {
 
     assert.equal(calls.length, 1)
     assert.equal(result, '')
-  })
-
-  test('describeImage uses streaming directly when stream mode is on', async () => {
-    const calls: any[] = []
-    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.4', {
-      imageStreamMode: 'on',
-    })
-    ;(provider as any).client = {
-      chat: {
-        completions: {
-          create: async (request: any) => {
-            calls.push(request)
-
-            async function* chunks() {
-              yield {
-                choices: [{
-                  delta: {
-                    content: '```json\n{\n  "detectedType": "photo",\n  "summary": "一张照片。",'
-                  },
-                }],
-              }
-              yield {
-                choices: [{
-                  delta: {
-                    content: '\n  "description": "直接走流式返回。",\n  "extractedText": []\n}\n```'
-                  },
-                }],
-                usage: {
-                  prompt_tokens: 10,
-                  completion_tokens: 10,
-                  total_tokens: 20,
-                },
-              }
-            }
-
-            return chunks()
-          },
-        },
-      },
-    }
-
-    const result = await provider.describeImage({
-      image: Buffer.from('image-bytes'),
-      contentType: 'image/jpeg',
-    })
-
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0].stream, true)
-    assert.match(result, /一张照片/)
-    assert.match(result, /直接走流式返回/)
   })
 
   test('describeImage preprocesses oversized images before request', async () => {

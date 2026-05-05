@@ -27,10 +27,6 @@ describe('config', () => {
       LLM_PROVIDER_GEMINI_API_KEY: 'gemini-key',
       LLM_SCENARIO_DESCRIBE_IMAGE_PROVIDER: 'gemini',
       LLM_SCENARIO_DESCRIBE_IMAGE_MODEL: 'gemini-3-flash-preview',
-      LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_PROVIDER: 'openai',
-      LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_MODEL: 'gpt-5.4',
-      LLM_SCENARIO_DESCRIBE_IMAGE_FALLBACK_GPT_STREAM_MODE: 'on',
-      LLM_SCENARIO_DESCRIBE_IMAGE_STREAM_MODE: 'fallback',
       LLM_SCENARIO_TRANSCRIBE_AUDIO_PROVIDER: 'gemini',
       LLM_SCENARIO_TRANSCRIBE_AUDIO_MODEL: 'gemini-3-flash-preview',
     }))
@@ -48,17 +44,13 @@ describe('config', () => {
     assert.deepEqual(config.llm.scenarios.describeImage, {
       provider: 'gemini',
       model: 'gemini-3-flash-preview',
-      fallbackProvider: 'openai',
-      fallbackModel: 'gpt-5.4',
-      fallbackGptStreamMode: 'on',
-      streamMode: 'fallback',
     })
   })
 
-  test('defaults image stream mode to off and omits unconfigured scenarios', () => {
+  test('omits unconfigured scenarios entirely', () => {
     const config = parseConfig(createBaseEnv())
 
-    assert.deepEqual(config.llm.scenarios.describeImage, { streamMode: 'off' })
+    assert.deepEqual(config.llm.scenarios.describeImage, {})
     assert.deepEqual(config.llm.scenarios.describeVideo, {})
     assert.deepEqual(config.botTargetGroupIds, [123])
     assert.deepEqual(config.botTargetPrivateUserIds, [])

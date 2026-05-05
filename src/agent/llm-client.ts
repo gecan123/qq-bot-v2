@@ -44,7 +44,9 @@ interface CreateLlmClientOptions {
 
 /**
  * 默认走 config.llm 里 default provider 的 URL/API key + default model。
- * 如果将来想给 agent 单独换模型,在这里加 LLM_AGENT_* 覆盖即可。
+ * 当前 agent / compaction / fetch_url 摘要 共享同一个 default model;
+ * 想把摘要类调用切到便宜模型 → 走 LLM_SCENARIO_SUMMARIZE_* 路由
+ * (见 docs/idle-fetch-mvp.zh-CN.md §"已知 Trade-offs" 第 3 条).
  */
 export function createLlmClient(options: CreateLlmClientOptions = {}): LlmClient {
   const defaultProvider = config.llm.providers[config.llm.defaultProvider]

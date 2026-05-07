@@ -9,10 +9,8 @@ const MAX_TEXT_LENGTH = 500
 
 export interface SendMessageDeps {
   sender: MessageSender
-  /** 群消息白名单 (启动时定型, 进程内不变). */
+  /** 群消息白名单 (启动时定型, 进程内不变). 私聊不走白名单, 任意好友 user_id 都可发. */
   groupIdWhitelist: readonly number[]
-  /** 私聊白名单 (启动时定型, 进程内不变). */
-  privateUserIdWhitelist: readonly number[]
 }
 
 const groupTargetSchema = z.object({
@@ -56,13 +54,12 @@ function failResult(kind: SendKind, error: string): SendResultPayload {
 
 export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
   const groupSet = new Set(deps.groupIdWhitelist)
-  const privateSet = new Set(deps.privateUserIdWhitelist)
 
   return {
     name: 'send_message',
     description: [
       '向 QQ 真实发送一条消息。target 必填, 决定这条消息发到哪个群 / 哪个私聊对方。',
-      '工具会按白名单校验 target —— 不在白名单内会返回 {ok:false}, 不会真发。',
+      'group target 会按 BOT_TARGET_GROUP_IDS 白名单校验 —— 不在白名单内会返回 {ok:false}, 不会真发。private target 不走白名单, 任意好友 userId 都接受 (陌生 DM 在 ingress 层已被 sub_type=friend 挡掉).',
       'target.type=group: 必传 groupId (来自消息标签 [群:名字 | 昵称(QQ:...)] 中暗含的 groupId, 可以用 db_read 查 messages 表 group_id 列). mentionUserId 可选, 在文本前加 @ 提及群内某人。',
       'target.type=private: 必传 userId (私聊对方 QQ).',
       'replyToMessageId 可选: 引用一条已存在消息. 被 @ed 时常回填以表示「我在回复你」, 主动插话或开新话题时省略.',
@@ -124,15 +121,6 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
       const { userId } = args.target
       const isReply = args.replyToMessageId !== undefined
       const kind: SendKind = isReply ? 'private-reply' : 'private-ambient'
-
-      if (!privateSet.has(userId)) {
-        log.warn({ userId, kind }, 'send_message_private_not_in_whitelist')
-        return {
-          content: JSON.stringify(
-            failResult(kind, `userId ${userId} is not in BOT_TARGET_PRIVATE_USER_IDS whitelist`),
-          ),
-        }
-      }
 
       const result = await deps.sender.sendPrivateMessage({
         userId,

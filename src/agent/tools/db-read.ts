@@ -11,8 +11,8 @@ export const dbReadTool: Tool<{ sql: string; params?: Record<string, SqlParamVal
   name: 'db_read',
   description: [
     '执行只读 SQL 查询。仅允许 SELECT / WITH 查询。',
-    '多源后系统不再自动注入 group_id —— 你想按某个群过滤时, 在 SQL 里写 :group_id (或 :peer_id) 占位符,',
-    '并在 params 里显式传值. 不在白名单 (BOT_TARGET_GROUP_IDS / BOT_TARGET_PRIVATE_USER_IDS) 内的 ID 会被工具拒绝.',
+    '多源后系统不再自动注入 group_id —— 你想按某个群过滤时, 在 SQL 里写 :group_id 占位符 (或写 :peer_id 限定到某个私聊),',
+    '并在 params 里显式传值. 不在 BOT_TARGET_GROUP_IDS 白名单内的 group_id 会被工具拒绝; peer_id 不走白名单, 任意私聊 QQ 都接受.',
     '跨源查询 (例如「最近 50 条所有源消息」) 是合法的, 不需要传任何 ID. 这是单上下文 bot 的天然能力.',
     '查群消息典型: WHERE scene_kind=\'qq_group\' AND group_id = :group_id',
     '查私聊典型:   WHERE scene_kind=\'qq_private\' AND scene_external_id = :peer_id',
@@ -29,7 +29,6 @@ export const dbReadTool: Tool<{ sql: string; params?: Record<string, SqlParamVal
       sql: args.sql,
       params: args.params,
       groupIdWhitelist: config.botTargetGroupIds,
-      peerIdWhitelist: config.botTargetPrivateUserIds,
       maxRows: DB_READ_MAX_ROWS,
       statementTimeoutMs: DB_READ_TIMEOUT_MS,
       maxOutputChars: DB_READ_MAX_OUTPUT_CHARS,

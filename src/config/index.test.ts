@@ -8,7 +8,6 @@ function createBaseEnv(overrides: Record<string, string | undefined> = {}): Node
     NAPCAT_WS_URL: 'ws://localhost:3001',
     NAPCAT_ACCESS_TOKEN: 'token',
     BOT_TARGET_GROUP_IDS: '123',
-    BOT_TARGET_PRIVATE_USER_IDS: '',
     SELF_NUMBER: '789',
     LLM_DEFAULT_PROVIDER: 'claude',
     LLM_DEFAULT_MODEL: 'claude-sonnet-4-6',
@@ -53,7 +52,6 @@ describe('config', () => {
     assert.deepEqual(config.llm.scenarios.describeImage, {})
     assert.deepEqual(config.llm.scenarios.describeVideo, {})
     assert.deepEqual(config.botTargetGroupIds, [123])
-    assert.deepEqual(config.botTargetPrivateUserIds, [])
     assert.equal(config.selfNumber, 789)
   })
 
@@ -77,33 +75,18 @@ describe('config', () => {
     )
   })
 
-  test('throws when both whitelists are empty', () => {
-    assert.throws(
-      () =>
-        parseConfig(createBaseEnv({
-          BOT_TARGET_GROUP_IDS: '',
-          BOT_TARGET_PRIVATE_USER_IDS: '',
-        })),
-      /both empty/,
-    )
-  })
-
-  test('parses both group and private whitelists, sorted + deduped', () => {
+  test('parses group whitelist, sorted + deduped', () => {
     const config = parseConfig(createBaseEnv({
       BOT_TARGET_GROUP_IDS: '222,111,222',
-      BOT_TARGET_PRIVATE_USER_IDS: '20002, 10001',
     }))
     assert.deepEqual(config.botTargetGroupIds, [111, 222])
-    assert.deepEqual(config.botTargetPrivateUserIds, [10001, 20002])
   })
 
-  test('private-only whitelist is allowed (no group required)', () => {
+  test('empty group whitelist is allowed (private 永远在线)', () => {
     const config = parseConfig(createBaseEnv({
       BOT_TARGET_GROUP_IDS: '',
-      BOT_TARGET_PRIVATE_USER_IDS: '10001',
     }))
     assert.deepEqual(config.botTargetGroupIds, [])
-    assert.deepEqual(config.botTargetPrivateUserIds, [10001])
   })
 
   test('compactionTriggerTokens defaults to 16_000 and accepts override', () => {

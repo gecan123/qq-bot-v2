@@ -45,15 +45,12 @@ export async function replayMissedMessages(
   }
 
   const groupIds = config.botTargetGroupIds.map((id) => BigInt(id))
-  const peerIds = config.botTargetPrivateUserIds.map((id) => String(id))
   const orFilters: Array<Record<string, unknown>> = []
   if (groupIds.length > 0) {
     orFilters.push({ sceneKind: 'qq_group', groupId: { in: groupIds } })
   }
-  if (peerIds.length > 0) {
-    orFilters.push({ sceneKind: 'qq_private', sceneExternalId: { in: peerIds } })
-  }
-  if (orFilters.length === 0) return { enqueued: 0, skippedDuplicates: 0 }
+  // 私聊不再过滤 peerId — 任意好友 DM 都回放
+  orFilters.push({ sceneKind: 'qq_private' })
 
   const rows = await prisma.message.findMany({
     where: {

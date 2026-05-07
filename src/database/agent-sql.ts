@@ -16,8 +16,6 @@ export interface ExecuteDbReadParams {
   params?: Record<string, SqlParamValue>
   /** 群消息白名单. 若 SQL 出现 :group_id 占位符, params.group_id 必须在该白名单内. */
   groupIdWhitelist: readonly number[]
-  /** 私聊白名单. 若 SQL 出现 :peer_id 占位符, params.peer_id 必须在该白名单内. */
-  peerIdWhitelist: readonly number[]
   maxRows?: number
   statementTimeoutMs?: number
   maxOutputChars?: number
@@ -154,16 +152,6 @@ export async function executeDbRead(params: ExecuteDbReadParams): Promise<DbRead
     if (num == null || !params.groupIdWhitelist.includes(num)) {
       throw new Error(
         `params.group_id (${String(value)}) is not in BOT_TARGET_GROUP_IDS whitelist`,
-      )
-    }
-  }
-
-  if ('peer_id' in namedParams) {
-    const value = namedParams.peer_id
-    const num = value == null ? null : asNumber(value as SqlParamValue)
-    if (num == null || !params.peerIdWhitelist.includes(num)) {
-      throw new Error(
-        `params.peer_id (${String(value)}) is not in BOT_TARGET_PRIVATE_USER_IDS whitelist`,
       )
     }
   }

@@ -141,7 +141,6 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
       createSendMessageTool({
         sender,
         groupIdWhitelist: [111, 222],
-        privateUserIdWhitelist: [10001],
       }),
     ])
 
@@ -215,7 +214,6 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
       createSendMessageTool({
         sender,
         groupIdWhitelist: [111],
-        privateUserIdWhitelist: [10001],
       }),
     ])
 
@@ -295,7 +293,6 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
       createSendMessageTool({
         sender,
         groupIdWhitelist: [111],
-        privateUserIdWhitelist: [10001],
       }),
     ])
 

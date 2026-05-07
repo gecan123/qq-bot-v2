@@ -42,7 +42,7 @@ function parsePositiveInteger(value: string | undefined, defaultValue: number): 
 
 /**
  * Parse a comma-separated ID list (`123,456` 之类) used for whitelist envs like
- * `BOT_TARGET_GROUP_IDS` / `BOT_TARGET_PRIVATE_USER_IDS`.
+ * `BOT_TARGET_GROUP_IDS`.
  *
  * Rules (deterministic — affects system prompt byte stability):
  *  1. split on `,`
@@ -147,10 +147,6 @@ function parseLlmConfig(env: EnvSource) {
 
 export function parseConfig(env: EnvSource) {
   const groupIds = parseIdList('BOT_TARGET_GROUP_IDS', env.BOT_TARGET_GROUP_IDS)
-  const privateUserIds = parseIdList('BOT_TARGET_PRIVATE_USER_IDS', env.BOT_TARGET_PRIVATE_USER_IDS)
-  if (groupIds.length === 0 && privateUserIds.length === 0) {
-    throw new Error('BOT_TARGET_GROUP_IDS and BOT_TARGET_PRIVATE_USER_IDS are both empty; bot has no source to listen to')
-  }
 
   const compactionTriggerTokens = parsePositiveInteger(env.COMPACTION_TRIGGER_TOKENS, 16_000)
   const idleHintMs = parsePositiveInteger(env.BOT_IDLE_HINT_MS, 1_800_000)
@@ -166,9 +162,8 @@ export function parseConfig(env: EnvSource) {
       wsUrl: requireEnv(env, 'NAPCAT_WS_URL'),
       accessToken: requireEnv(env, 'NAPCAT_ACCESS_TOKEN'),
     },
-    /** Multi-source whitelists. Bot listens + replies only within these IDs. */
+    /** Group whitelist. Bot listens + replies only within these IDs. 私聊不走白名单, 由 ingress 层 sub_type='friend' 过滤. */
     botTargetGroupIds: groupIds,
-    botTargetPrivateUserIds: privateUserIds,
     selfNumber: Number(requireEnv(env, 'SELF_NUMBER')),
     nodeEnv: env.NODE_ENV || 'development',
     replyMediaTimeoutMs: parsePositiveInteger(env.REPLY_MEDIA_TIMEOUT_MS, 15_000),

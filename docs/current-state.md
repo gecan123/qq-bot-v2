@@ -8,7 +8,7 @@ CLAUDE.md 只承载长期合约（perpetual context invariants、提交规范、
 
 ## 当前阶段
 
-**MVP-2**：服务 N 个白名单群（`BOT_TARGET_GROUP_IDS`）+ N 个白名单私聊（`BOT_TARGET_PRIVATE_USER_IDS`）。`BOT_TARGET_GROUP_IDS` 和 `BOT_TARGET_PRIVATE_USER_IDS` 不能同时为空。
+**MVP-2**：服务 N 个白名单群（`BOT_TARGET_GROUP_IDS`）+ 任意 QQ 好友的私聊（无白名单，仅 ingress 层按 `sub_type='friend'` 过滤陌生临时会话）。`BOT_TARGET_GROUP_IDS` 可空（私聊永远在线）。
 
 **叠加: Idle-Fetch MVP** — `wait` 工具 idle 引信 + `fetch_reddit` / `fetch_url` 工具 + NDJSON 旁路日志。设计文档 `docs/idle-fetch-mvp.zh-CN.md`，14 天复盘模板 `docs/reddit-mvp-review.md`。
 
@@ -38,9 +38,10 @@ idle-fetch MVP 跑起来后的近期 TODO，做完即勾。过期 / 已收敛的
 - `DATABASE_URL` — PostgreSQL 连接串
 - `NAPCAT_WS_URL` — NapCat WebSocket endpoint
 - `NAPCAT_ACCESS_TOKEN` — NapCat auth token
-- `BOT_TARGET_GROUP_IDS` — 群白名单（逗号分隔，例：`111,222`）
-- `BOT_TARGET_PRIVATE_USER_IDS` — 私聊白名单（逗号分隔，空表示不开私聊）
+- `BOT_TARGET_GROUP_IDS` — 群白名单（逗号分隔，例：`111,222`，可空 = 不监听任何群，纯私聊模式）
 - `SELF_NUMBER` — bot 自身 QQ 号（过滤自身消息）
+
+私聊不走 env 白名单：任意 QQ 好友都可以直接给 bot 发私聊，由 `napcat.on('message.private')` 处用 `sub_type === 'friend'` 过滤陌生临时会话。
 
 可选：
 
@@ -63,9 +64,9 @@ idle-fetch MVP 跑起来后的近期 TODO，做完即勾。过期 / 已收敛的
 4. `eventQueue` + `createDedupEnqueue(eventQueue)`（按 `messageRowId` 去重的统一入队 hook）
 5. `registerNapcatHandlers({ onMessageReady })` 注册 NapCat 事件 handler（sync, no I/O）
 6. `connectNapcat()` 真打开 WebSocket（必须在 `resolveTargetMetadataMaps` 之前 — 见下文 D2）
-7. `resolveTargetMetadataMaps()` 一次性拉群名 / 私聊昵称（`Promise.allSettled`，每调用 3s 超时）
-8. `replayMissedMessages(lastWakeAt)` 多源回放，与 live 共享同一去重 set
-9. `buildBotTools()` 装配 `wait` / `send_message` / `db_schema` / `db_read` / `web_search`；`buildBotSystemPrompt({groupIds, privateUserIds, metadata})` 拼 prompt
+7. `resolveTargetMetadataMaps()` 一次性拉群名（`Promise.allSettled`，每调用 3s 超时）。私聊昵称走 per-event render，不预拉
+8. `replayMissedMessages(lastWakeAt)` 多源回放，与 live 共享同一去重 set。私聊永远全量回放（不按 peerId 过滤）
+9. `buildBotTools()` 装配 `wait` / `send_message` / `db_schema` / `db_read` / `web_search`；`buildBotSystemPrompt({groupIds, metadata})` 拼 prompt
 10. `createBotLoopAgent({...})` + `agent.start()` — 进入 while 循环
 
 ## 主循环（`src/agent/bot-loop-agent.ts`）
@@ -105,7 +106,7 @@ while (!stopRequested) {
 - `event.ts` — `BotEvent = napcat_message | napcat_private_message | wake`
 - `dedup-enqueue.ts` — `createDedupEnqueue` 按 `messageRowId` 去重（red line 5 + replay×live 重叠保护）
 - `render-event.ts` — 纯函数 `BotEvent → string`，多源标签 + 群名缺失裸 ID fallback（red line 5）
-- `resolve-target-meta.ts` — 启动时一次性拉群名 / 私聊昵称（`Promise.allSettled`，3s/调用，失败裸 ID）
+- `resolve-target-meta.ts` — 启动时一次性拉群名（`Promise.allSettled`，3s/调用，失败裸 ID）。私聊昵称走 per-event render，不预拉
 - `llm-client.ts` — `AgentMessage <-> OpenAI ChatCompletion` 翻译
 - `bot-system-prompt.ts` — 启动时一次拼装（使用 metadata maps，red line 5）
 - `snapshot-repo.ts` — `bot_agent_snapshot` 单行持久化
@@ -169,11 +170,11 @@ LLM_PROVIDER_OPENAI_API_KEY=sk-local
 bot 通过工具自主决定：
 
 - **`wait`** — 没事可做时调用，阻塞到下个 BotEvent。内嵌 `BOT_IDLE_HINT_MS` Promise.race：长时间没事件时返回 `[空闲提示] 已闲置约 X 分钟` 的 tool result + enqueue 一个 wake，让下一轮立即跑（LLM 自己决定要 fetch 还是继续 wait）
-- **`send_message`** — 真发到群 / 私聊。target 必填，工具层白名单校验，越界返回 `{ok:false}`
+- **`send_message`** — 真发到群 / 私聊。target 必填。group target 经 `BOT_TARGET_GROUP_IDS` 白名单校验，越界返回 `{ok:false}`；private target 不走白名单（任意 userId 都接受，陌生 DM 已在 ingress 层挡掉）
   - target = `{type:'group', groupId, mentionUserId?}` 发群里
   - target = `{type:'private', userId}` 发私聊
   - `replyToMessageId` 可选，引用某条已存在消息
-- **`db_schema`** / **`db_read`** — 查历史聊天（任一源）/ 媒体描述。多源后系统**不再**自动注入 `:group_id`，LLM 想限定单源时显式传（`params: {group_id: ...}` 或 `peer_id`）。跨源 SELECT（无 ID 过滤）合法
+- **`db_schema`** / **`db_read`** — 查历史聊天（任一源）/ 媒体描述。多源后系统**不再**自动注入 `:group_id`，LLM 想限定单源时显式传（`params: {group_id: ...}` 或 `peer_id`）。`group_id` 走白名单校验；`peer_id` 任意 QQ 都接受。跨源 SELECT（无 ID 过滤）合法
 - **`web_search`** — 仅在 `TAVILY_API_KEY` 配置时注册
 - **`fetch_reddit`** — 拉 reddit RSS（subreddit 可选 + sort hot/top/new + limit 硬上限 10），每条 title ≤80 字 / summary ≤120 字硬截断。`AbortController` 超时走 `BOT_FETCH_REDDIT_TIMEOUT_MS`。每次调用写一行到 `logs/fetch.ndjson`
 - **`fetch_url`** — 抓任意 URL：response body cap 256KB → cheerio 抽 title/desc/article/main/body → 8KB 截断 → 默认 LLM 摘成 ≤500 中文字 → 输出 ≤1500 字符 clamp。LLM 失败 fallback 到原文截断 + 错误标记。每次调用写一行到 `logs/fetch.ndjson`

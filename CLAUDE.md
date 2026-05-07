@@ -39,17 +39,17 @@ Default stance:
 
 2. **`messages` table is the inbound fact ledger, not the LLM ledger.** Inbound 消息一次性入库；媒体描述就绪后 `resolved_text` **一次冻结** (once-frozen)，后续 `description_raw` 更新也**不**重写 `resolved_text`。`messages` 表**不**双写进 AgentContext，AgentContext 也**不**每轮从它重建——它服务 `db_read` 工具、媒体描述目标、引用查询、启动重放，仅此而已。Scene schema invariant：`sceneKind='qq_group'` → `groupId` 非空 + `sceneExternalId=''`；`sceneKind='qq_private'` → `groupId=null` + `sceneExternalId=String(peerId)`（代码层 assert 在 `insertMessage` 兜底）。
 
-3. **Bot speaks through the `send_message` tool, not through assistant content.** `send_message` 是唯一发消息路径，target 必填（`{type:'group',groupId}` 或 `{type:'private',userId}`）。assistant message 的 content 是模型的内部"思考"，用于让它跨轮 chain-of-thought，但**不**会发出去。tool 调用成功才有真发送；失败的 send 不影响 context（tool 自己返回 `{ok:false}`），保证「history 里出现的发言一定真发出去过」这条不变量。target 不在白名单内 → tool 返回 `{ok:false}`，不真发，不抛（隔离靠机制不靠 LLM 自律）。
+3. **Bot speaks through the `send_message` tool, not through assistant content.** `send_message` 是唯一发消息路径，target 必填（`{type:'group',groupId}` 或 `{type:'private',userId}`）。assistant message 的 content 是模型的内部"思考"，用于让它跨轮 chain-of-thought，但**不**会发出去。tool 调用成功才有真发送；失败的 send 不影响 context（tool 自己返回 `{ok:false}`），保证「history 里出现的发言一定真发出去过」这条不变量。target 经工具层校验失败 → tool 返回 `{ok:false}`，不真发，不抛（隔离靠机制不靠 LLM 自律）。当前校验策略：group target 经 `BOT_TARGET_GROUP_IDS` 白名单校验；private target 不校验 user_id，由 ingress 层 `sub_type='friend'` 过滤陌生 DM。
 
 4. **Compaction is the only path allowed to rewrite the prefix.** `maybeCompactConversation` 是唯一调用 `replaceMessages` 的地方。trigger 是 token 估算超 `COMPACTION_TRIGGER_TOKENS` env 阈值，`keepRatio` = 0.1。约束：cut 边界不能切开 `assistant.toolCalls` 与对应 `tool` result（锚 toolCallId 检测）；`previousSummary` 作为合并输入而不是简单 append；空摘要不写回；post-round compaction 用 try/catch 包，失败不影响已 sent 的消息。
 
-5. **Deterministic replay.** Given the same inputs, `getSnapshot().messages` must be byte-identical across runs. This is the mathematical precondition for prompt-cache hits, not a stylistic preference. Designs that make equivalent reruns produce different prefixes are treated as regressions. Caveat: system prompt 启动时根据元数据（群名 / 私聊昵称）一次拼装，跨重启如果元数据变了，整段 prompt cache 失效是设计预期，不是 bug。historical messages 数组里 `renderedText` 永远不变（per-event 一次冻结）。
+5. **Deterministic replay.** Given the same inputs, `getSnapshot().messages` must be byte-identical across runs. This is the mathematical precondition for prompt-cache hits, not a stylistic preference. Designs that make equivalent reruns produce different prefixes are treated as regressions. Caveat: system prompt 启动时根据元数据（群名）一次拼装，跨重启如果元数据变了，整段 prompt cache 失效是设计预期，不是 bug。historical messages 数组里 `renderedText` 永远不变（per-event 一次冻结）。
 
 **Implications for plans / refactors:**
 
 - 新事件源（forum / RSS / 系统通知）必须明确：它怎么渲染成一条 `user`-role AgentMessage，然后通过 dedup-enqueue → BotLoopAgent drainEvents → `appendUserMessage` 进 AgentContext。**不**改写已有 messages，**不**插入到 prefix 中段。新源也要决定它在 `render-event.ts` 里的 source label 形态。
 - 跨源知识流（LLM 在群 A 听到，想在群 B / 私聊用）在 single-context 模型下天然拥有，不需要额外 inner_journal / RAG 桥。扩到 forum / 新闻时同样适用。
-- 跨源**发声隔离**靠 `send_message` tool 的 target + 白名单校验，不靠 LLM 自律。任何新源出现 → 必须把"发到这个源"加入 tool 的 target 联合类型 + 白名单 env 加新字段。
+- 跨源**发声隔离**靠 `send_message` tool 的 target + 工具层校验，不靠 LLM 自律。任何新源出现 → 必须把"发到这个源"加入 tool 的 target 联合类型，并在工具层 / ingress 层为该源决定校验策略（白名单 env、sub_type 过滤、或其他机制）。
 - system prompt 在启动后**不变**（启动时一次拼装）。修改 system prompt 内容 = 整段 cache 失效，这是有意为之，提醒只能集中改。
 - 工具描述同上，集中改，不小步频改。
 - 大块原始数据（web 抓页 / 长文件）走子 TaskAgent 模式（现 MVP 暂未实现），**只回摘要给主 context**，不要让原始 token 进 messages 数组。

@@ -57,7 +57,6 @@ async function main() {
   log.info(
     {
       groupIds: config.botTargetGroupIds,
-      privateUserIds: config.botTargetPrivateUserIds,
     },
     'qq-bot-v2 single-context MVP-2 启动',
   )
@@ -136,11 +135,10 @@ async function main() {
   // 7. NapCat connect (D2: must be before resolveTargetMetadataMaps)
   await connectNapcat()
 
-  // 8. 启动元数据 (群名 / 私聊昵称) — 用于拼 system prompt
+  // 8. 启动元数据 (群名) — 用于拼 system prompt
   const targetMetadata = await resolveTargetMetadataMaps({
     napcat,
     groupIds: config.botTargetGroupIds,
-    privateUserIds: config.botTargetPrivateUserIds,
   })
 
   // 9. 关机期间消息回放. 在 connect 之后跑也安全, 因为 enqueueMessageEvent 按
@@ -156,12 +154,10 @@ async function main() {
     buildBotTools({
       sender: messageSender,
       groupIdWhitelist: config.botTargetGroupIds,
-      privateUserIdWhitelist: config.botTargetPrivateUserIds,
     }),
   )
   const systemPrompt = buildBotSystemPrompt({
     groupIds: config.botTargetGroupIds,
-    privateUserIds: config.botTargetPrivateUserIds,
     metadata: targetMetadata,
   })
 

@@ -8,7 +8,7 @@ const SCHEMA_PAYLOAD = {
     autoInjectedParams: 'none — 系统不再自动注入 group_id, 想限定单源时自己传',
     namedParams: {
       group_id: '可选. 只能是 BOT_TARGET_GROUP_IDS 白名单内的群号. 不在白名单 → 工具报错',
-      peer_id: '可选. 只能是 BOT_TARGET_PRIVATE_USER_IDS 白名单内的私聊 QQ. 不在白名单 → 工具报错',
+      peer_id: '可选. 私聊对方 QQ. 不走白名单, 任意 QQ 都接受',
     },
     maxRows: 200,
     statementTimeoutMs: 8000,

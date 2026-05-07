@@ -11,7 +11,6 @@ import { fetchUrlTool } from './fetch-url.js'
 export interface BotToolDeps {
   sender: MessageSender
   groupIdWhitelist: readonly number[]
-  privateUserIdWhitelist: readonly number[]
 }
 
 export function buildBotTools(deps: BotToolDeps): Tool[] {
@@ -20,7 +19,6 @@ export function buildBotTools(deps: BotToolDeps): Tool[] {
     createSendMessageTool({
       sender: deps.sender,
       groupIdWhitelist: deps.groupIdWhitelist,
-      privateUserIdWhitelist: deps.privateUserIdWhitelist,
     }),
     dbSchemaTool,
     dbReadTool,

@@ -51,7 +51,7 @@ function parseToolResult(content: string): {
 describe('send_message tool — group target', () => {
   test('group reply (replyToMessageId set) → sender.replyToMessage', async () => {
     const { sender, calls } = makeMockSender()
-    const tool = createSendMessageTool({ sender, groupIdWhitelist: [111, 222], privateUserIdWhitelist: [] })
+    const tool = createSendMessageTool({ sender, groupIdWhitelist: [111, 222] })
     const out = await tool.execute(
       {
         target: { type: 'group', groupId: 111 },
@@ -70,7 +70,7 @@ describe('send_message tool — group target', () => {
 
   test('group ambient (no replyToMessageId) → sender.sendGroupMessage', async () => {
     const { sender, calls } = makeMockSender()
-    const tool = createSendMessageTool({ sender, groupIdWhitelist: [111], privateUserIdWhitelist: [] })
+    const tool = createSendMessageTool({ sender, groupIdWhitelist: [111] })
     const out = await tool.execute(
       {
         target: { type: 'group', groupId: 111 },
@@ -85,7 +85,7 @@ describe('send_message tool — group target', () => {
 
   test('group target outside whitelist → ok=false, no actual send', async () => {
     const { sender, calls } = makeMockSender()
-    const tool = createSendMessageTool({ sender, groupIdWhitelist: [111], privateUserIdWhitelist: [] })
+    const tool = createSendMessageTool({ sender, groupIdWhitelist: [111] })
     const out = await tool.execute(
       {
         target: { type: 'group', groupId: 999 },
@@ -101,7 +101,7 @@ describe('send_message tool — group target', () => {
 
   test('group reply with mentionUserId is forwarded to replyToMessage', async () => {
     const { sender, calls } = makeMockSender()
-    const tool = createSendMessageTool({ sender, groupIdWhitelist: [111], privateUserIdWhitelist: [] })
+    const tool = createSendMessageTool({ sender, groupIdWhitelist: [111] })
     await tool.execute(
       {
         target: { type: 'group', groupId: 111, mentionUserId: 100 },
@@ -116,7 +116,7 @@ describe('send_message tool — group target', () => {
 
   test('group send failure → ok=false, error set', async () => {
     const { sender } = makeMockSender({ success: false, attempts: 2, providerMessageId: undefined })
-    const tool = createSendMessageTool({ sender, groupIdWhitelist: [111], privateUserIdWhitelist: [] })
+    const tool = createSendMessageTool({ sender, groupIdWhitelist: [111] })
     const out = await tool.execute(
       {
         target: { type: 'group', groupId: 111 },
@@ -136,7 +136,7 @@ describe('send_message tool — group target', () => {
 describe('send_message tool — private target', () => {
   test('private reply → sender.sendPrivateMessage with replyToMessageId', async () => {
     const { sender, calls } = makeMockSender()
-    const tool = createSendMessageTool({ sender, groupIdWhitelist: [], privateUserIdWhitelist: [10001] })
+    const tool = createSendMessageTool({ sender, groupIdWhitelist: [] })
     const out = await tool.execute(
       {
         target: { type: 'private', userId: 10001 },
@@ -156,7 +156,7 @@ describe('send_message tool — private target', () => {
 
   test('private ambient (no replyToMessageId) → sender.sendPrivateMessage without reply', async () => {
     const { sender, calls } = makeMockSender()
-    const tool = createSendMessageTool({ sender, groupIdWhitelist: [], privateUserIdWhitelist: [10001] })
+    const tool = createSendMessageTool({ sender, groupIdWhitelist: [] })
     const out = await tool.execute(
       {
         target: { type: 'private', userId: 10001 },
@@ -170,27 +170,30 @@ describe('send_message tool — private target', () => {
     assert.equal(args.replyToMessageId, undefined)
   })
 
-  test('private target outside whitelist → ok=false, no actual send', async () => {
+  test('private target with arbitrary userId → 仍然真发 (private 不走白名单)', async () => {
     const { sender, calls } = makeMockSender()
-    const tool = createSendMessageTool({ sender, groupIdWhitelist: [], privateUserIdWhitelist: [10001] })
+    const tool = createSendMessageTool({ sender, groupIdWhitelist: [] })
     const out = await tool.execute(
       {
         target: { type: 'private', userId: 99999 },
-        text: 'spam',
+        text: 'hello',
       },
       makeCtx(),
     )
     const result = parseToolResult(out.content)
-    assert.equal(result.ok, false)
-    assert.match(result.error ?? '', /not in BOT_TARGET_PRIVATE_USER_IDS whitelist/)
-    assert.equal(calls.length, 0)
+    assert.equal(result.ok, true)
+    assert.equal(result.kind, 'private-ambient')
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0]!.fn, 'sendPrivateMessage')
+    const args = calls[0]!.args as { userId: number }
+    assert.equal(args.userId, 99999)
   })
 })
 
 describe('send_message tool — schema rejection', () => {
   test('rejects mentionUserId on private target via Zod (private branch has no mentionUserId)', () => {
     const { sender } = makeMockSender()
-    const tool = createSendMessageTool({ sender, groupIdWhitelist: [], privateUserIdWhitelist: [10001] })
+    const tool = createSendMessageTool({ sender, groupIdWhitelist: [] })
     // safeParse via tool.schema
     const r = tool.schema.safeParse({
       target: { type: 'private', userId: 10001, mentionUserId: 1 },
@@ -208,7 +211,7 @@ describe('send_message tool — schema rejection', () => {
 
   test('rejects text > 500 chars via Zod', () => {
     const { sender } = makeMockSender()
-    const tool = createSendMessageTool({ sender, groupIdWhitelist: [111], privateUserIdWhitelist: [] })
+    const tool = createSendMessageTool({ sender, groupIdWhitelist: [111] })
     const r = tool.schema.safeParse({
       target: { type: 'group', groupId: 111 },
       text: 'x'.repeat(501),
@@ -218,7 +221,7 @@ describe('send_message tool — schema rejection', () => {
 
   test('accepts the historical name "send_group_message" is NOT this tool', () => {
     const { sender } = makeMockSender()
-    const tool = createSendMessageTool({ sender, groupIdWhitelist: [111], privateUserIdWhitelist: [] })
+    const tool = createSendMessageTool({ sender, groupIdWhitelist: [111] })
     assert.equal(tool.name, 'send_message')
   })
 })

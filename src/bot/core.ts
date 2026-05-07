@@ -269,7 +269,7 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): void
   })
 
   napcat.on('message.private', async (context) => {
-    if (!config.botTargetPrivateUserIds.includes(context.user_id)) return
+    if (context.sub_type !== 'friend') return
     try {
       await processMessage({ kind: 'private', peerId: context.user_id }, context.message_id, options)
     } catch (error) {
@@ -288,7 +288,6 @@ export async function connectNapcat(): Promise<void> {
   napcatLog.info(
     {
       groupIds: config.botTargetGroupIds,
-      privateUserIds: config.botTargetPrivateUserIds,
     },
     'NapCat 监听已启动',
   )

@@ -10,7 +10,6 @@ import type { TargetMetadataMaps } from './resolve-target-meta.js'
  */
 export interface BuildBotSystemPromptInput {
   groupIds: readonly number[]
-  privateUserIds: readonly number[]
   metadata: TargetMetadataMaps
 }
 
@@ -23,18 +22,9 @@ function renderSourceList(input: BuildBotSystemPromptInput): string {
       if (name) lines.push(`  - 群 ${name} (id=${groupId})`)
       else lines.push(`  - 群 (id=${groupId})`)
     }
-  }
-  if (input.privateUserIds.length > 0) {
-    if (lines.length > 0) lines.push('以及这些私聊:')
-    else lines.push('你监听这些私聊:')
-    for (const userId of input.privateUserIds) {
-      const nick = input.metadata.privateNicknames.get(userId)
-      if (nick) lines.push(`  - ${nick} (QQ:${userId})`)
-      else lines.push(`  - QQ:${userId}`)
-    }
-  }
-  if (lines.length === 0) {
-    lines.push('你目前没有任何被监听的源 (启动配置异常, 但 bot 仍在运行).')
+    lines.push('你同时接受任意 QQ 好友的私聊 (不预先列名 — 实时按消息里的昵称识别).')
+  } else {
+    lines.push('你只接受 QQ 好友的私聊 (没有配置任何群; 实时按消息里的昵称识别对方).')
   }
   return lines.join('\n')
 }

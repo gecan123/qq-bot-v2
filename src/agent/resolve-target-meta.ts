@@ -10,23 +10,21 @@ const PER_CALL_TIMEOUT_MS = 3_000
  * "我监听这些源" section.
  *
  * Process-immutable (CLAUDE.md 红线 5): 这些 map 在启动后不再变。
- * 即使后续运行时通过消息事件 payload 知道了某个 peer 的真昵称, 也不回写这里 ——
- * 那是 per-event render 的事 (render-event.ts), 不影响 system prompt.
  *
- * 想让 system prompt 里看到该 peer 的昵称, 必须重启 bot ——
+ * 想让 system prompt 里看到该群的新名字, 必须重启 bot ——
  * 重启时整段 cache 失效本来就是预期, 不是 bug.
+ *
+ * 私聊不在这里预解析: 私聊白名单已删除, 接受任意好友 DM, 由 ingress 层
+ * sub_type='friend' 过滤; 昵称走 per-event render (render-event.ts).
  */
 export interface TargetMetadataMaps {
   /** groupId → groupName.  Empty / unresolvable entries fall back to bare ID at the call site. */
   groupNames: Map<number, string>
-  /** userId → nickname.  Empty / unresolvable entries fall back to bare ID at the call site. */
-  privateNicknames: Map<number, string>
 }
 
 interface ResolveTargetMetadataMapsInput {
-  napcat: Pick<NCWebsocket, 'get_group_info' | 'get_stranger_info'>
+  napcat: Pick<NCWebsocket, 'get_group_info'>
   groupIds: readonly number[]
-  privateUserIds: readonly number[]
   perCallTimeoutMs?: number
 }
 
@@ -52,7 +50,7 @@ function normalizedString(value: unknown): string {
 }
 
 /**
- * 启动时一次性拉取每个白名单 ID 的人类可读名字, 用于 system prompt 拼装。
+ * 启动时一次性拉取每个群白名单 ID 的人类可读名字, 用于 system prompt 拼装。
  *
  * 行为:
  *  - 每个调用独立 `Promise.allSettled`, 单个失败不传染 (D6).
@@ -66,7 +64,6 @@ export async function resolveTargetMetadataMaps(
 ): Promise<TargetMetadataMaps> {
   const timeout = input.perCallTimeoutMs ?? PER_CALL_TIMEOUT_MS
   const groupNames = new Map<number, string>()
-  const privateNicknames = new Map<number, string>()
 
   const groupTasks = input.groupIds.map(async (groupId) => {
     try {
@@ -82,33 +79,15 @@ export async function resolveTargetMetadataMaps(
     }
   })
 
-  const privateTasks = input.privateUserIds.map(async (userId) => {
-    try {
-      const info = await withTimeout(
-        input.napcat.get_stranger_info({ user_id: userId }),
-        timeout,
-        `get_stranger_info(${userId})`,
-      )
-      const candidate =
-        normalizedString((info as { nick?: string }).nick) ||
-        normalizedString((info as { nickname?: string }).nickname)
-      if (candidate) privateNicknames.set(userId, candidate)
-    } catch (err) {
-      log.warn({ userId, err }, 'resolve_private_nickname_failed_falling_back_to_bare_id')
-    }
-  })
-
-  await Promise.allSettled([...groupTasks, ...privateTasks])
+  await Promise.allSettled(groupTasks)
 
   log.info(
     {
       groupResolved: groupNames.size,
       groupTotal: input.groupIds.length,
-      privateResolved: privateNicknames.size,
-      privateTotal: input.privateUserIds.length,
     },
     'target_metadata_resolved',
   )
 
-  return { groupNames, privateNicknames }
+  return { groupNames }
 }

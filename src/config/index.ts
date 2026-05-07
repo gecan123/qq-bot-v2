@@ -40,6 +40,15 @@ function parsePositiveInteger(value: string | undefined, defaultValue: number): 
   return Math.floor(parsed)
 }
 
+function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
+  if (value == null) return defaultValue
+  const v = value.trim().toLowerCase()
+  if (v === '') return defaultValue
+  if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true
+  if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false
+  return defaultValue
+}
+
 /**
  * Parse a comma-separated ID list (`123,456` 之类) used for whitelist envs like
  * `BOT_TARGET_GROUP_IDS`.
@@ -155,6 +164,7 @@ export function parseConfig(env: EnvSource) {
   const fetchLogPath = env.BOT_FETCH_LOG_PATH && env.BOT_FETCH_LOG_PATH.trim().length > 0
     ? env.BOT_FETCH_LOG_PATH.trim()
     : 'logs/fetch.ndjson'
+  const groupAmbientDryRun = parseBoolean(env.BOT_GROUP_AMBIENT_DRY_RUN, false)
 
   return {
     databaseUrl: requireEnv(env, 'DATABASE_URL'),
@@ -185,6 +195,16 @@ export function parseConfig(env: EnvSource) {
     fetchUrlTimeoutMs,
     /** NDJSON sidecar log path. Not a Prisma table — operations data only. */
     fetchLogPath,
+    /**
+     * 主动发言（group-ambient, 即没有 replyToMessageId 的群发送）的 dry-run 开关。
+     * true → send_message tool 在 group-ambient 分支不走 NapCat, 直接对 LLM 返回假成功
+     *        (ok:true, providerMessageId:null), 群友感知不到, 但 LLM 以为说出去了.
+     * false → 正常走 sender.sendGroupMessage 真发.
+     * 用于「想让 bot 觉得自己在主动开话题, 但又不想真打扰群」的观察期场景.
+     * 注意: 一旦在历史里写下假成功记录, 它会一直留在 AgentContext snapshot 里直到
+     * compaction 把它压走 — 别长期开. 默认 false.
+     */
+    botGroupAmbientDryRun: groupAmbientDryRun,
     tavily: env.TAVILY_API_KEY
       ? { apiKey: env.TAVILY_API_KEY }
       : undefined,

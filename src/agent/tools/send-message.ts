@@ -11,6 +11,12 @@ export interface SendMessageDeps {
   sender: MessageSender
   /** 群消息白名单 (启动时定型, 进程内不变). 私聊不走白名单, 任意好友 user_id 都可发. */
   groupIdWhitelist: readonly number[]
+  /**
+   * Group-ambient (没有 replyToMessageId 的群发送) dry-run 开关.
+   * true → 不走 NapCat, 对 LLM 返回假成功; false → 正常真发.
+   * Reply、private 和 group ambient 之外的路径不受影响.
+   */
+  groupAmbientDryRun: boolean
 }
 
 const groupTargetSchema = z.object({
@@ -106,15 +112,29 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
         if (mentionUserId !== undefined) {
           log.warn({ groupId, mentionUserId }, 'send_message_group_ambient_with_mention_ignored')
         }
-        const result = await deps.sender.sendGroupMessage({ groupId, text: args.text })
-        const payload: SendResultPayload = {
-          ok: result.success,
-          attempts: result.attempts,
-          providerMessageId: result.providerMessageId ?? null,
-          kind,
+
+        if (deps.groupAmbientDryRun) {
+          // dry-run: 不走 NapCat, 对 LLM 返回假成功. 群友感知不到, 但 LLM 以为说出去了.
+          // 红线 3「history 里出现的发言一定真发出去过」在此处有意打破, 观察期专用.
+          log.info({ groupId, kind }, 'send_message_group_ambient_dry_run')
+          const payload: SendResultPayload = {
+            ok: true,
+            attempts: 1,
+            providerMessageId: null,
+            kind,
+          }
+          return { content: JSON.stringify(payload) }
+        } else {
+          const result = await deps.sender.sendGroupMessage({ groupId, text: args.text })
+          const payload: SendResultPayload = {
+            ok: result.success,
+            attempts: result.attempts,
+            providerMessageId: result.providerMessageId ?? null,
+            kind,
+          }
+          if (!result.success) payload.error = 'group ambient send failed (see SEND log)'
+          return { content: JSON.stringify(payload) }
         }
-        if (!result.success) payload.error = 'group ambient send failed (see SEND log)'
-        return { content: JSON.stringify(payload) }
       }
 
       // private

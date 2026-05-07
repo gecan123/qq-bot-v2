@@ -89,6 +89,26 @@ describe('config', () => {
     assert.deepEqual(config.botTargetGroupIds, [])
   })
 
+  test('botGroupAmbientDryRun defaults to false and accepts truthy/falsy strings', () => {
+    const dflt = parseConfig(createBaseEnv())
+    assert.equal(dflt.botGroupAmbientDryRun, false)
+
+    for (const v of ['1', 'true', 'TRUE', 'yes', 'on']) {
+      assert.equal(
+        parseConfig(createBaseEnv({ BOT_GROUP_AMBIENT_DRY_RUN: v })).botGroupAmbientDryRun,
+        true,
+        `truthy "${v}" should parse to true`,
+      )
+    }
+    for (const v of ['0', 'false', 'no', 'off', '']) {
+      assert.equal(
+        parseConfig(createBaseEnv({ BOT_GROUP_AMBIENT_DRY_RUN: v })).botGroupAmbientDryRun,
+        false,
+        `falsy "${v}" should parse to false`,
+      )
+    }
+  })
+
   test('compactionTriggerTokens defaults to 16_000 and accepts override', () => {
     const dflt = parseConfig(createBaseEnv())
     assert.equal(dflt.compactionTriggerTokens, 16_000)

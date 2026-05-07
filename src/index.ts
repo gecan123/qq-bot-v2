@@ -154,6 +154,7 @@ async function main() {
     buildBotTools({
       sender: messageSender,
       groupIdWhitelist: config.botTargetGroupIds,
+      groupAmbientDryRun: config.botGroupAmbientDryRun,
     }),
   )
   const systemPrompt = buildBotSystemPrompt({

@@ -1,0 +1,216 @@
+import assert from 'node:assert/strict'
+import { describe, test } from 'node:test'
+import { z } from 'zod'
+import { buildClaudeCodeRequestBody, toClaudeSystemBlocks } from './request.js'
+import type { Tool } from '../tool.js'
+import type { AgentMessage } from '../agent-context.types.js'
+import { CLAUDE_CODE_BILLING_HEADER, CLAUDE_CODE_SDK_PROMPT } from './headers.js'
+
+const dummyTool: Tool = {
+  name: 'send_message',
+  description: '发一条消息',
+  schema: z.object({ text: z.string() }),
+  execute: async () => ({ content: 'ok' }),
+}
+
+const waitTool: Tool = {
+  name: 'wait',
+  description: '等下一条消息',
+  schema: z.object({}),
+  execute: async () => ({ content: 'ok' }),
+}
+
+describe('toClaudeSystemBlocks', () => {
+  test('returns 3 blocks: billing, SDK prompt, user persona', () => {
+    const blocks = toClaudeSystemBlocks('I am Mei.')
+    assert.equal(blocks.length, 3)
+    assert.equal(blocks[0]?.text, CLAUDE_CODE_BILLING_HEADER)
+    assert.equal(blocks[1]?.text, CLAUDE_CODE_SDK_PROMPT)
+    assert.equal(blocks[2]?.text, 'I am Mei.')
+    assert.equal(blocks[0]?.type, 'text')
+  })
+
+  test('omits user block when persona is empty', () => {
+    const blocks = toClaudeSystemBlocks('')
+    assert.equal(blocks.length, 2)
+  })
+
+  test('cache_control 1h 钉在最后一块 (有 persona 时是 user persona)', () => {
+    const blocks = toClaudeSystemBlocks('I am Mei.')
+    assert.equal(blocks[0]?.cache_control, undefined)
+    assert.equal(blocks[1]?.cache_control, undefined)
+    assert.deepEqual(blocks[2]?.cache_control, { type: 'ephemeral', ttl: '1h' })
+  })
+
+  test('persona 为空时 cache_control 落到 SDK prompt 块上', () => {
+    const blocks = toClaudeSystemBlocks('')
+    assert.equal(blocks[0]?.cache_control, undefined)
+    assert.deepEqual(blocks[1]?.cache_control, { type: 'ephemeral', ttl: '1h' })
+  })
+})
+
+describe('buildClaudeCodeRequestBody', () => {
+  test('字段顺序 model, stream, max_tokens, system, messages (顶层无 cache_control)', () => {
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 'persona',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [],
+    })
+    assert.deepEqual(Object.keys(body), [
+      'model',
+      'stream',
+      'max_tokens',
+      'system',
+      'messages',
+    ])
+  })
+
+  test('cache_control 1h 挂在最后一块 system block (per-block, 不在顶层)', () => {
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 'persona',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [],
+    })
+    assert.equal('cache_control' in body, false)
+    assert.equal(body.system.length, 3)
+    assert.equal(body.system[0]?.cache_control, undefined)
+    assert.equal(body.system[1]?.cache_control, undefined)
+    assert.deepEqual(body.system[2]?.cache_control, { type: 'ephemeral', ttl: '1h' })
+  })
+
+  test('stream is literally true', () => {
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 'persona',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [],
+    })
+    assert.equal(body.stream, true)
+  })
+
+  test('claude-sonnet-4-x picks 32000 max_tokens, others 4096', () => {
+    const a = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [],
+    })
+    const b = buildClaudeCodeRequestBody({
+      model: 'claude-haiku-3-5',
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [],
+    })
+    assert.equal(a.max_tokens, 32000)
+    assert.equal(b.max_tokens, 4096)
+  })
+
+  test('tools omitted entirely when empty (NOT tools:[])', () => {
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [],
+    })
+    assert.equal('tools' in body, false)
+    assert.equal('tool_choice' in body, false)
+  })
+
+  test('tools mapped to {name, description, input_schema}; tool_choice=auto', () => {
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [dummyTool, waitTool],
+    })
+    assert.deepEqual(body.tool_choice, { type: 'auto' })
+    assert.ok(Array.isArray(body.tools))
+    assert.equal(body.tools?.length, 2)
+    const sendDecl = body.tools?.[0] as Record<string, unknown>
+    assert.equal(sendDecl.name, 'send_message')
+    assert.equal(sendDecl.description, '发一条消息')
+    const inputSchema = sendDecl.input_schema as Record<string, unknown>
+    assert.equal(inputSchema.type, 'object')
+  })
+
+  test('temperature 字段永不写入 body (reasoning model 拒收, 跟真 Claude Code CLI 对齐)', () => {
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-opus-4-7',
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [],
+    })
+    assert.equal('temperature' in body, false)
+  })
+
+  test('user message → role:user with [{type:text}] content', () => {
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'hello' }],
+      tools: [],
+    })
+    assert.deepEqual(body.messages, [
+      { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+    ])
+  })
+
+  test('assistant with text + tool_call → role:assistant with [text, tool_use] content', () => {
+    const messages: AgentMessage[] = [
+      { role: 'user', content: 'plz say hi' },
+      {
+        role: 'assistant',
+        content: 'ok',
+        toolCalls: [{ id: 'call_1', name: 'send_message', args: { text: 'hi' } }],
+      },
+    ]
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 's',
+      messages,
+      tools: [dummyTool],
+    })
+    const assistantMsg = body.messages[1]
+    assert.equal(assistantMsg?.role, 'assistant')
+    assert.deepEqual(assistantMsg?.content, [
+      { type: 'text', text: 'ok' },
+      { type: 'tool_use', id: 'call_1', name: 'send_message', input: { text: 'hi' } },
+    ])
+  })
+
+  test('tool result → role:user with tool_result content block', () => {
+    const messages: AgentMessage[] = [
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'call_1', name: 'wait', args: {} }],
+      },
+      { role: 'tool', toolCallId: 'call_1', content: 'idle 5min' },
+    ]
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 's',
+      messages,
+      tools: [waitTool],
+    })
+    assert.equal(body.messages.length, 2)
+    assert.deepEqual(body.messages[1], {
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'idle 5min' }],
+    })
+  })
+
+  test('deterministic: same input → same output', () => {
+    const input = {
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 'persona',
+      messages: [{ role: 'user' as const, content: 'hi' }],
+      tools: [dummyTool],
+    }
+    const a = JSON.stringify(buildClaudeCodeRequestBody(input))
+    const b = JSON.stringify(buildClaudeCodeRequestBody(input))
+    assert.equal(a, b)
+  })
+})

@@ -10,11 +10,17 @@ import type { BotEvent } from './event.js'
  *   群消息 (有群名):    [群:阳光厨房 | 昵称(QQ:123) [@bot]] text
  *   群消息 (无群名):    [群:111111 | 昵称(QQ:123)] text       (裸 ID fallback)
  *   私聊:              [私聊 | 昵称(QQ:456)] text
+ *   好奇心 tick:        [好奇心 tick] ...                       (外部节奏脉冲, 文本完全常量)
  *
  * 私聊不带 [@bot] tag —— 私聊默认就是对 bot 说话, 这条规则在 system prompt 里告诉 LLM.
  */
+export const CURIOSITY_TICK_TEXT =
+  '[好奇心 tick] 例行戳一下, 要不要去刷点外面的东西看看? 随你判断, 不想刷就 wait.'
+
 export function renderBotEvent(event: BotEvent): string | null {
   if (event.type === 'wake') return null
+
+  if (event.type === 'curiosity_tick') return CURIOSITY_TICK_TEXT
 
   if (event.type === 'napcat_message') {
     const mentionTag = event.mentionedSelf ? ' [@bot]' : ''

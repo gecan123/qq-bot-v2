@@ -5,6 +5,9 @@
  *  - napcat_message:         群消息 (含 groupName 用于 per-event 标签).
  *  - napcat_private_message: 私聊消息. mentionedSelf 恒为 true (私聊默认对 bot 说).
  *  - wake:                   "解阻塞"信号, stop() 用, 以及未来 timer wakeup 用.
+ *  - curiosity_tick:         外部节奏脉冲 (SIGUSR1 / cron / launchd 戳进来), 例行问 LLM
+ *                            要不要刷一下论坛. 跟群消息密度脱钩, 进程内不维护定时器,
+ *                            节奏感交给外面 (`pnpm tick` 或 OS 调度).
  *
  * 所有 napcat_* 事件: renderedText 已在 ingest 时一次性冻结 (含媒体描述), 字节稳定.
  */
@@ -39,4 +42,5 @@ export type BotEvent =
       renderedText: string
     }
   | { type: 'wake' }
+  | { type: 'curiosity_tick' }
 

@@ -46,12 +46,19 @@
 - PostgreSQL
 - NapCat，并开启 WebSocket
 - 一个 OpenAI-compatible LLM endpoint，或本地兼容网关
+- cliproxyapi >= 6.10.5（`LLM_DEFAULT_PROVIDER=claude-code` 路径依赖其 `cloak.mode=auto` 对 Claude Code identity 客户端的透传行为）
 
 ## 安装
 
 ```bash
 pnpm install
 ```
+
+## 启动
+
+bot 必须从项目根目录起 (`cd qq-bot-v2 && pnpm start` 或 `tsx src/index.ts`)。
+启动时会写 `.bot.pid` 到 cwd, `pnpm tick` (`kill -USR1 $(cat .bot.pid)`) 也读这个文件。
+用 systemd / pm2 / Docker 部署时, 显式设 `WorkingDirectory=` 或 `cwd:` 指向项目根, 否则 PID 文件飘到别处, `pnpm tick` 找不到。
 
 ## 环境变量
 

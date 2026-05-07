@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { renderBotEvent } from './render-event.js'
+import { CURIOSITY_TICK_TEXT, renderBotEvent } from './render-event.js'
 
 describe('renderBotEvent — group messages', () => {
   test('renders group message with groupName + sender + mention tag', () => {
@@ -103,6 +103,19 @@ describe('renderBotEvent — private messages', () => {
 describe('renderBotEvent — control', () => {
   test('returns null for wake events (not appended to context)', () => {
     assert.equal(renderBotEvent({ type: 'wake' }), null)
+  })
+})
+
+describe('renderBotEvent — curiosity tick', () => {
+  test('returns the constant tick text', () => {
+    assert.equal(renderBotEvent({ type: 'curiosity_tick' }), CURIOSITY_TICK_TEXT)
+  })
+
+  test('tick text is byte-stable across calls (no time / counter embedded)', () => {
+    const a = renderBotEvent({ type: 'curiosity_tick' })
+    const b = renderBotEvent({ type: 'curiosity_tick' })
+    assert.equal(a, b)
+    assert.ok(a && a.startsWith('[好奇心 tick]'))
   })
 })
 

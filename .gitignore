@@ -17,3 +17,4 @@ agent-config.json
 
 .next/
 .superpowers/
+.bot.pid

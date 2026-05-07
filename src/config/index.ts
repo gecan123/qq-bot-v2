@@ -18,6 +18,17 @@ type LlmScenarioConfig = {
   model?: string
 }
 
+export const CLAUDE_CODE_PROVIDER_NAME = 'claude-code'
+
+/**
+ * `LLM_DEFAULT_PROVIDER=claude-code` 时, agent LLM 客户端走 cliproxy +
+ * Claude Code identity 透传路径, URL/API key 从 `LLM_PROVIDER_CLAUDE_*` 读
+ * (= `config.llm.providers.claude`). 这个常量是这个 fallback 的 provider 名字,
+ * 与 `CLAUDE_CODE_PROVIDER_NAME` 区分: 后者是 default provider 标识符,
+ * 前者是承载 cliproxy URL/key 的实际 provider 注册项.
+ */
+export const CLAUDE_CODE_BASE_PROVIDER_NAME = 'claude'
+
 const SCENARIO_NAME_MAP: Record<string, LlmScenarioKey> = {
   DESCRIBE_IMAGE: 'describeImage',
   DESCRIBE_VIDEO: 'describeVideo',
@@ -135,7 +146,9 @@ function parseLlmConfig(env: EnvSource) {
   const defaultProvider = requireEnv(env, 'LLM_DEFAULT_PROVIDER').toLowerCase()
   const defaultModel = requireEnv(env, 'LLM_DEFAULT_MODEL')
 
-  if (!providers[defaultProvider]) {
+  // claude-code 不在 providers 注册表里 (它复用 LLM_PROVIDER_CLAUDE_* 走 cliproxy);
+  // 其它 provider 必须在注册表里能找到。
+  if (defaultProvider !== CLAUDE_CODE_PROVIDER_NAME && !providers[defaultProvider]) {
     throw new Error(`Missing provider configuration for LLM_DEFAULT_PROVIDER: ${defaultProvider}`)
   }
 

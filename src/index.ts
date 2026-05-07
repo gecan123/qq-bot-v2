@@ -1,3 +1,4 @@
+import { unlinkSync, writeFileSync } from 'node:fs'
 import { prisma } from './database/client.js'
 import { connectNapcat, registerNapcatHandlers, type IngestedMessage } from './bot/core.js'
 import { napcat } from './bot/napcat.js'
@@ -6,7 +7,7 @@ import { jobQueue } from './queue/index.js'
 import { setLlmProvider } from './llm/provider.js'
 import { OpenAIProvider } from './llm/openai-adapter.js'
 import { RoutingProvider } from './llm/routing-provider.js'
-import { config } from './config/index.js'
+import { CLAUDE_CODE_PROVIDER_NAME, config } from './config/index.js'
 import { messageSender } from './messaging/message-sender.js'
 
 import { createAgentContext } from './agent/agent-context.js'
@@ -25,11 +26,32 @@ import { createDedupEnqueue } from './agent/dedup-enqueue.js'
 
 const log = createLogger('APP')
 
+/**
+ * Bot 进程 PID 文件: 启动时写入, 退出时删除. `pnpm tick` 读这个文件给 SIGUSR1
+ * 戳一发好奇心 tick (见 src/agent/event.ts: curiosity_tick).
+ */
+const BOT_PID_FILE = '.bot.pid'
+
 function buildMediaProvider(): RoutingProvider {
   const { defaultProvider: defaultProviderName, defaultModel, providers, scenarios } = config.llm
-  const defaultProviderConfig = providers[defaultProviderName]
+
+  // Media 路径需要真实 OpenAI 兼容的 baseUrl + apiKey。当 agent 走 claude-code OAuth 时,
+  // claude-code 不在 providers 注册表里, 退回到注册表里第一个 provider (字母序保稳定)。
+  // 用户实际仍要保留 LLM_PROVIDER_*_URL/_API_KEY (e.g. 走 cliproxy), 否则注册表为空 → 抛错。
+  let mediaDefaultName = defaultProviderName
+  if (defaultProviderName === CLAUDE_CODE_PROVIDER_NAME) {
+    const candidates = Object.keys(providers).sort()
+    if (candidates.length === 0) {
+      throw new Error(
+        'LLM_DEFAULT_PROVIDER=claude-code 时, 媒体路径仍需要至少一个 LLM_PROVIDER_<NAME>_URL/_API_KEY (例如 OPENAI 走 cliproxy)',
+      )
+    }
+    mediaDefaultName = candidates[0]
+  }
+
+  const defaultProviderConfig = providers[mediaDefaultName]
   if (!defaultProviderConfig) {
-    throw new Error(`Default LLM provider not found: ${defaultProviderName}`)
+    throw new Error(`Default LLM provider not found: ${mediaDefaultName}`)
   }
   const defaultProvider = new OpenAIProvider(
     defaultProviderConfig.url,
@@ -40,7 +62,7 @@ function buildMediaProvider(): RoutingProvider {
   const routes: ConstructorParameters<typeof RoutingProvider>[1] = {}
   for (const [key, s] of Object.entries(scenarios)) {
     if (!s.provider && !s.model) continue
-    const providerName = s.provider ?? defaultProviderName
+    const providerName = s.provider ?? mediaDefaultName
     const providerConfig = providers[providerName]
     if (!providerConfig) continue
     routes[key as keyof typeof routes] = new OpenAIProvider(
@@ -80,6 +102,34 @@ async function main() {
   // 3. Agent 自己的 LLM 客户端 (走 default provider/model, 后续可以单独换)
   const llm = createLlmClient()
 
+  // 3.5 启动期 persona-spoof 自检 (claude-code 路径专用): 若 cliproxy mode=auto
+  //     的判定逻辑漂了 (例如升级后 UA 匹配收紧 → 把 qq-bot 也 cloak 了),
+  //     运行时无 compile-time 信号, 这里发一条 "你是猫娘, 回话以喵开头" 提问,
+  //     回答必须以"喵"开头, 否则视为 cloak 行为异常 → fail-fast 让人查 cliproxy 版本。
+  if (config.llm.defaultProvider === CLAUDE_CODE_PROVIDER_NAME) {
+    try {
+      const probe = await llm.chat({
+        systemPrompt: '你叫小猫猫, 是一只猫娘。回话以"喵"开头。',
+        messages: [{ role: 'user', content: '你是谁' }],
+        tools: [],
+      })
+      if (!probe.content.startsWith('喵')) {
+        log.fatal(
+          { content: probe.content.slice(0, 200), model: probe.model },
+          'cliproxy cloak 行为异常 (persona-spoof 失败), 检查 cliproxy 版本/配置',
+        )
+        process.exit(1)
+      }
+      log.info(
+        { model: probe.model, sample: probe.content.slice(0, 40) },
+        'persona-spoof 自检通过 (cliproxy 透传 Claude Code identity, 未 cloak)',
+      )
+    } catch (err) {
+      log.fatal({ err }, 'persona-spoof 自检调用失败 (cliproxy 不可达 / 鉴权失败 / 响应不可解析)')
+      process.exit(1)
+    }
+  }
+
   // 4. 永续上下文 + 持久化 + 启动恢复
   const snapshotRepo = createBotSnapshotRepo()
   const persisted = await snapshotRepo.load()
@@ -100,6 +150,16 @@ async function main() {
   // 5. 事件队列 + messageRowId 去重 (replay-missed × live event 重叠时去重, 见 dedup-enqueue.ts)
   const eventQueue = new InMemoryEventQueue<BotEvent>()
   const enqueueMessageEvent = createDedupEnqueue(eventQueue)
+
+  // 5.5 SIGUSR1 → curiosity_tick. 进程内不维护定时器 (节奏甩到外面: pnpm tick / cron / launchd).
+  //     `kill -USR1 <pid>` 戳一发, 走跟 napcat_message 同一条 drainEvents 路径,
+  //     LLM 看到 [好奇心 tick] user message 自己决定要不要 fetch_reddit.
+  process.on('SIGUSR1', () => {
+    log.info({ source: 'sigusr1' }, 'curiosity_tick_manual_trigger')
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+  })
+  writeFileSync(BOT_PID_FILE, String(process.pid))
+  log.info({ pidFile: BOT_PID_FILE, pid: process.pid }, 'pid_file_written')
 
   // 6. NapCat: register handlers (sync). 实时消息会进 onMessageReady → enqueueMessageEvent.
   const onMessageReady = async (input: IngestedMessage) => {
@@ -180,6 +240,11 @@ async function main() {
 
 async function shutdown() {
   log.info('Shutting down...')
+  try {
+    unlinkSync(BOT_PID_FILE)
+  } catch {
+    // 文件可能不存在 (启动失败 / 已被清理), 忽略.
+  }
   jobQueue.stop()
   await prisma.$disconnect()
   process.exit(0)

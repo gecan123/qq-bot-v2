@@ -1,0 +1,209 @@
+import assert from 'node:assert/strict'
+import { describe, test } from 'node:test'
+import { createClaudeCodeLlmClient, ClaudeCodeApiError } from './llm-client.js'
+import {
+  ANTHROPIC_BETA,
+  ANTHROPIC_VERSION,
+  CLAUDE_CODE_USER_AGENT,
+} from './headers.js'
+
+const CLIPROXY_BASE_URL = 'http://127.0.0.1:8317/v1'
+const CLIPROXY_API_KEY = 'sk-local'
+
+function ev(type: string, data: Record<string, unknown>): string {
+  return `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`
+}
+
+const SAMPLE_TEXT_SSE =
+  ev('message_start', {
+    type: 'message_start',
+    message: {
+      model: 'claude-sonnet-4-5',
+      usage: { input_tokens: 50, output_tokens: 0, cache_read_input_tokens: 200 },
+    },
+  }) +
+  ev('content_block_start', {
+    type: 'content_block_start',
+    index: 0,
+    content_block: { type: 'text', text: '' },
+  }) +
+  ev('content_block_delta', {
+    type: 'content_block_delta',
+    index: 0,
+    delta: { type: 'text_delta', text: 'hello' },
+  }) +
+  ev('content_block_stop', { type: 'content_block_stop', index: 0 }) +
+  ev('message_delta', { type: 'message_delta', usage: { output_tokens: 5 } })
+
+function makeFetchMock(responses: Array<{ status?: number; body: string }>): {
+  fn: typeof fetch
+  calls: Array<{ url: string; init: RequestInit }>
+} {
+  const calls: Array<{ url: string; init: RequestInit }> = []
+  let i = 0
+  const fn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const next = responses[i] ?? responses[responses.length - 1]
+    if (!next) throw new Error('fetch mock ran out')
+    i++
+    calls.push({ url: String(input), init: init ?? {} })
+    return new Response(next.body, { status: next.status ?? 200 })
+  }) as unknown as typeof fetch
+  return { fn, calls }
+}
+
+describe('ClaudeCodeLlmClient.chat', () => {
+  test('hits cliproxy localhost endpoint with correct cloak headers + Bearer apiKey', async (t) => {
+    const { fn, calls } = makeFetchMock([{ body: SAMPLE_TEXT_SSE }])
+    t.mock.method(globalThis, 'fetch', fn)
+
+    const client = createClaudeCodeLlmClient({
+      model: 'claude-sonnet-4-5',
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+    })
+    await client.chat({ systemPrompt: 'persona', messages: [{ role: 'user', content: 'hi' }], tools: [] })
+
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0]?.url, `${CLIPROXY_BASE_URL}/messages?beta=true`)
+    const headers = calls[0]?.init.headers as Record<string, string>
+    assert.equal(headers.Authorization, `Bearer ${CLIPROXY_API_KEY}`)
+    assert.equal(headers['Anthropic-Version'], ANTHROPIC_VERSION)
+    assert.equal(headers['Anthropic-Beta'], ANTHROPIC_BETA)
+    assert.equal(headers['User-Agent'], CLAUDE_CODE_USER_AGENT)
+    assert.equal(headers['X-Stainless-Lang'], 'js')
+    assert.equal(headers['X-Stainless-Runtime'], 'node')
+  })
+
+  test('parses text output + maps cache_read to cachedTokens', async (t) => {
+    const { fn } = makeFetchMock([{ body: SAMPLE_TEXT_SSE }])
+    t.mock.method(globalThis, 'fetch', fn)
+
+    const client = createClaudeCodeLlmClient({
+      model: 'claude-sonnet-4-5',
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+    })
+    const out = await client.chat({
+      systemPrompt: 'persona',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [],
+    })
+    assert.equal(out.content, 'hello')
+    assert.equal(out.toolCalls.length, 0)
+    assert.equal(out.usage.cachedTokens, 200)
+    assert.equal(out.usage.outputTokens, 5)
+    // inputTokens = uncached(50) + cache_read(200) + cache_create(0) = 250
+    assert.equal(out.usage.inputTokens, 250)
+    assert.equal(out.model, 'claude-sonnet-4-5')
+  })
+
+  test('extracts toolCalls from tool_use stream blocks', async (t) => {
+    const sse =
+      ev('message_start', { type: 'message_start', message: { model: 'm' } }) +
+      ev('content_block_start', {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'tool_use', id: 'tu_1', name: 'send_message' },
+      }) +
+      ev('content_block_delta', {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'input_json_delta', partial_json: '{"text":"hi"}' },
+      }) +
+      ev('content_block_stop', { type: 'content_block_stop', index: 0 })
+    const { fn } = makeFetchMock([{ body: sse }])
+    t.mock.method(globalThis, 'fetch', fn)
+
+    const client = createClaudeCodeLlmClient({
+      model: 'm',
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+    })
+    const out = await client.chat({
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [],
+    })
+    assert.equal(out.toolCalls.length, 1)
+    assert.equal(out.toolCalls[0]?.id, 'tu_1')
+    assert.equal(out.toolCalls[0]?.name, 'send_message')
+    assert.deepEqual(out.toolCalls[0]?.args, { text: 'hi' })
+  })
+
+  test('non-2xx throws ClaudeCodeApiError with full request/response context (no retry)', async (t) => {
+    const { fn, calls } = makeFetchMock([{ status: 500, body: '{"error":"internal"}' }])
+    t.mock.method(globalThis, 'fetch', fn)
+
+    const client = createClaudeCodeLlmClient({
+      model: 'm',
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+    })
+    let caught: unknown
+    try {
+      await client.chat({
+        systemPrompt: 's',
+        messages: [{ role: 'user', content: 'h' }],
+        tools: [],
+      })
+    } catch (err) {
+      caught = err
+    }
+    assert.ok(caught instanceof ClaudeCodeApiError)
+    assert.equal(caught.status, 500)
+    assert.equal(caught.responseText, '{"error":"internal"}')
+    // 不重试: 失败一次直接抛 (cliproxy 端管 token, bot 不刷新)
+    assert.equal(calls.length, 1)
+    // 完整 request body 应该挂在 error 上, 让 pino log {err} 时能直接 dump
+    const reqBody = caught.requestBody as { system: Array<{ text: string }>; messages: unknown[] }
+    assert.ok(Array.isArray(reqBody.system))
+    assert.equal(reqBody.system.length, 3)
+    assert.equal(reqBody.system[2]?.text, 's')
+    assert.equal(reqBody.messages.length, 1)
+  })
+
+  test('401 不再做 forceRefresh 重试 - 直接抛 (cliproxy 端管 token)', async (t) => {
+    const { fn, calls } = makeFetchMock([{ status: 401, body: '{"error":"unauthorized"}' }])
+    t.mock.method(globalThis, 'fetch', fn)
+
+    const client = createClaudeCodeLlmClient({
+      model: 'claude-sonnet-4-5',
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+    })
+    let caught: unknown
+    try {
+      await client.chat({ systemPrompt: 's', messages: [{ role: 'user', content: 'h' }], tools: [] })
+    } catch (err) {
+      caught = err
+    }
+    assert.ok(caught instanceof ClaudeCodeApiError)
+    assert.equal(caught.status, 401)
+    assert.equal(calls.length, 1)
+  })
+
+  test('request body: stream:true, 3 system blocks, cache_control 1h 挂最后一块', async (t) => {
+    const { fn, calls } = makeFetchMock([{ body: SAMPLE_TEXT_SSE }])
+    t.mock.method(globalThis, 'fetch', fn)
+
+    const client = createClaudeCodeLlmClient({
+      model: 'claude-sonnet-4-5',
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+    })
+    await client.chat({
+      systemPrompt: 'persona-XY',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [],
+    })
+    const body = JSON.parse(String(calls[0]?.init.body))
+    assert.equal(body.stream, true)
+    assert.equal('cache_control' in body, false)
+    assert.equal(body.system.length, 3)
+    assert.equal(body.system[2].text, 'persona-XY')
+    assert.deepEqual(body.system[2].cache_control, { type: 'ephemeral', ttl: '1h' })
+    assert.equal(body.system[0].cache_control, undefined)
+    assert.equal(body.system[1].cache_control, undefined)
+    assert.equal('tools' in body, false)
+  })
+})

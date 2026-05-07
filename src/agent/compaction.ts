@@ -1,9 +1,7 @@
-import OpenAI from 'openai'
 import type { AgentContext } from './agent-context.js'
 import type { AgentMessage } from './agent-context.types.js'
-import { toOpenAIMessages } from './llm-client.js'
+import { createLlmClient } from './llm-client.js'
 import { config } from '../config/index.js'
-import { recordCurrentTokenUsage, toTokenUsage } from '../llm/token-usage.js'
 import { createLogger } from '../logger.js'
 
 /**
@@ -127,8 +125,7 @@ function splitExistingSummary(messages: AgentMessage[]): {
 }
 
 async function defaultSummarize(input: SummarizeInput): Promise<string> {
-  const provider = config.llm.providers[config.llm.defaultProvider]
-  const client = new OpenAI({ baseURL: provider.url, apiKey: provider.apiKey })
+  const llm = createLlmClient()
 
   const messages: AgentMessage[] = []
   const previous = input.previousSummary?.trim()
@@ -138,19 +135,21 @@ async function defaultSummarize(input: SummarizeInput): Promise<string> {
   messages.push(...input.history)
   messages.push({ role: 'user', content: SUMMARIZER_TRIGGER_INSTRUCTION })
 
-  const response = await client.chat.completions.create({
-    model: config.llm.defaultModel,
+  const result = await llm.chat({
+    systemPrompt: SUMMARIZER_SYSTEM_PROMPT,
+    messages,
+    tools: [],
     temperature: 0.3,
-    messages: toOpenAIMessages(SUMMARIZER_SYSTEM_PROMPT, messages),
   })
-  recordCurrentTokenUsage('compaction.summarize', toTokenUsage(response.usage))
+  // 注: llm-client 内部已经 recordCurrentTokenUsage('agent.chat', ...);
+  // compaction 想区分两路 token 用量, 让 llm-client 改成接受 operation 标签是后续优化,
+  // v1 共用 'agent.chat' 不影响行为正确性。
 
-  const content = response.choices[0]?.message?.content
-  if (typeof content !== 'string') {
-    log.warn({ choices: response.choices.length }, 'summarizer_empty_response')
+  if (result.content.length === 0) {
+    log.warn({}, 'summarizer_empty_response')
     return ''
   }
-  return content.trim()
+  return result.content.trim()
 }
 
 export async function maybeCompactConversation(

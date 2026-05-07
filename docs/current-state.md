@@ -12,7 +12,20 @@ CLAUDE.md 只承载长期合约（perpetual context invariants、提交规范、
 
 **叠加: Idle-Fetch MVP** — `wait` 工具 idle 引信 + `fetch_reddit` / `fetch_url` 工具 + NDJSON 旁路日志。设计文档 `docs/idle-fetch-mvp.zh-CN.md`，14 天复盘模板 `docs/reddit-mvp-review.md`。
 
-背景设计文档：`docs/single-context-mvp.zh-CN.md` 和 `~/.gstack/projects/gecan123-qq-bot-v2/zzz-single-context-mvp-design-20260504-010859.md`。
+**叠加: Claude Code identity 透传 cliproxy (可选启用)** — `LLM_DEFAULT_PROVIDER=claude-code` 时, agent 路径 (BotLoopAgent + compaction + fetch_url 摘要) 走 cliproxy + 完整 Claude Code identity payload (`claude-cli/2.1.76 (external, sdk-cli)` UA + `Anthropic-Beta: claude-code-20250219,...` + 3-block system: billing header / SDK self-id / 业务 persona)。cliproxy `cloak.mode=auto` 识别为 Claude Code 客户端 → **不**替换 system prompt, 直接转发到 Anthropic, 同时复用 cliproxy 自家 OAuth 池 (Claude Pro / ChatGPT Plus 等 5 账号轮换 + quota fallback)。Media 描述路径 (`generate-description.ts` + `RoutingProvider` + `OpenAIProvider`) 不变, 仍走 cliproxy 的 OpenAI 兼容路径。
+
+实测背书 (2026-05-08):
+- **P1 不 cloak**: 发完整 Claude Code identity 时 cliproxy 透传, persona spoof 站住 (问"你是谁" → "喵～我是猫猫呀")
+- **P2 字节稳定**: `cache_control:{type:'ephemeral',ttl:'1h'}` 挂在**最后一块 system block** (per-block, 不放顶层) 触发真 cache 写。1773 字符 persona 双发实测: 第 1 发 `cache_creation_input_tokens=2287`, `ephemeral_1h_input_tokens=2287` (确认进 1h pool); 第 2 发 `cache_read_input_tokens=2287` 完全命中。CLAUDE.md 红线 5 (字节稳定) 成立。
+  - **必须 per-block, 不能放顶层**: cliproxy 6.10.x `internal/runtime/executor/claude_executor.go` 的 `ensureCacheControl` 在 `countCacheControls(body)==0` 时会自动给最后一块 system block 注入 5m, 而 `countCacheControls` 只数 system/tools/messages 里 per-block 的 cache_control, 不数顶层。顶层 1h + cliproxy 注入 5m 同时存在时 Anthropic 在 `prompt-caching-scope-2026-01-05` beta 下报 "ttl='1h' must not come after ttl='5m'" 拒收。挂在 system 最后一块就让 cliproxy 跳过注入, 形态也跟当前真 Claude Code (anthropics/claude-code#49139) 对齐。kagami 因为自家 OAuth 直连 Anthropic 不经 cliproxy, 顶层 cache_control 在它那 work, 但 qq-bot-v2 走 cliproxy 必须 per-block。
+- **P3 5 账号池可用**: cliproxy 已配 Claude Pro `claude-gecanzzz@outlook.com.json` + ChatGPT Plus/Pro/Team 三份 + Gemini Code Assist, `/v1/messages` 走 OAuth 池而非 token 计费
+
+URL/API key 复用 `LLM_PROVIDER_CLAUDE_*` (不再需要单独的 `LLM_PROVIDER_CLAUDE_CODE_*` 或 `LLM_CLAUDE_CODE_AUTH_FILE`)。启动期发一条 persona-spoof 自检请求, 回答必须以"喵"开头, 否则 fail-fast 让人查 cliproxy 版本 (P4 风险 mitigation)。
+- 主路径代码: `src/agent/claude-code/*` (headers / request / sse-parser / llm-client) — 3-block system 拼装与 wire format **不**改, 这是 cliproxy mode=auto 不 cloak 的前提
+- 切换/回滚: 切 `LLM_DEFAULT_PROVIDER` env 即可。其它 provider 分支 (OpenAI 适配器) 保持 byte-identical, cache 回滚不会被触发
+- 删除的旧物: 自家 OAuth 直连路径 (`src/auth/claude-code/*` ~700 行) + `scripts/login-claude.ts` + `~/.qq-bot-v2/auth/claude-code.json` 凭据文件 + `pnpm login:claude` script (实证 cliproxy 共享 cache 后失去存在理由)
+
+背景设计文档：`docs/single-context-mvp.zh-CN.md` 和 `~/.gstack/projects/gecan123-qq-bot-v2/zzz-single-context-mvp-design-20260504-010859.md`。本次切换的实证 + 决策记录: `~/.gstack/projects/gecan123-qq-bot-v2/zzz-main-design-20260508-012341.md`。
 
 ---
 
@@ -52,6 +65,10 @@ idle-fetch MVP 跑起来后的近期 TODO，做完即勾。过期 / 已收敛的
 - `BOT_FETCH_URL_TIMEOUT_MS` — fetch_url 单次 HTTP 超时（默认 12000）
 - `BOT_FETCH_LOG_PATH` — NDJSON 旁路日志路径（默认 `logs/fetch.ndjson`）
 - `BOT_GROUP_AMBIENT_DRY_RUN` — 主动发言（group-ambient，没有 `replyToMessageId` 的群发送）dry-run 开关。`true` 时 `send_message` 不走 NapCat，对 LLM 返回假成功；reply / private 不受影响。默认 `false`。观察期专用，长期开会让 AgentContext 里堆满"假发出去"记录
+
+无 env，但跟运行时相关：
+
+- **好奇心 tick (SIGUSR1)** — 进程内不维护定时器，节奏甩到外面。`pnpm tick` = `kill -USR1 $(cat .bot.pid)` 戳一发，bot 收到信号 enqueue 一条 `{type:'curiosity_tick'}` 事件，渲染成常量 user message `[好奇心 tick] ...`，LLM 跟看到群消息一样的路径自己决定要不要 fetch_reddit。生产期定时由 cron / launchd / `while sleep 3600; do kill -USR1 $(cat .bot.pid); done` 之类外部调度负责。bot 启动时写 `.bot.pid`（gitignored），shutdown 时删除
 - `LLM_PROVIDER_*_URL` / `_API_KEY` — provider 注册表，默认 provider 由 `LLM_DEFAULT_PROVIDER` 选
 - `LLM_SCENARIO_*` — 媒体描述各场景的 provider/model 覆盖
 
@@ -104,7 +121,7 @@ while (!stopRequested) {
 `src/agent/`
 - `agent-context.ts` — single-bot AgentContext（red line 1）
 - `event-queue.ts` — `InMemoryEventQueue<BotEvent>`
-- `event.ts` — `BotEvent = napcat_message | napcat_private_message | wake`
+- `event.ts` — `BotEvent = napcat_message | napcat_private_message | wake | curiosity_tick`
 - `dedup-enqueue.ts` — `createDedupEnqueue` 按 `messageRowId` 去重（red line 5 + replay×live 重叠保护）
 - `render-event.ts` — 纯函数 `BotEvent → string`，多源标签 + 群名缺失裸 ID fallback（red line 5）
 - `resolve-target-meta.ts` — 启动时一次性拉群名（`Promise.allSettled`，3s/调用，失败裸 ID）。私聊昵称走 per-event render，不预拉

@@ -293,5 +293,3 @@ function clampOutput(value: string): string {
   if (value.length <= OUTPUT_CAP_CHARS) return value
   return value.slice(0, OUTPUT_CAP_CHARS - 1).trimEnd() + '…'
 }
-
-export const fetchUrlTool = createFetchUrlTool()

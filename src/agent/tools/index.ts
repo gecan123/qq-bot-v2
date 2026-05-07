@@ -6,7 +6,7 @@ import { dbSchemaTool } from './db-schema.js'
 import { dbReadTool } from './db-read.js'
 import { maybeCreateWebSearchTool } from './web-search.js'
 import { fetchRedditTool } from './fetch-reddit.js'
-import { fetchUrlTool } from './fetch-url.js'
+import { createFetchUrlTool } from './fetch-url.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -26,7 +26,7 @@ export function buildBotTools(deps: BotToolDeps): Tool[] {
     dbSchemaTool,
     dbReadTool,
     fetchRedditTool,
-    fetchUrlTool,
+    createFetchUrlTool(),
   ]
 
   const webSearch = maybeCreateWebSearchTool()

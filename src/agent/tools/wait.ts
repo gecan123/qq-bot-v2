@@ -1,6 +1,9 @@
 import { z } from 'zod'
 import { config } from '../../config/index.js'
+import { createLogger } from '../../logger.js'
 import type { Tool } from '../tool.js'
+
+const log = createLogger('TOOL_WAIT')
 
 /**
  * wait 工具: bot 没事可做时挂在这里, 直到有新事件 — 或者直到 IDLE_HINT_MS 到点。
@@ -45,9 +48,12 @@ export function createWaitTool(deps: WaitToolDeps = {}): Tool<WaitArgs> {
     schema: z.object({
       reason: z.string().optional().describe('选择 wait 的简短理由 (仅日志用,不会发出去)'),
     }),
-    async execute(_args, ctx) {
+    async execute(args, ctx) {
       let timerHandle: unknown = null
       let idleFired = false
+
+      log.info({ idleHintMs, reason: args.reason ?? null }, 'wait_enter')
+      const enteredAt = Date.now()
 
       const timeoutPromise = new Promise<'idle'>((resolve) => {
         timerHandle = timer.setTimeout(() => {
@@ -62,13 +68,16 @@ export function createWaitTool(deps: WaitToolDeps = {}): Tool<WaitArgs> {
           timeoutPromise,
         ])
 
+        const elapsedMs = Date.now() - enteredAt
         if (result === 'idle') {
+          log.info({ elapsedMs }, 'wait_idle_fired')
           // wait 是一次 toolCall → 主循环 hadToolCalls=true → 立即跑下一轮看 tool result, 不用额外戳.
           const minutes = Math.round(idleHintMs / 60_000)
           return {
             content: `[空闲提示] 已闲置约 ${minutes} 分钟. 你处于自由时段, 可以 fetch_reddit 看看有啥值得分享的 / 主动找谁聊 / 或者继续 wait. 别每次空闲都硬刷, 你的判断比频率重要.`,
           }
         }
+        log.info({ elapsedMs }, 'wait_resumed_by_event')
         return { content: 'ok' }
       } finally {
         if (!idleFired && timerHandle != null) {

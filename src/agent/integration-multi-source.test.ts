@@ -140,7 +140,6 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     const tools = createToolExecutor([
       createSendMessageTool({
         sender,
-        groupIdWhitelist: [111, 222],
         groupAmbientDryRun: false,
       }),
     ])
@@ -174,74 +173,6 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     const args = calls[0]!.args as { groupId: number; replyToMessageId: number }
     assert.equal(args.groupId, 111)
     assert.equal(args.replyToMessageId, 1001)
-  })
-
-  test('LLM target outside whitelist → tool returns ok:false, NO actual send', async () => {
-    const ctx = createAgentContext()
-    const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({
-      type: 'napcat_private_message',
-      messageRowId: 1,
-      peerId: 10001,
-      messageId: 1,
-      senderId: 10001,
-      senderNickname: 'A',
-      mentionedSelf: true,
-      sentAt: new Date(),
-      renderedText: 'hi',
-    })
-
-    // LLM hallucinates a send to a non-whitelisted group
-    const llm = makeMockLlm([
-      {
-        content: '',
-        toolCalls: [
-          {
-            id: 'tc1',
-            name: 'send_message',
-            args: {
-              target: { type: 'group', groupId: 999999 },
-              text: 'leakage',
-            },
-          },
-        ],
-        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
-        model: 'mock',
-      },
-    ])
-
-    const { sender, calls } = makeMockSender()
-    const tools = createToolExecutor([
-      createSendMessageTool({
-        sender,
-        groupIdWhitelist: [111],
-        groupAmbientDryRun: false,
-      }),
-    ])
-
-    const { repo } = makeMockSnapshotRepo()
-    const agent = createBotLoopAgent({
-      systemPrompt: '',
-      context: ctx,
-      eventQueue,
-      llm,
-      tools,
-      snapshotRepo: repo,
-      renderEvent: renderBotEvent,
-    })
-
-    await agent.runOnceForTest()
-
-    // No actual send occurred
-    assert.equal(calls.length, 0)
-    // Tool result message contains ok:false
-    const toolMsg = ctx.getSnapshot().messages.find((m) => m.role === 'tool')
-    assert.ok(toolMsg)
-    if (toolMsg && toolMsg.role === 'tool') {
-      const parsed = JSON.parse(toolMsg.content)
-      assert.equal(parsed.ok, false)
-      assert.match(parsed.error, /not in BOT_TARGET_GROUP_IDS whitelist/)
-    }
   })
 
   test('private target reaches sendPrivateMessage; group event in same batch does not leak into the private send', async () => {
@@ -294,7 +225,6 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     const tools = createToolExecutor([
       createSendMessageTool({
         sender,
-        groupIdWhitelist: [111],
         groupAmbientDryRun: false,
       }),
     ])

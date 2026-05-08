@@ -12,7 +12,7 @@ The description (after the colon) must be written in Chinese. The `type` prefix 
 
 ## Project Overview
 
-qq-bot-v2 是一个**单上下文 + 主动 + 被动**的 QQ Agent。接 NapCat 听 QQ 群 + 私聊，把消息存进 Postgres，跑 Kagami-style 的 BotLoopAgent：LLM 通过 `wait` 工具决定何时休息，通过 `send_message` 工具决定何时 / 在哪说话。整个 bot 持有**单一**永续 AgentContext（一个 messages 数组），多源事件全部 funnel 进来，没有 per-scene / per-source 区分。同一意识跨源贯通（在群 A 学到的可以在群 B / 私聊里用），但发声 target 显式 + 工具层白名单校验，防止串台。
+qq-bot-v2 是一个**单上下文 + 主动 + 被动**的 QQ Agent。接 NapCat 听 QQ 群 + 私聊，把消息存进 Postgres，跑 Kagami-style 的 BotLoopAgent：LLM 通过 `wait` 工具决定何时休息，通过 `send_message` 工具决定何时 / 在哪说话。整个 bot 持有**单一**永续 AgentContext（一个 messages 数组），多源事件全部 funnel 进来，没有 per-scene / per-source 区分。同一意识跨源贯通（在群 A 学到的可以在群 B / 私聊里用），但发声 target 显式 + ingress 层准入过滤，防止串台。
 
 当前阶段、模块清单、env vars、最近取舍见 `docs/current-state.md`。
 
@@ -39,7 +39,7 @@ Default stance:
 
 2. **`messages` table is the inbound fact ledger, not the LLM ledger.** Inbound 消息一次性入库；媒体描述就绪后 `resolved_text` **一次冻结** (once-frozen)，后续 `description_raw` 更新也**不**重写 `resolved_text`。`messages` 表**不**双写进 AgentContext，AgentContext 也**不**每轮从它重建——它服务 `db_read` 工具、媒体描述目标、引用查询、启动重放，仅此而已。Scene schema invariant：`sceneKind='qq_group'` → `groupId` 非空 + `sceneExternalId=''`；`sceneKind='qq_private'` → `groupId=null` + `sceneExternalId=String(peerId)`（代码层 assert 在 `insertMessage` 兜底）。
 
-3. **Bot speaks through the `send_message` tool, not through assistant content.** `send_message` 是唯一发消息路径，target 必填（`{type:'group',groupId}` 或 `{type:'private',userId}`）。assistant message 的 content 是模型的内部"思考"，用于让它跨轮 chain-of-thought，但**不**会发出去。tool 调用成功才有真发送；失败的 send 不影响 context（tool 自己返回 `{ok:false}`），保证「history 里出现的发言一定真发出去过」这条不变量。target 经工具层校验失败 → tool 返回 `{ok:false}`，不真发，不抛（隔离靠机制不靠 LLM 自律）。当前校验策略：group target 经 `BOT_TARGET_GROUP_IDS` 白名单校验；private target 不校验 user_id，由 ingress 层 `sub_type='friend'` 过滤陌生 DM。
+3. **Bot speaks through the `send_message` tool, not through assistant content.** `send_message` 是唯一发消息路径，target 必填（`{type:'group',groupId}` 或 `{type:'private',userId}`）。assistant message 的 content 是模型的内部"思考"，用于让它跨轮 chain-of-thought，但**不**会发出去。tool 调用成功才有真发送；失败的 send 不影响 context（tool 自己返回 `{ok:false}`），保证「history 里出现的发言一定真发出去过」这条不变量。当前隔离策略：群白名单只在 ingress 层执行（`BOT_TARGET_GROUP_IDS` 过滤 NapCat `message.group` 事件），工具层**不**做二次白名单校验——能进 AgentContext 的群消息必然来自白名单内的群，所以 LLM 看到 `[群:...]` 标签就一定可以发回去。私聊白名单已删，陌生 DM 由 ingress 层 `sub_type='friend'` 过滤。这样设计是为了避免 LLM 看到工具描述里"会校验"就脑补"我不能发这个群"而停止尝试。
 
 4. **Compaction is the only path allowed to rewrite the prefix.** `maybeCompactConversation` 是唯一调用 `replaceMessages` 的地方。trigger 是 token 估算超 `COMPACTION_TRIGGER_TOKENS` env 阈值，`keepRatio` = 0.1。约束：cut 边界不能切开 `assistant.toolCalls` 与对应 `tool` result（锚 toolCallId 检测）；`previousSummary` 作为合并输入而不是简单 append；空摘要不写回；post-round compaction 用 try/catch 包，失败不影响已 sent 的消息。
 
@@ -49,7 +49,7 @@ Default stance:
 
 - 新事件源（forum / RSS / 系统通知）必须明确：它怎么渲染成一条 `user`-role AgentMessage，然后通过 dedup-enqueue → BotLoopAgent drainEvents → `appendUserMessage` 进 AgentContext。**不**改写已有 messages，**不**插入到 prefix 中段。新源也要决定它在 `render-event.ts` 里的 source label 形态。
 - 跨源知识流（LLM 在群 A 听到，想在群 B / 私聊用）在 single-context 模型下天然拥有，不需要额外 inner_journal / RAG 桥。扩到 forum / 新闻时同样适用。
-- 跨源**发声隔离**靠 `send_message` tool 的 target + 工具层校验，不靠 LLM 自律。任何新源出现 → 必须把"发到这个源"加入 tool 的 target 联合类型，并在工具层 / ingress 层为该源决定校验策略（白名单 env、sub_type 过滤、或其他机制）。
+- 跨源**发声隔离**靠 ingress 层过滤（白名单 env、`sub_type='friend'` 等）+ `send_message` tool 的 target 显式必填。工具层不做二次校验。任何新源出现 → 必须把"发到这个源"加入 tool 的 target 联合类型，并在 ingress 层为该源决定准入策略（白名单 env、sub_type 过滤、或其他机制）；工具层不再为新源加 if-allowed 分支。
 - system prompt 在启动后**不变**（启动时一次拼装）。修改 system prompt 内容 = 整段 cache 失效，这是有意为之，提醒只能集中改。
 - 工具描述同上，集中改，不小步频改。
 - 大块原始数据（web 抓页 / 长文件）走子 TaskAgent 模式（现 MVP 暂未实现），**只回摘要给主 context**，不要让原始 token 进 messages 数组。

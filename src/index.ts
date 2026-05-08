@@ -213,13 +213,13 @@ async function main() {
   const tools = createToolExecutor(
     buildBotTools({
       sender: messageSender,
-      groupIdWhitelist: config.botTargetGroupIds,
       groupAmbientDryRun: config.botGroupAmbientDryRun,
     }),
   )
   const systemPrompt = buildBotSystemPrompt({
     groupIds: config.botTargetGroupIds,
     metadata: targetMetadata,
+    selfNumber: config.selfNumber,
   })
 
   // 11. BotLoopAgent

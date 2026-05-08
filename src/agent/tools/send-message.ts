@@ -9,8 +9,6 @@ const MAX_TEXT_LENGTH = 500
 
 export interface SendMessageDeps {
   sender: MessageSender
-  /** 群消息白名单 (启动时定型, 进程内不变). 私聊不走白名单, 任意好友 user_id 都可发. */
-  groupIdWhitelist: readonly number[]
   /**
    * Group-ambient (没有 replyToMessageId 的群发送) dry-run 开关.
    * true → 不走 NapCat, 对 LLM 返回假成功; false → 正常真发.
@@ -54,18 +52,12 @@ interface SendResultPayload {
   error?: string
 }
 
-function failResult(kind: SendKind, error: string): SendResultPayload {
-  return { ok: false, attempts: 0, providerMessageId: null, kind, error }
-}
-
 export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
-  const groupSet = new Set(deps.groupIdWhitelist)
-
   return {
     name: 'send_message',
     description: [
       '向 QQ 真实发送一条消息。target 必填, 决定这条消息发到哪个群 / 哪个私聊对方。',
-      'group target 会按 BOT_TARGET_GROUP_IDS 白名单校验 —— 不在白名单内会返回 {ok:false}, 不会真发。private target 不走白名单, 任意好友 userId 都接受 (陌生 DM 在 ingress 层已被 sub_type=friend 挡掉).',
+      '群白名单已经在 ingress 层做过 —— 你能在 history 里看到的群消息, 那个群一定是可发的, 不需要自己再判断。私聊同样: 陌生 DM 在 ingress 层已被 sub_type=friend 挡掉, 你看到的 [私聊 | ...(QQ:N)] 一定可发回。',
       'target.type=group: 必传 groupId (来自消息标签 [群:名字 | 昵称(QQ:...)] 中暗含的 groupId, 可以用 db_read 查 messages 表 group_id 列). mentionUserId 可选, 在文本前加 @ 提及群内某人。',
       'target.type=private: 必传 userId (私聊对方 QQ).',
       'replyToMessageId 可选: 引用一条已存在消息. 被 @ed 时常回填以表示「我在回复你」, 主动插话或开新话题时省略.',
@@ -79,15 +71,6 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
         const { groupId, mentionUserId } = args.target
         const isReply = args.replyToMessageId !== undefined
         const kind: SendKind = isReply ? 'group-reply' : 'group-ambient'
-
-        if (!groupSet.has(groupId)) {
-          log.warn({ groupId, kind }, 'send_message_group_not_in_whitelist')
-          return {
-            content: JSON.stringify(
-              failResult(kind, `groupId ${groupId} is not in BOT_TARGET_GROUP_IDS whitelist`),
-            ),
-          }
-        }
 
         if (isReply) {
           const result = await deps.sender.replyToMessage({

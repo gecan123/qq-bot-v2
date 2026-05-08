@@ -11,6 +11,7 @@ import type { TargetMetadataMaps } from './resolve-target-meta.js'
 export interface BuildBotSystemPromptInput {
   groupIds: readonly number[]
   metadata: TargetMetadataMaps
+  selfNumber: number
 }
 
 function renderSourceList(input: BuildBotSystemPromptInput): string {
@@ -33,6 +34,10 @@ export function buildBotSystemPrompt(input: BuildBotSystemPromptInput): string {
   const persona = loadPrompt('./prompts/characters/default.md').trim()
 
   return [
+    '[身份 — 硬事实, 不要编]',
+    '  - 名字: Luna',
+    `  - QQ 号: ${input.selfNumber}`,
+    '',
     '[人设基座]',
     persona,
     '',
@@ -53,7 +58,7 @@ export function buildBotSystemPrompt(input: BuildBotSystemPromptInput): string {
     '      * target = {type:"group", groupId: <群号>, mentionUserId?: <可选 @ 谁>}  → 发群里',
     '      * target = {type:"private", userId: <对方 QQ>}                         → 发私聊',
     '    可选 replyToMessageId: 回复某条已存在的消息 (被 @ed 时常回填; 主动开新话题时省略).',
-    '    白名单校验在工具层做: target 不在白名单 → tool 返回 {ok:false}, 不会真发.',
+    '    群白名单已经在 ingress 层过滤了: 你能在 history 里看到 [群:...] 标签的, 那个群一定可发, 不要自己脑补"不在白名单".',
     '    assistant message 里写的内容只是你的内心想法, 不会发出去 —— 只有调这个工具才会真发.',
     '  - wait: 没什么想说时调它. 它会让你休眠到下一条消息到达 (或长时间没事件时拿到一条 [空闲提示]). 优先 wait, 不要硬找话说.',
     '  - db_read / db_schema: 想查历史聊天 (任一源) 或媒体描述时用. 跨源查询合法.',
@@ -68,13 +73,13 @@ export function buildBotSystemPrompt(input: BuildBotSystemPromptInput): string {
     '  - 在群 A 里不要 cue 群 B 的人或具体话题, 也不要说「我在群 B 看到」这种跨源 reference.',
     '  - 私聊回复只能用 target.type=private 发回该私聊, 不能错发到群里.',
     '  - 群消息回复只能用 target.type=group + 该群 groupId, 不能错发到别的群.',
-    '机制层会校验 (白名单), 但请你也别尝试越界发送 —— 越界 → tool 返回 ok:false 浪费一轮.',
+    '群白名单只在 ingress 层做; 工具层不会再拦你, 严格按消息标签里的群名 / QQ 号回到原源, 不要错发到别的群 / 私聊.',
     '',
     '[节奏]',
-    '每个 round 你拿到自上次以来所有源的新消息. 判断:',
-    '  1. 有人 @ 你 / 私聊有人在跟你说话, 且你有有效回应? → 用 send_message 回应.',
-    '  2. 没人 @ 你, 但话题你真的有想法且能加分? → send_message 主动插话 (target 明确到那个源).',
-    '  3. 否则 → call wait, 不要硬聊, 也不要每条私聊都立即回 (允许 wait).',
+    '每个 round 你拿到自上次以来所有源的新消息. 怎么处理见 [人设基座] 「你怎么在场」 — 这里只补工具映射:',
+    '  - 看一眼, 有 "想说" 的勾起 → send_message 一句, target 回到该源 (被 @ 时回填 replyToMessageId; 主动开新话题省略).',
+    '  - 没勾起 → wait. 不要审讯自己 "是不是该说点什么".',
+    '  - 有人 @ 你 / 私聊在跟你说话, 默认要回, 但允许稍微 wait 再回, 不要做机器响应.',
     '',
     '[空闲行为]',
     '两种触发会把你带进自由时段:',

@@ -19,6 +19,55 @@ describe('segmentsToPlainText', () => {
     assert.equal(segmentsToPlainText(segments), '[图片: 一只猫]')
   })
 
+  test('image segment fuses all structured fields with detectedType label', () => {
+    const segments: ParsedSegment[] = [
+      {
+        type: 'image',
+        mediaDescription: {
+          detectedType: 'sticker',
+          summary: '粉色小猪贴纸',
+          description: '一只粉色卡通小猪',
+          extractedText: [],
+          memeContext: '萌系表达',
+          intentSignal: '想卖萌',
+          confidence: 0.92,
+        },
+      },
+    ]
+    assert.equal(
+      segmentsToPlainText(segments),
+      '[图片(sticker): 一只粉色卡通小猪 | 概要:粉色小猪贴纸 | 梗:萌系表达 | 推测意图:想卖萌 | 置信度:0.92]',
+    )
+  })
+
+  test('image segment skips empty fields', () => {
+    const segments: ParsedSegment[] = [
+      {
+        type: 'image',
+        mediaDescription: {
+          description: '一只猫',
+          summary: '',
+          extractedText: [],
+          memeContext: '   ',
+        },
+      },
+    ]
+    assert.equal(segmentsToPlainText(segments), '[图片: 一只猫]')
+  })
+
+  test('image segment renders OCR extractedText when description missing', () => {
+    const segments: ParsedSegment[] = [
+      {
+        type: 'image',
+        mediaDescription: {
+          extractedText: ['HELLO', 'WORLD'],
+          memeContext: '英文招呼',
+        },
+      },
+    ]
+    assert.equal(segmentsToPlainText(segments), '[图片: HELLO；WORLD | 梗:英文招呼]')
+  })
+
   test('video segment without description returns [视频]', () => {
     const segments: ParsedSegment[] = [{ type: 'video' }]
     assert.equal(segmentsToPlainText(segments), '[视频]')
@@ -27,6 +76,24 @@ describe('segmentsToPlainText', () => {
   test('video segment with mediaDescription includes it', () => {
     const segments: ParsedSegment[] = [{ type: 'video', mediaDescription: { description: '搞笑片段' } }]
     assert.equal(segmentsToPlainText(segments), '[视频: 搞笑片段]')
+  })
+
+  test('video segment fuses description, summary, extractedText with detectedType', () => {
+    const segments: ParsedSegment[] = [
+      {
+        type: 'video',
+        mediaDescription: {
+          detectedType: 'screen_recording',
+          description: '操作录屏',
+          summary: '某 app 录屏',
+          extractedText: ['登录', '继续'],
+        },
+      },
+    ]
+    assert.equal(
+      segmentsToPlainText(segments),
+      '[视频(screen_recording): 操作录屏 | 概要:某 app 录屏 | 文字:登录；继续]',
+    )
   })
 
   test('record segment without description returns [语音]', () => {
@@ -39,6 +106,13 @@ describe('segmentsToPlainText', () => {
     assert.equal(segmentsToPlainText(segments), '[语音: 语音内容]')
   })
 
+  test('record segment drops audio.refer flag', () => {
+    const segments: ParsedSegment[] = [
+      { type: 'record', mediaDescription: { transcription: '今晚一起吃饭', refer: true } },
+    ]
+    assert.equal(segmentsToPlainText(segments), '[语音: 今晚一起吃饭]')
+  })
+
   test('file segment without fileName returns [文件]', () => {
     const segments: ParsedSegment[] = [{ type: 'file' }]
     assert.equal(segmentsToPlainText(segments), '[文件]')
@@ -47,6 +121,20 @@ describe('segmentsToPlainText', () => {
   test('file segment with fileName includes it', () => {
     const segments: ParsedSegment[] = [{ type: 'file', fileName: 'report.pdf' }]
     assert.equal(segmentsToPlainText(segments), '[文件: report.pdf]')
+  })
+
+  test('file segment with PDF description renders fileName as label suffix and body inside', () => {
+    const segments: ParsedSegment[] = [
+      {
+        type: 'file',
+        fileName: 'report.pdf',
+        mediaDescription: { summary: '季度财报', description: '2026 Q1 收入 $1.2M' },
+      },
+    ]
+    assert.equal(
+      segmentsToPlainText(segments),
+      '[文件(report.pdf): 2026 Q1 收入 $1.2M | 概要:季度财报]',
+    )
   })
 
   test('face segment without name returns [表情]', () => {

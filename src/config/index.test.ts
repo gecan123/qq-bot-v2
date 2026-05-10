@@ -109,6 +109,69 @@ describe('config', () => {
     }
   })
 
+  test('owner: 都不给 → null', () => {
+    const config = parseConfig(createBaseEnv())
+    assert.equal(config.owner, null)
+  })
+
+  test('owner: 都给 → 解析成 { qq, name }', () => {
+    const config = parseConfig(createBaseEnv({
+      BOT_OWNER_QQ: '3916147294',
+      BOT_OWNER_NAME: 'zzz',
+    }))
+    assert.deepEqual(config.owner, { qq: 3916147294, name: 'zzz' })
+  })
+
+  test('owner: 双空字符串 → null (跟未设置等价)', () => {
+    const config = parseConfig(createBaseEnv({
+      BOT_OWNER_QQ: '',
+      BOT_OWNER_NAME: '',
+    }))
+    assert.equal(config.owner, null)
+  })
+
+  test('owner: 只给 QQ 没给 name → throw', () => {
+    assert.throws(
+      () => parseConfig(createBaseEnv({ BOT_OWNER_QQ: '3916147294' })),
+      /BOT_OWNER_QQ and BOT_OWNER_NAME must be set together/,
+    )
+  })
+
+  test('owner: 只给 name 没给 QQ → throw', () => {
+    assert.throws(
+      () => parseConfig(createBaseEnv({ BOT_OWNER_NAME: 'zzz' })),
+      /BOT_OWNER_QQ and BOT_OWNER_NAME must be set together/,
+    )
+  })
+
+  test('owner: QQ 是非数字 → throw', () => {
+    assert.throws(
+      () => parseConfig(createBaseEnv({
+        BOT_OWNER_QQ: 'abc',
+        BOT_OWNER_NAME: 'zzz',
+      })),
+      /Invalid BOT_OWNER_QQ "abc"/,
+    )
+  })
+
+  test('owner: QQ 是浮点 → throw (必须整数)', () => {
+    assert.throws(
+      () => parseConfig(createBaseEnv({
+        BOT_OWNER_QQ: '123.5',
+        BOT_OWNER_NAME: 'zzz',
+      })),
+      /Invalid BOT_OWNER_QQ "123\.5"/,
+    )
+  })
+
+  test('owner: name 含空格在前后会被 trim', () => {
+    const config = parseConfig(createBaseEnv({
+      BOT_OWNER_QQ: '  100  ',
+      BOT_OWNER_NAME: '  alice  ',
+    }))
+    assert.deepEqual(config.owner, { qq: 100, name: 'alice' })
+  })
+
   test('compactionTriggerTokens defaults to 16_000 and accepts override', () => {
     const dflt = parseConfig(createBaseEnv())
     assert.equal(dflt.compactionTriggerTokens, 16_000)

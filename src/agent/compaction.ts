@@ -139,7 +139,6 @@ async function defaultSummarize(input: SummarizeInput): Promise<string> {
     systemPrompt: SUMMARIZER_SYSTEM_PROMPT,
     messages,
     tools: [],
-    temperature: 0.3,
   })
   // 注: llm-client 内部已经 recordCurrentTokenUsage('agent.chat', ...);
   // compaction 想区分两路 token 用量, 让 llm-client 改成接受 operation 标签是后续优化,

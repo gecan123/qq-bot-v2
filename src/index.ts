@@ -153,7 +153,7 @@ async function main() {
 
   // 5.5 SIGUSR1 → curiosity_tick. 进程内不维护定时器 (节奏甩到外面: pnpm tick / cron / launchd).
   //     `kill -USR1 <pid>` 戳一发, 走跟 napcat_message 同一条 drainEvents 路径,
-  //     LLM 看到 [好奇心 tick] user message 自己决定要不要 fetch_reddit.
+  //     LLM 看到 [好奇心 tick] user message 自己决定要不要 list_reddit.
   process.on('SIGUSR1', () => {
     log.info({ source: 'sigusr1' }, 'curiosity_tick_manual_trigger')
     eventQueue.enqueue({ type: 'curiosity_tick' })
@@ -220,6 +220,7 @@ async function main() {
     groupIds: config.botTargetGroupIds,
     metadata: targetMetadata,
     selfNumber: config.selfNumber,
+    owner: config.owner,
   })
 
   // 11. BotLoopAgent

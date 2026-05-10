@@ -10,7 +10,7 @@ CLAUDE.md 只承载长期合约（perpetual context invariants、提交规范、
 
 **MVP-2**：服务 N 个白名单群（`BOT_TARGET_GROUP_IDS`）+ 任意 QQ 好友的私聊（无白名单，仅 ingress 层按 `sub_type='friend'` 过滤陌生临时会话）。`BOT_TARGET_GROUP_IDS` 可空（私聊永远在线）。
 
-**叠加: Idle-Fetch MVP** — `wait` 工具 idle 引信 + `fetch_reddit` / `fetch_url` 工具 + NDJSON 旁路日志。设计文档 `docs/idle-fetch-mvp.zh-CN.md`，14 天复盘模板 `docs/reddit-mvp-review.md`。
+**叠加: Idle-Fetch MVP** — `wait` 工具 idle 引信 + `list_reddit` / `get_reddit_post` / `fetch_url` 工具 + NDJSON 旁路日志。设计文档 `docs/idle-fetch-mvp.zh-CN.md`，14 天复盘模板 `docs/reddit-mvp-review.md`。
 
 **叠加: Claude Code identity 透传 cliproxy (可选启用)** — `LLM_DEFAULT_PROVIDER=claude-code` 时, agent 路径 (BotLoopAgent + compaction + fetch_url 摘要) 走 cliproxy + 完整 Claude Code identity payload (`claude-cli/2.1.76 (external, sdk-cli)` UA + `Anthropic-Beta: claude-code-20250219,...` + 3-block system: billing header / SDK self-id / 业务 persona)。cliproxy `cloak.mode=auto` 识别为 Claude Code 客户端 → **不**替换 system prompt, 直接转发到 Anthropic, 同时复用 cliproxy 自家 OAuth 池 (Claude Pro / ChatGPT Plus 等 5 账号轮换 + quota fallback)。Media 描述路径 (`generate-description.ts` + `RoutingProvider` + `OpenAIProvider`) 不变, 仍走 cliproxy 的 OpenAI 兼容路径。
 
@@ -61,14 +61,14 @@ idle-fetch MVP 跑起来后的近期 TODO，做完即勾。过期 / 已收敛的
 - `TAVILY_API_KEY` — Tavily web search，设置则 `web_search` 工具自动注册
 - `COMPACTION_TRIGGER_TOKENS` — compaction 触发阈值（默认 16000，多源场景默认值）
 - `BOT_IDLE_HINT_MS` — wait 工具空闲提示阈值（默认 1800000 = 30min）
-- `BOT_FETCH_REDDIT_TIMEOUT_MS` — fetch_reddit 单次 HTTP 超时（默认 8000）
+- `BOT_REDDIT_TIMEOUT_MS` — list_reddit / get_reddit_post 单次 HTTP 超时（默认 8000）
 - `BOT_FETCH_URL_TIMEOUT_MS` — fetch_url 单次 HTTP 超时（默认 12000）
 - `BOT_FETCH_LOG_PATH` — NDJSON 旁路日志路径（默认 `logs/fetch.ndjson`）
 - `BOT_GROUP_AMBIENT_DRY_RUN` — 主动发言（group-ambient，没有 `replyToMessageId` 的群发送）dry-run 开关。`true` 时 `send_message` 不走 NapCat，对 LLM 返回假成功；reply / private 不受影响。默认 `false`。观察期专用，长期开会让 AgentContext 里堆满"假发出去"记录
 
 无 env，但跟运行时相关：
 
-- **好奇心 tick (SIGUSR1)** — 进程内不维护定时器，节奏甩到外面。`pnpm tick` = `kill -USR1 $(cat .bot.pid)` 戳一发，bot 收到信号 enqueue 一条 `{type:'curiosity_tick'}` 事件，渲染成常量 user message `[好奇心 tick] ...`，LLM 跟看到群消息一样的路径自己决定要不要 fetch_reddit。生产期定时由 cron / launchd / `while sleep 3600; do kill -USR1 $(cat .bot.pid); done` 之类外部调度负责。bot 启动时写 `.bot.pid`（gitignored），shutdown 时删除
+- **好奇心 tick (SIGUSR1)** — 进程内不维护定时器，节奏甩到外面。`pnpm tick` = `kill -USR1 $(cat .bot.pid)` 戳一发，bot 收到信号 enqueue 一条 `{type:'curiosity_tick'}` 事件，渲染成常量 user message `[好奇心 tick] ...`，LLM 跟看到群消息一样的路径自己决定要不要 list_reddit。生产期定时由 cron / launchd / `while sleep 3600; do kill -USR1 $(cat .bot.pid); done` 之类外部调度负责。bot 启动时写 `.bot.pid`（gitignored），shutdown 时删除
 - `LLM_PROVIDER_*_URL` / `_API_KEY` — provider 注册表，默认 provider 由 `LLM_DEFAULT_PROVIDER` 选
 - `LLM_SCENARIO_*` — 媒体描述各场景的 provider/model 覆盖
 
@@ -132,10 +132,11 @@ while (!stopRequested) {
 - `bot-loop-agent.ts` — 主循环
 - `replay-missed.ts` — 启动时多源回放关机期间漏掉的消息（与 live 共享 dedup hook）
 - `tool.ts` — Tool / ToolExecutor 接口
-- `tools/*` — `wait` / `send_message` / `db_schema` / `db_read` / `web_search` / `fetch_reddit` / `fetch_url`
+- `tools/*` — `wait` / `send_message` / `db_schema` / `db_read` / `web_search` / `fetch_url`
+- `tools/reddit/*` — `list_reddit` (list.ts) / `get_reddit_post` (get-post.ts) / 共享依赖 (shared.ts)
 
 `src/ops/`
-- `fetch-log.ts` — NDJSON 旁路日志 appendFile (容错), 不进 Prisma. 服务 `fetch_reddit` / `fetch_url` 的运维统计 (`logs/fetch.ndjson`)
+- `fetch-log.ts` — NDJSON 旁路日志 appendFile (容错), 不进 Prisma. 服务 `list_reddit` / `get_reddit_post` / `fetch_url` 的运维统计 (`logs/fetch.ndjson`)
 
 `src/messaging/`
 - `message-sender.ts` + `napcat-sender.ts` — 底层 NapCat 发送 + 重试（含群 + 私聊 reply）
@@ -194,7 +195,8 @@ bot 通过工具自主决定：
   - `replyToMessageId` 可选，引用某条已存在消息
 - **`db_schema`** / **`db_read`** — 查历史聊天（任一源）/ 媒体描述。多源后系统**不再**自动注入 `:group_id`，LLM 想限定单源时显式传（`params: {group_id: ...}` 或 `peer_id`）。`group_id` 走白名单校验；`peer_id` 任意 QQ 都接受。跨源 SELECT（无 ID 过滤）合法
 - **`web_search`** — 仅在 `TAVILY_API_KEY` 配置时注册
-- **`fetch_reddit`** — 拉 reddit RSS（subreddit 可选 + sort hot/top/new + limit 硬上限 10），每条 title ≤80 字 / summary ≤120 字硬截断。`AbortController` 超时走 `BOT_FETCH_REDDIT_TIMEOUT_MS`。每次调用写一行到 `logs/fetch.ndjson`
+- **`list_reddit`** — 列 reddit 帖子（subreddit 可选 + sort hot/top/new + limit 硬上限 10），走 reddit 公开 JSON。每条 title ≤80 字 / selftext ≤120 字硬截断，输出 permalink + score + num_comments + is_self 元数据。`AbortController` 超时走 `BOT_REDDIT_TIMEOUT_MS`。每次调用写一行到 `logs/fetch.ndjson`
+- **`get_reddit_post`** — 读 reddit 单帖正文 + top 5 评论。接 permalink URL，走 `<url>.json`。正文 ≤500 字 / 每条评论 ≤200 字 / 总输出 ≤2000 字符硬截断。超时共享 `BOT_REDDIT_TIMEOUT_MS`
 - **`fetch_url`** — 抓任意 URL：response body cap 256KB → cheerio 抽 title/desc/article/main/body → 8KB 截断 → 默认 LLM 摘成 ≤500 中文字 → 输出 ≤1500 字符 clamp。LLM 失败 fallback 到原文截断 + 错误标记。每次调用写一行到 `logs/fetch.ndjson`
 
 ---

@@ -92,7 +92,7 @@ export function buildClaudeCodeRequestBody(
 export function toClaudeSystemBlocks(userSystem: string): ClaudeSystemBlock[] {
   const blocks: ClaudeSystemBlock[] = [
     { type: 'text', text: CLAUDE_CODE_BILLING_HEADER },
-    { type: 'text', text: CLAUDE_CODE_SDK_PROMPT },
+    // { type: 'text', text: CLAUDE_CODE_SDK_PROMPT },
   ]
   if (userSystem.length > 0) {
     blocks.push({ type: 'text', text: userSystem })

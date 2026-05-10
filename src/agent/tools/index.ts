@@ -5,7 +5,8 @@ import { createSendMessageTool } from './send-message.js'
 import { dbSchemaTool } from './db-schema.js'
 import { dbReadTool } from './db-read.js'
 import { maybeCreateWebSearchTool } from './web-search.js'
-import { fetchRedditTool } from './fetch-reddit.js'
+import { listRedditTool } from './reddit/list.js'
+import { getRedditPostTool } from './reddit/get-post.js'
 import { createFetchUrlTool } from './fetch-url.js'
 
 export interface BotToolDeps {
@@ -23,7 +24,8 @@ export function buildBotTools(deps: BotToolDeps): Tool[] {
     }),
     dbSchemaTool,
     dbReadTool,
-    fetchRedditTool,
+    listRedditTool,
+    getRedditPostTool,
     createFetchUrlTool(),
   ]
 

@@ -18,3 +18,7 @@ agent-config.json
 .next/
 .superpowers/
 .bot.pid
+
+# Local debug snapshots / one-off probes (not part of the project)
+temp.json
+openai-sdk-sonnet-test.mjs

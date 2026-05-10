@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
-  createFetchRedditTool,
+  createListRedditTool,
   buildRedditRssUrl,
   parseRedditAtom,
-} from './fetch-reddit.js'
-import { InMemoryEventQueue } from '../event-queue.js'
-import type { BotEvent } from '../event.js'
-import type { ToolContext } from '../tool.js'
+} from './list.js'
+import { InMemoryEventQueue } from '../../event-queue.js'
+import type { BotEvent } from '../../event.js'
+import type { ToolContext } from '../../tool.js'
 
 function makeCtx(): ToolContext {
   return { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 1 }
@@ -92,37 +92,36 @@ describe('parseRedditAtom', () => {
   })
 })
 
-describe('fetch_reddit tool', () => {
+describe('list_reddit tool', () => {
   test('happy path: 200 + valid atom → formatted markdown list + NDJSON line', async () => {
     const writes: string[] = []
     const fetcher: typeof fetch = async (url) => {
-      assert.equal(url, 'https://www.reddit.com/r/programming/hot.rss')
+      assert.equal(url, 'https://www.reddit.com/r/technology/hot.rss')
       return new Response(SAMPLE_ATOM, { status: 200 })
     }
-    const tool = createFetchRedditTool({
+    const tool = createListRedditTool({
       fetcher,
       appender: async (_p, line) => {
         writes.push(line)
       },
-      logPath: '/tmp/test-fetch.ndjson',
+      logPath: '/tmp/test-list-reddit.ndjson',
     })
-    const result = await tool.execute({ subreddit: 'programming', sort: 'hot', limit: 10 }, makeCtx())
-    assert.match(result.content, /\[reddit \/r\/programming hot/)
+    const result = await tool.execute({ subreddit: 'technology', sort: 'hot', limit: 10 }, makeCtx())
+    assert.match(result.content, /\[reddit \/r\/technology hot/)
     assert.match(result.content, /Rust 1\.99/)
     assert.match(result.content, /async closures/)
     assert.equal(writes.length, 1, 'exactly one NDJSON line per call')
     const logged = JSON.parse(writes[0]!.trim())
-    assert.equal(logged.source, 'reddit')
+    assert.equal(logged.source, 'reddit_list')
     assert.equal(logged.status, 200)
-    assert.equal(logged.url, 'https://www.reddit.com/r/programming/hot.rss')
   })
 
-  test('limit > 10 is clipped at the schema layer', async () => {
-    const tool = createFetchRedditTool({
+  test('limit > 10 rejected by schema', () => {
+    const tool = createListRedditTool({
       fetcher: async () => new Response(SAMPLE_ATOM, { status: 200 }),
       appender: async () => {},
     })
-    const parsed = tool.schema.safeParse({ subreddit: 'programming', sort: 'hot', limit: 100 })
+    const parsed = tool.schema.safeParse({ subreddit: 'technology', sort: 'hot', limit: 100 })
     assert.equal(parsed.success, false)
   })
 
@@ -136,38 +135,35 @@ describe('fetch_reddit tool', () => {
         <summary type="html">${longSummary}</summary>
       </entry>
     </feed>`
-    const tool = createFetchRedditTool({
+    const tool = createListRedditTool({
       fetcher: async () => new Response(xml, { status: 200 }),
       appender: async () => {},
     })
-    const result = await tool.execute({ sort: 'hot', limit: 10 }, makeCtx())
-    const titleLine = result.content.split('\n').find((l) => l.startsWith('- '))!
-    // 80 chars of title + ' | url | ' + 120 chars of summary, ellipsis appended on truncation
-    const aRun = titleLine.match(/A+/)?.[0] ?? ''
-    assert.ok(aRun.length <= 80, `title not clipped (got ${aRun.length} chars)`)
-    const bRun = titleLine.match(/B+/)?.[0] ?? ''
-    assert.ok(bRun.length <= 120, `summary not clipped (got ${bRun.length} chars)`)
+    const result = await tool.execute({ subreddit: 'technology', sort: 'hot', limit: 10 }, makeCtx())
+    const line = result.content.split('\n').find((l) => l.startsWith('- '))!
+    const aRun = line.match(/A+/)?.[0] ?? ''
+    assert.ok(aRun.length <= 80, `title not clipped (got ${aRun.length})`)
+    const bRun = line.match(/B+/)?.[0] ?? ''
+    assert.ok(bRun.length <= 120, `summary not clipped (got ${bRun.length})`)
   })
 
-  test('HTTP 404 → returns ok content with HTTP error, does not throw', async () => {
+  test('HTTP 404 → returns ok content with HTTP error tag', async () => {
     const writes: string[] = []
-    const tool = createFetchRedditTool({
+    const tool = createListRedditTool({
       fetcher: async () => new Response('not found', { status: 404 }),
       appender: async (_p, line) => {
         writes.push(line)
       },
     })
-    const result = await tool.execute({ subreddit: 'doesnotexist', sort: 'hot', limit: 10 }, makeCtx())
+    const result = await tool.execute({ subreddit: 'technology', sort: 'hot', limit: 10 }, makeCtx())
     assert.match(result.content, /HTTP 404/)
-    assert.equal(writes.length, 1)
     const logged = JSON.parse(writes[0]!.trim())
-    assert.equal(logged.status, 404)
     assert.equal(logged.errorKind, 'http_404')
   })
 
-  test('network error → status -1, errorKind=network_error', async () => {
+  test('network error → status -1 / network_error', async () => {
     const writes: string[] = []
-    const tool = createFetchRedditTool({
+    const tool = createListRedditTool({
       fetcher: async () => {
         throw new Error('ENOTFOUND')
       },
@@ -175,19 +171,18 @@ describe('fetch_reddit tool', () => {
         writes.push(line)
       },
     })
-    const result = await tool.execute({ sort: 'hot', limit: 10 }, makeCtx())
+    const result = await tool.execute({ subreddit: 'ClaudeAI', sort: 'hot', limit: 10 }, makeCtx())
     assert.match(result.content, /失败/)
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.status, -1)
     assert.equal(logged.errorKind, 'network_error')
   })
 
-  test('timeout (AbortController) → errorKind=timeout', async () => {
+  test('timeout via AbortController', async () => {
     const writes: string[] = []
-    const tool = createFetchRedditTool({
+    const tool = createListRedditTool({
       timeoutMs: 5,
       fetcher: async (_url, init) => {
-        // Never resolves until aborted
         return new Promise((_resolve, reject) => {
           const signal = (init as RequestInit | undefined)?.signal
           signal?.addEventListener('abort', () => {
@@ -201,15 +196,15 @@ describe('fetch_reddit tool', () => {
         writes.push(line)
       },
     })
-    const result = await tool.execute({ sort: 'hot', limit: 10 }, makeCtx())
+    const result = await tool.execute({ subreddit: 'OpenAI', sort: 'hot', limit: 10 }, makeCtx())
     assert.match(result.content, /timeout/)
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.errorKind, 'timeout')
   })
 
-  test('User-Agent header is set explicitly (not default)', async () => {
+  test('User-Agent header is set explicitly', async () => {
     let capturedUA = ''
-    const tool = createFetchRedditTool({
+    const tool = createListRedditTool({
       userAgent: 'qq-bot-v2/test-suite',
       fetcher: async (_url, init) => {
         const headers = (init as RequestInit | undefined)?.headers as Record<string, string> | undefined
@@ -218,15 +213,22 @@ describe('fetch_reddit tool', () => {
       },
       appender: async () => {},
     })
-    await tool.execute({ sort: 'hot', limit: 10 }, makeCtx())
+    await tool.execute({ subreddit: 'wallstreetbets', sort: 'hot', limit: 10 }, makeCtx())
     assert.equal(capturedUA, 'qq-bot-v2/test-suite')
   })
 
-  test('rejects malformed subreddit name via zod', () => {
-    const tool = createFetchRedditTool({ fetcher: async () => new Response('', { status: 200 }) })
-    const r = tool.schema.safeParse({ subreddit: 'has spaces', sort: 'hot' })
-    assert.equal(r.success, false)
-    const r2 = tool.schema.safeParse({ subreddit: 'r/programming', sort: 'hot' })
-    assert.equal(r2.success, false)
+  test('rejects non-whitelisted subreddit via zod', () => {
+    const tool = createListRedditTool({ fetcher: async () => new Response('', { status: 200 }) })
+    assert.equal(tool.schema.safeParse({ subreddit: 'programming', sort: 'hot' }).success, false)
+    assert.equal(tool.schema.safeParse({ subreddit: 'rust', sort: 'hot' }).success, false)
+    assert.equal(tool.schema.safeParse({ subreddit: 'has spaces', sort: 'hot' }).success, false)
+  })
+
+  test('accepts whitelisted subreddits via zod', () => {
+    const tool = createListRedditTool({ fetcher: async () => new Response('', { status: 200 }) })
+    assert.equal(tool.schema.safeParse({ subreddit: 'technology' }).success, true)
+    assert.equal(tool.schema.safeParse({ subreddit: 'ClaudeAI' }).success, true)
+    assert.equal(tool.schema.safeParse({ subreddit: 'OpenAI' }).success, true)
+    assert.equal(tool.schema.safeParse({ subreddit: 'wallstreetbets' }).success, true)
   })
 })

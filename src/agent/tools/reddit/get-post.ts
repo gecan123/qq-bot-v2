@@ -1,0 +1,185 @@
+import { z } from 'zod'
+import type { Tool } from '../../tool.js'
+import { config } from '../../../config/index.js'
+import { logFetch } from '../../../ops/fetch-log.js'
+import { createLogger } from '../../../logger.js'
+import {
+  DEFAULT_USER_AGENT,
+  type RedditFetchDeps,
+  fetchRedditRss,
+  parseAtomXml,
+  normalizeEntries,
+  pickText,
+  pickLinkHref,
+  pickAuthorName,
+  stripHtml,
+  clip,
+  collapseWhitespace,
+} from './shared.js'
+
+const log = createLogger('TOOL_GET_REDDIT_POST')
+
+/** 工具实现层硬截断. */
+const COMMENT_BODY_MAX_CHARS = 200
+const TOP_N_COMMENTS = 5
+const OUTPUT_CAP_CHARS = 2000
+
+/** /r/<sub>/comments/<post_id>(/<slug>?)?  -- 容许 slug, 末尾 / 可选, 容许 query/hash */
+const REDDIT_POST_REGEX =
+  /^https?:\/\/(?:www\.|old\.)?reddit\.com\/r\/[A-Za-z0-9_]+\/comments\/[A-Za-z0-9]+(?:\/[^?#]*)?\/?(?:[?#].*)?$/
+
+const argsSchema = z.object({
+  url: z
+    .string()
+    .url()
+    .refine((u) => REDDIT_POST_REGEX.test(u), {
+      message: 'url 必须是 reddit 帖子页 (形如 https://www.reddit.com/r/X/comments/POSTID/...)',
+    })
+    .describe('reddit 帖子链接, 通常从 list_reddit 输出里复制.'),
+})
+
+type Args = z.infer<typeof argsSchema>
+
+export interface RedditPostDetail {
+  title: string
+  comments: { author: string; body: string }[]
+}
+
+/** 把帖子页 URL 转成 .rss 端点. 纯函数. */
+export function toRedditPostRssUrl(url: string): string {
+  const stripped = url.replace(/[?#].*$/, '').replace(/\/+$/, '')
+  return `${stripped}.rss`
+}
+
+/**
+ * 单帖 RSS → 帖子标题 + 评论列表.
+ *
+ * reddit 的 /comments/POSTID.rss 返回 Atom feed:
+ * - <feed><title> = 帖子标题 (有时带 "comments on:" 前缀)
+ * - <entry> = 每条评论 (content 是 HTML)
+ * - 帖子 selftext 不在 RSS 里, 只有评论. 这是 RSS 的限制.
+ */
+export function parseRedditPostRss(xml: string): RedditPostDetail | null {
+  const parsed = parseAtomXml(xml) as { feed?: { title?: unknown; entry?: unknown } }
+  if (!parsed?.feed) return null
+
+  const rawTitle = pickText(parsed.feed.title)
+  if (!rawTitle) return null
+
+  const entries = normalizeEntries(parsed.feed.entry)
+  const comments: RedditPostDetail['comments'] = []
+  for (const entry of entries) {
+    const body = stripHtml(pickText(entry.content ?? entry.summary))
+    if (!body) continue
+    comments.push({
+      author: pickAuthorName(entry.author),
+      body,
+    })
+    if (comments.length >= TOP_N_COMMENTS) break
+  }
+
+  return { title: rawTitle, comments }
+}
+
+function clampOutput(value: string): string {
+  if (value.length <= OUTPUT_CAP_CHARS) return value
+  return value.slice(0, OUTPUT_CAP_CHARS - 1).trimEnd() + '…'
+}
+
+function formatPost(detail: RedditPostDetail, sourceUrl: string): string {
+  const lines: string[] = []
+  lines.push(`[reddit post] ${sourceUrl}`)
+  lines.push(`标题: ${clip(collapseWhitespace(detail.title), 200)}`)
+  if (detail.comments.length > 0) {
+    lines.push('')
+    lines.push(`top ${detail.comments.length} 评论:`)
+    for (const c of detail.comments) {
+      const body = clip(collapseWhitespace(c.body), COMMENT_BODY_MAX_CHARS)
+      lines.push(`- ${c.author || '(unknown)'}: ${body}`)
+    }
+  } else {
+    lines.push('')
+    lines.push('(还没拿到评论 / 评论被屏蔽)')
+  }
+  return clampOutput(lines.join('\n'))
+}
+
+export function createGetRedditPostTool(deps: RedditFetchDeps = {}): Tool<Args> {
+  const fetcher = deps.fetcher ?? fetch
+  const timeoutMs = deps.timeoutMs ?? config.redditTimeoutMs
+  const userAgent = deps.userAgent ?? DEFAULT_USER_AGENT
+  const now = deps.now ?? (() => new Date())
+
+  return {
+    name: 'get_reddit_post',
+    description: [
+      `读 reddit 一条帖子的 top ${TOP_N_COMMENTS} 评论 (输出 ≤ ${OUTPUT_CAP_CHARS} 字符).`,
+      '典型: list_reddit 给了 10 条, 挑一条想深读的链接调本工具看评论讨论.',
+      'url 必须是 reddit 帖子页 (含 /r/X/comments/POSTID/...). 其它站不接受, 走 fetch_url.',
+      `每条评论 ≤${COMMENT_BODY_MAX_CHARS} 字, 硬截断, 不能让本工具返回更长.`,
+      'RSS 限制: 拿不到帖子 selftext 正文, 只能看评论. list_reddit 的摘要里已有部分正文.',
+    ].join(' '),
+    schema: argsSchema,
+    async execute(rawArgs, ctx) {
+      const args = rawArgs as Args
+      const rssUrl = toRedditPostRssUrl(args.url)
+      const startedAt = Date.now()
+      const outcome = await fetchRedditRss(rssUrl, { fetcher, userAgent, timeoutMs })
+      const durationMs = Date.now() - startedAt
+
+      const baseLog = {
+        ts: now().toISOString(),
+        source: 'reddit_post',
+        url: rssUrl,
+        status: outcome.status,
+        bytes: outcome.bytes,
+        toolCallId: `round-${ctx.roundIndex}`,
+        durationMs,
+      }
+
+      if (outcome.errorKind) {
+        await logFetch(
+          { ...baseLog, errorKind: outcome.errorKind },
+          { path: deps.logPath, appender: deps.appender },
+        )
+        log.warn({ url: rssUrl, errorKind: outcome.errorKind }, 'get_reddit_post_failed')
+        return { content: `[get_reddit_post 失败] ${args.url}: ${outcome.errorKind}.` }
+      }
+
+      if (outcome.status < 200 || outcome.status >= 300) {
+        await logFetch(
+          { ...baseLog, errorKind: `http_${outcome.status}` },
+          { path: deps.logPath, appender: deps.appender },
+        )
+        return {
+          content: `[get_reddit_post HTTP ${outcome.status}] ${args.url}. reddit 拒了, 帖子可能不存在 / 被删 / rate limit. 别原地重试.`,
+        }
+      }
+
+      let detail: RedditPostDetail | null
+      try {
+        detail = parseRedditPostRss(outcome.body)
+      } catch (err) {
+        await logFetch(
+          { ...baseLog, errorKind: 'parse_error' },
+          { path: deps.logPath, appender: deps.appender },
+        )
+        log.warn({ url: rssUrl, err }, 'get_reddit_post_parse_failed')
+        return { content: `[get_reddit_post 解析失败] ${args.url}: ${(err as Error).message}` }
+      }
+
+      if (!detail) {
+        await logFetch(
+          { ...baseLog, errorKind: 'empty_post' },
+          { path: deps.logPath, appender: deps.appender },
+        )
+        return { content: `[get_reddit_post 空] ${args.url}. 拿到响应但解不出帖子结构.` }
+      }
+
+      await logFetch(baseLog, { path: deps.logPath, appender: deps.appender })
+      return { content: formatPost(detail, args.url) }
+    },
+  }
+}
+
+export const getRedditPostTool = createGetRedditPostTool()

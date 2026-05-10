@@ -19,7 +19,7 @@ const argsSchema = z.object({
   url: z
     .string()
     .url()
-    .describe('要抓取的 URL (典型: 从 fetch_reddit 列表里挑一条想深读的链接).'),
+    .describe('要抓取的 URL (非 reddit 页面; reddit 帖子请用 get_reddit_post).'),
   hint: z
     .string()
     .max(200)
@@ -186,7 +186,7 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
     description: [
       `抓取一个 URL 并返回 ≤ ${OUTPUT_CAP_CHARS} 字符的中文摘要 (目标 ≤ 500 中文字).`,
       '返回的不是原文, 是摘要. 如果摘要不够你判断, 没办法让这个工具给你更长 — 要么换工具 / 要么放弃这条.',
-      '典型用法: fetch_reddit 给了 10 条, 挑一条想深读的 url 调这个工具.',
+      '典型用法: 非 reddit 的外链页面. reddit 帖子请用 get_reddit_post, 不要走本工具.',
       'hint 参数可选, 用来影响摘要侧重 (例: "我想知道作者的核心论点").',
       '抓不到 / 摘要失败时返回错误标记 + 原文截断, 可以忽略也可以再试一次.',
     ].join(' '),

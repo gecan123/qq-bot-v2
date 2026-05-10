@@ -88,6 +88,33 @@ export function parseIdList(name: string, raw: string | undefined): number[] {
   return unique
 }
 
+/**
+ * Owner = 把 bot 做出来的那个人. 出现在 system prompt 的 [关系基线] 段里, 让 Luna
+ * 知道 QQ:xxx 这个号是谁. 两个 env (QQ + 名字) 必须同时给, 单给一个 throw —— 避免
+ * "知道 QQ 不知道叫什么" 或 "知道叫什么但不知道哪个号" 这种半调子状态. 都不给则
+ * 返回 null, [关系基线] 段整段不渲染 (字节稳定: 无 owner 时 prompt 跟无此特性一致).
+ */
+export interface BotOwner {
+  qq: number
+  name: string
+}
+
+function parseOwner(env: EnvSource): BotOwner | null {
+  const qqRaw = env.BOT_OWNER_QQ?.trim() ?? ''
+  const nameRaw = env.BOT_OWNER_NAME?.trim() ?? ''
+  const hasQq = qqRaw.length > 0
+  const hasName = nameRaw.length > 0
+  if (!hasQq && !hasName) return null
+  if (hasQq !== hasName) {
+    throw new Error('BOT_OWNER_QQ and BOT_OWNER_NAME must be set together (or both empty)')
+  }
+  const qq = Number(qqRaw)
+  if (!Number.isFinite(qq) || !Number.isInteger(qq) || qq <= 0) {
+    throw new Error(`Invalid BOT_OWNER_QQ "${qqRaw}" (must be positive integer)`)
+  }
+  return { qq, name: nameRaw }
+}
+
 function parseProviderConfigs(env: EnvSource): Record<string, ProviderConfig> {
   const providers: Record<string, Partial<ProviderConfig>> = {}
 
@@ -172,7 +199,7 @@ export function parseConfig(env: EnvSource) {
 
   const compactionTriggerTokens = parsePositiveInteger(env.COMPACTION_TRIGGER_TOKENS, 16_000)
   const idleHintMs = parsePositiveInteger(env.BOT_IDLE_HINT_MS, 1_800_000)
-  const fetchRedditTimeoutMs = parsePositiveInteger(env.BOT_FETCH_REDDIT_TIMEOUT_MS, 8_000)
+  const redditTimeoutMs = parsePositiveInteger(env.BOT_REDDIT_TIMEOUT_MS, 8_000)
   const fetchUrlTimeoutMs = parsePositiveInteger(env.BOT_FETCH_URL_TIMEOUT_MS, 12_000)
   const fetchLogPath = env.BOT_FETCH_LOG_PATH && env.BOT_FETCH_LOG_PATH.trim().length > 0
     ? env.BOT_FETCH_LOG_PATH.trim()
@@ -188,6 +215,8 @@ export function parseConfig(env: EnvSource) {
     /** Group whitelist. Bot listens + replies only within these IDs. 私聊不走白名单, 由 ingress 层 sub_type='friend' 过滤. */
     botTargetGroupIds: groupIds,
     selfNumber: Number(requireEnv(env, 'SELF_NUMBER')),
+    /** Owner (创造者) — 渲染 [关系基线] 用. null = 未配置 → 那段不渲染. */
+    owner: parseOwner(env),
     nodeEnv: env.NODE_ENV || 'development',
     replyMediaTimeoutMs: parsePositiveInteger(env.REPLY_MEDIA_TIMEOUT_MS, 15_000),
     jobInterDelayMs: parsePositiveInteger(env.JOB_INTER_DELAY_MS, 200),
@@ -202,8 +231,8 @@ export function parseConfig(env: EnvSource) {
      * the LLM a chance to fetch something or start a topic. Default 30min.
      */
     idleHintMs,
-    /** Hard timeout for fetch_reddit (AbortController). */
-    fetchRedditTimeoutMs,
+    /** Hard timeout for list_reddit / get_reddit_post (AbortController). */
+    redditTimeoutMs,
     /** Hard timeout for fetch_url (AbortController). */
     fetchUrlTimeoutMs,
     /** NDJSON sidecar log path. Not a Prisma table — operations data only. */

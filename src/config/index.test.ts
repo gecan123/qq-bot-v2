@@ -172,6 +172,23 @@ describe('config', () => {
     assert.deepEqual(config.owner, { qq: 100, name: 'alice' })
   })
 
+  test('botGroupPromptsPath defaults to ./prompts/groups.yaml and accepts override', () => {
+    const dflt = parseConfig(createBaseEnv())
+    assert.equal(dflt.botGroupPromptsPath, './prompts/groups.yaml')
+
+    const override = parseConfig(createBaseEnv({
+      BOT_GROUP_PROMPTS_PATH: './prompts/groups.test.yaml',
+    }))
+    assert.equal(override.botGroupPromptsPath, './prompts/groups.test.yaml')
+
+    // 空字符串 / 仅空格 → 走默认值 (跟 fetchLogPath 同一套行为)
+    const empty = parseConfig(createBaseEnv({ BOT_GROUP_PROMPTS_PATH: '' }))
+    assert.equal(empty.botGroupPromptsPath, './prompts/groups.yaml')
+
+    const blank = parseConfig(createBaseEnv({ BOT_GROUP_PROMPTS_PATH: '   ' }))
+    assert.equal(blank.botGroupPromptsPath, './prompts/groups.yaml')
+  })
+
   test('compactionTriggerTokens defaults to 16_000 and accepts override', () => {
     const dflt = parseConfig(createBaseEnv())
     assert.equal(dflt.compactionTriggerTokens, 16_000)

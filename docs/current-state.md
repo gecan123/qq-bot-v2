@@ -64,6 +64,7 @@ idle-fetch MVP 跑起来后的近期 TODO，做完即勾。过期 / 已收敛的
 - `BOT_REDDIT_TIMEOUT_MS` — list_reddit / get_reddit_post 单次 HTTP 超时（默认 8000）
 - `BOT_FETCH_URL_TIMEOUT_MS` — fetch_url 单次 HTTP 超时（默认 12000）
 - `BOT_FETCH_LOG_PATH` — NDJSON 旁路日志路径（默认 `logs/fetch.ndjson`）
+- `BOT_GROUP_PROMPTS_PATH` — Per-group prompt customization yaml 路径（默认 `./prompts/groups.yaml`）。文件必须存在；loader fail-fast。yaml 写 `groups: []` = 不做任何 per-group 定制（system prompt byte-equal 到无此特性）。改文件需重启 bot（红线 5：cache 整段失效一次，集中改不要小步频改）
 - `BOT_GROUP_AMBIENT_DRY_RUN` — 主动发言（group-ambient，没有 `replyToMessageId` 的群发送）dry-run 开关。`true` 时 `send_message` 不走 NapCat，对 LLM 返回假成功；reply / private 不受影响。默认 `false`。观察期专用，长期开会让 AgentContext 里堆满"假发出去"记录
 
 无 env，但跟运行时相关：
@@ -118,6 +119,15 @@ while (!stopRequested) {
 - `ensure-message-ready.ts` — 等媒体描述 + 渲染 + 冻结 `resolved_text`
 - `message-resolver.ts` — `resolveMessage` 把 segments 跑到带 mediaDescription 的形态
 
+`src/config/`
+- `index.ts` — env parsing（含 `botGroupPromptsPath` 默认 `./prompts/groups.yaml`）
+- `group-prompts.ts` — `loadGroupCustomizations(path)`：yaml + zod 校验 → `GroupCustomization[]`。启动期一次 load + freeze（红线 5），文件不存在 / schema 错 → fail-fast
+- `prompt-loader.ts` — 缓存式同步 `loadPrompt(filePath)`，给 `prompts/characters/default.md` 等静态 prompt 用
+
+`prompts/`
+- `groups.yaml` — per-group prompt customization source of truth。schema：`groups: [{ id, frequency_hint, body }]`。`frequency_hint` 4 档枚举 `lurker / quiet / normal / chatty`。`groups: []` = 不做任何定制。改这个文件需重启 bot
+- `characters/default.md` — bot 人设基座（Luna）
+
 `src/agent/`
 - `agent-context.ts` — single-bot AgentContext（red line 1）
 - `event-queue.ts` — `InMemoryEventQueue<BotEvent>`
@@ -126,7 +136,7 @@ while (!stopRequested) {
 - `render-event.ts` — 纯函数 `BotEvent → string`，多源标签 + 群名缺失裸 ID fallback（red line 5）
 - `resolve-target-meta.ts` — 启动时一次性拉群名（`Promise.allSettled`，3s/调用，失败裸 ID）。私聊昵称走 per-event render，不预拉
 - `llm-client.ts` — `AgentMessage <-> OpenAI ChatCompletion` 翻译
-- `bot-system-prompt.ts` — 启动时一次拼装（使用 metadata maps，red line 5）
+- `bot-system-prompt.ts` — 启动时一次拼装（使用 metadata maps + groupCustomizations，red line 5）。新加 `[群定制]` 子段：渲染顺序按 `groupIds` 遍历（deterministic），yaml 配了但不在白名单的 id 静默忽略；`groupCustomizations=[]` 时整段不渲染，输出字节等价于无此特性
 - `snapshot-repo.ts` — `bot_agent_snapshot` 单行持久化
 - `compaction.ts` — `maybeCompactConversation`（red line 4 唯一前缀写口）
 - `bot-loop-agent.ts` — 主循环

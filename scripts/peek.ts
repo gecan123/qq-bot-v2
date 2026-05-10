@@ -130,7 +130,8 @@ function formatMessage(args: Args, i: number, m: Msg): string {
   const idx = String(i).padStart(4, ' ')
   if (m.role === 'user') {
     const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
-    return paint(args, 'user', `[${idx}] user`) + ` ${clip(c, 600)}`
+    const isSummary = c.startsWith('[历史摘要]')
+    return paint(args, 'user', `[${idx}] user`) + ` ${isSummary ? c : clip(c, 600)}`
   }
   if (m.role === 'assistant') {
     const lines: string[] = []

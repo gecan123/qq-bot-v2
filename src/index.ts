@@ -1,4 +1,4 @@
-import { unlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { prisma } from './database/client.js'
 import { connectNapcat, registerNapcatHandlers, type IngestedMessage } from './bot/core.js'
 import { napcat } from './bot/napcat.js'
@@ -8,6 +8,7 @@ import { setLlmProvider } from './llm/provider.js'
 import { OpenAIProvider } from './llm/openai-adapter.js'
 import { RoutingProvider } from './llm/routing-provider.js'
 import { CLAUDE_CODE_PROVIDER_NAME, config } from './config/index.js'
+import { loadGroupCustomizations } from './config/group-prompts.js'
 import { messageSender } from './messaging/message-sender.js'
 
 import { createAgentContext } from './agent/agent-context.js'
@@ -216,12 +217,35 @@ async function main() {
       groupAmbientDryRun: config.botGroupAmbientDryRun,
     }),
   )
+  // Per-group prompt customization (启动期一次 load + freeze, 红线 5).
+  // 文件不存在 / yaml schema 错 → fail-fast (loader throws), 这里不兜底.
+  const groupCustomizations = loadGroupCustomizations(config.botGroupPromptsPath)
+  log.info(
+    {
+      path: config.botGroupPromptsPath,
+      configured: groupCustomizations.length,
+      ids: groupCustomizations.map((c) => c.id),
+    },
+    'group customizations loaded',
+  )
+
   const systemPrompt = buildBotSystemPrompt({
     groupIds: config.botTargetGroupIds,
     metadata: targetMetadata,
     selfNumber: config.selfNumber,
     owner: config.owner,
+    groupCustomizations,
   })
+
+  // 10.5 把 system prompt 写到文件, 方便调试查看
+  {
+    const now = new Date()
+    const beijingTime = now.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
+    const header = `=== System Prompt (${beijingTime} 北京时间) ===\n\n`
+    mkdirSync('logs', { recursive: true })
+    writeFileSync('logs/system-prompt.txt', header + systemPrompt + '\n', 'utf-8')
+    log.info('system prompt 已写入 logs/system-prompt.txt')
+  }
 
   // 11. BotLoopAgent
   const agent = createBotLoopAgent({

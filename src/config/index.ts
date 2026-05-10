@@ -205,6 +205,9 @@ export function parseConfig(env: EnvSource) {
     ? env.BOT_FETCH_LOG_PATH.trim()
     : 'logs/fetch.ndjson'
   const groupAmbientDryRun = parseBoolean(env.BOT_GROUP_AMBIENT_DRY_RUN, false)
+  const groupPromptsPath = env.BOT_GROUP_PROMPTS_PATH && env.BOT_GROUP_PROMPTS_PATH.trim().length > 0
+    ? env.BOT_GROUP_PROMPTS_PATH.trim()
+    : './prompts/groups.yaml'
 
   return {
     databaseUrl: requireEnv(env, 'DATABASE_URL'),
@@ -247,6 +250,13 @@ export function parseConfig(env: EnvSource) {
      * compaction 把它压走 — 别长期开. 默认 false.
      */
     botGroupAmbientDryRun: groupAmbientDryRun,
+    /**
+     * Per-group prompt customization yaml 路径. 启动时一次 load, 拼进 system prompt
+     * `[群定制]` 段. 改这个文件需要重启 bot (红线 5: prompt cache 整段失效一次).
+     * 默认 `./prompts/groups.yaml`. 文件必须存在 (loader fail-fast); 内容可以是
+     * `groups: []` 表示当前不做 per-group 定制.
+     */
+    botGroupPromptsPath: groupPromptsPath,
     tavily: env.TAVILY_API_KEY
       ? { apiKey: env.TAVILY_API_KEY }
       : undefined,

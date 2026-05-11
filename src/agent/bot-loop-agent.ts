@@ -25,9 +25,12 @@ export interface BotLoopAgentDeps {
   compactOptions?: MaybeCompactOptions
   /** 单 round 失败后退避时间。 */
   errorBackoffMs?: number
+  /** 队列有事件时，drain 前等待更多事件堆积的毫秒数（0 = 不等）。 */
+  eventDebounceMs?: number
 }
 
 const DEFAULT_ERROR_BACKOFF_MS = 5_000
+const DEFAULT_EVENT_DEBOUNCE_MS = 15_000
 
 export interface BotLoopAgent {
   start(): Promise<void>
@@ -110,6 +113,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   }
 
   async function step(): Promise<{ hadToolCalls: boolean }> {
+    const debounceMs = deps.eventDebounceMs ?? DEFAULT_EVENT_DEBOUNCE_MS
+    if (deps.eventQueue.size() > 0 && debounceMs > 0 && !stopRequested) {
+      await sleep(debounceMs)
+    }
     const consumed = await drainEvents()
     log.debug({ roundIndex: roundIndex + 1, eventsConsumed: consumed }, 'round_start')
 

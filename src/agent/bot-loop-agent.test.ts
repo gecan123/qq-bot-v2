@@ -95,6 +95,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         if (event.type !== 'napcat_message') return null
         return `[${event.senderNickname}] hello`
       },
+      eventDebounceMs: 0,
     })
 
     await agent.runOnceForTest()
@@ -132,6 +133,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       tools: makeMockTools(),
       snapshotRepo: repo,
       renderEvent: () => null,
+      eventDebounceMs: 0,
     })
 
     await agent.runOnceForTest()
@@ -211,6 +213,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         if (event.type !== 'napcat_message') return null
         return `[${event.senderNickname}] hello`
       },
+      eventDebounceMs: 0,
     })
 
     const startPromise = agent.start()
@@ -257,6 +260,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       tools: makeMockTools(),
       snapshotRepo: repo,
       renderEvent: () => null,
+      eventDebounceMs: 0,
     })
 
     await agent.runOnceForTest()

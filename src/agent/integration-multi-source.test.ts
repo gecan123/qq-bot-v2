@@ -153,6 +153,7 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
       tools,
       snapshotRepo: repo,
       renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
     })
 
     await agent.runOnceForTest()
@@ -238,6 +239,7 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
       tools,
       snapshotRepo: repo,
       renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
     })
 
     await agent.runOnceForTest()

@@ -65,6 +65,7 @@ idle-fetch MVP 跑起来后的近期 TODO，做完即勾。过期 / 已收敛的
 - `BOT_FETCH_URL_TIMEOUT_MS` — fetch_url 单次 HTTP 超时（默认 12000）
 - `BOT_FETCH_LOG_PATH` — NDJSON 旁路日志路径（默认 `logs/fetch.ndjson`）
 - `BOT_GROUP_PROMPTS_PATH` — Per-group prompt customization yaml 路径（默认 `./prompts/groups.yaml`）。文件必须存在；loader fail-fast。yaml 写 `groups: []` = 不做任何 per-group 定制（system prompt byte-equal 到无此特性）。改文件需重启 bot（红线 5：cache 整段失效一次，集中改不要小步频改）
+- `BOT_EVENT_DEBOUNCE_MS` — drain 前等待更多事件堆积的毫秒数（默认 15000）。连续消息在此窗口内会被合并进同一轮 LLM 调用，避免逐条回复。默认 15s 覆盖图片解析延迟（~10s）+ 打字间隔
 - `BOT_GROUP_AMBIENT_DRY_RUN` — 主动发言（group-ambient，没有 `replyToMessageId` 的群发送）dry-run 开关。`true` 时 `send_message` 不走 NapCat，对 LLM 返回假成功；reply / private 不受影响。默认 `false`。观察期专用，长期开会让 AgentContext 里堆满"假发出去"记录
 
 无 env，但跟运行时相关：

@@ -256,6 +256,9 @@ async function main() {
     tools,
     snapshotRepo,
     renderEvent: renderBotEvent,
+    eventDebounceMs: process.env.BOT_EVENT_DEBOUNCE_MS
+      ? Number(process.env.BOT_EVENT_DEBOUNCE_MS)
+      : undefined,
   })
 
   // 12. 进入主循环

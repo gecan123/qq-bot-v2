@@ -124,7 +124,6 @@ export function createListRedditTool(deps: RedditFetchDeps = {}): Tool<Args> {
       '想深读某条 → 拿那条链接调 get_reddit_post 看评论讨论. 别用 fetch_url 走 reddit, 用专用工具.',
       '不要因为没给详情就反复调本工具换 limit, 上限 10 就是 10.',
       `subreddit 必填, 只能传这几个: ${ALLOWED_SUBREDDITS.join(' / ')}. sort: hot/top/new, 默认 hot.`,
-      '收到 [空闲提示] 时这是首选工具. 但有想法才发, 没意思的就咽下去继续 wait.',
     ].join(' '),
     schema: argsSchema,
     async execute(rawArgs, ctx) {

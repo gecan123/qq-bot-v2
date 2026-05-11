@@ -14,16 +14,6 @@ export interface GenerateDescriptionData {
 
 const VISION_MEDIA_TYPES = new Set(['image', 'sticker'])
 
-const SENSITIVE_CONTENT_FALLBACK = {
-  detectedType: 'sensitive_content',
-  summary: '内容受限',
-  description: '图片内容无法详述，可能包含敏感元素或超出解析能力',
-  extractedText: [] as string[],
-  memeContext: '',
-  confidence: 0.1,
-  intentSignal: 'unknown',
-}
-
 const inFlight = new Map<number, Promise<void>>()
 const log = createLogger('JOB_MEDIA')
 
@@ -113,7 +103,7 @@ function logInvalidDescriptionResult(
       llmDescription: result?.description,
       llmRaw: result?.raw,
     },
-    '媒体描述结果不是有效对象，写入 sensitive_content 兜底描述',
+    '媒体描述结果无效，保留待重试',
   )
 }
 
@@ -181,16 +171,10 @@ async function doGenerate(mediaId: number): Promise<void> {
     const descriptionRaw = normalizeDescriptionRaw(result?.raw, result?.description)
 
     if (!descriptionRaw) {
-      const hasInvalidShape = result?.raw !== null && result?.raw !== undefined
-      if (hasInvalidShape) {
-        logInvalidDescriptionResult(mediaId, mediaType, result)
-        await prisma.media.update({
-          where: { mediaId },
-          data: { descriptionRaw: toDescriptionRawInput(SENSITIVE_CONTENT_FALLBACK) },
-        })
-      } else {
-        log.warn({ mediaId, mediaType, llmDescription: result?.description }, '图片描述返回空结果，保留待解析状态供重试')
-      }
+      log.warn(
+        { mediaId, mediaType, llmDescription: result?.description, llmRaw: result?.raw },
+        '图片描述结果无效，保留待重试',
+      )
       return
     }
 

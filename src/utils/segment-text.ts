@@ -1,10 +1,11 @@
 import type { ParsedSegment } from '../types/message-segments.js'
 import { formatMediaDescription } from '../media/media-description.js'
 
-function renderMediaSegment(label: string, value: unknown): string {
+function renderMediaSegment(label: string, referenceId: string | undefined, value: unknown): string {
+  const tag = referenceId ? `${label}#${referenceId}` : label
   const formatted = formatMediaDescription(value)
-  if (!formatted) return `[${label}]`
-  const head = formatted.detectedType ? `${label}(${formatted.detectedType})` : label
+  if (!formatted) return `[${tag}]`
+  const head = formatted.detectedType ? `${tag}(${formatted.detectedType})` : tag
   return `[${head}: ${formatted.body}]`
 }
 
@@ -15,15 +16,16 @@ export function segmentsToPlainText(segments: ParsedSegment[]): string {
         case 'text':
           return seg.content
         case 'image':
-          return renderMediaSegment('图片', seg.mediaDescription)
+          return renderMediaSegment('图片', seg.referenceId, seg.mediaDescription)
         case 'video':
-          return renderMediaSegment('视频', seg.mediaDescription)
+          return renderMediaSegment('视频', seg.referenceId, seg.mediaDescription)
         case 'record':
-          return renderMediaSegment('语音', seg.mediaDescription)
+          return renderMediaSegment('语音', seg.referenceId, seg.mediaDescription)
         case 'file': {
+          const tag = seg.referenceId ? `文件#${seg.referenceId}` : '文件'
           const formatted = formatMediaDescription(seg.mediaDescription)
-          if (!formatted) return seg.fileName ? `[文件: ${seg.fileName}]` : '[文件]'
-          const head = seg.fileName ? `文件(${seg.fileName})` : '文件'
+          if (!formatted) return seg.fileName ? `[${tag}: ${seg.fileName}]` : `[${tag}]`
+          const head = seg.fileName ? `${tag}(${seg.fileName})` : tag
           return `[${head}: ${formatted.body}]`
         }
         case 'face':

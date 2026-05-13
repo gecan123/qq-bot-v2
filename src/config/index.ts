@@ -204,7 +204,7 @@ export function parseConfig(env: EnvSource) {
   const fetchLogPath = env.BOT_FETCH_LOG_PATH && env.BOT_FETCH_LOG_PATH.trim().length > 0
     ? env.BOT_FETCH_LOG_PATH.trim()
     : 'logs/fetch.ndjson'
-  const groupAmbientDryRun = parseBoolean(env.BOT_GROUP_AMBIENT_DRY_RUN, false)
+  const groupAmbientSendIds = new Set(parseIdList('BOT_GROUP_AMBIENT_SEND_IDS', env.BOT_GROUP_AMBIENT_SEND_IDS))
   const groupPromptsPath = env.BOT_GROUP_PROMPTS_PATH && env.BOT_GROUP_PROMPTS_PATH.trim().length > 0
     ? env.BOT_GROUP_PROMPTS_PATH.trim()
     : './prompts/groups.yaml'
@@ -241,15 +241,12 @@ export function parseConfig(env: EnvSource) {
     /** NDJSON sidecar log path. Not a Prisma table — operations data only. */
     fetchLogPath,
     /**
-     * 主动发言（group-ambient, 即没有 replyToMessageId 的群发送）的 dry-run 开关。
-     * true → send_message tool 在 group-ambient 分支不走 NapCat, 直接对 LLM 返回假成功
-     *        (ok:true, providerMessageId:null), 群友感知不到, 但 LLM 以为说出去了.
-     * false → 正常走 sender.sendGroupMessage 真发.
-     * 用于「想让 bot 觉得自己在主动开话题, 但又不想真打扰群」的观察期场景.
-     * 注意: 一旦在历史里写下假成功记录, 它会一直留在 AgentContext snapshot 里直到
-     * compaction 把它压走 — 别长期开. 默认 false.
+     * 主动发言（group-ambient）白名单. 只有在此集合内的群才真发 ambient 消息,
+     * 不在集合内的群走 dry-run (对 LLM 返回假成功, 群友感知不到).
+     * Reply / private 路径不受影响. 空集合 = 全部 dry-run (安全默认值).
+     * env: `BOT_GROUP_AMBIENT_SEND_IDS=111,222`
      */
-    botGroupAmbientDryRun: groupAmbientDryRun,
+    groupAmbientSendIds,
     /**
      * Per-group prompt customization yaml 路径. 启动时一次 load, 拼进 system prompt
      * `[群定制]` 段. 改这个文件需要重启 bot (红线 5: prompt cache 整段失效一次).

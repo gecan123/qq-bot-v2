@@ -1,0 +1,32 @@
+import OpenAI from 'openai'
+import { config } from '../config/index.js'
+
+const MODEL = 'gpt-image-2'
+const SIZE = '1024x1024' as const
+const QUALITY = 'low' as const
+
+function getClient(): OpenAI {
+  const provider = config.llm.providers.openai
+  if (!provider) {
+    throw new Error('需要 LLM_PROVIDER_OPENAI_URL / _API_KEY 指向 cliproxy')
+  }
+  return new OpenAI({ baseURL: provider.url, apiKey: provider.apiKey })
+}
+
+export async function generateImage(prompt: string): Promise<Buffer> {
+  const client = getClient()
+  const result = await client.images.generate({
+    model: MODEL,
+    prompt,
+    size: SIZE,
+    quality: QUALITY,
+    n: 1,
+    response_format: 'b64_json',
+  })
+
+  const b64 = result.data?.[0]?.b64_json
+  if (!b64) {
+    throw new Error('GPT image API 返回空数据')
+  }
+  return Buffer.from(b64, 'base64')
+}

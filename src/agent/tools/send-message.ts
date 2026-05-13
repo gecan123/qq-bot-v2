@@ -10,11 +10,11 @@ const MAX_TEXT_LENGTH = 500
 export interface SendMessageDeps {
   sender: MessageSender
   /**
-   * Group-ambient (没有 replyToMessageId 的群发送) dry-run 开关.
-   * true → 不走 NapCat, 对 LLM 返回假成功; false → 正常真发.
-   * Reply、private 和 group ambient 之外的路径不受影响.
+   * Group-ambient (没有 replyToMessageId 的群发送) 真发白名单.
+   * 只有在此集合内的群才真发 ambient 消息; 不在的走 dry-run (假成功).
+   * Reply、private 路径不受影响. 空集合 = 全部 dry-run.
    */
-  groupAmbientDryRun: boolean
+  groupAmbientSendIds: ReadonlySet<number>
 }
 
 const groupTargetSchema = z.object({
@@ -96,9 +96,7 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
           log.warn({ groupId, mentionUserId }, 'send_message_group_ambient_with_mention_ignored')
         }
 
-        if (deps.groupAmbientDryRun) {
-          // dry-run: 不走 NapCat, 对 LLM 返回假成功. 群友感知不到, 但 LLM 以为说出去了.
-          // 红线 3「history 里出现的发言一定真发出去过」在此处有意打破, 观察期专用.
+        if (!deps.groupAmbientSendIds.has(groupId)) {
           log.info({ groupId, kind }, 'send_message_group_ambient_dry_run')
           const payload: SendResultPayload = {
             ok: true,

@@ -11,8 +11,8 @@ import { createFetchUrlTool } from './fetch-url.js'
 
 export interface BotToolDeps {
   sender: MessageSender
-  /** Group-ambient dry-run 开关. 透传给 send_message tool. 见 SendMessageDeps. */
-  groupAmbientDryRun: boolean
+  /** Group-ambient 真发白名单. 透传给 send_message tool. 见 SendMessageDeps. */
+  groupAmbientSendIds: ReadonlySet<number>
 }
 
 export function buildBotTools(deps: BotToolDeps): Tool[] {
@@ -20,7 +20,7 @@ export function buildBotTools(deps: BotToolDeps): Tool[] {
     waitTool,
     createSendMessageTool({
       sender: deps.sender,
-      groupAmbientDryRun: deps.groupAmbientDryRun,
+      groupAmbientSendIds: deps.groupAmbientSendIds,
     }),
     dbSchemaTool,
     dbReadTool,

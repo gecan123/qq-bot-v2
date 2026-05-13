@@ -214,7 +214,7 @@ async function main() {
   const tools = createToolExecutor(
     buildBotTools({
       sender: messageSender,
-      groupAmbientDryRun: config.botGroupAmbientDryRun,
+      groupAmbientSendIds: config.groupAmbientSendIds,
     }),
   )
   // Per-group prompt customization (启动期一次 load + freeze, 红线 5).

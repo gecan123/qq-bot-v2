@@ -140,7 +140,7 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     const tools = createToolExecutor([
       createSendMessageTool({
         sender,
-        groupAmbientDryRun: false,
+        groupAmbientSendIds: new Set<number>(),
       }),
     ])
 
@@ -226,7 +226,7 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     const tools = createToolExecutor([
       createSendMessageTool({
         sender,
-        groupAmbientDryRun: false,
+        groupAmbientSendIds: new Set<number>(),
       }),
     ])
 

@@ -254,6 +254,9 @@ export function parseConfig(env: EnvSource) {
      * `groups: []` 表示当前不做 per-group 定制.
      */
     botGroupPromptsPath: groupPromptsPath,
+    openbb: env.OPENBB_API_URL
+      ? { apiUrl: env.OPENBB_API_URL.trim() }
+      : undefined,
     tavily: env.TAVILY_API_KEY
       ? { apiKey: env.TAVILY_API_KEY }
       : undefined,

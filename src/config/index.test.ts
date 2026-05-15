@@ -177,6 +177,18 @@ describe('config', () => {
     assert.equal(blank.botGroupPromptsPath, './prompts/groups.yaml')
   })
 
+  test('openbb: 不配 OPENBB_API_URL → undefined', () => {
+    const config = parseConfig(createBaseEnv())
+    assert.equal(config.openbb, undefined)
+  })
+
+  test('openbb: 配了 OPENBB_API_URL → { apiUrl } (trimmed)', () => {
+    const config = parseConfig(createBaseEnv({
+      OPENBB_API_URL: '  http://localhost:6900  ',
+    }))
+    assert.deepEqual(config.openbb, { apiUrl: 'http://localhost:6900' })
+  })
+
   test('compactionTriggerTokens defaults to 16_000 and accepts override', () => {
     const dflt = parseConfig(createBaseEnv())
     assert.equal(dflt.compactionTriggerTokens, 16_000)

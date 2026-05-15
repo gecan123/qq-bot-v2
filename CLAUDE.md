@@ -45,6 +45,10 @@ Default stance:
 
 5. **Deterministic replay.** Given the same inputs, `getSnapshot().messages` must be byte-identical across runs. This is the mathematical precondition for prompt-cache hits, not a stylistic preference. Designs that make equivalent reruns produce different prefixes are treated as regressions. Caveat: system prompt 启动时根据元数据（群名）一次拼装，跨重启如果元数据变了，整段 prompt cache 失效是设计预期，不是 bug。historical messages 数组里 `renderedText` 永远不变（per-event 一次冻结）。
 
+6. **字节永不进 AgentContext，永不进 LLM tool args**。字节进系统的两条路径：(a) NapCat 入站 → `media-cache.ts` → `Media` 表；(b) 产字节工具（`generate_image` / `fetch_url` image mode / `screenshot`）→ `OutboundCache` 内存（process-local LRU + refcount + TTL）。AgentContext.messages 里出现的所有图引用都是 `{mediaId: int}` 或 `{ephemeralRef: string}`（64-char SHA-256 hex），一图 ~10 token，不是 30k token。已发送的内容由 `send_message` 内部 lazy persist (upsert by dataHash) 保证落 `Media`；从未发送的 ephemeralRef 允许 TTL evict 失效，LLM regenerate 成本 < $0.05。lazy persist 失败时 ephemeralRef 不 evict，下次 send 重试（upsert 幂等）。这条比红线 5 更底层——它是红线 5 在图领域的具体落地保证：base64 永远不进 args，所以红线 5 的"字节稳定"自动成立。
+
+7. **Universal handle 契约（仅对图工具）**。所有**吃图**工具的 image 输入字段类型为 `z.union([{mediaId: int}, {ephemeralRef: string (64-hex)}])`；所有**吐图**工具的输出形态为 `{ephemeralRef, dataHash, byteSize, contentType, description}`，其中 `description` 字段写法与 inbound `Media.descriptionRaw.description` 同 key 兼容。这条契约让 LLM 自由组合 `fetch_url → edit → send` / `screenshot → edit → send` / `mediaId → edit → edit → send` 任意链路，不需要为每条链路写专用工具或转换层。新加图工具必须遵守。schema 漂移按红线 5 处理（集中改，不小步频改）。非图工具不受此红线约束。
+
 **Implications for plans / refactors:**
 
 - 新事件源（forum / RSS / 系统通知）必须明确：它怎么渲染成一条 `user`-role AgentMessage，然后通过 dedup-enqueue → BotLoopAgent drainEvents → `appendUserMessage` 进 AgentContext。**不**改写已有 messages，**不**插入到 prefix 中段。新源也要决定它在 `render-event.ts` 里的 source label 形态。

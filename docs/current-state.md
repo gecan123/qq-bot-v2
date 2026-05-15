@@ -58,6 +58,7 @@ idle-fetch MVP 跑起来后的近期 TODO，做完即勾。过期 / 已收敛的
 
 可选：
 
+- `OPENBB_API_URL` — 本地 OpenBB REST API 地址（如 `http://localhost:8000`），设置则 `stock_query` 工具自动注册。需先启动 `openbb-api` sidecar
 - `TAVILY_API_KEY` — Tavily web search，设置则 `web_search` 工具自动注册
 - `COMPACTION_TRIGGER_TOKENS` — compaction 触发阈值（默认 16000，多源场景默认值）
 - `BOT_IDLE_HINT_MS` — wait 工具空闲提示阈值（默认 1800000 = 30min）
@@ -143,7 +144,7 @@ while (!stopRequested) {
 - `bot-loop-agent.ts` — 主循环
 - `replay-missed.ts` — 启动时多源回放关机期间漏掉的消息（与 live 共享 dedup hook）
 - `tool.ts` — Tool / ToolExecutor 接口
-- `tools/*` — `wait` / `send_message` / `db_schema` / `db_read` / `web_search` / `fetch_url`
+- `tools/*` — `wait` / `send_message` / `db_schema` / `db_read` / `web_search` / `fetch_url` / `stock_query`
 - `tools/reddit/*` — `list_reddit` (list.ts) / `get_reddit_post` (get-post.ts) / 共享依赖 (shared.ts)
 
 `src/ops/`
@@ -209,6 +210,7 @@ bot 通过工具自主决定：
 - **`list_reddit`** — 列 reddit 帖子（subreddit 可选 + sort hot/top/new + limit 硬上限 10），走 reddit 公开 JSON。每条 title ≤80 字 / selftext ≤120 字硬截断，输出 permalink + score + num_comments + is_self 元数据。`AbortController` 超时走 `BOT_REDDIT_TIMEOUT_MS`。每次调用写一行到 `logs/fetch.ndjson`
 - **`get_reddit_post`** — 读 reddit 单帖正文 + top 5 评论。接 permalink URL，走 `<url>.json`。正文 ≤500 字 / 每条评论 ≤200 字 / 总输出 ≤2000 字符硬截断。超时共享 `BOT_REDDIT_TIMEOUT_MS`
 - **`fetch_url`** — 抓任意 URL：response body cap 256KB → cheerio 抽 title/desc/article/main/body → 8KB 截断 → 默认 LLM 摘成 ≤500 中文字 → 输出 ≤1500 字符 clamp。LLM 失败 fallback 到原文截断 + 错误标记。每次调用写一行到 `logs/fetch.ndjson`
+- **`stock_query`** — 仅在 `OPENBB_API_URL` 配置时注册。查本地 OpenBB REST API（yfinance provider，免费）。参数：`path`（白名单 10 条：equity/price/quote, equity/price/historical, equity/profile, equity/fundamental/income|balance|cash|metrics|dividends, equity/estimates/consensus, news/company）+ `params`（至少传 symbol）。JSON-aware 截断 ≤1500 字符/次。每次调用写一行到 `logs/fetch.ndjson`
 
 ---
 

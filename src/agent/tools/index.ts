@@ -8,6 +8,7 @@ import { maybeCreateWebSearchTool } from './web-search.js'
 import { listRedditTool } from './reddit/list.js'
 import { getRedditPostTool } from './reddit/get-post.js'
 import { createFetchUrlTool } from './fetch-url.js'
+import { maybeCreateStockQueryTool } from './stock-query.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -31,6 +32,9 @@ export function buildBotTools(deps: BotToolDeps): Tool[] {
 
   const webSearch = maybeCreateWebSearchTool()
   if (webSearch) tools.push(webSearch)
+
+  const stockQuery = maybeCreateStockQueryTool()
+  if (stockQuery) tools.push(stockQuery)
 
   return tools
 }

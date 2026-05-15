@@ -11,6 +11,7 @@ import { CLAUDE_CODE_PROVIDER_NAME, config } from './config/index.js'
 import { loadGroupCustomizations } from './config/group-prompts.js'
 import { messageSender } from './messaging/message-sender.js'
 
+import { purgeOldData } from './database/retention.js'
 import { createAgentContext } from './agent/agent-context.js'
 import { InMemoryEventQueue } from './agent/event-queue.js'
 import type { BotEvent } from './agent/event.js'
@@ -85,6 +86,9 @@ async function main() {
   )
   await prisma.$connect()
   log.info('数据库已连接')
+
+  // 0. 启动期清理 7 天前的 Message + Media
+  await purgeOldData()
 
   // 1. 媒体描述用的 LLM provider routing (与 agent 自身的 LLM 客户端独立)
   const mediaProvider = buildMediaProvider()

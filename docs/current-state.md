@@ -68,6 +68,9 @@ idle-fetch MVP 跑起来后的近期 TODO，做完即勾。过期 / 已收敛的
 - `BOT_GROUP_PROMPTS_PATH` — Per-group prompt customization yaml 路径（默认 `./prompts/groups.yaml`）。文件必须存在；loader fail-fast。yaml 写 `groups: []` = 不做任何 per-group 定制（system prompt byte-equal 到无此特性）。改文件需重启 bot（红线 5：cache 整段失效一次，集中改不要小步频改）
 - `BOT_EVENT_DEBOUNCE_MS` — drain 前等待更多事件堆积的毫秒数（默认 15000）。连续消息在此窗口内会被合并进同一轮 LLM 调用，避免逐条回复。默认 15s 覆盖图片解析延迟（~10s）+ 打字间隔
 - `BOT_GROUP_AMBIENT_DRY_RUN` — 主动发言（group-ambient，没有 `replyToMessageId` 的群发送）dry-run 开关。`true` 时 `send_message` 不走 NapCat，对 LLM 返回假成功；reply / private 不受影响。默认 `false`。观察期专用，长期开会让 AgentContext 里堆满"假发出去"记录
+- `BOT_OUTBOUND_CACHE_MAX_ENTRIES` — OutboundCache 最大条目数（默认 32）
+- `BOT_OUTBOUND_CACHE_MAX_BYTES` — OutboundCache 最大字节数（默认 104857600 = 100MB）
+- `BOT_OUTBOUND_CACHE_TTL_MS` — OutboundCache 条目 TTL（默认 3600000 = 1h）
 
 无 env，但跟运行时相关：
 
@@ -120,6 +123,10 @@ while (!stopRequested) {
 - `media-cache.ts` — `persistMediaReferences(scope: group|private)` 把媒体下载 + Media 表入库
 - `ensure-message-ready.ts` — 等媒体描述 + 渲染 + 冻结 `resolved_text`
 - `message-resolver.ts` — `resolveMessage` 把 segments 跑到带 mediaDescription 的形态
+- `outbound-cache.ts` — 出站字节 LRU 内存缓存（refcount + TTL + maxEntries/maxBytes），产字节工具写入，`send_message` 消费
+- `image-handle.ts` — `resolveImageHandle({mediaId}|{ephemeralRef})` 统一解析，含 acquire/release 配对
+- `image-handle-schema.ts` — 共享 zod schema `imageHandleSchema` + `ImageHandle` / `ImageProduceResult` / `ResolvedImage` 类型
+- `promote-outbound.ts` — `promoteToMedia(input)` 幂等 upsert by dataHash 到 Media 表
 
 `src/config/`
 - `index.ts` — env parsing（含 `botGroupPromptsPath` 默认 `./prompts/groups.yaml`）
@@ -151,7 +158,8 @@ while (!stopRequested) {
 - `fetch-log.ts` — NDJSON 旁路日志 appendFile (容错), 不进 Prisma. 服务 `list_reddit` / `get_reddit_post` / `fetch_url` 的运维统计 (`logs/fetch.ndjson`)
 
 `src/messaging/`
-- `message-sender.ts` + `napcat-sender.ts` — 底层 NapCat 发送 + 重试（含群 + 私聊 reply）
+- `message-sender.ts` + `napcat-sender.ts` — 底层 NapCat 发送 + 重试（含群 + 私聊 reply + 复合 segment 发送）
+- `segment-builder.ts` — `buildReplySegments` (reply/at/text) + `buildOutboundSegments` (reply/at/text/image 全组合)
 
 `src/llm/`
 - 媒体描述用的 provider routing（与 agent LLM 独立）
@@ -201,10 +209,12 @@ LLM_PROVIDER_OPENAI_API_KEY=sk-local
 bot 通过工具自主决定：
 
 - **`wait`** — 没事可做时调用，阻塞到下个 BotEvent。内嵌 `BOT_IDLE_HINT_MS` Promise.race：长时间没事件时返回 `[空闲提示] 已闲置约 X 分钟` 的 tool result + enqueue 一个 wake，让下一轮立即跑（LLM 自己决定要 fetch 还是继续 wait）
-- **`send_message`** — 真发到群 / 私聊。target 必填。group target 经 `BOT_TARGET_GROUP_IDS` 白名单校验，越界返回 `{ok:false}`；private target 不走白名单（任意 userId 都接受，陌生 DM 已在 ingress 层挡掉）
+- **`send_message`** — 真发到群 / 私聊。target 必填。group ambient 经 `BOT_GROUP_AMBIENT_SEND_IDS` 白名单校验，不在白名单走 dry-run（假成功）；reply / private 不受影响
   - target = `{type:'group', groupId, mentionUserId?}` 发群里
   - target = `{type:'private', userId}` 发私聊
   - `replyToMessageId` 可选，引用某条已存在消息
+  - `image` 可选，`{mediaId:N}` 走存量 Media 或 `{ephemeralRef:"<64-hex>"}` 走 OutboundCache（1h TTL）。发送成功后 ephemeralRef 自动 lazy persist 到 Media 表（upsert by dataHash），tool result 返回 `image.mediaId`。persist 失败时 ok:true + lazyPersistError，ephemeralRef 保留可重试
+  - text 和 image 至少一个非空
 - **`db_schema`** / **`db_read`** — 查历史聊天（任一源）/ 媒体描述。多源后系统**不再**自动注入 `:group_id`，LLM 想限定单源时显式传（`params: {group_id: ...}` 或 `peer_id`）。`group_id` 走白名单校验；`peer_id` 任意 QQ 都接受。跨源 SELECT（无 ID 过滤）合法
 - **`web_search`** — 仅在 `TAVILY_API_KEY` 配置时注册
 - **`list_reddit`** — 列 reddit 帖子（subreddit 可选 + sort hot/top/new + limit 硬上限 10），走 reddit 公开 JSON。每条 title ≤80 字 / selftext ≤120 字硬截断，输出 permalink + score + num_comments + is_self 元数据。`AbortController` 超时走 `BOT_REDDIT_TIMEOUT_MS`。每次调用写一行到 `logs/fetch.ndjson`

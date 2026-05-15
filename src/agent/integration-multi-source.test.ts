@@ -46,6 +46,9 @@ function makeMockSender(): { sender: MessageSender; calls: RecordedSend[] } {
         calls.push({ fn: 'sendPrivateMessage', args })
         return ok
       },
+      async sendSegments() {
+        return ok
+      },
     },
   }
 }

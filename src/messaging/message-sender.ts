@@ -1,4 +1,11 @@
-import { sendGroupReply, sendPrivateMessage as sendPrivateMessageRaw, type SendNapcatResult } from './napcat-sender.js'
+import {
+  sendGroupReply,
+  sendPrivateMessage as sendPrivateMessageRaw,
+  sendSegmentsRaw,
+  type SendNapcatResult,
+  type NapcatSegment,
+  type SendTarget,
+} from './napcat-sender.js'
 import { buildReplySegments } from './segment-builder.js'
 
 export interface MessageSender {
@@ -19,6 +26,11 @@ export interface MessageSender {
   sendGroupMessage(params: {
     groupId: number
     text: string
+  }): Promise<SendNapcatResult>
+
+  sendSegments(params: {
+    target: SendTarget
+    segments: NapcatSegment[]
   }): Promise<SendNapcatResult>
 }
 
@@ -54,6 +66,10 @@ class NapcatMessageSender implements MessageSender {
 
   async sendGroupMessage(params: { groupId: number; text: string }): Promise<SendNapcatResult> {
     return sendGroupReply(params.groupId, [{ type: 'text', data: { text: params.text } }])
+  }
+
+  async sendSegments(params: { target: SendTarget; segments: NapcatSegment[] }): Promise<SendNapcatResult> {
+    return sendSegmentsRaw(params.target, params.segments)
   }
 }
 

@@ -2,7 +2,7 @@ import { napcat } from '../bot/napcat.js'
 import { createLogger } from '../logger.js'
 import { previewText } from '../utils/business-log.js'
 
-interface NapcatSegment {
+export interface NapcatSegment {
   type: string
   data: Record<string, string | number | boolean>
 }
@@ -86,6 +86,17 @@ export async function sendGroupReply(groupId: number, segments: NapcatSegment[])
     `消息发送失败，已重试 ${RETRY_LIMIT} 次`,
   )
   return { success: false, attempts: RETRY_LIMIT }
+}
+
+export type SendTarget =
+  | { type: 'group'; groupId: number }
+  | { type: 'private'; userId: number }
+
+export async function sendSegmentsRaw(target: SendTarget, segments: NapcatSegment[]): Promise<SendNapcatResult> {
+  if (target.type === 'group') {
+    return sendGroupReply(target.groupId, segments)
+  }
+  return sendPrivateMessage(target.userId, segments)
 }
 
 export async function sendPrivateMessage(userId: number, segments: NapcatSegment[]): Promise<SendNapcatResult> {

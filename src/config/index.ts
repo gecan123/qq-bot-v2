@@ -205,6 +205,10 @@ export function parseConfig(env: EnvSource) {
     ? env.BOT_FETCH_LOG_PATH.trim()
     : 'logs/fetch.ndjson'
   const groupAmbientSendIds = new Set(parseIdList('BOT_GROUP_AMBIENT_SEND_IDS', env.BOT_GROUP_AMBIENT_SEND_IDS))
+
+  const outboundCacheMaxEntries = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_MAX_ENTRIES, 32)
+  const outboundCacheMaxBytes = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_MAX_BYTES, 100 * 1024 * 1024)
+  const outboundCacheTtlMs = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_TTL_MS, 60 * 60 * 1000)
   const groupPromptsPath = env.BOT_GROUP_PROMPTS_PATH && env.BOT_GROUP_PROMPTS_PATH.trim().length > 0
     ? env.BOT_GROUP_PROMPTS_PATH.trim()
     : './prompts/groups.yaml'
@@ -254,6 +258,11 @@ export function parseConfig(env: EnvSource) {
      * `groups: []` 表示当前不做 per-group 定制.
      */
     botGroupPromptsPath: groupPromptsPath,
+    outboundCache: {
+      maxEntries: outboundCacheMaxEntries,
+      maxBytes: outboundCacheMaxBytes,
+      ttlMs: outboundCacheTtlMs,
+    },
     openbb: env.OPENBB_API_URL
       ? { apiUrl: env.OPENBB_API_URL.trim() }
       : undefined,

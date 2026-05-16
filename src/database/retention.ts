@@ -11,12 +11,10 @@ export async function purgeOldData(): Promise<void> {
   const now = new Date()
   const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7)
 
-  const { count: mediaCount } = await prisma.media.deleteMany({
-    where: { createdAt: { lt: cutoff } },
-  })
-  const { count: messageCount } = await prisma.message.deleteMany({
-    where: { createdAt: { lt: cutoff } },
-  })
+  const [{ count: messageCount }, { count: mediaCount }] = await prisma.$transaction([
+    prisma.message.deleteMany({ where: { createdAt: { lt: cutoff } } }),
+    prisma.media.deleteMany({ where: { createdAt: { lt: cutoff } } }),
+  ])
 
   log.info(
     { cutoff: cutoff.toISOString(), deletedMessages: messageCount, deletedMedia: mediaCount },

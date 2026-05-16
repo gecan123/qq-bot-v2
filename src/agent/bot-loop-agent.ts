@@ -41,6 +41,7 @@ export interface BotLoopAgent {
 
 export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let stopRequested = false
+  let cancelDebounceSleep: (() => void) | null = null
   let lastWakeAt: Date | null = null
   let roundIndex = 0
 
@@ -115,7 +116,17 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   async function step(): Promise<{ hadToolCalls: boolean }> {
     const debounceMs = deps.eventDebounceMs ?? DEFAULT_EVENT_DEBOUNCE_MS
     if (deps.eventQueue.size() > 0 && debounceMs > 0 && !stopRequested) {
-      await sleep(debounceMs)
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          cancelDebounceSleep = null
+          resolve()
+        }, debounceMs)
+        cancelDebounceSleep = () => {
+          clearTimeout(timer)
+          cancelDebounceSleep = null
+          resolve()
+        }
+      })
     }
     const consumed = await drainEvents()
     log.debug({ roundIndex: roundIndex + 1, eventsConsumed: consumed }, 'round_start')
@@ -163,7 +174,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     },
     async stop() {
       stopRequested = true
-      // 唤醒任何阻塞中的 waitForEvent (主循环的 / wait tool 内部的), 让 while 顶部能跑到 stopRequested 检查.
+      cancelDebounceSleep?.()
       deps.eventQueue.enqueue({ type: 'wake' })
       log.info('bot_loop_stop_requested')
     },

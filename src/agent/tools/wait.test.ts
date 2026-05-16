@@ -64,7 +64,7 @@ describe('wait tool — idle race', () => {
     queue.enqueue({ type: 'napcat_message' } as BotEvent)
     const result = await promise
 
-    assert.equal(result.content, 'ok')
+    assert.match(result.content, /\[当前北京时间: .+\] ok$/)
     assert.equal(timer.pending(), 0, 'timer must be cleared on event win')
     assert.equal(timer.cleared(), 1)
   })
@@ -109,7 +109,7 @@ describe('wait tool — idle race', () => {
     const { ctx, queue } = makeCtx()
     queue.enqueue({ type: 'wake' } as BotEvent)
     const result = await tool.execute({}, ctx)
-    assert.equal(result.content, 'ok')
+    assert.match(result.content, /\[当前北京时间: .+\] ok$/)
   })
 })
 

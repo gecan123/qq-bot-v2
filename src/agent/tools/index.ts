@@ -9,6 +9,10 @@ import { listRedditTool } from './reddit/list.js'
 import { getRedditPostTool } from './reddit/get-post.js'
 import { createFetchUrlTool } from './fetch-url.js'
 import { maybeCreateStockQueryTool } from './stock-query.js'
+import { createGenerateImageTool } from './generate-image.js'
+import { createDownloadImageTool } from './download-image.js'
+import { rememberTool } from './remember.js'
+import { recallTool } from './recall.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -28,6 +32,10 @@ export function buildBotTools(deps: BotToolDeps): Tool[] {
     listRedditTool,
     getRedditPostTool,
     createFetchUrlTool(),
+    createGenerateImageTool(),
+    createDownloadImageTool(),
+    rememberTool,
+    recallTool,
   ]
 
   const webSearch = maybeCreateWebSearchTool()

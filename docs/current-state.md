@@ -65,9 +65,9 @@ idle-fetch MVP 跑起来后的近期 TODO，做完即勾。过期 / 已收敛的
 - `BOT_REDDIT_TIMEOUT_MS` — list_reddit / get_reddit_post 单次 HTTP 超时（默认 8000）
 - `BOT_FETCH_URL_TIMEOUT_MS` — fetch_url 单次 HTTP 超时（默认 12000）
 - `BOT_FETCH_LOG_PATH` — NDJSON 旁路日志路径（默认 `logs/fetch.ndjson`）
-- `BOT_GROUP_PROMPTS_PATH` — Per-group prompt customization yaml 路径（默认 `./prompts/groups.yaml`）。文件必须存在；loader fail-fast。yaml 写 `groups: []` = 不做任何 per-group 定制（system prompt byte-equal 到无此特性）。改文件需重启 bot（红线 5：cache 整段失效一次，集中改不要小步频改）
-- `BOT_EVENT_DEBOUNCE_MS` — drain 前等待更多事件堆积的毫秒数（默认 15000）。连续消息在此窗口内会被合并进同一轮 LLM 调用，避免逐条回复。默认 15s 覆盖图片解析延迟（~10s）+ 打字间隔
-- `BOT_GROUP_AMBIENT_DRY_RUN` — 主动发言（group-ambient，没有 `replyToMessageId` 的群发送）dry-run 开关。`true` 时 `send_message` 不走 NapCat，对 LLM 返回假成功；reply / private 不受影响。默认 `false`。观察期专用，长期开会让 AgentContext 里堆满"假发出去"记录
+- `BOT_GROUP_PROMPTS_PATH` — Per-group prompt customization yaml 路径（默认 `./prompts/groups.yaml`）。文件不存在 → loader 返空数组 = 所有群走默认人设（不阻断启动）。yaml 写 `groups: []` 等价。`./prompts/groups.yaml` 含真实群号 + body，不入 git；模板见 `prompts/groups.yaml.example`。改文件需重启 bot（红线 5：cache 整段失效一次，集中改不要小步频改）
+- `BOT_EVENT_DEBOUNCE_MS` — drain 前等待更多事件堆积的毫秒数（默认 15000）。连续消息在此窗口内会被合并进同一轮 LLM 调用，避免逐条回复。默认 15s 覆盖图片解析延迟（~10s）+ 打字间隔。在 `config/index.ts` 走 `parsePositiveInteger`，非正值或非数字 fallback 默认
+- `BOT_GROUP_AMBIENT_SEND_IDS` — 主动发言（group-ambient，没有 `replyToMessageId` 的群发送）真发白名单，逗号分隔群 ID（如 `111,222`）。不在白名单的群走 dry-run（对 LLM 返回假成功）；reply / private 不受影响。空集合 / 不配 = 全部 dry-run（安全默认）。`BOT_TARGET_GROUP_IDS` 非空但此项空 → 启动期 warn 一句
 - `BOT_OUTBOUND_CACHE_MAX_ENTRIES` — OutboundCache 最大条目数（默认 32）
 - `BOT_OUTBOUND_CACHE_MAX_BYTES` — OutboundCache 最大字节数（默认 104857600 = 100MB）
 - `BOT_OUTBOUND_CACHE_TTL_MS` — OutboundCache 条目 TTL（默认 3600000 = 1h）
@@ -130,11 +130,12 @@ while (!stopRequested) {
 
 `src/config/`
 - `index.ts` — env parsing（含 `botGroupPromptsPath` 默认 `./prompts/groups.yaml`）
-- `group-prompts.ts` — `loadGroupCustomizations(path)`：yaml + zod 校验 → `GroupCustomization[]`。启动期一次 load + freeze（红线 5），文件不存在 / schema 错 → fail-fast
+- `group-prompts.ts` — `loadGroupCustomizations(path)`：yaml + zod 校验 → `GroupCustomization[]`。启动期一次 load + freeze（红线 5）。文件不存在 → 返空数组（不阻断启动）；schema 错 → fail-fast
 - `prompt-loader.ts` — 缓存式同步 `loadPrompt(filePath)`，给 `prompts/characters/default.md` 等静态 prompt 用
 
 `prompts/`
-- `groups.yaml` — per-group prompt customization source of truth。schema：`groups: [{ id, frequency_hint, body }]`。`frequency_hint` 4 档枚举 `lurker / quiet / normal / chatty`。`groups: []` = 不做任何定制。改这个文件需重启 bot
+- `groups.yaml` — per-group prompt customization source of truth（含真实群号，不入 git，**gitignored**）。schema：`groups: [{ id, frequency_hint, body }]`。`frequency_hint` 4 档枚举 `lurker / quiet / normal / chatty`。`groups: []` 或文件不存在 = 不做任何定制。改这个文件需重启 bot
+- `groups.yaml.example` — 上面的占位模板（committed）；新机器 `cp` 一份成 `groups.yaml` 改
 - `characters/default.md` — bot 人设基座（Luna）
 
 `src/agent/`
@@ -151,7 +152,7 @@ while (!stopRequested) {
 - `bot-loop-agent.ts` — 主循环
 - `replay-missed.ts` — 启动时多源回放关机期间漏掉的消息（与 live 共享 dedup hook）
 - `tool.ts` — Tool / ToolExecutor 接口
-- `tools/*` — `wait` / `send_message` / `db_schema` / `db_read` / `web_search` / `fetch_url` / `stock_query`
+- `tools/*` — `wait` / `send_message` / `db_schema` / `db_read` / `web_search` / `remember` / `recall` / `fetch_url` / `stock_query`
 - `tools/reddit/*` — `list_reddit` (list.ts) / `get_reddit_post` (get-post.ts) / 共享依赖 (shared.ts)
 
 `src/ops/`
@@ -168,7 +169,7 @@ while (!stopRequested) {
 
 ## Database
 
-Prisma 7，PG driver adapter。当前 3 个 model：`Message` / `Media` / `BotAgentSnapshot`。
+Prisma 7，PG driver adapter。当前 4 个 model：`Message` / `Media` / `BotAgentSnapshot` / `MemoryEntry`。
 
 - `Message.groupId` 改 nullable 以容纳私聊（private 用 `sceneExternalId=peerId`）
 - 永续上下文唯一持久化点：`bot_agent_snapshot` 单行表（`id=1`）
@@ -221,6 +222,7 @@ bot 通过工具自主决定：
 - **`get_reddit_post`** — 读 reddit 单帖正文 + top 5 评论。接 permalink URL，走 `<url>.json`。正文 ≤500 字 / 每条评论 ≤200 字 / 总输出 ≤2000 字符硬截断。超时共享 `BOT_REDDIT_TIMEOUT_MS`
 - **`fetch_url`** — 抓任意 URL：response body cap 256KB → cheerio 抽 title/desc/article/main/body → 8KB 截断 → 默认 LLM 摘成 ≤500 中文字 → 输出 ≤1500 字符 clamp。LLM 失败 fallback 到原文截断 + 错误标记。每次调用写一行到 `logs/fetch.ndjson`
 - **`stock_query`** — 仅在 `OPENBB_API_URL` 配置时注册。查本地 OpenBB REST API（yfinance provider，免费）。参数：`path`（白名单 10 条：equity/price/quote, equity/price/historical, equity/profile, equity/fundamental/income|balance|cash|metrics|dividends, equity/estimates/consensus, news/company）+ `params`（至少传 symbol）。JSON-aware 截断 ≤1500 字符/次。每次调用写一行到 `logs/fetch.ndjson`
+- **`remember`** / **`recall`** — Luna 自主控制的长期记忆笔记本（`memory_entries` 表）。`remember` 写一条笔记：`target={kind:'person'|'group', id}` + `content ≤500` 字 + 可选 `sourceMessageIds`（追溯用，不回传给 LLM）。`recall` 按 target 取笔记：可选 `keyword`（精确子串、大小写不敏感）+ `limit 1-20`（默认 10）+ `orderBy createdAt desc`。空结果返回 hint。无 env 开关，无条件注册。设计文档 `~/.gstack/projects/gecan123-qq-bot-v2/zzz-main-design-20260516-134812.md`
 
 ---
 

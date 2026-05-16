@@ -87,6 +87,19 @@ describe('parseRedditAtom', () => {
     assert.equal(entries[0]!.title, 'only one')
   })
 
+  test('extracts original image URL from reddit RSS content before thumbnail', () => {
+    const xml = `<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+      <entry>
+        <title>meme</title>
+        <content type="html">&lt;table&gt;&lt;tr&gt;&lt;td&gt;&lt;img src=&quot;https://preview.redd.it/abc.jpeg?width=320&amp;amp;crop=smart&quot; /&gt;&lt;/td&gt;&lt;td&gt;&lt;a href=&quot;https://i.redd.it/abc.jpeg&quot;&gt;[link]&lt;/a&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;</content>
+        <media:thumbnail url="https://preview.redd.it/abc.jpeg?width=320&amp;crop=smart" />
+        <link href="https://www.reddit.com/r/memes/comments/abc/meme/" rel="alternate"/>
+      </entry>
+    </feed>`
+    const entries = parseRedditAtom(xml)
+    assert.equal(entries[0]!.imageUrl, 'https://i.redd.it/abc.jpeg')
+  })
+
   test('empty feed returns empty array', () => {
     assert.deepEqual(parseRedditAtom('<feed xmlns="http://www.w3.org/2005/Atom"/>'), [])
   })
@@ -230,5 +243,6 @@ describe('list_reddit tool', () => {
     assert.equal(tool.schema.safeParse({ subreddit: 'ClaudeAI' }).success, true)
     assert.equal(tool.schema.safeParse({ subreddit: 'OpenAI' }).success, true)
     assert.equal(tool.schema.safeParse({ subreddit: 'wallstreetbets' }).success, true)
+    assert.equal(tool.schema.safeParse({ subreddit: 'memes' }).success, true)
   })
 })

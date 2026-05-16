@@ -16,7 +16,7 @@ describe('renderBotEvent — group messages', () => {
       sentAt: new Date('2026-01-01T00:00:00Z'),
       renderedText: '在吗 [图片: 一只猫]',
     })
-    assert.equal(out, '[群:阳光厨房 | 张三(QQ:100) [@bot]] 在吗 [图片: 一只猫]')
+    assert.equal(out, '[2026/1/1 08:00:00 群:阳光厨房 | 张三(QQ:100) #12345 [@bot]] 在吗 [图片: 一只猫]')
   })
 
   test('omits mention tag when mentionedSelf is false', () => {
@@ -29,10 +29,10 @@ describe('renderBotEvent — group messages', () => {
       senderId: 200,
       senderNickname: '李四',
       mentionedSelf: false,
-      sentAt: new Date(),
+      sentAt: new Date('2026-01-02T00:00:00Z'),
       renderedText: '吃了吗',
     })
-    assert.equal(out, '[群:阳光厨房 | 李四(QQ:200)] 吃了吗')
+    assert.equal(out, '[2026/1/2 08:00:00 群:阳光厨房 | 李四(QQ:200) #12346] 吃了吗')
   })
 
   test('falls back to bare group ID when groupName is missing (undefined)', () => {
@@ -44,10 +44,10 @@ describe('renderBotEvent — group messages', () => {
       senderId: 300,
       senderNickname: '王五',
       mentionedSelf: false,
-      sentAt: new Date(),
+      sentAt: new Date('2026-01-03T00:00:00Z'),
       renderedText: 'hi',
     })
-    assert.equal(out, '[群:111111 | 王五(QQ:300)] hi')
+    assert.equal(out, '[2026/1/3 08:00:00 群:111111 | 王五(QQ:300) #12347] hi')
   })
 
   test('falls back to bare group ID when groupName is empty string', () => {
@@ -60,10 +60,10 @@ describe('renderBotEvent — group messages', () => {
       senderId: 400,
       senderNickname: '赵六',
       mentionedSelf: false,
-      sentAt: new Date(),
+      sentAt: new Date('2026-01-04T00:00:00Z'),
       renderedText: 'yo',
     })
-    assert.equal(out, '[群:222222 | 赵六(QQ:400)] yo')
+    assert.equal(out, '[2026/1/4 08:00:00 群:222222 | 赵六(QQ:400) #12348] yo')
   })
 })
 
@@ -77,10 +77,10 @@ describe('renderBotEvent — private messages', () => {
       senderId: 10001,
       senderNickname: 'Alice',
       mentionedSelf: true,
-      sentAt: new Date(),
+      sentAt: new Date('2026-01-05T00:00:00Z'),
       renderedText: '在不',
     })
-    assert.equal(out, '[私聊 | Alice(QQ:10001)] 在不')
+    assert.equal(out, '[2026/1/5 08:00:00 私聊 | Alice(QQ:10001) #50000] 在不')
   })
 
   test('private message label does NOT contain [@bot] (private is implicitly to bot)', () => {
@@ -92,11 +92,68 @@ describe('renderBotEvent — private messages', () => {
       senderId: 10002,
       senderNickname: '某人',
       mentionedSelf: true,
-      sentAt: new Date(),
+      sentAt: new Date('2026-01-06T00:00:00Z'),
       renderedText: '一段消息',
     })
     assert.ok(out)
     assert.equal(out!.includes('[@bot]'), false, 'private label must not contain [@bot]')
+  })
+})
+
+describe('renderBotEvent — message_id exposure (回归保护)', () => {
+  test('group: `#NNNNN` 出现在 (QQ:N) 之后 [@bot] 之前', () => {
+    const out = renderBotEvent({
+      type: 'napcat_message',
+      messageRowId: 100,
+      groupId: 999,
+      groupName: '阳光厨房',
+      messageId: 77777,
+      senderId: 100,
+      senderNickname: '张三',
+      mentionedSelf: true,
+      sentAt: new Date('2026-01-01T00:00:00Z'),
+      renderedText: 'hello',
+    })
+    assert.ok(out)
+    // 顺序: (QQ:N) → #id → [@bot]
+    const idxQQ = out!.indexOf('(QQ:100)')
+    const idxId = out!.indexOf('#77777')
+    const idxMention = out!.indexOf('[@bot]')
+    assert.ok(idxQQ >= 0 && idxId > idxQQ && idxMention > idxId,
+      `expected (QQ:N) < #id < [@bot], got idxQQ=${idxQQ} idxId=${idxId} idxMention=${idxMention} in: ${out}`)
+  })
+
+  test('group without @: `#NNNNN` 仍紧跟 (QQ:N) 之后, 在 ] 之前', () => {
+    const out = renderBotEvent({
+      type: 'napcat_message',
+      messageRowId: 101,
+      groupId: 999,
+      groupName: '阳光厨房',
+      messageId: 88888,
+      senderId: 200,
+      senderNickname: '李四',
+      mentionedSelf: false,
+      sentAt: new Date('2026-01-01T00:00:00Z'),
+      renderedText: 'hi',
+    })
+    assert.ok(out)
+    assert.match(out!, /\(QQ:200\) #88888\]/)
+  })
+
+  test('private: `#NNNNN` 紧跟 (QQ:N) 之后, 在 ] 之前', () => {
+    const out = renderBotEvent({
+      type: 'napcat_private_message',
+      messageRowId: 102,
+      peerId: 10001,
+      messageId: 60000,
+      senderId: 10001,
+      senderNickname: 'Alice',
+      mentionedSelf: true,
+      sentAt: new Date('2026-01-01T00:00:00Z'),
+      renderedText: 'yo',
+    })
+    assert.ok(out)
+    assert.match(out!, /\(QQ:10001\) #60000\]/)
   })
 })
 

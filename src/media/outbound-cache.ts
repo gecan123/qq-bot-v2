@@ -122,7 +122,21 @@ export class OutboundCache {
       this.totalBytes + incomingBytes > this.maxBytes
     ) {
       const victim = this.findLruVictim()
-      if (!victim) break
+      if (!victim) {
+        // 所有 entry 都被 refcount 占用, 无法驱逐. 新 put 会让 size / totalBytes
+        // 暂时超过上限 (软上限). 高频出现意味着上游 acquire 后没 release, 是 bug.
+        log.warn(
+          {
+            size: this.entries.size,
+            maxEntries: this.maxEntries,
+            totalBytes: this.totalBytes,
+            maxBytes: this.maxBytes,
+            incomingBytes,
+          },
+          'outbound_cache_eviction_starved_all_entries_refcounted',
+        )
+        break
+      }
       this.totalBytes -= victim.byteSize
       this.entries.delete(victim.dataHash)
       log.info(

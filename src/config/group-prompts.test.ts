@@ -95,9 +95,9 @@ describe('loadGroupCustomizations', () => {
     assert.throws(() => loadGroupCustomizations(p))
   })
 
-  test('文件不存在 → throw (fs error 透传)', () => {
+  test('文件不存在 → 返空数组 (新机器没 groups.yaml 不阻断启动)', () => {
     const missing = path.join(tmpDir, 'does-not-exist.yaml')
-    assert.throws(() => loadGroupCustomizations(missing))
+    assert.deepEqual(loadGroupCustomizations(missing), [])
   })
 
   test('多个群顺序保留 (输出顺序 = 文件顺序)', () => {

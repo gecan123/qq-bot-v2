@@ -90,6 +90,19 @@ async function main() {
   // 0. 启动期清理 7 天前的 Message + Media
   await purgeOldData()
 
+  // ambient 白名单 sanity: 配了群但白名单空 → 所有群 ambient 都走 dry-run, 真发
+  // 一条群消息都不会发出去. 不是配置错误 (空集合是「全部 dry-run」的安全默认), 但
+  // 容易踩坑, 醒目地 warn 一句方便排查.
+  if (config.groupAmbientSendIds.size === 0 && config.botTargetGroupIds.length > 0) {
+    log.warn(
+      {
+        botTargetGroupIds: config.botTargetGroupIds,
+        groupAmbientSendIds: [],
+      },
+      'BOT_GROUP_AMBIENT_SEND_IDS 未配置 — 所有群 ambient 发言走 dry-run (假成功, 不真发)',
+    )
+  }
+
   // 1. 媒体描述用的 LLM provider routing (与 agent 自身的 LLM 客户端独立)
   const mediaProvider = buildMediaProvider()
   setLlmProvider(mediaProvider)
@@ -260,9 +273,7 @@ async function main() {
     tools,
     snapshotRepo,
     renderEvent: renderBotEvent,
-    eventDebounceMs: process.env.BOT_EVENT_DEBOUNCE_MS
-      ? Number(process.env.BOT_EVENT_DEBOUNCE_MS)
-      : undefined,
+    eventDebounceMs: config.eventDebounceMs,
   })
 
   // 12. 进入主循环

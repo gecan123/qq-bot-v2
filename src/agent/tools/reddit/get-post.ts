@@ -11,10 +11,12 @@ import {
   normalizeEntries,
   pickText,
   pickLinkHref,
+  pickUrlAttr,
   pickAuthorName,
   stripHtml,
   clip,
   collapseWhitespace,
+  extractImageUrlFromHtml,
 } from './shared.js'
 
 const log = createLogger('TOOL_GET_REDDIT_POST')
@@ -42,6 +44,7 @@ type Args = z.infer<typeof argsSchema>
 
 export interface RedditPostDetail {
   title: string
+  imageUrl?: string
   comments: { author: string; body: string }[]
 }
 
@@ -56,8 +59,8 @@ export function toRedditPostRssUrl(url: string): string {
  *
  * reddit 的 /comments/POSTID.rss 返回 Atom feed:
  * - <feed><title> = 帖子标题 (有时带 "comments on:" 前缀)
- * - <entry> = 每条评论 (content 是 HTML)
- * - 帖子 selftext 不在 RSS 里, 只有评论. 这是 RSS 的限制.
+ * - 第一条 t3_ entry 通常是帖子本身, 图片帖会在 content 里带原图链接
+ * - 后续 t1_ entry = 评论 (content 是 HTML)
  */
 export function parseRedditPostRss(xml: string): RedditPostDetail | null {
   const parsed = parseAtomXml(xml) as { feed?: { title?: unknown; entry?: unknown } }
@@ -68,8 +71,16 @@ export function parseRedditPostRss(xml: string): RedditPostDetail | null {
 
   const entries = normalizeEntries(parsed.feed.entry)
   const comments: RedditPostDetail['comments'] = []
+  let imageUrl = ''
   for (const entry of entries) {
-    const body = stripHtml(pickText(entry.content ?? entry.summary))
+    const entryId = pickText(entry.id)
+    const html = pickText(entry.content ?? entry.summary)
+    const entryImageUrl = extractImageUrlFromHtml(html, pickUrlAttr(entry['media:thumbnail']))
+    if (!imageUrl && entryImageUrl) imageUrl = entryImageUrl
+
+    if (entryId.startsWith('t3_')) continue
+
+    const body = stripHtml(html)
     if (!body) continue
     comments.push({
       author: pickAuthorName(entry.author),
@@ -78,7 +89,7 @@ export function parseRedditPostRss(xml: string): RedditPostDetail | null {
     if (comments.length >= TOP_N_COMMENTS) break
   }
 
-  return { title: rawTitle, comments }
+  return imageUrl ? { title: rawTitle, imageUrl, comments } : { title: rawTitle, comments }
 }
 
 function clampOutput(value: string): string {
@@ -90,6 +101,9 @@ function formatPost(detail: RedditPostDetail, sourceUrl: string): string {
   const lines: string[] = []
   lines.push(`[reddit post] ${sourceUrl}`)
   lines.push(`标题: ${clip(collapseWhitespace(detail.title), 200)}`)
+  if (detail.imageUrl) {
+    lines.push(`图片: ${detail.imageUrl}`)
+  }
   if (detail.comments.length > 0) {
     lines.push('')
     lines.push(`top ${detail.comments.length} 评论:`)
@@ -117,7 +131,8 @@ export function createGetRedditPostTool(deps: RedditFetchDeps = {}): Tool<Args> 
       '典型: list_reddit 给了 10 条, 挑一条想深读的链接调本工具看评论讨论.',
       'url 必须是 reddit 帖子页 (含 /r/X/comments/POSTID/...). 其它站不接受, 走 fetch_url.',
       `每条评论 ≤${COMMENT_BODY_MAX_CHARS} 字, 硬截断, 不能让本工具返回更长.`,
-      'RSS 限制: 拿不到帖子 selftext 正文, 只能看评论. list_reddit 的摘要里已有部分正文.',
+      '如果 RSS 带图片直链, 会输出 图片: https://i.redd.it/... 可交给 download_image → generate_image.',
+      'RSS 限制: 正文可用性不稳定, 主要看图片链接 + top 评论. list_reddit 的摘要里已有部分正文.',
     ].join(' '),
     schema: argsSchema,
     async execute(rawArgs, ctx) {

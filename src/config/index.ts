@@ -209,6 +209,7 @@ export function parseConfig(env: EnvSource) {
   const outboundCacheMaxEntries = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_MAX_ENTRIES, 32)
   const outboundCacheMaxBytes = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_MAX_BYTES, 100 * 1024 * 1024)
   const outboundCacheTtlMs = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_TTL_MS, 60 * 60 * 1000)
+  const eventDebounceMs = parsePositiveInteger(env.BOT_EVENT_DEBOUNCE_MS, 15_000)
   const groupPromptsPath = env.BOT_GROUP_PROMPTS_PATH && env.BOT_GROUP_PROMPTS_PATH.trim().length > 0
     ? env.BOT_GROUP_PROMPTS_PATH.trim()
     : './prompts/groups.yaml'
@@ -254,10 +255,16 @@ export function parseConfig(env: EnvSource) {
     /**
      * Per-group prompt customization yaml 路径. 启动时一次 load, 拼进 system prompt
      * `[群定制]` 段. 改这个文件需要重启 bot (红线 5: prompt cache 整段失效一次).
-     * 默认 `./prompts/groups.yaml`. 文件必须存在 (loader fail-fast); 内容可以是
-     * `groups: []` 表示当前不做 per-group 定制.
+     * 默认 `./prompts/groups.yaml`. 文件不存在 → loader 返空数组 = 所有群走默认人设
+     * (groups.yaml 含真实群号, 不入 git; 模板见 prompts/groups.yaml.example).
      */
     botGroupPromptsPath: groupPromptsPath,
+    /**
+     * 队列有事件时, drainEvents 前等更多事件堆积的毫秒数. 合并连续消息进同一轮 LLM
+     * 调用. 默认 15s 覆盖图片描述延迟 (~10s) + 用户打字间隔. 非正值或非数字 fallback
+     * 默认. 测试通过 `eventDebounceMs: 0` 直接传给 createBotLoopAgent 绕过.
+     */
+    eventDebounceMs,
     outboundCache: {
       maxEntries: outboundCacheMaxEntries,
       maxBytes: outboundCacheMaxBytes,

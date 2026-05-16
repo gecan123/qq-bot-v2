@@ -11,9 +11,11 @@ import {
   normalizeEntries,
   pickText,
   pickLinkHref,
+  pickUrlAttr,
   pickAuthorName,
   stripHtml,
   clip,
+  extractImageUrlFromHtml,
 } from './shared.js'
 
 const log = createLogger('TOOL_LIST_REDDIT')
@@ -23,7 +25,7 @@ const HARD_LIMIT = 10
 const TITLE_MAX_CHARS = 80
 const SUMMARY_MAX_CHARS = 120
 
-const ALLOWED_SUBREDDITS = ['technology', 'ClaudeAI', 'OpenAI', 'wallstreetbets'] as const
+const ALLOWED_SUBREDDITS = ['technology', 'ClaudeAI', 'OpenAI', 'wallstreetbets', 'memes'] as const
 type AllowedSubreddit = (typeof ALLOWED_SUBREDDITS)[number]
 const ALLOWED_SET = new Set<string>(ALLOWED_SUBREDDITS)
 
@@ -56,6 +58,7 @@ export interface RedditListEntry {
   title: string
   link: string
   summary: string
+  imageUrl?: string
   author?: string
   published?: string
 }
@@ -78,14 +81,17 @@ export function parseRedditAtom(xml: string): RedditListEntry[] {
 
   for (const entry of rawEntries) {
     const title = pickText(entry.title)
-    const summary = stripHtml(pickText(entry.summary))
+    const html = pickText(entry.content ?? entry.summary)
+    const summary = stripHtml(html)
     const link = pickLinkHref(entry.link)
+    const imageUrl = extractImageUrlFromHtml(html, pickUrlAttr(entry['media:thumbnail']))
     const author = pickAuthorName(entry.author)
     const published = pickText(entry.published)
 
     if (!title && !link) continue
 
     const item: RedditListEntry = { title, link, summary }
+    if (imageUrl) item.imageUrl = imageUrl
     if (author) item.author = author
     if (published) item.published = published
     result.push(item)
@@ -102,11 +108,10 @@ function formatEntries(entries: RedditListEntry[], limit: number): string {
     const title = clip(entry.title, TITLE_MAX_CHARS) || '(无标题)'
     const summary = clip(entry.summary, SUMMARY_MAX_CHARS)
     const link = entry.link || '(无链接)'
-    if (summary) {
-      lines.push(`- ${title} | ${link} | ${summary}`)
-    } else {
-      lines.push(`- ${title} | ${link}`)
-    }
+    const parts = [`- ${title}`, link]
+    if (entry.imageUrl) parts.push(`image: ${entry.imageUrl}`)
+    if (summary) parts.push(summary)
+    lines.push(parts.join(' | '))
   }
   return lines.join('\n')
 }
@@ -120,8 +125,9 @@ export function createListRedditTool(deps: RedditFetchDeps = {}): Tool<Args> {
   return {
     name: 'list_reddit',
     description: [
-      `列 reddit 帖子, 仅返回前 ${HARD_LIMIT} 条简要 (标题 + 链接 + 短摘要).`,
+      `列 reddit 帖子, 仅返回前 ${HARD_LIMIT} 条简要 (标题 + 链接 + 图片直链 + 短摘要).`,
       '想深读某条 → 拿那条链接调 get_reddit_post 看评论讨论. 别用 fetch_url 走 reddit, 用专用工具.',
+      '如果输出里有 image: https://i.redd.it/... 这类直链 → 用 download_image 下载, 再用 send_message 发送或 generate_image 编辑.',
       '不要因为没给详情就反复调本工具换 limit, 上限 10 就是 10.',
       `subreddit 必填, 只能传这几个: ${ALLOWED_SUBREDDITS.join(' / ')}. sort: hot/top/new, 默认 hot.`,
     ].join(' '),

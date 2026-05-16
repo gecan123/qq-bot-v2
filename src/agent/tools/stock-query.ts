@@ -141,7 +141,7 @@ export function createStockQueryTool(deps: StockQueryDeps = {}): Tool<Args> {
           ? 'request timeout'
           : 'OpenBB service unreachable'
         log.warn({ url, errorKind }, 'stock_query_failed')
-        return { content: `{ok: false, error: "${msg}"}` }
+        return { content: JSON.stringify({ ok: false, error: msg }) }
       }
 
       if (status === 404) {
@@ -149,7 +149,7 @@ export function createStockQueryTool(deps: StockQueryDeps = {}): Tool<Args> {
           { ...baseLog, errorKind: 'not_found' },
           { path: deps.logPath, appender: deps.appender },
         )
-        return { content: '{ok: false, error: "endpoint not found"}' }
+        return { content: JSON.stringify({ ok: false, error: 'endpoint not found' }) }
       }
 
       if (status < 200 || status >= 300) {
@@ -158,7 +158,7 @@ export function createStockQueryTool(deps: StockQueryDeps = {}): Tool<Args> {
           { path: deps.logPath, appender: deps.appender },
         )
         const snippet = bodyText.slice(0, 200)
-        return { content: `{ok: false, error: "HTTP ${status}: ${snippet}"}` }
+        return { content: JSON.stringify({ ok: false, error: `HTTP ${status}: ${snippet}` }) }
       }
 
       await logFetch(baseLog, { path: deps.logPath, appender: deps.appender })
@@ -173,7 +173,7 @@ export function createStockQueryTool(deps: StockQueryDeps = {}): Tool<Args> {
       const results = (parsed as Record<string, unknown>)?.results
       if (Array.isArray(results) && results.length === 0) {
         const symbol = args.params.symbol ?? '(unknown)'
-        return { content: `{ok: true, data: "No data returned for ${symbol}"}` }
+        return { content: JSON.stringify({ ok: true, data: `No data returned for ${symbol}` }) }
       }
 
       const resultsJson = results != null

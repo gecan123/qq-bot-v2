@@ -84,6 +84,29 @@ describe('parseRedditPostRss', () => {
     assert.equal(detail.comments.length, 0)
   })
 
+  test('extracts post image URL from t3 entry and skips it from comments', () => {
+    const xml = `<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+      <title>Meme title</title>
+      <entry>
+        <id>t3_abc</id>
+        <content type="html">&lt;table&gt;&lt;tr&gt;&lt;td&gt;&lt;img src=&quot;https://preview.redd.it/abc.png?width=320&amp;amp;crop=smart&quot; /&gt;&lt;/td&gt;&lt;td&gt;&lt;a href=&quot;https://i.redd.it/abc.png&quot;&gt;[link]&lt;/a&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;</content>
+        <media:thumbnail url="https://preview.redd.it/abc.png?width=320&amp;crop=smart" />
+        <author><name>/u/poster</name></author>
+      </entry>
+      <entry>
+        <id>t1_comment</id>
+        <content type="html">&lt;p&gt;actual comment&lt;/p&gt;</content>
+        <author><name>/u/commenter</name></author>
+      </entry>
+    </feed>`
+    const detail = parseRedditPostRss(xml)
+    assert.ok(detail)
+    assert.equal(detail.imageUrl, 'https://i.redd.it/abc.png')
+    assert.equal(detail.comments.length, 1)
+    assert.equal(detail.comments[0]!.author, '/u/commenter')
+    assert.match(detail.comments[0]!.body, /actual comment/)
+  })
+
   test('returns null for malformed input', () => {
     assert.equal(parseRedditPostRss('<feed/>'), null)
     assert.equal(parseRedditPostRss('<feed xmlns="http://www.w3.org/2005/Atom"></feed>'), null)

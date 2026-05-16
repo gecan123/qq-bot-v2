@@ -178,10 +178,12 @@ describe('BotLoopAgent.runOnceForTest', () => {
             model: 'mock',
           }
         }
-        // round 3+ 让 LLM 显式 wait, 这样测试可以稳定停下来 (wait 内部阻塞队列, 不烧 token)
+        // round 3+: 返回空 toolCalls, 让 runOnce 走 waitForEvent 阻塞分支,
+        // loop 在 stop() enqueue wake 时解开. 不能用 mock wait 工具 — 它会让
+        // hadToolCalls=true, loop 永不阻塞, 100ms 内死循环耗尽内存 (OOM).
         return {
           content: '说完了, 等下条',
-          toolCalls: [{ id: 'c3', name: 'wait', args: {} }],
+          toolCalls: [],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',
         }
@@ -194,10 +196,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
       send_message: async () => {
         sendMessageCalled = true
         return { content: '{"ok":true}' }
-      },
-      wait: async () => {
-        // 简化: 测试里 wait 直接返回 ok, 不挂. 真实 wait 会 race 队列, 这里不需要.
-        return { content: 'ok' }
       },
     })
     const { repo } = makeMockSnapshotRepo()

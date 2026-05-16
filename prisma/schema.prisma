@@ -66,3 +66,19 @@ model BotAgentSnapshot {
 
   @@map("bot_agent_snapshot")
 }
+
+/// Luna 的长期记忆笔记本。bot 通过 remember / recall 工具自主读写,
+/// 不自动注入 prefix (红线 1/4 不变)。content 是 Luna 自己写的笔记内容。
+/// targetId 统一用 String 存 QQ号 / 群号: LLM 通过 z.union([str, num]) → String 传入,
+/// 避免 BigInt JSON 序列化摩擦。
+model MemoryEntry {
+  id               Int      @id @default(autoincrement())
+  targetKind       String   @map("target_kind") @db.VarChar(16)
+  targetId         String   @map("target_id") @db.VarChar(64)
+  content          String   @db.Text
+  sourceMessageIds Json?    @map("source_message_ids")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([targetKind, targetId, createdAt(sort: Desc)])
+  @@map("memory_entries")
+}

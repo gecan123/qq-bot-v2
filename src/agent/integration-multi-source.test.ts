@@ -167,9 +167,9 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
 
     const userMessages = messages.filter((m) => m.role === 'user')
     assert.equal(userMessages.length, 3)
-    assert.match(userMessages[0]!.content, /^\[群:阳光厨房 \| 张三\(QQ:100\) \[@bot\]\]/)
-    assert.match(userMessages[1]!.content, /^\[私聊 \| Alice\(QQ:10001\)\]/)
-    assert.match(userMessages[2]!.content, /^\[群:技术群 \| 李四\(QQ:200\)\]/)
+    assert.match(userMessages[0]!.content, /^\[[\d/: ]+ 群:阳光厨房 \| 张三\(QQ:100\) #\d+ \[@bot\]\]/)
+    assert.match(userMessages[1]!.content, /^\[[\d/: ]+ 私聊 \| Alice\(QQ:10001\) #\d+\]/)
+    assert.match(userMessages[2]!.content, /^\[[\d/: ]+ 群:技术群 \| 李四\(QQ:200\) #\d+\]/)
 
     // The send_message tool should have been called via replyToMessage, scoped to group 111.
     assert.equal(calls.length, 1)

@@ -157,8 +157,8 @@ describe('ClaudeCodeLlmClient.chat', () => {
     // 完整 request body 应该挂在 error 上, 让 pino log {err} 时能直接 dump
     const reqBody = caught.requestBody as { system: Array<{ text: string }>; messages: unknown[] }
     assert.ok(Array.isArray(reqBody.system))
-    assert.equal(reqBody.system.length, 3)
-    assert.equal(reqBody.system[2]?.text, 's')
+    assert.equal(reqBody.system.length, 2)
+    assert.equal(reqBody.system[1]?.text, 's')
     assert.equal(reqBody.messages.length, 1)
   })
 
@@ -182,7 +182,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
     assert.equal(calls.length, 1)
   })
 
-  test('request body: stream:true, 3 system blocks, cache_control 1h 挂最后一块', async (t) => {
+  test('request body: stream:true, 2 system blocks, cache_control 1h 挂最后一块', async (t) => {
     const { fn, calls } = makeFetchMock([{ body: SAMPLE_TEXT_SSE }])
     t.mock.method(globalThis, 'fetch', fn)
 
@@ -199,11 +199,10 @@ describe('ClaudeCodeLlmClient.chat', () => {
     const body = JSON.parse(String(calls[0]?.init.body))
     assert.equal(body.stream, true)
     assert.equal('cache_control' in body, false)
-    assert.equal(body.system.length, 3)
-    assert.equal(body.system[2].text, 'persona-XY')
-    assert.deepEqual(body.system[2].cache_control, { type: 'ephemeral', ttl: '1h' })
+    assert.equal(body.system.length, 2)
+    assert.equal(body.system[1].text, 'persona-XY')
+    assert.deepEqual(body.system[1].cache_control, { type: 'ephemeral', ttl: '1h' })
     assert.equal(body.system[0].cache_control, undefined)
-    assert.equal(body.system[1].cache_control, undefined)
     assert.equal('tools' in body, false)
   })
 })

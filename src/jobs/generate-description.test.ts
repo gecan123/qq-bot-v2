@@ -136,7 +136,7 @@ describe('generateDescriptionForMedia', () => {
     assert.equal(updates.length, 0)
     assert.deepEqual(enqueued, [])
     assert.equal(warnings.length, 1)
-    assert.match(warnings[0]?.message ?? '', /保留待解析状态供重试/)
+    assert.match(warnings[0]?.message ?? '', /图片描述结果无效，保留待重试/)
   })
 
   test('logs model and duration when image description is generated', async () => {
@@ -304,7 +304,7 @@ describe('generateDescriptionForMedia', () => {
     assert.equal(infos[0]?.object.model, 'gpt-5.4-mini')
   })
 
-  test('logs llm response and writes sensitive_content fallback when image description result is invalid', async () => {
+  test('logs llm response when image description result has invalid shape (does not persist, leaves pending for retry)', async () => {
     const warnings: Array<{ object: Record<string, unknown>; message: string | undefined }> = []
     const updates: any[] = []
 
@@ -352,13 +352,13 @@ describe('generateDescriptionForMedia', () => {
     await generateDescriptionForMedia(333)
 
     assert.equal(warnings.length, 1)
-    assert.equal(warnings[0]?.message, '媒体描述结果不是有效对象，写入 sensitive_content 兜底描述')
+    assert.equal(warnings[0]?.message, '图片描述结果无效，保留待重试')
     assert.equal(warnings[0]?.object.mediaId, 333)
     assert.equal(warnings[0]?.object.mediaType, 'image')
     assert.equal(warnings[0]?.object.llmDescription, '   ')
     assert.deepEqual(warnings[0]?.object.llmRaw, ['bad-shape'])
-    assert.equal(updates.length, 1)
-    assert.equal(updates[0].data.descriptionRaw.detectedType, 'sensitive_content')
+    // 红线: sensitive_content 兜底已删除, 无效结果不写库, 等下一轮重试
+    assert.equal(updates.length, 0)
   })
 
   test('uses describeVideo for video media', async () => {

@@ -46,7 +46,7 @@ const argsSchema = z
       .number()
       .int()
       .optional()
-      .describe('回复某条已存在消息的 message_id. 被 @ed 时通常回填; 主动开新话题时省略.'),
+      .describe('回复某条已存在消息的 message_id. 直接抄消息标签里 `#NNNNN` 那个数 (例: `[群:阳光厨房 | 张三(QQ:100) #12345 [@bot]]` → 这里填 12345). 被 @ed 时通常回填; 主动开新话题时省略. 不要凭印象编, 编错就会回错条消息.'),
   })
   .refine((v) => v.text !== undefined || v.image !== undefined, {
     message: 'text 或 image 至少一个非空',
@@ -112,7 +112,7 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
       'target.type=group: 必传 groupId (来自消息标签 [群:名字 | 昵称(QQ:...)] 中暗含的 groupId, 可以用 db_read 查 messages 表 group_id 列). mentionUserId 可选, 在文本前加 @ 提及群内某人。',
       'target.type=private: 必传 userId (私聊对方 QQ).',
       'image 可选: 发图. {mediaId:N} 走存量, {ephemeralRef:"<hash>"} 走刚生成/抓取/截屏 (1h 内有效). 发出去会自动登记 mediaId 写进 tool result. text 和 image 至少一个非空.',
-      'replyToMessageId 可选: 引用一条已存在消息. 被 @ed 时常回填以表示「我在回复你」, 主动插话或开新话题时省略.',
+      'replyToMessageId 可选: 引用一条已存在消息. 数字必须等于该条消息标签里 `#` 后面的 message_id, 不要凭印象编. 被 @ed 时常回填以表示「我在回复你」, 主动插话或开新话题时省略.',
       'assistant message 里写的内容只是你的内心想法, 不会发出去 —— 只有调这个工具才会真发。',
     ].join(' '),
     schema: argsSchema,

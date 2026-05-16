@@ -29,10 +29,7 @@ import type { z } from 'zod'
 import { z as zod } from 'zod'
 import type { AgentMessage } from '../agent-context.types.js'
 import type { Tool } from '../tool.js'
-import {
-  CLAUDE_CODE_BILLING_HEADER,
-  CLAUDE_CODE_SDK_PROMPT,
-} from './headers.js'
+import { CLAUDE_CODE_BILLING_HEADER } from './headers.js'
 
 const DEFAULT_MAX_TOKENS = 4096
 const CLAUDE_4_MAX_TOKENS = 32000
@@ -92,7 +89,6 @@ export function buildClaudeCodeRequestBody(
 export function toClaudeSystemBlocks(userSystem: string): ClaudeSystemBlock[] {
   const blocks: ClaudeSystemBlock[] = [
     { type: 'text', text: CLAUDE_CODE_BILLING_HEADER },
-    // { type: 'text', text: CLAUDE_CODE_SDK_PROMPT },
   ]
   if (userSystem.length > 0) {
     blocks.push({ type: 'text', text: userSystem })

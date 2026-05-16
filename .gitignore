@@ -22,3 +22,7 @@ agent-config.json
 # Local debug snapshots / one-off probes (not part of the project)
 temp.json
 openai-sdk-sonnet-test.mjs
+
+# Per-group prompt customization — contains real group IDs + body.
+# Template lives at prompts/groups.yaml.example (committed).
+prompts/groups.yaml

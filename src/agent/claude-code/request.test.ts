@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { buildClaudeCodeRequestBody, toClaudeSystemBlocks } from './request.js'
 import type { Tool } from '../tool.js'
 import type { AgentMessage } from '../agent-context.types.js'
-import { CLAUDE_CODE_BILLING_HEADER, CLAUDE_CODE_SDK_PROMPT } from './headers.js'
+import { CLAUDE_CODE_BILLING_HEADER } from './headers.js'
 
 const dummyTool: Tool = {
   name: 'send_message',
@@ -21,31 +21,28 @@ const waitTool: Tool = {
 }
 
 describe('toClaudeSystemBlocks', () => {
-  test('returns 3 blocks: billing, SDK prompt, user persona', () => {
+  test('returns 2 blocks: billing, user persona', () => {
     const blocks = toClaudeSystemBlocks('I am Mei.')
-    assert.equal(blocks.length, 3)
+    assert.equal(blocks.length, 2)
     assert.equal(blocks[0]?.text, CLAUDE_CODE_BILLING_HEADER)
-    assert.equal(blocks[1]?.text, CLAUDE_CODE_SDK_PROMPT)
-    assert.equal(blocks[2]?.text, 'I am Mei.')
+    assert.equal(blocks[1]?.text, 'I am Mei.')
     assert.equal(blocks[0]?.type, 'text')
   })
 
   test('omits user block when persona is empty', () => {
     const blocks = toClaudeSystemBlocks('')
-    assert.equal(blocks.length, 2)
+    assert.equal(blocks.length, 1)
   })
 
   test('cache_control 1h 钉在最后一块 (有 persona 时是 user persona)', () => {
     const blocks = toClaudeSystemBlocks('I am Mei.')
     assert.equal(blocks[0]?.cache_control, undefined)
-    assert.equal(blocks[1]?.cache_control, undefined)
-    assert.deepEqual(blocks[2]?.cache_control, { type: 'ephemeral', ttl: '1h' })
+    assert.deepEqual(blocks[1]?.cache_control, { type: 'ephemeral', ttl: '1h' })
   })
 
-  test('persona 为空时 cache_control 落到 SDK prompt 块上', () => {
+  test('persona 为空时 cache_control 落到 billing header 块上', () => {
     const blocks = toClaudeSystemBlocks('')
-    assert.equal(blocks[0]?.cache_control, undefined)
-    assert.deepEqual(blocks[1]?.cache_control, { type: 'ephemeral', ttl: '1h' })
+    assert.deepEqual(blocks[0]?.cache_control, { type: 'ephemeral', ttl: '1h' })
   })
 })
 
@@ -74,10 +71,9 @@ describe('buildClaudeCodeRequestBody', () => {
       tools: [],
     })
     assert.equal('cache_control' in body, false)
-    assert.equal(body.system.length, 3)
+    assert.equal(body.system.length, 2)
     assert.equal(body.system[0]?.cache_control, undefined)
-    assert.equal(body.system[1]?.cache_control, undefined)
-    assert.deepEqual(body.system[2]?.cache_control, { type: 'ephemeral', ttl: '1h' })
+    assert.deepEqual(body.system[1]?.cache_control, { type: 'ephemeral', ttl: '1h' })
   })
 
   test('stream is literally true', () => {

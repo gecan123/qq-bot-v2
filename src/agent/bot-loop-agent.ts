@@ -30,7 +30,7 @@ export interface BotLoopAgentDeps {
 }
 
 const DEFAULT_ERROR_BACKOFF_MS = 5_000
-const DEFAULT_EVENT_DEBOUNCE_MS = 15_000
+const DEFAULT_EVENT_DEBOUNCE_MS = 3_000
 
 export interface BotLoopAgent {
   start(): Promise<void>

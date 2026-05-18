@@ -259,22 +259,36 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): void
     napcatLog.error({ status: ctx.status, message: ctx.message }, 'API 调用失败')
   })
 
-  napcat.on('message.group', async (context) => {
+  const groupChains = new Map<number, Promise<void>>()
+
+  napcat.on('message.group', (context) => {
     if (!config.botTargetGroupIds.includes(context.group_id)) return
-    try {
-      await processMessage({ kind: 'group', groupId: context.group_id }, context.message_id, options)
-    } catch (error) {
-      ingressLog.error({ error, group: context.group_id, msgId: context.message_id }, '处理群消息失败')
-    }
+    const groupId = context.group_id
+    const prev = groupChains.get(groupId) ?? Promise.resolve()
+    const next = prev.then(async () => {
+      try {
+        await processMessage({ kind: 'group', groupId }, context.message_id, options)
+      } catch (error) {
+        ingressLog.error({ error, group: groupId, msgId: context.message_id }, '处理群消息失败')
+      }
+    })
+    groupChains.set(groupId, next)
   })
 
-  napcat.on('message.private', async (context) => {
+  const privateChains = new Map<number, Promise<void>>()
+
+  napcat.on('message.private', (context) => {
     if (context.sub_type !== 'friend') return
-    try {
-      await processMessage({ kind: 'private', peerId: context.user_id }, context.message_id, options)
-    } catch (error) {
-      ingressLog.error({ error, peer: context.user_id, msgId: context.message_id }, '处理私聊消息失败')
-    }
+    const peerId = context.user_id
+    const prev = privateChains.get(peerId) ?? Promise.resolve()
+    const next = prev.then(async () => {
+      try {
+        await processMessage({ kind: 'private', peerId }, context.message_id, options)
+      } catch (error) {
+        ingressLog.error({ error, peer: peerId, msgId: context.message_id }, '处理私聊消息失败')
+      }
+    })
+    privateChains.set(peerId, next)
   })
 }
 

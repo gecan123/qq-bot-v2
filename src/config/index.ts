@@ -209,7 +209,7 @@ export function parseConfig(env: EnvSource) {
   const outboundCacheMaxEntries = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_MAX_ENTRIES, 32)
   const outboundCacheMaxBytes = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_MAX_BYTES, 100 * 1024 * 1024)
   const outboundCacheTtlMs = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_TTL_MS, 60 * 60 * 1000)
-  const eventDebounceMs = parsePositiveInteger(env.BOT_EVENT_DEBOUNCE_MS, 15_000)
+  const eventDebounceMs = parsePositiveInteger(env.BOT_EVENT_DEBOUNCE_MS, 3_000)
   const groupPromptsPath = env.BOT_GROUP_PROMPTS_PATH && env.BOT_GROUP_PROMPTS_PATH.trim().length > 0
     ? env.BOT_GROUP_PROMPTS_PATH.trim()
     : './prompts/groups.yaml'

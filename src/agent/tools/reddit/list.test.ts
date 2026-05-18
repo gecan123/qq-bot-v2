@@ -120,9 +120,9 @@ describe('list_reddit tool', () => {
       logPath: '/tmp/test-list-reddit.ndjson',
     })
     const result = await tool.execute({ subreddit: 'technology', sort: 'hot', limit: 10 }, makeCtx())
-    assert.match(result.content, /\[reddit \/r\/technology hot/)
-    assert.match(result.content, /Rust 1\.99/)
-    assert.match(result.content, /async closures/)
+    assert.match((result.content as string), /\[reddit \/r\/technology hot/)
+    assert.match((result.content as string), /Rust 1\.99/)
+    assert.match((result.content as string), /async closures/)
     assert.equal(writes.length, 1, 'exactly one NDJSON line per call')
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.source, 'reddit_list')
@@ -153,7 +153,7 @@ describe('list_reddit tool', () => {
       appender: async () => {},
     })
     const result = await tool.execute({ subreddit: 'technology', sort: 'hot', limit: 10 }, makeCtx())
-    const line = result.content.split('\n').find((l) => l.startsWith('- '))!
+    const line = (result.content as string).split('\n').find((l) => l.startsWith('- '))!
     const aRun = line.match(/A+/)?.[0] ?? ''
     assert.ok(aRun.length <= 80, `title not clipped (got ${aRun.length})`)
     const bRun = line.match(/B+/)?.[0] ?? ''
@@ -169,7 +169,7 @@ describe('list_reddit tool', () => {
       },
     })
     const result = await tool.execute({ subreddit: 'technology', sort: 'hot', limit: 10 }, makeCtx())
-    assert.match(result.content, /HTTP 404/)
+    assert.match((result.content as string), /HTTP 404/)
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.errorKind, 'http_404')
   })
@@ -185,7 +185,7 @@ describe('list_reddit tool', () => {
       },
     })
     const result = await tool.execute({ subreddit: 'ClaudeAI', sort: 'hot', limit: 10 }, makeCtx())
-    assert.match(result.content, /失败/)
+    assert.match((result.content as string), /失败/)
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.status, -1)
     assert.equal(logged.errorKind, 'network_error')
@@ -210,7 +210,7 @@ describe('list_reddit tool', () => {
       },
     })
     const result = await tool.execute({ subreddit: 'OpenAI', sort: 'hot', limit: 10 }, makeCtx())
-    assert.match(result.content, /timeout/)
+    assert.match((result.content as string), /timeout/)
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.errorKind, 'timeout')
   })

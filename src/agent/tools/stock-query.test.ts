@@ -53,7 +53,7 @@ describe('stock_query tool', () => {
       { path: 'equity/price/quote', params: { symbol: 'AAPL' } },
       makeCtx(),
     )
-    const parsed = JSON.parse(result.content)
+    const parsed = JSON.parse(result.content as string)
     assert.equal(Array.isArray(parsed), true)
     assert.equal(parsed[0].symbol, 'AAPL')
   })
@@ -122,7 +122,7 @@ describe('stock_query tool', () => {
       { path: 'equity/price/quote', params: { symbol: 'AAPL' } },
       makeCtx(),
     )
-    assert.ok(result.content.includes('OpenBB service unreachable'))
+    assert.ok((result.content as string).includes('OpenBB service unreachable'))
   })
 
   test('timeout → timeout error', async () => {
@@ -131,7 +131,7 @@ describe('stock_query tool', () => {
       { path: 'equity/price/quote', params: { symbol: 'AAPL' } },
       makeCtx(),
     )
-    assert.ok(result.content.includes('request timeout'))
+    assert.ok((result.content as string).includes('request timeout'))
   })
 
   test('404 → endpoint not found', async () => {
@@ -140,7 +140,7 @@ describe('stock_query tool', () => {
       { path: 'equity/profile', params: { symbol: 'AAPL' } },
       makeCtx(),
     )
-    assert.ok(result.content.includes('endpoint not found'))
+    assert.ok((result.content as string).includes('endpoint not found'))
   })
 
   test('other HTTP error → includes status code', async () => {
@@ -149,7 +149,7 @@ describe('stock_query tool', () => {
       { path: 'equity/price/quote', params: { symbol: 'AAPL' } },
       makeCtx(),
     )
-    assert.ok(result.content.includes('HTTP 502'))
+    assert.ok((result.content as string).includes('HTTP 502'))
   })
 
   test('empty results array → no data message', async () => {
@@ -159,7 +159,7 @@ describe('stock_query tool', () => {
       { path: 'equity/price/quote', params: { symbol: 'AAPL' } },
       makeCtx(),
     )
-    assert.ok(result.content.includes('No data returned for AAPL'))
+    assert.ok((result.content as string).includes('No data returned for AAPL'))
   })
 
   test('logs fetch to ops log', async () => {

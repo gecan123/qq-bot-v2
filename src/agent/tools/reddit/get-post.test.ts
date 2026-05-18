@@ -141,11 +141,11 @@ describe('get_reddit_post tool', () => {
       { url: 'https://www.reddit.com/r/programming/comments/abc1/rust_1_99/' },
       makeCtx(),
     )
-    assert.match(result.content, /\[reddit post\]/)
-    assert.match(result.content, /Rust 1\.99/)
-    assert.match(result.content, /\/u\/alice/)
-    assert.match(result.content, /async closures/)
-    assert.match(result.content, /\/u\/bob/)
+    assert.match((result.content as string), /\[reddit post\]/)
+    assert.match((result.content as string), /Rust 1\.99/)
+    assert.match((result.content as string), /\/u\/alice/)
+    assert.match((result.content as string), /async closures/)
+    assert.match((result.content as string), /\/u\/bob/)
     assert.equal(writes.length, 1)
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.source, 'reddit_post')
@@ -169,7 +169,7 @@ describe('get_reddit_post tool', () => {
       { url: 'https://www.reddit.com/r/test/comments/z/t/' },
       makeCtx(),
     )
-    const yRun = result.content.match(/Y+/)?.[0] ?? ''
+    const yRun = (result.content as string).match(/Y+/)?.[0] ?? ''
     assert.ok(yRun.length <= 200, `comment not clipped (got ${yRun.length})`)
   })
 
@@ -192,7 +192,7 @@ describe('get_reddit_post tool', () => {
       { url: 'https://www.reddit.com/r/test/comments/z/t/' },
       makeCtx(),
     )
-    assert.ok(result.content.length <= 2000, `output too long (${result.content.length})`)
+    assert.ok((result.content as string).length <= 2000, `output too long (${(result.content as string).length})`)
   })
 
   test('HTTP 404 → error content, not throw', async () => {
@@ -205,7 +205,7 @@ describe('get_reddit_post tool', () => {
       { url: 'https://www.reddit.com/r/test/comments/deleted/x/' },
       makeCtx(),
     )
-    assert.match(result.content, /HTTP 404/)
+    assert.match((result.content as string), /HTTP 404/)
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.errorKind, 'http_404')
   })
@@ -234,7 +234,7 @@ describe('get_reddit_post tool', () => {
       { url: 'https://www.reddit.com/r/test/comments/z/t/' },
       makeCtx(),
     )
-    assert.match(result.content, /失败/)
+    assert.match((result.content as string), /失败/)
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.errorKind, 'network_error')
   })

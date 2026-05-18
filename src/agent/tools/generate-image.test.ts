@@ -3,8 +3,17 @@ import { describe, test, beforeEach, afterEach } from 'node:test'
 import { createGenerateImageTool } from './generate-image.js'
 import { OutboundCache, setOutboundCacheForTest } from '../../media/outbound-cache.js'
 import type { ToolContext } from '../tool.js'
+import type { ToolResultContent } from '../agent-context.types.js'
 import { InMemoryEventQueue } from '../event-queue.js'
 import type { BotEvent } from '../event.js'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseResultJson(content: ToolResultContent): any {
+  if (typeof content === 'string') return JSON.parse(content)
+  const textBlock = content.find(b => b.type === 'text')
+  if (!textBlock || textBlock.type !== 'text') throw new Error('No text block')
+  return JSON.parse(textBlock.text)
+}
 
 const fakeCtx: ToolContext = {
   eventQueue: new InMemoryEventQueue<BotEvent>(),
@@ -31,7 +40,7 @@ describe('generate_image tool', () => {
     })
 
     const result = await tool.execute({ prompt: 'a cat in space' }, fakeCtx)
-    const parsed = JSON.parse(result.content)
+    const parsed = parseResultJson(result.content)
 
     assert.equal(parsed.ok, true)
     assert.equal(typeof parsed.ephemeralRef, 'string')
@@ -51,7 +60,7 @@ describe('generate_image tool', () => {
     })
 
     const result = await tool.execute({ prompt: 'anything' }, fakeCtx)
-    const parsed = JSON.parse(result.content)
+    const parsed = parseResultJson(result.content)
 
     assert.equal(parsed.ok, false)
     assert.ok(parsed.error.includes('API quota exceeded'))
@@ -67,7 +76,7 @@ describe('generate_image tool', () => {
       { prompt: 'edit this', image: { ephemeralRef: 'a'.repeat(64) } },
       fakeCtx,
     )
-    const parsed = JSON.parse(result.content)
+    const parsed = parseResultJson(result.content)
 
     assert.equal(parsed.ok, false)
     assert.ok(parsed.error.includes('源图片解析失败'))
@@ -96,7 +105,7 @@ describe('generate_image tool', () => {
       { prompt: 'make it blue', image: { ephemeralRef: sourceHash } },
       fakeCtx,
     )
-    const parsed = JSON.parse(result.content)
+    const parsed = parseResultJson(result.content)
 
     assert.equal(parsed.ok, true)
     assert.ok(editCalled, 'edit function should have been called')

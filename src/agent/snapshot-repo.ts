@@ -27,9 +27,10 @@ export function createBotSnapshotRepo(): BotSnapshotRepo {
         return null
       }
 
-      lastFingerprint = JSON.stringify(persistedRaw)
+      const migrated = migrateSnapshot(persistedRaw)
+      lastFingerprint = JSON.stringify(migrated)
       return {
-        snapshot: persistedRaw,
+        snapshot: migrated,
         lastWakeAt: row.lastWakeAt ?? null,
       }
     },
@@ -55,6 +56,11 @@ export function createBotSnapshotRepo(): BotSnapshotRepo {
       lastFingerprint = fingerprint
     },
   }
+}
+
+function migrateSnapshot(raw: PersistedAgentSnapshot): PersistedAgentSnapshot {
+  if (raw.schemaVersion >= SNAPSHOT_SCHEMA_VERSION) return raw
+  return { ...raw, schemaVersion: SNAPSHOT_SCHEMA_VERSION }
 }
 
 function isPersistedAgentSnapshot(value: unknown): value is PersistedAgentSnapshot {

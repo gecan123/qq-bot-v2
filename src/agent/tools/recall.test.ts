@@ -102,7 +102,7 @@ describe('recall tool — execute', () => {
       { target: { kind: 'person', id: '999' } },
       makeCtx(),
     )
-    const parsed = JSON.parse(result.content) as {
+    const parsed = JSON.parse(result.content as string) as {
       entries: unknown[]
       hint?: string
     }
@@ -117,7 +117,7 @@ describe('recall tool — execute', () => {
       { target: { kind: 'group', id: '888' }, keyword: '日本' },
       makeCtx(),
     )
-    const parsed = JSON.parse(result.content) as { hint?: string }
+    const parsed = JSON.parse(result.content as string) as { hint?: string }
     assert.match(parsed.hint!, /日本/)
   })
 
@@ -131,7 +131,7 @@ describe('recall tool — execute', () => {
       { target: { kind: 'person', id: '12345' } },
       makeCtx(),
     )
-    const parsed = JSON.parse(result.content) as {
+    const parsed = JSON.parse(result.content as string) as {
       entries: { content: string; when: string }[]
     }
     assert.equal(parsed.entries.length, 2)

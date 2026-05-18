@@ -27,7 +27,7 @@
  */
 import type { z } from 'zod'
 import { z as zod } from 'zod'
-import type { AgentMessage } from '../agent-context.types.js'
+import type { AgentMessage, ToolResultContentBlock } from '../agent-context.types.js'
 import type { Tool } from '../tool.js'
 import { CLAUDE_CODE_BILLING_HEADER } from './headers.js'
 
@@ -131,6 +131,10 @@ function toClaudeMessage(
   }
 
   // role === 'tool': 在 Anthropic 协议里 tool result 用 user role 包裹 tool_result content block
+  const toolResultContent = typeof msg.content === 'string'
+    ? msg.content
+    : msg.content.map(toAnthropicToolResultBlock)
+
   return [
     {
       role: 'user',
@@ -138,11 +142,27 @@ function toClaudeMessage(
         {
           type: 'tool_result',
           tool_use_id: msg.toolCallId,
-          content: msg.content,
+          content: toolResultContent,
         },
       ],
     },
   ]
+}
+
+function toAnthropicToolResultBlock(
+  block: ToolResultContentBlock,
+): Record<string, unknown> {
+  if (block.type === 'text') {
+    return { type: 'text', text: block.text }
+  }
+  return {
+    type: 'image',
+    source: {
+      type: block.source.type,
+      media_type: block.source.media_type,
+      data: block.source.data,
+    },
+  }
 }
 
 function toAnthropicToolDecl(tool: Tool): Record<string, unknown> {

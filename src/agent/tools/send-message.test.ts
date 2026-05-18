@@ -52,8 +52,8 @@ function makeMockSender(
   return { sender, calls, segmentsCalls }
 }
 
-function parseToolResult(content: string): Record<string, unknown> {
-  return JSON.parse(content)
+function parseToolResult(content: string | unknown): Record<string, unknown> {
+  return JSON.parse(content as string)
 }
 
 describe('send_message tool — group target', () => {

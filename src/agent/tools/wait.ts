@@ -75,7 +75,7 @@ export function createWaitTool(deps: WaitToolDeps = {}): Tool<WaitArgs> {
           log.info({ elapsedMs }, 'wait_idle_fired')
           const minutes = Math.round(idleHintMs / 60_000)
           return {
-            content: `[空闲提示] 当前北京时间: ${now}. 已闲置约 ${minutes} 分钟. 你处于自由时段, 可以 list_reddit 看看有啥值得分享的 / 主动找谁聊 / 或者继续 wait. 别每次空闲都硬刷, 你的判断比频率重要.`,
+            content: `[空闲提示] 当前北京时间: ${now}. 已闲置约 ${minutes} 分钟. 去翻翻外面在发生什么 — list_reddit 换个 subreddit 刷一刷 / 查个你好奇的东西 / 或者找人聊两句.`,
           }
         }
         log.info({ elapsedMs }, 'wait_resumed_by_event')

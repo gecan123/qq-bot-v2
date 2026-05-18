@@ -1,9 +1,11 @@
 import { z } from 'zod'
 import type { Tool } from '../tool.js'
+import type { ToolResultContentBlock } from '../agent-context.types.js'
 import { config } from '../../config/index.js'
 import { logFetch } from '../../ops/fetch-log.js'
 import { getOutboundCache } from '../../media/outbound-cache.js'
 import { computeMediaHash } from '../../media/media-hash.js'
+import { compressForContext } from '../../media/compress-for-context.js'
 import type { ImageProduceResult } from '../../media/image-handle-schema.js'
 import { createLogger } from '../../logger.js'
 
@@ -207,7 +209,18 @@ export function createDownloadImageTool(
         description,
       }
 
-      return { content: JSON.stringify({ ok: true, ...result }) }
+      const compressed = await compressForContext(bytes)
+      const blocks: ToolResultContentBlock[] = [
+        { type: 'text', text: JSON.stringify({ ok: true, ...result }) },
+      ]
+      if (compressed) {
+        blocks.push({
+          type: 'image',
+          source: { type: 'base64', media_type: compressed.mediaType, data: compressed.base64 },
+        })
+      }
+
+      return { content: blocks }
     },
   }
 }

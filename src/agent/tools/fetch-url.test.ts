@@ -77,9 +77,9 @@ describe('fetch_url tool — happy path', () => {
       logPath: '/tmp/test-fetch.ndjson',
     })
     const result = await tool.execute({ url: 'https://example.com/article' }, makeCtx())
-    assert.match(result.content, /\[fetch_url 摘要\]/)
-    assert.match(result.content, /Example article/)
-    assert.match(result.content, /单仓优势/)
+    assert.match((result.content as string), /\[fetch_url 摘要\]/)
+    assert.match((result.content as string), /Example article/)
+    assert.match((result.content as string), /单仓优势/)
     assert.equal(writes.length, 1)
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.source, 'url')
@@ -97,7 +97,7 @@ describe('fetch_url tool — happy path', () => {
       appender: async () => {},
     })
     const result = await tool.execute({ url: 'https://example.com/notes.txt' }, makeCtx())
-    assert.match(result.content, /讲缓存的笔记/)
+    assert.match((result.content as string), /讲缓存的笔记/)
   })
 })
 
@@ -110,7 +110,7 @@ describe('fetch_url tool — hard truncation', () => {
       appender: async () => {},
     })
     const result = await tool.execute({ url: 'https://example.com/' }, makeCtx())
-    assert.ok(result.content.length <= 1500, `output too long: ${result.content.length}`)
+    assert.ok((result.content as string).length <= 1500, `output too long: ${(result.content as string).length}`)
   })
 
   test('input cap: huge HTML body is truncated to ≤ 8KB before sending to LLM', async () => {
@@ -188,8 +188,8 @@ describe('fetch_url tool — failure modes', () => {
       },
     })
     const result = await tool.execute({ url: 'https://example.com/' }, makeCtx())
-    assert.match(result.content, /摘要 LLM 失败/)
-    assert.match(result.content, /原文截断/)
+    assert.match((result.content as string), /摘要 LLM 失败/)
+    assert.match((result.content as string), /原文截断/)
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.errorKind, 'summarize_failed')
   })
@@ -204,7 +204,7 @@ describe('fetch_url tool — failure modes', () => {
       },
     })
     const result = await tool.execute({ url: 'https://example.com/missing' }, makeCtx())
-    assert.match(result.content, /HTTP 404/)
+    assert.match((result.content as string), /HTTP 404/)
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.status, 404)
     assert.equal(logged.errorKind, 'http_404')
@@ -240,7 +240,7 @@ describe('fetch_url tool — failure modes', () => {
       },
     })
     const result = await tool.execute({ url: 'https://example.com/' }, makeCtx())
-    assert.match(result.content, /timeout/)
+    assert.match((result.content as string), /timeout/)
     assert.equal(llmCalled, false)
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.errorKind, 'timeout')
@@ -265,7 +265,7 @@ describe('fetch_url tool — failure modes', () => {
       appender: async () => {},
     })
     const result = await tool.execute({ url: 'https://example.com/empty' }, makeCtx())
-    assert.match(result.content, /内容为空/)
+    assert.match((result.content as string), /内容为空/)
     assert.equal(llmCalled, false)
   })
 

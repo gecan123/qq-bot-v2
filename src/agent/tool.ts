@@ -1,7 +1,7 @@
 import type { ZodTypeAny, z } from 'zod'
 import type { EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
-import type { AssistantToolCall } from './agent-context.types.js'
+import type { AssistantToolCall, ToolResultContent } from './agent-context.types.js'
 
 /**
  * Tool 接口最简形:name + description + 参数 schema + execute。
@@ -24,8 +24,8 @@ export interface Tool<TArgs = unknown> {
 }
 
 export interface ToolExecutionResult {
-  /** 喂给 LLM 的 tool message content (一段字符串 / JSON 序列化)。 */
-  content: string
+  /** 喂给 LLM 的 tool message content。string 或 structured content blocks (含图片)。 */
+  content: ToolResultContent
 }
 
 export interface ToolExecutor {

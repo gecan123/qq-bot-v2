@@ -3,8 +3,17 @@ import { describe, test, beforeEach, afterEach } from 'node:test'
 import { createDownloadImageTool } from './download-image.js'
 import { OutboundCache, setOutboundCacheForTest } from '../../media/outbound-cache.js'
 import type { ToolContext } from '../tool.js'
+import type { ToolResultContent } from '../agent-context.types.js'
 import { InMemoryEventQueue } from '../event-queue.js'
 import type { BotEvent } from '../event.js'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseResultJson(content: ToolResultContent): any {
+  if (typeof content === 'string') return JSON.parse(content)
+  const textBlock = content.find(b => b.type === 'text')
+  if (!textBlock || textBlock.type !== 'text') throw new Error('No text block')
+  return JSON.parse(textBlock.text)
+}
 
 const fakeCtx: ToolContext = {
   eventQueue: new InMemoryEventQueue<BotEvent>(),
@@ -45,7 +54,7 @@ describe('download_image tool', () => {
       { url: 'https://example.com/cat.png' },
       fakeCtx,
     )
-    const parsed = JSON.parse(result.content)
+    const parsed = parseResultJson(result.content)
 
     assert.equal(parsed.ok, true)
     assert.match(parsed.ephemeralRef, /^[a-f0-9]{64}$/)
@@ -71,7 +80,7 @@ describe('download_image tool', () => {
       { url: 'https://example.com/page.html' },
       fakeCtx,
     )
-    const parsed = JSON.parse(result.content)
+    const parsed = parseResultJson(result.content)
 
     assert.equal(parsed.ok, false)
     assert.ok(parsed.error.includes('content-type'))
@@ -87,7 +96,7 @@ describe('download_image tool', () => {
       { url: 'https://example.com/missing.png' },
       fakeCtx,
     )
-    const parsed = JSON.parse(result.content)
+    const parsed = parseResultJson(result.content)
 
     assert.equal(parsed.ok, false)
     assert.ok(parsed.error.includes('404'))
@@ -104,7 +113,7 @@ describe('download_image tool', () => {
       { url: 'https://example.com/down.png' },
       fakeCtx,
     )
-    const parsed = JSON.parse(result.content)
+    const parsed = parseResultJson(result.content)
 
     assert.equal(parsed.ok, false)
     assert.ok(parsed.error.includes('网络'))
@@ -123,7 +132,7 @@ describe('download_image tool', () => {
       { url: 'https://example.com/slow.png' },
       fakeCtx,
     )
-    const parsed = JSON.parse(result.content)
+    const parsed = parseResultJson(result.content)
 
     assert.equal(parsed.ok, false)
     assert.ok(parsed.error.includes('超时'))
@@ -139,7 +148,7 @@ describe('download_image tool', () => {
       { url: 'https://example.com/huge.jpg' },
       fakeCtx,
     )
-    const parsed = JSON.parse(result.content)
+    const parsed = parseResultJson(result.content)
 
     assert.equal(parsed.ok, true)
     assert.ok(parsed.byteSize <= 10 * 1024 * 1024, 'should be capped at 10MB')
@@ -158,7 +167,7 @@ describe('download_image tool', () => {
       { url: 'https://example.com/meme.webp' },
       fakeCtx,
     )
-    const parsed = JSON.parse(result.content)
+    const parsed = parseResultJson(result.content)
 
     assert.equal(parsed.ok, true)
     assert.equal(parsed.contentType, 'image/webp')
@@ -174,7 +183,7 @@ describe('download_image tool', () => {
       { url: 'https://example.com/cat.png' },
       fakeCtx,
     )
-    const parsed = JSON.parse(result.content)
+    const parsed = parseResultJson(result.content)
 
     assert.equal(parsed.ok, true)
     assert.equal(parsed.contentType, 'image/png')
@@ -189,7 +198,7 @@ describe('download_image tool', () => {
       { url: 'https://cdn.reddit.com/funny-meme.png?v=123' },
       fakeCtx,
     )
-    const parsed = JSON.parse(result.content)
+    const parsed = parseResultJson(result.content)
 
     assert.ok(parsed.description.includes('funny-meme.png'))
   })

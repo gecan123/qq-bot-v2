@@ -16,10 +16,28 @@ export interface AssistantToolCall {
   args: Record<string, unknown>
 }
 
+export interface ToolResultTextBlock {
+  type: 'text'
+  text: string
+}
+
+export interface ToolResultImageBlock {
+  type: 'image'
+  source: {
+    type: 'base64'
+    media_type: string
+    data: string
+  }
+}
+
+export type ToolResultContentBlock = ToolResultTextBlock | ToolResultImageBlock
+
+export type ToolResultContent = string | ToolResultContentBlock[]
+
 export type AgentMessage =
   | { role: 'user'; content: string }
   | { role: 'assistant'; content: string; toolCalls: AssistantToolCall[] }
-  | { role: 'tool'; toolCallId: string; content: string }
+  | { role: 'tool'; toolCallId: string; content: ToolResultContent }
 
 /**
  * 持久化形态。runtime 形态 == 这个对象 (CLAUDE.md 红线 1)。
@@ -29,4 +47,4 @@ export interface PersistedAgentSnapshot {
   messages: AgentMessage[]
 }
 
-export const SNAPSHOT_SCHEMA_VERSION = 1
+export const SNAPSHOT_SCHEMA_VERSION = 2

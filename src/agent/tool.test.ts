@@ -34,7 +34,7 @@ describe('createToolExecutor', () => {
   test('returns error envelope for unknown tool', async () => {
     const exec = createToolExecutor([])
     const result = await exec.execute({ id: 'c1', name: 'nope', args: {} }, makeCtx())
-    assert.match(result.content, /Unknown tool/)
+    assert.match(result.content as string, /Unknown tool/)
   })
 
   test('invalid args produce structured error, not throw', async () => {
@@ -51,7 +51,7 @@ describe('createToolExecutor', () => {
       { id: 'c1', name: 'inc', args: { n: 'not a number' } },
       makeCtx(),
     )
-    assert.match(result.content, /Invalid tool arguments/)
+    assert.match(result.content as string, /Invalid tool arguments/)
   })
 
   test('thrown errors inside execute become tool error envelope', async () => {
@@ -65,7 +65,7 @@ describe('createToolExecutor', () => {
     }
     const exec = createToolExecutor([t])
     const result = await exec.execute({ id: 'c1', name: 'boom', args: {} }, makeCtx())
-    assert.match(result.content, /Tool execution failed: kaboom/)
+    assert.match(result.content as string, /Tool execution failed: kaboom/)
   })
 
   test('duplicate tool name in registration throws', () => {

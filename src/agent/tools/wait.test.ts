@@ -64,7 +64,7 @@ describe('wait tool — idle race', () => {
     queue.enqueue({ type: 'napcat_message' } as BotEvent)
     const result = await promise
 
-    assert.match(result.content, /\[当前北京时间: .+\] ok$/)
+    assert.match((result.content as string), /\[当前北京时间: .+\] ok$/)
     assert.equal(timer.pending(), 0, 'timer must be cleared on event win')
     assert.equal(timer.cleared(), 1)
   })
@@ -81,8 +81,8 @@ describe('wait tool — idle race', () => {
     timer.fire()
     const result = await promise
 
-    assert.match(result.content, /\[空闲提示\]/)
-    assert.match(result.content, /30 分钟/)
+    assert.match((result.content as string), /\[空闲提示\]/)
+    assert.match((result.content as string), /30 分钟/)
     // 关键: wait 是一次 toolCall, 主循环看 hadToolCalls=true 自动跑下一轮, 不用 wake 戳.
     assert.equal(queue.size(), 0, 'no wake enqueue — Guard 2 reads hadToolCalls now')
   })
@@ -94,7 +94,7 @@ describe('wait tool — idle race', () => {
     const promise = tool.execute({}, ctx)
     timer.fire()
     const result = await promise
-    assert.match(result.content, /10 分钟/)
+    assert.match((result.content as string), /10 分钟/)
   })
 
   test('idle hint description mentions the configured threshold', () => {
@@ -109,7 +109,7 @@ describe('wait tool — idle race', () => {
     const { ctx, queue } = makeCtx()
     queue.enqueue({ type: 'wake' } as BotEvent)
     const result = await tool.execute({}, ctx)
-    assert.match(result.content, /\[当前北京时间: .+\] ok$/)
+    assert.match((result.content as string), /\[当前北京时间: .+\] ok$/)
   })
 })
 

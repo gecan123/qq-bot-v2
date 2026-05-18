@@ -1,5 +1,5 @@
 import type { AgentContext } from './agent-context.js'
-import type { AgentMessage } from './agent-context.types.js'
+import type { AgentMessage, ToolResultContent } from './agent-context.types.js'
 import { createLlmClient } from './llm-client.js'
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
@@ -52,10 +52,21 @@ export interface MaybeCompactOptions {
   keepRatio?: number
 }
 
-/**
- * 估算 messages 数组的 token 总数。
- * 中英混合用 chars/2.5 估算, 偏保守 (高估), 触发更早, 不会让真实 token 数突破 cache 边界。
- */
+const IMAGE_BLOCK_CHAR_EQUIV = 2500
+
+function estimateToolContentChars(content: ToolResultContent): number {
+  if (typeof content === 'string') return content.length
+  let chars = 0
+  for (const block of content) {
+    if (block.type === 'text') {
+      chars += block.text.length
+    } else {
+      chars += IMAGE_BLOCK_CHAR_EQUIV
+    }
+  }
+  return chars
+}
+
 function estimateTokens(messages: AgentMessage[]): number {
   let chars = 0
   for (const m of messages) {
@@ -67,7 +78,7 @@ function estimateTokens(messages: AgentMessage[]): number {
         chars += call.name.length + JSON.stringify(call.args).length
       }
     } else {
-      chars += m.content.length
+      chars += estimateToolContentChars(m.content)
     }
   }
   return Math.ceil(chars / 2.5)
@@ -124,6 +135,18 @@ function splitExistingSummary(messages: AgentMessage[]): {
   }
 }
 
+function stripImagesForSummary(messages: AgentMessage[]): AgentMessage[] {
+  return messages.map((m) => {
+    if (m.role !== 'tool' || typeof m.content === 'string') return m
+    return {
+      ...m,
+      content: m.content.map((block) =>
+        block.type === 'text' ? block : { type: 'text' as const, text: '[图片]' },
+      ),
+    }
+  })
+}
+
 async function defaultSummarize(input: SummarizeInput): Promise<string> {
   const llm = createLlmClient()
 
@@ -132,7 +155,7 @@ async function defaultSummarize(input: SummarizeInput): Promise<string> {
   if (previous) {
     messages.push({ role: 'user', content: `[上次摘要]\n${previous}` })
   }
-  messages.push(...input.history)
+  messages.push(...stripImagesForSummary(input.history))
   messages.push({ role: 'user', content: SUMMARIZER_TRIGGER_INSTRUCTION })
 
   const result = await llm.chat({

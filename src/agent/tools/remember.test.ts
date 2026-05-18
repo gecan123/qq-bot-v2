@@ -122,7 +122,7 @@ describe('remember tool — execute', () => {
       },
       makeCtx(),
     )
-    const parsed = JSON.parse(result.content) as { ok: boolean; id: number }
+    const parsed = JSON.parse(result.content as string) as { ok: boolean; id: number }
     assert.equal(parsed.ok, true)
     assert.equal(parsed.id, 42)
     assert.ok(captured, 'create should have been called')

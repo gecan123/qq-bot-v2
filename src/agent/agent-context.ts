@@ -1,7 +1,7 @@
-import type { AgentMessage, AssistantToolCall, PersistedAgentSnapshot } from './agent-context.types.js'
+import type { AgentMessage, AssistantToolCall, PersistedAgentSnapshot, ToolResultContent, ToolResultContentBlock } from './agent-context.types.js'
 import { SNAPSHOT_SCHEMA_VERSION } from './agent-context.types.js'
 
-export type { AgentMessage, AssistantToolCall, PersistedAgentSnapshot } from './agent-context.types.js'
+export type { AgentMessage, AssistantToolCall, PersistedAgentSnapshot, ToolResultContent } from './agent-context.types.js'
 
 /**
  * Single-context bot 的 AgentContext。
@@ -16,7 +16,7 @@ export interface AgentContext {
   getSnapshot(): { messages: AgentMessage[] }
   appendUserMessage(content: string): void
   appendAssistantTurn(turn: { content: string; toolCalls: AssistantToolCall[] }): void
-  appendToolResult(input: { toolCallId: string; content: string }): void
+  appendToolResult(input: { toolCallId: string; content: ToolResultContent }): void
   /** compaction 唯一写口。原子替换全部 messages。 */
   replaceMessages(messages: AgentMessage[]): void
   exportPersistedSnapshot(): PersistedAgentSnapshot
@@ -46,7 +46,7 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
         toolCalls: turn.toolCalls.map(cloneToolCall),
       })
     },
-    appendToolResult(input: { toolCallId: string; content: string }): void {
+    appendToolResult(input: { toolCallId: string; content: ToolResultContent }): void {
       messages.push({
         role: 'tool',
         toolCallId: input.toolCallId,
@@ -87,7 +87,30 @@ function cloneMessage(input: AgentMessage): AgentMessage {
         toolCalls: input.toolCalls.map(cloneToolCall),
       }
     case 'tool':
-      return { role: 'tool', toolCallId: input.toolCallId, content: input.content }
+      return {
+        role: 'tool',
+        toolCallId: input.toolCallId,
+        content: cloneToolResultContent(input.content),
+      }
+  }
+}
+
+function cloneToolResultContent(content: ToolResultContent): ToolResultContent {
+  if (typeof content === 'string') return content
+  return content.map(cloneToolResultBlock)
+}
+
+function cloneToolResultBlock(block: ToolResultContentBlock): ToolResultContentBlock {
+  if (block.type === 'text') {
+    return { type: 'text', text: block.text }
+  }
+  return {
+    type: 'image',
+    source: {
+      type: 'base64',
+      media_type: block.source.media_type,
+      data: block.source.data,
+    },
   }
 }
 

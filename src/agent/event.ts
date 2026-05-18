@@ -43,4 +43,13 @@ export type BotEvent =
     }
   | { type: 'wake' }
   | { type: 'curiosity_tick' }
+  | {
+      type: 'background_task_completed'
+      taskId: string
+      toolName: string
+      description: string
+      elapsedMs: number
+      ok: boolean
+      summary: string
+    }
 

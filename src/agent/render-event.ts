@@ -43,5 +43,11 @@ export function renderBotEvent(event: BotEvent): string | null {
     return `[${ts} 私聊 | ${event.senderNickname}(QQ:${event.senderId}) #${event.messageId}] ${event.renderedText}`
   }
 
+  if (event.type === 'background_task_completed') {
+    const status = event.ok ? '完成' : '失败'
+    const elapsed = Math.round(event.elapsedMs / 1000)
+    return `[后台任务${status} | ${event.toolName} #${event.taskId} | 耗时${elapsed}s] ${event.summary}`
+  }
+
   return null
 }

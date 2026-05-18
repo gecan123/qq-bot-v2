@@ -1,5 +1,6 @@
 import type { Tool } from '../tool.js'
 import type { MessageSender } from '../../messaging/message-sender.js'
+import type { BackgroundTaskRegistry } from '../background-task-registry.js'
 import { waitTool } from './wait.js'
 import { createSendMessageTool } from './send-message.js'
 import { dbSchemaTool } from './db-schema.js'
@@ -11,6 +12,8 @@ import { createFetchUrlTool } from './fetch-url.js'
 import { maybeCreateStockQueryTool } from './stock-query.js'
 import { createGenerateImageTool } from './generate-image.js'
 import { createDownloadImageTool } from './download-image.js'
+import { createCheckTasksTool } from './check-tasks.js'
+import { createGetTaskResultTool } from './get-task-result.js'
 import { rememberTool } from './remember.js'
 import { recallTool } from './recall.js'
 
@@ -18,6 +21,7 @@ export interface BotToolDeps {
   sender: MessageSender
   /** Group-ambient 真发白名单. 透传给 send_message tool. 见 SendMessageDeps. */
   groupAmbientSendIds: ReadonlySet<number>
+  taskRegistry: BackgroundTaskRegistry
 }
 
 export function buildBotTools(deps: BotToolDeps): Tool[] {
@@ -32,8 +36,10 @@ export function buildBotTools(deps: BotToolDeps): Tool[] {
     listRedditTool,
     getRedditPostTool,
     createFetchUrlTool(),
-    createGenerateImageTool(),
+    createGenerateImageTool({ taskRegistry: deps.taskRegistry }),
     createDownloadImageTool(),
+    createCheckTasksTool({ taskRegistry: deps.taskRegistry }),
+    createGetTaskResultTool({ taskRegistry: deps.taskRegistry }),
     rememberTool,
     recallTool,
   ]

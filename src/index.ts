@@ -25,6 +25,7 @@ import { renderBotEvent } from './agent/render-event.js'
 import { replayMissedMessages } from './agent/replay-missed.js'
 import { resolveTargetMetadataMaps } from './agent/resolve-target-meta.js'
 import { createDedupEnqueue } from './agent/dedup-enqueue.js'
+import { createInMemoryTaskRegistry } from './agent/background-task-registry.js'
 
 const log = createLogger('APP')
 
@@ -228,10 +229,12 @@ async function main() {
   log.info({ enqueued: replayResult.enqueued }, 'replay-missed 完成')
 
   // 10. 工具集 + bot system prompt (启动后定型, 进程内不变)
+  const taskRegistry = createInMemoryTaskRegistry()
   const tools = createToolExecutor(
     buildBotTools({
       sender: messageSender,
       groupAmbientSendIds: config.groupAmbientSendIds,
+      taskRegistry,
     }),
   )
   // Per-group prompt customization (启动期一次 load + freeze, 红线 5).

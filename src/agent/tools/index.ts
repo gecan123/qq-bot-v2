@@ -16,6 +16,7 @@ import { createCheckTasksTool } from './check-tasks.js'
 import { createGetTaskResultTool } from './get-task-result.js'
 import { rememberTool } from './remember.js'
 import { recallTool } from './recall.js'
+import { writeJournalTool } from './write-journal.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -42,6 +43,7 @@ export function buildBotTools(deps: BotToolDeps): Tool[] {
     createGetTaskResultTool({ taskRegistry: deps.taskRegistry }),
     rememberTool,
     recallTool,
+    writeJournalTool,
   ]
 
   const webSearch = maybeCreateWebSearchTool()

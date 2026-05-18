@@ -82,3 +82,15 @@ model MemoryEntry {
   @@index([targetKind, targetId, createdAt(sort: Desc)])
   @@map("memory_entries")
 }
+
+/// Luna 的日记 & 做梦笔记。bot 通过 write_journal 工具自主写入,
+/// 不自动注入 prefix (红线 1/4 不变)。内容作为 tool result 留在 context 里。
+model JournalEntry {
+  id        Int      @id @default(autoincrement())
+  kind      String   @db.VarChar(16)
+  content   String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([kind, createdAt(sort: Desc)])
+  @@map("journal_entries")
+}

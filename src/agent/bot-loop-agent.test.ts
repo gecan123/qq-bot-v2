@@ -106,7 +106,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(messages[1]?.role, 'assistant')
     assert.equal(messages[2]?.role, 'tool')
     assert.equal(toolExecuted, true)
-    assert.equal(saved.length, 1, 'snapshot persisted once')
+    assert.equal(saved.length, 2, 'snapshot persisted twice (pre-round + post-round)')
   })
 
   test('wake events drain without appending to context', async () => {

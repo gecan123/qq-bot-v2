@@ -94,3 +94,19 @@ model JournalEntry {
   @@index([kind, createdAt(sort: Desc)])
   @@map("journal_entries")
 }
+
+/// Luna 的表情包收藏池。collect_sticker 工具写入, compaction 后注入摘要进 context。
+/// mediaId 唯一 (一张图在池子里只有一个条目), 逻辑引用 Media 表的 mediaId。
+model StickerPool {
+  id          Int       @id @default(autoincrement())
+  mediaId     Int       @unique @map("media_id")
+  name        String    @db.VarChar(50)
+  tags        String[]  @default([])
+  description String    @db.Text
+  useCount    Int       @default(0) @map("use_count")
+  lastUsedAt  DateTime? @map("last_used_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([useCount(sort: Desc), createdAt(sort: Desc)])
+  @@map("sticker_pool")
+}

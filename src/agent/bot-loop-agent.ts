@@ -5,6 +5,7 @@ import type { EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { BotSnapshotRepo } from './snapshot-repo.js'
 import { maybeCompactConversation, type MaybeCompactOptions } from './compaction.js'
+import { injectStickerPoolAfterCompaction } from './sticker-pool.js'
 import { createLogger } from '../logger.js'
 
 const log = createLogger('BOT_LOOP')
@@ -134,6 +135,12 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     if (deps.context.getSnapshot().messages.length === 0) {
       return { hadToolCalls: false }
     }
+
+    await maybeCompact()
+    await deps.snapshotRepo.save({
+      snapshot: deps.context.exportPersistedSnapshot(),
+      lastWakeAt,
+    })
 
     const { hadToolCalls } = await runRound()
     await deps.snapshotRepo.save({

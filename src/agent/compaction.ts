@@ -16,6 +16,7 @@ import { createLogger } from '../logger.js'
 const DEFAULT_COMPACTION_TRIGGER_TOKENS = 16_000
 const DEFAULT_COMPACTION_KEEP_RATIO = 0.1
 const SUMMARY_HEAD_PREFIX = '[历史摘要]\n'
+const SUMMARIZER_DROP_RATIO = 0.1
 
 const log = createLogger('COMPACTION')
 
@@ -194,14 +195,26 @@ export async function maybeCompactConversation(
   const tail = snapshot.messages.slice(cutIndex)
   const { previousSummary, rest: historyToSummarize } = splitExistingSummary(toCompress)
 
-  if (historyToSummarize.length === 0 && !previousSummary) {
+  const drop = Math.max(1, Math.ceil(historyToSummarize.length * SUMMARIZER_DROP_RATIO))
+  const trimmedHistory = historyToSummarize.slice(drop)
+  if (drop > 0) {
+    log.info({ total: historyToSummarize.length, dropped: drop }, 'summarizer_input_trimmed')
+  }
+
+  if (trimmedHistory.length === 0 && !previousSummary) {
     return
   }
 
-  const newSummary = await summarize({
-    previousSummary,
-    history: historyToSummarize,
-  })
+  let newSummary: string
+  try {
+    newSummary = await summarize({
+      previousSummary,
+      history: trimmedHistory,
+    })
+  } catch (err) {
+    log.error({ err, tokens, cutIndex }, 'summarizer_failed_emergency_truncation')
+    newSummary = previousSummary ?? '(历史消息因超长被应急截断)'
+  }
   if (!newSummary.trim()) {
     log.warn({ tokens, cutIndex, tailLen: tail.length }, 'compaction_skipped_empty_summary')
     return

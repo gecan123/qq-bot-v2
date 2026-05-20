@@ -46,7 +46,7 @@ export function createWaitTool(deps: WaitToolDeps = {}): Tool<WaitArgs> {
       '什么时候 wait / 什么时候不 wait, 见 system prompt [在场状态] 段.',
     ].join(' '),
     schema: z.object({
-      reason: z.string().optional().describe('选择 wait 的简短理由 (仅日志用,不会发出去)'),
+      reason: z.string().optional().describe('此刻的心情或状态速写 (仅日志, 不会发出去; 每次写点不一样的)'),
     }),
     async execute(args, ctx) {
       let timerHandle: unknown = null

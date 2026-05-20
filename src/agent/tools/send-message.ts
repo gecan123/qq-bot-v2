@@ -6,6 +6,7 @@ import { resolveImageHandle, releaseHandle } from '../../media/image-handle.js'
 import { promoteToMedia } from '../../media/promote-outbound.js'
 import { buildOutboundSegments } from '../../messaging/segment-builder.js'
 import type { SendTarget } from '../../messaging/napcat-sender.js'
+import { prisma } from '../../database/client.js'
 import { createLogger } from '../../logger.js'
 
 const log = createLogger('TOOL_SEND')
@@ -272,6 +273,16 @@ async function sendWithImage(
       kind,
       image: imageResult,
     }
+
+    if (imageResult.mediaId != null) {
+      prisma.stickerPool
+        .updateMany({
+          where: { mediaId: imageResult.mediaId },
+          data: { useCount: { increment: 1 }, lastUsedAt: new Date() },
+        })
+        .catch(() => {})
+    }
+
     return { content: JSON.stringify(payload) }
   } finally {
     releaseHandle(handle)

@@ -67,7 +67,7 @@ describe('stock_query tool', () => {
     assert.equal(parseResult.success, false)
   })
 
-  test('accepts all 10 whitelist paths', async () => {
+  test('accepts all whitelist paths', async () => {
     const tool = makeTool(makeMockFetcher({ status: 200, body: '{}' }))
     const paths = [
       'equity/price/quote',
@@ -80,6 +80,7 @@ describe('stock_query tool', () => {
       'equity/fundamental/dividends',
       'equity/estimates/consensus',
       'news/company',
+      'equity/technical/rsi',
     ]
     for (const path of paths) {
       const parseResult = tool.schema.safeParse({ path, params: { symbol: 'X' } })

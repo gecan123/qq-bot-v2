@@ -3,10 +3,11 @@ import type { Tool } from '../tool.js'
 import { config } from '../../config/index.js'
 import { logFetch } from '../../ops/fetch-log.js'
 import { createLogger } from '../../logger.js'
+import { VIRTUAL_PATH_RSI, handleRsi } from './rsi.js'
 
 const log = createLogger('TOOL_STOCK_QUERY')
 
-const OUTPUT_CAP = 1500
+export const OUTPUT_CAP = 1500
 
 const ALLOWED_PATHS = [
   'equity/price/quote',
@@ -19,6 +20,7 @@ const ALLOWED_PATHS = [
   'equity/fundamental/dividends',
   'equity/estimates/consensus',
   'news/company',
+  'equity/technical/rsi',
 ] as const
 
 type AllowedPath = (typeof ALLOWED_PATHS)[number]
@@ -72,7 +74,7 @@ export function truncateJson(raw: string, cap: number): string {
   return raw.slice(0, cap) + '\n[...truncated at ' + cap + ' chars]'
 }
 
-function buildUrl(apiUrl: string, path: string, params: Record<string, string>): string {
+export function buildUrl(apiUrl: string, path: string, params: Record<string, string>): string {
   const url = new URL(`/api/v1/${path}`, apiUrl)
   if (!params.provider) {
     url.searchParams.set('provider', 'yfinance')
@@ -100,6 +102,14 @@ export function createStockQueryTool(deps: StockQueryDeps = {}): Tool<Args> {
     schema: argsSchema,
     async execute(rawArgs, ctx) {
       const args = rawArgs as Args
+
+      if (args.path === VIRTUAL_PATH_RSI) {
+        return handleRsi(args.params, {
+          fetcher, apiUrl, timeoutMs,
+          logPath: deps.logPath, appender: deps.appender, now,
+        }, ctx)
+      }
+
       const url = buildUrl(apiUrl, args.path, args.params)
       const startedAt = Date.now()
 

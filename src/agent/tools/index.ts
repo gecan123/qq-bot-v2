@@ -18,6 +18,7 @@ import { rememberTool } from './remember.js'
 import { recallTool } from './recall.js'
 import { writeJournalTool } from './write-journal.js'
 import { collectStickerTool } from './collect-sticker.js'
+import { createFetchAvatarTool } from './fetch-avatar.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -40,6 +41,7 @@ export function buildBotTools(deps: BotToolDeps): Tool[] {
     createFetchUrlTool(),
     createGenerateImageTool({ taskRegistry: deps.taskRegistry }),
     createDownloadImageTool(),
+    createFetchAvatarTool(),
     createCheckTasksTool({ taskRegistry: deps.taskRegistry }),
     createGetTaskResultTool({ taskRegistry: deps.taskRegistry }),
     rememberTool,

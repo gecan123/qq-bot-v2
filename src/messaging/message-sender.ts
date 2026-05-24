@@ -26,6 +26,7 @@ export interface MessageSender {
   sendGroupMessage(params: {
     groupId: number
     text: string
+    mentionUserId?: number
   }): Promise<SendNapcatResult>
 
   sendSegments(params: {
@@ -64,8 +65,14 @@ class NapcatMessageSender implements MessageSender {
     return sendPrivateMessageRaw(params.userId, [{ type: 'text', data: { text: params.text } }])
   }
 
-  async sendGroupMessage(params: { groupId: number; text: string }): Promise<SendNapcatResult> {
-    return sendGroupReply(params.groupId, [{ type: 'text', data: { text: params.text } }])
+  async sendGroupMessage(params: { groupId: number; text: string; mentionUserId?: number }): Promise<SendNapcatResult> {
+    const segments: NapcatSegment[] = []
+    if (params.mentionUserId !== undefined) {
+      segments.push({ type: 'at', data: { qq: String(params.mentionUserId) } })
+    }
+    const text = params.mentionUserId !== undefined ? ` ${params.text}` : params.text
+    segments.push({ type: 'text', data: { text } })
+    return sendGroupReply(params.groupId, segments)
   }
 
   async sendSegments(params: { target: SendTarget; segments: NapcatSegment[] }): Promise<SendNapcatResult> {

@@ -123,9 +123,6 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
       const dryRun = isDryRun(kind, args.target, deps.groupAmbientSendIds)
 
       if (dryRun) {
-        if (kind === 'group-ambient' && mentionUserId !== undefined) {
-          log.warn({ groupId: (args.target as { groupId: number }).groupId, mentionUserId }, 'send_message_group_ambient_with_mention_ignored')
-        }
         const groupId = (args.target as { groupId: number }).groupId
         log.info({ groupId, kind }, 'send_message_group_ambient_dry_run')
         const payload: SendResultPayload = {
@@ -143,10 +140,6 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
           }
         }
         return { content: JSON.stringify(payload) }
-      }
-
-      if (kind === 'group-ambient' && mentionUserId !== undefined) {
-        log.warn({ groupId: (args.target as { groupId: number }).groupId, mentionUserId }, 'send_message_group_ambient_with_mention_ignored')
       }
 
       // Text-only path: use legacy sender methods for backward compat
@@ -179,7 +172,7 @@ async function sendTextOnly(
       })
       return { content: JSON.stringify(buildPayload(result, kind)) }
     }
-    const result = await deps.sender.sendGroupMessage({ groupId: sendTarget.groupId, text })
+    const result = await deps.sender.sendGroupMessage({ groupId: sendTarget.groupId, text, mentionUserId })
     return { content: JSON.stringify(buildPayload(result, kind)) }
   }
 

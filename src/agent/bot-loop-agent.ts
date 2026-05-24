@@ -6,6 +6,7 @@ import type { BotEvent } from './event.js'
 import type { BotSnapshotRepo } from './snapshot-repo.js'
 import { maybeCompactConversation, type MaybeCompactOptions } from './compaction.js'
 import { injectStickerPoolAfterCompaction } from './sticker-pool.js'
+import { recordTokenUsage } from './token-stats.js'
 import { createLogger } from '../logger.js'
 
 const log = createLogger('BOT_LOOP')
@@ -52,7 +53,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       const event = deps.eventQueue.dequeue()
       if (!event) break
       consumed++
-      // wake 是控制信号 (stop / 未来 timer), 不进 context
       if (event.type === 'wake') continue
       const rendered = await deps.renderEvent(event)
       if (rendered == null || rendered.length === 0) continue
@@ -62,7 +62,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     return consumed
   }
 
-  async function runRound(): Promise<{ hadToolCalls: boolean }> {
+  async function runRound(): Promise<{ hadToolCalls: boolean; inputTokens: number | null }> {
     roundIndex++
     const snapshot = deps.context.getSnapshot()
     const tools = deps.tools.list()
@@ -87,7 +87,15 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       'round_llm_done',
     )
 
-    // 即使 content 为空, 只要有 toolCalls 也要 append, 这样 tool_results 才能 anchor。
+    recordTokenUsage({
+      operation: 'agent.chat',
+      roundIndex,
+      inputTokens: completion.usage.inputTokens,
+      cachedTokens: completion.usage.cachedTokens,
+      outputTokens: completion.usage.outputTokens,
+      model: completion.model,
+    })
+
     if (completion.content.length > 0 || completion.toolCalls.length > 0) {
       deps.context.appendAssistantTurn({
         content: completion.content,
@@ -103,14 +111,24 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       deps.context.appendToolResult({ toolCallId: call.id, content: result.content })
     }
 
-    return { hadToolCalls: completion.toolCalls.length > 0 }
+    return { hadToolCalls: completion.toolCalls.length > 0, inputTokens: completion.usage.inputTokens }
   }
 
-  async function maybeCompact(): Promise<void> {
+  async function maybeCompact(inputTokens: number | null): Promise<void> {
+    let compacted = false
     try {
-      await maybeCompactConversation(deps.context, deps.compactOptions)
+      const before = deps.context.getSnapshot().messages.length
+      await maybeCompactConversation(deps.context, inputTokens, deps.compactOptions)
+      compacted = deps.context.getSnapshot().messages.length < before
     } catch (err) {
       log.error({ err }, 'compaction_failed_skipped')
+    }
+    if (compacted) {
+      try {
+        await injectStickerPoolAfterCompaction(deps.context)
+      } catch (err) {
+        log.warn({ err }, 'sticker_pool_injection_failed')
+      }
     }
   }
 
@@ -136,25 +154,20 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       return { hadToolCalls: false }
     }
 
-    await maybeCompact()
     await deps.snapshotRepo.save({
       snapshot: deps.context.exportPersistedSnapshot(),
       lastWakeAt,
     })
 
-    const { hadToolCalls } = await runRound()
+    const { hadToolCalls, inputTokens } = await runRound()
     await deps.snapshotRepo.save({
       snapshot: deps.context.exportPersistedSnapshot(),
       lastWakeAt,
     })
-    await maybeCompact()
+    await maybeCompact(inputTokens)
     return { hadToolCalls }
   }
 
-  // 节奏 = LLM 意图 (跟文章版 stop_reason != tool_use 同形):
-  //   有 toolCall (含 wait): 立即跑下一轮让 LLM 看 tool result.
-  //   无 toolCall (纯 text / context 空): LLM 没事做 → 阻塞等事件, 不烧 token.
-  // waitForEvent 在队列非空时立即 resolve, stop 时手动 enqueue wake 也能解开.
   async function runOnce(): Promise<void> {
     const { hadToolCalls } = await step()
     if (!hadToolCalls && !stopRequested) {
@@ -186,8 +199,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       log.info('bot_loop_stop_requested')
     },
     async runOnceForTest() {
-      // 测试用: 跑一次 step (drain + round + persist + compact), 跳过 runOnce 的 waitForEvent
-      // 守护, 否则空 context 测试会阻塞.
       await step()
     },
   }

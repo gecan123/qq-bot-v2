@@ -1,18 +1,10 @@
 import type { AgentContext } from './agent-context.js'
-import type { AgentMessage, ToolResultContent } from './agent-context.types.js'
+import type { AgentMessage } from './agent-context.types.js'
 import { createLlmClient } from './llm-client.js'
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
+import { recordTokenUsage } from './token-stats.js'
 
-/**
- * Compaction 是「计划性破坏 prefix」的唯一路径 (CLAUDE.md 红线 4)。
- * 别处不允许调 replaceMessages。
- *
- * 触发: 估算 token 总数 > triggerTokens, 默认 16k (MVP-2 多源场景, 可由 COMPACTION_TRIGGER_TOKENS env 覆盖).
- * 保留: 尾部 keepRatio (默认 0.1) 条, 但不切开 assistant.toolCalls 和它的 tool result。
- * 输出: replaceMessages([summaryHead, ...keptTail]), 头部一条 user message
- *      "[历史摘要] ..." 包住摘要文本。
- */
 const DEFAULT_COMPACTION_TRIGGER_TOKENS = 16_000
 const DEFAULT_COMPACTION_KEEP_RATIO = 0.1
 const SUMMARY_HEAD_PREFIX = '[历史摘要]\n'
@@ -21,24 +13,33 @@ const SUMMARIZER_DROP_RATIO = 0.1
 const log = createLogger('COMPACTION')
 
 const SUMMARIZER_SYSTEM_PROMPT = `
-你是一个对话摘要助手。接下来会喂给你一段历史聊天片段, 由群聊用户消息 (user role)、
-你过去的回复或想法 (assistant role)、以及工具调用结果 (tool role) 组成。
+你是一个对话摘要助手。把以下历史对话压缩成结构化摘要。
 
-你的任务: 把这段对话压缩成简洁的中文摘要, 只保留:
-  - 已被讨论的话题和结论
-  - 重要事实、群成员的偏好或情绪
-  - 你自己 (assistant 角色) 说过 / 承诺过的事
-  - 关键工具查询结果
+按以下分类分段输出（每段可为空但标题必须保留）：
 
-忽略: 客套、口水、未展开的玩笑、被覆盖的旧话题。
+## 讨论过的话题
+已讨论的话题和结论，按时间顺序。
 
-如果给你了 [上次摘要], 把它和新对话合并成新摘要, 不要简单 append。
+## 群友信息
+提到的群友偏好、性格特点、关系动态。用 QQ 号标识（不是昵称）。
 
-输出: 仅一段连贯的中文文本, 不要标题不要列表, 控制在 400 字以内。
-不要回应或继续对话。直接输出摘要。
+## 我的承诺和状态
+我（assistant）说过、承诺过、正在进行的事。
+
+## 工具调用结果
+关键的工具查询结果（股票、网页、图片描述等）的摘要。
+
+## 情绪和氛围
+当前对话的整体氛围、群友的情绪状态。
+
+规则：
+- 如果给了 [上次摘要]，合并新旧信息，不要简单 append
+- 忽略客套、口水、未展开的玩笑
+- 每段控制在 200 字以内，总摘要不超过 800 字
+- 不要回应或继续对话，直接输出摘要
 `.trim()
 
-const SUMMARIZER_TRIGGER_INSTRUCTION = '请把以上历史对话压缩成中文摘要。'
+const SUMMARIZER_TRIGGER_INSTRUCTION = '请把以上历史对话压缩成结构化中文摘要。'
 
 export interface SummarizeInput {
   previousSummary: string | null
@@ -53,54 +54,6 @@ export interface MaybeCompactOptions {
   keepRatio?: number
 }
 
-const IMAGE_BLOCK_CHAR_EQUIV = 2500
-
-function estimateToolContentChars(content: ToolResultContent): number {
-  if (typeof content === 'string') return content.length
-  let chars = 0
-  for (const block of content) {
-    if (block.type === 'text') {
-      chars += block.text.length
-    } else {
-      chars += IMAGE_BLOCK_CHAR_EQUIV
-    }
-  }
-  return chars
-}
-
-function estimateTokens(messages: AgentMessage[]): number {
-  let chars = 0
-  for (const m of messages) {
-    if (m.role === 'user') {
-      chars += m.content.length
-    } else if (m.role === 'assistant') {
-      chars += m.content.length
-      for (const call of m.toolCalls) {
-        chars += call.name.length + JSON.stringify(call.args).length
-      }
-    } else {
-      chars += estimateToolContentChars(m.content)
-    }
-  }
-  return Math.ceil(chars / 2.5)
-}
-
-/**
- * 切割位置: 保留尾部 keep 条, 把前面的压缩。
- *
- * 不变量 (违反任一会让 OpenAI API 拒掉下一轮请求):
- *   1. kept tail 不能以 tool 消息开头 (没有锚 assistant)。
- *   2. kept tail 不能切在 assistant(toolCalls) 和它的 tool results 之间
- *      —— 要么整个 block 在 kept, 要么整个 block 在 compressed。
- *
- * 策略: 从初始 cut 向前 (向小 index) 走, 把不安全的边界吞进 tail。
- *   - 若 messages[cut] 是 tool, cut-- (tail 不能以 tool 起头)。
- *   - 若 messages[cut-1] 是 assistant(toolCalls), cut-- (整 block 进 tail)。
- *   - 否则 break, cut 已经是安全边界。
- *
- * 走到 cut=0 表示无法压缩 (整段都是粘连的 tool 序列), maybeCompactConversation
- * 会因为 cutIndex<=0 跳过这一轮。
- */
 export function findSafeCutIndex(messages: AgentMessage[], keepCount: number): number {
   if (messages.length <= keepCount) return 0
   let cut = messages.length - keepCount
@@ -164,9 +117,14 @@ async function defaultSummarize(input: SummarizeInput): Promise<string> {
     messages,
     tools: [],
   })
-  // 注: llm-client 内部已经 recordCurrentTokenUsage('agent.chat', ...);
-  // compaction 想区分两路 token 用量, 让 llm-client 改成接受 operation 标签是后续优化,
-  // v1 共用 'agent.chat' 不影响行为正确性。
+
+  recordTokenUsage({
+    operation: 'compaction',
+    inputTokens: result.usage.inputTokens,
+    cachedTokens: result.usage.cachedTokens,
+    outputTokens: result.usage.outputTokens,
+    model: result.model,
+  })
 
   if (result.content.length === 0) {
     log.warn({}, 'summarizer_empty_response')
@@ -177,19 +135,33 @@ async function defaultSummarize(input: SummarizeInput): Promise<string> {
 
 export async function maybeCompactConversation(
   context: AgentContext,
+  lastInputTokens: number | null,
   options: MaybeCompactOptions = {},
 ): Promise<void> {
+  if (lastInputTokens == null) return
+
   const summarize = options.summarize ?? defaultSummarize
   const triggerTokens = options.triggerTokens ?? config.compactionTriggerTokens ?? DEFAULT_COMPACTION_TRIGGER_TOKENS
   const keepRatio = options.keepRatio ?? DEFAULT_COMPACTION_KEEP_RATIO
 
+  if (lastInputTokens <= triggerTokens) return
+
   const snapshot = context.getSnapshot()
-  const tokens = estimateTokens(snapshot.messages)
-  if (tokens <= triggerTokens) return
+
+  log.info(
+    { inputTokens: lastInputTokens, messageCount: snapshot.messages.length, triggerTokens },
+    'compaction_triggered',
+  )
 
   const keepCount = Math.max(1, Math.ceil(snapshot.messages.length * keepRatio))
   const cutIndex = findSafeCutIndex(snapshot.messages, keepCount)
-  if (cutIndex <= 0) return
+  if (cutIndex <= 0) {
+    log.warn(
+      { inputTokens: lastInputTokens, messageCount: snapshot.messages.length, keepCount },
+      'compaction_no_safe_cut',
+    )
+    return
+  }
 
   const toCompress = snapshot.messages.slice(0, cutIndex)
   const tail = snapshot.messages.slice(cutIndex)
@@ -212,11 +184,11 @@ export async function maybeCompactConversation(
       history: trimmedHistory,
     })
   } catch (err) {
-    log.error({ err, tokens, cutIndex }, 'summarizer_failed_emergency_truncation')
+    log.error({ err, inputTokens: lastInputTokens, cutIndex }, 'summarizer_failed_emergency_truncation')
     newSummary = previousSummary ?? '(历史消息因超长被应急截断)'
   }
   if (!newSummary.trim()) {
-    log.warn({ tokens, cutIndex, tailLen: tail.length }, 'compaction_skipped_empty_summary')
+    log.warn({ inputTokens: lastInputTokens, cutIndex, tailLen: tail.length }, 'compaction_skipped_empty_summary')
     return
   }
 
@@ -232,7 +204,7 @@ export async function maybeCompactConversation(
       newMessages: 1 + tail.length,
       compressedCount: toCompress.length,
       keptCount: tail.length,
-      estimatedTokens: tokens,
+      inputTokensBefore: lastInputTokens,
     },
     'compaction_replaced',
   )

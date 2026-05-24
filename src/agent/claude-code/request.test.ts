@@ -149,7 +149,7 @@ describe('buildClaudeCodeRequestBody', () => {
       tools: [],
     })
     assert.deepEqual(body.messages, [
-      { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      { role: 'user', content: [{ type: 'text', text: 'hello', cache_control: { type: 'ephemeral', ttl: '1h' } }] },
     ])
   })
 
@@ -172,7 +172,7 @@ describe('buildClaudeCodeRequestBody', () => {
     assert.equal(assistantMsg?.role, 'assistant')
     assert.deepEqual(assistantMsg?.content, [
       { type: 'text', text: 'ok' },
-      { type: 'tool_use', id: 'call_1', name: 'send_message', input: { text: 'hi' } },
+      { type: 'tool_use', id: 'call_1', name: 'send_message', input: { text: 'hi' }, cache_control: { type: 'ephemeral', ttl: '1h' } },
     ])
   })
 
@@ -194,7 +194,7 @@ describe('buildClaudeCodeRequestBody', () => {
     assert.equal(body.messages.length, 2)
     assert.deepEqual(body.messages[1], {
       role: 'user',
-      content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'idle 5min' }],
+      content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'idle 5min', cache_control: { type: 'ephemeral', ttl: '1h' } }],
     })
   })
 

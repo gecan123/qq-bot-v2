@@ -83,6 +83,19 @@ export function buildClaudeCodeRequestBody(
     body.tool_choice = { type: 'auto' }
   }
 
+  // 1h cache breakpoint: 钉在 messages 最后一条的最后一个 content block 上,
+  // 让整段 messages prefix 进 1h cache pool。下一轮追加 2 条新消息后,
+  // 本轮的 cache 仍作为 prefix 命中 — 只有新增部分 uncached (~500 tokens)。
+  // 没有这个 breakpoint 时 messages 只有 auto-cache (~5min TTL),
+  // wait 工具挂 >5min 后整段 ~750k messages 全部 miss。
+  if (body.messages.length > 0) {
+    const lastMsg = body.messages[body.messages.length - 1]
+    if (lastMsg.content.length > 0) {
+      const lastBlock = lastMsg.content[lastMsg.content.length - 1];
+      (lastBlock as Record<string, unknown>).cache_control = { type: 'ephemeral', ttl: '1h' }
+    }
+  }
+
   return body
 }
 

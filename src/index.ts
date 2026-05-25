@@ -236,6 +236,7 @@ async function main() {
       groupAmbientSendIds: config.groupAmbientSendIds,
       taskRegistry,
     }),
+    { trace: { path: config.toolCallLogPath } },
   )
   // Per-group prompt customization (启动期一次 load + freeze, 红线 5).
   // 文件不存在 / yaml schema 错 → fail-fast (loader throws), 这里不兜底.

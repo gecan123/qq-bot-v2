@@ -177,6 +177,19 @@ describe('config', () => {
     assert.equal(blank.botGroupPromptsPath, './prompts/groups.yaml')
   })
 
+  test('toolCallLogPath defaults to logs/tool-calls.ndjson and accepts override', () => {
+    const dflt = parseConfig(createBaseEnv())
+    assert.equal(dflt.toolCallLogPath, 'logs/tool-calls.ndjson')
+
+    const override = parseConfig(createBaseEnv({
+      BOT_TOOL_CALL_LOG_PATH: '/tmp/tool-calls.ndjson',
+    }))
+    assert.equal(override.toolCallLogPath, '/tmp/tool-calls.ndjson')
+
+    const blank = parseConfig(createBaseEnv({ BOT_TOOL_CALL_LOG_PATH: '   ' }))
+    assert.equal(blank.toolCallLogPath, 'logs/tool-calls.ndjson')
+  })
+
   test('openbb: 不配 OPENBB_API_URL → undefined', () => {
     const config = parseConfig(createBaseEnv())
     assert.equal(config.openbb, undefined)

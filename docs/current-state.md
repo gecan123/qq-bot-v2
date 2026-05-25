@@ -12,6 +12,8 @@ CLAUDE.md 只承载长期合约（perpetual context invariants、提交规范、
 
 **叠加: Idle-Fetch MVP** — `wait` 工具 idle 引信 + `list_reddit` / `get_reddit_post` / `fetch_url` 工具 + NDJSON 旁路日志。设计文档 `docs/idle-fetch-mvp.zh-CN.md`，14 天复盘模板 `docs/reddit-mvp-review.md`。
 
+**叠加: Tool Trace 运维日志** — `ToolExecutor` 统一入口为每次 tool 调用 append `logs/tool-calls.ndjson`（可用 `BOT_TOOL_CALL_LOG_PATH` 覆盖）。记录 `toolCallId` / `toolName` / `roundIndex` / redacted `argsSummary` / `durationMs` / `ok` / `error` / `sideEffect`。这是旁路运维数据，不进 Prisma，不进 `AgentContext`，不参与 replay 或 prompt cache。
+
 **叠加: Claude Code identity 透传 cliproxy (可选启用)** — `LLM_DEFAULT_PROVIDER=claude-code` 时, agent 路径 (BotLoopAgent + compaction + fetch_url 摘要) 走 cliproxy + 完整 Claude Code identity payload (`claude-cli/2.1.76 (external, sdk-cli)` UA + `Anthropic-Beta: claude-code-20250219,...` + 3-block system: billing header / SDK self-id / 业务 persona)。cliproxy `cloak.mode=auto` 识别为 Claude Code 客户端 → **不**替换 system prompt, 直接转发到 Anthropic, 同时复用 cliproxy 自家 OAuth 池 (Claude Pro / ChatGPT Plus 等 5 账号轮换 + quota fallback)。Media 描述路径 (`generate-description.ts` + `RoutingProvider` + `OpenAIProvider`) 不变, 仍走 cliproxy 的 OpenAI 兼容路径。
 
 实测背书 (2026-05-08):
@@ -65,6 +67,7 @@ idle-fetch MVP 跑起来后的近期 TODO，做完即勾。过期 / 已收敛的
 - `BOT_REDDIT_TIMEOUT_MS` — list_reddit / get_reddit_post 单次 HTTP 超时（默认 8000）
 - `BOT_FETCH_URL_TIMEOUT_MS` — fetch_url 单次 HTTP 超时（默认 12000）
 - `BOT_FETCH_LOG_PATH` — NDJSON 旁路日志路径（默认 `logs/fetch.ndjson`）
+- `BOT_TOOL_CALL_LOG_PATH` — 统一工具调用 NDJSON 旁路日志路径（默认 `logs/tool-calls.ndjson`）
 - `BOT_GROUP_PROMPTS_PATH` — Per-group prompt customization yaml 路径（默认 `./prompts/groups.yaml`）。文件不存在 → loader 返空数组 = 所有群走默认人设（不阻断启动）。yaml 写 `groups: []` 等价。`./prompts/groups.yaml` 含真实群号 + body，不入 git；模板见 `prompts/groups.yaml.example`。改文件需重启 bot（红线 5：cache 整段失效一次，集中改不要小步频改）
 - `BOT_EVENT_DEBOUNCE_MS` — drain 前等待更多事件堆积的毫秒数（默认 15000）。连续消息在此窗口内会被合并进同一轮 LLM 调用，避免逐条回复。默认 15s 覆盖图片解析延迟（~10s）+ 打字间隔。在 `config/index.ts` 走 `parsePositiveInteger`，非正值或非数字 fallback 默认
 - `BOT_GROUP_AMBIENT_SEND_IDS` — 主动发言（group-ambient，没有 `replyToMessageId` 的群发送）真发白名单，逗号分隔群 ID（如 `111,222`）。不在白名单的群走 dry-run（对 LLM 返回假成功）；reply / private 不受影响。空集合 / 不配 = 全部 dry-run（安全默认）。`BOT_TARGET_GROUP_IDS` 非空但此项空 → 启动期 warn 一句
@@ -157,6 +160,7 @@ while (!stopRequested) {
 
 `src/ops/`
 - `fetch-log.ts` — NDJSON 旁路日志 appendFile (容错), 不进 Prisma. 服务 `list_reddit` / `get_reddit_post` / `fetch_url` 的运维统计 (`logs/fetch.ndjson`)
+- `tool-call-log.ts` — 统一 tool 调用轨迹 NDJSON appendFile (容错), 不进 Prisma / AgentContext. 参数摘要会脱敏 token/key/cookie/QQ 群号/用户号等敏感字段 (`logs/tool-calls.ndjson`)
 
 `src/messaging/`
 - `message-sender.ts` + `napcat-sender.ts` — 底层 NapCat 发送 + 重试（含群 + 私聊 reply + 复合 segment 发送）
@@ -269,6 +273,8 @@ pnpm db:generate      # prisma generate (after schema changes)
 pnpm db:migrate       # prisma migrate dev
 pnpm db:push          # prisma db push (no migration files)
 pnpm test             # tsx --test src/**/*.test.ts
+pnpm toollog          # tail recent tool trace lines
+pnpm toollogf         # follow logs/tool-calls.ndjson
 ```
 
 ESM-only（`"type": "module"` in package.json），所有本地 import 用 `.js` 扩展名。

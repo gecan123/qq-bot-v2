@@ -2,6 +2,7 @@ import type { ZodTypeAny, z } from 'zod'
 import type { EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { AssistantToolCall, ToolResultContent } from './agent-context.types.js'
+import { isSideEffectTool, logToolCall, summarizeToolArgs } from '../ops/tool-call-log.js'
 
 /**
  * Tool 接口最简形:name + description + 参数 schema + execute。
@@ -34,7 +35,18 @@ export interface ToolExecutor {
   execute(call: AssistantToolCall, ctx: ToolContext): Promise<ToolExecutionResult>
 }
 
-export function createToolExecutor(tools: Tool[]): ToolExecutor {
+export interface ToolTraceOptions {
+  path?: string
+  appender?: (path: string, line: string) => Promise<void>
+  now?: () => Date
+  clockMs?: () => number
+}
+
+export interface ToolExecutorOptions {
+  trace?: ToolTraceOptions
+}
+
+export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions = {}): ToolExecutor {
   const byName = new Map<string, Tool>()
   for (const tool of tools) {
     if (byName.has(tool.name)) {
@@ -48,15 +60,18 @@ export function createToolExecutor(tools: Tool[]): ToolExecutor {
       return [...tools]
     },
     async execute(call, ctx) {
+      const startedAt = options.trace ? (options.trace.clockMs?.() ?? Date.now()) : 0
       const tool = byName.get(call.name)
       if (!tool) {
-        return {
+        const result = {
           content: JSON.stringify({ error: `Unknown tool: ${call.name}` }),
         }
+        await traceToolCall(options.trace, call, ctx.roundIndex, startedAt, result, `Unknown tool: ${call.name}`)
+        return result
       }
       const parseResult = tool.schema.safeParse(call.args)
       if (!parseResult.success) {
-        return {
+        const result = {
           content: JSON.stringify({
             error: 'Invalid tool arguments',
             issues: parseResult.error.issues.map((issue) => ({
@@ -65,17 +80,75 @@ export function createToolExecutor(tools: Tool[]): ToolExecutor {
             })),
           }),
         }
+        await traceToolCall(options.trace, call, ctx.roundIndex, startedAt, result, 'Invalid tool arguments')
+        return result
       }
       try {
-        return await tool.execute(parseResult.data as never, ctx)
+        const result = await tool.execute(parseResult.data as never, ctx)
+        await traceToolCall(options.trace, call, ctx.roundIndex, startedAt, result)
+        return result
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
-        return {
+        const result = {
           content: JSON.stringify({ error: `Tool execution failed: ${message}` }),
         }
+        await traceToolCall(options.trace, call, ctx.roundIndex, startedAt, result, `Tool execution failed: ${message}`)
+        return result
       }
     },
   }
+}
+
+async function traceToolCall(
+  trace: ToolTraceOptions | undefined,
+  call: AssistantToolCall,
+  roundIndex: number,
+  startedAt: number,
+  result: ToolExecutionResult,
+  forcedError?: string,
+): Promise<void> {
+  if (!trace) return
+
+  const finishedAt = trace.clockMs?.() ?? Date.now()
+  const classified = classifyToolResult(result, forcedError)
+  await logToolCall(
+    {
+      ts: (trace.now?.() ?? new Date()).toISOString(),
+      toolCallId: call.id,
+      toolName: call.name,
+      roundIndex,
+      argsSummary: summarizeToolArgs(call.args),
+      durationMs: Math.max(0, Math.round(finishedAt - startedAt)),
+      ok: classified.ok,
+      sideEffect: isSideEffectTool(call.name),
+      ...(classified.error ? { error: classified.error } : {}),
+    },
+    { path: trace.path, appender: trace.appender },
+  )
+}
+
+function classifyToolResult(
+  result: ToolExecutionResult,
+  forcedError?: string,
+): { ok: boolean; error?: string } {
+  if (forcedError) return { ok: false, error: forcedError }
+  if (typeof result.content !== 'string') return { ok: true }
+  try {
+    const parsed = JSON.parse(result.content) as unknown
+    if (parsed && typeof parsed === 'object') {
+      const obj = parsed as Record<string, unknown>
+      if (typeof obj.ok === 'boolean') {
+        return {
+          ok: obj.ok,
+          ...(obj.ok ? {} : { error: typeof obj.error === 'string' ? obj.error : 'Tool returned ok=false' }),
+        }
+      }
+      if (typeof obj.error === 'string') return { ok: false, error: obj.error }
+    }
+  } catch {
+    // Non-JSON string content is a normal successful tool result.
+  }
+  return { ok: true }
 }
 
 // re-export z for convenience

@@ -207,6 +207,9 @@ export function parseConfig(env: EnvSource) {
   const tokenUsageLogPath = env.BOT_TOKEN_USAGE_LOG_PATH && env.BOT_TOKEN_USAGE_LOG_PATH.trim().length > 0
     ? env.BOT_TOKEN_USAGE_LOG_PATH.trim()
     : 'logs/token-usage.ndjson'
+  const toolCallLogPath = env.BOT_TOOL_CALL_LOG_PATH && env.BOT_TOOL_CALL_LOG_PATH.trim().length > 0
+    ? env.BOT_TOOL_CALL_LOG_PATH.trim()
+    : 'logs/tool-calls.ndjson'
   const groupAmbientSendIds = new Set(parseIdList('BOT_GROUP_AMBIENT_SEND_IDS', env.BOT_GROUP_AMBIENT_SEND_IDS))
 
   const outboundCacheMaxEntries = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_MAX_ENTRIES, 32)
@@ -250,6 +253,8 @@ export function parseConfig(env: EnvSource) {
     fetchLogPath,
     /** Token usage NDJSON log path. Override via BOT_TOKEN_USAGE_LOG_PATH env. */
     tokenUsageLogPath,
+    /** Unified tool-call NDJSON sidecar log path. Override via BOT_TOOL_CALL_LOG_PATH env. */
+    toolCallLogPath,
     /**
      * 主动发言（group-ambient）白名单. 只有在此集合内的群才真发 ambient 消息,
      * 不在集合内的群走 dry-run (对 LLM 返回假成功, 群友感知不到).

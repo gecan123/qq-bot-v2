@@ -83,6 +83,9 @@ describe('wait tool — idle race', () => {
 
     assert.match((result.content as string), /\[空闲提示\]/)
     assert.match((result.content as string), /30 分钟/)
+    assert.match((result.content as string), /创作者/)
+    assert.match((result.content as string), /工具/)
+    assert.match((result.content as string), /事件/)
     // 关键: wait 是一次 toolCall, 主循环看 hadToolCalls=true 自动跑下一轮, 不用 wake 戳.
     assert.equal(queue.size(), 0, 'no wake enqueue — Guard 2 reads hadToolCalls now')
   })

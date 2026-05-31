@@ -79,7 +79,7 @@ idle-fetch MVP 跑起来后的近期 TODO，做完即勾。过期 / 已收敛的
 
 无 env，但跟运行时相关：
 
-- **好奇心 tick (SIGUSR1)** — 进程内不维护定时器，节奏甩到外面。`pnpm tick` = `kill -USR1 $(cat .bot.pid)` 戳一发，bot 收到信号 enqueue 一条 `{type:'curiosity_tick'}` 事件，渲染成常量 user message `[好奇心 tick] ...`，LLM 跟看到群消息一样的路径自己决定要不要 list_reddit。生产期定时由 cron / launchd / `while sleep 3600; do kill -USR1 $(cat .bot.pid); done` 之类外部调度负责。bot 启动时写 `.bot.pid`（gitignored），shutdown 时删除
+- **好奇心 tick (SIGUSR1)** — 进程内不维护定时器，节奏甩到外面。`pnpm tick` = `kill -USR1 $(cat .bot.pid)` 戳一发，bot 收到信号 enqueue 一条 `{type:'curiosity_tick'}` 事件，渲染成常量 user message `[好奇心 tick] ...`，LLM 跟看到群消息一样的路径自己决定要不要查外界、整理想法，或在觉得工具/事件不够时私聊创作者提需求。生产期定时由 cron / launchd / `while sleep 3600; do kill -USR1 $(cat .bot.pid); done` 之类外部调度负责。bot 启动时写 `.bot.pid`（gitignored），shutdown 时删除
 - `LLM_PROVIDER_*_URL` / `_API_KEY` — provider 注册表，默认 provider 由 `LLM_DEFAULT_PROVIDER` 选
 - `LLM_SCENARIO_*` — 媒体描述各场景的 provider/model 覆盖
 
@@ -216,7 +216,7 @@ LLM_PROVIDER_OPENAI_API_KEY=sk-local
 
 bot 通过工具自主决定：
 
-- **`wait`** — 没事可做时调用，阻塞到下个 BotEvent。内嵌 `BOT_IDLE_HINT_MS` Promise.race：长时间没事件时返回 `[空闲提示] 已闲置约 X 分钟` 的 tool result + enqueue 一个 wake，让下一轮立即跑（LLM 自己决定要 fetch 还是继续 wait）
+- **`wait`** — 没事可做时调用，阻塞到下个 BotEvent。内嵌 `BOT_IDLE_HINT_MS` Promise.race：长时间没事件时返回 `[空闲提示] 已闲置约 X 分钟` 的 tool result，让下一轮立即跑（LLM 自己决定要 fetch、整理想法、私聊创作者提工具/事件需求，还是继续 wait）
 - **`send_message`** — 真发到群 / 私聊。target 必填。group ambient 经 `BOT_GROUP_AMBIENT_SEND_IDS` 白名单校验，不在白名单走 dry-run（假成功）；reply / private 不受影响
   - target = `{type:'group', groupId, mentionUserId?}` 发群里
   - target = `{type:'private', userId}` 发私聊
@@ -247,6 +247,7 @@ system prompt（`src/agent/bot-system-prompt.ts`）明示 LLM：
 
 - 主动发也走工具，assistant content 只是内心想法
 - 优先 wait，质量比频率重要
+- 配了 owner 时，空闲、卡住、觉得工具/事件太少，可以用 `send_message` 私聊创作者提需求
 - 跨源知识共享 OK（同一意识），跨源 cue 人不行（target 显式）
 
 ---

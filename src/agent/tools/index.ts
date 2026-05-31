@@ -23,6 +23,7 @@ import { collectStickerTool } from './collect-sticker.js'
 import { createFetchAvatarTool } from './fetch-avatar.js'
 import { styleGuideTool } from './style-guide.js'
 import { createSourceProfileTool } from './source-profile.js'
+import { createWorkspaceBashTool } from './workspace-bash.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -61,6 +62,7 @@ export function buildBotTools(deps: BotToolDeps): Tool[] {
     recallTool,
     writeJournalTool,
     collectStickerTool,
+    createWorkspaceBashTool(),
   ]
 
   const webSearch = maybeCreateWebSearchTool()

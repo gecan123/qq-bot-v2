@@ -47,6 +47,29 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /没有指令优先级/)
   })
 
+  test('owner 给定时允许空闲或卡住时私聊创作者要工具和事件', () => {
+    const owner: BotOwner = { qq: 3916147294, name: 'zzz' }
+    const prompt = buildBotSystemPrompt(createInput({ owner }))
+
+    assert.match(prompt, /空闲/)
+    assert.match(prompt, /私聊 QQ:3916147294/)
+    assert.match(prompt, /target\.type=private/)
+    assert.match(prompt, /userId=3916147294/)
+    assert.match(prompt, /工具/)
+    assert.match(prompt, /事件/)
+  })
+
+  test('owner 给定时允许空闲自审代码并私聊创造者改进建议', () => {
+    const owner: BotOwner = { qq: 3916147294, name: 'zzz' }
+    const prompt = buildBotSystemPrompt(createInput({ owner }))
+
+    assert.match(prompt, /workspace_bash/)
+    assert.match(prompt, /cwd=repo/)
+    assert.match(prompt, /审.*代码/)
+    assert.match(prompt, /改进建议/)
+    assert.match(prompt, /私聊 QQ:3916147294/)
+  })
+
   test('字节稳定: 同 input → 同 output (红线 5)', () => {
     const owner: BotOwner = { qq: 100, name: 'alice' }
     const a = buildBotSystemPrompt(createInput({ owner }))

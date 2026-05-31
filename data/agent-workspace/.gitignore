@@ -1,0 +1,5 @@
+# Agent-owned workspace contents are runtime/generated state.
+# Keep the directory contract and README in git; ignore everything else by default.
+*
+!.gitignore
+!README.md

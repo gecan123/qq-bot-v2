@@ -12,6 +12,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
+    "db:query": "tsx scripts/agent-db-query.ts",
     "test": "tsx --test --import tsx 'src/**/*.test.ts'",
     "tick": "kill -USR1 $(cat .bot.pid)",
     "peek": "tsx scripts/peek.ts",

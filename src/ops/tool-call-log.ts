@@ -111,6 +111,7 @@ const SIDE_EFFECT_TOOLS = new Set([
   'remember',
   'write_journal',
   'collect_sticker',
+  'workspace_bash',
 ])
 
 /** 测试用 reset; 生产代码不应调用。 */

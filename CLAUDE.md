@@ -56,6 +56,8 @@ Default stance:
 - 跨源**发声隔离**靠 ingress 层过滤（白名单 env、`sub_type='friend'` 等）+ `send_message` tool 的 target 显式必填。工具层不做二次校验。任何新源出现 → 必须把"发到这个源"加入 tool 的 target 联合类型，并在 ingress 层为该源决定准入策略（白名单 env、sub_type 过滤、或其他机制）；工具层不再为新源加 if-allowed 分支。
 - system prompt 在启动后**不变**（启动时一次拼装）。修改 system prompt 内容 = 整段 cache 失效，这是有意为之，提醒只能集中改。
 - 工具描述同上，集中改，不小步频改。
+- **Establish-time disclosure.** 新能力建立 / 注册时，只向常驻 system prompt 披露稳定边界、索引和入口；长说明、风格正文、群口味、工具手册、可变数据、外部内容，都放到工具、文件工作区或其它按需读取路径里。Bash 可以作为 capability 的统一交互形态，但不是统一权限：对常驻 bot 暴露的 Bash 必须是 allowlist、固定工作区、最小 env、可审计的受控执行器，而不是裸 shell。
+- `data/agent-workspace/` 是 agent 自己生产和整理内容的仓库内工作区（journal / dream / scratch / index / draft 等）。该区域不是产品源代码、不是 Prisma 事实账本、也不是 AgentContext replay 的一部分；默认由局部 `.gitignore` 忽略运行时内容，只保留目录契约文件入库，除非人类明确决定把某个生成物提升为项目文档。
 - 大块原始数据（web 抓页 / 长文件）走子 TaskAgent 模式（现 MVP 暂未实现），**只回摘要给主 context**，不要让原始 token 进 messages 数组。
 - Late-binding 信息（媒体描述在消息已入库后才返回）走 `resolved_text` 一次冻结。如果某条消息的描述在它进入 BotEvent 之前还没好，会等待最多 `REPLY_MEDIA_TIMEOUT_MS`，然后用当前最佳值冻结，后续不再变。
 - **Replay × live 重叠去重**：启动期 replay 与 live 入站可能命中同一条消息，统一按 `messageRowId`（Message PK，跨 scene 全局唯一）去重，replay 与 live 共享同一份 set，同条消息只进队一次。

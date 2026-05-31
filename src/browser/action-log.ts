@@ -1,11 +1,11 @@
 import { appendFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
 import type { BrowserActionInput, BrowserActionJsonResult } from './protocol.js'
 import { redactBrowserValue } from './risk.js'
 
 const log = createLogger('BROWSER_ACTION_LOG')
+const DEFAULT_BROWSER_ACTION_LOG_PATH = 'logs/browser-actions.ndjson'
 
 export interface BrowserActionLogEntry {
   ts: string
@@ -43,7 +43,7 @@ export async function logBrowserAction(
   entry: BrowserActionLogEntry,
   options: BrowserActionLogOptions = {},
 ): Promise<void> {
-  const path = options.path ?? config.browser.actionLogPath
+  const path = options.path ?? DEFAULT_BROWSER_ACTION_LOG_PATH
   const appender = options.appender ?? defaultAppender
   try {
     await appender(path, JSON.stringify(entry) + '\n')

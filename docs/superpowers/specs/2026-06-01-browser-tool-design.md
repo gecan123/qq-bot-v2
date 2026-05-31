@@ -1,33 +1,33 @@
-# Browser Tool Design
+# 浏览器工具设计
 
-Date: 2026-06-01
+日期：2026-06-01
 
-## Goal
+## 目标
 
-Give Luna a real browser capability while preserving the single main Agent, perpetual context, prompt-cache stability, and progressive-disclosure principles of `qq-bot-v2`.
+给 Luna 接入真实浏览器能力，同时保持 `qq-bot-v2` 的单主 Agent、永续上下文、prompt cache 稳定性和渐进式披露原则。
 
-The browser should feel like Luna has a real pair of eyes and hands:
+浏览器能力应该像 Luna 拥有真实的眼睛和手：
 
-- Browse arbitrary websites through a real Chromium session.
-- Keep one persistent browser identity and session.
-- Read pages, click, type, scroll, screenshot, download resources, and leave local annotations.
-- Use routine anti-bot interstitials autonomously when possible.
-- Ask the owner for help only when credentials, 2FA, account security, payment, or repeated automation failure requires human intervention.
+- 通过真实 Chromium session 浏览任意网站。
+- 保持一个持久浏览器身份和登录 session。
+- 阅读页面、点击、输入、滚动、截图、下载资源、留下本地批注。
+- 尽可能自主处理常规反自动化中间页。
+- 只有凭据、2FA、账号安全、支付或反复自动化失败时才请求主人协助。
 
-This spec covers the first implementation slice: one main Agent, one `browser` tool, one local browser sidecar, one persistent profile, and real-browser integration tests.
+本 spec 覆盖第一版实现范围：一个主 Agent、一个 `browser` 工具、一个本地浏览器 sidecar、一个持久 profile、真实浏览器集成测试。
 
-## Non-Goals
+## 非目标
 
-- No browser sub-agent in the first version.
-- No site-specific Reddit-only or forum-only tool.
-- No natural-language browser task executor hidden behind the tool.
-- No remote noVNC or browser profile manager UI in the first version.
-- No automatic password, cookie, token, 2FA, or payment handling by the Agent.
-- No full DOM, full network log, or full console log injection into the main context.
+- 第一版不做 browser sub-agent。
+- 不做 Reddit 专用或论坛专用工具。
+- 不把自然语言浏览任务执行器藏在工具内部。
+- 第一版不做远程 noVNC 或浏览器 profile 管理 UI。
+- Agent 不自动处理密码、cookie、token、2FA 或支付信息。
+- 不把完整 DOM、完整 network log 或完整 console log 注入主上下文。
 
-## Architecture
+## 架构
 
-`qq-bot-v2` registers one `browser` tool. The tool does not launch or control CloakBrowser directly. It calls a local Browser Controller sidecar over loopback HTTP.
+`qq-bot-v2` 注册一个 `browser` 工具。这个工具不直接启动或控制 CloakBrowser，而是通过 loopback HTTP 调用本地 Browser Controller sidecar。
 
 ```text
 BotLoopAgent
@@ -42,23 +42,23 @@ BotLoopAgent
               -> multiple pages/tabs
 ```
 
-The Agent remains the only planner. The Browser Controller only executes single browser actions and returns observations.
+Agent 仍然是唯一规划者。Browser Controller 只执行单步浏览器动作并返回观察结果。
 
-### Components
+### 组件
 
-- `browser` tool: the only Agent-facing browser entrypoint. It validates action arguments, calls the controller, clamps text output, and returns stable tool results.
-- `BrowserControllerClient`: an internal loopback HTTP client with short timeouts and normalized errors.
-- Browser Controller sidecar: owns the CloakBrowser process, persistent profile, page registry, screenshots, downloads, annotations, and browser action audit log.
-- Browser artifacts: original screenshots, downloads, and annotations stored on disk under an explicit browser artifact directory.
-- `AgentContext`: stores tool results, including screenshot image blocks when the Agent asks for screenshots. It does not depend on controller state for replay.
+- `browser` tool：Agent 面向浏览器的唯一入口。负责校验 action 参数、调用 controller、截断文本输出、返回稳定 tool result。
+- `BrowserControllerClient`：bot 内部 loopback HTTP client。负责短超时和错误归一化。
+- Browser Controller sidecar：持有 CloakBrowser 进程、持久 profile、page registry、截图、下载、批注和浏览器动作审计日志。
+- Browser artifacts：原始截图、下载文件和批注存到明确的浏览器 artifact 目录。
+- `AgentContext`：保存 tool result，包括 Agent 主动截图时返回的 image block。它不依赖 controller 状态来 replay。
 
-The tool should only be registered when browser support is configured. If the controller is unavailable at runtime, the tool returns a structured error rather than crashing the bot.
+只有在浏览器能力被配置时才注册这个工具。运行时 controller 不可用时，工具返回结构化错误，不能拖崩主 bot。
 
-## Browser Tool API
+## 浏览器工具 API
 
-The Agent sees one tool named `browser`. It is a single-step action tool, not a task runner.
+Agent 只看到一个工具：`browser`。它是单步 action 工具，不是任务执行器。
 
-Representative schema:
+代表性 schema：
 
 ```ts
 browser({
@@ -82,113 +82,113 @@ browser({
 })
 ```
 
-The permanent tool description stays short. Detailed usage, action-specific parameters, examples, and limits are disclosed by `browser({ action: "help" })`.
+常驻 tool description 保持短。详细用法、action 专属参数、示例和限制通过 `browser({ action: "help" })` 按需披露。
 
 ### Actions
 
-- `help`: returns the detailed browser manual.
-- `status`: returns controller state, browser state, profile path, active page, and all known pages.
-- `open`: opens a URL in the active page or creates a new page when requested.
-- `switch_page`: changes the active page.
-- `close_page`: closes one page.
-- `observe`: returns the default page view: URL, title, load state, page summary, and a capped list of interactive elements with stable `elementId`s.
-- `click`: clicks an `elementId`. Coordinate clicking is allowed only as a fallback for pages where element lookup is insufficient.
-- `type`: types into a focused element or an explicit `elementId`. It supports append and clear-then-type modes.
-- `press`: sends a keyboard key or shortcut, such as `Enter`, `Escape`, or `Meta+L`.
-- `scroll`: scrolls the page or a scrollable element by direction and amount.
-- `screenshot`: captures the current viewport or full page. It returns a compressed image block in the tool result and saves the original image as an artifact.
-- `download`: triggers a download from the current page or an element and stores the file as an artifact, subject to risk checks.
-- `annotate`: writes a local annotation about a page, screenshot, download, or source URL.
-- `request_owner_help`: records that Luna needs human help for login, 2FA, session recovery, account security, payment, or repeated automation failure.
+- `help`：返回详细浏览器工具手册。
+- `status`：返回 controller 状态、浏览器状态、profile 路径、active page 和所有已知 pages。
+- `open`：在 active page 打开 URL，或按需创建新 page。
+- `switch_page`：切换 active page。
+- `close_page`：关闭一个 page。
+- `observe`：返回默认页面视野：URL、标题、加载状态、页面摘要和带稳定 `elementId` 的可交互元素列表。
+- `click`：点击 `elementId`。坐标点击只作为 element lookup 不足时的 fallback。
+- `type`：向当前聚焦元素或指定 `elementId` 输入文本。支持追加输入和清空后输入。
+- `press`：发送键盘按键或快捷键，例如 `Enter`、`Escape`、`Meta+L`。
+- `scroll`：按方向和距离滚动页面或可滚动元素。
+- `screenshot`：截取当前 viewport 或 full page。tool result 返回压缩 image block，并保存原图 artifact。
+- `download`：从当前页面或指定元素触发下载，并按风险检查保存为 artifact。
+- `annotate`：写一条关于页面、截图、下载或来源 URL 的本地批注。
+- `request_owner_help`：记录 Luna 需要人类协助登录、2FA、修复 session、处理账号安全、支付或反复自动化失败。
 
-### Page Model
+### Page 模型
 
-There is one persistent profile but many pages can be open at once.
+只有一个持久 profile，但可以同时打开多个 page。
 
-- Every page has a `pageId`.
-- `status` returns every page with URL, title, active state, load state, and `lastUsedAt`.
-- Actions default to the active page unless a `pageId` is provided.
-- `open` can reuse the active page or create a new page.
-- `switch_page` changes the active page without changing page content.
-- `close_page` closes a page but does not clear the profile or session.
+- 每个 page 都有 `pageId`。
+- `status` 返回所有 page 的 URL、标题、active 状态、加载状态和 `lastUsedAt`。
+- action 默认作用于 active page，除非显式传入 `pageId`。
+- `open` 可以复用 active page，也可以创建新 page。
+- `switch_page` 只改变 active page，不改变网页内容。
+- `close_page` 关闭 page，但不清除 profile 或 session。
 
-The main Agent still calls tools serially. Multi-page support means the browser can preserve several tabs, background loads, and downloads while the Agent advances them one step at a time.
+主 Agent 仍然串行调用工具。多 page 支持意味着浏览器可以保留多个标签页、后台加载和下载，而 Agent 一次推进一步。
 
-## Profile And Session
+## Profile 与 Session
 
-The first version uses one persistent browser profile for Luna. The profile stores cookies, localStorage, IndexedDB, cache, extensions, and browser history.
+第一版使用一个持久浏览器 profile，代表 Luna 的唯一浏览器身份。profile 保存 cookies、localStorage、IndexedDB、缓存、扩展和浏览历史。
 
-Default profile path:
+默认 profile 路径：
 
 ```text
 data/browser-profile/luna/
 ```
 
-The Browser Controller starts CloakBrowser with `launchPersistentContext` in headed mode. The owner can directly operate the visible browser window on the Mac when human help is needed.
+Browser Controller 用 `launchPersistentContext` 以 headed 模式启动 CloakBrowser。需要人类协助时，主人可以直接在 Mac 上操作这个可见浏览器窗口。
 
-The Agent does not receive raw cookies, localStorage, passwords, tokens, or profile files. It only uses session state through normal page interactions.
+Agent 不接收原始 cookies、localStorage、密码、token 或 profile 文件。它只能通过正常页面交互使用 session。
 
-### Owner Handoff
+### 主人接管
 
-Owner handoff is not for routine browsing friction. Luna should first try to handle normal browser work herself:
+主人接管不是为了常规浏览摩擦。Luna 应该先自己处理普通浏览器工作：
 
-- Cloudflare or Turnstile interstitials.
-- "I am human" single-click checks.
-- Cookie consent.
-- Age or region confirmation.
-- Ordinary popups, continue buttons, and content expansion.
+- Cloudflare 或 Turnstile 中间页。
+- “I am human” 单击检查。
+- Cookie consent。
+- 年龄或地区确认。
+- 普通弹窗、继续按钮和展开内容。
 
-Luna asks the owner only for:
+只有这些情况才请求主人：
 
-- Username/password login that is not already available in the session.
-- 2FA, SMS, email verification, passkeys, or device approval.
-- Account security changes.
-- OAuth authorization of a real account.
-- Payment or purchase flows.
-- Identity or private-document upload.
-- Repeated challenge failure or account-risk pages.
+- session 里没有可用登录态，需要输入用户名/密码。
+- 2FA、短信、邮箱验证码、passkey 或设备批准。
+- 账号安全变更。
+- 真实账号的 OAuth 授权。
+- 支付或购买流程。
+- 身份材料或私密文件上传。
+- 反复挑战失败或账号风控页面。
 
-The normal flow is:
+正常流程：
 
-1. Luna observes that human help is required.
-2. Luna calls `browser({ action: "request_owner_help", ... })`.
-3. The tool returns `requiresOwnerHelp: true`.
-4. Luna uses existing `send_message` to privately ask the owner for help.
-5. The owner completes the login or recovery in the visible browser window.
-6. Luna continues with `observe` on the same page/profile.
+1. Luna 观察到需要人类协助。
+2. Luna 调用 `browser({ action: "request_owner_help", ... })`。
+3. 工具返回 `requiresOwnerHelp: true`。
+4. Luna 用现有 `send_message` 私聊主人说明需要处理什么。
+5. 主人在可见浏览器窗口里完成登录或恢复。
+6. Luna 在同一个 page/profile 上继续 `observe`。
 
-## Risk Policy
+## 风险策略
 
-Risk checks live in the Browser Controller, not only in prompt wording.
+风险检查放在 Browser Controller 层，不能只依赖 prompt 自觉。
 
-### Low Risk: Allow
+### 低风险：允许
 
-- Open, read, search, scroll, expand, navigate.
-- Cookie consent and ordinary popups.
-- Routine anti-bot interstitials.
-- Screenshots.
-- Reading and copying public text.
+- 打开、阅读、搜索、滚动、展开、导航。
+- Cookie consent 和普通弹窗。
+- 常规反自动化中间页。
+- 截图。
+- 阅读和复制公开文本。
 
-### Normal Risk: Allow And Audit
+### 常规风险：允许并审计
 
-- Filling ordinary forms.
-- Posting, commenting, liking, following, starring, bookmarking, or uploading ordinary text/images.
-- Using sites that welcome AI agents or normal community participation.
+- 填写普通表单。
+- 发帖、评论、点赞、关注、star、收藏、上传普通文本或图片。
+- 在欢迎 AI agent 或普通社区场景下进行账号行为。
 
-These are part of the desired human-like browser capability. They are allowed by default and recorded in the browser action audit log.
+这些能力属于目标中的真人级浏览器能力。默认允许，但写入浏览器动作审计日志。
 
-### High Risk: Require Owner Help
+### 高风险：必须请求主人
 
-- Payment, purchase, subscription, refunds, or financial actions.
-- Password, email, 2FA, passkey, recovery, or account security settings.
-- OAuth authorization for third-party apps.
-- Exporting large amounts of private data.
-- Deleting accounts, repositories, posts, or important user content.
-- Downloading or running executables, installers, scripts, or suspicious archives.
-- Uploading identity documents or private material.
-- Repeated challenge failure or account-risk pages.
+- 支付、购买、订阅、退款或金融行为。
+- 密码、邮箱、2FA、passkey、恢复或账号安全设置。
+- 第三方 app 的 OAuth 授权。
+- 导出大量私密数据。
+- 删除账号、仓库、帖子或重要用户内容。
+- 下载或运行可执行文件、安装包、脚本或可疑压缩包。
+- 上传身份证明或私密材料。
+- 反复挑战失败或账号风控页面。
 
-On high risk, the controller returns a structured refusal:
+命中高风险时，controller 返回结构化拒绝：
 
 ```json
 {
@@ -199,193 +199,193 @@ On high risk, the controller returns a structured refusal:
 }
 ```
 
-### Detection Inputs
+### 检测输入
 
-The first version uses conservative heuristics from:
+第一版使用保守启发式，来源包括：
 
-- Element text and `aria-label`.
-- Form field names, labels, placeholders, and autocomplete values.
-- Current URL, domain, and path.
-- File extension, MIME type, and download filename.
-- Page title and nearby text around the target element.
+- 元素文本和 `aria-label`。
+- 表单字段名、label、placeholder 和 autocomplete 值。
+- 当前 URL、domain 和 path。
+- 文件扩展名、MIME type 和下载文件名。
+- 页面标题和目标元素周围文本。
 
-Sensitive values such as passwords, tokens, cookies, authorization headers, card numbers, and 2FA codes are never returned to the LLM and never written to logs.
+密码、token、cookie、Authorization、卡号、2FA code 等敏感值永远不返回给 LLM，也不写入日志。
 
-## Context And Artifacts
+## 上下文与 Artifacts
 
-The design follows the perpetual context contract: tool results appended to `AgentContext` are historical facts. The browser tool must not mutate, replace, delete, or summarize older browser tool results. History slimming is only allowed through the formal compaction path.
+设计遵循永续上下文契约：append 到 `AgentContext` 的 tool result 是历史事实。browser 工具不能修改、替换、删除或摘要化旧的浏览器 tool result。历史瘦身只能通过正式 compaction 路径。
 
 ### Observe
 
-`observe` is the default cheap visual substitute. It returns a short, deterministic textual observation:
+`observe` 是默认的低成本视野。它返回短且稳定的文本观察：
 
-- URL.
-- Title.
-- Page load state.
-- Capped page summary.
-- Capped interactive element list.
-- Stable element IDs valid until the next observation or page mutation.
+- URL。
+- 标题。
+- 页面加载状态。
+- 截断后的页面摘要。
+- 截断后的可交互元素列表。
+- 稳定 element ID；它们在下一次 observe 或页面突变前有效。
 
-It does not include a screenshot by default.
+`observe` 默认不带截图。
 
 ### Screenshot
 
-`screenshot` is the visual memory path.
+`screenshot` 是视觉记忆路径。
 
-- It returns metadata plus a compressed image block in the tool result.
-- The image block is appended to `AgentContext`, so Luna can keep seeing the screenshot in future rounds as part of the stable history.
-- The original full-resolution image is also saved as an artifact.
-- The artifact is for audit, review, sending, or later re-reading. It is not a substitute for the LLM history.
+- 它在 tool result 里返回 metadata 和压缩 image block。
+- image block append 到 `AgentContext`，所以 Luna 在后续轮次里仍能把这张截图作为稳定历史的一部分继续看见。
+- 原始全分辨率图片也保存为 artifact。
+- artifact 用于审计、复查、发送或之后重新读取，但不是 LLM history 的替代品。
 
-This intentionally preserves the meaning of screenshots. Converting every screenshot to text would lose layout, relative position, visual obstruction, icons, colors, and image content.
+这能保留截图的意义。把每张截图都转成文字会丢失布局、相对位置、视觉遮挡、图标、颜色和图片内容。
 
 ### Downloads
 
-Downloads are for resources behind or linked from web pages, not for ordinary page reading.
+下载是为了获取网页背后或网页链接的资源，不是为了普通阅读网页。
 
-Examples:
+例子：
 
-- Original images rather than rendered thumbnails.
-- PDFs, reports, papers, and manuals.
-- Text, CSV, JSON, Markdown, logs, and other attachments.
-- Web snapshots for evidence when a page may change.
-- Dev debugging outputs such as exported files, HAR, traces, or generated reports.
-- Materials that Luna may later send through `send_message`.
+- 原图，而不是页面里渲染出的缩略图。
+- PDF、报告、论文和手册。
+- 文本、CSV、JSON、Markdown、日志等附件。
+- 页面可能变化时用于留证的网页快照。
+- 开发调试产物，例如导出文件、HAR、trace 或生成报告。
+- Luna 之后可能通过 `send_message` 发送的材料。
 
-Downloads are saved under the browser artifact directory and return artifact references, metadata, size, content type, and source URL. High-risk file types require owner help.
+下载文件保存到浏览器 artifact 目录，并返回 artifact 引用、metadata、大小、content type 和来源 URL。高风险文件类型必须请求主人。
 
 ### Annotations
 
-`annotate` writes local notes about pages or artifacts. It does not post to the website.
+`annotate` 写本地批注，不会发布到网站。
 
-Representative path:
+代表性路径：
 
 ```text
 data/agent-workspace/browser/annotations/<domain>/<artifactId>.md
 ```
 
-Annotations are page-specific marginalia. They do not replace `write_journal`, which remains Luna's general diary/thought tool.
+批注是页面或 artifact 的边注，不替代 `write_journal`。`write_journal` 仍然是 Luna 的通用日记/思考工具。
 
-## Logging
+## 日志
 
-Each browser action writes an NDJSON audit entry, separate from Prisma and separate from `AgentContext`.
+每个 browser action 写一条 NDJSON 审计日志。它独立于 Prisma，也独立于 `AgentContext`。
 
-Representative path:
+代表性路径：
 
 ```text
 logs/browser-actions.ndjson
 ```
 
-Fields include:
+字段包括：
 
-- Timestamp.
-- Action.
-- Page ID.
-- URL and title.
-- Target element summary or coordinates.
-- Risk level and risk reason.
-- Result status.
-- Artifact IDs.
-- Error code, when any.
+- 时间戳。
+- Action。
+- Page ID。
+- URL 和标题。
+- 目标元素摘要或坐标。
+- 风险级别和风险原因。
+- 结果状态。
+- Artifact IDs。
+- 错误码。
 
-The existing tool-call log still records the top-level `browser` tool call. The browser action log records browser-specific details.
+现有 tool-call log 继续记录顶层 `browser` 工具调用。browser action log 记录浏览器专属细节。
 
-Logs must redact sensitive fields, identifiers, cookies, tokens, passwords, 2FA codes, payment fields, and long typed text when appropriate.
+日志必须脱敏敏感字段、标识符、cookie、token、密码、2FA code、支付字段和必要时的长输入文本。
 
-## Errors And Recovery
+## 错误与恢复
 
-The browser tool returns structured errors and never crashes the bot.
+browser 工具返回结构化错误，不能拖崩 bot。
 
-- `browser_controller_unavailable`: sidecar is not running or not reachable.
-- `browser_start_failed`: controller could not start CloakBrowser.
-- `browser_crashed`: browser process died; controller should attempt recovery on the next action.
-- `page_not_found`: the page was closed or the page ID is stale.
-- `element_stale`: the element ID is no longer valid; Luna should call `observe`.
-- `navigation_timeout`: navigation is still loading or timed out; result includes current URL and load state.
-- `download_blocked`: download risk policy blocked the file.
-- `requires_owner_help`: high-risk or human-required state.
+- `browser_controller_unavailable`：sidecar 未运行或不可达。
+- `browser_start_failed`：controller 无法启动 CloakBrowser。
+- `browser_crashed`：浏览器进程退出；controller 应在下一次 action 尝试恢复。
+- `page_not_found`：page 已关闭或 page ID 过期。
+- `element_stale`：element ID 已失效；Luna 应重新 `observe`。
+- `navigation_timeout`：导航仍在加载或超时；结果包含当前 URL 和加载状态。
+- `download_blocked`：下载风险策略拦截了文件。
+- `requires_owner_help`：高风险或需要人类介入。
 
-Recovery entrypoints:
+恢复入口：
 
-- `status` to inspect controller/browser/page state.
-- `observe` to rebuild element IDs.
-- `open` to create a new page.
-- owner handoff when session or account state requires human input.
+- `status`：检查 controller、浏览器和 page 状态。
+- `observe`：重建 element IDs。
+- `open`：创建新 page。
+- owner handoff：session 或账号状态需要人类输入时使用。
 
-Artifacts and audit logs survive controller restarts. AgentContext replay does not re-run browser actions; it replays the original tool result bytes.
+Artifacts 和审计日志在 controller 重启后仍保留。AgentContext replay 不重跑浏览器动作，只 replay 当时原始 tool result 字节。
 
-## Configuration
+## 配置
 
-Expected environment variables:
+环境变量：
 
-- `BOT_BROWSER_ENABLED`: registers the `browser` tool when true.
-- `BOT_BROWSER_CONTROLLER_URL`: loopback URL, for example `http://127.0.0.1:37921`.
-- `BOT_BROWSER_PROFILE_DIR`: persistent profile path, default `data/browser-profile/luna`.
-- `BOT_BROWSER_ARTIFACT_DIR`: screenshots/downloads/annotations path, default `data/agent-workspace/browser`.
-- `BOT_BROWSER_ACTION_LOG_PATH`: browser action audit log, default `logs/browser-actions.ndjson`.
-- `BOT_BROWSER_ACTION_TIMEOUT_MS`: per-action timeout.
+- `BOT_BROWSER_ENABLED`：为 true 时注册 `browser` 工具。
+- `BOT_BROWSER_CONTROLLER_URL`：loopback URL，例如 `http://127.0.0.1:37921`。
+- `BOT_BROWSER_PROFILE_DIR`：持久 profile 路径，默认 `data/browser-profile/luna`。
+- `BOT_BROWSER_ARTIFACT_DIR`：截图、下载和批注路径，默认 `data/agent-workspace/browser`。
+- `BOT_BROWSER_ACTION_LOG_PATH`：browser action 审计日志，默认 `logs/browser-actions.ndjson`。
+- `BOT_BROWSER_ACTION_TIMEOUT_MS`：单 action 超时。
 
-These names are part of the design. Implementation should wire them through `src/config/index.ts` and document them in `.env.example`.
+这些名字是设计的一部分。实现时应接入 `src/config/index.ts`，并写入 `.env.example`。
 
-## Testing And Verification
+## 测试与验证
 
-The core verification uses a real Browser Controller and a real CloakBrowser instance against local fixture pages. Mock-based tests are not the main acceptance path because this feature's risk is in real browser behavior.
+核心验证使用真实 Browser Controller 和真实 CloakBrowser，对本地 fixture 页面执行。Mock 测试不是主要验收路径，因为这个能力的风险在真实浏览器行为里。
 
-### Real Browser Integration Tests
+### 真实浏览器集成测试
 
-Start the controller and a real persistent CloakBrowser profile, then use local HTML fixtures to verify:
+启动 controller 和真实持久 CloakBrowser profile，然后用本地 HTML fixtures 验证：
 
-- `open -> observe -> click -> type -> press -> scroll -> screenshot -> download`.
-- Each step has a short timeout, for example 5-15 seconds. A hang is a failure.
-- `screenshot` returns an image block and saves the original artifact.
-- `download` saves safe files and blocks high-risk files.
-- `observe` output is capped.
-- Element IDs work after observation and become recoverable with a new observation if stale.
+- `open -> observe -> click -> type -> press -> scroll -> screenshot -> download`。
+- 每一步都有短超时，例如 5-15 秒。卡住即失败。
+- `screenshot` 返回 image block，并保存原始 artifact。
+- `download` 保存安全文件并拦截高风险文件。
+- `observe` 输出被截断。
+- observation 后 element IDs 可用；失效时可以通过新的 observation 恢复。
 
-### Multi-Page Tests
+### 多 Page 测试
 
-- Open two fixture pages.
-- `status` lists both pages.
-- `switch_page` changes the active page.
-- Actions with explicit `pageId` apply to the correct page.
-- `close_page` updates the page registry.
+- 打开两个 fixture pages。
+- `status` 能列出两个 pages。
+- `switch_page` 改变 active page。
+- 显式 `pageId` 的 action 作用到正确 page。
+- `close_page` 更新 page registry。
 
-### Risk Tests
+### 风险测试
 
-Fixture pages include representative controls:
+Fixture pages 包含代表性控件：
 
-- "Post comment" should be allowed and audited.
-- "Pay now" should require owner help.
-- "Connect OAuth" should require owner help.
-- "Change password" should require owner help.
-- "Download .dmg" or similar high-risk downloads should be blocked.
-- Ordinary cookie consent and "I am human" buttons should be allowed.
+- "Post comment" 应允许并审计。
+- "Pay now" 应请求主人。
+- "Connect OAuth" 应请求主人。
+- "Change password" 应请求主人。
+- "Download .dmg" 或类似高风险下载应被拦截。
+- 普通 cookie consent 和 "I am human" 按钮应允许。
 
-### Context Tests
+### 上下文测试
 
-Use real `browser` tool results where possible:
+尽可能使用真实 `browser` tool result：
 
-- Append a screenshot result to `AgentContext`.
-- Export the snapshot.
-- Confirm the snapshot is byte-stable for the same appended result.
-- Confirm the browser tool does not mutate prior messages.
+- 把 screenshot result append 到 `AgentContext`。
+- export snapshot。
+- 确认同一个 append 后的 snapshot 字节稳定。
+- 确认 browser 工具不会修改旧 messages。
 
-### Manual External-Site Verification
+### 外部网站手工验证
 
-External sites are not stable CI dependencies. They are manual acceptance checks:
+外部网站不作为稳定 CI 依赖，只做手工验收：
 
-- Open a real site.
-- Let Luna handle routine anti-bot interstitials.
-- Use owner handoff for login/session repair.
-- Verify session persistence after controller restart.
-- Verify a normal post/comment on an AI-welcoming test site.
-- Check `logs/browser-actions.ndjson` and `logs/tool-calls.ndjson`.
+- 打开真实网站。
+- 让 Luna 处理常规反自动化中间页。
+- 对登录/session 修复使用 owner handoff。
+- controller 重启后验证 session 保留。
+- 在欢迎 AI 的测试站验证普通发帖/评论。
+- 检查 `logs/browser-actions.ndjson` 和 `logs/tool-calls.ndjson`。
 
-## Implementation Decisions
+## 实现决策
 
-- The sidecar entrypoint is `scripts/browser-controller.ts`.
-- Shared controller/client/types modules live under `src/browser/**`.
-- Local protocol types live in `src/browser/protocol.ts` and are shared by the tool and sidecar.
-- The profile directory `data/browser-profile/` must be gitignored.
-- Verify CloakBrowser JavaScript package API and persistent context support in the target environment before coding the launcher.
-- Keep tool descriptions short and use `action:"help"` for detailed progressive disclosure.
+- Sidecar 入口是 `scripts/browser-controller.ts`。
+- 共享 controller/client/types 模块放在 `src/browser/**`。
+- 本地协议类型放在 `src/browser/protocol.ts`，由 tool 和 sidecar 共享。
+- Profile 目录 `data/browser-profile/` 必须加入 gitignore。
+- 写 launcher 前先验证目标环境里的 CloakBrowser JavaScript package API 和 persistent context 支持。
+- Tool description 保持短，详细说明通过 `action:"help"` 渐进式披露。

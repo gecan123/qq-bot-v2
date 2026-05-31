@@ -66,10 +66,11 @@ export class BrowserController {
       result = await this.executeParsed(input)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
+      const code = normalizeBrowserErrorCode(message)
       result = {
         ok: false,
         action: input.action,
-        code: 'browser_action_failed',
+        code,
         error: message,
       }
     }
@@ -136,13 +137,13 @@ export class BrowserController {
     }
   }
 
-  private status(): BrowserActionJsonResult {
+  private async status(): Promise<BrowserActionJsonResult> {
     return {
       ok: true,
       action: 'status',
       message: this.context ? (this.crashed ? 'browser crashed' : 'browser ready') : 'browser not started',
       activePageId: this.activePageId ?? undefined,
-      pages: this.summarizePages(),
+      pages: await this.summarizePages(),
     }
   }
 
@@ -166,7 +167,7 @@ export class BrowserController {
       url: record.page.url(),
       title: await safeTitle(record.page),
       activePageId: this.activePageId ?? undefined,
-      pages: this.summarizePages(),
+      pages: await this.summarizePages(),
     }
   }
 
@@ -182,7 +183,7 @@ export class BrowserController {
       url: record.page.url(),
       title: await safeTitle(record.page),
       activePageId: record.pageId,
-      pages: this.summarizePages(),
+      pages: await this.summarizePages(),
     }
   }
 
@@ -194,7 +195,7 @@ export class BrowserController {
       this.activePageId = this.pages.keys().next().value ?? null
       this.markActiveFlags()
     }
-    return { ok: true, action: 'close_page', activePageId: this.activePageId ?? undefined, pages: this.summarizePages() }
+    return { ok: true, action: 'close_page', activePageId: this.activePageId ?? undefined, pages: await this.summarizePages() }
   }
 
   private async observe(input: BrowserActionInput): Promise<BrowserActionJsonResult> {
@@ -210,7 +211,7 @@ export class BrowserController {
       pageId: record.pageId,
       url: page.url(),
       title,
-      pages: this.summarizePages(),
+      pages: await this.summarizePages(),
       elements,
     }
   }
@@ -470,16 +471,21 @@ export class BrowserController {
     for (const record of this.pages.values()) record.active = record.pageId === this.activePageId
   }
 
-  private summarizePages(): BrowserPageSummary[] {
-    return [...this.pages.values()].map((record) => ({
-      pageId: record.pageId,
-      url: record.page.isClosed() ? '' : record.page.url(),
-      title: '',
-      active: record.active,
-      loadState: record.loadState,
-      closed: record.page.isClosed(),
-      lastUsedAt: record.lastUsedAt.toISOString(),
-    }))
+  private async summarizePages(): Promise<BrowserPageSummary[]> {
+    const summaries: BrowserPageSummary[] = []
+    for (const record of this.pages.values()) {
+      const closed = record.page.isClosed()
+      summaries.push({
+        pageId: record.pageId,
+        url: closed ? '' : record.page.url(),
+        title: closed ? '' : await safeTitle(record.page),
+        active: record.active,
+        loadState: record.loadState,
+        closed,
+        lastUsedAt: record.lastUsedAt.toISOString(),
+      })
+    }
+    return summaries
   }
 }
 
@@ -574,4 +580,17 @@ function contentTypeFromExtension(fileName: string): string {
     default:
       return 'application/octet-stream'
   }
+}
+
+function normalizeBrowserErrorCode(message: string): string {
+  if (message.startsWith('page_not_found')) return 'page_not_found'
+  if (/Target page, context or browser has been closed/i.test(message)) return 'browser_crashed'
+  if (/Timeout|timed out/i.test(message)) return 'navigation_timeout'
+  if (/strict mode violation|not attached|detached|Element is not attached|waiting for locator/i.test(message)) {
+    return 'element_stale'
+  }
+  if (/Executable doesn't exist|Failed to launch|browserType.launchPersistentContext/i.test(message)) {
+    return 'browser_start_failed'
+  }
+  return 'browser_action_failed'
 }

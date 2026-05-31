@@ -219,6 +219,20 @@ export function parseConfig(env: EnvSource) {
   const groupPromptsPath = env.BOT_GROUP_PROMPTS_PATH && env.BOT_GROUP_PROMPTS_PATH.trim().length > 0
     ? env.BOT_GROUP_PROMPTS_PATH.trim()
     : './prompts/groups.yaml'
+  const browserEnabled = parseBoolean(env.BOT_BROWSER_ENABLED, false)
+  const browserControllerUrl = env.BOT_BROWSER_CONTROLLER_URL && env.BOT_BROWSER_CONTROLLER_URL.trim().length > 0
+    ? env.BOT_BROWSER_CONTROLLER_URL.trim()
+    : 'http://127.0.0.1:37921'
+  const browserProfileDir = env.BOT_BROWSER_PROFILE_DIR && env.BOT_BROWSER_PROFILE_DIR.trim().length > 0
+    ? env.BOT_BROWSER_PROFILE_DIR.trim()
+    : 'data/browser-profile/luna'
+  const browserArtifactDir = env.BOT_BROWSER_ARTIFACT_DIR && env.BOT_BROWSER_ARTIFACT_DIR.trim().length > 0
+    ? env.BOT_BROWSER_ARTIFACT_DIR.trim()
+    : 'data/agent-workspace/browser'
+  const browserActionLogPath = env.BOT_BROWSER_ACTION_LOG_PATH && env.BOT_BROWSER_ACTION_LOG_PATH.trim().length > 0
+    ? env.BOT_BROWSER_ACTION_LOG_PATH.trim()
+    : 'logs/browser-actions.ndjson'
+  const browserActionTimeoutMs = parsePositiveInteger(env.BOT_BROWSER_ACTION_TIMEOUT_MS, 15_000)
 
   return {
     databaseUrl: requireEnv(env, 'DATABASE_URL'),
@@ -279,6 +293,14 @@ export function parseConfig(env: EnvSource) {
       maxEntries: outboundCacheMaxEntries,
       maxBytes: outboundCacheMaxBytes,
       ttlMs: outboundCacheTtlMs,
+    },
+    browser: {
+      enabled: browserEnabled,
+      controllerUrl: browserControllerUrl,
+      profileDir: browserProfileDir,
+      artifactDir: browserArtifactDir,
+      actionLogPath: browserActionLogPath,
+      actionTimeoutMs: browserActionTimeoutMs,
     },
     openbb: parseBoolean(env.OPENBB_CLI_ENABLED, false)
       ? {

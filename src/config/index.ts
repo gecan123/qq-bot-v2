@@ -263,8 +263,8 @@ export function parseConfig(env: EnvSource) {
      */
     groupAmbientSendIds,
     /**
-     * Per-group prompt customization yaml 路径. 启动时一次 load, 拼进 system prompt
-     * `[群定制]` 段. 改这个文件需要重启 bot (红线 5: prompt cache 整段失效一次).
+     * Per-group prompt customization yaml 路径. 启动时一次 load, 通过
+     * source_profile 工具按需披露, 不拼进 system prompt.
      * 默认 `./prompts/groups.yaml`. 文件不存在 → loader 返空数组 = 所有群走默认人设
      * (groups.yaml 含真实群号, 不入 git; 模板见 prompts/groups.yaml.example).
      */
@@ -280,8 +280,11 @@ export function parseConfig(env: EnvSource) {
       maxBytes: outboundCacheMaxBytes,
       ttlMs: outboundCacheTtlMs,
     },
-    openbb: env.OPENBB_API_URL
-      ? { apiUrl: env.OPENBB_API_URL.trim() }
+    openbb: parseBoolean(env.OPENBB_CLI_ENABLED, false)
+      ? {
+          cliBin: env.OPENBB_CLI_BIN?.trim() || 'openbb',
+          cliTimeoutMs: parsePositiveInteger(env.OPENBB_CLI_TIMEOUT_MS, 15_000),
+        }
       : undefined,
     tavily: env.TAVILY_API_KEY
       ? { apiKey: env.TAVILY_API_KEY }

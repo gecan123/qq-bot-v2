@@ -229,17 +229,8 @@ async function main() {
   log.info({ enqueued: replayResult.enqueued }, 'replay-missed 完成')
 
   // 10. 工具集 + bot system prompt (启动后定型, 进程内不变)
-  const taskRegistry = createInMemoryTaskRegistry()
-  const tools = createToolExecutor(
-    buildBotTools({
-      sender: messageSender,
-      groupAmbientSendIds: config.groupAmbientSendIds,
-      taskRegistry,
-    }),
-    { trace: { path: config.toolCallLogPath } },
-  )
-  // Per-group prompt customization (启动期一次 load + freeze, 红线 5).
-  // 文件不存在 / yaml schema 错 → fail-fast (loader throws), 这里不兜底.
+  // Per-group customization 启动期一次 load + freeze, 但不拼进 system prompt;
+  // 通过 source_profile 按需披露, 避免群口味正文污染常驻 cache 前缀.
   const groupCustomizations = loadGroupCustomizations(config.botGroupPromptsPath)
   log.info(
     {
@@ -249,13 +240,24 @@ async function main() {
     },
     'group customizations loaded',
   )
+  const taskRegistry = createInMemoryTaskRegistry()
+  const tools = createToolExecutor(
+    buildBotTools({
+      sender: messageSender,
+      groupAmbientSendIds: config.groupAmbientSendIds,
+      taskRegistry,
+      groupIds: config.botTargetGroupIds,
+      metadata: targetMetadata,
+      groupCustomizations,
+    }),
+    { trace: { path: config.toolCallLogPath } },
+  )
 
   const systemPrompt = buildBotSystemPrompt({
     groupIds: config.botTargetGroupIds,
     metadata: targetMetadata,
     selfNumber: config.selfNumber,
     owner: config.owner,
-    groupCustomizations,
   })
 
   // 10.5 把 system prompt 写到文件, 方便调试查看

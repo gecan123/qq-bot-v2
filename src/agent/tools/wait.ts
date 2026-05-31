@@ -41,9 +41,9 @@ export function createWaitTool(deps: WaitToolDeps = {}): Tool<WaitArgs> {
   return {
     name: 'wait',
     description: [
-      '让你休眠到下个外部事件 (新群 / 私聊消息) 到达 —— [在场状态] 里的「休息」走这个工具.',
+      '让你休眠到下个外部事件 (新群 / 私聊消息) 到达.',
       `长时间无事件会自动返回一条 [空闲提示] tool result (默认 ${Math.round(idleHintMs / 60000)} 分钟); 它跟 [好奇心 tick] 一样, 是让你自由活动的时机, 不是要回复的对象.`,
-      '什么时候 wait / 什么时候不 wait, 见 system prompt [在场状态] 段.',
+      '一般在已经处理完当前消息、没有想说的话、或刚看完外界暂时不想发言时使用.',
     ].join(' '),
     schema: z.object({
       reason: z.string().optional().describe('此刻的心情或状态速写 (仅日志, 不会发出去; 每次写点不一样的)'),

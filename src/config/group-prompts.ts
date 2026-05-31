@@ -6,10 +6,9 @@ import { z } from 'zod'
 /**
  * Per-group prompt customization (red line 5: 启动时一次 load + freeze).
  *
- * 这个 loader 只在启动期跑一次. 解析出来的 `GroupCustomization[]` 传进
- * `buildBotSystemPrompt`, 拼进同一段 system prompt 的 `[群定制]` 子段. 整段
- * prompt byte-stable; 改 yaml = bot 重启 = prompt cache 整段失效一次. 这是设计
- * 预期, 不是 bug, 保证: 同一份 yaml + 同一组运行时元数据 → 同一段 system prompt.
+ * 这个 loader 只在启动期跑一次. 解析出来的 `GroupCustomization[]` 传给
+ * `source_profile` 工具按需读取, 不再拼进 system prompt. 这样同一组运行源下,
+ * 改群口味正文不会污染常驻 system prompt cache 前缀.
  *
  * fallback 语义: BOT_TARGET_GROUP_IDS 里但 yaml 里没条目的群 → 不渲染该群的
  * 特殊段, 走基础人设 (= 等价于 frequency_hint=normal + 空 body). Loader 不感

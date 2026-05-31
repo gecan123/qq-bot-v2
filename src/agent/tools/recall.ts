@@ -51,7 +51,7 @@ export const recallTool: Tool<Args> = {
     '从你的私人笔记本里翻出关于「某个人」或「某个群」的事.',
     'target 必填. keyword 可选 (精确子串, 不传按时间倒序). limit 1-20 (默认 10).',
     '返回值不含 sourceMessageIds — 那是给人工排查用的, 你不需要.',
-    '什么时候翻 / 怎么用记忆说话, 见 system prompt [记忆] 段.',
+    '聊到具体人/群、旧话题、偏好或关系细节时, 不确定就先 recall; 用结果说话要自然, 不要像报数据库.',
   ].join(' '),
   schema: argsSchema,
   async execute(args) {

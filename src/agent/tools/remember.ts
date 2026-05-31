@@ -37,7 +37,7 @@ export const rememberTool: Tool<Args> = {
     '把关于「某个人」或「某个群」的事写进你的私人笔记本.',
     'target 必填: {kind:"person"|"group", id: QQ号或群号}.',
     'content ≤500 字, 用自己的话写要点 (计划 / 偏好 / 近况 / 烦恼 / 有意思的事).',
-    '什么时候写 / 怎么写, 见 system prompt [记忆] 段.',
+    '只记以后可能用得上的真实信息; 不要照搬原话, 一条记一件事.',
   ].join(' '),
   schema: argsSchema,
   async execute(args) {

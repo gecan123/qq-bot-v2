@@ -5,19 +5,19 @@
 # 这份 example 是 schema 文档 + 占位示例, 进 git.
 #
 # loader 行为:
-# - `./prompts/groups.yaml` 存在 → 启动期一次 load, 拼进 system prompt [群定制] 段
+# - `./prompts/groups.yaml` 存在 → 启动期一次 load, 通过 source_profile 工具按需返回
 # - 不存在 → 返空数组 (= 所有群走默认人设, 不阻断启动)
-# - 改这个文件需要重启 bot (红线 5: system prompt 字节变 → cache 整段失效一次)
+# - 改这个文件需要重启 bot (工具侧数据启动期冻结; system prompt 字节不变)
 # - 集中改, 不要小步频改
 #
 # fallback 语义:
-# - BOT_TARGET_GROUP_IDS 里但 yaml 里没条目的群 → 不渲染该群的特殊段,
+# - BOT_TARGET_GROUP_IDS 里但 yaml 里没条目的群 → source_profile 返回 normal + 空 body,
 #   走基础人设 (= 等价于 frequency_hint=normal + 空 body)
-# - yaml 里写一个不在白名单里的 id → 不报错也不渲染 (静默忽略)
+# - yaml 里写一个不在白名单里的 id → 不报错, 但 source_profile 不会为它提供可用结果
 #
 # ─── schema ─────────────────────────────────────────────────────────────────
 # groups: 数组, 每项三字段 (全 required):
-#   id              integer  群号 (必须在 BOT_TARGET_GROUP_IDS 里才会真渲染)
+#   id              integer  群号 (必须在 BOT_TARGET_GROUP_IDS 里才可通过 source_profile 使用)
 #   frequency_hint  enum     发言节奏倾向, 4 档:
 #                              lurker - 几乎只在被 @ 时回; 主动开话题 + 空闲 fetch 都很谨慎
 #                              quiet  - 偏被动; 真有内容才发, 主动话题少

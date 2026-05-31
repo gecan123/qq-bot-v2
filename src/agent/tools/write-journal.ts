@@ -23,7 +23,7 @@ export const writeJournalTool: Tool<Args> = {
     'diary = 有意识的回顾 (今天发生了什么、你的想法);',
     'dream = 自由联想 (可以混合记忆、不需要忠于事实、可以抽象和超现实).',
     'content ≤2000 字.',
-    '什么时候写 / 怎么分享, 见 system prompt [日记 & 做梦] 段.',
+    '空闲且没什么外界内容时可用; 这是私人内容, 不要主动往群里贴, 除非聊天自然勾上.',
   ].join(' '),
   schema: argsSchema,
   async execute(args) {

@@ -190,16 +190,26 @@ describe('config', () => {
     assert.equal(blank.toolCallLogPath, 'logs/tool-calls.ndjson')
   })
 
-  test('openbb: 不配 OPENBB_API_URL → undefined', () => {
+  test('openbb: 不启用 OPENBB_CLI_ENABLED → undefined', () => {
     const config = parseConfig(createBaseEnv())
     assert.equal(config.openbb, undefined)
   })
 
-  test('openbb: 配了 OPENBB_API_URL → { apiUrl } (trimmed)', () => {
+  test('openbb: 启用 OPENBB_CLI_ENABLED → { cliBin, cliTimeoutMs }', () => {
     const config = parseConfig(createBaseEnv({
-      OPENBB_API_URL: '  http://localhost:6900  ',
+      OPENBB_CLI_ENABLED: 'true',
+      OPENBB_CLI_BIN: '  python3 -m openbb  ',
+      OPENBB_CLI_TIMEOUT_MS: '30000',
     }))
-    assert.deepEqual(config.openbb, { apiUrl: 'http://localhost:6900' })
+    assert.deepEqual(config.openbb, { cliBin: 'python3 -m openbb', cliTimeoutMs: 30_000 })
+  })
+
+  test('openbb: OPENBB_CLI_TIMEOUT_MS 非法时回退默认 15000', () => {
+    const config = parseConfig(createBaseEnv({
+      OPENBB_CLI_ENABLED: '1',
+      OPENBB_CLI_TIMEOUT_MS: 'nope',
+    }))
+    assert.deepEqual(config.openbb, { cliBin: 'openbb', cliTimeoutMs: 15_000 })
   })
 
   test('compactionTriggerTokens defaults to 16_000 and accepts override', () => {

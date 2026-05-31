@@ -14,6 +14,8 @@ CLAUDE.md 只承载长期合约（perpetual context invariants、提交规范、
 
 **叠加: Tool Trace 运维日志** — `ToolExecutor` 统一入口为每次 tool 调用 append `logs/tool-calls.ndjson`（可用 `BOT_TOOL_CALL_LOG_PATH` 覆盖）。记录 `toolCallId` / `toolName` / `roundIndex` / redacted `argsSummary` / `durationMs` / `ok` / `error` / `sideEffect`。这是旁路运维数据，不进 Prisma，不进 `AgentContext`，不参与 replay 或 prompt cache。
 
+**叠加: Browser Tool MVP (可选启用)** — `BOT_BROWSER_ENABLED=true` 时注册单一 `browser` 工具。bot 主进程通过 loopback HTTP 调 `scripts/browser-controller.ts` sidecar, sidecar 用 CloakBrowser `launchPersistentContext` 启动 headed persistent profile。一个 profile 可多 page/tab；`observe` 返回可访问元素，`screenshot` 返回压缩 image block 并进入 `AgentContext`，原图/下载/批注写入 browser artifact 目录。浏览器动作审计写 `logs/browser-actions.ndjson`，不进 Prisma。设计文档 `docs/superpowers/specs/2026-06-01-browser-tool-design.md`。
+
 **叠加: Claude Code identity 透传 cliproxy (可选启用)** — `LLM_DEFAULT_PROVIDER=claude-code` 时, agent 路径 (BotLoopAgent + compaction + fetch_url 摘要) 走 cliproxy + 完整 Claude Code identity payload (`claude-cli/2.1.76 (external, sdk-cli)` UA + `Anthropic-Beta: claude-code-20250219,...` + 3-block system: billing header / SDK self-id / 业务 persona)。cliproxy `cloak.mode=auto` 识别为 Claude Code 客户端 → **不**替换 system prompt, 直接转发到 Anthropic, 同时复用 cliproxy 自家 OAuth 池 (Claude Pro / ChatGPT Plus 等 5 账号轮换 + quota fallback)。Media 描述路径 (`generate-description.ts` + `RoutingProvider` + `OpenAIProvider`) 不变, 仍走 cliproxy 的 OpenAI 兼容路径。
 
 实测背书 (2026-05-08):
@@ -70,6 +72,12 @@ idle-fetch MVP 跑起来后的近期 TODO，做完即勾。过期 / 已收敛的
 - `BOT_FETCH_URL_TIMEOUT_MS` — fetch_url 单次 HTTP 超时（默认 12000）
 - `BOT_FETCH_LOG_PATH` — NDJSON 旁路日志路径（默认 `logs/fetch.ndjson`）
 - `BOT_TOOL_CALL_LOG_PATH` — 统一工具调用 NDJSON 旁路日志路径（默认 `logs/tool-calls.ndjson`）
+- `BOT_BROWSER_ENABLED` — 设为 `true` / `1` / `yes` / `on` 时注册 `browser` 工具。需要另起 `pnpm browser:controller`
+- `BOT_BROWSER_CONTROLLER_URL` — browser sidecar loopback URL（默认 `http://127.0.0.1:37921`）
+- `BOT_BROWSER_PROFILE_DIR` — CloakBrowser persistent profile 目录（默认 `data/browser-profile/luna`，gitignored）
+- `BOT_BROWSER_ARTIFACT_DIR` — 浏览器截图 / 下载 / 批注 artifact 目录（默认 `data/agent-workspace/browser`）
+- `BOT_BROWSER_ACTION_LOG_PATH` — 浏览器动作 NDJSON 审计日志（默认 `logs/browser-actions.ndjson`）
+- `BOT_BROWSER_ACTION_TIMEOUT_MS` — browser 单步动作超时（默认 15000）
 - `BOT_GROUP_PROMPTS_PATH` — Per-group prompt customization yaml 路径（默认 `./prompts/groups.yaml`）。文件不存在 → loader 返空数组 = 所有群走默认人设（不阻断启动）。yaml 写 `groups: []` 等价。`./prompts/groups.yaml` 含真实群号 + body，不入 git；模板见 `prompts/groups.yaml.example`。改文件需重启 bot（红线 5：cache 整段失效一次，集中改不要小步频改）
 - `BOT_EVENT_DEBOUNCE_MS` — drain 前等待更多事件堆积的毫秒数（默认 15000）。连续消息在此窗口内会被合并进同一轮 LLM 调用，避免逐条回复。默认 15s 覆盖图片解析延迟（~10s）+ 打字间隔。在 `config/index.ts` 走 `parsePositiveInteger`，非正值或非数字 fallback 默认
 - `BOT_GROUP_AMBIENT_SEND_IDS` — 主动发言（group-ambient，没有 `replyToMessageId` 的群发送）真发白名单，逗号分隔群 ID（如 `111,222`）。不在白名单的群走 dry-run（对 LLM 返回假成功）；reply / private 不受影响。空集合 / 不配 = 全部 dry-run（安全默认）。`BOT_TARGET_GROUP_IDS` 非空但此项空 → 启动期 warn 一句
@@ -161,6 +169,14 @@ while (!stopRequested) {
 - `tools/*` — `wait` / `send_message` / `db_schema` / `db_read` / `web_search` / `style_guide` / `source_profile` / `remember` / `recall` / `fetch_url` / `openbb_cli`
 - `tools/reddit/*` — `list_reddit` (list.ts) / `get_reddit_post` (get-post.ts) / 共享依赖 (shared.ts)
 
+`src/browser/`
+- `protocol.ts` — browser action schema / result shape / 输出截断 helper
+- `client.ts` — bot 侧 loopback HTTP client
+- `controller.ts` — Browser Controller core: CloakBrowser lifecycle, page registry, actions, screenshots/downloads/annotations
+- `server.ts` — sidecar HTTP server (`POST /action`, `GET /health`)
+- `risk.ts` — browser click/type/download 风险分级
+- `action-log.ts` — `logs/browser-actions.ndjson` 审计日志
+
 `src/ops/`
 - `fetch-log.ts` — NDJSON 旁路日志 appendFile (容错), 不进 Prisma. 服务 `list_reddit` / `get_reddit_post` / `fetch_url` 的运维统计 (`logs/fetch.ndjson`)
 - `tool-call-log.ts` — 统一 tool 调用轨迹 NDJSON appendFile (容错), 不进 Prisma / AgentContext. 参数摘要会脱敏 token/key/cookie/QQ 群号/用户号等敏感字段 (`logs/tool-calls.ndjson`)
@@ -229,6 +245,7 @@ bot 通过工具自主决定：
 - **`get_reddit_post`** — 读 reddit 单帖正文 + top 5 评论。接 permalink URL，走 `<url>.json`。正文 ≤500 字 / 每条评论 ≤200 字 / 总输出 ≤2000 字符硬截断。超时共享 `BOT_REDDIT_TIMEOUT_MS`
 - **`fetch_url`** — 抓任意 URL：response body cap 256KB → cheerio 抽 title/desc/article/main/body → 8KB 截断 → 默认 LLM 摘成 ≤500 中文字 → 输出 ≤1500 字符 clamp。LLM 失败 fallback 到原文截断 + 错误标记。每次调用写一行到 `logs/fetch.ndjson`
 - **`openbb_cli`** — 仅在 `OPENBB_CLI_ENABLED` 启用时注册。通过本机 OpenBB CLI 查股票 / 金融数据，参数是 `command`，内容是 OpenBB CLI 内部命令（如 `/equity/price/historical --symbol AAPL --provider yfinance --export json`）。要拿原始数据正文时加 `--export json`；工具会读取 OpenBB 保存的 JSON 并返回内容。工具启动 `OPENBB_CLI_BIN` 后把命令写入 stdin 并收集 stdout/stderr。禁止 shell 元字符、`exe`、`record` 和退出命令。单次输出 ≤1500 字符，默认 15s 超时，每次调用写一行到 `logs/fetch.ndjson`（`source=openbb_cli`，`url` 字段记录命令文本）
+- **`browser`** — 仅在 `BOT_BROWSER_ENABLED` 启用时注册。真实浏览器单步 action 工具: `help/status/open/switch_page/close_page/observe/click/type/press/scroll/screenshot/download/annotate/request_owner_help`。通过 `BOT_BROWSER_CONTROLLER_URL` 调本地 sidecar。`observe` 返回 URL/title/load state/可交互元素；`screenshot` 返回压缩 image block 进入 AgentContext 并落原图 artifact；普通浏览、发帖/评论/点赞、Cloudflare/Turnstile/cookie 弹窗可自主处理；登录/2FA/账号安全/OAuth/支付/可执行下载等返回 `requiresOwnerHelp`。每步写 `logs/browser-actions.ndjson`
 - **`style_guide`** — 按需返回 Luna 的完整说话风格指南。日常短回复不需要每轮调用；不确定语气、需要反例对照或校准“像不像 Luna”时再读
 - **`source_profile`** — 按需返回某个监听群的 `groups.yaml` 风格定制。未配置的监听群返回 `frequencyHint=normal` + 空 body；不在监听范围内的群返回错误
 - **`remember`** / **`recall`** — Luna 自主控制的长期记忆笔记本（`memory_entries` 表）。`remember` 写一条笔记：`target={kind:'person'|'group', id}` + `content ≤500` 字 + 可选 `sourceMessageIds`（追溯用，不回传给 LLM）。`recall` 按 target 取笔记：可选 `keyword`（精确子串、大小写不敏感）+ `limit 1-20`（默认 10）+ `orderBy createdAt desc`。空结果返回 hint。无 env 开关，无条件注册。设计文档 `~/.gstack/projects/gecan123-qq-bot-v2/zzz-main-design-20260516-134812.md`

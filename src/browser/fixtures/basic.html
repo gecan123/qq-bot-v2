@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Browser Tool Fixture</title>
+    <style>
+      body { font-family: system-ui, sans-serif; min-height: 1600px; padding: 24px; }
+      button, input, a { display: block; margin: 12px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>Browser Tool Fixture</h1>
+    <button id="human">I am human</button>
+    <input id="comment" placeholder="Write comment">
+    <button id="post">Post comment</button>
+    <button id="pay">Pay now</button>
+    <button id="oauth">Connect OAuth app</button>
+    <button id="password">Change password</button>
+    <a id="download-text" href="/download.txt" download="download.txt">Download text file</a>
+    <a id="download-dmg" href="/installer.dmg" download="installer.dmg">Download .dmg</a>
+    <script>
+      document.querySelector('#post').addEventListener('click', () => {
+        document.body.setAttribute('data-posted', document.querySelector('#comment').value)
+      })
+      document.querySelector('#human').addEventListener('click', () => {
+        document.body.setAttribute('data-human', 'true')
+      })
+    </script>
+  </body>
+</html>

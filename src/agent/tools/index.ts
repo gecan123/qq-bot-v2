@@ -24,6 +24,7 @@ import { createFetchAvatarTool } from './fetch-avatar.js'
 import { styleGuideTool } from './style-guide.js'
 import { createSourceProfileTool } from './source-profile.js'
 import { createWorkspaceBashTool } from './workspace-bash.js'
+import { maybeCreateBrowserTool } from './browser.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -64,6 +65,9 @@ export function buildBotTools(deps: BotToolDeps): Tool[] {
     collectStickerTool,
     createWorkspaceBashTool(),
   ]
+
+  const browser = maybeCreateBrowserTool()
+  if (browser) tools.push(browser)
 
   const webSearch = maybeCreateWebSearchTool()
   if (webSearch) tools.push(webSearch)

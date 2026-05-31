@@ -112,6 +112,7 @@ const SIDE_EFFECT_TOOLS = new Set([
   'write_journal',
   'collect_sticker',
   'workspace_bash',
+  'browser',
 ])
 
 /** 测试用 reset; 生产代码不应调用。 */

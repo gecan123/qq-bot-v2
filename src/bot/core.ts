@@ -4,9 +4,8 @@ import { findExistingMessageIds, insertMessage } from '../database/messages.js'
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
 import { persistMediaReferences } from '../media/media-cache.js'
-import { ensureMessageReadyForAgent } from '../media/ensure-message-ready.js'
-import { prisma } from '../database/client.js'
 import { summarizeSegments } from '../utils/business-log.js'
+import { createMessageReadyDispatcher, type MessageReadyDispatcher } from './message-ready-dispatcher.js'
 
 const ingressLog = createLogger('INGRESS')
 const napcatLog = createLogger('NAPCAT')
@@ -45,6 +44,10 @@ export interface NapcatHandlerOptions {
   onMessageReady?: (input: IngestedMessage) => void | Promise<void>
 }
 
+interface ProcessMessageOptions extends NapcatHandlerOptions {
+  readyDispatcher?: MessageReadyDispatcher
+}
+
 type Scope =
   | { kind: 'group'; groupId: number }
   | { kind: 'private'; peerId: number }
@@ -52,7 +55,7 @@ type Scope =
 async function processMessage(
   scope: Scope,
   messageId: number,
-  options: NapcatHandlerOptions,
+  options: ProcessMessageOptions,
 ): Promise<void> {
   const qqMsg = await napcat.get_msg({ message_id: messageId })
   const parsed = parseMessage(qqMsg)
@@ -143,15 +146,8 @@ async function processMessage(
     )
   }
 
-  if (!options.onMessageReady) return
-
-  // 等媒体描述就绪 + 渲染成 LLM 可见文本 + 冻结 resolved_text
-  const messageRow = await prisma.message.findUnique({ where: { id: persisted.id } })
-  if (!messageRow) return
-  const ready = await ensureMessageReadyForAgent(messageRow)
-
   if (scope.kind === 'group') {
-    await options.onMessageReady({
+    options.readyDispatcher?.schedule({
       kind: 'group',
       messageRowId: persisted.id,
       groupId: scope.groupId,
@@ -161,10 +157,9 @@ async function processMessage(
       senderNickname: parsed.senderGroupNickname ?? parsed.senderNickname,
       mentionedSelf,
       sentAt: persisted.sentAt ?? persisted.createdAt,
-      renderedText: ready.renderedText,
     })
   } else {
-    await options.onMessageReady({
+    options.readyDispatcher?.schedule({
       kind: 'private',
       messageRowId: persisted.id,
       peerId: scope.peerId,
@@ -172,7 +167,6 @@ async function processMessage(
       senderId: parsed.senderId,
       senderNickname: parsed.senderNickname,
       sentAt: persisted.sentAt ?? persisted.createdAt,
-      renderedText: ready.renderedText,
     })
   }
 }
@@ -240,6 +234,8 @@ async function resolveGroupName(context: { group_id: number; group_name?: string
  *       replay-missed 在 connect 之后跑也安全, 因为它们共享 messageRowId 去重.
  */
 export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): void {
+  const readyDispatcher = createMessageReadyDispatcher({ onMessageReady: options.onMessageReady })
+
   napcat.on('socket.open', () => napcatLog.info('WebSocket 开始连接'))
   napcat.on('socket.error', (ctx) => napcatLog.error({ errorType: ctx.error_type }, 'WebSocket 连接错误'))
   napcat.on('socket.close', (ctx) => napcatLog.warn({ code: ctx.code }, 'WebSocket 连接关闭'))
@@ -267,7 +263,7 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): void
     const prev = groupChains.get(groupId) ?? Promise.resolve()
     const next = prev.then(async () => {
       try {
-        await processMessage({ kind: 'group', groupId }, context.message_id, options)
+        await processMessage({ kind: 'group', groupId }, context.message_id, { ...options, readyDispatcher })
       } catch (error) {
         ingressLog.error({ error, group: groupId, msgId: context.message_id }, '处理群消息失败')
       }
@@ -283,7 +279,7 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): void
     const prev = privateChains.get(peerId) ?? Promise.resolve()
     const next = prev.then(async () => {
       try {
-        await processMessage({ kind: 'private', peerId }, context.message_id, options)
+        await processMessage({ kind: 'private', peerId }, context.message_id, { ...options, readyDispatcher })
       } catch (error) {
         ingressLog.error({ error, peer: peerId, msgId: context.message_id }, '处理私聊消息失败')
       }

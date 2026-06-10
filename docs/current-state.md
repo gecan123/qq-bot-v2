@@ -133,9 +133,9 @@ while (!stopRequested) {
 - `agent-sql.ts` — agent `db_read` 的安全只读 SQL 校验 + 执行（多源，不再强制 `:group_id`）
 
 `src/media/`
-- `media-cache.ts` — `persistMediaReferences(scope: group|private)` 把媒体下载 + Media 表入库
-- `ensure-message-ready.ts` — 等媒体描述 + 渲染 + 冻结 `resolved_text`
-- `message-resolver.ts` — `resolveMessage` 把 segments 跑到带 mediaDescription 的形态
+- `media-cache.ts` — `persistMediaReferences(scope: group|private)` 先写 Media 占位行并返回稳定 `referenceId`，后台异步下载字节、补 metadata、排描述任务
+- `ensure-message-ready.ts` — 等媒体下载/描述预算 + 渲染 + 冻结 `resolved_text`
+- `message-resolver.ts` — `resolveMessage` 把 segments 跑到带 mediaDescription 的形态；有时间预算时先等本进程内 pending media download，再排高优先级描述任务
 - `outbound-cache.ts` — 出站字节 LRU 内存缓存（refcount + TTL + maxEntries/maxBytes），产字节工具写入，`send_message` 消费
 - `image-handle.ts` — `resolveImageHandle({mediaId}|{ephemeralRef})` 统一解析，含 acquire/release 配对
 - `image-handle-schema.ts` — 共享 zod schema `imageHandleSchema` + `ImageHandle` / `ImageProduceResult` / `ResolvedImage` 类型

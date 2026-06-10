@@ -13,6 +13,7 @@ import type { NCWebsocket } from 'node-napcat-ts'
 
 type MediaSegment = ImageSegment | VideoSegment | RecordSegment | FileSegment
 const log = createLogger('MEDIA')
+const pendingMediaDownloads = new Map<number, Promise<void>>()
 
 function resolveMediaType(segment: MediaSegment): string {
   if (segment.type === 'image') {
@@ -154,8 +155,47 @@ async function cacheMediaSegment(input: CacheInput): Promise<string | undefined>
     return String(media.mediaId)
   }
 
+  const media = await prisma.media.create({
+    data: {
+      data: new Uint8Array(0),
+      mediaType: resolveMediaType(segment),
+      fileName: segment.fileName,
+      fileSize: fileSizeBytes,
+    },
+  })
+  const mediaId = media.mediaId
+
+  const download = downloadMediaIntoPlaceholder(mediaId, segment, napcat)
+    .catch((error) => {
+      log.warn(
+        {
+          mediaId,
+          mediaType: segment.type,
+          error: formatError(error),
+        },
+        '媒体异步下载失败，保留占位记录',
+      )
+    })
+    .finally(() => {
+      if (pendingMediaDownloads.get(mediaId) === download) {
+        pendingMediaDownloads.delete(mediaId)
+      }
+    })
+  pendingMediaDownloads.set(mediaId, download)
+
+  return String(mediaId)
+}
+
+async function downloadMediaIntoPlaceholder(
+  mediaId: number,
+  segment: MediaSegment,
+  napcat: NCWebsocket,
+): Promise<void> {
   const url = await resolveMediaUrl(segment, napcat)
-  if (!url) return undefined
+  if (!url) {
+    log.warn({ mediaId, mediaType: segment.type }, '媒体 URL 缺失，保留占位记录')
+    return
+  }
 
   let response: Response
   try {
@@ -181,14 +221,36 @@ async function cacheMediaSegment(input: CacheInput): Promise<string | undefined>
 
   const existing = await prisma.media.findUnique({
     where: { dataHash },
-    select: { mediaId: true },
+    select: {
+      data: true,
+      mediaType: true,
+      contentType: true,
+      fileName: true,
+      fileSize: true,
+      descriptionRaw: true,
+    },
   })
   if (existing) {
-    return String(existing.mediaId)
+    await prisma.media.update({
+      where: { mediaId },
+      data: {
+        data: existing.data,
+        mediaType: existing.mediaType,
+        contentType: existing.contentType,
+        fileName: existing.fileName,
+        fileSize: existing.fileSize,
+        descriptionRaw: existing.descriptionRaw ?? undefined,
+      },
+    })
+    if (!existing.descriptionRaw) {
+      jobQueue.enqueue('generate-description', { mediaId }, { priority: 'low' })
+    }
+    return
   }
 
   try {
-    const media = await prisma.media.create({
+    await prisma.media.update({
+      where: { mediaId },
       data: {
         data: new Uint8Array(bytes),
         dataHash,
@@ -198,18 +260,58 @@ async function cacheMediaSegment(input: CacheInput): Promise<string | undefined>
         fileSize,
       },
     })
-    jobQueue.enqueue('generate-description', { mediaId: media.mediaId }, { priority: 'low' })
-    return String(media.mediaId)
+    jobQueue.enqueue('generate-description', { mediaId }, { priority: 'low' })
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       const deduped = await prisma.media.findUnique({
         where: { dataHash },
-        select: { mediaId: true },
+        select: {
+          data: true,
+          mediaType: true,
+          contentType: true,
+          fileName: true,
+          fileSize: true,
+          descriptionRaw: true,
+        },
       })
-      if (deduped) return String(deduped.mediaId)
+      if (deduped) {
+        await prisma.media.update({
+          where: { mediaId },
+          data: {
+            data: deduped.data,
+            mediaType: deduped.mediaType,
+            contentType: deduped.contentType,
+            fileName: deduped.fileName,
+            fileSize: deduped.fileSize,
+            descriptionRaw: deduped.descriptionRaw ?? undefined,
+          },
+        })
+        if (!deduped.descriptionRaw) {
+          jobQueue.enqueue('generate-description', { mediaId }, { priority: 'low' })
+        }
+        return
+      }
     }
     throw error
   }
+}
+
+export async function waitForPendingMediaDownloads(mediaIds: number[], timeoutMs: number): Promise<void> {
+  const pending = mediaIds
+    .map((mediaId) => pendingMediaDownloads.get(mediaId))
+    .filter((promise): promise is Promise<void> => promise !== undefined)
+  if (pending.length === 0) return
+
+  const downloads = Promise.allSettled(pending).then(() => undefined)
+  if (timeoutMs <= 0) {
+    await downloads
+    return
+  }
+
+  await Promise.race([
+    downloads,
+    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+  ])
 }
 
 export async function persistMediaReferences(params: {

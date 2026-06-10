@@ -3,6 +3,7 @@ import { Prisma, type Message } from '../generated/prisma/client.js'
 import type { ParsedSegment, ImageSegment, VideoSegment, RecordSegment, FileSegment } from '../types/message-segments.js'
 import { isMediaDescription } from './media-description.js'
 import { jobQueue } from '../queue/runtime.js'
+import { waitForPendingMediaDownloads } from './media-cache.js'
 
 type MediaSegment = ImageSegment | VideoSegment | RecordSegment | FileSegment
 type ResolvePriority = 'high' | 'normal' | 'low'
@@ -33,6 +34,12 @@ function collectReferenceIds(segments: ParsedSegment[]): number[] {
 async function ensureDescriptions(refIds: number[], options: ResolveMessageOptions): Promise<void> {
   if (refIds.length === 0) return
 
+  const startedAt = Date.now()
+  const timeoutMs = options.timeoutMs ?? 0
+  if (timeoutMs > 0) {
+    await waitForPendingMediaDownloads(refIds, timeoutMs)
+  }
+
   const pendingRows = await prisma.media.findMany({
     where: { mediaId: { in: refIds }, descriptionRaw: { equals: Prisma.AnyNull } },
     select: { mediaId: true },
@@ -41,7 +48,6 @@ async function ensureDescriptions(refIds: number[], options: ResolveMessageOptio
   if (pendingIds.length === 0) return
 
   const priority = options.priority ?? 'high'
-  const timeoutMs = options.timeoutMs ?? 0
   const schedule = (mediaId: number): Promise<void> => {
     const existing = scheduledDescriptionJobs.get(mediaId)
     if (existing) return existing
@@ -65,7 +71,8 @@ async function ensureDescriptions(refIds: number[], options: ResolveMessageOptio
     return
   }
 
-  const timeout = new Promise<void>((resolve) => setTimeout(resolve, timeoutMs))
+  const remainingMs = Math.max(0, timeoutMs - (Date.now() - startedAt))
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, remainingMs))
   const all = Promise.allSettled(
     pendingIds.map((mediaId) => schedule(mediaId)),
   )

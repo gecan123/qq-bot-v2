@@ -110,7 +110,7 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
     description: [
       '向 QQ 真实发送一条消息。target 必填, 决定这条消息发到哪个群 / 哪个私聊对方。',
       '群白名单已经在 ingress 层做过 —— 你能在 history 里看到的群消息, 那个群一定是可发的, 不需要自己再判断。私聊同样: 陌生 DM 在 ingress 层已被 sub_type=friend 挡掉, 你看到的 [私聊 | ...(QQ:N)] 一定可发回。',
-      'target.type=group: 必传 groupId (来自消息标签 [群:名字 | 昵称(QQ:...)] 中暗含的 groupId, 可以用 db_read 查 messages 表 group_id 列). mentionUserId 可选, 在文本前加 @ 提及群内某人。',
+      'target.type=group: 必传 groupId (来自消息标签 [群:名字 | 昵称(QQ:...)] 中暗含的 groupId, 可以用 db action=query 查 messages 表 group_id 列). mentionUserId 可选, 在文本前加 @ 提及群内某人。',
       'target.type=private: 必传 userId (私聊对方 QQ).',
       'image 可选: 发图. {mediaId:N} 走存量, {ephemeralRef:"<hash>"} 走刚生成/抓取/截屏 (1h 内有效). 发出去会自动登记 mediaId 写进 tool result. text 和 image 至少一个非空.',
       'replyToMessageId 可选: 引用一条已存在消息. 数字必须等于该条消息标签里 `#` 后面的 message_id, 不要凭印象编. 被 @ed 时常回填以表示「我在回复你」, 主动插话或开新话题时省略.',

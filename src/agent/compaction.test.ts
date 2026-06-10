@@ -43,7 +43,7 @@ test('findSafeCutIndex: clean cut after assistant without toolCalls', () => {
 test('findSafeCutIndex: cut would land ON a tool message → walks back to before its anchor', () => {
   const msgs: AgentMessage[] = [
     user('hello'),
-    asst('thinking', [{ id: 'a', name: 'wait' }, { id: 'b', name: 'db_read' }]),
+    asst('thinking', [{ id: 'a', name: 'wait' }, { id: 'b', name: 'db' }]),
     tool('a'),
     tool('b'),
     user('next'),
@@ -67,7 +67,7 @@ test('findSafeCutIndex: cut in middle of multi-tool-result sequence → walks ba
     user('hi'),
     asst('working', [
       { id: 'a', name: 'wait' },
-      { id: 'b', name: 'db_read' },
+      { id: 'b', name: 'db' },
       { id: 'c', name: 'send_message' },
     ]),
     tool('a'),
@@ -82,7 +82,7 @@ test('findSafeCutIndex: cut in middle of multi-tool-result sequence → walks ba
 test('findSafeCutIndex: kept tail starting with tool whose anchor was already compressed → push back', () => {
   const msgs: AgentMessage[] = [
     user('hi'),
-    asst('thinking', [{ id: 'a', name: 'wait' }, { id: 'b', name: 'db_read' }]),
+    asst('thinking', [{ id: 'a', name: 'wait' }, { id: 'b', name: 'db' }]),
     tool('a'),
     tool('b'),
   ]
@@ -181,7 +181,7 @@ test('maybeCompactConversation: kept tail never starts with orphan tool message'
     content: 'thinking',
     toolCalls: [
       { id: 'a', name: 'wait', args: {} },
-      { id: 'b', name: 'db_read', args: {} },
+      { id: 'b', name: 'db', args: {} },
     ],
   })
   ctx.appendToolResult({ toolCallId: 'a', content: 'ok' })

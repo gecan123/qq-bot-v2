@@ -37,7 +37,7 @@ const argsSchema = z.object({
     .refine((u) => REDDIT_POST_REGEX.test(u), {
       message: 'url 必须是 reddit 帖子页 (形如 https://www.reddit.com/r/X/comments/POSTID/...)',
     })
-    .describe('reddit 帖子链接, 通常从 list_reddit 输出里复制.'),
+    .describe('reddit 帖子链接, 通常从 reddit action=list 输出里复制.'),
 })
 
 type Args = z.infer<typeof argsSchema>
@@ -128,11 +128,11 @@ export function createGetRedditPostTool(deps: RedditFetchDeps = {}): Tool<Args> 
     name: 'get_reddit_post',
     description: [
       `读 reddit 一条帖子的 top ${TOP_N_COMMENTS} 评论 (输出 ≤ ${OUTPUT_CAP_CHARS} 字符).`,
-      '典型: list_reddit 给了 10 条, 挑一条想深读的链接调本工具看评论讨论.',
+      '典型: reddit action=list 给了 10 条, 挑一条想深读的链接调本工具看评论讨论.',
       'url 必须是 reddit 帖子页 (含 /r/X/comments/POSTID/...). 其它站不接受, 走 fetch_url.',
       `每条评论 ≤${COMMENT_BODY_MAX_CHARS} 字, 硬截断, 不能让本工具返回更长.`,
-      '如果 RSS 带图片直链, 会输出 图片: https://i.redd.it/... 可交给 download_image → generate_image.',
-      'RSS 限制: 正文可用性不稳定, 主要看图片链接 + top 评论. list_reddit 的摘要里已有部分正文.',
+      '如果 RSS 带图片直链, 会输出 图片: https://i.redd.it/... 可交给 fetch_image action=url → generate_image.',
+      'RSS 限制: 正文可用性不稳定, 主要看图片链接 + top 评论. reddit action=list 的摘要里已有部分正文.',
     ].join(' '),
     schema: argsSchema,
     async execute(rawArgs, ctx) {
@@ -158,7 +158,7 @@ export function createGetRedditPostTool(deps: RedditFetchDeps = {}): Tool<Args> 
           { path: deps.logPath, appender: deps.appender },
         )
         log.warn({ url: rssUrl, errorKind: outcome.errorKind }, 'get_reddit_post_failed')
-        return { content: `[get_reddit_post 失败] ${args.url}: ${outcome.errorKind}.` }
+        return { content: `[reddit action=get_post 失败] ${args.url}: ${outcome.errorKind}.` }
       }
 
       if (outcome.status < 200 || outcome.status >= 300) {
@@ -167,7 +167,7 @@ export function createGetRedditPostTool(deps: RedditFetchDeps = {}): Tool<Args> 
           { path: deps.logPath, appender: deps.appender },
         )
         return {
-          content: `[get_reddit_post HTTP ${outcome.status}] ${args.url}. reddit 拒了, 帖子可能不存在 / 被删 / rate limit. 别原地重试.`,
+          content: `[reddit action=get_post HTTP ${outcome.status}] ${args.url}. reddit 拒了, 帖子可能不存在 / 被删 / rate limit. 别原地重试.`,
         }
       }
 
@@ -180,7 +180,7 @@ export function createGetRedditPostTool(deps: RedditFetchDeps = {}): Tool<Args> 
           { path: deps.logPath, appender: deps.appender },
         )
         log.warn({ url: rssUrl, err }, 'get_reddit_post_parse_failed')
-        return { content: `[get_reddit_post 解析失败] ${args.url}: ${(err as Error).message}` }
+        return { content: `[reddit action=get_post 解析失败] ${args.url}: ${(err as Error).message}` }
       }
 
       if (!detail) {
@@ -188,7 +188,7 @@ export function createGetRedditPostTool(deps: RedditFetchDeps = {}): Tool<Args> 
           { ...baseLog, errorKind: 'empty_post' },
           { path: deps.logPath, appender: deps.appender },
         )
-        return { content: `[get_reddit_post 空] ${args.url}. 拿到响应但解不出帖子结构.` }
+        return { content: `[reddit action=get_post 空] ${args.url}. 拿到响应但解不出帖子结构.` }
       }
 
       await logFetch(baseLog, { path: deps.logPath, appender: deps.appender })
@@ -196,5 +196,3 @@ export function createGetRedditPostTool(deps: RedditFetchDeps = {}): Tool<Args> 
     },
   }
 }
-
-export const getRedditPostTool = createGetRedditPostTool()

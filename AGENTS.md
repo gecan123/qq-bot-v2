@@ -36,6 +36,14 @@
 - `src/agent/**`：永续上下文 runtime、主循环、工具、compaction
 - `src/bot/**`, `src/media/**`, `src/messaging/**`：NapCat 入站、媒体、发送路径
 
+## 两大核心思路
+
+本项目的两条主线是：**永续上下文** 和 **渐进式披露**。
+
+- 永续上下文决定历史怎么稳定存在：LLM 看到的是一个可持久化、可 replay、字节稳定的 `AgentContext` 前缀。已经 append 的历史不因为晚到媒体、工具结果、重跑或 side table 变化而被改写；需要压缩时只走受控 compaction。
+- 渐进式披露决定知识和能力怎么便宜进入上下文：常驻 system prompt 只放稳定规则、边界、索引和入口。长风格指南、群口味、数据库 schema、工具手册、外部网页、工作区文件等内容，应通过工具或受控文件路径按需读取。
+- 设计新功能时先问两件事：它会不会破坏已 append prefix 的稳定性？它是不是把本可按需读取的大块信息塞进了常驻上下文？
+
 ## 永续上下文契约
 
 项目的核心产品契约是：LLM 历史必须稳定、可 replay、低成本扩展。Prompt cache 稳定性是产品特性，不是顺手优化。
@@ -91,6 +99,7 @@ pnpm toollogf
 - Agent chat 当前有 Claude-Code-compatible 路径：`src/agent/claude-code/**`。除非任务明确要求，否则不要改 wire format / cache-control 细节。
 - 媒体描述使用 `src/llm/**` 下的 routing provider，和 agent chat client 分离。
 - 工具注册集中在 `src/agent/tools/index.ts`。声称某个工具存在前，先查这个文件。
+- 每次修改工具注册后，同步检查并更新对应的 system prompt、tool description、测试、文档和旧导出/旧命名残留；不要让 LLM 看到已废弃的工具名或入口。
 - 建立新能力时遵循“建立时披露”：常驻 system prompt 只放稳定边界、索引和入口；长说明、风格正文、群口味、工具手册、可变数据和外部内容，通过工具、文件工作区或其它按需路径读取。
 - Bash 可以作为能力底座或统一交互形态，但不要把裸 shell 暴露给常驻 bot。Bash 类工具必须有命令 allowlist、固定工作区、最小 env、输出/时间上限和审计日志；DB 查询等敏感能力通过专门脚本或 capability 入口复用现有安全层。
 - `data/agent-workspace/` 是 agents 自己生产内容的区域，用于 journal、dream、scratch、index、draft 等自组织文件。默认不要把这里的运行时内容当项目源码或事实账本；局部 `.gitignore` 会忽略生成内容，只保留目录说明。除非用户明确要求，否则不要提交该目录下的生成物。

@@ -4,7 +4,7 @@ import { compileNamedSql, validateDbReadSql } from './agent-sql.js'
 
 // validateDbReadSql in MVP-2 only checks: read-only / single-statement / SELECT|WITH /
 // no dangerous keywords. It NO LONGER requires :group_id; cross-source SELECTs are legal.
-// Whitelist enforcement on params lives in executeDbRead (and the db_read tool).
+// Whitelist enforcement on params lives in executeDbRead (and the db action=query tool).
 describe('validateDbReadSql (MVP-2 multi-source)', () => {
   test('allows select with explicit group filter', () => {
     const result = validateDbReadSql('select * from messages where group_id = :group_id')

@@ -47,7 +47,7 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<Args> {
       '只传 prompt → 从零生成; 同时传 image → 在该图基础上按 prompt 编辑.',
       '编辑图片时注意区分意图: 用户想「微调」(改文字/局部修改/保持风格) 还是「大改」(换风格/重构). 如果对方说得模糊 (比如只说「帮我改一下这图」), 先 send_message 问一句是想保持原样微调还是大改, 再动手.',
       '本工具在后台运行, 立即返回 taskId. 完成后你会收到 [后台任务完成] 消息.',
-      '用 get_task_result 查看生成结果 (含预览图 + ephemeralRef, 可传给 send_message 发送).',
+      '用 background_task action=get 查看生成结果 (含预览图 + ephemeralRef, 可传给 send_message 发送).',
       'prompt 用英文效果最好.',
     ].join(' '),
     schema: argsSchema,

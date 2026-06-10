@@ -141,7 +141,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
   })
 
   test('LLM call 非 wait tool 后立即跑下一轮消化 result (Guard 2 keys on hadToolCalls)', async () => {
-    // 双轮意图: round 1 LLM call list_reddit → tool result 进 context → 主循环立即跑 round 2 →
+    // 双轮意图: round 1 LLM call reddit → tool result 进 context → 主循环立即跑 round 2 →
     // LLM 看到 result 决定 send_message → 真发出去. 旧实现 Guard 2 看 eventQueue 空就阻塞,
     // round 2 永远跑不到. 新实现 Guard 2 看 hadToolCalls, 这条链路天然贯通.
     const ctx = createAgentContext()
@@ -165,7 +165,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         if (llmCallCount === 1) {
           return {
             content: '让我看看 reddit 有啥',
-            toolCalls: [{ id: 'c1', name: 'list_reddit', args: {} }],
+            toolCalls: [{ id: 'c1', name: 'reddit', args: { action: 'list', subreddit: 'technology' } }],
             usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
             model: 'mock',
           }
@@ -192,7 +192,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     let sendMessageCalled = false
     const tools = makeMockTools({
-      list_reddit: async () => ({ content: '[reddit] r/programming top: foo bar' }),
+      reddit: async () => ({ content: '[reddit] r/programming top: foo bar' }),
       send_message: async () => {
         sendMessageCalled = true
         return { content: '{"ok":true}' }
@@ -219,7 +219,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     // 双轮意图贯通: LLM 至少跑了 2 次, send_message 真的执行了
     assert.ok(llmCallCount >= 2, `expected LLM ≥2 calls, got ${llmCallCount}`)
-    assert.equal(sendMessageCalled, true, 'send_message 拿到 list_reddit result 后真发出去了')
+    assert.equal(sendMessageCalled, true, 'send_message 拿到 reddit result 后真发出去了')
 
     await agent.stop()
     await startPromise

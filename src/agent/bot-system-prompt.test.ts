@@ -85,8 +85,8 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /\[按需披露\]/)
     assert.match(prompt, /style_guide/)
     assert.match(prompt, /source_profile/)
-    assert.match(prompt, /recall/)
-    assert.match(prompt, /db_read/)
+    assert.match(prompt, /memory/)
+    assert.match(prompt, /action=query/)
 
     const forbiddenFragments = [
       '[日记 & 做梦]',
@@ -96,6 +96,7 @@ describe('buildBotSystemPrompt', () => {
       'equity/fundamental/income',
       'list_reddit:',
       'get_reddit_post:',
+      'recall:',
       '每次 compaction 后, 池子里的完整列表',
     ]
     for (const fragment of forbiddenFragments) {

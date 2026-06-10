@@ -43,7 +43,7 @@ export const collectStickerTool: Tool<Args> = {
   name: 'collect_sticker',
   description: [
     '收藏一张已有的图片到你的表情包池 — 最常见场景: 群里有人发了好玩的表情, 你想以后也能用, 就传它的 mediaId 收进来.',
-    '图片必须已经存在 (群友发过的图、你之前 generate_image / download_image 过的图). 不要为了收藏而去 generate_image 重新画一张 — 那是「创作」不是「收藏」.',
+    '图片必须已经存在 (群友发过的图、你之前 generate_image / fetch_image 过的图). 不要为了收藏而去 generate_image 重新画一张 — 那是「创作」不是「收藏」.',
     'image 字段: 群聊消息里看到的图片描述旁会标注 mediaId, 直接传 {mediaId:N}; 刚生成/下载的图也可以传 {ephemeralRef}.',
     '每次 collect 后会返回你当前完整的表情包列表. compaction 后列表也会自动注入 context.',
     '同一张图再次 collect 会更新名字/标签/描述. description 可选, 不传自动用图片已有的描述.',

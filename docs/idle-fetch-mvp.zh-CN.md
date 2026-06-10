@@ -240,14 +240,14 @@ fetch_reddit / fetch_url 返回 content
   → compaction 触发 (默认 16k token) 时进入摘要被压缩
 ```
 
-它**确实持久化** — 在 snapshot 里, 跟其他工具结果同等地位, 重启不丢. 但**没有独立查询入口**: db_read 看不到 (messages 表只装 QQ 真消息), 没有"刷过的链接"独立表. 跟 bot 自己 send_message 不进 messages 表的策略对称.
+它**确实持久化** — 在 snapshot 里, 跟其他工具结果同等地位, 重启不丢. 但**没有独立查询入口**: db action=query 看不到 (messages 表只装 QQ 真消息), 没有"刷过的链接"独立表. 跟 bot 自己 send_message 不进 messages 表的策略对称.
 
 | 场景 | 行为 |
 |---|---|
 | 重启后还记得早上刷过啥 | ✅ snapshot 恢复, 只要还没被 compaction 摘要 |
 | 1 小时内不重复推同一篇 | ✅ LLM 看到刚刚 history, 自己避免 |
 | 一周前推过的, 今天再推一次 | ❌ 大概率被 compaction 摘掉了, LLM 不知道具体推过哪条 |
-| db_read "我最近从 reddit 看过哪些" | ❌ 查不到 (但 NDJSON 旁路日志里有, 见下) |
+| db action=query "我最近从 reddit 看过哪些" | ❌ 查不到 (但 NDJSON 旁路日志里有, 见下) |
 | 分析 "bot 一天 fetch 几次 / 命中率" | ❌ AgentContext 看不出, 但 NDJSON 能 |
 
 ### NDJSON 旁路日志 (运维信息, 非数据持久化)

@@ -120,7 +120,7 @@ async function traceToolCall(
       argsSummary: summarizeToolArgs(call.args),
       durationMs: Math.max(0, Math.round(finishedAt - startedAt)),
       ok: classified.ok,
-      sideEffect: isSideEffectTool(call.name),
+      sideEffect: isSideEffectTool(call.name, call.args),
       ...(classified.error ? { error: classified.error } : {}),
     },
     { path: trace.path, appender: trace.appender },

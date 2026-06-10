@@ -65,7 +65,7 @@ EventQueue.enqueue({ type:'napcat_message', renderedText, ... })
    │
    ├── tool: wait                    → eventQueue.waitForEvent() 阻塞
    ├── tool: send_group_message       → messageSender → NapCat 真发
-   ├── tool: db_schema / db_read      → src/database/agent-sql.ts
+   ├── tool: db action=schema/query   → src/database/agent-sql.ts
    └── tool: web_search (可选)        → Tavily
 ```
 

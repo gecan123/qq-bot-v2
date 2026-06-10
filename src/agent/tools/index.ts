@@ -5,22 +5,17 @@ import type { GroupCustomization } from '../../config/group-prompts.js'
 import type { TargetMetadataMaps } from '../resolve-target-meta.js'
 import { waitTool } from './wait.js'
 import { createSendMessageTool } from './send-message.js'
-import { dbSchemaTool } from './db-schema.js'
-import { dbReadTool } from './db-read.js'
+import { createDbTool } from './db.js'
 import { maybeCreateWebSearchTool } from './web-search.js'
-import { listRedditTool } from './reddit/list.js'
-import { getRedditPostTool } from './reddit/get-post.js'
+import { redditTool } from './reddit.js'
 import { createFetchUrlTool } from './fetch-url.js'
 import { maybeCreateOpenbbCliTool } from './openbb-cli.js'
 import { createGenerateImageTool } from './generate-image.js'
-import { createDownloadImageTool } from './download-image.js'
-import { createCheckTasksTool } from './check-tasks.js'
-import { createGetTaskResultTool } from './get-task-result.js'
-import { rememberTool } from './remember.js'
-import { recallTool } from './recall.js'
+import { createBackgroundTaskTool } from './background-task.js'
+import { memoryTool } from './memory.js'
 import { writeJournalTool } from './write-journal.js'
 import { collectStickerTool } from './collect-sticker.js'
-import { createFetchAvatarTool } from './fetch-avatar.js'
+import { fetchImageTool } from './fetch-image.js'
 import { styleGuideTool } from './style-guide.js'
 import { createSourceProfileTool } from './source-profile.js'
 import { createWorkspaceBashTool } from './workspace-bash.js'
@@ -43,24 +38,19 @@ export function buildBotTools(deps: BotToolDeps): Tool[] {
       sender: deps.sender,
       groupAmbientSendIds: deps.groupAmbientSendIds,
     }),
-    dbSchemaTool,
-    dbReadTool,
-    listRedditTool,
-    getRedditPostTool,
+    createDbTool({ groupIdWhitelist: deps.groupIds }),
+    redditTool,
     createFetchUrlTool(),
     createGenerateImageTool({ taskRegistry: deps.taskRegistry }),
-    createDownloadImageTool(),
-    createFetchAvatarTool(),
+    fetchImageTool,
     styleGuideTool,
     createSourceProfileTool({
       groupIds: deps.groupIds,
       metadata: deps.metadata,
       groupCustomizations: deps.groupCustomizations,
     }),
-    createCheckTasksTool({ taskRegistry: deps.taskRegistry }),
-    createGetTaskResultTool({ taskRegistry: deps.taskRegistry }),
-    rememberTool,
-    recallTool,
+    createBackgroundTaskTool({ taskRegistry: deps.taskRegistry }),
+    memoryTool,
     writeJournalTool,
     collectStickerTool,
     createWorkspaceBashTool(),

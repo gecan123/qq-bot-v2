@@ -10,7 +10,7 @@ CLAUDE.md 只承载长期合约（perpetual context invariants、提交规范、
 
 **MVP-2**：服务 N 个白名单群（`BOT_TARGET_GROUP_IDS`）+ 任意 QQ 好友的私聊（无白名单，仅 ingress 层按 `sub_type='friend'` 过滤陌生临时会话）。`BOT_TARGET_GROUP_IDS` 可空（私聊永远在线）。
 
-**叠加: Idle-Fetch MVP** — `wait` 工具 idle 引信 + `list_reddit` / `get_reddit_post` / `fetch_url` 工具 + NDJSON 旁路日志。设计文档 `docs/idle-fetch-mvp.zh-CN.md`，14 天复盘模板 `docs/reddit-mvp-review.md`。
+**叠加: Idle-Fetch MVP** — `wait` 工具 idle 引信 + `reddit` / `fetch_url` 工具 + NDJSON 旁路日志。设计文档 `docs/idle-fetch-mvp.zh-CN.md`，14 天复盘模板 `docs/reddit-mvp-review.md`。
 
 **叠加: Tool Trace 运维日志** — `ToolExecutor` 统一入口为每次 tool 调用 append `logs/tool-calls.ndjson`（可用 `BOT_TOOL_CALL_LOG_PATH` 覆盖）。记录 `toolCallId` / `toolName` / `roundIndex` / redacted `argsSummary` / `durationMs` / `ok` / `error` / `sideEffect`。这是旁路运维数据，不进 Prisma，不进 `AgentContext`，不参与 replay 或 prompt cache。
 
@@ -68,7 +68,7 @@ idle-fetch MVP 跑起来后的近期 TODO，做完即勾。过期 / 已收敛的
 - `TAVILY_API_KEY` — Tavily web search，设置则 `web_search` 工具自动注册
 - `COMPACTION_TRIGGER_TOKENS` — compaction 触发阈值（默认 16000，多源场景默认值）
 - `BOT_IDLE_HINT_MS` — wait 工具空闲提示阈值（默认 1800000 = 30min）
-- `BOT_REDDIT_TIMEOUT_MS` — list_reddit / get_reddit_post 单次 HTTP 超时（默认 8000）
+- `BOT_REDDIT_TIMEOUT_MS` — `reddit` action=list / action=get_post 单次 HTTP 超时（默认 8000）
 - `BOT_FETCH_URL_TIMEOUT_MS` — fetch_url 单次 HTTP 超时（默认 12000）
 - `BOT_FETCH_LOG_PATH` — NDJSON 旁路日志路径（默认 `logs/fetch.ndjson`）
 - `BOT_TOOL_CALL_LOG_PATH` — 统一工具调用 NDJSON 旁路日志路径（默认 `logs/tool-calls.ndjson`）
@@ -103,7 +103,7 @@ idle-fetch MVP 跑起来后的近期 TODO，做完即勾。过期 / 已收敛的
 6. `connectNapcat()` 真打开 WebSocket（必须在 `resolveTargetMetadataMaps` 之前 — 见下文 D2）
 7. `resolveTargetMetadataMaps()` 一次性拉群名（`Promise.allSettled`，每调用 3s 超时）。私聊昵称走 per-event render，不预拉
 8. `replayMissedMessages(lastWakeAt)` 多源回放，与 live 共享同一去重 set。私聊永远全量回放（不按 peerId 过滤）
-9. `loadGroupCustomizations()` 启动期一次读取 per-group yaml；`buildBotTools()` 装配 `wait` / `send_message` / `db_schema` / `db_read` / `style_guide` / `source_profile` 等工具；`buildBotSystemPrompt({groupIds, metadata})` 拼短常驻 prompt
+9. `loadGroupCustomizations()` 启动期一次读取 per-group yaml；`buildBotTools()` 装配 `wait` / `send_message` / `db` / `style_guide` / `source_profile` 等工具；`buildBotSystemPrompt({groupIds, metadata})` 拼短常驻 prompt
 10. `createBotLoopAgent({...})` + `agent.start()` — 进入 while 循环
 
 ## 主循环（`src/agent/bot-loop-agent.ts`）
@@ -130,7 +130,7 @@ while (!stopRequested) {
 
 `src/database/`
 - `messages.ts` — `insertMessage()` upsert + invariant assert（qq_group / qq_private 必填字段）+ `freezeResolvedTextIfUnset` 一次冻结
-- `agent-sql.ts` — agent `db_read` 的安全只读 SQL 校验 + 执行（多源，不再强制 `:group_id`）
+- `agent-sql.ts` — agent `db action=query` 的安全只读 SQL 校验 + 执行（多源，不再强制 `:group_id`）
 
 `src/media/`
 - `media-cache.ts` — `persistMediaReferences(scope: group|private)` 先写 Media 占位行并返回稳定 `referenceId`，后台异步下载字节、补 metadata、排描述任务
@@ -166,8 +166,8 @@ while (!stopRequested) {
 - `bot-loop-agent.ts` — 主循环
 - `replay-missed.ts` — 启动时多源回放关机期间漏掉的消息（与 live 共享 dedup hook）
 - `tool.ts` — Tool / ToolExecutor 接口
-- `tools/*` — `wait` / `send_message` / `db_schema` / `db_read` / `web_search` / `style_guide` / `source_profile` / `remember` / `recall` / `fetch_url` / `openbb_cli`
-- `tools/reddit/*` — `list_reddit` (list.ts) / `get_reddit_post` (get-post.ts) / 共享依赖 (shared.ts)
+- `tools/*` — `wait` / `send_message` / `db` / `reddit` / `fetch_image` / `web_search` / `style_guide` / `source_profile` / `memory` / `background_task` / `fetch_url` / `openbb_cli`
+- `tools/reddit/*` — `reddit` 底层 action=list (list.ts) / action=get_post (get-post.ts) / 共享依赖 (shared.ts)
 
 `src/browser/`
 - `protocol.ts` — browser action schema / result shape / 输出截断 helper
@@ -178,7 +178,7 @@ while (!stopRequested) {
 - `action-log.ts` — `logs/browser-actions.ndjson` 审计日志
 
 `src/ops/`
-- `fetch-log.ts` — NDJSON 旁路日志 appendFile (容错), 不进 Prisma. 服务 `list_reddit` / `get_reddit_post` / `fetch_url` 的运维统计 (`logs/fetch.ndjson`)
+- `fetch-log.ts` — NDJSON 旁路日志 appendFile (容错), 不进 Prisma. 服务 `reddit` / `fetch_url` 的运维统计 (`logs/fetch.ndjson`)
 - `tool-call-log.ts` — 统一 tool 调用轨迹 NDJSON appendFile (容错), 不进 Prisma / AgentContext. 参数摘要会脱敏 token/key/cookie/QQ 群号/用户号等敏感字段 (`logs/tool-calls.ndjson`)
 
 `src/messaging/`
@@ -239,16 +239,17 @@ bot 通过工具自主决定：
   - `replyToMessageId` 可选，引用某条已存在消息
   - `image` 可选，`{mediaId:N}` 走存量 Media 或 `{ephemeralRef:"<64-hex>"}` 走 OutboundCache（1h TTL）。发送成功后 ephemeralRef 自动 lazy persist 到 Media 表（upsert by dataHash），tool result 返回 `image.mediaId`。persist 失败时 ok:true + lazyPersistError，ephemeralRef 保留可重试
   - text 和 image 至少一个非空
-- **`db_schema`** / **`db_read`** — 查历史聊天（任一源）/ 媒体描述。多源后系统**不再**自动注入 `:group_id`，LLM 想限定单源时显式传（`params: {group_id: ...}` 或 `peer_id`）。`group_id` 走白名单校验；`peer_id` 任意 QQ 都接受。跨源 SELECT（无 ID 过滤）合法
+- **`db`** — `action=schema` 查看数据库结构与查询约束；`action=query` 查历史聊天（任一源）/ 媒体描述。多源后系统**不再**自动注入 `:group_id`，LLM 想限定单源时显式传（`params: {group_id: ...}` 或 `peer_id`）。`group_id` 走白名单校验；`peer_id` 任意 QQ 都接受。跨源 SELECT（无 ID 过滤）合法
 - **`web_search`** — 仅在 `TAVILY_API_KEY` 配置时注册
-- **`list_reddit`** — 列 reddit 帖子（subreddit 可选 + sort hot/top/new + limit 硬上限 10），走 reddit 公开 JSON。每条 title ≤80 字 / selftext ≤120 字硬截断，输出 permalink + score + num_comments + is_self 元数据。`AbortController` 超时走 `BOT_REDDIT_TIMEOUT_MS`。每次调用写一行到 `logs/fetch.ndjson`
-- **`get_reddit_post`** — 读 reddit 单帖正文 + top 5 评论。接 permalink URL，走 `<url>.json`。正文 ≤500 字 / 每条评论 ≤200 字 / 总输出 ≤2000 字符硬截断。超时共享 `BOT_REDDIT_TIMEOUT_MS`
+- **`reddit`** — Reddit 单入口工具。`action=list` 列 subreddit 帖子（sort hot/top/new + limit 硬上限 10），走 reddit RSS，返回标题 / 链接 / 图片直链 / 短摘要；`action=get_post` 读单帖标题 + 图片链接 + top 5 评论。超时共享 `BOT_REDDIT_TIMEOUT_MS`，每次调用写一行到 `logs/fetch.ndjson`
+- **`fetch_image`** — 图片获取单入口工具。`action=url` 从图片 URL 下载 jpg/png/gif/webp，`action=qq_avatar` 通过 QQ 号获取用户头像。内部走受限 `curl` 子进程抓 bytes；返回 `ephemeralRef`，图片进入 OutboundCache，可继续 `send_message`、`generate_image` 或 `collect_sticker`。不要通过 `workspace_bash` 裸跑 curl 抓图片，避免绕过大小限制、预览压缩、缓存和审计
 - **`fetch_url`** — 抓任意 URL：response body cap 256KB → cheerio 抽 title/desc/article/main/body → 8KB 截断 → 默认 LLM 摘成 ≤500 中文字 → 输出 ≤1500 字符 clamp。LLM 失败 fallback 到原文截断 + 错误标记。每次调用写一行到 `logs/fetch.ndjson`
 - **`openbb_cli`** — 仅在 `OPENBB_CLI_ENABLED` 启用时注册。通过本机 OpenBB CLI 查股票 / 金融数据，参数是 `command`，内容是 OpenBB CLI 内部命令（如 `/equity/price/historical --symbol AAPL --provider yfinance --export json`）。要拿原始数据正文时加 `--export json`；工具会读取 OpenBB 保存的 JSON 并返回内容。工具启动 `OPENBB_CLI_BIN` 后把命令写入 stdin 并收集 stdout/stderr。禁止 shell 元字符、`exe`、`record` 和退出命令。单次输出 ≤1500 字符，默认 15s 超时，每次调用写一行到 `logs/fetch.ndjson`（`source=openbb_cli`，`url` 字段记录命令文本）
 - **`browser`** — 仅在 `BOT_BROWSER_ENABLED` 启用时注册。真实浏览器单步 action 工具: `help/status/open/switch_page/close_page/observe/click/type/press/scroll/screenshot/download/annotate/request_owner_help`。通过 `BOT_BROWSER_CONTROLLER_URL` 调本地 sidecar。`observe` 返回 URL/title/load state/可交互元素；`screenshot` 返回压缩 image block 进入 AgentContext 并落原图 artifact；普通浏览、发帖/评论/点赞、Cloudflare/Turnstile/cookie 弹窗可自主处理；登录/2FA/账号安全/OAuth/支付/可执行下载等返回 `requiresOwnerHelp`。每步写 `logs/browser-actions.ndjson`
 - **`style_guide`** — 按需返回 Luna 的完整说话风格指南。日常短回复不需要每轮调用；不确定语气、需要反例对照或校准“像不像 Luna”时再读
 - **`source_profile`** — 按需返回某个监听群的 `groups.yaml` 风格定制。未配置的监听群返回 `frequencyHint=normal` + 空 body；不在监听范围内的群返回错误
-- **`remember`** / **`recall`** — Luna 自主控制的长期记忆笔记本（`memory_entries` 表）。`remember` 写一条笔记：`target={kind:'person'|'group', id}` + `content ≤500` 字 + 可选 `sourceMessageIds`（追溯用，不回传给 LLM）。`recall` 按 target 取笔记：可选 `keyword`（精确子串、大小写不敏感）+ `limit 1-20`（默认 10）+ `orderBy createdAt desc`。空结果返回 hint。无 env 开关，无条件注册。设计文档 `~/.gstack/projects/gecan123-qq-bot-v2/zzz-main-design-20260516-134812.md`
+- **`background_task`** — 后台任务单入口工具。`action=list` 查看正在运行和最近完成/失败的任务；`action=get` 按 `taskId` 获取已完成任务详情。图片生成任务结果包含预览图和 `ephemeralRef`
+- **`memory`** — Luna 自主控制的长期记忆笔记本（`memory_entries` 表）。`action=write` 写一条笔记：`target={kind:'person'|'group', id}` + `content ≤500` 字 + 可选 `sourceMessageIds`（追溯用，不回传给 LLM）；`action=search` 按 target 取笔记：可选 `keyword`（精确子串、大小写不敏感）+ `limit 1-20`（默认 10）+ `orderBy createdAt desc`。空结果返回 hint。无 env 开关，无条件注册。设计文档 `~/.gstack/projects/gecan123-qq-bot-v2/zzz-main-design-20260516-134812.md`
 
 ---
 

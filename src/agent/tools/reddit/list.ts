@@ -126,8 +126,8 @@ export function createListRedditTool(deps: RedditFetchDeps = {}): Tool<Args> {
     name: 'list_reddit',
     description: [
       `列 reddit 帖子, 仅返回前 ${HARD_LIMIT} 条简要 (标题 + 链接 + 图片直链 + 短摘要).`,
-      '想深读某条 → 拿那条链接调 get_reddit_post 看评论讨论. 别用 fetch_url 走 reddit, 用专用工具.',
-      '如果输出里有 image: https://i.redd.it/... 这类直链 → 用 download_image 下载, 再用 send_message 发送或 generate_image 编辑.',
+      '想深读某条 → 拿那条链接调 reddit action=get_post 看评论讨论. 别用 fetch_url 走 reddit, 用专用工具.',
+      '如果输出里有 image: https://i.redd.it/... 这类直链 → 用 fetch_image action=url 下载, 再用 send_message 发送或 generate_image 编辑.',
       '不要因为没给详情就反复调本工具换 limit, 上限 10 就是 10.',
       `subreddit 必填, 只能传这几个: ${ALLOWED_SUBREDDITS.join(' / ')}. sort: hot/top/new, 默认 hot.`,
     ].join(' '),
@@ -156,7 +156,7 @@ export function createListRedditTool(deps: RedditFetchDeps = {}): Tool<Args> {
         )
         log.warn({ url, errorKind: outcome.errorKind }, 'list_reddit_failed')
         return {
-          content: `[list_reddit 失败] ${url}: ${outcome.errorKind}. 可换个 subreddit / 稍后再试 / 或直接 wait.`,
+          content: `[reddit action=list 失败] ${url}: ${outcome.errorKind}. 可换个 subreddit / 稍后再试 / 或直接 wait.`,
         }
       }
 
@@ -166,7 +166,7 @@ export function createListRedditTool(deps: RedditFetchDeps = {}): Tool<Args> {
           { path: deps.logPath, appender: deps.appender },
         )
         return {
-          content: `[list_reddit HTTP ${outcome.status}] ${url}. reddit 拒了, 可能 rate limit / sub 不存在. 别原地重试.`,
+          content: `[reddit action=list HTTP ${outcome.status}] ${url}. reddit 拒了, 可能 rate limit / sub 不存在. 别原地重试.`,
         }
       }
 
@@ -179,7 +179,7 @@ export function createListRedditTool(deps: RedditFetchDeps = {}): Tool<Args> {
           { path: deps.logPath, appender: deps.appender },
         )
         log.warn({ url, err }, 'list_reddit_parse_failed')
-        return { content: `[list_reddit 解析失败] ${url}: ${(err as Error).message}` }
+        return { content: `[reddit action=list 解析失败] ${url}: ${(err as Error).message}` }
       }
 
       await logFetch(baseLog, { path: deps.logPath, appender: deps.appender })
@@ -190,5 +190,3 @@ export function createListRedditTool(deps: RedditFetchDeps = {}): Tool<Args> {
     },
   }
 }
-
-export const listRedditTool = createListRedditTool()

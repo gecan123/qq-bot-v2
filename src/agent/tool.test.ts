@@ -106,6 +106,33 @@ describe('createToolExecutor', () => {
     assert.equal(entry.error, 'Invalid tool arguments')
   })
 
+  test('classifies merged memory side effects by action', async () => {
+    const writes: string[] = []
+    const memory: Tool<{ action: 'write' | 'search' }> = {
+      name: 'memory',
+      description: 'memory',
+      schema: z.object({ action: z.enum(['write', 'search']) }),
+      async execute() {
+        return { content: JSON.stringify({ ok: true }) }
+      },
+    }
+    const exec = createToolExecutor([memory], {
+      trace: {
+        now: () => new Date('2026-05-25T12:00:00.000Z'),
+        clockMs: () => 100,
+        appender: async (_path, line) => {
+          writes.push(line)
+        },
+      },
+    })
+
+    await exec.execute({ id: 'write', name: 'memory', args: { action: 'write' } }, makeCtx())
+    await exec.execute({ id: 'search', name: 'memory', args: { action: 'search' } }, makeCtx())
+
+    assert.equal(JSON.parse(writes[0]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[1]!).sideEffect, false)
+  })
+
   test('routes call to correct tool by name and validates args', async () => {
     const echo: Tool<{ msg: string }> = {
       name: 'echo',

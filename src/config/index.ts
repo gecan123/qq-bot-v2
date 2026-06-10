@@ -259,7 +259,7 @@ export function parseConfig(env: EnvSource) {
      * the LLM a chance to fetch something or start a topic. Default 30min.
      */
     idleHintMs,
-    /** Hard timeout for list_reddit / get_reddit_post (AbortController). */
+    /** Hard timeout for reddit action=list / action=get_post (AbortController). */
     redditTimeoutMs,
     /** Hard timeout for fetch_url (AbortController). */
     fetchUrlTimeoutMs,

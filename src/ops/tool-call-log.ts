@@ -100,13 +100,21 @@ function summarizeString(value: string): string {
   return `${value.slice(0, MAX_STRING_LENGTH)}...[truncated ${value.length - MAX_STRING_LENGTH} chars]`
 }
 
-export function isSideEffectTool(toolName: string): boolean {
+export function isSideEffectTool(toolName: string, args?: unknown): boolean {
+  if (toolName === 'memory') {
+    return hasAction(args, 'write')
+  }
   return SIDE_EFFECT_TOOLS.has(toolName)
+}
+
+function hasAction(args: unknown, action: string): boolean {
+  return !!args && typeof args === 'object' && (args as Record<string, unknown>).action === action
 }
 
 const SIDE_EFFECT_TOOLS = new Set([
   'send_message',
   'generate_image',
+  'fetch_image',
   'download_image',
   'remember',
   'write_journal',

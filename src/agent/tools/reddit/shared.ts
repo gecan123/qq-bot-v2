@@ -1,7 +1,7 @@
 /**
  * reddit/ 工具公共依赖：UA / fetch / Atom XML 解析帮手 / clip。
  *
- * list_reddit + get_reddit_post 都走 reddit 公开 RSS (Atom feed),
+ * reddit action=list + action=get_post 都走 reddit 公开 RSS (Atom feed),
  * 不需要 OAuth, 也不走 .json 端点 (被 reddit 按 IP/network policy 拦)。
  */
 

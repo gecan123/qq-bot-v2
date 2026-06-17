@@ -104,6 +104,21 @@ describe('buildBotSystemPrompt', () => {
     }
   })
 
+  test('在场规则提到 rest 可用于短暂休息且被 @/私聊唤醒', () => {
+    const prompt = buildBotSystemPrompt(createInput())
+
+    assert.match(prompt, /rest/)
+    assert.match(prompt, /被 @/)
+    assert.match(prompt, /私聊/)
+  })
+
+  test('在场规则要求没动作时用 wait 或 rest, 不靠 assistant 停住', () => {
+    const prompt = buildBotSystemPrompt(createInput())
+
+    assert.match(prompt, /没有要做的动作/)
+    assert.match(prompt, /wait \/ rest/)
+  })
+
   test('owner 改变 → prompt 改变 (确认 owner 真的进 prompt)', () => {
     const a = buildBotSystemPrompt(createInput({ owner: { qq: 100, name: 'alice' } }))
     const b = buildBotSystemPrompt(createInput({ owner: { qq: 200, name: 'bob' } }))

@@ -54,6 +54,7 @@ describe('merged main-agent tools', () => {
     assert.ok(names.includes('background_task'))
     assert.ok(names.includes('memory'))
     assert.ok(names.includes('fetch_image'))
+    assert.ok(names.includes('rest'))
     assert.equal(names.includes('list_reddit'), false)
     assert.equal(names.includes('get_reddit_post'), false)
     assert.equal(names.includes('check_tasks'), false)

@@ -159,6 +159,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     })
 
     let llmCallCount = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
     const llm: LlmClient = {
       async chat() {
         llmCallCount++
@@ -178,12 +179,10 @@ describe('BotLoopAgent.runOnceForTest', () => {
             model: 'mock',
           }
         }
-        // round 3+: 返回空 toolCalls, 让 runOnce 走 waitForEvent 阻塞分支,
-        // loop 在 stop() enqueue wake 时解开. 不能用 mock wait 工具 — 它会让
-        // hadToolCalls=true, loop 永不阻塞, 100ms 内死循环耗尽内存 (OOM).
+        // round 3+: 新语义下主循环不会替 LLM 阻塞; LLM 应自己调用 rest / wait.
         return {
-          content: '说完了, 等下条',
-          toolCalls: [],
+          content: '',
+          toolCalls: [{ id: 'c3', name: 'rest', args: { durationSeconds: 30 } }],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',
         }
@@ -197,10 +196,14 @@ describe('BotLoopAgent.runOnceForTest', () => {
         sendMessageCalled = true
         return { content: '{"ok":true}' }
       },
+      rest: async () => {
+        await agent.stop()
+        return { content: '[休息结束] 已休息约 30 秒。' }
+      },
     })
     const { repo } = makeMockSnapshotRepo()
 
-    const agent = createBotLoopAgent({
+    agent = createBotLoopAgent({
       systemPrompt: 'you are a bot',
       context: ctx,
       eventQueue,
@@ -221,7 +224,76 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.ok(llmCallCount >= 2, `expected LLM ≥2 calls, got ${llmCallCount}`)
     assert.equal(sendMessageCalled, true, 'send_message 拿到 reddit result 后真发出去了')
 
-    await agent.stop()
+    await startPromise
+  })
+
+  test('assistant 返回 no tool calls 后仍继续下一轮, 由 LLM 自己选择 rest/wait', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({
+      type: 'napcat_message',
+      messageRowId: 1,
+      groupId: 999,
+      messageId: 12345,
+      senderId: 100,
+      senderNickname: '张三',
+      mentionedSelf: true,
+      sentAt: new Date('2026-01-01T00:00:00Z'),
+      renderedText: 'hello',
+    })
+
+    let llmCallCount = 0
+    let restCalled = false
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const llm: LlmClient = {
+      async chat() {
+        llmCallCount++
+        if (llmCallCount === 1) {
+          return {
+            content: '先想一下',
+            toolCalls: [],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+            model: 'mock',
+          }
+        }
+        return {
+          content: '',
+          toolCalls: [{ id: 'c2', name: 'rest', args: { durationSeconds: 30 } }],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+          model: 'mock',
+        }
+      },
+    }
+
+    const tools = makeMockTools({
+      rest: async () => {
+        restCalled = true
+        await agent.stop()
+        return { content: '[休息结束] 已休息约 30 秒。' }
+      },
+    })
+    const { repo } = makeMockSnapshotRepo()
+
+    agent = createBotLoopAgent({
+      systemPrompt: 'you are a bot',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools,
+      snapshotRepo: repo,
+      renderEvent: async (event) => {
+        if (event.type !== 'napcat_message') return null
+        return `[${event.senderNickname}] hello`
+      },
+      eventDebounceMs: 0,
+    })
+
+    const startPromise = agent.start()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    assert.ok(llmCallCount >= 2, `expected LLM to choose next action itself, got ${llmCallCount}`)
+    assert.equal(restCalled, true)
+
     await startPromise
   })
 

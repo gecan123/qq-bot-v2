@@ -52,6 +52,40 @@ describe('InMemoryEventQueue', () => {
     assert.equal(wokeB, true)
   })
 
+  test('waitForEventWhere ignores non-matching events and resolves on a matching event without consuming', async () => {
+    const q = new InMemoryEventQueue<number>()
+    let resolved = false
+    const waiting = q.waitForEventWhere((event) => event === 2).then(() => {
+      resolved = true
+    })
+
+    q.enqueue(1)
+    await tick()
+    assert.equal(resolved, false)
+
+    q.enqueue(2)
+    await waiting
+    assert.equal(resolved, true)
+    assert.equal(q.size(), 2)
+  })
+
+  test('waitForEventWhere can be aborted before a matching event arrives', async () => {
+    const q = new InMemoryEventQueue<number>()
+    const abort = new AbortController()
+    let resolvedCount = 0
+    const waiting = q.waitForEventWhere((event) => event === 2, { signal: abort.signal }).then(() => {
+      resolvedCount++
+    })
+
+    abort.abort()
+    await waiting
+    assert.equal(resolvedCount, 1)
+
+    q.enqueue(2)
+    await tick()
+    assert.equal(resolvedCount, 1)
+  })
+
   test('clear empties the queue and returns count', () => {
     const q = new InMemoryEventQueue<number>()
     q.enqueue(1)

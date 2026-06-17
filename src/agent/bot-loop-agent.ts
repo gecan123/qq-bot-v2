@@ -132,7 +132,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     }
   }
 
-  async function step(): Promise<{ hadToolCalls: boolean }> {
+  async function step(): Promise<{ ranRound: boolean }> {
     const debounceMs = deps.eventDebounceMs ?? DEFAULT_EVENT_DEBOUNCE_MS
     if (deps.eventQueue.size() > 0 && debounceMs > 0 && !stopRequested) {
       await new Promise<void>((resolve) => {
@@ -151,7 +151,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     log.debug({ roundIndex: roundIndex + 1, eventsConsumed: consumed }, 'round_start')
 
     if (deps.context.getSnapshot().messages.length === 0) {
-      return { hadToolCalls: false }
+      return { ranRound: false }
     }
 
     await deps.snapshotRepo.save({
@@ -159,24 +159,25 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       lastWakeAt,
     })
 
-    const { hadToolCalls, inputTokens } = await runRound()
+    const { inputTokens } = await runRound()
     await deps.snapshotRepo.save({
       snapshot: deps.context.exportPersistedSnapshot(),
       lastWakeAt,
     })
     await maybeCompact(inputTokens)
-    return { hadToolCalls }
+    return { ranRound: true }
   }
 
   async function runOnce(): Promise<void> {
-    const { hadToolCalls } = await step()
-    if (!hadToolCalls && !stopRequested) {
+    const { ranRound } = await step()
+    if (!ranRound && !stopRequested) {
       await deps.eventQueue.waitForEvent()
     }
   }
 
   async function loop(): Promise<void> {
-    while (!stopRequested) {
+    while (true) {
+      if (stopRequested) break
       try {
         await runOnce()
       } catch (err) {

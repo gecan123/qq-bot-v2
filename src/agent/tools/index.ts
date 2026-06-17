@@ -4,6 +4,7 @@ import type { BackgroundTaskRegistry } from '../background-task-registry.js'
 import type { GroupCustomization } from '../../config/group-prompts.js'
 import type { TargetMetadataMaps } from '../resolve-target-meta.js'
 import { waitTool } from './wait.js'
+import { restTool } from './rest.js'
 import { createSendMessageTool } from './send-message.js'
 import { createDbTool } from './db.js'
 import { maybeCreateWebSearchTool } from './web-search.js'
@@ -34,6 +35,7 @@ export interface BotToolDeps {
 export function buildBotTools(deps: BotToolDeps): Tool[] {
   const tools: Tool[] = [
     waitTool,
+    restTool,
     createSendMessageTool({
       sender: deps.sender,
       groupAmbientSendIds: deps.groupAmbientSendIds,

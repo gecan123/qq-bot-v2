@@ -51,6 +51,7 @@ export function createWaitTool(deps: WaitToolDeps = {}): Tool<WaitArgs> {
     async execute(args, ctx) {
       let timerHandle: unknown = null
       let idleFired = false
+      const eventAbort = new AbortController()
 
       log.info({ idleHintMs, reason: args.reason ?? null }, 'wait_enter')
       const enteredAt = Date.now()
@@ -64,7 +65,7 @@ export function createWaitTool(deps: WaitToolDeps = {}): Tool<WaitArgs> {
 
       try {
         const result = await Promise.race([
-          ctx.eventQueue.waitForEvent().then(() => 'event' as const),
+          ctx.eventQueue.waitForEvent({ signal: eventAbort.signal }).then(() => 'event' as const),
           timeoutPromise,
         ])
 
@@ -81,6 +82,7 @@ export function createWaitTool(deps: WaitToolDeps = {}): Tool<WaitArgs> {
         log.info({ elapsedMs }, 'wait_resumed_by_event')
         return { content: `[当前北京时间: ${now}] ok` }
       } finally {
+        eventAbort.abort()
         if (!idleFired && timerHandle != null) {
           timer.clearTimeout(timerHandle)
         }

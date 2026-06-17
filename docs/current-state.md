@@ -109,13 +109,14 @@ idle-fetch MVP 跑起来后的近期 TODO，做完即勾。过期 / 已收敛的
 ## 主循环（`src/agent/bot-loop-agent.ts`）
 
 ```
-while (!stopRequested) {
+while (true) {
+  if (stopRequested) break
   drainEvents()          // BotEvent → context.appendUserMessage(renderedText)
   if (context 是空) await waitForEvent(); continue
   runRound()             // LLM call + execute tool calls
   persistSnapshot()      // 写 bot_agent_snapshot
   maybeCompact()         // token 阈值触发
-  if (queue 空) await waitForEvent()  // 守 LLM 不空跑
+  // 不再由 loop 因 toolCalls=[] 自动 wait; LLM 没动作时应自己调用 wait / rest
 }
 ```
 
@@ -166,7 +167,7 @@ while (!stopRequested) {
 - `bot-loop-agent.ts` — 主循环
 - `replay-missed.ts` — 启动时多源回放关机期间漏掉的消息（与 live 共享 dedup hook）
 - `tool.ts` — Tool / ToolExecutor 接口
-- `tools/*` — `wait` / `send_message` / `db` / `reddit` / `fetch_image` / `web_search` / `style_guide` / `source_profile` / `memory` / `background_task` / `fetch_url` / `openbb_cli`
+- `tools/*` — `wait` / `rest` / `send_message` / `db` / `reddit` / `fetch_image` / `web_search` / `style_guide` / `source_profile` / `memory` / `background_task` / `fetch_url` / `openbb_cli`
 - `tools/reddit/*` — `reddit` 底层 action=list (list.ts) / action=get_post (get-post.ts) / 共享依赖 (shared.ts)
 
 `src/browser/`
@@ -233,6 +234,7 @@ LLM_PROVIDER_OPENAI_API_KEY=sk-local
 bot 通过工具自主决定：
 
 - **`wait`** — 没事可做时调用，阻塞到下个 BotEvent。内嵌 `BOT_IDLE_HINT_MS` Promise.race：长时间没事件时返回 `[空闲提示] 已闲置约 X 分钟` 的 tool result，让下一轮立即跑（LLM 自己决定要 fetch、整理想法、私聊创作者提工具/事件需求，还是继续 wait）
+- **`rest`** — 主动短休工具，默认 `durationSeconds=30`（范围 1–300）。普通群消息只入队不打断；被 @ 的群消息、私聊、后台任务完成或 stop wake 会立刻返回 `[休息被打断]`。工具只负责唤醒，不消费事件；下一轮仍由 `drainEvents()` 把消息 append 进 `AgentContext`
 - **`send_message`** — 真发到群 / 私聊。target 必填。group ambient 经 `BOT_GROUP_AMBIENT_SEND_IDS` 白名单校验，不在白名单走 dry-run（假成功）；reply / private 不受影响
   - target = `{type:'group', groupId, mentionUserId?}` 发群里
   - target = `{type:'private', userId}` 发私聊
@@ -264,7 +266,7 @@ bot 通过工具自主决定：
 system prompt（`src/agent/bot-system-prompt.ts`）明示 LLM：
 
 - 主动发也走工具，assistant content 只是内心想法
-- 优先 wait，质量比频率重要
+- 优先 wait / rest，质量比频率重要
 - 配了 owner 时，空闲、卡住、觉得工具/事件太少，可以用 `send_message` 私聊创作者提需求
 - 跨源知识共享 OK（同一意识），跨源 cue 人不行（target 显式）
 

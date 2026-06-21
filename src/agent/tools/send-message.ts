@@ -35,25 +35,49 @@ const privateTargetSchema = z.object({
 })
 
 const targetSchema = z.union([groupTargetSchema, privateTargetSchema])
+const imageRefSchema = z
+  .string()
+  .regex(/^(?:media:\d+|ephemeral:[a-f0-9]{64})$/)
 
 const argsSchema = z
   .object({
     target: targetSchema.describe('显式发送目标. group 必传 groupId, private 必传 userId. 不要把私聊和群混淆.'),
-    text: z.string().min(1).max(MAX_TEXT_LENGTH).describe('消息正文 (<= 500 字)').optional(),
-    image: imageHandleSchema
-      .describe('发图. {mediaId:N} 走存量, {ephemeralRef:"<hash>"} 走刚生成/抓取/截屏 (1h 内有效). 发出去会自动登记 mediaId 写进 tool result. text 和 image 至少一个非空.')
-      .optional(),
+    mode: z.enum(['ambient', 'reply']).optional().describe('ambient=顺聊/主动说一句, 不引用消息; reply=明确回复某条 message_id.'),
+    text: z.string().min(1).max(MAX_TEXT_LENGTH).nullable().optional().describe('消息正文 (<= 500 字). 不发文字时填 null.'),
+    imageRef: imageRefSchema
+      .nullable()
+      .optional()
+      .describe('发图句柄. 无图填 null. 存量图用 media:<id>, 刚生成/抓取/截屏用 ephemeral:<64-hex>. 不要猜.'),
     replyToMessageId: z
       .number()
       .int()
+      .nullable()
       .optional()
-      .describe('回复某条已存在消息的 message_id. 直接抄消息标签里 `#NNNNN` 那个数 (例: `[群:阳光厨房 | 张三(QQ:100) #12345 [@bot]]` → 这里填 12345). 被 @ed 时通常回填; 主动开新话题时省略. 不要凭印象编, 编错就会回错条消息.'),
+      .describe('mode=reply 时填消息标签里 # 后面的 message_id; mode=ambient 必须填 null. 不要凭印象编.'),
   })
-  .refine((v) => v.text !== undefined || v.image !== undefined, {
-    message: 'text 或 image 至少一个非空',
+  .refine((v) => v.text != null || v.imageRef != null, {
+    message: 'text 或 imageRef 至少一个非空',
+  })
+  .refine((v) => v.mode !== 'reply' || v.replyToMessageId != null, {
+    message: 'mode=reply 时必须提供 replyToMessageId',
   })
 
-type Args = z.infer<typeof argsSchema>
+interface Args {
+  target: z.infer<typeof targetSchema>
+  mode?: 'ambient' | 'reply' | null
+  text?: string | null
+  image?: ImageHandle
+  imageRef?: string | null
+  replyToMessageId?: number | null
+}
+
+interface NormalizedArgs {
+  target: z.infer<typeof targetSchema>
+  mode: 'ambient' | 'reply'
+  text?: string
+  image?: ImageHandle
+  replyToMessageId?: number
+}
 
 type SendKind = 'group-reply' | 'group-ambient' | 'private-reply' | 'private-ambient'
 
@@ -64,6 +88,7 @@ interface ImageResultPayload {
   byteSize?: number
   contentType?: string
   lazyPersistError?: string
+  resolveError?: string
 }
 
 interface SendResultPayload {
@@ -112,18 +137,35 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
       '群白名单已经在 ingress 层做过 —— 你能在 history 里看到的群消息, 那个群一定是可发的, 不需要自己再判断。私聊同样: 陌生 DM 在 ingress 层已被 sub_type=friend 挡掉, 你看到的 [私聊 | ...(QQ:N)] 一定可发回。',
       'target.type=group: 必传 groupId (来自消息标签 [群:名字 | 昵称(QQ:...)] 中暗含的 groupId, 可以用 db action=query 查 messages 表 group_id 列). mentionUserId 可选, 在文本前加 @ 提及群内某人。',
       'target.type=private: 必传 userId (私聊对方 QQ).',
-      'image 可选: 发图. {mediaId:N} 走存量, {ephemeralRef:"<hash>"} 走刚生成/抓取/截屏 (1h 内有效). 发出去会自动登记 mediaId 写进 tool result. text 和 image 至少一个非空.',
-      'replyToMessageId 可选: 引用一条已存在消息. 数字必须等于该条消息标签里 `#` 后面的 message_id, 不要凭印象编. 被 @ed 时常回填以表示「我在回复你」, 主动插话或开新话题时省略.',
-      'assistant message 里写的内容只是你的内心想法, 不会发出去 —— 只有调这个工具才会真发。',
+      'mode 必填: 顺聊/上下文明确时用 ambient, replyToMessageId 填 null; 只有多人多话题混杂、需要精确指向某条消息时才用 reply.',
+      'imageRef 必填但通常是 null. 只在你明确拿到了可用句柄时才填: media:<id> 或 ephemeral:<64-hex>; 不确定就填 null, 只发 text. text 和 imageRef 至少一个非 null.',
+      'replyToMessageId 必填: mode=ambient 时填 null; mode=reply 时数字必须等于消息标签里 `#` 后面的 message_id, 不要凭印象编.',
+      'text 是会发给 QQ 的用户可见正文; 不要把思考、自我检查、tool 参数调试或元评论写进 text。只有调这个工具才会真发。',
     ].join(' '),
     schema: argsSchema,
     async execute(rawArgs) {
-      const args = rawArgs as Args
-      const { kind, sendTarget, mentionUserId } = classifySend(args.target, args.replyToMessageId)
-      const dryRun = isDryRun(kind, args.target, deps.groupAmbientSendIds)
+      const args = normalizeSendArgs(rawArgs as Args)
+      const text = args.text ? normalizeSendText(args.text) : undefined
+      const normalizedArgs = { ...args, ...(text ? { text } : { text: undefined }) }
+      if (!normalizedArgs.text && !normalizedArgs.image) {
+        return {
+          content: JSON.stringify({
+            ok: false,
+            attempts: 0,
+            providerMessageId: null,
+            kind: classifySend(normalizedArgs.target, normalizedArgs.replyToMessageId).kind,
+            error: 'send_message text became empty after normalization',
+          }),
+        }
+      }
+      const { kind, sendTarget, mentionUserId } = classifySend(
+        normalizedArgs.target,
+        normalizedArgs.replyToMessageId,
+      )
+      const dryRun = isDryRun(kind, normalizedArgs.target, deps.groupAmbientSendIds)
 
       if (dryRun) {
-        const groupId = (args.target as { groupId: number }).groupId
+        const groupId = (normalizedArgs.target as { groupId: number }).groupId
         log.info({ groupId, kind }, 'send_message_group_ambient_dry_run')
         const payload: SendResultPayload = {
           ok: true,
@@ -131,8 +173,8 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
           providerMessageId: null,
           kind,
         }
-        if (args.image) {
-          const handle = args.image as ImageHandle
+        if (normalizedArgs.image) {
+          const handle = normalizedArgs.image as ImageHandle
           payload.image = {
             mediaId: null,
             ...('ephemeralRef' in handle ? { ephemeralRef: handle.ephemeralRef } : {}),
@@ -143,19 +185,51 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
       }
 
       // Text-only path: use legacy sender methods for backward compat
-      if (!args.image) {
-        return await sendTextOnly(deps, args, kind, sendTarget, mentionUserId)
+      if (!normalizedArgs.image) {
+        return await sendTextOnly(deps, normalizedArgs, kind, sendTarget, mentionUserId)
       }
 
       // Image path: resolve handle → build segments → sendSegments → lazy persist
-      return await sendWithImage(deps, args, kind, sendTarget, mentionUserId, dryRun)
+      return await sendWithImage(deps, normalizedArgs, kind, sendTarget, mentionUserId, dryRun)
     },
   }
 }
 
+export function normalizeSendText(text: string): string {
+  return text
+    .replace(/[\u200b-\u200f\ufeff]/gu, '')
+    .replace(/[ \t]+\n/gu, '\n')
+    .replace(/\n{3,}/gu, '\n\n')
+    .trim()
+}
+
+function normalizeSendArgs(args: Args): NormalizedArgs {
+  const mode = args.mode ?? (args.replyToMessageId != null ? 'reply' : 'ambient')
+  const image = args.image ?? imageRefToHandle(args.imageRef ?? null)
+  return {
+    target: args.target,
+    mode,
+    text: args.text ?? undefined,
+    image,
+    replyToMessageId: mode === 'reply' ? args.replyToMessageId ?? undefined : undefined,
+  }
+}
+
+function imageRefToHandle(ref: string | null): ImageHandle | undefined {
+  if (!ref) return undefined
+  if (ref.startsWith('media:')) {
+    const mediaId = Number(ref.slice('media:'.length))
+    return Number.isSafeInteger(mediaId) && mediaId > 0 ? { mediaId } : undefined
+  }
+  if (ref.startsWith('ephemeral:')) {
+    return { ephemeralRef: ref.slice('ephemeral:'.length) }
+  }
+  return undefined
+}
+
 async function sendTextOnly(
   deps: SendMessageDeps,
-  args: Args,
+  args: NormalizedArgs,
   kind: SendKind,
   sendTarget: SendTarget,
   mentionUserId: number | undefined,
@@ -186,7 +260,7 @@ async function sendTextOnly(
 
 async function sendWithImage(
   deps: SendMessageDeps,
-  args: Args,
+  args: NormalizedArgs,
   kind: SendKind,
   sendTarget: SendTarget,
   mentionUserId: number | undefined,
@@ -199,6 +273,16 @@ async function sendWithImage(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     log.warn({ handle, error: message }, 'send_message_image_resolve_failed')
+    if (args.text) {
+      const textOnly = await sendTextOnly(deps, args, kind, sendTarget, mentionUserId)
+      const payload = JSON.parse(textOnly.content) as SendResultPayload
+      payload.image = {
+        mediaId: 'mediaId' in handle ? handle.mediaId : null,
+        ...('ephemeralRef' in handle ? { ephemeralRef: handle.ephemeralRef } : {}),
+        resolveError: message,
+      }
+      return { content: JSON.stringify(payload) }
+    }
     return {
       content: JSON.stringify({
         ok: false,

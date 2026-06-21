@@ -240,7 +240,10 @@ describe('send_message tool — schema rejection', () => {
     const tool = createSendMessageTool({ sender, groupAmbientSendIds: new Set([111, 999, 10001, 99999]) })
     const r = tool.schema.safeParse({
       target: { type: 'private', userId: 10001, mentionUserId: 1 },
+      mode: 'ambient',
       text: 'hi',
+      replyToMessageId: null,
+      imageRef: null,
     })
     assert.equal(r.success, true)
     if (r.success) {
@@ -269,23 +272,28 @@ describe('send_message tool — schema rejection', () => {
     assert.equal(r.success, false)
   })
 
-  test('accepts image-only (no text)', () => {
+  test('accepts imageRef-only (no text)', () => {
     const { sender } = makeMockSender()
     const tool = createSendMessageTool({ sender, groupAmbientSendIds: new Set([111]) })
     const r = tool.schema.safeParse({
       target: { type: 'group', groupId: 111 },
-      image: { mediaId: 42 },
+      mode: 'ambient',
+      text: null,
+      replyToMessageId: null,
+      imageRef: 'media:42',
     })
     assert.equal(r.success, true)
   })
 
-  test('accepts text + image', () => {
+  test('accepts text + imageRef', () => {
     const { sender } = makeMockSender()
     const tool = createSendMessageTool({ sender, groupAmbientSendIds: new Set([111]) })
     const r = tool.schema.safeParse({
       target: { type: 'group', groupId: 111 },
+      mode: 'ambient',
       text: 'look at this',
-      image: { ephemeralRef: 'a'.repeat(64) },
+      replyToMessageId: null,
+      imageRef: `ephemeral:${'a'.repeat(64)}`,
     })
     assert.equal(r.success, true)
   })
@@ -295,6 +303,90 @@ describe('send_message tool — schema rejection', () => {
     const tool = createSendMessageTool({ sender, groupAmbientSendIds: new Set([111, 999, 10001, 99999]) })
     assert.equal(tool.name, 'send_message')
   })
+
+  test('accepts flattened ambient text args without reply or image fields', async () => {
+    const { sender, calls } = makeMockSender()
+    const tool = createSendMessageTool({ sender, groupAmbientSendIds: new Set([111]) })
+    const out = await tool.execute(
+      {
+        target: { type: 'private', userId: 10001 },
+        mode: 'ambient',
+        text: '在的',
+        replyToMessageId: null,
+        imageRef: null,
+      },
+      makeCtx(),
+    )
+
+    const result = parseToolResult(out.content)
+    assert.equal(result.ok, true)
+    assert.equal(result.kind, 'private-ambient')
+    assert.equal(calls[0]!.fn, 'sendPrivateMessage')
+    const args = calls[0]!.args as { text: string; replyToMessageId?: number }
+    assert.equal(args.text, '在的')
+    assert.equal(args.replyToMessageId, undefined)
+  })
+
+  test('does not reject or rewrite send_message text based on content markers', async () => {
+    const { sender, calls } = makeMockSender()
+    const tool = createSendMessageTool({ sender, groupAmbientSendIds: new Set([111]) })
+    const text = '收到，这条不引用。\n\n*思考: 这里不应该出现在用户可见正文里。*'
+    const out = await tool.execute(
+      {
+        target: { type: 'private', userId: 10001 },
+        mode: 'ambient',
+        text,
+        replyToMessageId: null,
+        imageRef: null,
+      },
+      makeCtx(),
+    )
+
+    const result = parseToolResult(out.content)
+    assert.equal(result.ok, true)
+    assert.equal(calls.length, 1)
+    const args = calls[0]!.args as { text: string }
+    assert.equal(args.text, text)
+  })
+
+  test('mode=ambient strips hallucinated replyToMessageId instead of replying', async () => {
+    const { sender, calls } = makeMockSender()
+    const tool = createSendMessageTool({ sender, groupAmbientSendIds: new Set([111]) })
+    const out = await tool.execute(
+      {
+        target: { type: 'private', userId: 10001 },
+        mode: 'ambient',
+        text: '在的',
+        replyToMessageId: 12345,
+        imageRef: null,
+      },
+      makeCtx(),
+    )
+
+    const result = parseToolResult(out.content)
+    assert.equal(result.kind, 'private-ambient')
+    const args = calls[0]!.args as { replyToMessageId?: number }
+    assert.equal(args.replyToMessageId, undefined)
+  })
+
+  test('schema rejects object-shaped image in flattened args', () => {
+    const { sender } = makeMockSender()
+    const tool = createSendMessageTool({ sender, groupAmbientSendIds: new Set([111]) })
+    const r = tool.schema.safeParse({
+      target: { type: 'private', userId: 10001 },
+      mode: 'ambient',
+      text: '在的',
+      replyToMessageId: null,
+      image: { mediaId: 1 },
+      imageRef: null,
+    })
+    assert.equal(r.success, true)
+    if (r.success) {
+      const data = r.data as Record<string, unknown>
+      assert.equal('image' in data, false)
+    }
+  })
+
 })
 
 describe('send_message tool — image via ephemeralRef', () => {
@@ -581,5 +673,35 @@ describe('send_message tool — image via mediaId', () => {
     const result = parseToolResult(out.content)
     assert.equal(result.ok, false)
     assert.match(result.error as string, /resolve failed/)
+  })
+
+  test('text + missing mediaId → sends text-only and reports image resolveError', async () => {
+    prisma.media.findUnique = (async () => null) as never
+
+    const { sender, calls } = makeMockSender()
+    const tool = createSendMessageTool({ sender, groupAmbientSendIds: new Set([111]) })
+    const out = await tool.execute(
+      {
+        target: { type: 'private', userId: 10001 },
+        text: 'hi，醒着呢。咋啦',
+        image: { mediaId: 1 },
+        replyToMessageId: 333,
+      },
+      makeCtx(),
+    )
+
+    const result = parseToolResult(out.content)
+    assert.equal(result.ok, true)
+    assert.equal(result.kind, 'private-reply')
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0]!.fn, 'sendPrivateMessage')
+
+    const args = calls[0]!.args as { text: string; replyToMessageId?: number }
+    assert.equal(args.text, 'hi，醒着呢。咋啦')
+    assert.equal(args.replyToMessageId, 333)
+
+    const img = result.image as Record<string, unknown>
+    assert.equal(img.mediaId, 1)
+    assert.match(img.resolveError as string, /Media not found: mediaId=1/)
   })
 })

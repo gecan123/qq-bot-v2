@@ -8,7 +8,7 @@ const log = createLogger('TOOL_WAIT')
 /**
  * wait 工具: bot 没事可做时挂在这里, 直到有新事件 — 或者直到 IDLE_HINT_MS 到点。
  *
- * 节奏: wait 是一次 toolCall, 主循环看到 hadToolCalls=true → 立即跑下一轮.
+ * 节奏: wait 是一次非 send_message toolCall, 主循环会立即跑下一轮.
  * idle 触发只需返回 [空闲提示] tool result, 不必额外 enqueue wake — 下一轮 LLM 自然看到.
  *
  * 红线 5: idle hint 文本是常量, 同样 trigger 输出同样字节; 一旦 append 进 messages 数组就冻结,

@@ -62,7 +62,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     return consumed
   }
 
-  async function runRound(): Promise<{ hadToolCalls: boolean; inputTokens: number | null }> {
+  async function runRound(): Promise<{
+    inputTokens: number | null
+    shouldWaitForExternalEvent: boolean
+  }> {
     roundIndex++
     const snapshot = deps.context.getSnapshot()
     const tools = deps.tools.list()
@@ -96,22 +99,40 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       model: completion.model,
     })
 
-    if (completion.content.length > 0 || completion.toolCalls.length > 0) {
+    if (completion.content.length > 0) {
+      log.warn(
+        {
+          roundIndex,
+          contentLen: completion.content.length,
+          toolCallCount: completion.toolCalls.length,
+        },
+        'assistant_text_dropped_from_context',
+      )
+    }
+
+    if (completion.toolCalls.length > 0) {
       deps.context.appendAssistantTurn({
-        content: completion.content,
+        content: '',
         toolCalls: completion.toolCalls,
       })
     }
 
+    let shouldWaitForExternalEvent = false
     for (const call of completion.toolCalls) {
       const result = await deps.tools.execute(call, {
         eventQueue: deps.eventQueue,
         roundIndex,
       })
+      if (call.name === 'send_message' && isSuccessfulSendMessageResult(result.content)) {
+        shouldWaitForExternalEvent = true
+      }
       deps.context.appendToolResult({ toolCallId: call.id, content: result.content })
     }
 
-    return { hadToolCalls: completion.toolCalls.length > 0, inputTokens: completion.usage.inputTokens }
+    return {
+      inputTokens: completion.usage.inputTokens,
+      shouldWaitForExternalEvent,
+    }
   }
 
   async function maybeCompact(inputTokens: number | null): Promise<void> {
@@ -132,7 +153,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     }
   }
 
-  async function step(): Promise<{ ranRound: boolean }> {
+  async function step(): Promise<{ ranRound: boolean; shouldWaitForExternalEvent: boolean }> {
     const debounceMs = deps.eventDebounceMs ?? DEFAULT_EVENT_DEBOUNCE_MS
     if (deps.eventQueue.size() > 0 && debounceMs > 0 && !stopRequested) {
       await new Promise<void>((resolve) => {
@@ -151,7 +172,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     log.debug({ roundIndex: roundIndex + 1, eventsConsumed: consumed }, 'round_start')
 
     if (deps.context.getSnapshot().messages.length === 0) {
-      return { ranRound: false }
+      return { ranRound: false, shouldWaitForExternalEvent: false }
     }
 
     await deps.snapshotRepo.save({
@@ -159,18 +180,22 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       lastWakeAt,
     })
 
-    const { inputTokens } = await runRound()
+    const { inputTokens, shouldWaitForExternalEvent } = await runRound()
     await deps.snapshotRepo.save({
       snapshot: deps.context.exportPersistedSnapshot(),
       lastWakeAt,
     })
     await maybeCompact(inputTokens)
-    return { ranRound: true }
+    return { ranRound: true, shouldWaitForExternalEvent }
   }
 
   async function runOnce(): Promise<void> {
-    const { ranRound } = await step()
+    const { ranRound, shouldWaitForExternalEvent } = await step()
     if (!ranRound && !stopRequested) {
+      await deps.eventQueue.waitForEvent()
+    }
+    if (ranRound && shouldWaitForExternalEvent && !stopRequested) {
+      log.debug({ roundIndex }, 'round_waiting_after_send_message')
       await deps.eventQueue.waitForEvent()
     }
   }
@@ -207,4 +232,19 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function isSuccessfulSendMessageResult(content: unknown): boolean {
+  if (typeof content !== 'string') return false
+  try {
+    const parsed = JSON.parse(content) as unknown
+    return !!(
+      parsed &&
+      typeof parsed === 'object' &&
+      'ok' in parsed &&
+      (parsed as { ok?: unknown }).ok === true
+    )
+  } catch {
+    return false
+  }
 }

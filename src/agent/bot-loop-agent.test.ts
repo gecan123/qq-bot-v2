@@ -104,6 +104,9 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(messages.length, 3, 'user + assistant + tool')
     assert.equal(messages[0]?.role, 'user')
     assert.equal(messages[1]?.role, 'assistant')
+    if (messages[1]?.role === 'assistant') {
+      assert.equal(messages[1].content, '', 'new assistant text must not enter durable AgentContext')
+    }
     assert.equal(messages[2]?.role, 'tool')
     assert.equal(toolExecuted, true)
     assert.equal(saved.length, 2, 'snapshot persisted twice (pre-round + post-round)')
@@ -140,10 +143,10 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(ctx.getSnapshot().messages.length, 0, 'wake events must not enter context')
   })
 
-  test('LLM call 非 wait tool 后立即跑下一轮消化 result (Guard 2 keys on hadToolCalls)', async () => {
+  test('LLM call 非 send_message tool 后立即跑下一轮消化 result', async () => {
     // 双轮意图: round 1 LLM call reddit → tool result 进 context → 主循环立即跑 round 2 →
-    // LLM 看到 result 决定 send_message → 真发出去. 旧实现 Guard 2 看 eventQueue 空就阻塞,
-    // round 2 永远跑不到. 新实现 Guard 2 看 hadToolCalls, 这条链路天然贯通.
+    // LLM 看到 result 决定 send_message → 真发出去. 但 send_message 之后不再继续空转,
+    // 避免同一批入站消息被重复回复.
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({
@@ -179,7 +182,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
             model: 'mock',
           }
         }
-        // round 3+: 新语义下主循环不会替 LLM 阻塞; LLM 应自己调用 rest / wait.
+        // 如果 send_message 后仍继续跑, 这里会 stop; 正常情况下不会走到这里.
         return {
           content: '',
           toolCalls: [{ id: 'c3', name: 'rest', args: { durationSeconds: 30 } }],
@@ -223,11 +226,156 @@ describe('BotLoopAgent.runOnceForTest', () => {
     // 双轮意图贯通: LLM 至少跑了 2 次, send_message 真的执行了
     assert.ok(llmCallCount >= 2, `expected LLM ≥2 calls, got ${llmCallCount}`)
     assert.equal(sendMessageCalled, true, 'send_message 拿到 reddit result 后真发出去了')
+    await agent.stop()
 
     await startPromise
   })
 
-  test('assistant 返回 no tool calls 后仍继续下一轮, 由 LLM 自己选择 rest/wait', async () => {
+  test('send_message 后没有新外部事件时主循环阻塞, 不重复回复同一批消息', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({
+      type: 'napcat_message',
+      messageRowId: 1,
+      groupId: 999,
+      messageId: 12345,
+      senderId: 100,
+      senderNickname: '张三',
+      mentionedSelf: true,
+      sentAt: new Date('2026-01-01T00:00:00Z'),
+      renderedText: 'hello',
+    })
+
+    let llmCallCount = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const llm: LlmClient = {
+      async chat() {
+        llmCallCount++
+        if (llmCallCount === 1) {
+          return {
+            content: '',
+            toolCalls: [{ id: 'c1', name: 'send_message', args: { text: '在' } }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+            model: 'mock',
+          }
+        }
+        await agent.stop()
+        return {
+          content: '',
+          toolCalls: [{ id: 'c2', name: 'send_message', args: { text: '又回一次' } }],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+          model: 'mock',
+        }
+      },
+    }
+
+    let sendMessageCount = 0
+    const tools = makeMockTools({
+      send_message: async () => {
+        sendMessageCount++
+        return { content: '{"ok":true}' }
+      },
+    })
+    const { repo } = makeMockSnapshotRepo()
+
+    agent = createBotLoopAgent({
+      systemPrompt: 'you are a bot',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools,
+      snapshotRepo: repo,
+      renderEvent: async (event) => {
+        if (event.type !== 'napcat_message') return null
+        return `[${event.senderNickname}] hello`
+      },
+      eventDebounceMs: 0,
+    })
+
+    const startPromise = agent.start()
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      assert.equal(llmCallCount, 1, 'send_message 后应等新事件, 不能立刻下一轮重看同一条消息')
+      assert.equal(sendMessageCount, 1)
+    } finally {
+      await agent.stop()
+      await startPromise
+    }
+  })
+
+  test('send_message 返回失败时立即跑下一轮让 LLM 修正', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({
+      type: 'napcat_message',
+      messageRowId: 1,
+      groupId: 999,
+      messageId: 12345,
+      senderId: 100,
+      senderNickname: '张三',
+      mentionedSelf: true,
+      sentAt: new Date('2026-01-01T00:00:00Z'),
+      renderedText: 'hello',
+    })
+
+    let llmCallCount = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const llm: LlmClient = {
+      async chat() {
+        llmCallCount++
+        if (llmCallCount === 1) {
+          return {
+            content: '',
+            toolCalls: [{ id: 'c1', name: 'send_message', args: { text: '在' } }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+            model: 'mock',
+          }
+        }
+        return {
+          content: '',
+          toolCalls: [{ id: 'c2', name: 'rest', args: { durationSeconds: 30 } }],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+          model: 'mock',
+        }
+      },
+    }
+
+    let restCalled = false
+    const tools = makeMockTools({
+      send_message: async () => ({ content: '{"ok":false,"error":"Invalid tool arguments"}' }),
+      rest: async () => {
+        restCalled = true
+        await agent.stop()
+        return { content: '[休息结束] 已休息约 30 秒。' }
+      },
+    })
+    const { repo } = makeMockSnapshotRepo()
+
+    agent = createBotLoopAgent({
+      systemPrompt: 'you are a bot',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools,
+      snapshotRepo: repo,
+      renderEvent: async (event) => {
+        if (event.type !== 'napcat_message') return null
+        return `[${event.senderNickname}] hello`
+      },
+      eventDebounceMs: 0,
+    })
+
+    const startPromise = agent.start()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    assert.ok(llmCallCount >= 2, `expected LLM to see failed send result, got ${llmCallCount}`)
+    assert.equal(restCalled, true)
+
+    await startPromise
+  })
+
+  test('assistant 返回 no tool calls 时不把 text-only 思考写入 context', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({
@@ -293,8 +441,88 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     assert.ok(llmCallCount >= 2, `expected LLM to choose next action itself, got ${llmCallCount}`)
     assert.equal(restCalled, true)
+    assert.equal(
+      ctx.getSnapshot().messages.some((msg) => msg.role === 'assistant' && msg.content === '先想一下'),
+      false,
+      'text-only assistant output is transient telemetry, not durable context',
+    )
 
     await startPromise
+  })
+
+  test('send_message 参数不做隐藏思考 preflight 拦截', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({
+      type: 'napcat_message',
+      messageRowId: 1,
+      groupId: 999,
+      messageId: 12345,
+      senderId: 100,
+      senderNickname: '张三',
+      mentionedSelf: true,
+      sentAt: new Date('2026-01-01T00:00:00Z'),
+      renderedText: 'hello',
+    })
+
+    const llm = makeMockLlm([
+      {
+        content: '',
+        toolCalls: [{
+          id: 'c1',
+          name: 'send_message',
+          args: {
+            target: { type: 'private', userId: 10001 },
+            mode: 'ambient',
+            text: '收到。\n\n*思考: 这段不能进长期上下文。*',
+            replyToMessageId: null,
+            imageRef: null,
+          },
+        }],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+        model: 'mock',
+      },
+    ])
+
+    let toolExecuted = false
+    const tools = makeMockTools({
+      send_message: async () => {
+        toolExecuted = true
+        return { content: '{"ok":true}' }
+      },
+    })
+    const { repo } = makeMockSnapshotRepo()
+
+    const agent = createBotLoopAgent({
+      systemPrompt: 'you are a bot',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools,
+      snapshotRepo: repo,
+      renderEvent: async (event) => {
+        if (event.type !== 'napcat_message') return null
+        return `[${event.senderNickname}] hello`
+      },
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    const messages = ctx.getSnapshot().messages
+    assert.equal(toolExecuted, true)
+
+    const assistant = messages.find((msg) => msg.role === 'assistant')
+    assert.equal(assistant?.role, 'assistant')
+    if (assistant?.role === 'assistant') {
+      assert.equal(assistant.toolCalls[0]?.args.text, '收到。\n\n*思考: 这段不能进长期上下文。*')
+    }
+
+    const toolResult = messages.find((msg) => msg.role === 'tool')
+    assert.equal(toolResult?.role, 'tool')
+    if (toolResult?.role === 'tool' && typeof toolResult.content === 'string') {
+      assert.equal(toolResult.content, '{"ok":true}')
+    }
   })
 
   test('renderEvent returning null skips appending', async () => {

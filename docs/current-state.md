@@ -16,7 +16,7 @@ CLAUDE.md 只承载长期合约（perpetual context invariants、提交规范、
 
 **叠加: Browser Tool MVP (可选启用)** — `BOT_BROWSER_ENABLED=true` 时注册单一 `browser` 工具。bot 主进程通过 loopback HTTP 调 `scripts/browser-controller.ts` sidecar, sidecar 用 CloakBrowser `launchPersistentContext` 启动 headed persistent profile。一个 profile 可多 page/tab；`observe` 返回可访问元素，`screenshot` 返回压缩 image block 并进入 `AgentContext`，原图/下载/批注写入 browser artifact 目录。浏览器动作审计写 `logs/browser-actions.ndjson`，不进 Prisma。设计文档 `docs/superpowers/specs/2026-06-01-browser-tool-design.md`。
 
-**叠加: Claude Code identity 透传 cliproxy (可选启用)** — `LLM_DEFAULT_PROVIDER=claude-code` 时, agent 路径 (BotLoopAgent + compaction + fetch_url 摘要) 走 cliproxy + 完整 Claude Code identity payload (`claude-cli/2.1.76 (external, sdk-cli)` UA + `Anthropic-Beta: claude-code-20250219,...` + 3-block system: billing header / SDK self-id / 业务 persona)。cliproxy `cloak.mode=auto` 识别为 Claude Code 客户端 → **不**替换 system prompt, 直接转发到 Anthropic, 同时复用 cliproxy 自家 OAuth 池 (Claude Pro / ChatGPT Plus 等 5 账号轮换 + quota fallback)。Media 描述路径 (`generate-description.ts` + `RoutingProvider` + `OpenAIProvider`) 不变, 仍走 cliproxy 的 OpenAI 兼容路径。
+**叠加: Agent LLM 双主路径** — agent 路径 (BotLoopAgent + compaction + fetch_url 摘要) 目前只支持 `LLM_DEFAULT_PROVIDER=openai-agent` 或 `claude-code`。当前示例默认走 `openai-agent`: OpenAI Chat Completions + 同一套 `AgentMessage` / tool contract, URL/API key 复用 `LLM_PROVIDER_OPENAI_*`。需要回滚 Claude 时切到 `claude-code`: 走 cliproxy + 完整 Claude Code identity payload (`claude-cli/2.1.76 (external, sdk-cli)` UA + `Anthropic-Beta: claude-code-20250219,...` + 3-block system: billing header / SDK self-id / 业务 persona)。cliproxy `cloak.mode=auto` 识别为 Claude Code 客户端 → **不**替换 system prompt, 直接转发到 Anthropic, 同时复用 cliproxy 自家 OAuth 池。Media 描述路径 (`generate-description.ts` + `RoutingProvider` + `OpenAIProvider`) 不变, 仍走 provider 注册表的 OpenAI 兼容路径。
 
 实测背书 (2026-05-08):
 - **P1 不 cloak**: 发完整 Claude Code identity 时 cliproxy 透传, persona spoof 站住 (问"你是谁" → "喵～我是猫猫呀")
@@ -24,9 +24,10 @@ CLAUDE.md 只承载长期合约（perpetual context invariants、提交规范、
   - **必须 per-block, 不能放顶层**: cliproxy 6.10.x `internal/runtime/executor/claude_executor.go` 的 `ensureCacheControl` 在 `countCacheControls(body)==0` 时会自动给最后一块 system block 注入 5m, 而 `countCacheControls` 只数 system/tools/messages 里 per-block 的 cache_control, 不数顶层。顶层 1h + cliproxy 注入 5m 同时存在时 Anthropic 在 `prompt-caching-scope-2026-01-05` beta 下报 "ttl='1h' must not come after ttl='5m'" 拒收。挂在 system 最后一块就让 cliproxy 跳过注入, 形态也跟当前真 Claude Code (anthropics/claude-code#49139) 对齐。kagami 因为自家 OAuth 直连 Anthropic 不经 cliproxy, 顶层 cache_control 在它那 work, 但 qq-bot-v2 走 cliproxy 必须 per-block。
 - **P3 5 账号池可用**: cliproxy 已配 Claude Pro `claude-gecanzzz@outlook.com.json` + ChatGPT Plus/Pro/Team 三份 + Gemini Code Assist, `/v1/messages` 走 OAuth 池而非 token 计费
 
-URL/API key 复用 `LLM_PROVIDER_CLAUDE_*` (不再需要单独的 `LLM_PROVIDER_CLAUDE_CODE_*` 或 `LLM_CLAUDE_CODE_AUTH_FILE`)。启动期发一条 persona-spoof 自检请求, 回答必须以"喵"开头, 否则 fail-fast 让人查 cliproxy 版本 (P4 风险 mitigation)。
+Claude Code URL/API key 复用 `LLM_PROVIDER_CLAUDE_*` (不再需要单独的 `LLM_PROVIDER_CLAUDE_CODE_*` 或 `LLM_CLAUDE_CODE_AUTH_FILE`)。只有 `LLM_DEFAULT_PROVIDER=claude-code` 时, 启动期才发 persona-spoof 自检请求, 回答必须以"喵"开头, 否则 fail-fast 让人查 cliproxy 版本 (P4 风险 mitigation)。
 - 主路径代码: `src/agent/claude-code/*` (headers / request / sse-parser / llm-client) — 3-block system 拼装与 wire format **不**改, 这是 cliproxy mode=auto 不 cloak 的前提
-- 切换/回滚: 切 `LLM_DEFAULT_PROVIDER` env 即可。其它 provider 分支 (OpenAI 适配器) 保持 byte-identical, cache 回滚不会被触发
+- OpenAI agent 主路径代码: `src/agent/openai-agent/*` + `src/agent/tool-schema.ts` — Chat Completions function tools 使用 strict schema, replayed tool arguments 做稳定 key order
+- 切换/回滚: 切 `LLM_DEFAULT_PROVIDER` env 即可。切 provider 会改变 wire format / prompt cache 池, 但 `AgentContext` ledger 字节不从 side table 重建
 - 删除的旧物: 自家 OAuth 直连路径 (`src/auth/claude-code/*` ~700 行) + `scripts/login-claude.ts` + `~/.qq-bot-v2/auth/claude-code.json` 凭据文件 + `pnpm login:claude` script (实证 cliproxy 共享 cache 后失去存在理由)
 
 背景设计文档：`docs/single-context-mvp.zh-CN.md` 和 `~/.gstack/projects/gecan123-qq-bot-v2/zzz-single-context-mvp-design-20260504-010859.md`。本次切换的实证 + 决策记录: `~/.gstack/projects/gecan123-qq-bot-v2/zzz-main-design-20260508-012341.md`。
@@ -103,7 +104,7 @@ idle-fetch MVP 跑起来后的近期 TODO，做完即勾。过期 / 已收敛的
 6. `connectNapcat()` 真打开 WebSocket（必须在 `resolveTargetMetadataMaps` 之前 — 见下文 D2）
 7. `resolveTargetMetadataMaps()` 一次性拉群名（`Promise.allSettled`，每调用 3s 超时）。私聊昵称走 per-event render，不预拉
 8. `replayMissedMessages(lastWakeAt)` 多源回放，与 live 共享同一去重 set。私聊永远全量回放（不按 peerId 过滤）
-9. `loadGroupCustomizations()` 启动期一次读取 per-group yaml；`buildBotTools()` 装配 `wait` / `send_message` / `db` / `style_guide` / `source_profile` 等工具；`buildBotSystemPrompt({groupIds, metadata})` 拼短常驻 prompt
+9. `loadGroupCustomizations()` 启动期一次读取 per-group yaml；`buildBotTools()` 装配 `wait` / `send_message` / `db` / `source_profile` / `memory` 等工具；`buildBotSystemPrompt({groupIds, metadata})` 拼短常驻 prompt
 10. `createBotLoopAgent({...})` + `agent.start()` — 进入 while 循环
 
 ## 主循环（`src/agent/bot-loop-agent.ts`）
@@ -116,6 +117,8 @@ while (true) {
   runRound()             // LLM call + execute tool calls
   persistSnapshot()      // 写 bot_agent_snapshot
   maybeCompact()         // token 阈值触发
+  if (本轮调用 send_message) await waitForEvent()
+                         // 发声后等新外部事件，避免同一批消息被重复回复
   // 不再由 loop 因 toolCalls=[] 自动 wait; LLM 没动作时应自己调用 wait / rest
 }
 ```
@@ -145,13 +148,12 @@ while (true) {
 `src/config/`
 - `index.ts` — env parsing（含 `botGroupPromptsPath` 默认 `./prompts/groups.yaml`）
 - `group-prompts.ts` — `loadGroupCustomizations(path)`：yaml + zod 校验 → `GroupCustomization[]`。启动期一次 load + freeze，供 `source_profile` 按需读取；文件不存在 → 返空数组（不阻断启动）；schema 错 → fail-fast
-- `prompt-loader.ts` — 缓存式同步 `loadPrompt(filePath)`，给 `prompts/characters/core.md` / `default.md` 等静态 prompt 用
+- `prompt-loader.ts` — 缓存式同步 `loadPrompt(filePath)`，给 `prompts/characters/core.md` 等静态 prompt 用
 
 `prompts/`
 - `groups.yaml` — per-group prompt customization source of truth（含真实群号，不入 git，**gitignored**）。schema：`groups: [{ id, frequency_hint, body }]`。`frequency_hint` 4 档枚举 `lurker / quiet / normal / chatty`。`groups: []` 或文件不存在 = 不做任何定制。改这个文件需重启 bot
 - `groups.yaml.example` — 上面的占位模板（committed）；新机器 `cp` 一份成 `groups.yaml` 改
 - `characters/core.md` — 常驻 system prompt 的短人设基座（Luna）
-- `characters/default.md` — `style_guide` 按需返回的完整说话风格指南
 
 `src/agent/`
 - `agent-context.ts` — single-bot AgentContext（red line 1）
@@ -161,13 +163,13 @@ while (true) {
 - `render-event.ts` — 纯函数 `BotEvent → string`，多源标签 + 群名缺失裸 ID fallback（red line 5）
 - `resolve-target-meta.ts` — 启动时一次性拉群名（`Promise.allSettled`，3s/调用，失败裸 ID）。私聊昵称走 per-event render，不预拉
 - `llm-client.ts` — `AgentMessage <-> OpenAI ChatCompletion` 翻译
-- `bot-system-prompt.ts` — 启动时一次拼装（使用 metadata maps，red line 5）。常驻 prompt 只保留短人设、来源标签、源隔离和硬约束；长风格指南与群定制正文改由工具按需披露
+- `bot-system-prompt.ts` — 启动时一次拼装（使用 metadata maps，red line 5）。常驻 prompt 只保留短人设、来源标签、源隔离和硬约束；群定制正文改由工具按需披露
 - `snapshot-repo.ts` — `bot_agent_snapshot` 单行持久化
 - `compaction.ts` — `maybeCompactConversation`（red line 4 唯一前缀写口）
 - `bot-loop-agent.ts` — 主循环
 - `replay-missed.ts` — 启动时多源回放关机期间漏掉的消息（与 live 共享 dedup hook）
 - `tool.ts` — Tool / ToolExecutor 接口
-- `tools/*` — `wait` / `rest` / `send_message` / `db` / `reddit` / `fetch_image` / `web_search` / `style_guide` / `source_profile` / `memory` / `background_task` / `fetch_url` / `openbb_cli`
+- `tools/*` — `wait` / `rest` / `send_message` / `db` / `reddit` / `fetch_image` / `web_search` / `source_profile` / `memory` / `background_task` / `fetch_url` / `openbb_cli` / `workspace_bash` / `browser`
 - `tools/reddit/*` — `reddit` 底层 action=list (list.ts) / action=get_post (get-post.ts) / 共享依赖 (shared.ts)
 
 `src/browser/`
@@ -204,11 +206,14 @@ Prisma 7，PG driver adapter。当前 4 个 model：`Message` / `Media` / `BotAg
 
 ## LLM 配置
 
-双 provider routing。Agent 自身的 LLM 调用走 default provider/model，媒体描述按场景路由。
+双 provider routing。Agent 自身的 LLM 调用走 `LLM_DEFAULT_PROVIDER` / `LLM_DEFAULT_MODEL`，目前只支持 `claude-code` 和 `openai-agent` 两条主路径；媒体描述按场景路由。
 
 ```
-LLM_DEFAULT_PROVIDER=claude
-LLM_DEFAULT_MODEL=gpt-5.1
+LLM_DEFAULT_PROVIDER=openai-agent
+LLM_DEFAULT_MODEL=gpt-5.5
+# 或:
+# LLM_DEFAULT_PROVIDER=claude-code
+# LLM_DEFAULT_MODEL=claude-opus-4-7
 
 LLM_PROVIDER_CLAUDE_URL=http://127.0.0.1:8317/v1
 LLM_PROVIDER_CLAUDE_API_KEY=sk-local
@@ -238,9 +243,10 @@ bot 通过工具自主决定：
 - **`send_message`** — 真发到群 / 私聊。target 必填。group ambient 经 `BOT_GROUP_AMBIENT_SEND_IDS` 白名单校验，不在白名单走 dry-run（假成功）；reply / private 不受影响
   - target = `{type:'group', groupId, mentionUserId?}` 发群里
   - target = `{type:'private', userId}` 发私聊
-  - `replyToMessageId` 可选，引用某条已存在消息
-  - `image` 可选，`{mediaId:N}` 走存量 Media 或 `{ephemeralRef:"<64-hex>"}` 走 OutboundCache（1h TTL）。发送成功后 ephemeralRef 自动 lazy persist 到 Media 表（upsert by dataHash），tool result 返回 `image.mediaId`。persist 失败时 ok:true + lazyPersistError，ephemeralRef 保留可重试
-  - text 和 image 至少一个非空
+  - `mode` 控制是否引用：`ambient` 是顺聊 / 主动说一句，`replyToMessageId` 填 `null`；`reply` 是明确回复某条消息，`replyToMessageId` 填消息标签里 `#` 后的 message_id
+  - `imageRef` 用扁平字符串句柄：`media:N` 走存量 Media，`ephemeral:<64-hex>` 走 OutboundCache（1h TTL）；无图填 `null`，不要猜 `mediaId`
+  - 发送成功后 ephemeralRef 自动 lazy persist 到 Media 表（upsert by dataHash），tool result 返回 `image.mediaId`。persist 失败时 ok:true + lazyPersistError，ephemeralRef 保留可重试
+  - `text` 和 `imageRef` 至少一个非 `null`
 - **`db`** — `action=schema` 查看数据库结构与查询约束；`action=query` 查历史聊天（任一源）/ 媒体描述。多源后系统**不再**自动注入 `:group_id`，LLM 想限定单源时显式传（`params: {group_id: ...}` 或 `peer_id`）。`group_id` 走白名单校验；`peer_id` 任意 QQ 都接受。跨源 SELECT（无 ID 过滤）合法
 - **`web_search`** — 仅在 `TAVILY_API_KEY` 配置时注册
 - **`reddit`** — Reddit 单入口工具。`action=list` 列 subreddit 帖子（sort hot/top/new + limit 硬上限 10），走 reddit RSS，返回标题 / 链接 / 图片直链 / 短摘要；`action=get_post` 读单帖标题 + 图片链接 + top 5 评论。超时共享 `BOT_REDDIT_TIMEOUT_MS`，每次调用写一行到 `logs/fetch.ndjson`
@@ -248,7 +254,6 @@ bot 通过工具自主决定：
 - **`fetch_url`** — 抓任意 URL：response body cap 256KB → cheerio 抽 title/desc/article/main/body → 8KB 截断 → 默认 LLM 摘成 ≤500 中文字 → 输出 ≤1500 字符 clamp。LLM 失败 fallback 到原文截断 + 错误标记。每次调用写一行到 `logs/fetch.ndjson`
 - **`openbb_cli`** — 仅在 `OPENBB_CLI_ENABLED` 启用时注册。通过本机 OpenBB CLI 查股票 / 金融数据，参数是 `command`，内容是 OpenBB CLI 内部命令（如 `/equity/price/historical --symbol AAPL --provider yfinance --export json`）。要拿原始数据正文时加 `--export json`；工具会读取 OpenBB 保存的 JSON 并返回内容。工具启动 `OPENBB_CLI_BIN` 后把命令写入 stdin 并收集 stdout/stderr。禁止 shell 元字符、`exe`、`record` 和退出命令。单次输出 ≤1500 字符，默认 15s 超时，每次调用写一行到 `logs/fetch.ndjson`（`source=openbb_cli`，`url` 字段记录命令文本）
 - **`browser`** — 仅在 `BOT_BROWSER_ENABLED` 启用时注册。真实浏览器单步 action 工具: `help/status/open/switch_page/close_page/observe/click/type/press/scroll/screenshot/download/annotate/request_owner_help`。通过 `BOT_BROWSER_CONTROLLER_URL` 调本地 sidecar。`observe` 返回 URL/title/load state/可交互元素；`screenshot` 返回压缩 image block 进入 AgentContext 并落原图 artifact；普通浏览、发帖/评论/点赞、Cloudflare/Turnstile/cookie 弹窗可自主处理；登录/2FA/账号安全/OAuth/支付/可执行下载等返回 `requiresOwnerHelp`。每步写 `logs/browser-actions.ndjson`
-- **`style_guide`** — 按需返回 Luna 的完整说话风格指南。日常短回复不需要每轮调用；不确定语气、需要反例对照或校准“像不像 Luna”时再读
 - **`source_profile`** — 按需返回某个监听群的 `groups.yaml` 风格定制。未配置的监听群返回 `frequencyHint=normal` + 空 body；不在监听范围内的群返回错误
 - **`background_task`** — 后台任务单入口工具。`action=list` 查看正在运行和最近完成/失败的任务；`action=get` 按 `taskId` 获取已完成任务详情。图片生成任务结果包含预览图和 `ephemeralRef`
 - **`memory`** — Luna 自主控制的长期记忆笔记本（`memory_entries` 表）。`action=write` 写一条笔记：`target={kind:'person'|'group', id}` + `content ≤500` 字 + 可选 `sourceMessageIds`（追溯用，不回传给 LLM）；`action=search` 按 target 取笔记：可选 `keyword`（精确子串、大小写不敏感）+ `limit 1-20`（默认 10）+ `orderBy createdAt desc`。空结果返回 hint。无 env 开关，无条件注册。设计文档 `~/.gstack/projects/gecan123-qq-bot-v2/zzz-main-design-20260516-134812.md`
@@ -277,8 +282,6 @@ system prompt（`src/agent/bot-system-prompt.ts`）明示 LLM：
 所有静态 prompt 文本在 `prompts/`。当前用到：
 
 - `prompts/characters/core.md` — bot 常驻短人设基座（`bot-system-prompt.ts` 通过 `loadPrompt` 加载）
-- `prompts/characters/default.md` — 完整说话风格指南（`style_guide` 工具按需读取）
-
 旧的 reply-instruction / proactive-judge prompts 保留在目录里，single-context MVP 不再使用。媒体描述还在用图 / 视频 / PDF / 音频几个。
 
 ---

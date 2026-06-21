@@ -59,13 +59,17 @@ export function buildBrowserActionLogEntry(input: {
   now?: () => Date
 }): BrowserActionLogEntry {
   const finishedAt = Date.now()
+  const argsSummary = redactBrowserValue(input.action) as Record<string, unknown>
+  if (input.action.action === 'type' && input.result.risk === 'high' && 'text' in argsSummary) {
+    argsSummary.text = '[REDACTED]'
+  }
   return {
     ts: (input.now?.() ?? new Date()).toISOString(),
     action: input.action.action,
     ...(input.action.pageId ? { pageId: input.action.pageId } : {}),
     ...(input.result.url ? { url: input.result.url } : {}),
     ...(input.result.title ? { title: input.result.title } : {}),
-    argsSummary: redactBrowserValue(input.action),
+    argsSummary,
     ...(input.result.risk ? { risk: input.result.risk } : {}),
     ...(input.result.reason ? { riskReason: input.result.reason } : {}),
     ok: input.result.ok,

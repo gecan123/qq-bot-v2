@@ -19,6 +19,8 @@ type LlmScenarioConfig = {
 }
 
 export const CLAUDE_CODE_PROVIDER_NAME = 'claude-code'
+export const OPENAI_AGENT_PROVIDER_NAME = 'openai-agent'
+export const OPENAI_AGENT_BASE_PROVIDER_NAME = 'openai'
 
 /**
  * `LLM_DEFAULT_PROVIDER=claude-code` 时, agent LLM 客户端走 cliproxy +
@@ -173,10 +175,18 @@ function parseLlmConfig(env: EnvSource) {
   const defaultProvider = requireEnv(env, 'LLM_DEFAULT_PROVIDER').toLowerCase()
   const defaultModel = requireEnv(env, 'LLM_DEFAULT_MODEL')
 
-  // claude-code 不在 providers 注册表里 (它复用 LLM_PROVIDER_CLAUDE_* 走 cliproxy);
-  // 其它 provider 必须在注册表里能找到。
-  if (defaultProvider !== CLAUDE_CODE_PROVIDER_NAME && !providers[defaultProvider]) {
-    throw new Error(`Missing provider configuration for LLM_DEFAULT_PROVIDER: ${defaultProvider}`)
+  if (defaultProvider === CLAUDE_CODE_PROVIDER_NAME) {
+    if (!providers[CLAUDE_CODE_BASE_PROVIDER_NAME]) {
+      throw new Error('Missing provider configuration for LLM_DEFAULT_PROVIDER: claude-code requires claude')
+    }
+  } else if (defaultProvider === OPENAI_AGENT_PROVIDER_NAME) {
+    if (!providers.openai) {
+      throw new Error('Missing provider configuration for LLM_DEFAULT_PROVIDER: openai-agent requires openai')
+    }
+  } else {
+    throw new Error(
+      `Unsupported LLM_DEFAULT_PROVIDER: ${defaultProvider} (expected ${CLAUDE_CODE_PROVIDER_NAME} or ${OPENAI_AGENT_PROVIDER_NAME})`,
+    )
   }
 
   const scenarios = parseScenarioConfigs(env)

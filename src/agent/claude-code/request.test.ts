@@ -114,14 +114,14 @@ describe('buildClaudeCodeRequestBody', () => {
     assert.equal('tool_choice' in body, false)
   })
 
-  test('tools mapped to {name, description, input_schema}; tool_choice=auto', () => {
+  test('tools mapped to {name, description, input_schema}; tool_choice=any', () => {
     const body = buildClaudeCodeRequestBody({
       model: 'claude-sonnet-4-5',
       systemPrompt: 's',
       messages: [{ role: 'user', content: 'h' }],
       tools: [dummyTool, waitTool],
     })
-    assert.deepEqual(body.tool_choice, { type: 'auto' })
+    assert.deepEqual(body.tool_choice, { type: 'any' })
     assert.ok(Array.isArray(body.tools))
     assert.equal(body.tools?.length, 2)
     const sendDecl = body.tools?.[0] as Record<string, unknown>

@@ -7,7 +7,12 @@ import { jobQueue } from './queue/index.js'
 import { setLlmProvider } from './llm/provider.js'
 import { OpenAIProvider } from './llm/openai-adapter.js'
 import { RoutingProvider } from './llm/routing-provider.js'
-import { CLAUDE_CODE_PROVIDER_NAME, config } from './config/index.js'
+import {
+  CLAUDE_CODE_PROVIDER_NAME,
+  config,
+  OPENAI_AGENT_BASE_PROVIDER_NAME,
+  OPENAI_AGENT_PROVIDER_NAME,
+} from './config/index.js'
 import { loadGroupCustomizations } from './config/group-prompts.js'
 import { messageSender } from './messaging/message-sender.js'
 
@@ -38,11 +43,14 @@ const BOT_PID_FILE = '.bot.pid'
 function buildMediaProvider(): RoutingProvider {
   const { defaultProvider: defaultProviderName, defaultModel, providers, scenarios } = config.llm
 
-  // Media 路径需要真实 OpenAI 兼容的 baseUrl + apiKey。当 agent 走 claude-code OAuth 时,
-  // claude-code 不在 providers 注册表里, 退回到注册表里第一个 provider (字母序保稳定)。
-  // 用户实际仍要保留 LLM_PROVIDER_*_URL/_API_KEY (e.g. 走 cliproxy), 否则注册表为空 → 抛错。
+  // Media 路径需要真实 OpenAI 兼容的 baseUrl + apiKey。agent provider 名不一定等于
+  // provider 注册表 key: openai-agent 复用 openai; claude-code 不在 providers 注册表里,
+  // 退回到第一个 provider (字母序保稳定)。用户实际仍要保留 LLM_PROVIDER_*_URL/_API_KEY
+  // (e.g. 走 cliproxy), 否则注册表为空 → 抛错。
   let mediaDefaultName = defaultProviderName
-  if (defaultProviderName === CLAUDE_CODE_PROVIDER_NAME) {
+  if (defaultProviderName === OPENAI_AGENT_PROVIDER_NAME) {
+    mediaDefaultName = OPENAI_AGENT_BASE_PROVIDER_NAME
+  } else if (defaultProviderName === CLAUDE_CODE_PROVIDER_NAME) {
     const candidates = Object.keys(providers).sort()
     if (candidates.length === 0) {
       throw new Error(
@@ -303,6 +311,6 @@ process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
 
 main().catch((err) => {
-  log.fatal(err, 'Failed to start')
+  log.fatal({ err }, 'Failed to start')
   process.exit(1)
 })

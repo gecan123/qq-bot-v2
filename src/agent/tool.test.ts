@@ -199,4 +199,49 @@ describe('createToolExecutor', () => {
     }
     assert.throws(() => createToolExecutor([a, a]), /Duplicate tool name: dup/)
   })
+
+  test('strips null values for optional schema fields before zod validation', async () => {
+    let received: unknown
+    const echo: Tool<{
+      target: { type: 'group'; groupId: number; mentionUserId?: number }
+      text?: string
+      params?: Record<string, string | null>
+    }> = {
+      name: 'echo',
+      description: 'echo input',
+      schema: z.object({
+        target: z.object({
+          type: z.literal('group'),
+          groupId: z.number(),
+          mentionUserId: z.number().optional(),
+        }),
+        text: z.string().optional(),
+        params: z.record(z.string(), z.union([z.string(), z.null()])).optional(),
+      }),
+      async execute(args) {
+        received = args
+        return { content: 'ok' }
+      },
+    }
+    const exec = createToolExecutor([echo])
+
+    const result = await exec.execute(
+      {
+        id: 'call_1',
+        name: 'echo',
+        args: {
+          target: { type: 'group', groupId: 123, mentionUserId: null },
+          text: null,
+          params: { nullableDbParam: null },
+        },
+      },
+      makeCtx(),
+    )
+
+    assert.equal(result.content, 'ok')
+    assert.deepEqual(received, {
+      target: { type: 'group', groupId: 123 },
+      params: { nullableDbParam: null },
+    })
+  })
 })

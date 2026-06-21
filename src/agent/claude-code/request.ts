@@ -25,11 +25,10 @@
  *   挂在最后一块 system block 上 cliproxy 数得到 ≥1 就跳过注入, 字节稳定不变。
  *   形态也跟当前真 Claude Code (issue anthropics/claude-code#49139) 对齐。
  */
-import type { z } from 'zod'
-import { z as zod } from 'zod'
 import type { AgentMessage, ToolResultContentBlock } from '../agent-context.types.js'
 import type { Tool } from '../tool.js'
 import { CLAUDE_CODE_BILLING_HEADER } from './headers.js'
+import { zodToToolJsonSchema } from '../tool-schema.js'
 
 const DEFAULT_MAX_TOKENS = 4096
 const CLAUDE_4_MAX_TOKENS = 32000
@@ -80,7 +79,7 @@ export function buildClaudeCodeRequestBody(
 
   if (toolsEnabled) {
     body.tools = input.tools.map(toAnthropicToolDecl)
-    body.tool_choice = { type: 'auto' }
+    body.tool_choice = { type: 'any' }
   }
 
   // 1h cache breakpoint: 钉在 messages 最后一条的最后一个 content block 上,
@@ -182,18 +181,8 @@ function toAnthropicToolDecl(tool: Tool): Record<string, unknown> {
   return {
     name: tool.name,
     ...(tool.description ? { description: tool.description } : {}),
-    input_schema: zodToAnthropicSchema(tool.schema),
+    input_schema: zodToToolJsonSchema(tool.schema),
   }
-}
-
-function zodToAnthropicSchema(schema: z.ZodTypeAny): Record<string, unknown> {
-  const json = zod.toJSONSchema(schema) as Record<string, unknown>
-  // Anthropic 要求 input_schema 至少有 type 与 properties (object 的话)。
-  // zod 的 toJSONSchema 已经返回 properties; 这里做一次浅 normalize 保 properties 必存在。
-  if (json.type === 'object' && !('properties' in json)) {
-    json.properties = {}
-  }
-  return json
 }
 
 function resolveMaxTokens(model: string): number {

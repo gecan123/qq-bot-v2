@@ -3,6 +3,7 @@ import type { EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { AssistantToolCall, ToolResultContent } from './agent-context.types.js'
 import { isSideEffectTool, logToolCall, summarizeToolArgs } from '../ops/tool-call-log.js'
+import { stripNullsFromOptionalFields } from './tool-schema.js'
 
 /**
  * Tool 接口最简形:name + description + 参数 schema + execute。
@@ -69,7 +70,9 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
         await traceToolCall(options.trace, call, ctx.roundIndex, startedAt, result, `Unknown tool: ${call.name}`)
         return result
       }
-      const parseResult = tool.schema.safeParse(call.args)
+      const normalizedArgs = stripNullsFromOptionalFields(tool.schema, call.args) as Record<string, unknown>
+      const normalizedCall = { ...call, args: normalizedArgs }
+      const parseResult = tool.schema.safeParse(normalizedArgs)
       if (!parseResult.success) {
         const result = {
           content: JSON.stringify({
@@ -80,19 +83,19 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
             })),
           }),
         }
-        await traceToolCall(options.trace, call, ctx.roundIndex, startedAt, result, 'Invalid tool arguments')
+        await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result, 'Invalid tool arguments')
         return result
       }
       try {
         const result = await tool.execute(parseResult.data as never, ctx)
-        await traceToolCall(options.trace, call, ctx.roundIndex, startedAt, result)
+        await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result)
         return result
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         const result = {
           content: JSON.stringify({ error: `Tool execution failed: ${message}` }),
         }
-        await traceToolCall(options.trace, call, ctx.roundIndex, startedAt, result, `Tool execution failed: ${message}`)
+        await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result, `Tool execution failed: ${message}`)
         return result
       }
     },

@@ -9,7 +9,7 @@ function createBaseEnv(overrides: Record<string, string | undefined> = {}): Node
     NAPCAT_ACCESS_TOKEN: 'token',
     BOT_TARGET_GROUP_IDS: '123',
     SELF_NUMBER: '789',
-    LLM_DEFAULT_PROVIDER: 'claude',
+    LLM_DEFAULT_PROVIDER: 'claude-code',
     LLM_DEFAULT_MODEL: 'claude-sonnet-4-6',
     LLM_PROVIDER_CLAUDE_URL: 'http://127.0.0.1:8317/v1',
     LLM_PROVIDER_CLAUDE_API_KEY: 'sk-local',
@@ -30,7 +30,7 @@ describe('config', () => {
       LLM_SCENARIO_TRANSCRIBE_AUDIO_MODEL: 'gemini-3-flash-preview',
     }))
 
-    assert.equal(config.llm.defaultProvider, 'claude')
+    assert.equal(config.llm.defaultProvider, 'claude-code')
     assert.equal(config.llm.defaultModel, 'claude-sonnet-4-6')
     assert.deepEqual(config.llm.providers.claude, {
       url: 'http://127.0.0.1:8317/v1',
@@ -55,13 +55,27 @@ describe('config', () => {
     assert.equal(config.selfNumber, 789)
   })
 
-  test('throws when default provider is missing from registry', () => {
+  test('parses openai-agent as a supported main agent provider', () => {
+    const config = parseConfig(createBaseEnv({
+      LLM_DEFAULT_PROVIDER: 'openai-agent',
+      LLM_DEFAULT_MODEL: 'gpt-5.1',
+    }))
+
+    assert.equal(config.llm.defaultProvider, 'openai-agent')
+    assert.equal(config.llm.defaultModel, 'gpt-5.1')
+    assert.deepEqual(config.llm.providers.openai, {
+      url: 'http://127.0.0.1:8317/v1',
+      apiKey: 'sk-local',
+    })
+  })
+
+  test('throws when default provider is not an agent provider', () => {
     assert.throws(
       () =>
         parseConfig(createBaseEnv({
           LLM_DEFAULT_PROVIDER: 'anthropic',
         })),
-      /Missing provider configuration for LLM_DEFAULT_PROVIDER: anthropic/,
+      /Unsupported LLM_DEFAULT_PROVIDER: anthropic/,
     )
   })
 
@@ -158,23 +172,6 @@ describe('config', () => {
       BOT_OWNER_NAME: '  alice  ',
     }))
     assert.deepEqual(config.owner, { qq: 100, name: 'alice' })
-  })
-
-  test('botGroupPromptsPath defaults to ./prompts/groups.yaml and accepts override', () => {
-    const dflt = parseConfig(createBaseEnv())
-    assert.equal(dflt.botGroupPromptsPath, './prompts/groups.yaml')
-
-    const override = parseConfig(createBaseEnv({
-      BOT_GROUP_PROMPTS_PATH: './prompts/groups.test.yaml',
-    }))
-    assert.equal(override.botGroupPromptsPath, './prompts/groups.test.yaml')
-
-    // 空字符串 / 仅空格 → 走默认值 (跟 fetchLogPath 同一套行为)
-    const empty = parseConfig(createBaseEnv({ BOT_GROUP_PROMPTS_PATH: '' }))
-    assert.equal(empty.botGroupPromptsPath, './prompts/groups.yaml')
-
-    const blank = parseConfig(createBaseEnv({ BOT_GROUP_PROMPTS_PATH: '   ' }))
-    assert.equal(blank.botGroupPromptsPath, './prompts/groups.yaml')
   })
 
   test('toolCallLogPath defaults to logs/tool-calls.ndjson and accepts override', () => {

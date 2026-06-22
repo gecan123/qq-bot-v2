@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { Tool } from '../tool.js'
 import { loadPromptSection } from '../../config/prompt-loader.js'
 
-const PROMPT_PATH = './prompts/characters/core.md'
+const PROMPT_PATH = './prompts/bot-system.md'
 
 const sectionNames = {
   base: 'style_base',

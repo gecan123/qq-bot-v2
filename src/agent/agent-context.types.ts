@@ -40,7 +40,7 @@ export type AgentMessage =
   | { role: 'tool'; toolCallId: string; content: ToolResultContent }
 
 /**
- * 持久化形态。runtime 形态 == 这个对象 (CLAUDE.md 红线 1)。
+ * 持久化形态。runtime 形态 == 这个对象 (AGENTS.md / CLAUDE.md 红线 1)。
  */
 export interface PersistedAgentSnapshot {
   schemaVersion: number

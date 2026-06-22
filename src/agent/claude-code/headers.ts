@@ -1,5 +1,5 @@
 /**
- * cloak headers/常量。整段一次拼装, 启动后不变 (CLAUDE.md 红线 5: system prompt 字节稳定)。
+ * cloak headers/常量。整段一次拼装, 启动后不变 (AGENTS.md / CLAUDE.md 红线 5: system prompt 字节稳定)。
  *
  * 这些常量从 kagami `apps/server/src/llm/providers/claude-code-provider.ts` 原样移植 ——
  * 它们让请求看起来像真实 Claude Code CLI 流量, 让 Anthropic OAuth quota 走订阅免费额度。

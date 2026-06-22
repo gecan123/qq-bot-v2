@@ -9,7 +9,7 @@ const PER_CALL_TIMEOUT_MS = 3_000
  * Maps populated once at startup, used to build the system prompt's
  * "我监听这些源" section.
  *
- * Process-immutable (CLAUDE.md 红线 5): 这些 map 在启动后不再变。
+ * Process-immutable (AGENTS.md / CLAUDE.md 红线 5): 这些 map 在启动后不再变。
  *
  * 想让 system prompt 里看到该群的新名字, 必须重启 bot ——
  * 重启时整段 cache 失效本来就是预期, 不是 bug.

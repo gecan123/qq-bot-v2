@@ -6,7 +6,7 @@ export type { AgentMessage, AssistantToolCall, PersistedAgentSnapshot, ToolResul
 /**
  * Single-context bot 的 AgentContext。
  *
- * CLAUDE.md「Perpetual Context Contract」红线:
+ * AGENTS.md / CLAUDE.md「永续上下文契约」红线:
  *  - getSnapshot() 返回深拷贝, 外部修改不影响内部 (字节稳定的前提)
  *  - 仅 appendXxx 和 replaceMessages 两类写口
  *  - replaceMessages 仅 compaction 调用

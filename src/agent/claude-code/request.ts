@@ -7,7 +7,7 @@
  *     (cloak fingerprint 可能看 JSON shape, 不要换序)
  *   - system 为 3 块 text array: billing header → SDK prompt → user persona
  *   - 1h prompt caching 挂在 **最后一块 system block** 上 (per-block), 不放在顶层。
- *     CLAUDE.md 红线 5 对应。
+ *     AGENTS.md / CLAUDE.md 红线 5 对应。
  *   - tools 为空时整个 tools / tool_choice 字段省略 (Anthropic API 不接受 tools:[])
  *   - **不发 temperature**: Claude reasoning 模型 (opus-4-7 / sonnet-4-7 等) 在 API 层
  *     直接拒绝 `temperature` 字段, 报 "temperature is deprecated for this model"。
@@ -106,7 +106,7 @@ export function toClaudeSystemBlocks(userSystem: string): ClaudeSystemBlock[] {
     blocks.push({ type: 'text', text: userSystem })
   }
   // 1h cache breakpoint: 钉在 system 数组最后一块, 让 cliproxy 不再注入 5m,
-  // 同时让 system prefix 整段进 1h cache pool (CLAUDE.md 红线 5)。
+  // 同时让 system prefix 整段进 1h cache pool (AGENTS.md / CLAUDE.md 红线 5)。
   const lastBlock = blocks.at(-1)
   if (lastBlock) {
     lastBlock.cache_control = { type: 'ephemeral', ttl: '1h' }

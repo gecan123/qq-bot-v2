@@ -3,8 +3,7 @@
  *
  * cliproxy `cloak.mode=auto` 在客户端发完整 Claude Code identity payload
  * (UA `claude-cli/...` + Anthropic-Beta `claude-code-...` + 3-block system) 时
- * 不 cloak / 不替换 system prompt, 直接转发到 Anthropic, 复用 cliproxy 的 OAuth 池
- * (Claude Pro / ChatGPT Plus 等 5 账号轮换, 见 docs/current-state.md)。
+ * 不 cloak / 不替换 system prompt, 直接转发到 Anthropic, 复用 cliproxy 的 OAuth 池。
  *
  * 接口跟 src/agent/llm-client.ts 的 LlmClient 完全一致, 上层 BotLoopAgent 不感知路径。
  *

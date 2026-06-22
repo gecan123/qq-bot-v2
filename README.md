@@ -26,7 +26,7 @@
 4. **compaction 是计划性的破坏性操作**。`src/conversation/compaction.ts` 的 `maybeCompactConversation(context)` 是唯一改写历史的路径：在 AgentContext 上 `replaceMessages([summaryHead, ...keptTail])` 原子替换，kept 部分字节保持不变，前缀 hash 切换一次后再次稳定。token-based 阈值（默认 12k token），`previousSummary` 是合并输入而非 append，cut 边界不切开 `tool_calls + tool_results` 三元组。post-send 触发，try/catch wrap 不污染已 sent reply。
 5. **决定性重放**。同一个 scene 在任意时刻 `getSnapshot()` 出来的 messages 必须 byte-identical（输入相同时）——这是 cache 命中的数学前提，不是好习惯。
 
-观测面在 admin-web 的 `/llm-traces` 里，按 sceneId 聚合 `prefixHash` 切换次数和 `cached_tokens` 占比；持久形态在 `scene_agent_contexts` 表（一条记录 = 一个 scene 的全部 LLM 可见历史）。扩展规则同步写在 `CLAUDE.md` 的 *Perpetual Context Contract* 章节，做出影响 prefix 的改动时务必先读那一节。
+观测面在 admin-web 的 `/llm-traces` 里，按 sceneId 聚合 `prefixHash` 切换次数和 `cached_tokens` 占比；持久形态在 `scene_agent_contexts` 表（一条记录 = 一个 scene 的全部 LLM 可见历史）。当前长期契约见 `AGENTS.md` / `CLAUDE.md` 的「永续上下文契约」章节，做出影响 prefix 的改动时务必先读那一节。
 
 ## 功能概览
 

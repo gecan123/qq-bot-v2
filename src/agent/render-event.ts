@@ -3,7 +3,7 @@ import type { BotEvent } from './event.js'
 /**
  * 把 BotEvent 翻译成喂给 LLM 的 user-role 文本。
  *
- * 字节稳定 (CLAUDE.md 红线 5): 同样的 messageRowId + sentAt + renderedText 必须每次输出同样字节。
+ * 字节稳定 (AGENTS.md / CLAUDE.md 红线 5): 同样的 messageRowId + sentAt + renderedText 必须每次输出同样字节。
  * sentAt 是消息自身的固定时间戳, 不是"当前时间", 所以不破坏 prefix 稳定性。
  * `#NNNNN` 是 napcat 的 message_id, BotEvent 自带, 同源同条永远同一个数, 不破坏 cache 前缀。
  *

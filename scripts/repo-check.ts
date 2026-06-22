@@ -1,0 +1,28 @@
+import { readFileSync } from 'node:fs'
+import { runRepoChecks, type RepoCheckFiles } from '../src/ops/repo-check.js'
+
+const files: RepoCheckFiles = {
+  'AGENTS.md': readFileSync('AGENTS.md', 'utf8'),
+  'CLAUDE.md': readFileSync('CLAUDE.md', 'utf8'),
+  'README.md': readFileSync('README.md', 'utf8'),
+  'package.json': readFileSync('package.json', 'utf8'),
+  'prisma/schema.prisma': readFileSync('prisma/schema.prisma', 'utf8'),
+  'docs/README.md': readFileSync('docs/README.md', 'utf8'),
+  'docs/ARCHITECTURE.md': readFileSync('docs/ARCHITECTURE.md', 'utf8'),
+  'docs/AGENT_CONTEXT.md': readFileSync('docs/AGENT_CONTEXT.md', 'utf8'),
+  'docs/TOOLS.md': readFileSync('docs/TOOLS.md', 'utf8'),
+  'docs/OPERATIONS.md': readFileSync('docs/OPERATIONS.md', 'utf8'),
+  'docs/TECH_DEBT.md': readFileSync('docs/TECH_DEBT.md', 'utf8'),
+}
+
+const result = runRepoChecks(files)
+
+if (result.errors.length > 0) {
+  console.error('repo-check failed:')
+  for (const error of result.errors) {
+    console.error(`- ${error}`)
+  }
+  process.exit(1)
+}
+
+console.log('repo-check passed')

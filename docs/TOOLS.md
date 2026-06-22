@@ -1,0 +1,41 @@
+# Agent 工具
+
+工具注册集中在 `src/agent/tools/index.ts`。声称某个工具存在前，先查这个文件。
+
+## 已注册能力
+
+- 对话控制：`wait`、`rest`。
+- 发送：`send_message`。
+- 知识和历史：`db`、`memory`、`write_journal`、`source_profile`、`style_guide`。
+- 外部内容：`fetch_url`、`fetch_image`、配置后可用的 `web_search`、`reddit`、配置后可用的 `openbb_cli`。
+- 媒体生成和复用：`generate_image`、`collect_sticker`。
+- 运行时工作：`background_task`、`workspace_bash`、配置后可用的 `browser`。
+
+## 安全规则
+
+- 对外 QQ 发言必须走 `send_message`。
+- `send_message` 的 target 必须明确。不能从 memory 里推断群聊或私聊 target。
+- assistant text 是内部历史/推理，不是公开发送通道。
+- group ambient 发送受 ingress allowlist 和 `BOT_GROUP_AMBIENT_SEND_IDS` 保护。reply 和 private 不受 ambient whitelist 控制。
+- 外部工具必须有输出上限、超时和审计日志。
+- `workspace_bash` 提供可写 private workspace 和只读 repo view。repo view 必须保持 allowlist，不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
+- 有副作用的工具通过 `src/ops/tool-call-log.ts` 记录。
+- Bash 类能力必须保留 command allowlist、固定 workspace、最小 env、输出/时间上限和审计日志。敏感访问应通过专门脚本或 capability wrapper。
+- `workspace_bash`、`browser`、`fetch_url`、`fetch_image` 和 `openbb_cli` 必须保留现有上限、preview compression、cache、timeout 和 audit 行为。
+- 有副作用的工具要格外谨慎：`send_message`、图片生成/下载、journal/memory/sticker 工具、browser 写操作，以及未来任何会写 DB 或外部服务的工具。
+
+## LLM 路径
+
+- Agent chat 有 Claude-Code-compatible 和 OpenAI-agent 两条路径。除非任务明确要求，否则不要改 wire format、cache-control 或 provider identity 细节。
+- 媒体描述使用 `src/llm/**` 下的 routing provider，和 agent chat client 分离。
+- 优先使用渐进式披露：system prompt 只放稳定边界和入口，长手册和可变数据放到工具或文件后面。
+- 不要写锁定 prompt 具体措辞的单元测试。应测试 parser、schema 和工具契约。
+
+## 修改清单
+
+修改工具注册或行为时：
+
+- 更新工具实现和测试。
+- 检查 `src/agent/bot-system-prompt.ts` 里的 progressive-disclosure index。
+- 如果能力面变化，同步更新本文档。
+- 运行 `pnpm repo-check`、`pnpm typecheck` 和相关工具的 focused tests。

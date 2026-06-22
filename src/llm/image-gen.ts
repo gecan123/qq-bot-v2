@@ -21,7 +21,6 @@ export async function generateImage(prompt: string): Promise<Buffer> {
     size: SIZE,
     quality: QUALITY,
     n: 1,
-    response_format: 'b64_json',
   })
 
   const b64 = result.data?.[0]?.b64_json
@@ -40,7 +39,6 @@ export async function editImage(prompt: string, sourceBytes: Buffer): Promise<Bu
     prompt,
     size: SIZE,
     n: 1,
-    response_format: 'b64_json',
   })
 
   const b64 = result.data?.[0]?.b64_json

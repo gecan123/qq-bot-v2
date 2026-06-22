@@ -182,6 +182,35 @@ describe('ClaudeCodeLlmClient.chat', () => {
     assert.equal(calls.length, 1)
   })
 
+  test('SSE error event throws instead of becoming an empty completion', async (t) => {
+    const sse = ev('error', {
+      type: 'error',
+      error: {
+        type: 'overloaded_error',
+        message: 'Overloaded',
+      },
+    })
+    const { fn } = makeFetchMock([{ body: sse }])
+    t.mock.method(globalThis, 'fetch', fn)
+
+    const client = createClaudeCodeLlmClient({
+      model: 'claude-sonnet-4-6',
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+    })
+
+    await assert.rejects(
+      () => client.chat({ systemPrompt: 's', messages: [{ role: 'user', content: 'h' }], tools: [] }),
+      (err: unknown) => {
+        assert.ok(err instanceof ClaudeCodeApiError)
+        assert.equal(err.status, 200)
+        assert.match(err.message, /overloaded_error/)
+        assert.match(err.message, /Overloaded/)
+        return true
+      },
+    )
+  })
+
   test('request body: stream:true, 2 system blocks, cache_control 1h 挂最后一块', async (t) => {
     const { fn, calls } = makeFetchMock([{ body: SAMPLE_TEXT_SSE }])
     t.mock.method(globalThis, 'fetch', fn)

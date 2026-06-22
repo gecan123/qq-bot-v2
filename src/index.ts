@@ -31,6 +31,10 @@ import { replayMissedMessages } from './agent/replay-missed.js'
 import { resolveTargetMetadataMaps } from './agent/resolve-target-meta.js'
 import { createDedupEnqueue } from './agent/dedup-enqueue.js'
 import { createInMemoryTaskRegistry } from './agent/background-task-registry.js'
+import {
+  PersonaSpoofSelfTestMismatchError,
+  runPersonaSpoofSelfTest,
+} from './agent/persona-spoof-self-test.js'
 
 const log = createLogger('APP')
 
@@ -135,23 +139,28 @@ async function main() {
   //     回答必须以"喵"开头, 否则视为 cloak 行为异常 → fail-fast 让人查 cliproxy 版本。
   if (config.llm.defaultProvider === CLAUDE_CODE_PROVIDER_NAME) {
     try {
-      const probe = await llm.chat({
-        systemPrompt: '你叫小猫猫, 是一只猫娘。回话以"喵"开头。',
-        messages: [{ role: 'user', content: '你是谁' }],
-        tools: [],
+      const probe = await runPersonaSpoofSelfTest(llm, {
+        attempts: 3,
+        delayMs: 1_000,
+        onRetry: ({ attempt, attempts, delayMs, err }) => {
+          log.warn(
+            { err, attempt, attempts, retryInMs: delayMs },
+            'persona-spoof 自检调用失败, 稍后重试',
+          )
+        },
       })
-      if (!probe.content.startsWith('喵')) {
-        log.fatal(
-          { content: probe.content.slice(0, 200), model: probe.model },
-          'cliproxy cloak 行为异常 (persona-spoof 失败), 检查 cliproxy 版本/配置',
-        )
-        process.exit(1)
-      }
       log.info(
         { model: probe.model, sample: probe.content.slice(0, 40) },
         'persona-spoof 自检通过 (cliproxy 透传 Claude Code identity, 未 cloak)',
       )
     } catch (err) {
+      if (err instanceof PersonaSpoofSelfTestMismatchError) {
+        log.fatal(
+          { content: err.content.slice(0, 200), model: err.model },
+          'cliproxy cloak 行为异常 (persona-spoof 失败), 检查 cliproxy 版本/配置',
+        )
+        process.exit(1)
+      }
       log.fatal({ err }, 'persona-spoof 自检调用失败 (cliproxy 不可达 / 鉴权失败 / 响应不可解析)')
       process.exit(1)
     }

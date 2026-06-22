@@ -47,6 +47,7 @@ export function parseClaudeStreamResponse(value: string): ClaudeMessageResponse 
   let outputTokens: number | undefined
   let cacheReadInputTokens: number | undefined
   let cacheCreationInputTokens: number | undefined
+  let error: ClaudeMessageResponse['error'] | undefined
 
   for (const chunk of value.split('\n\n')) {
     const lines = chunk
@@ -83,6 +84,15 @@ export function parseClaudeStreamResponse(value: string): ClaudeMessageResponse 
         if (typeof usage.cache_creation_input_tokens === 'number') {
           cacheCreationInputTokens = usage.cache_creation_input_tokens
         }
+      }
+      continue
+    }
+
+    if (parsed.type === 'error') {
+      const parsedError = isRecord(parsed.error) ? parsed.error : null
+      error = {
+        ...(typeof parsedError?.type === 'string' ? { type: parsedError.type } : {}),
+        ...(typeof parsedError?.message === 'string' ? { message: parsedError.message } : {}),
       }
       continue
     }
@@ -185,6 +195,7 @@ export function parseClaudeStreamResponse(value: string): ClaudeMessageResponse 
     role: 'assistant',
     ...(model ? { model } : {}),
     content,
+    ...(error ? { error } : {}),
     ...(inputTokens !== undefined ||
     outputTokens !== undefined ||
     cacheReadInputTokens !== undefined ||

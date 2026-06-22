@@ -101,6 +101,17 @@ export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput)
         })
       }
 
+      if (parsed.error) {
+        const type = parsed.error.type ?? 'unknown_error'
+        const message = parsed.error.message ?? 'unknown error'
+        throw new ClaudeCodeApiError({
+          message: `Anthropic API SSE error: ${type}: ${message}`,
+          status: response.status,
+          requestBody: body,
+          responseText: response.text,
+        })
+      }
+
       // content:[] 是合法的 — 模型可以选择 end_turn 不输出任何 block。
       // 这种情况返回空 completion, BotLoop 会自然 skip 这一轮 (不 append assistant turn)。
       // 但仍然 warn 一下, 因为对 bot 来说 "既不调 wait 也不调 send_message" 是反常状态。

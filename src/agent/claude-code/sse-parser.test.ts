@@ -140,6 +140,25 @@ describe('parseClaudeStreamResponse', () => {
     assert.equal(result.usage?.output_tokens, 1)
   })
 
+  test('preserves upstream SSE error events instead of treating them as empty content', () => {
+    const sse = ev('error', {
+      type: 'error',
+      error: {
+        type: 'overloaded_error',
+        message: 'Overloaded',
+      },
+    })
+
+    const result = parseClaudeStreamResponse(sse)
+
+    assert.ok(result)
+    assert.deepEqual(result.error, {
+      type: 'overloaded_error',
+      message: 'Overloaded',
+    })
+    assert.deepEqual(result.content, [])
+  })
+
   test('unknown content block type at index → ignored, no crash', () => {
     const sse =
       ev('message_start', { type: 'message_start', message: { model: 'm' } }) +

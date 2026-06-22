@@ -10,3 +10,20 @@ export function loadPrompt(filePath: string): string {
   cache.set(resolved, content)
   return content
 }
+
+export function loadPromptSection(filePath: string, section: string): string {
+  const content = loadPrompt(filePath)
+  const pattern = new RegExp(
+    `<!--\\s*section:${escapeRegExp(section)}\\s*-->\\n?([\\s\\S]*?)\\n?<!--\\s*/section:${escapeRegExp(section)}\\s*-->`,
+    'm',
+  )
+  const match = content.match(pattern)
+  if (!match) {
+    throw new Error(`Missing prompt section "${section}" in ${filePath}`)
+  }
+  return match[1]!.trim()
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}

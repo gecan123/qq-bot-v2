@@ -100,6 +100,7 @@ pnpm toollogf
 - 媒体描述使用 `src/llm/**` 下的 routing provider，和 agent chat client 分离。
 - 工具注册集中在 `src/agent/tools/index.ts`。声称某个工具存在前，先查这个文件。
 - 每次修改工具注册后，同步检查并更新对应的 system prompt、tool description、测试、文档和旧导出/旧命名残留；不要让 LLM 看到已废弃的工具名或入口。
+- 不要针对 prompt 文本写单元测试。prompt 改动用人工 diff、渲染结果抽查、必要时真实对话/工具调用验证；代码解析器或工具契约可以测，但不要把具体措辞锁进测试。
 - 建立新能力时遵循“建立时披露”：常驻 system prompt 只放稳定边界、索引和入口；长说明、风格正文、群口味、工具手册、可变数据和外部内容，通过工具、文件工作区或其它按需路径读取。
 - Bash 可以作为能力底座或统一交互形态，但不要把裸 shell 暴露给常驻 bot。Bash 类工具必须有命令 allowlist、固定工作区、最小 env、输出/时间上限和审计日志；DB 查询等敏感能力通过专门脚本或 capability 入口复用现有安全层。
 - `data/agent-workspace/` 是 agents 自己生产内容的区域，用于 journal、dream、scratch、index、draft 等自组织文件。默认不要把这里的运行时内容当项目源码或事实账本；局部 `.gitignore` 会忽略生成内容，只保留目录说明。除非用户明确要求，否则不要提交该目录下的生成物。

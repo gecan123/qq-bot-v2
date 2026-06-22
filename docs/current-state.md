@@ -148,12 +148,12 @@ while (true) {
 `src/config/`
 - `index.ts` — env parsing（含 `botGroupPromptsPath` 默认 `./prompts/groups.yaml`）
 - `group-prompts.ts` — `loadGroupCustomizations(path)`：yaml + zod 校验 → `GroupCustomization[]`。启动期一次 load + freeze，供 `source_profile` 按需读取；文件不存在 → 返空数组（不阻断启动）；schema 错 → fail-fast
-- `prompt-loader.ts` — 缓存式同步 `loadPrompt(filePath)`，给 `prompts/characters/core.md` 等静态 prompt 用
+- `prompt-loader.ts` — 缓存式同步 `loadPrompt(filePath)` / `loadPromptSection(filePath, section)`，给 `prompts/characters/core.md` 单文件分段 prompt 用
 
 `prompts/`
 - `groups.yaml` — per-group prompt customization source of truth（含真实群号，不入 git，**gitignored**）。schema：`groups: [{ id, frequency_hint, body }]`。`frequency_hint` 4 档枚举 `lurker / quiet / normal / chatty`。`groups: []` 或文件不存在 = 不做任何定制。改这个文件需重启 bot
 - `groups.yaml.example` — 上面的占位模板（committed）；新机器 `cp` 一份成 `groups.yaml` 改
-- `characters/core.md` — 常驻 system prompt 的短人设基座（Luna）
+- `characters/core.md` — Luna 单文件 prompt source，包含 `core` 常驻短人设基座和 `style_guide` 按需读取的风格分段
 
 `src/agent/`
 - `agent-context.ts` — single-bot AgentContext（red line 1）
@@ -163,13 +163,13 @@ while (true) {
 - `render-event.ts` — 纯函数 `BotEvent → string`，多源标签 + 群名缺失裸 ID fallback（red line 5）
 - `resolve-target-meta.ts` — 启动时一次性拉群名（`Promise.allSettled`，3s/调用，失败裸 ID）。私聊昵称走 per-event render，不预拉
 - `llm-client.ts` — `AgentMessage <-> OpenAI ChatCompletion` 翻译
-- `bot-system-prompt.ts` — 启动时一次拼装（使用 metadata maps，red line 5）。常驻 prompt 只保留短人设、来源标签、源隔离和硬约束；群定制正文改由工具按需披露
+- `bot-system-prompt.ts` — 启动时一次拼装（使用 metadata maps，red line 5）。常驻 prompt 只读取 `characters/core.md` 的 `core` 分段，保留短人设、来源标签、源隔离和硬约束；长风格正文与群定制正文改由工具按需披露
 - `snapshot-repo.ts` — `bot_agent_snapshot` 单行持久化
 - `compaction.ts` — `maybeCompactConversation`（red line 4 唯一前缀写口）
 - `bot-loop-agent.ts` — 主循环
 - `replay-missed.ts` — 启动时多源回放关机期间漏掉的消息（与 live 共享 dedup hook）
 - `tool.ts` — Tool / ToolExecutor 接口
-- `tools/*` — `wait` / `rest` / `send_message` / `db` / `reddit` / `fetch_image` / `web_search` / `source_profile` / `memory` / `background_task` / `fetch_url` / `openbb_cli` / `workspace_bash` / `browser`
+- `tools/*` — `wait` / `rest` / `send_message` / `db` / `reddit` / `fetch_image` / `web_search` / `style_guide` / `source_profile` / `memory` / `background_task` / `fetch_url` / `openbb_cli` / `workspace_bash` / `browser`
 - `tools/reddit/*` — `reddit` 底层 action=list (list.ts) / action=get_post (get-post.ts) / 共享依赖 (shared.ts)
 
 `src/browser/`
@@ -254,6 +254,7 @@ bot 通过工具自主决定：
 - **`fetch_url`** — 抓任意 URL：response body cap 256KB → cheerio 抽 title/desc/article/main/body → 8KB 截断 → 默认 LLM 摘成 ≤500 中文字 → 输出 ≤1500 字符 clamp。LLM 失败 fallback 到原文截断 + 错误标记。每次调用写一行到 `logs/fetch.ndjson`
 - **`openbb_cli`** — 仅在 `OPENBB_CLI_ENABLED` 启用时注册。通过本机 OpenBB CLI 查股票 / 金融数据，参数是 `command`，内容是 OpenBB CLI 内部命令（如 `/equity/price/historical --symbol AAPL --provider yfinance --export json`）。要拿原始数据正文时加 `--export json`；工具会读取 OpenBB 保存的 JSON 并返回内容。工具启动 `OPENBB_CLI_BIN` 后把命令写入 stdin 并收集 stdout/stderr。禁止 shell 元字符、`exe`、`record` 和退出命令。单次输出 ≤1500 字符，默认 15s 超时，每次调用写一行到 `logs/fetch.ndjson`（`source=openbb_cli`，`url` 字段记录命令文本）
 - **`browser`** — 仅在 `BOT_BROWSER_ENABLED` 启用时注册。真实浏览器单步 action 工具: `help/status/open/switch_page/close_page/observe/click/type/press/scroll/screenshot/download/annotate/request_owner_help`。通过 `BOT_BROWSER_CONTROLLER_URL` 调本地 sidecar。`observe` 返回 URL/title/load state/可交互元素；`screenshot` 返回压缩 image block 进入 AgentContext 并落原图 artifact；普通浏览、发帖/评论/点赞、Cloudflare/Turnstile/cookie 弹窗可自主处理；登录/2FA/账号安全/OAuth/支付/可执行下载等返回 `requiresOwnerHelp`。每步写 `logs/browser-actions.ndjson`
+- **`style_guide`** — 按需返回 Luna 的完整说话风格指南。物理内容与常驻 core 合并在 `prompts/characters/core.md` 一个文件里，但 system prompt 只读取 `core` 分段；日常短回复不需要每轮调用，不确定语气、需要反例对照或校准“像不像 Luna”时再读
 - **`source_profile`** — 按需返回某个监听群的 `groups.yaml` 风格定制。未配置的监听群返回 `frequencyHint=normal` + 空 body；不在监听范围内的群返回错误
 - **`background_task`** — 后台任务单入口工具。`action=list` 查看正在运行和最近完成/失败的任务；`action=get` 按 `taskId` 获取已完成任务详情。图片生成任务结果包含预览图和 `ephemeralRef`
 - **`memory`** — Luna 自主控制的长期记忆笔记本（`memory_entries` 表）。`action=write` 写一条笔记：`target={kind:'person'|'group', id}` + `content ≤500` 字 + 可选 `sourceMessageIds`（追溯用，不回传给 LLM）；`action=search` 按 target 取笔记：可选 `keyword`（精确子串、大小写不敏感）+ `limit 1-20`（默认 10）+ `orderBy createdAt desc`。空结果返回 hint。无 env 开关，无条件注册。设计文档 `~/.gstack/projects/gecan123-qq-bot-v2/zzz-main-design-20260516-134812.md`
@@ -281,7 +282,7 @@ system prompt（`src/agent/bot-system-prompt.ts`）明示 LLM：
 
 所有静态 prompt 文本在 `prompts/`。当前用到：
 
-- `prompts/characters/core.md` — bot 常驻短人设基座（`bot-system-prompt.ts` 通过 `loadPrompt` 加载）
+- `prompts/characters/core.md` — 单文件角色 prompt。`bot-system-prompt.ts` 只加载 `core` 分段；`style_guide` 工具从同一文件加载 `style_index` / `style_base` / `style_anti_patterns` / `style_special_cases`
 旧的 reply-instruction / proactive-judge prompts 保留在目录里，single-context MVP 不再使用。媒体描述还在用图 / 视频 / PDF / 音频几个。
 
 ---

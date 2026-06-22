@@ -17,6 +17,7 @@ import { memoryTool } from './memory.js'
 import { writeJournalTool } from './write-journal.js'
 import { collectStickerTool } from './collect-sticker.js'
 import { fetchImageTool } from './fetch-image.js'
+import { styleGuideTool } from './style-guide.js'
 import { createSourceProfileTool } from './source-profile.js'
 import { createWorkspaceBashTool } from './workspace-bash.js'
 import { maybeCreateBrowserTool } from './browser.js'
@@ -44,6 +45,7 @@ export function buildBotTools(deps: BotToolDeps): Tool[] {
     createFetchUrlTool(),
     createGenerateImageTool({ taskRegistry: deps.taskRegistry }),
     fetchImageTool,
+    styleGuideTool,
     createSourceProfileTool({
       groupIds: deps.groupIds,
       metadata: deps.metadata,

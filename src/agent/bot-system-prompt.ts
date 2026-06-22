@@ -1,5 +1,5 @@
 import type { BotOwner } from '../config/index.js'
-import { loadPrompt } from '../config/prompt-loader.js'
+import { loadPromptSection } from '../config/prompt-loader.js'
 import type { TargetMetadataMaps } from './resolve-target-meta.js'
 
 /**
@@ -51,7 +51,7 @@ function renderSourceList(input: BuildBotSystemPromptInput): string {
 }
 
 export function buildBotSystemPrompt(input: BuildBotSystemPromptInput): string {
-  const persona = loadPrompt('./prompts/characters/core.md').trim()
+  const persona = loadPromptSection('./prompts/characters/core.md', 'core').trim()
   const ownerSection = renderOwnerSection(input.owner)
 
   const sections: string[] = [
@@ -92,6 +92,7 @@ export function buildBotSystemPrompt(input: BuildBotSystemPromptInput): string {
     '',
     '[按需披露]',
     '常驻 system 只放稳定规则. 更细的信息按需取:',
+    '  - style_guide: 不确定 Luna 该怎么说、需要长语气反例或完整风格校准时再读.',
     '  - source_profile: 涉及某个群的在场风格、节奏或 groups.yaml 群口味正文时再读.',
     '  - memory: 涉及具体人/群、关系、偏好、旧话题时先 action=search 翻私人笔记; 需要记下长期有用事实时 action=write.',
     '  - db: 需要历史聊天、媒体描述、message_id 或群/私聊事实时查数据库; 先 action=schema, 再 action=query.',

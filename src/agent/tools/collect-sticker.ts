@@ -9,7 +9,7 @@ import { createLogger } from '../../logger.js'
 
 const log = createLogger('TOOL_COLLECT_STICKER')
 
-const argsSchema = z.object({
+const collectArgsSchema = z.object({
   image: imageHandleSchema.describe(
     '要收藏的图片. {mediaId:N} 走存量, {ephemeralRef:"<hash>"} 走刚收到/生成的 (1h 内有效, 会自动持久化).',
   ),
@@ -30,7 +30,85 @@ const argsSchema = z.object({
     .describe('可选: 描述画面内容 + 适用场景, ≤200 字. 不传则自动取 Media 表里的图片描述.'),
 })
 
+const listArgsSchema = z.object({
+  action: z.literal('list').describe('按使用次数和创建时间列出表情包.'),
+  limit: z.number().int().min(1).optional().describe('最多返回多少个, 运行时上限 20.'),
+})
+
+const searchArgsSchema = z.object({
+  action: z.literal('search').describe('按名称、标签或描述搜索表情包.'),
+  query: z.string().min(1).max(50).describe('搜索关键词.'),
+  limit: z.number().int().min(1).optional().describe('最多返回多少个, 运行时上限 20.'),
+})
+
+const randomArgsSchema = z.object({
+  action: z.literal('random').describe('随机返回若干个候选表情包.'),
+  tag: z.string().min(1).max(20).optional().describe('可选: 只从这个标签里随机.'),
+  limit: z.number().int().min(1).optional().describe('最多返回多少个, 运行时上限 20.'),
+})
+
+const argsSchema = z.union([
+  collectArgsSchema,
+  z.discriminatedUnion('action', [
+    collectArgsSchema.extend({ action: z.literal('collect').describe('收藏或更新一张表情包.') }),
+    listArgsSchema,
+    searchArgsSchema,
+    randomArgsSchema,
+  ]),
+])
+
 type Args = z.infer<typeof argsSchema>
+type StickerActionArgs =
+  | (z.infer<typeof collectArgsSchema> & { action: 'collect' })
+  | z.infer<typeof listArgsSchema>
+  | z.infer<typeof searchArgsSchema>
+  | z.infer<typeof randomArgsSchema>
+
+type StickerRow = {
+  id: number
+  mediaId: number
+  name: string
+  tags: string[]
+  description: string
+  useCount: number
+  createdAt: Date
+}
+
+const stickerSelect = {
+  id: true,
+  mediaId: true,
+  name: true,
+  tags: true,
+  description: true,
+  useCount: true,
+  createdAt: true,
+} as const
+
+function normalizeArgs(args: Args): StickerActionArgs {
+  return 'action' in args ? args : { action: 'collect', ...args }
+}
+
+function boundedLimit(limit: number | undefined): number {
+  if (limit == null) return 10
+  return Math.min(limit, 20)
+}
+
+function renderStickerRows(rows: StickerRow[]) {
+  return rows.map((row) => ({
+    mediaRef: `media:${row.mediaId}`,
+    mediaId: row.mediaId,
+    name: row.name,
+    tags: row.tags,
+    description: row.description,
+    useCount: row.useCount,
+  }))
+}
+
+function pickRandomRows(rows: StickerRow[], limit: number): StickerRow[] {
+  return [...rows]
+    .sort(() => Math.random() - 0.5)
+    .slice(0, limit)
+}
 
 function extractDescription(raw: unknown): string {
   if (raw && typeof raw === 'object' && 'description' in raw) {
@@ -49,7 +127,46 @@ export const collectStickerTool: Tool<Args> = {
     '同一张图再次 collect 会更新名字/标签/描述. description 可选, 不传自动用图片已有的描述.',
   ].join(' '),
   schema: argsSchema,
-  async execute(args) {
+  async execute(rawArgs) {
+    const args = normalizeArgs(argsSchema.parse(rawArgs))
+
+    if (args.action === 'list') {
+      const rows = await prisma.stickerPool.findMany({
+        where: undefined,
+        orderBy: [{ useCount: 'desc' }, { createdAt: 'desc' }],
+        take: boundedLimit(args.limit),
+        select: stickerSelect,
+      })
+      return { content: JSON.stringify({ ok: true, action: 'list', stickers: renderStickerRows(rows) }) }
+    }
+
+    if (args.action === 'search') {
+      const rows = await prisma.stickerPool.findMany({
+        where: {
+          OR: [
+            { name: { contains: args.query, mode: 'insensitive' as const } },
+            { description: { contains: args.query, mode: 'insensitive' as const } },
+            { tags: { has: args.query } },
+          ],
+        },
+        orderBy: [{ useCount: 'desc' }, { createdAt: 'desc' }],
+        take: boundedLimit(args.limit),
+        select: stickerSelect,
+      })
+      return { content: JSON.stringify({ ok: true, action: 'search', query: args.query, stickers: renderStickerRows(rows) }) }
+    }
+
+    if (args.action === 'random') {
+      const limit = boundedLimit(args.limit)
+      const rows = await prisma.stickerPool.findMany({
+        where: args.tag ? { tags: { has: args.tag } } : undefined,
+        orderBy: [{ useCount: 'desc' }, { createdAt: 'desc' }],
+        take: 20,
+        select: stickerSelect,
+      })
+      return { content: JSON.stringify({ ok: true, action: 'random', stickers: renderStickerRows(pickRandomRows(rows, limit)) }) }
+    }
+
     const handle = args.image as ImageHandle
     let mediaId: number
     let autoDescription = ''

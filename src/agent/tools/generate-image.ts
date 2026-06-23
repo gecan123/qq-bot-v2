@@ -31,8 +31,8 @@ const argsSchema = z.object({
     .optional()
     .describe('可选: 要编辑/参考的源图片数组, 最多 5 张. 多图时请在 prompt 里说明保留主体、布局、风格和合成目标.'),
   quality: z.enum(['low', 'medium', 'high'])
-    .default('medium')
-    .describe('图片生成质量. low 更省, high 更精细, 默认 medium.'),
+    .default('low')
+    .describe('图片生成质量. low 更省, high 更精细, 默认 low.'),
   count: z.number()
     .int()
     .min(1)

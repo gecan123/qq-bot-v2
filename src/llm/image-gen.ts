@@ -3,7 +3,7 @@ import { config } from '../config/index.js'
 
 const MODEL = 'gpt-image-2'
 const SIZE = '1024x1024' as const
-const QUALITY = 'medium' as const
+const QUALITY = 'low' as const
 
 export type ImageQuality = 'low' | 'medium' | 'high'
 

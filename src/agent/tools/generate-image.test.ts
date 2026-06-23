@@ -161,7 +161,11 @@ describe('generate_image tool', () => {
     const taskRegistry = createInMemoryTaskRegistry()
     const tool = createGenerateImageTool({ taskRegistry })
     const handles = Array.from({ length: 5 }, (_, index) => ({ ephemeralRef: `${index}`.repeat(64) }))
+    const defaulted = tool.schema.safeParse({ prompt: 'p' })
+    const defaultedData = defaulted.success ? defaulted.data as { quality: string } : undefined
 
+    assert.equal(defaulted.success, true)
+    assert.equal(defaultedData?.quality, 'low')
     assert.equal(tool.schema.safeParse({ prompt: 'p', quality: 'low' }).success, true)
     assert.equal(tool.schema.safeParse({ prompt: 'p', quality: 'medium' }).success, true)
     assert.equal(tool.schema.safeParse({ prompt: 'p', quality: 'high' }).success, true)

@@ -63,7 +63,7 @@ describe('image generation API adapter', () => {
     await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()))
   })
 
-  test('generateImage defaults quality to medium', async () => {
+  test('generateImage defaults quality to low', async () => {
     const image = await imageGen.generateImage('p')
 
     assert.deepEqual(image, Buffer.from('image-bytes'))
@@ -71,7 +71,7 @@ describe('image generation API adapter', () => {
     assert.equal(captured.method, 'POST')
     assert.equal(captured.url, '/v1/images/generations')
     const payload = JSON.parse(captured.body.toString('utf8')) as Record<string, unknown>
-    assert.equal(payload?.quality, 'medium')
+    assert.equal(payload?.quality, 'low')
   })
 
   test('generateImage passes explicit quality', async () => {

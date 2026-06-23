@@ -15,6 +15,7 @@
 
 ```bash
 pnpm dev
+pnpm dev:once
 pnpm build
 pnpm typecheck
 pnpm test
@@ -33,6 +34,7 @@ pnpm toollogf
 ## 本地运行
 
 - 从仓库根目录启动，确保 `.bot.pid`、logs、prompts 和相对路径稳定。
+- `pnpm dev` 使用 watch 模式，文件变化会重启；`pnpm dev:once` 单次启动，不监听文件变化。
 - `pnpm tick` 会读取 `.bot.pid`，向进程发送 `SIGUSR1`，并注入一个 curiosity tick。
 - logs 写在 `logs/` 下，是运维证据，不是 replay 输入。
 - 启动时当前 system prompt 会写入 `logs/system-prompt.txt`，便于检查。

@@ -61,18 +61,19 @@ pnpm dev
 ## 常用命令
 
 ```bash
-pnpm dev          # watch 模式启动 bot
-pnpm build        # 编译 TypeScript
-pnpm typecheck    # 只做 TypeScript 检查
-pnpm test         # 运行 src/**/*.test.ts
-pnpm repo-check   # 检查仓库指令和文档漂移
-pnpm lint         # typecheck + repo-check
-pnpm db:generate  # 重新生成 Prisma client
-pnpm db:migrate   # 执行 Prisma migrations
-pnpm db:push      # 本地开发时同步 schema
-pnpm tick         # 通过 SIGUSR1 注入 curiosity tick
-pnpm toollog      # 查看最近 tool-call 审计日志
-pnpm toollogf     # follow tool-call 审计日志
+pnpm dev           # watch 模式启动 bot，文件变化会重启
+pnpm dev:once      # 单次启动 bot，不监听文件变化
+pnpm build         # 编译 TypeScript
+pnpm typecheck     # 只做 TypeScript 检查
+pnpm test          # 运行 src/**/*.test.ts
+pnpm repo-check    # 检查仓库指令和文档漂移
+pnpm lint          # typecheck + repo-check
+pnpm db:generate   # 重新生成 Prisma client
+pnpm db:migrate    # 执行 Prisma migrations
+pnpm db:push       # 本地开发时同步 schema
+pnpm tick          # 通过 SIGUSR1 注入 curiosity tick
+pnpm toollog       # 查看最近 tool-call 审计日志
+pnpm toollogf      # follow tool-call 审计日志
 ```
 
 ## 运行形态

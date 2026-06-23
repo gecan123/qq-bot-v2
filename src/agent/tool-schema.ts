@@ -7,8 +7,8 @@ export function zodToToolJsonSchema(schema: z.ZodTypeAny): Record<string, unknow
 
   // Anthropic 不允许顶层 oneOf/anyOf/allOf。OpenAI function tools 也更稳地吃普通
   // object schema；discriminatedUnion 在这里展平成合并 object。
-  const variants = (json.oneOf ?? json.anyOf) as Record<string, unknown>[] | undefined
-  if (Array.isArray(variants) && variants.length > 0 && variants.every((v) => v.type === 'object')) {
+  const variants = getFlattenableObjectVariants(json)
+  if (variants) {
     const mergedProps: Record<string, Record<string, unknown>[]> = {}
     const requiredSets: Set<string>[] = []
     for (const variant of variants) {
@@ -57,6 +57,31 @@ export function zodToToolJsonSchema(schema: z.ZodTypeAny): Record<string, unknow
     json.properties = {}
   }
   return json
+}
+
+function getFlattenableObjectVariants(json: Record<string, unknown>): Record<string, unknown>[] | null {
+  const rawVariants = getVariantArray(json)
+  if (!rawVariants) return null
+  return collectObjectVariants(rawVariants)
+}
+
+function collectObjectVariants(variants: unknown[]): Record<string, unknown>[] | null {
+  const output: Record<string, unknown>[] = []
+  for (const variant of variants) {
+    const expanded = expandObjectVariant(variant)
+    if (!expanded) return null
+    output.push(...expanded)
+  }
+  return output.length > 0 ? output : null
+}
+
+function expandObjectVariant(variant: unknown): Record<string, unknown>[] | null {
+  if (!isRecord(variant)) return null
+  if (variant.type === 'object') return [variant]
+
+  const nestedVariants = getVariantArray(variant)
+  if (!nestedVariants) return null
+  return collectObjectVariants(nestedVariants)
 }
 
 export function zodToOpenAIStrictToolJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
@@ -146,13 +171,16 @@ function stripNullOptionals(schema: unknown, value: unknown): unknown {
 }
 
 function getSchemaVariants(schema: Record<string, unknown>): Record<string, unknown>[] {
+  const variants = getVariantArray(schema)
+  return variants?.every(isRecord) ? variants : []
+}
+
+function getVariantArray(schema: Record<string, unknown>): unknown[] | null {
   for (const key of ['anyOf', 'oneOf', 'allOf']) {
     const variants = schema[key]
-    if (Array.isArray(variants) && variants.every(isRecord)) {
-      return variants as Record<string, unknown>[]
-    }
+    if (Array.isArray(variants)) return variants
   }
-  return []
+  return null
 }
 
 function selectVariant(variants: Record<string, unknown>[], value: Record<string, unknown>): Record<string, unknown> {

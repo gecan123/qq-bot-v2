@@ -1,7 +1,20 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { z } from 'zod'
-import { zodToOpenAIStrictToolJsonSchema } from './tool-schema.js'
+import { zodToOpenAIStrictToolJsonSchema, zodToToolJsonSchema } from './tool-schema.js'
+import { collectStickerTool } from './tools/collect-sticker.js'
+
+test('zodToToolJsonSchema flattens collect_sticker union to Anthropic object schema', () => {
+  const json = zodToToolJsonSchema(collectStickerTool.schema)
+
+  assert.equal(json.type, 'object')
+  assert.equal('anyOf' in json, false)
+  assert.equal('oneOf' in json, false)
+
+  const props = json.properties as Record<string, unknown>
+  assert.ok(props.action)
+  assert.ok(props.image)
+})
 
 test('zodToOpenAIStrictToolJsonSchema makes optional object fields required and nullable', () => {
   const schema = z.object({

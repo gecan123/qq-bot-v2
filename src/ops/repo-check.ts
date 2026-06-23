@@ -3,6 +3,9 @@ export interface RepoCheckFiles {
   'CLAUDE.md': string
   'README.md': string
   'package.json': string
+  'src/agent/tools/index.ts': string
+  'src/agent/tools/workspace-bash.ts': string
+  'prompts/bot-system.md': string
   'prisma/schema.prisma': string
   'docs/README.md': string
   'docs/ARCHITECTURE.md': string
@@ -40,6 +43,27 @@ const REQUIRED_DOCS = [
 
 const MAX_AGENT_ENTRY_LINES = 120
 
+const TOOL_REGISTRY_MARKERS = [
+  ['pauseTool', 'pause'],
+  ['createSendMessageTool', 'send_message'],
+  ['createGenerateImageTool', 'generate_image'],
+  ['createBackgroundTaskTool', 'background_task'],
+  ['memoryTool', 'memory'],
+  ['collectStickerTool', 'collect_sticker'],
+  ['createWorkspaceBashTool', 'workspace_bash'],
+  ['maybeCreateBrowserTool', 'browser'],
+  ['maybeCreateWebSearchTool', 'web_search'],
+] as const
+
+const WORKSPACE_BASH_SUBCOMMAND_MARKERS = [
+  ['parseHelpCommand', 'help'],
+  ['parseJournalCommand', 'journal'],
+  ['parseDbToolCommand', 'db'],
+  ['parseStyleCommand', 'style'],
+  ['parseOpenbbCommand', 'openbb'],
+  ['parseFetchCommand', 'fetch'],
+] as const
+
 export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   const errors: string[] = []
 
@@ -50,6 +74,7 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   checkAgentEntry('AGENTS.md', files['AGENTS.md'], errors)
   checkAgentEntry('CLAUDE.md', files['CLAUDE.md'], errors)
   checkDocsMap(files, errors)
+  checkToolIndexes(files, errors)
 
   for (const surface of README_REMOVED_SURFACES) {
     if (files['README.md'].includes(surface)) {
@@ -97,6 +122,38 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   }
 
   return { errors }
+}
+
+function checkToolIndexes(files: RepoCheckFiles, errors: string[]): void {
+  const toolIndex = files['src/agent/tools/index.ts']
+  const workspaceBash = files['src/agent/tools/workspace-bash.ts']
+  const toolsDoc = files['docs/TOOLS.md']
+  const systemPrompt = files['prompts/bot-system.md']
+
+  for (const [marker, toolName] of TOOL_REGISTRY_MARKERS) {
+    if (!toolIndex.includes(marker)) continue
+    if (!mentionsToken(toolsDoc, toolName)) {
+      errors.push(`docs/TOOLS.md must mention registered tool "${toolName}"`)
+    }
+  }
+
+  for (const [marker, subcommand] of WORKSPACE_BASH_SUBCOMMAND_MARKERS) {
+    if (!workspaceBash.includes(marker)) continue
+    if (!mentionsToken(toolsDoc, subcommand)) {
+      errors.push(`docs/TOOLS.md must mention workspace_bash subcommand "${subcommand}"`)
+    }
+    if (!mentionsToken(systemPrompt, subcommand)) {
+      errors.push(`prompts/bot-system.md must mention workspace_bash subcommand "${subcommand}"`)
+    }
+  }
+}
+
+function mentionsToken(content: string, token: string): boolean {
+  return new RegExp(`(^|[^A-Za-z0-9_])${escapeRegex(token)}([^A-Za-z0-9_]|$)`).test(content)
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function checkAgentEntry(path: 'AGENTS.md' | 'CLAUDE.md', content: string, errors: string[]): void {

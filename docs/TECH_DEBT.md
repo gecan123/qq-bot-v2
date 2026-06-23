@@ -4,7 +4,7 @@
 
 ## 当前条目
 
-- 为 tool registry drift、docs links 和 prompt entry points 增加更多 `repo-check` 规则。
+- 为 docs links 和 prompt entry points 增加更多 `repo-check` 规则。
 - 扩展 `agent:doctor`，增加可选的 database、NapCat、LLM provider 和 prompt-rendering probes。
 - 扩展 `agent:metrics`，增加趋势窗口和 cache-hit 回归阈值。
 - 增加 replay-focused checks，从 `bot_agent_snapshot` 采样并验证稳定序列化。

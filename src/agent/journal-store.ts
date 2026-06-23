@@ -36,6 +36,11 @@ export interface JournalEntriesResult {
   skippedCorrupt: number
 }
 
+export interface JournalEntryReadResult {
+  entry: JournalEntryRecord | null
+  skippedCorrupt: number
+}
+
 function entriesPath(rootDir: string): string {
   return join(rootDir, 'journal', 'entries.jsonl')
 }
@@ -82,6 +87,17 @@ export async function searchJournalEntries(
   const matches = result.entries.filter((entry) => entry.content.toLocaleLowerCase().includes(needle))
   return {
     entries: applyEntryQuery(matches, query),
+    skippedCorrupt: result.skippedCorrupt,
+  }
+}
+
+export async function readJournalEntry(
+  options: JournalStoreOptions,
+  id: string,
+): Promise<JournalEntryReadResult> {
+  const result = await readEntries(options.rootDir)
+  return {
+    entry: result.entries.find((entry) => entry.id === id) ?? null,
     skippedCorrupt: result.skippedCorrupt,
   }
 }

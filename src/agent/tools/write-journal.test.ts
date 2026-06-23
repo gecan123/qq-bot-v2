@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
-import { describe, test, beforeEach, afterEach } from 'node:test'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, test } from 'node:test'
 import * as zod from 'zod'
-import { writeJournalTool } from './write-journal.js'
-import { prisma } from '../../database/client.js'
+import { appendJournalEntry } from '../journal-store.js'
+import { createWriteJournalTool, writeJournalTool } from './write-journal.js'
 import { InMemoryEventQueue } from '../event-queue.js'
 import type { BotEvent } from '../event.js'
 import type { ToolContext } from '../tool.js'
@@ -11,19 +14,9 @@ function makeCtx(): ToolContext {
   return { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 0 }
 }
 
-interface CapturedCreate {
-  data: {
-    kind: string
-    content: string
-  }
-  select?: Record<string, boolean>
-}
-
-interface CapturedFindMany {
-  where?: Record<string, unknown>
-  orderBy?: unknown
-  take?: number
-  select?: Record<string, boolean>
+function parseContent<T>(content: unknown): T {
+  assert.ok(typeof content === 'string')
+  return JSON.parse(content) as T
 }
 
 describe('write_journal tool — schema', () => {
@@ -75,119 +68,151 @@ describe('write_journal tool — schema', () => {
     assert.equal(r.success, true)
   })
 
+  test('accepts read action', () => {
+    const r = writeJournalTool.schema.safeParse({
+      action: 'read',
+      id: 'journal-id',
+    })
+    assert.equal(r.success, true)
+  })
+
   test('schema serializes cleanly to JSON Schema', () => {
     assert.doesNotThrow(() => zod.toJSONSchema(writeJournalTool.schema))
   })
 })
 
 describe('write_journal tool — execute', () => {
-  let captured: CapturedCreate | null
-  let originalCreate: typeof prisma.journalEntry.create
-  let originalFindMany: typeof prisma.journalEntry.findMany
-  let capturedFindMany: CapturedFindMany | null
+  let rootDir: string
+  let idCounter: number
+  let nowMs: number
 
-  beforeEach(() => {
-    captured = null
-    capturedFindMany = null
-    originalCreate = prisma.journalEntry.create
-    originalFindMany = prisma.journalEntry.findMany
-    prisma.journalEntry.create = ((args: CapturedCreate) => {
-      captured = args
-      return Promise.resolve({ id: 7 })
-    }) as never
-    prisma.journalEntry.findMany = ((args: CapturedFindMany) => {
-      capturedFindMany = args
-      return Promise.resolve([
-        {
-          id: 2,
-          kind: 'dream',
-          content: '梦到关键词' + 'x'.repeat(240),
-          createdAt: new Date('2026-06-23T01:00:00.000Z'),
-        },
-        {
-          id: 1,
-          kind: 'diary',
-          content: '短内容',
-          createdAt: new Date('2026-06-22T01:00:00.000Z'),
-        },
-      ])
-    }) as never
+  beforeEach(async () => {
+    rootDir = await mkdtemp(join(tmpdir(), 'qq-bot-write-journal-'))
+    idCounter = 0
+    nowMs = Date.parse('2026-06-23T01:00:00.000Z')
   })
 
-  afterEach(() => {
-    prisma.journalEntry.create = originalCreate
-    prisma.journalEntry.findMany = originalFindMany
+  afterEach(async () => {
+    await rm(rootDir, { recursive: true, force: true })
   })
 
-  test('writes diary entry and returns ok:true with id and kind', async () => {
-    const result = await writeJournalTool.execute(
+  function tool() {
+    return createWriteJournalTool({
+      journalRootDir: rootDir,
+      id: () => `entry-${++idCounter}`,
+      now: () => new Date((nowMs += 1000)),
+    })
+  }
+
+  test('old kind/content writes through the workspace store', async () => {
+    const result = await tool().execute(
       { kind: 'diary' as const, content: '今天很充实' },
       makeCtx(),
     )
-    const parsed = JSON.parse(result.content as string) as { ok: boolean; id: number; kind: string }
+    const parsed = parseContent<{ ok: boolean; id: string; kind: string }>(result.content)
     assert.equal(parsed.ok, true)
-    assert.equal(parsed.id, 7)
+    assert.equal(parsed.id, 'entry-1')
     assert.equal(parsed.kind, 'diary')
-    assert.ok(captured, 'create should have been called')
-    assert.equal(captured!.data.kind, 'diary')
-    assert.equal(captured!.data.content, '今天很充实')
+
+    const raw = await readFile(join(rootDir, 'journal', 'entries.jsonl'), 'utf8')
+    const rows = raw.trim().split('\n').map((line) => JSON.parse(line) as { id: string; content: string })
+    assert.deepEqual(rows.map((row) => row.id), ['entry-1'])
+    assert.equal(rows[0]!.content, '今天很充实')
   })
 
-  test('writes dream entry with correct kind', async () => {
-    const result = await writeJournalTool.execute(
-      { kind: 'dream' as const, content: '在云上飘' },
-      makeCtx(),
-    )
-    const parsed = JSON.parse(result.content as string) as { ok: boolean; id: number; kind: string }
-    assert.equal(parsed.ok, true)
-    assert.equal(parsed.kind, 'dream')
-    assert.equal(captured!.data.kind, 'dream')
-    assert.equal(captured!.data.content, '在云上飘')
-  })
-
-  test('new action=write writes dream entry', async () => {
-    const result = await writeJournalTool.execute(
+  test('action=write returns the new string id', async () => {
+    const result = await tool().execute(
       { action: 'write', kind: 'dream' as const, content: '梦里有风' },
       makeCtx(),
     )
-    const parsed = JSON.parse(result.content as string) as { ok: boolean; id: number; kind: string }
-    assert.equal(parsed.ok, true)
-    assert.equal(parsed.id, 7)
-    assert.equal(parsed.kind, 'dream')
-    assert.equal(captured!.data.kind, 'dream')
-    assert.equal(captured!.data.content, '梦里有风')
+    const parsed = parseContent<{ ok: boolean; id: string; kind: string }>(result.content)
+    assert.deepEqual(parsed, { ok: true, id: 'entry-1', kind: 'dream' })
   })
 
-  test('action=list returns bounded recent entries for kind', async () => {
-    const result = await writeJournalTool.execute(
+  test('action=list reads from workspace files and returns previews', async () => {
+    await appendJournalEntry({ rootDir, id: () => 'diary-1', now: () => new Date('2026-06-23T01:00:00.000Z') }, {
+      kind: 'diary',
+      content: '日记内容',
+    })
+    await appendJournalEntry({ rootDir, id: () => 'dream-1', now: () => new Date('2026-06-24T01:00:00.000Z') }, {
+      kind: 'dream',
+      content: '梦境内容',
+    })
+
+    const result = await tool().execute(
       { action: 'list', kind: 'dream' as const, limit: 5 },
       makeCtx(),
     )
-    const parsed = JSON.parse(result.content as string) as {
+    const parsed = parseContent<{
       ok: boolean
-      entries: { id: number; kind: string; createdAt: string; preview: string }[]
-    }
+      action: string
+      entries: { id: string; kind: string; createdAt: string; preview: string }[]
+    }>(result.content)
 
     assert.equal(parsed.ok, true)
-    assert.equal(parsed.entries.length, 2)
-    assert.equal(parsed.entries[0]!.id, 2)
-    assert.equal(parsed.entries[0]!.kind, 'dream')
-    assert.equal(parsed.entries[0]!.preview.length <= 201, true)
-    assert.ok(parsed.entries[0]!.preview.endsWith('…'))
-    assert.deepEqual(capturedFindMany?.where, { kind: 'dream' })
-    assert.equal(capturedFindMany?.take, 5)
-    assert.deepEqual(capturedFindMany?.orderBy, { createdAt: 'desc' })
+    assert.equal(parsed.action, 'list')
+    assert.deepEqual(parsed.entries, [
+      {
+        id: 'dream-1',
+        kind: 'dream',
+        createdAt: '2026-06-24T01:00:00.000Z',
+        preview: '梦境内容',
+      },
+    ])
   })
 
-  test('action=search queries keyword and caps limit at 20', async () => {
-    const result = await writeJournalTool.execute(
-      { action: 'search', query: '关键词', limit: 99 },
+  test('action=search reads from workspace files and returns previews', async () => {
+    await appendJournalEntry({ rootDir, id: () => 'match', now: () => new Date('2026-06-24T01:00:00.000Z') }, {
+      kind: 'dream',
+      content: 'Alpha beta',
+    })
+    await appendJournalEntry({ rootDir, id: () => 'skip', now: () => new Date('2026-06-25T01:00:00.000Z') }, {
+      kind: 'diary',
+      content: 'gamma',
+    })
+
+    const result = await tool().execute(
+      { action: 'search', query: 'ALPHA', limit: 10 },
       makeCtx(),
     )
-    const parsed = JSON.parse(result.content as string) as { ok: boolean; entries: unknown[] }
+    const parsed = parseContent<{ ok: boolean; action: string; query: string; entries: { id: string; preview: string }[] }>(
+      result.content,
+    )
 
     assert.equal(parsed.ok, true)
-    assert.equal(capturedFindMany?.take, 20)
-    assert.deepEqual(capturedFindMany?.where, { content: { contains: '关键词', mode: 'insensitive' } })
+    assert.equal(parsed.action, 'search')
+    assert.equal(parsed.query, 'ALPHA')
+    assert.deepEqual(parsed.entries, [{ id: 'match', kind: 'dream', createdAt: '2026-06-24T01:00:00.000Z', preview: 'Alpha beta' }])
+  })
+
+  test('action=read returns full content for one entry', async () => {
+    await appendJournalEntry({ rootDir, id: () => 'read-me', now: () => new Date('2026-06-23T01:00:00.000Z') }, {
+      kind: 'diary',
+      content: '完整内容'.repeat(80),
+    })
+
+    const result = await tool().execute({ action: 'read', id: 'read-me' }, makeCtx())
+    const parsed = parseContent<{ ok: boolean; entry: { id: string; content: string } }>(result.content)
+    assert.equal(parsed.ok, true)
+    assert.equal(parsed.entry.id, 'read-me')
+    assert.equal(parsed.entry.content, '完整内容'.repeat(80))
+  })
+
+  test('unknown read id returns ok:false', async () => {
+    const result = await tool().execute({ action: 'read', id: 'missing' }, makeCtx())
+    const parsed = parseContent<{ ok: boolean; error: string; id: string }>(result.content)
+    assert.deepEqual(parsed, { ok: false, action: 'read', id: 'missing', error: 'journal entry not found' })
+  })
+
+  test('previews are truncated to 200 chars', async () => {
+    await appendJournalEntry({ rootDir, id: () => 'long', now: () => new Date('2026-06-23T01:00:00.000Z') }, {
+      kind: 'diary',
+      content: 'x'.repeat(240),
+    })
+
+    const result = await tool().execute({ action: 'list', limit: 1 }, makeCtx())
+    const parsed = parseContent<{ ok: boolean; entries: { id: string; preview: string }[] }>(result.content)
+    assert.equal(parsed.entries[0]!.id, 'long')
+    assert.equal(parsed.entries[0]!.preview, `${'x'.repeat(200)}…`)
   })
 })

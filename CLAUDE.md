@@ -51,6 +51,7 @@
 
 ## Git 和验证
 
+- 默认采用 trunk-based development，直接在主干 `main` 进行开发。
 - 提交信息格式：`<type>: <中文描述>`。
 - 允许的 type：`feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`。
 - 改代码时，先跑最小有用测试；影响面大时再跑更广的验证。

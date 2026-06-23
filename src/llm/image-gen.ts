@@ -5,6 +5,12 @@ const MODEL = 'gpt-image-2'
 const SIZE = '1024x1024' as const
 const QUALITY = 'medium' as const
 
+export type ImageQuality = 'low' | 'medium' | 'high'
+
+export interface ImageGenerationOptions {
+  quality?: ImageQuality
+}
+
 function getClient(): OpenAI {
   const provider = config.llm.providers.openai
   if (!provider) {
@@ -13,13 +19,17 @@ function getClient(): OpenAI {
   return new OpenAI({ baseURL: provider.url, apiKey: provider.apiKey })
 }
 
-export async function generateImage(prompt: string): Promise<Buffer> {
+function normalizeImageQuality(value?: ImageQuality): ImageQuality {
+  return value ?? QUALITY
+}
+
+export async function generateImage(prompt: string, options: ImageGenerationOptions = {}): Promise<Buffer> {
   const client = getClient()
   const result = await client.images.generate({
     model: MODEL,
     prompt,
     size: SIZE,
-    quality: QUALITY,
+    quality: normalizeImageQuality(options.quality),
     n: 1,
   })
 
@@ -30,14 +40,17 @@ export async function generateImage(prompt: string): Promise<Buffer> {
   return Buffer.from(b64, 'base64')
 }
 
-export async function editImage(prompt: string, sourceBytes: Buffer): Promise<Buffer> {
+export async function editImage(prompt: string, sourceBytes: Buffer[], options: ImageGenerationOptions = {}): Promise<Buffer> {
   const client = getClient()
-  const file = await toFile(sourceBytes, 'source.png', { type: 'image/png' })
+  const files = await Promise.all(
+    sourceBytes.map((bytes, index) => toFile(bytes, `source-${index + 1}.png`, { type: 'image/png' })),
+  )
   const result = await client.images.edit({
     model: MODEL,
-    image: file,
+    image: files,
     prompt,
     size: SIZE,
+    quality: normalizeImageQuality(options.quality),
     n: 1,
   })
 

@@ -20,7 +20,15 @@ export interface AgentMetricsSummary {
     total: number
     failed: number
     sideEffects: number
-    byTool: Record<string, { calls: number; failed: number; avgDurationMs: number | null }>
+    sideEffectsByTool: Record<string, number>
+    byTool: Record<string, {
+      calls: number
+      failed: number
+      sideEffects: number
+      avgDurationMs: number | null
+      failedRate: number
+      sideEffectRate: number
+    }>
   }
   malformedLines: {
     tokenUsage: number
@@ -59,13 +67,21 @@ export function summarizeAgentMetrics(input: AgentMetricsInput): AgentMetricsSum
       total: toolSummary.total,
       failed: toolSummary.failed,
       sideEffects: toolSummary.sideEffects,
+      sideEffectsByTool: Object.fromEntries(
+        Object.entries(toolSummary.byTool)
+          .filter(([, bucket]) => bucket.sideEffects > 0)
+          .map(([toolName, bucket]) => [toolName, bucket.sideEffects]),
+      ),
       byTool: Object.fromEntries(
         Object.entries(toolSummary.byTool).map(([toolName, bucket]) => [
           toolName,
           {
             calls: bucket.calls,
             failed: bucket.failed,
+            sideEffects: bucket.sideEffects,
             avgDurationMs: bucket.calls > 0 ? round(bucket.durationMs / bucket.calls) : null,
+            failedRate: bucket.calls > 0 ? round(bucket.failed / bucket.calls) : 0,
+            sideEffectRate: bucket.calls > 0 ? round(bucket.sideEffects / bucket.calls) : 0,
           },
         ]),
       ),
@@ -125,7 +141,7 @@ function summarizeToolCalls(raw: string): {
     const toolName = typeof line.toolName === 'string' && line.toolName.length > 0
       ? line.toolName
       : 'unknown'
-    const bucket = (byTool[toolName] ??= { calls: 0, failed: 0, durationMs: 0 })
+    const bucket = (byTool[toolName] ??= { calls: 0, failed: 0, sideEffects: 0, durationMs: 0 })
     const ok = line.ok === true
     const durationMs = typeof line.durationMs === 'number' && Number.isFinite(line.durationMs)
       ? line.durationMs
@@ -138,7 +154,10 @@ function summarizeToolCalls(raw: string): {
       failed++
       bucket.failed++
     }
-    if (line.sideEffect === true) sideEffects++
+    if (line.sideEffect === true) {
+      sideEffects++
+      bucket.sideEffects++
+    }
   }
 
   return { total, failed, sideEffects, byTool, malformed }
@@ -154,6 +173,7 @@ interface MutableTokenBucket {
 interface MutableToolBucket {
   calls: number
   failed: number
+  sideEffects: number
   durationMs: number
 }
 

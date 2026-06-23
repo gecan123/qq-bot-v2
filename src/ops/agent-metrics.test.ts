@@ -14,6 +14,8 @@ describe('summarizeAgentMetrics', () => {
         '{"toolName":"send_message","ok":true,"sideEffect":true,"durationMs":120}',
         '{"toolName":"fetch_url","ok":false,"sideEffect":false,"durationMs":500,"error":"timeout"}',
         '{"toolName":"fetch_url","ok":true,"sideEffect":false,"durationMs":250}',
+        '{"toolName":"workspace_bash","ok":true,"sideEffect":false,"durationMs":100}',
+        '{"toolName":"workspace_bash","ok":true,"sideEffect":true,"durationMs":300}',
       ].join('\n'),
     })
 
@@ -31,13 +33,28 @@ describe('summarizeAgentMetrics', () => {
       outputTokens: 30,
       cacheHitRate: 0.533,
     })
-    assert.equal(result.toolCalls.total, 3)
+    assert.equal(result.toolCalls.total, 5)
     assert.equal(result.toolCalls.failed, 1)
-    assert.equal(result.toolCalls.sideEffects, 1)
+    assert.equal(result.toolCalls.sideEffects, 2)
+    assert.deepEqual(result.toolCalls.sideEffectsByTool, {
+      send_message: 1,
+      workspace_bash: 1,
+    })
     assert.deepEqual(result.toolCalls.byTool.fetch_url, {
       calls: 2,
       failed: 1,
+      sideEffects: 0,
       avgDurationMs: 375,
+      failedRate: 0.5,
+      sideEffectRate: 0,
+    })
+    assert.deepEqual(result.toolCalls.byTool.workspace_bash, {
+      calls: 2,
+      failed: 0,
+      sideEffects: 1,
+      avgDurationMs: 200,
+      failedRate: 0,
+      sideEffectRate: 0.5,
     })
   })
 

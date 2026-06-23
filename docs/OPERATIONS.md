@@ -47,7 +47,7 @@ pnpm toollogf
 ## Agent 反馈
 
 - `pnpm agent:doctor` 做本地、无网络健康检查：必需文件、必需环境变量、agent 指令镜像、schema anchor、startup anchor 和 tool registry anchor。输出 JSON，有错误时非零退出。
-- `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson` 和 `logs/tool-calls.ndjson`：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时和 malformed log line 计数。
+- `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson` 和 `logs/tool-calls.ndjson` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率和 malformed log line 计数。
 - `pnpm agent:metrics <token-log> <tool-log>` 可以汇总指定日志文件。
 
 ## Git

@@ -19,6 +19,13 @@ interface CapturedCreate {
   select?: Record<string, boolean>
 }
 
+interface CapturedFindMany {
+  where?: Record<string, unknown>
+  orderBy?: unknown
+  take?: number
+  select?: Record<string, boolean>
+}
+
 describe('write_journal tool — schema', () => {
   test('accepts diary kind', () => {
     const r = writeJournalTool.schema.safeParse({
@@ -76,18 +83,40 @@ describe('write_journal tool — schema', () => {
 describe('write_journal tool — execute', () => {
   let captured: CapturedCreate | null
   let originalCreate: typeof prisma.journalEntry.create
+  let originalFindMany: typeof prisma.journalEntry.findMany
+  let capturedFindMany: CapturedFindMany | null
 
   beforeEach(() => {
     captured = null
+    capturedFindMany = null
     originalCreate = prisma.journalEntry.create
+    originalFindMany = prisma.journalEntry.findMany
     prisma.journalEntry.create = ((args: CapturedCreate) => {
       captured = args
       return Promise.resolve({ id: 7 })
+    }) as never
+    prisma.journalEntry.findMany = ((args: CapturedFindMany) => {
+      capturedFindMany = args
+      return Promise.resolve([
+        {
+          id: 2,
+          kind: 'dream',
+          content: '梦到关键词' + 'x'.repeat(240),
+          createdAt: new Date('2026-06-23T01:00:00.000Z'),
+        },
+        {
+          id: 1,
+          kind: 'diary',
+          content: '短内容',
+          createdAt: new Date('2026-06-22T01:00:00.000Z'),
+        },
+      ])
     }) as never
   })
 
   afterEach(() => {
     prisma.journalEntry.create = originalCreate
+    prisma.journalEntry.findMany = originalFindMany
   })
 
   test('writes diary entry and returns ok:true with id and kind', async () => {
@@ -114,5 +143,51 @@ describe('write_journal tool — execute', () => {
     assert.equal(parsed.kind, 'dream')
     assert.equal(captured!.data.kind, 'dream')
     assert.equal(captured!.data.content, '在云上飘')
+  })
+
+  test('new action=write writes dream entry', async () => {
+    const result = await writeJournalTool.execute(
+      { action: 'write', kind: 'dream' as const, content: '梦里有风' },
+      makeCtx(),
+    )
+    const parsed = JSON.parse(result.content as string) as { ok: boolean; id: number; kind: string }
+    assert.equal(parsed.ok, true)
+    assert.equal(parsed.id, 7)
+    assert.equal(parsed.kind, 'dream')
+    assert.equal(captured!.data.kind, 'dream')
+    assert.equal(captured!.data.content, '梦里有风')
+  })
+
+  test('action=list returns bounded recent entries for kind', async () => {
+    const result = await writeJournalTool.execute(
+      { action: 'list', kind: 'dream' as const, limit: 5 },
+      makeCtx(),
+    )
+    const parsed = JSON.parse(result.content as string) as {
+      ok: boolean
+      entries: { id: number; kind: string; createdAt: string; preview: string }[]
+    }
+
+    assert.equal(parsed.ok, true)
+    assert.equal(parsed.entries.length, 2)
+    assert.equal(parsed.entries[0]!.id, 2)
+    assert.equal(parsed.entries[0]!.kind, 'dream')
+    assert.equal(parsed.entries[0]!.preview.length <= 201, true)
+    assert.ok(parsed.entries[0]!.preview.endsWith('…'))
+    assert.deepEqual(capturedFindMany?.where, { kind: 'dream' })
+    assert.equal(capturedFindMany?.take, 5)
+    assert.deepEqual(capturedFindMany?.orderBy, { createdAt: 'desc' })
+  })
+
+  test('action=search queries keyword and caps limit at 20', async () => {
+    const result = await writeJournalTool.execute(
+      { action: 'search', query: '关键词', limit: 99 },
+      makeCtx(),
+    )
+    const parsed = JSON.parse(result.content as string) as { ok: boolean; entries: unknown[] }
+
+    assert.equal(parsed.ok, true)
+    assert.equal(capturedFindMany?.take, 20)
+    assert.deepEqual(capturedFindMany?.where, { content: { contains: '关键词', mode: 'insensitive' } })
   })
 })

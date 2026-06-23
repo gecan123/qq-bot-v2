@@ -6,6 +6,7 @@ import { getOutboundCache } from '../../media/outbound-cache.js'
 import { computeMediaHash } from '../../media/media-hash.js'
 import { compressForContext } from '../../media/compress-for-context.js'
 import { generateImage, editImage } from '../../llm/image-gen.js'
+import type { ImageGenerationOptions } from '../../llm/image-gen.js'
 import type { BackgroundTaskRegistry, JsonValue } from '../background-task-registry.js'
 import { createLogger } from '../../logger.js'
 
@@ -25,13 +26,34 @@ const argsSchema = z.object({
   image: imageHandleSchema
     .optional()
     .describe('可选: 要编辑的源图片. 传 {mediaId} 或 {ephemeralRef}. 不传则从零生成.'),
+  images: z.array(imageHandleSchema)
+    .max(5)
+    .optional()
+    .describe('可选: 要编辑/参考的源图片数组, 最多 5 张. 多图时请在 prompt 里说明保留主体、布局、风格和合成目标.'),
+  quality: z.enum(['low', 'medium', 'high'])
+    .default('medium')
+    .describe('图片生成质量. low 更省, high 更精细, 默认 medium.'),
+  count: z.number()
+    .int()
+    .min(1)
+    .max(4)
+    .default(1)
+    .describe('生成图片数量, 1 到 4 张.'),
+}).superRefine((args, ctx) => {
+  if (args.image && args.images) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['images'],
+      message: 'image and images cannot both be provided',
+    })
+  }
 })
 
 type Args = z.infer<typeof argsSchema>
 
 export interface GenerateImageDeps {
-  generate?: (prompt: string) => Promise<Buffer>
-  edit?: (prompt: string, source: Buffer) => Promise<Buffer>
+  generate?: (prompt: string, options?: ImageGenerationOptions) => Promise<Buffer>
+  edit?: (prompt: string, source: Buffer[], options?: ImageGenerationOptions) => Promise<Buffer>
   taskRegistry: BackgroundTaskRegistry
 }
 
@@ -52,15 +74,19 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<Args> {
     ].join(' '),
     schema: argsSchema,
     async execute(rawArgs, ctx: ToolContext) {
-      const args = rawArgs as Args
+      const args = argsSchema.parse(rawArgs)
+      const sourceImages = args.images ?? (args.image ? [args.image] : [])
 
-      let sourceBytes: Buffer | undefined
+      const sourceBytes: Buffer[] = []
       try {
-        if (args.image) {
-          const resolved = await resolveImageHandle(args.image, { acquire: true })
-          sourceBytes = resolved.bytes
+        for (const image of sourceImages) {
+          const resolved = await resolveImageHandle(image, { acquire: true })
+          sourceBytes.push(resolved.bytes)
         }
       } catch (err) {
+        for (const image of sourceImages.slice(0, sourceBytes.length)) {
+          releaseHandle(image)
+        }
         return {
           content: JSON.stringify({
             ok: false,
@@ -69,7 +95,7 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<Args> {
         }
       }
 
-      const isEdit = !!sourceBytes
+      const isEdit = sourceBytes.length > 0
       const description = isEdit
         ? `编辑图片: ${args.prompt.slice(0, 100)}`
         : `生成图片: ${args.prompt.slice(0, 100)}`
@@ -79,8 +105,8 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<Args> {
       const bgWork = async () => {
         try {
           const imageBytes = isEdit
-            ? await edit(args.prompt, sourceBytes!)
-            : await generate(args.prompt)
+            ? await edit(args.prompt, sourceBytes, { quality: args.quality })
+            : await generate(args.prompt, { quality: args.quality })
 
           const dataHash = computeMediaHash(imageBytes)
           const imgDescription = isEdit
@@ -144,7 +170,7 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<Args> {
             summary: errorMsg,
           })
         } finally {
-          if (args.image) releaseHandle(args.image)
+          for (const image of sourceImages) releaseHandle(image)
         }
       }
 

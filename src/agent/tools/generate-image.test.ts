@@ -157,6 +157,83 @@ describe('generate_image tool', () => {
     assert.equal(task!.status, 'completed')
   })
 
+  test('schema accepts quality, count, and up to five source images', () => {
+    const taskRegistry = createInMemoryTaskRegistry()
+    const tool = createGenerateImageTool({ taskRegistry })
+    const handles = Array.from({ length: 5 }, (_, index) => ({ ephemeralRef: `${index}`.repeat(64) }))
+
+    assert.equal(tool.schema.safeParse({ prompt: 'p', quality: 'low' }).success, true)
+    assert.equal(tool.schema.safeParse({ prompt: 'p', quality: 'medium' }).success, true)
+    assert.equal(tool.schema.safeParse({ prompt: 'p', quality: 'high' }).success, true)
+    assert.equal(tool.schema.safeParse({ prompt: 'p', quality: 'ultra' }).success, false)
+    assert.equal(tool.schema.safeParse({ prompt: 'p', count: 1 }).success, true)
+    assert.equal(tool.schema.safeParse({ prompt: 'p', count: 4 }).success, true)
+    assert.equal(tool.schema.safeParse({ prompt: 'p', count: 5 }).success, false)
+    assert.equal(tool.schema.safeParse({ prompt: 'p', images: handles }).success, true)
+    assert.equal(tool.schema.safeParse({ prompt: 'p', images: [...handles, { ephemeralRef: 'f'.repeat(64) }] }).success, false)
+  })
+
+  test('rejects args that provide both image and images', () => {
+    const taskRegistry = createInMemoryTaskRegistry()
+    const tool = createGenerateImageTool({ taskRegistry })
+
+    assert.equal(tool.schema.safeParse({
+      prompt: 'p',
+      image: { ephemeralRef: '0'.repeat(64) },
+      images: [{ ephemeralRef: '1'.repeat(64) }],
+    }).success, false)
+  })
+
+  test('calls edit with every source image from images array', async () => {
+    const sourceHash1 = '1'.repeat(64)
+    const sourceHash2 = '2'.repeat(64)
+    cache.put({
+      bytes: Buffer.from('source-image-1'),
+      dataHash: sourceHash1,
+      byteSize: 14,
+      contentType: 'image/png',
+      description: 'source 1',
+    })
+    cache.put({
+      bytes: Buffer.from('source-image-2'),
+      dataHash: sourceHash2,
+      byteSize: 14,
+      contentType: 'image/png',
+      description: 'source 2',
+    })
+
+    let editSources: Buffer[] = []
+    let editQuality: unknown
+    const taskRegistry = createInMemoryTaskRegistry()
+    const tool = createGenerateImageTool({
+      generate: async () => { throw new Error('should not be called') },
+      edit: async (_prompt, sources, options) => {
+        editSources = sources
+        editQuality = options?.quality
+        return FAKE_PNG
+      },
+      taskRegistry,
+    })
+
+    const result = await tool.execute(
+      {
+        prompt: 'combine them',
+        quality: 'high',
+        images: [{ ephemeralRef: sourceHash1 }, { ephemeralRef: sourceHash2 }],
+      },
+      ctx,
+    )
+    const parsed = parseResultJson(result.content)
+
+    assert.equal(parsed.ok, true)
+    await flushMicrotasks()
+
+    assert.equal(editSources.length, 2)
+    assert.equal(editSources[0].toString(), 'source-image-1')
+    assert.equal(editSources[1].toString(), 'source-image-2')
+    assert.equal(editQuality, 'high')
+  })
+
   test('releases source handle even on generation failure', async () => {
     const sourceHash = '0'.repeat(64)
     cache.put({

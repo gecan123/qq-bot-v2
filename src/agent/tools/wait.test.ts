@@ -86,6 +86,9 @@ describe('wait tool — idle race', () => {
     assert.match((result.content as string), /创作者/)
     assert.match((result.content as string), /工具/)
     assert.match((result.content as string), /事件/)
+    assert.match((result.content as string), /fetch reddit list/)
+    assert.match((result.content as string), /journal write/)
+    assert.match((result.content as string), /pause action=wait/)
     // 关键: wait 是一次非 send_message toolCall, 主循环会自动跑下一轮, 不用 wake 戳.
     assert.equal(queue.size(), 0, 'no wake enqueue needed')
   })

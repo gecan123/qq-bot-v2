@@ -67,6 +67,8 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
             ...(data?.byteSize != null ? { byteSize: data.byteSize } : {}),
             ...(data?.contentType != null ? { contentType: data.contentType } : {}),
             ...(data?.description != null ? { description: data.description } : {}),
+            ...(Array.isArray(data?.images) ? { images: data.images } : {}),
+            ...(Array.isArray(data?.failures) ? { failures: data.failures } : {}),
           }),
         },
       ]

@@ -49,7 +49,8 @@ const argsSchema = z.object({
   }
 })
 
-type Args = z.infer<typeof argsSchema>
+type RawArgs = z.input<typeof argsSchema>
+type Args = z.output<typeof argsSchema>
 
 export interface GenerateImageDeps {
   generate?: (prompt: string, options?: ImageGenerationOptions) => Promise<Buffer>
@@ -57,7 +58,7 @@ export interface GenerateImageDeps {
   taskRegistry: BackgroundTaskRegistry
 }
 
-export function createGenerateImageTool(deps: GenerateImageDeps): Tool<Args> {
+export function createGenerateImageTool(deps: GenerateImageDeps): Tool<RawArgs> {
   const generate = deps.generate ?? generateImage
   const edit = deps.edit ?? editImage
 
@@ -104,44 +105,78 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<Args> {
 
       const bgWork = async () => {
         try {
-          const imageBytes = isEdit
-            ? await edit(args.prompt, sourceBytes, { quality: args.quality })
-            : await generate(args.prompt, { quality: args.quality })
+          const images: ImageProduceResult[] = []
+          const failures: string[] = []
+          let firstCompressed: Awaited<ReturnType<typeof compressForContext>> | null = null
 
-          const dataHash = computeMediaHash(imageBytes)
-          const imgDescription = isEdit
-            ? `AI edited image: ${args.prompt.slice(0, 200)}`
-            : `AI generated image: ${args.prompt.slice(0, 200)}`
+          for (let index = 0; index < args.count; index++) {
+            try {
+              const imageBytes = isEdit
+                ? await edit(args.prompt, sourceBytes, { quality: args.quality })
+                : await generate(args.prompt, { quality: args.quality })
 
-          const cache = getOutboundCache()
-          cache.put({
-            bytes: imageBytes,
-            dataHash,
-            byteSize: imageBytes.byteLength,
-            contentType: 'image/png',
-            description: imgDescription,
-          })
+              const dataHash = computeMediaHash(imageBytes)
+              const imgDescription = isEdit
+                ? `AI edited image ${index + 1}/${args.count}: ${args.prompt.slice(0, 200)}`
+                : `AI generated image ${index + 1}/${args.count}: ${args.prompt.slice(0, 200)}`
 
-          const result: ImageProduceResult = {
-            ephemeralRef: dataHash,
-            dataHash,
-            byteSize: imageBytes.byteLength,
-            contentType: 'image/png',
-            description: imgDescription,
-          }
+              const cache = getOutboundCache()
+              cache.put({
+                bytes: imageBytes,
+                dataHash,
+                byteSize: imageBytes.byteLength,
+                contentType: 'image/png',
+                description: imgDescription,
+              })
 
-          const compressed = await compressForContext(imageBytes)
-          const resultData: Record<string, JsonValue> = {
-            ...result,
-          }
-          if (compressed) {
-            resultData.contextImage = {
-              base64: compressed.base64,
-              mediaType: compressed.mediaType,
+              images.push({
+                ephemeralRef: dataHash,
+                dataHash,
+                byteSize: imageBytes.byteLength,
+                contentType: 'image/png',
+                description: imgDescription,
+              })
+
+              if (!firstCompressed) {
+                firstCompressed = await compressForContext(imageBytes)
+              }
+            } catch (err) {
+              failures.push(`image ${index + 1}/${args.count}: ${err instanceof Error ? err.message : String(err)}`)
             }
           }
 
-          const summary = `图片已生成 (ephemeralRef=${dataHash.slice(0, 8)}…, ${(imageBytes.byteLength / 1024).toFixed(0)}KB)`
+          if (images.length === 0) {
+            throw new Error(failures.join('; ') || 'all image generation attempts failed')
+          }
+
+          const firstResult = images[0]!
+          const resultData: Record<string, JsonValue> = {
+            ephemeralRef: firstResult.ephemeralRef,
+            dataHash: firstResult.dataHash,
+            byteSize: firstResult.byteSize,
+            contentType: firstResult.contentType,
+            description: firstResult.description,
+            images: images.map((image) => ({
+              ephemeralRef: image.ephemeralRef,
+              dataHash: image.dataHash,
+              byteSize: image.byteSize,
+              contentType: image.contentType,
+              description: image.description,
+            })),
+          }
+          if (failures.length > 0) {
+            resultData.failures = failures
+          }
+          if (firstCompressed) {
+            resultData.contextImage = {
+              base64: firstCompressed.base64,
+              mediaType: firstCompressed.mediaType,
+            }
+          }
+
+          const summary = args.count === 1
+            ? `图片已生成 (ephemeralRef=${firstResult.ephemeralRef.slice(0, 8)}…, ${(firstResult.byteSize / 1024).toFixed(0)}KB)`
+            : `图片已生成 ${images.length}/${args.count} 张 (首张 ephemeralRef=${firstResult.ephemeralRef.slice(0, 8)}…)`
           deps.taskRegistry.complete(task.id, { summary, data: resultData })
 
           const elapsedMs = Date.now() - task.startedAt.getTime()

@@ -134,6 +134,48 @@ describe('merged main-agent tools', () => {
     assert.match(JSON.stringify(detail.content), /abc/)
   })
 
+  test('background_task action=get renders batched image metadata with one preview image', async () => {
+    const registry = createInMemoryTaskRegistry()
+    const task = registry.register({ toolName: 'generate_image', description: '生成图片' })
+    registry.complete(task.id, {
+      summary: 'done',
+      data: {
+        images: [
+          {
+            ephemeralRef: 'a'.repeat(64),
+            dataHash: 'a'.repeat(64),
+            byteSize: 10,
+            contentType: 'image/png',
+            description: 'AI generated image 1/2: cat',
+          },
+          {
+            ephemeralRef: 'b'.repeat(64),
+            dataHash: 'b'.repeat(64),
+            byteSize: 20,
+            contentType: 'image/png',
+            description: 'AI generated image 2/2: cat',
+          },
+        ],
+        contextImage: {
+          base64: Buffer.from('preview').toString('base64'),
+          mediaType: 'image/png',
+        },
+      },
+    })
+    const tool = createBackgroundTaskTool({ taskRegistry: registry })
+
+    const detail = await tool.execute({ action: 'get', taskId: task.id }, makeCtx())
+    assert.ok(Array.isArray(detail.content))
+    const text = detail.content.find((block) => block.type === 'text')
+    assert.ok(text && text.type === 'text')
+    const parsed = JSON.parse(text.text) as { images?: { ephemeralRef: string }[] }
+
+    assert.equal(parsed.images?.length, 2)
+    assert.equal(parsed.images?.[0]?.ephemeralRef, 'a'.repeat(64))
+    assert.equal(parsed.images?.[1]?.ephemeralRef, 'b'.repeat(64))
+    assert.equal(detail.content.filter((block) => block.type === 'image').length, 1)
+  })
+
   test('memory action=write and action=search preserve remember/recall behavior', async () => {
     const originalCreate = prisma.memoryEntry.create
     const originalFindMany = prisma.memoryEntry.findMany

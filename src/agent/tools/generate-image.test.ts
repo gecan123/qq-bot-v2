@@ -234,6 +234,39 @@ describe('generate_image tool', () => {
     assert.equal(editQuality, 'high')
   })
 
+  test('count generates multiple independent image results', async () => {
+    const taskRegistry = createInMemoryTaskRegistry()
+    let generateCalls = 0
+    const tool = createGenerateImageTool({
+      generate: async (_prompt, options) => {
+        generateCalls++
+        assert.equal(options?.quality, 'low')
+        return Buffer.from(`generated-image-${generateCalls}`)
+      },
+      taskRegistry,
+    })
+
+    const result = await tool.execute({ prompt: 'three cats', quality: 'low', count: 3 }, ctx)
+    const parsed = parseResultJson(result.content)
+
+    assert.equal(parsed.ok, true)
+    await flushMicrotasks()
+
+    assert.equal(generateCalls, 3)
+    const task = taskRegistry.get(parsed.taskId as string)
+    assert.equal(task?.status, 'completed')
+    const images = (task!.resultData as { images?: Record<string, unknown>[] }).images
+    assert.equal(images?.length, 3)
+    for (const image of images ?? []) {
+      assert.match(String(image.ephemeralRef), /^[a-f0-9]{64}$/)
+      assert.equal(image.ephemeralRef, image.dataHash)
+      assert.equal(typeof image.byteSize, 'number')
+      assert.equal(image.contentType, 'image/png')
+      assert.equal(typeof image.description, 'string')
+      assert.ok(cache.get(String(image.ephemeralRef)))
+    }
+  })
+
   test('releases source handle even on generation failure', async () => {
     const sourceHash = '0'.repeat(64)
     cache.put({

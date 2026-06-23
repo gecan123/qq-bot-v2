@@ -27,13 +27,13 @@ describe('workspace_bash command parser', () => {
       args: [],
     })
 
-    assert.deepEqual(parseWorkspaceBashCommand("printf 'hello\\n' > journal/diary/today.md"), {
+    assert.deepEqual(parseWorkspaceBashCommand("printf 'hello\\n' > notes/today.md"), {
       ok: true,
       kind: 'workspace',
       cwd: 'workspace',
       command: 'printf',
       args: ['hello\\n'],
-      redirect: { mode: 'write', path: 'journal/diary/today.md' },
+      redirect: { mode: 'write', path: 'notes/today.md' },
     })
   })
 
@@ -126,7 +126,7 @@ describe('workspace_bash tool', () => {
     let captured: Parameters<WorkspaceBashRunner>[0] | null = null
     const runner: WorkspaceBashRunner = async (input) => {
       captured = input
-      return { exitCode: 0, stdout: 'journal\n', stderr: '', timedOut: false }
+      return { exitCode: 0, stdout: 'notes\n', stderr: '', timedOut: false }
     }
     const tool = createWorkspaceBashTool({
       workspaceDir: '/tmp/agent-workspace',
@@ -134,12 +134,12 @@ describe('workspace_bash tool', () => {
       runner,
     })
 
-    const result = await tool.execute({ command: 'ls journal' }, makeCtx())
+    const result = await tool.execute({ command: 'ls notes' }, makeCtx())
 
-    assert.equal(result.content, 'journal\n')
+    assert.equal(result.content, 'notes\n')
     assert.deepEqual(captured, {
       executable: 'ls',
-      args: ['journal'],
+      args: ['notes'],
       cwd: '/tmp/agent-workspace',
       env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
       stdin: undefined,
@@ -221,7 +221,7 @@ describe('runWorkspaceBashCommand', () => {
   test('writes printf output through controlled redirection inside workspace', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'workspace-bash-'))
     try {
-      const parsed = parseWorkspaceBashCommand("printf 'hello' > journal/today.md")
+      const parsed = parseWorkspaceBashCommand("printf 'hello' > notes/today.md")
       assert.equal(parsed.ok, true)
       if (!parsed.ok || parsed.kind !== 'workspace') return
 
@@ -234,7 +234,7 @@ describe('runWorkspaceBashCommand', () => {
 
       assert.equal(result.exitCode, 0)
 
-      const read = parseWorkspaceBashCommand('cat journal/today.md')
+      const read = parseWorkspaceBashCommand('cat notes/today.md')
       assert.equal(read.ok, true)
       if (!read.ok || read.kind !== 'workspace') return
       const readResult = await runWorkspaceBashCommand(read, {

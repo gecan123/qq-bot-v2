@@ -4,9 +4,9 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, test } from 'node:test'
 import {
-  appendJournalEntry,
-  listJournalEntries,
-  searchJournalEntries,
+  appendJournalRecord,
+  listJournalRecords,
+  searchJournalRecords,
   type JournalStoreOptions,
 } from './journal-store.js'
 
@@ -29,8 +29,8 @@ describe('workspace journal store', () => {
     }
   }
 
-  test('appendJournalEntry creates the journal directory and appends a JSONL row', async () => {
-    const entry = await appendJournalEntry(storeOptions(), {
+  test('appendJournalRecord creates the journal directory and appends a JSONL row', async () => {
+    const entry = await appendJournalRecord(storeOptions(), {
       kind: 'diary',
       content: '今天整理了一点自己的想法',
     })
@@ -41,7 +41,7 @@ describe('workspace journal store', () => {
   })
 
   test('appended row includes stable fields', async () => {
-    const entry = await appendJournalEntry(storeOptions('stable-id'), {
+    const entry = await appendJournalRecord(storeOptions('stable-id'), {
       kind: 'dream',
       content: '梦见在海底走路',
     })
@@ -54,38 +54,38 @@ describe('workspace journal store', () => {
     })
   })
 
-  test('listJournalEntries returns newest entries first and can filter by kind', async () => {
-    await appendJournalEntry(storeOptions('old', '2026-06-22T01:00:00.000Z'), {
+  test('listJournalRecords returns newest entries first and can filter by kind', async () => {
+    await appendJournalRecord(storeOptions('old', '2026-06-22T01:00:00.000Z'), {
       kind: 'dream',
       content: '旧梦',
     })
-    await appendJournalEntry(storeOptions('new-diary', '2026-06-23T01:00:00.000Z'), {
+    await appendJournalRecord(storeOptions('new-diary', '2026-06-23T01:00:00.000Z'), {
       kind: 'diary',
       content: '新日记',
     })
-    await appendJournalEntry(storeOptions('new-dream', '2026-06-24T01:00:00.000Z'), {
+    await appendJournalRecord(storeOptions('new-dream', '2026-06-24T01:00:00.000Z'), {
       kind: 'dream',
       content: '新梦',
     })
 
-    const all = await listJournalEntries({ rootDir })
+    const all = await listJournalRecords({ rootDir })
     assert.deepEqual(all.entries.map((entry) => entry.id), ['new-dream', 'new-diary', 'old'])
 
-    const dreams = await listJournalEntries({ rootDir }, { kind: 'dream' })
+    const dreams = await listJournalRecords({ rootDir }, { kind: 'dream' })
     assert.deepEqual(dreams.entries.map((entry) => entry.id), ['new-dream', 'old'])
   })
 
-  test('searchJournalEntries matches content case-insensitively', async () => {
-    await appendJournalEntry(storeOptions('a', '2026-06-22T01:00:00.000Z'), {
+  test('searchJournalRecords matches content case-insensitively', async () => {
+    await appendJournalRecord(storeOptions('a', '2026-06-22T01:00:00.000Z'), {
       kind: 'diary',
       content: 'Alpha beta',
     })
-    await appendJournalEntry(storeOptions('b', '2026-06-23T01:00:00.000Z'), {
+    await appendJournalRecord(storeOptions('b', '2026-06-23T01:00:00.000Z'), {
       kind: 'dream',
       content: 'gamma',
     })
 
-    const result = await searchJournalEntries({ rootDir }, { query: 'ALPHA' })
+    const result = await searchJournalRecords({ rootDir }, { query: 'ALPHA' })
     assert.deepEqual(result.entries.map((entry) => entry.id), ['a'])
   })
 
@@ -107,7 +107,7 @@ describe('workspace journal store', () => {
       'utf8',
     )
 
-    const result = await listJournalEntries({ rootDir })
+    const result = await listJournalRecords({ rootDir })
     assert.deepEqual(result.entries.map((entry) => entry.id), ['valid'])
     assert.equal(result.skippedCorrupt, 2)
   })

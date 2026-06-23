@@ -396,7 +396,7 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
       '受限 Bash. 默认 cwd=workspace, 用来整理你的私有工作文件、日记、梦、草稿和索引; 也可 cwd=repo 只读查看自己的仓库代码.',
       'workspace 允许少量文件命令: pwd/ls/rg/cat/head/tail/wc/mkdir/touch/printf.',
       'repo 只允许读命令: pwd/ls/rg/cat/head/tail/wc; rg 支持普通搜索和 --files, 不能写, 也不能读 .env/logs/node_modules/.git/data/prompts/groups.yaml.',
-      '可以用重定向把 printf 输出写入工作区文件, 例如 `printf "..." > journal/diary/today.md`.',
+      '可以用重定向把 printf 输出写入工作区文件, 例如 `printf "..." > notes/today.md`.',
       '数据库只允许通过 `pnpm db:query` 做只读查询; 不允许 psql/curl/node/cat .env/路径逃逸/任意 shell 组合.',
     ].join(' '),
     schema: argsSchema,

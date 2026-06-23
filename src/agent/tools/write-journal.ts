@@ -3,11 +3,11 @@ import { resolve } from 'node:path'
 import type { Tool } from '../tool.js'
 import { createLogger } from '../../logger.js'
 import {
-  appendJournalEntry,
-  listJournalEntries,
-  readJournalEntry,
-  searchJournalEntries,
-  type JournalEntryRecord,
+  appendJournalRecord,
+  listJournalRecords,
+  readJournalRecord,
+  searchJournalRecords,
+  type JournalRecord,
   type JournalKind,
 } from '../journal-store.js'
 
@@ -76,7 +76,7 @@ function preview(content: string): string {
   return content.length <= 200 ? content : `${content.slice(0, 200)}…`
 }
 
-function renderEntries(entries: JournalEntryRecord[]) {
+function renderEntries(entries: JournalRecord[]) {
   return entries.map((entry) => ({
     id: entry.id,
     kind: entry.kind,
@@ -105,7 +105,7 @@ export function createWriteJournalTool(deps: WriteJournalDeps = {}): Tool<Args> 
     async execute(rawArgs) {
       const args = normalizeArgs(argsSchema.parse(rawArgs))
       if (args.action === 'list') {
-        const result = await listJournalEntries({ rootDir }, { kind: args.kind, limit: boundedLimit(args.limit) })
+        const result = await listJournalRecords({ rootDir }, { kind: args.kind, limit: boundedLimit(args.limit) })
         return {
           content: JSON.stringify({
             ok: true,
@@ -117,7 +117,7 @@ export function createWriteJournalTool(deps: WriteJournalDeps = {}): Tool<Args> 
       }
 
       if (args.action === 'search') {
-        const result = await searchJournalEntries(
+        const result = await searchJournalRecords(
           { rootDir },
           { query: args.query, kind: args.kind, limit: boundedLimit(args.limit) },
         )
@@ -133,7 +133,7 @@ export function createWriteJournalTool(deps: WriteJournalDeps = {}): Tool<Args> 
       }
 
       if (args.action === 'read') {
-        const result = await readJournalEntry({ rootDir }, args.id)
+        const result = await readJournalRecord({ rootDir }, args.id)
         if (!result.entry) {
           return {
             content: JSON.stringify({
@@ -154,7 +154,7 @@ export function createWriteJournalTool(deps: WriteJournalDeps = {}): Tool<Args> 
         }
       }
 
-      const entry = await appendJournalEntry(
+      const entry = await appendJournalRecord(
         {
           rootDir,
           now: deps.now,

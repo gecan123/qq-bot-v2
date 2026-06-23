@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, test } from 'node:test'
 import * as zod from 'zod'
-import { appendJournalEntry } from '../journal-store.js'
+import { appendJournalRecord } from '../journal-store.js'
 import { createWriteJournalTool, writeJournalTool } from './write-journal.js'
 import { InMemoryEventQueue } from '../event-queue.js'
 import type { BotEvent } from '../event.js'
@@ -130,11 +130,11 @@ describe('write_journal tool — execute', () => {
   })
 
   test('action=list reads from workspace files and returns previews', async () => {
-    await appendJournalEntry({ rootDir, id: () => 'diary-1', now: () => new Date('2026-06-23T01:00:00.000Z') }, {
+    await appendJournalRecord({ rootDir, id: () => 'diary-1', now: () => new Date('2026-06-23T01:00:00.000Z') }, {
       kind: 'diary',
       content: '日记内容',
     })
-    await appendJournalEntry({ rootDir, id: () => 'dream-1', now: () => new Date('2026-06-24T01:00:00.000Z') }, {
+    await appendJournalRecord({ rootDir, id: () => 'dream-1', now: () => new Date('2026-06-24T01:00:00.000Z') }, {
       kind: 'dream',
       content: '梦境内容',
     })
@@ -162,11 +162,11 @@ describe('write_journal tool — execute', () => {
   })
 
   test('action=search reads from workspace files and returns previews', async () => {
-    await appendJournalEntry({ rootDir, id: () => 'match', now: () => new Date('2026-06-24T01:00:00.000Z') }, {
+    await appendJournalRecord({ rootDir, id: () => 'match', now: () => new Date('2026-06-24T01:00:00.000Z') }, {
       kind: 'dream',
       content: 'Alpha beta',
     })
-    await appendJournalEntry({ rootDir, id: () => 'skip', now: () => new Date('2026-06-25T01:00:00.000Z') }, {
+    await appendJournalRecord({ rootDir, id: () => 'skip', now: () => new Date('2026-06-25T01:00:00.000Z') }, {
       kind: 'diary',
       content: 'gamma',
     })
@@ -186,7 +186,7 @@ describe('write_journal tool — execute', () => {
   })
 
   test('action=read returns full content for one entry', async () => {
-    await appendJournalEntry({ rootDir, id: () => 'read-me', now: () => new Date('2026-06-23T01:00:00.000Z') }, {
+    await appendJournalRecord({ rootDir, id: () => 'read-me', now: () => new Date('2026-06-23T01:00:00.000Z') }, {
       kind: 'diary',
       content: '完整内容'.repeat(80),
     })
@@ -205,7 +205,7 @@ describe('write_journal tool — execute', () => {
   })
 
   test('previews are truncated to 200 chars', async () => {
-    await appendJournalEntry({ rootDir, id: () => 'long', now: () => new Date('2026-06-23T01:00:00.000Z') }, {
+    await appendJournalRecord({ rootDir, id: () => 'long', now: () => new Date('2026-06-23T01:00:00.000Z') }, {
       kind: 'diary',
       content: 'x'.repeat(240),
     })

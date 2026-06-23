@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 export type JournalKind = 'diary' | 'dream'
 
-export interface JournalEntryRecord {
+export interface JournalRecord {
   id: string
   kind: JournalKind
   content: string
@@ -17,27 +17,27 @@ export interface JournalStoreOptions {
   id?: () => string
 }
 
-export interface JournalEntryInput {
+export interface JournalInput {
   kind: JournalKind
   content: string
 }
 
-export interface JournalEntryQuery {
+export interface JournalQuery {
   kind?: JournalKind
   limit?: number
 }
 
-export interface JournalSearchQuery extends JournalEntryQuery {
+export interface JournalSearchQuery extends JournalQuery {
   query: string
 }
 
 export interface JournalEntriesResult {
-  entries: JournalEntryRecord[]
+  entries: JournalRecord[]
   skippedCorrupt: number
 }
 
-export interface JournalEntryReadResult {
-  entry: JournalEntryRecord | null
+export interface JournalReadResult {
+  entry: JournalRecord | null
   skippedCorrupt: number
 }
 
@@ -49,12 +49,12 @@ function generateId(now: Date): string {
   return `${now.toISOString().replace(/[-:.TZ]/g, '')}-${randomUUID().slice(0, 8)}`
 }
 
-export async function appendJournalEntry(
+export async function appendJournalRecord(
   options: JournalStoreOptions,
-  input: JournalEntryInput,
-): Promise<JournalEntryRecord> {
+  input: JournalInput,
+): Promise<JournalRecord> {
   const now = options.now?.() ?? new Date()
-  const entry: JournalEntryRecord = {
+  const entry: JournalRecord = {
     id: options.id?.() ?? generateId(now),
     kind: input.kind,
     content: input.content,
@@ -67,9 +67,9 @@ export async function appendJournalEntry(
   return entry
 }
 
-export async function listJournalEntries(
+export async function listJournalRecords(
   options: JournalStoreOptions,
-  query: JournalEntryQuery = {},
+  query: JournalQuery = {},
 ): Promise<JournalEntriesResult> {
   const result = await readEntries(options.rootDir)
   return {
@@ -78,7 +78,7 @@ export async function listJournalEntries(
   }
 }
 
-export async function searchJournalEntries(
+export async function searchJournalRecords(
   options: JournalStoreOptions,
   query: JournalSearchQuery,
 ): Promise<JournalEntriesResult> {
@@ -91,10 +91,10 @@ export async function searchJournalEntries(
   }
 }
 
-export async function readJournalEntry(
+export async function readJournalRecord(
   options: JournalStoreOptions,
   id: string,
-): Promise<JournalEntryReadResult> {
+): Promise<JournalReadResult> {
   const result = await readEntries(options.rootDir)
   return {
     entry: result.entries.find((entry) => entry.id === id) ?? null,
@@ -114,7 +114,7 @@ async function readEntries(rootDir: string): Promise<JournalEntriesResult> {
   }
 
   let skippedCorrupt = 0
-  const entries: Array<JournalEntryRecord & { index: number }> = []
+  const entries: Array<JournalRecord & { index: number }> = []
   for (const [index, line] of raw.split('\n').entries()) {
     if (!line.trim()) continue
     const parsed = parseEntryLine(line)
@@ -137,12 +137,12 @@ async function readEntries(rootDir: string): Promise<JournalEntriesResult> {
   }
 }
 
-function applyEntryQuery(entries: JournalEntryRecord[], query: JournalEntryQuery): JournalEntryRecord[] {
+function applyEntryQuery(entries: JournalRecord[], query: JournalQuery): JournalRecord[] {
   const filtered = query.kind ? entries.filter((entry) => entry.kind === query.kind) : entries
   return query.limit == null ? filtered : filtered.slice(0, query.limit)
 }
 
-function parseEntryLine(line: string): JournalEntryRecord | null {
+function parseEntryLine(line: string): JournalRecord | null {
   let parsed: unknown
   try {
     parsed = JSON.parse(line)

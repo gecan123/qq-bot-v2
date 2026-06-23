@@ -6,9 +6,9 @@
 
 - 对话控制：`wait`、`rest`。
 - 发送：`send_message`。
-- 知识和历史：`db`、`memory`、`write_journal`、`source_profile`、`style_guide`。
+- 知识和历史：`db`、`memory`、`write_journal`（write/list/search）、`source_profile`、`style_guide`。
 - 外部内容：`fetch_url`、`fetch_image`、配置后可用的 `web_search`、`reddit`、配置后可用的 `openbb_cli`。
-- 媒体生成和复用：`generate_image`、`collect_sticker`。
+- 媒体生成和复用：`generate_image`（quality、批量输出、最多 5 张输入图）、`collect_sticker`（collect/list/search/random）。
 - 运行时工作：`background_task`、`workspace_bash`、配置后可用的 `browser`。
 
 ## 安全规则

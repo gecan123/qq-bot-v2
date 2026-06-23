@@ -152,6 +152,21 @@ describe('workspace_bash command parser', () => {
     })
   })
 
+  test('accepts help subcommands in workspace mode', () => {
+    assert.deepEqual(parseWorkspaceBashCommand('help'), {
+      ok: true,
+      kind: 'help',
+      cwd: 'workspace',
+    })
+
+    assert.deepEqual(parseWorkspaceBashCommand('help journal'), {
+      ok: true,
+      kind: 'help',
+      cwd: 'workspace',
+      topic: 'journal',
+    })
+  })
+
   test('accepts read-only repo code inspection commands', () => {
     assert.deepEqual(parseWorkspaceBashCommand('rg "buildBotTools" src/agent/tools/index.ts', 'repo'), {
       ok: true,
@@ -173,6 +188,7 @@ describe('workspace_bash command parser', () => {
   test('rejects shell escapes, disallowed commands, and path escapes', () => {
     const rejected = [
       'cat .env',
+      'cat .env.local',
       'cat ../.env',
       'cat /etc/passwd',
       'curl https://example.com',
@@ -182,6 +198,7 @@ describe('workspace_bash command parser', () => {
       'printf hi > ../leak.txt',
       'pnpm test',
       'journal write note hi',
+      'help secrets',
       'journal search',
       'db drop table messages',
       'db query not-json',
@@ -209,6 +226,7 @@ describe('workspace_bash command parser', () => {
       'mkdir tmp',
       'touch src/new.ts',
       'cat .env',
+      'cat .env.production',
       'cat logs/tool-calls.ndjson',
       'cat prompts/groups.yaml',
       'cat data/agent-workspace/journal.md',
@@ -216,6 +234,7 @@ describe('workspace_bash command parser', () => {
       'cat .git/config',
       'cat ../qq-bot-v2/package.json',
       'journal list',
+      'help',
       'db schema',
       'style global',
       'fetch url https://example.com',
@@ -353,6 +372,33 @@ describe('workspace_bash tool', () => {
     } finally {
       await rm(workspace, { recursive: true, force: true })
     }
+  })
+
+  test('renders help without shelling out', async () => {
+    let runnerCalled = false
+    const tool = createWorkspaceBashTool({
+      workspaceDir: '/tmp/agent-workspace',
+      repoDir: '/repo',
+      runner: async () => {
+        runnerCalled = true
+        return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
+      },
+    })
+
+    const overview = JSON.parse((await tool.execute({ command: 'help' }, makeCtx())).content as string) as {
+      ok: boolean
+      topics: string[]
+    }
+    const journal = JSON.parse((await tool.execute({ command: 'help journal' }, makeCtx())).content as string) as {
+      ok: boolean
+      commands: string[]
+    }
+
+    assert.equal(overview.ok, true)
+    assert.ok(overview.topics.includes('journal'))
+    assert.equal(journal.ok, true)
+    assert.ok(journal.commands.includes('journal write diary|dream <content>'))
+    assert.equal(runnerCalled, false)
   })
 
   test('runs db schema/query through the internal db tool without shelling out', async () => {

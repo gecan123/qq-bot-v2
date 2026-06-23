@@ -156,6 +156,9 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<RawArgs> 
             byteSize: firstResult.byteSize,
             contentType: firstResult.contentType,
             description: firstResult.description,
+            requestedCount: args.count,
+            succeededCount: images.length,
+            failedCount: failures.length,
             images: images.map((image) => ({
               ephemeralRef: image.ephemeralRef,
               dataHash: image.dataHash,
@@ -165,6 +168,7 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<RawArgs> 
             })),
           }
           if (failures.length > 0) {
+            resultData.partialSuccess = true
             resultData.failures = failures
           }
           if (firstCompressed) {

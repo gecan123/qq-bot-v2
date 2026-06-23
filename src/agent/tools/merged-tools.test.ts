@@ -114,6 +114,11 @@ describe('merged main-agent tools', () => {
             description: 'AI generated image 2/2: cat',
           },
         ],
+        partialSuccess: true,
+        requestedCount: 3,
+        succeededCount: 2,
+        failedCount: 1,
+        failures: ['image 3/3: timeout'],
         contextImage: {
           base64: Buffer.from('preview').toString('base64'),
           mediaType: 'image/png',
@@ -126,9 +131,21 @@ describe('merged main-agent tools', () => {
     assert.ok(Array.isArray(detail.content))
     const text = detail.content.find((block) => block.type === 'text')
     assert.ok(text && text.type === 'text')
-    const parsed = JSON.parse(text.text) as { images?: { ephemeralRef: string }[] }
+    const parsed = JSON.parse(text.text) as {
+      images?: { ephemeralRef: string }[]
+      partialSuccess?: boolean
+      requestedCount?: number
+      succeededCount?: number
+      failedCount?: number
+      failures?: string[]
+    }
 
     assert.equal(parsed.images?.length, 2)
+    assert.equal(parsed.partialSuccess, true)
+    assert.equal(parsed.requestedCount, 3)
+    assert.equal(parsed.succeededCount, 2)
+    assert.equal(parsed.failedCount, 1)
+    assert.deepEqual(parsed.failures, ['image 3/3: timeout'])
     assert.equal(parsed.images?.[0]?.ephemeralRef, 'a'.repeat(64))
     assert.equal(parsed.images?.[1]?.ephemeralRef, 'b'.repeat(64))
     assert.equal(detail.content.filter((block) => block.type === 'image').length, 1)

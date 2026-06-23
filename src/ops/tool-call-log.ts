@@ -107,6 +107,9 @@ export function isSideEffectTool(toolName: string, args?: unknown): boolean {
   if (toolName === 'fetch_content') {
     return hasAnyAction(args, ['image_url', 'qq_avatar'])
   }
+  if (toolName === 'workspace_bash') {
+    return isWorkspaceBashSideEffect(args)
+  }
   return SIDE_EFFECT_TOOLS.has(toolName)
 }
 
@@ -118,6 +121,43 @@ function hasAnyAction(args: unknown, actions: readonly string[]): boolean {
   return !!args && typeof args === 'object' && actions.includes(String((args as Record<string, unknown>).action))
 }
 
+function isWorkspaceBashSideEffect(args: unknown): boolean {
+  if (!args || typeof args !== 'object') return true
+  const raw = args as Record<string, unknown>
+  const command = typeof raw.command === 'string' ? raw.command.trim() : ''
+  if (!command) return true
+  if (raw.cwd === 'repo') return false
+  if (/[\r\n;&|`<]/.test(command) || command.includes('$(')) return true
+
+  const first = firstShellToken(command)
+  if (!first) return true
+  if (command.includes('>')) return true
+  if (first === 'mkdir' || first === 'touch') return true
+  if (first === 'journal') {
+    if (command === 'journal write' || command.startsWith('journal write ')) return true
+    return isKnownWorkspaceSubcommand(command, ['journal list', 'journal search', 'journal read']) ? false : true
+  }
+  if (first === 'fetch') {
+    if (command === 'fetch image' || command.startsWith('fetch image ')) return true
+    if (command === 'fetch avatar' || command.startsWith('fetch avatar ')) return true
+    return isKnownWorkspaceSubcommand(command, ['fetch url', 'fetch reddit list', 'fetch reddit post']) ? false : true
+  }
+  if (first === 'help' || first === 'db' || first === 'style' || first === 'openbb') return false
+  if (first === 'pwd' || first === 'ls' || first === 'rg' || first === 'cat' || first === 'head' || first === 'tail' || first === 'wc' || first === 'printf') {
+    return false
+  }
+  return true
+}
+
+function firstShellToken(command: string): string | null {
+  const match = /^\s*([^\s"'`;&|<>]+)/.exec(command)
+  return match?.[1] ?? null
+}
+
+function isKnownWorkspaceSubcommand(command: string, prefixes: readonly string[]): boolean {
+  return prefixes.some((prefix) => command === prefix || command.startsWith(`${prefix} `))
+}
+
 const SIDE_EFFECT_TOOLS = new Set([
   'send_message',
   'generate_image',
@@ -125,7 +165,6 @@ const SIDE_EFFECT_TOOLS = new Set([
   'download_image',
   'remember',
   'collect_sticker',
-  'workspace_bash',
   'browser',
 ])
 

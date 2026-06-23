@@ -162,6 +162,46 @@ describe('createToolExecutor', () => {
     assert.equal(JSON.parse(writes[2]!).sideEffect, true)
   })
 
+  test('classifies workspace_bash side effects by command', async () => {
+    const writes: string[] = []
+    const workspaceBash: Tool<{ cwd?: 'workspace' | 'repo'; command: string }> = {
+      name: 'workspace_bash',
+      description: 'workspace bash',
+      schema: z.object({
+        cwd: z.enum(['workspace', 'repo']).optional(),
+        command: z.string(),
+      }),
+      async execute() {
+        return { content: JSON.stringify({ ok: true }) }
+      },
+    }
+    const exec = createToolExecutor([workspaceBash], {
+      trace: {
+        now: () => new Date('2026-05-25T12:00:00.000Z'),
+        clockMs: () => 100,
+        appender: async (_path, line) => {
+          writes.push(line)
+        },
+      },
+    })
+
+    await exec.execute({ id: 'repo-read', name: 'workspace_bash', args: { cwd: 'repo', command: 'rg "foo" src' } }, makeCtx())
+    await exec.execute({ id: 'journal-list', name: 'workspace_bash', args: { command: 'journal list' } }, makeCtx())
+    await exec.execute({ id: 'journal-write', name: 'workspace_bash', args: { command: 'journal write diary hi' } }, makeCtx())
+    await exec.execute({ id: 'redirect', name: 'workspace_bash', args: { command: 'printf hi > notes/today.md' } }, makeCtx())
+    await exec.execute({ id: 'fetch-url', name: 'workspace_bash', args: { command: 'fetch url https://example.com' } }, makeCtx())
+    await exec.execute({ id: 'fetch-image', name: 'workspace_bash', args: { command: 'fetch image https://example.com/cat.png' } }, makeCtx())
+    await exec.execute({ id: 'unknown', name: 'workspace_bash', args: { command: 'curl https://example.com' } }, makeCtx())
+
+    assert.equal(JSON.parse(writes[0]!).sideEffect, false)
+    assert.equal(JSON.parse(writes[1]!).sideEffect, false)
+    assert.equal(JSON.parse(writes[2]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[3]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[4]!).sideEffect, false)
+    assert.equal(JSON.parse(writes[5]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[6]!).sideEffect, true)
+  })
+
   test('routes call to correct tool by name and validates args', async () => {
     const echo: Tool<{ msg: string }> = {
       name: 'echo',

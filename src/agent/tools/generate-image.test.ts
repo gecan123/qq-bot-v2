@@ -271,6 +271,34 @@ describe('generate_image tool', () => {
     }
   })
 
+  test('count records partial success metadata when some images fail', async () => {
+    const taskRegistry = createInMemoryTaskRegistry()
+    let generateCalls = 0
+    const tool = createGenerateImageTool({
+      generate: async () => {
+        generateCalls++
+        if (generateCalls === 2) throw new Error('temporary image failure')
+        return Buffer.from(`generated-image-${generateCalls}`)
+      },
+      taskRegistry,
+    })
+
+    const result = await tool.execute({ prompt: 'three cats', count: 3 }, ctx)
+    const parsed = parseResultJson(result.content)
+
+    assert.equal(parsed.ok, true)
+    await flushMicrotasks()
+
+    const task = taskRegistry.get(parsed.taskId as string)
+    assert.equal(task?.status, 'completed')
+    const data = task!.resultData as Record<string, unknown>
+    assert.equal(data.partialSuccess, true)
+    assert.equal(data.requestedCount, 3)
+    assert.equal(data.succeededCount, 2)
+    assert.equal(data.failedCount, 1)
+    assert.deepEqual(data.failures, ['image 2/3: temporary image failure'])
+  })
+
   test('releases source handle even on generation failure', async () => {
     const sourceHash = '0'.repeat(64)
     cache.put({

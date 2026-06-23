@@ -139,6 +139,13 @@ export interface ParsedJournalCommand {
   limit?: number
 }
 
+export interface ParsedHelpCommand {
+  ok: true
+  kind: 'help'
+  cwd: 'workspace'
+  topic?: 'workspace' | 'repo' | 'journal' | 'db' | 'style' | 'openbb' | 'fetch'
+}
+
 export type ParsedWorkspaceBashCommand =
   | ParsedWorkspaceCommand
   | ParsedDbToolCommand
@@ -146,6 +153,7 @@ export type ParsedWorkspaceBashCommand =
   | ParsedOpenbbCommand
   | ParsedFetchCommand
   | ParsedJournalCommand
+  | ParsedHelpCommand
   | { ok: false; error: string }
 
 export interface WorkspaceBashRunInput {
@@ -235,8 +243,15 @@ function isSafeRelativePath(value: string): boolean {
   if (!value || isAbsolute(value) || value.startsWith('~')) return false
   const normalized = normalize(value)
   if (normalized === '..' || normalized.startsWith(`..${'/'}`)) return false
-  if (normalized === '.env' || normalized.startsWith('.env/')) return false
+  if (hasEnvLikePathSegment(normalized)) return false
   return true
+}
+
+function hasEnvLikePathSegment(value: string): boolean {
+  return value
+    .replace(/\\/g, '/')
+    .split('/')
+    .some((segment) => segment === '.env' || segment.startsWith('.env.'))
 }
 
 function isSafeRepoPath(value: string): boolean {
@@ -370,6 +385,17 @@ function parseJournalCommand(tokens: string[], cwd: 'workspace' | 'repo'): Parse
   }
 
   return { ok: false, error: 'journal action must be write, list, search, or read' }
+}
+
+function parseHelpCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedHelpCommand | { ok: false; error: string } {
+  if (cwd !== 'workspace') return { ok: false, error: 'help is only available in workspace mode' }
+  if (tokens.length > 2) return { ok: false, error: 'help accepts at most one topic' }
+  const topic = tokens[1]
+  if (topic == null) return { ok: true, kind: 'help', cwd: 'workspace' }
+  if (topic === 'workspace' || topic === 'repo' || topic === 'journal' || topic === 'db' || topic === 'style' || topic === 'openbb' || topic === 'fetch') {
+    return { ok: true, kind: 'help', cwd: 'workspace', topic }
+  }
+  return { ok: false, error: 'help topic must be workspace, repo, journal, db, style, openbb, or fetch' }
 }
 
 function parseDbToolCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedDbToolCommand | { ok: false; error: string } {
@@ -561,6 +587,10 @@ export function parseWorkspaceBashCommand(
   const tokens = shellTokens(trimmed)
   if (!tokens || tokens.length === 0) return { ok: false, error: 'could not parse command' }
 
+  if (tokens[0] === 'help') {
+    return parseHelpCommand(tokens, cwd)
+  }
+
   if (tokens[0] === 'journal') {
     return parseJournalCommand(tokens, cwd)
   }
@@ -643,6 +673,99 @@ function renderJournalEntries(entries: JournalRecord[]) {
     createdAt: entry.createdAt,
     preview: journalPreview(entry.content),
   }))
+}
+
+function renderHelpCommand(parsed: ParsedHelpCommand): WorkspaceBashRunResult {
+  const topics = {
+    workspace: {
+      purpose: '私有工作区文件整理, cwd 默认就是 workspace.',
+      commands: [
+        'pwd',
+        'ls [path]',
+        'rg <pattern> [path]',
+        'cat <path>',
+        'head <path>',
+        'tail <path>',
+        'wc <path>',
+        'mkdir <path>',
+        'touch <path>',
+        'printf <text> > <path>',
+      ],
+    },
+    repo: {
+      purpose: '只读查看仓库代码和文档, 需要显式传 cwd=repo.',
+      commands: [
+        'pwd',
+        'ls [path]',
+        'rg <pattern> [path]',
+        'rg --files [path]',
+        'cat <path>',
+        'head <path>',
+        'tail <path>',
+        'wc <path>',
+      ],
+    },
+    journal: {
+      purpose: '写入和回顾日记/梦境, 存在 private workspace 文件中.',
+      commands: [
+        'journal write diary|dream <content>',
+        'journal list [diary|dream] [limit]',
+        'journal search <query> [diary|dream] [limit]',
+        'journal read <id>',
+      ],
+    },
+    db: {
+      purpose: '只读查询消息账本和可公开 schema.',
+      commands: [
+        'db schema',
+        'db query <json>',
+      ],
+    },
+    style: {
+      purpose: '按需读取全局或群风格说明.',
+      commands: [
+        'style global [base|anti_patterns|special_cases]',
+        'style group <groupId>',
+      ],
+    },
+    openbb: {
+      purpose: '通过 OpenBB allowlist 查询金融数据.',
+      commands: [
+        'openbb <allowed command>',
+        'openbb {"command":"<allowed command>","output":{...}}',
+      ],
+    },
+    fetch: {
+      purpose: '获取外部网页、图片、头像或 Reddit 内容.',
+      commands: [
+        'fetch url <http(s)-url> [hint]',
+        'fetch image <http(s)-url>',
+        'fetch avatar <qq> [640|100|40]',
+        `fetch reddit list ${FETCH_ALLOWED_SUBREDDITS.join('|')} [hot|top|new] [limit]`,
+        'fetch reddit post <reddit-post-url>',
+      ],
+    },
+  } as const
+  const payload = parsed.topic
+    ? { ok: true, topic: parsed.topic, ...topics[parsed.topic] }
+    : {
+      ok: true,
+      topics: Object.keys(topics),
+      examples: [
+        'help journal',
+        'help fetch',
+        'journal list 5',
+        'fetch url https://example.com "要点"',
+        'db schema',
+      ],
+    }
+
+  return {
+    exitCode: 0,
+    stdout: JSON.stringify(payload),
+    stderr: '',
+    timedOut: false,
+  }
 }
 
 function fetchArgsFromParsed(parsed: ParsedFetchCommand): Record<string, unknown> {
@@ -786,7 +909,7 @@ export async function runCommand(input: WorkspaceBashRunInput): Promise<Workspac
 }
 
 export async function runWorkspaceBashCommand(
-  parsed: ParsedWorkspaceCommand | ParsedJournalCommand,
+  parsed: ParsedWorkspaceCommand | ParsedJournalCommand | ParsedHelpCommand,
   options: {
     workspaceDir: string
     repoDir: string
@@ -800,6 +923,10 @@ export async function runWorkspaceBashCommand(
 
   if (parsed.kind === 'journal') {
     return await runJournalCommand(parsed, options.workspaceDir)
+  }
+
+  if (parsed.kind === 'help') {
+    return renderHelpCommand(parsed)
   }
 
   const runInput: WorkspaceBashRunInput = {
@@ -842,10 +969,10 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
     name: 'workspace_bash',
     description: [
       '受限 Bash. 默认 cwd=workspace, 用来整理你的私有工作文件、日记、梦、草稿和索引; 也可 cwd=repo 只读查看自己的仓库代码.',
-      'workspace 允许少量文件命令: pwd/ls/rg/cat/head/tail/wc/mkdir/touch/printf; 还提供内置子命令: journal、db、style、openbb、fetch.',
+      'workspace 允许少量文件命令: pwd/ls/rg/cat/head/tail/wc/mkdir/touch/printf; 还提供内置子命令: help、journal、db、style、openbb、fetch.',
       'repo 只允许读命令: pwd/ls/rg/cat/head/tail/wc; rg 支持普通搜索和 --files, 不能写, 也不能读 .env/logs/node_modules/.git/data/prompts/groups.yaml.',
       '可以用重定向把 printf 输出写入工作区文件, 例如 `printf "..." > notes/today.md`.',
-      '日记/梦境用 `journal write|list|search|read`; 数据库用 `db schema` / `db query <json>`; 风格用 `style global|group`; 金融数据用 `openbb <command>`; 外部内容用 `fetch url|image|avatar|reddit list|reddit post`.',
+      '不确定语法时先用 `help` 或 `help <topic>`; 日记/梦境用 `journal write|list|search|read`; 数据库用 `db schema` / `db query <json>`; 风格用 `style global|group`; 金融数据用 `openbb <command>`; 外部内容用 `fetch url|image|avatar|reddit list|reddit post`.',
       '数据库仍只读; openbb 仍走 OpenBB allowlist; 不允许 psql/curl/node/cat .env/路径逃逸/任意 shell 组合.',
     ].join(' '),
     schema: argsSchema,

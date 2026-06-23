@@ -27,10 +27,10 @@ export function createBackgroundTaskTool(deps: BackgroundTaskToolDeps): Tool<Arg
   return {
     name: 'background_task',
     description: [
-      '后台任务工具, 一个入口用 action 决定动作.',
-      'action=list: 查看正在运行和最近完成/失败的任务.',
+      '通用后台任务状态/结果工具, 一个入口用 action 决定动作.',
+      'action=list: 查看所有异步工具创建的正在运行和最近完成/失败的任务.',
       'action=get: 读取某个已完成任务的详细结果; 图片生成任务会返回预览图和 ephemeralRef.',
-      'generate_image 返回 taskId 或收到 [后台任务完成] 后, 用这里查看状态或取结果.',
+      '任何工具返回 taskId 或收到 [后台任务完成] 后, 都用这里查看状态或取结果; 不负责创建任务.',
     ].join(' '),
     schema: argsSchema,
     async execute(args, ctx) {

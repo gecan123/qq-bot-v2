@@ -63,7 +63,7 @@ describe('db tool', () => {
     assert.match(result.content as string, /"rowCount": 1/)
   })
 
-  test('bot tool registry exposes db instead of db_schema and db_read', () => {
+  test('bot tool registry exposes database access through workspace_bash only', () => {
     const names = buildBotTools({
       sender: mockSender,
       groupAmbientSendIds: new Set(),
@@ -73,7 +73,8 @@ describe('db tool', () => {
       groupCustomizations: [],
     }).map((tool) => tool.name)
 
-    assert.ok(names.includes('db'))
+    assert.ok(names.includes('workspace_bash'))
+    assert.equal(names.includes('db'), false)
     assert.equal(names.includes('db_schema'), false)
     assert.equal(names.includes('db_read'), false)
   })

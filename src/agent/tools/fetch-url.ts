@@ -19,7 +19,7 @@ const argsSchema = z.object({
   url: z
     .string()
     .url()
-    .describe('要抓取的 URL (非 reddit 页面; reddit 帖子请用 reddit action=get_post).'),
+    .describe('要抓取的 URL (非 reddit 页面; reddit 帖子请用 workspace_bash `fetch reddit post`).'),
   hint: z
     .string()
     .max(200)
@@ -186,7 +186,7 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
     description: [
       `抓取一个 URL 并返回 ≤ ${OUTPUT_CAP_CHARS} 字符的中文摘要 (目标 ≤ 500 中文字).`,
       '返回的不是原文, 是摘要. 如果摘要不够你判断, 没办法让这个工具给你更长 — 要么换工具 / 要么放弃这条.',
-      '典型用法: 非 reddit 的外链页面. reddit 帖子请用 reddit action=get_post, 不要走本工具.',
+      '典型用法: 非 reddit 的外链页面. reddit 帖子请用 workspace_bash `fetch reddit post`, 不要走本工具.',
       'hint 参数可选, 用来影响摘要侧重 (例: "我想知道作者的核心论点").',
       '抓不到 / 摘要失败时返回错误标记 + 原文截断, 可以忽略也可以再试一次.',
     ].join(' '),
@@ -214,7 +214,7 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
         )
         log.warn({ url: args.url, errorKind: outcome.errorKind }, 'fetch_url_failed')
         return {
-          content: `[fetch_url 失败] ${args.url}: ${outcome.errorKind}.`,
+          content: `[fetch url 失败] ${args.url}: ${outcome.errorKind}.`,
         }
       }
 
@@ -224,7 +224,7 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
           { path: deps.logPath, appender: deps.appender },
         )
         return {
-          content: `[fetch_url HTTP ${outcome.status}] ${args.url}. 抓不到, 别原地重试.`,
+          content: `[fetch url HTTP ${outcome.status}] ${args.url}. 抓不到, 别原地重试.`,
         }
       }
 
@@ -240,7 +240,7 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
           { path: deps.logPath, appender: deps.appender },
         )
         return {
-          content: `[fetch_url 内容为空] ${args.url}. 可能是 JS 渲染页或 paywall.`,
+          content: `[fetch url 内容为空] ${args.url}. 可能是 JS 渲染页或 paywall.`,
         }
       }
 
@@ -276,12 +276,12 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
         const errorTag = summarizeFailed ? '摘要 LLM 失败' : '摘要为空'
         return {
           content: clampOutput(
-            `[fetch_url ${errorTag}] ${args.url}\n标题: ${extracted.title || '(未知)'}\n原文截断:\n${fallback}`,
+            `[fetch url ${errorTag}] ${args.url}\n标题: ${extracted.title || '(未知)'}\n原文截断:\n${fallback}`,
           ),
         }
       }
 
-      const headerLines = [`[fetch_url 摘要] ${args.url}`]
+      const headerLines = [`[fetch url 摘要] ${args.url}`]
       if (extracted.title) headerLines.push(`标题: ${extracted.title}`)
       const output = `${headerLines.join('\n')}\n\n${summary}`
       return { content: clampOutput(output) }

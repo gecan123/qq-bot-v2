@@ -135,7 +135,7 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
     description: [
       '向 QQ 真实发送一条消息。target 必填, 决定这条消息发到哪个群 / 哪个私聊对方。',
       '群白名单已经在 ingress 层做过 —— 你能在 history 里看到的群消息, 那个群一定是可发的, 不需要自己再判断。私聊同样: 陌生 DM 在 ingress 层已被 sub_type=friend 挡掉, 你看到的 [私聊 | ...(QQ:N)] 一定可发回。',
-      'target.type=group: 必传 groupId (来自消息标签 [群:名字 | 昵称(QQ:...)] 中暗含的 groupId, 可以用 db action=query 查 messages 表 group_id 列). mentionUserId 可选, 在文本前加 @ 提及群内某人。',
+      'target.type=group: 必传 groupId (来自消息标签 [群:名字 | 昵称(QQ:...)] 中暗含的 groupId, 可以用 workspace_bash 的 `db query <json>` 查 messages 表 group_id 列). mentionUserId 可选, 在文本前加 @ 提及群内某人。',
       'target.type=private: 必传 userId (私聊对方 QQ).',
       'mode 必填: 顺聊/上下文明确时用 ambient, replyToMessageId 填 null; 只有多人多话题混杂、需要精确指向某条消息时才用 reply.',
       'imageRef 必填但通常是 null. 只在你明确拿到了可用句柄时才填: media:<id> 或 ephemeral:<64-hex>; 不确定就填 null, 只发 text. text 和 imageRef 至少一个非 null.',

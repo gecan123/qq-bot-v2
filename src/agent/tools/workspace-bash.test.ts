@@ -12,6 +12,7 @@ import {
   runWorkspaceBashCommand,
   type WorkspaceBashRunner,
 } from './workspace-bash.js'
+import type { Tool } from '../tool.js'
 
 function makeCtx(): ToolContext {
   return { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 0 }
@@ -37,12 +38,117 @@ describe('workspace_bash command parser', () => {
     })
   })
 
-  test('accepts only the db query package script for database access', () => {
-    assert.deepEqual(parseWorkspaceBashCommand('pnpm db:query \'{"sql":"select 1","params":{}}\''), {
+  test('rejects the old pnpm db:query alias for database access', () => {
+    const parsed = parseWorkspaceBashCommand('pnpm db:query \'{"sql":"select 1","params":{}}\'')
+
+    assert.equal(parsed.ok, false)
+  })
+
+  test('accepts controlled db, style, and openbb subcommands in workspace mode', () => {
+    assert.deepEqual(parseWorkspaceBashCommand('db schema'), {
       ok: true,
-      kind: 'db_query',
+      kind: 'db_tool',
       cwd: 'workspace',
-      args: ['{"sql":"select 1","params":{}}'],
+      action: 'schema',
+    })
+
+    assert.deepEqual(parseWorkspaceBashCommand('db query \'{"sql":"select 1","params":{"group_id":123}}\''), {
+      ok: true,
+      kind: 'db_tool',
+      cwd: 'workspace',
+      action: 'query',
+      sql: 'select 1',
+      params: { group_id: 123 },
+    })
+
+    assert.deepEqual(parseWorkspaceBashCommand('style global anti_patterns'), {
+      ok: true,
+      kind: 'style',
+      cwd: 'workspace',
+      scope: 'global',
+      section: 'anti_patterns',
+    })
+
+    assert.deepEqual(parseWorkspaceBashCommand('style group 222'), {
+      ok: true,
+      kind: 'style',
+      cwd: 'workspace',
+      scope: 'group',
+      groupId: 222,
+    })
+
+    assert.deepEqual(parseWorkspaceBashCommand('openbb /equity/price/historical --symbol AAPL --provider yfinance'), {
+      ok: true,
+      kind: 'openbb',
+      cwd: 'workspace',
+      command: '/equity/price/historical --symbol AAPL --provider yfinance',
+    })
+  })
+
+  test('accepts controlled fetch subcommands in workspace mode', () => {
+    assert.deepEqual(parseWorkspaceBashCommand('fetch url "https://example.com/post" "核心观点"'), {
+      ok: true,
+      kind: 'fetch',
+      cwd: 'workspace',
+      action: 'url',
+      url: 'https://example.com/post',
+      hint: '核心观点',
+    })
+
+    assert.deepEqual(parseWorkspaceBashCommand('fetch image https://example.com/cat.png'), {
+      ok: true,
+      kind: 'fetch',
+      cwd: 'workspace',
+      action: 'image_url',
+      url: 'https://example.com/cat.png',
+    })
+
+    assert.deepEqual(parseWorkspaceBashCommand('fetch avatar 123 100'), {
+      ok: true,
+      kind: 'fetch',
+      cwd: 'workspace',
+      action: 'qq_avatar',
+      qq: 123,
+      size: '100',
+    })
+
+    assert.deepEqual(parseWorkspaceBashCommand('fetch reddit list technology top 5'), {
+      ok: true,
+      kind: 'fetch',
+      cwd: 'workspace',
+      action: 'reddit_list',
+      subreddit: 'technology',
+      sort: 'top',
+      limit: 5,
+    })
+
+    assert.deepEqual(parseWorkspaceBashCommand('fetch reddit post "https://www.reddit.com/r/technology/comments/abc123/title/"'), {
+      ok: true,
+      kind: 'fetch',
+      cwd: 'workspace',
+      action: 'reddit_post',
+      url: 'https://www.reddit.com/r/technology/comments/abc123/title/',
+    })
+  })
+
+  test('accepts controlled journal subcommands in workspace mode', () => {
+    assert.deepEqual(parseWorkspaceBashCommand('journal write diary "今天很充实"'), {
+      ok: true,
+      kind: 'journal',
+      cwd: 'workspace',
+      action: 'write',
+      kindArg: 'diary',
+      content: '今天很充实',
+    })
+
+    assert.deepEqual(parseWorkspaceBashCommand('journal search "ALPHA" dream 5'), {
+      ok: true,
+      kind: 'journal',
+      cwd: 'workspace',
+      action: 'search',
+      query: 'ALPHA',
+      kindArg: 'dream',
+      limit: 5,
     })
   })
 
@@ -75,6 +181,18 @@ describe('workspace_bash command parser', () => {
       'ls && cat .env',
       'printf hi > ../leak.txt',
       'pnpm test',
+      'journal write note hi',
+      'journal search',
+      'db drop table messages',
+      'db query not-json',
+      'style global secrets',
+      'style group not-a-number',
+      'fetch reddit list notallowed hot 5',
+      'fetch reddit list technology best 5',
+      'fetch reddit list technology hot 50',
+      'fetch reddit post https://example.com/not-reddit',
+      'fetch avatar nobody',
+      'openbb curl https://example.com',
       'find .',
       "sed -n '1,5p' notes.md",
     ]
@@ -97,6 +215,11 @@ describe('workspace_bash command parser', () => {
       'cat node_modules/.bin/tsx',
       'cat .git/config',
       'cat ../qq-bot-v2/package.json',
+      'journal list',
+      'db schema',
+      'style global',
+      'fetch url https://example.com',
+      'openbb /equity/price/historical --symbol AAPL',
     ]
 
     for (const command of rejected) {
@@ -174,32 +297,6 @@ describe('workspace_bash tool', () => {
     })
   })
 
-  test('routes pnpm db:query through repo cwd instead of workspace cwd', async () => {
-    let captured: Parameters<WorkspaceBashRunner>[0] | null = null
-    const runner: WorkspaceBashRunner = async (input) => {
-      captured = input
-      return { exitCode: 0, stdout: '{"rows":[[1]]}', stderr: '', timedOut: false }
-    }
-    const tool = createWorkspaceBashTool({
-      workspaceDir: '/tmp/agent-workspace',
-      repoDir: '/repo',
-      runner,
-    })
-
-    const result = await tool.execute({ command: 'pnpm db:query \'{"sql":"select 1","params":{}}\'' }, makeCtx())
-
-    assert.equal(result.content, '{"rows":[[1]]}')
-    assert.deepEqual(captured, {
-      executable: 'pnpm',
-      args: ['db:query', '{"sql":"select 1","params":{}}'],
-      cwd: '/repo',
-      env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
-      stdin: undefined,
-      timeoutMs: 8000,
-      maxOutputChars: 8000,
-    })
-  })
-
   test('returns structured error without executing rejected commands', async () => {
     const tool = createWorkspaceBashTool({
       workspaceDir: '/tmp/agent-workspace',
@@ -214,6 +311,177 @@ describe('workspace_bash tool', () => {
 
     assert.equal(parsed.ok, false)
     assert.match(parsed.error, /not allowed/i)
+  })
+
+  test('runs journal write/list/search/read through the workspace store without shelling out', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'workspace-bash-journal-'))
+    let runnerCalled = false
+    try {
+      const tool = createWorkspaceBashTool({
+        workspaceDir: workspace,
+        repoDir: workspace,
+        runner: async () => {
+          runnerCalled = true
+          return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
+        },
+      })
+
+      const written = JSON.parse((await tool.execute({
+        command: 'journal write diary "Alpha beta"',
+      }, makeCtx())).content as string) as { ok: boolean; id: string; kind: string }
+      assert.equal(written.ok, true)
+      assert.equal(written.kind, 'diary')
+
+      const searched = JSON.parse((await tool.execute({
+        command: 'journal search "alpha" diary 5',
+      }, makeCtx())).content as string) as { ok: boolean; entries: { id: string; preview: string }[] }
+      assert.equal(searched.ok, true)
+      assert.deepEqual(searched.entries.map((entry) => entry.preview), ['Alpha beta'])
+
+      const read = JSON.parse((await tool.execute({
+        command: `journal read ${written.id}`,
+      }, makeCtx())).content as string) as { ok: boolean; entry: { content: string } }
+      assert.equal(read.ok, true)
+      assert.equal(read.entry.content, 'Alpha beta')
+
+      const listed = JSON.parse((await tool.execute({
+        command: 'journal list 5',
+      }, makeCtx())).content as string) as { ok: boolean; entries: { id: string }[] }
+      assert.equal(listed.ok, true)
+      assert.equal(listed.entries.length, 1)
+      assert.equal(runnerCalled, false)
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  test('runs db schema/query through the internal db tool without shelling out', async () => {
+    let runnerCalled = false
+    const tool = createWorkspaceBashTool({
+      workspaceDir: '/tmp/agent-workspace',
+      repoDir: '/repo',
+      groupIdWhitelist: [123],
+      executeDbRead: async (params) => ({
+        ok: true,
+        sql: params.sql,
+        params: params.params,
+        rows: [{ answer: 1 }],
+      }),
+      runner: async () => {
+        runnerCalled = true
+        return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
+      },
+    })
+
+    const schema = await tool.execute({ command: 'db schema' }, makeCtx())
+    assert.match(schema.content as string, /messages/)
+
+    const queried = JSON.parse((await tool.execute({
+      command: 'db query \'{"sql":"select 1","params":{"group_id":123}}\'',
+    }, makeCtx())).content as string) as { ok: boolean; rows: { answer: number }[] }
+    assert.equal(queried.ok, true)
+    assert.equal(queried.rows[0]!.answer, 1)
+    assert.equal(runnerCalled, false)
+  })
+
+  test('runs style commands through the internal style reader without shelling out', async () => {
+    let runnerCalled = false
+    const tool = createWorkspaceBashTool({
+      workspaceDir: '/tmp/agent-workspace',
+      repoDir: '/repo',
+      groupIds: [222],
+      metadata: { groupNames: new Map([[222, '测试群']]) },
+      groupCustomizations: [{ id: 222, frequencyHint: 'chatty', body: '这个群喜欢短句接梗。' }],
+      runner: async () => {
+        runnerCalled = true
+        return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
+      },
+    })
+
+    const global = await tool.execute({ command: 'style global' }, makeCtx())
+    assert.match(global.content as string, /Luna 按需风格指南/)
+
+    const group = JSON.parse((await tool.execute({ command: 'style group 222' }, makeCtx())).content as string) as {
+      ok: boolean
+      groupName: string
+      body: string
+    }
+    assert.equal(group.ok, true)
+    assert.equal(group.groupName, '测试群')
+    assert.equal(group.body, '这个群喜欢短句接梗。')
+    assert.equal(runnerCalled, false)
+  })
+
+  test('runs openbb through the configured OpenBB delegate without shelling out', async () => {
+    const calls: unknown[] = []
+    let runnerCalled = false
+    const openbbTool: Tool = {
+      name: 'openbb_cli',
+      description: 'test openbb',
+      schema: {} as never,
+      async execute(args) {
+        calls.push(args)
+        return { content: '[{"symbol":"AAPL"}]' }
+      },
+    }
+    const tool = createWorkspaceBashTool({
+      workspaceDir: '/tmp/agent-workspace',
+      repoDir: '/repo',
+      openbbTool,
+      runner: async () => {
+        runnerCalled = true
+        return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
+      },
+    })
+
+    const result = await tool.execute({
+      command: 'openbb /equity/price/historical --symbol AAPL --provider yfinance',
+    }, makeCtx())
+
+    assert.equal(result.content, '[{"symbol":"AAPL"}]')
+    assert.deepEqual(calls, [{ command: '/equity/price/historical --symbol AAPL --provider yfinance' }])
+    assert.equal(runnerCalled, false)
+  })
+
+  test('runs fetch through the configured fetch delegate without shelling out', async () => {
+    const calls: unknown[] = []
+    let runnerCalled = false
+    const fetchTool: Tool = {
+      name: 'fetch_content',
+      description: 'test fetch',
+      schema: {} as never,
+      async execute(args) {
+        calls.push(args)
+        return { content: JSON.stringify({ ok: true, args }) }
+      },
+    }
+    const tool = createWorkspaceBashTool({
+      workspaceDir: '/tmp/agent-workspace',
+      repoDir: '/repo',
+      fetchTool,
+      runner: async () => {
+        runnerCalled = true
+        return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
+      },
+    })
+
+    await tool.execute({ command: 'fetch url "https://example.com/post" "核心观点"' }, makeCtx())
+    await tool.execute({ command: 'fetch image https://example.com/cat.png' }, makeCtx())
+    await tool.execute({ command: 'fetch avatar 123 100' }, makeCtx())
+    await tool.execute({ command: 'fetch reddit list technology top 5' }, makeCtx())
+    const result = await tool.execute({
+      command: 'fetch reddit post "https://www.reddit.com/r/technology/comments/abc123/title/"',
+    }, makeCtx())
+
+    assert.match(result.content as string, /reddit_post/)
+    assert.deepEqual(calls, [
+      { action: 'url', url: 'https://example.com/post', hint: '核心观点' },
+      { action: 'image_url', url: 'https://example.com/cat.png' },
+      { action: 'qq_avatar', qq: 123, size: '100' },
+      { action: 'reddit_list', subreddit: 'technology', sort: 'top', limit: 5 },
+      { action: 'reddit_post', url: 'https://www.reddit.com/r/technology/comments/abc123/title/' },
+    ])
+    assert.equal(runnerCalled, false)
   })
 })
 

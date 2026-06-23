@@ -247,7 +247,7 @@ async function main() {
 
   // 10. 工具集 + bot system prompt (启动后定型, 进程内不变)
   // Per-group customization 启动期一次 load + freeze, 但不拼进 system prompt;
-  // 通过 source_profile 按需披露, 避免群口味正文污染常驻 cache 前缀.
+  // 通过 chat_style 按需披露, 避免群口味正文污染常驻 cache 前缀.
   const groupCustomizations = loadGroupCustomizations(config.botGroupPromptsPath)
   log.info(
     {

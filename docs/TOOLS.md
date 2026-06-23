@@ -4,12 +4,12 @@
 
 ## 已注册能力
 
-- 对话控制：`wait`、`rest`。
+- 对话控制：`pause`。
 - 发送：`send_message`。
-- 知识和历史：`db`、`memory`、`write_journal`（write/list/search/read）、`source_profile`、`style_guide`。
-- 外部内容：`fetch_url`、`fetch_image`、配置后可用的 `web_search`、`reddit`、配置后可用的 `openbb_cli`。
-- 媒体生成和复用：`generate_image`（quality、批量输出、最多 5 张输入图）、`collect_sticker`（collect/list/search/random）。
-- 运行时工作：`background_task`、`workspace_bash`、配置后可用的 `browser`。
+- 知识和历史：`memory`、`workspace_bash` 内置的 `db` / `style` 子命令。
+- 外部内容：`workspace_bash` 内置的 `fetch` 子命令（url/image/avatar/reddit list/reddit post）、配置后可用的 `web_search`、`workspace_bash` 内置的 `openbb` 子命令。
+- 媒体生成和复用：`generate_image`（创建图片生成/编辑后台任务，quality、批量输出、最多 5 张输入图）、`collect_sticker`（collect/list/search/random）。
+- 运行时工作：`background_task`（通用异步任务 list/get）、`workspace_bash`、配置后可用的 `browser`。
 
 ## 安全规则
 
@@ -19,11 +19,11 @@
 - group ambient 发送受 ingress allowlist 和 `BOT_GROUP_AMBIENT_SEND_IDS` 保护。reply 和 private 不受 ambient whitelist 控制。
 - 外部工具必须有输出上限、超时和审计日志。
 - `workspace_bash` 提供可写 private workspace 和只读 repo view。repo view 必须保持 allowlist，不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
-- `write_journal` 把日记和梦境存到 private workspace 文件中，支持 `write`/`list`/`search`/`read`；`data/agent-workspace/` 下的 journal 文件是 bot 生成数据，不应提交。
+- `workspace_bash` 内置 `journal write|list|search|read` 子命令，把日记和梦境存到 private workspace 文件中；`data/agent-workspace/` 下的 journal 文件是 bot 生成数据，不应提交。
 - 有副作用的工具通过 `src/ops/tool-call-log.ts` 记录。
 - Bash 类能力必须保留 command allowlist、固定 workspace、最小 env、输出/时间上限和审计日志。敏感访问应通过专门脚本或 capability wrapper。
-- `workspace_bash`、`browser`、`fetch_url`、`fetch_image` 和 `openbb_cli` 必须保留现有上限、preview compression、cache、timeout 和 audit 行为。
-- 有副作用的工具要格外谨慎：`send_message`、图片生成/下载、journal/memory/sticker 工具、browser 写操作，以及未来任何会写 DB 或外部服务的工具。
+- `workspace_bash` 和 `browser` 必须保留现有上限、preview compression、cache、timeout 和 audit 行为；其中 `workspace_bash` 内置的 `db` / `style` / `openbb` / `fetch` 子命令仍走对应专用 wrapper。
+- 有副作用的工具要格外谨慎：`send_message`、图片生成/下载、`workspace_bash` journal 子命令、memory/sticker 工具、browser 写操作，以及未来任何会写 DB 或外部服务的工具。
 
 ## LLM 路径
 

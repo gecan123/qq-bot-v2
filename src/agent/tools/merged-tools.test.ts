@@ -8,7 +8,6 @@ import type { BotEvent } from '../event.js'
 import type { ToolContext } from '../tool.js'
 import type { MessageSender } from '../../messaging/message-sender.js'
 import { buildBotTools } from './index.js'
-import { createRedditTool } from './reddit.js'
 import { createBackgroundTaskTool } from './background-task.js'
 import { memoryTool } from './memory.js'
 import { createFetchImageTool, runCurlImage } from './fetch-image.js'
@@ -50,73 +49,32 @@ describe('merged main-agent tools', () => {
       groupCustomizations: [],
     }).map((tool) => tool.name)
 
-    assert.ok(names.includes('reddit'))
     assert.ok(names.includes('background_task'))
     assert.ok(names.includes('memory'))
-    assert.ok(names.includes('fetch_image'))
-    assert.ok(names.includes('rest'))
+    assert.ok(names.includes('pause'))
+    assert.ok(names.includes('workspace_bash'))
+    assert.equal(names.includes('fetch_content'), false)
+    assert.equal(names.includes('db'), false)
+    assert.equal(names.includes('chat_style'), false)
+    assert.equal(names.includes('openbb_cli'), false)
+    assert.equal(names.includes('wait'), false)
+    assert.equal(names.includes('rest'), false)
+    assert.equal(names.includes('reddit'), false)
     assert.equal(names.includes('list_reddit'), false)
     assert.equal(names.includes('get_reddit_post'), false)
     assert.equal(names.includes('check_tasks'), false)
     assert.equal(names.includes('get_task_result'), false)
     assert.equal(names.includes('remember'), false)
     assert.equal(names.includes('recall'), false)
+    assert.equal(names.includes('fetch_url'), false)
+    assert.equal(names.includes('fetch_image'), false)
+    assert.equal(names.includes('style_guide'), false)
+    assert.equal(names.includes('group_profile'), false)
+    assert.equal(names.includes('source_profile'), false)
+    assert.equal(names.includes('write_journal'), false)
+    assert.equal(names.includes('journal'), false)
     assert.equal(names.includes('download_image'), false)
     assert.equal(names.includes('fetch_avatar'), false)
-  })
-
-  test('reddit action=list reuses list behavior and action=get_post reuses detail behavior', async () => {
-    const writes: string[] = []
-    const fetcher: typeof fetch = async (url) => {
-      if (String(url).endsWith('/hot.rss')) {
-        return new Response(`<feed xmlns="http://www.w3.org/2005/Atom">
-          <entry>
-            <title>Story</title>
-            <link href="https://www.reddit.com/r/technology/comments/abc/story/" rel="alternate"/>
-            <summary type="html">summary</summary>
-          </entry>
-        </feed>`, { status: 200 })
-      }
-      return new Response(`<feed xmlns="http://www.w3.org/2005/Atom">
-        <title>Story</title>
-        <entry>
-          <content type="html">nice comment</content>
-          <author><name>/u/a</name></author>
-        </entry>
-      </feed>`, { status: 200 })
-    }
-    const tool = createRedditTool({
-      fetcher,
-      appender: async (_path, line) => {
-        writes.push(line)
-      },
-    })
-
-    const listed = await tool.execute({ action: 'list', subreddit: 'technology', sort: 'hot', limit: 10 }, makeCtx())
-    const detailed = await tool.execute({
-      action: 'get_post',
-      url: 'https://www.reddit.com/r/technology/comments/abc/story/',
-    }, makeCtx())
-
-    assert.match(listed.content as string, /\[reddit \/r\/technology hot/)
-    assert.match(detailed.content as string, /\[reddit post\]/)
-    assert.equal(writes.length, 2)
-  })
-
-  test('reddit failure output names the merged reddit action instead of removed split tools', async () => {
-    const fetcher: typeof fetch = async () => new Response('nope', { status: 404 })
-    const tool = createRedditTool({ fetcher })
-
-    const listed = await tool.execute({ action: 'list', subreddit: 'technology', sort: 'hot', limit: 10 }, makeCtx())
-    const detailed = await tool.execute({
-      action: 'get_post',
-      url: 'https://www.reddit.com/r/technology/comments/abc/story/',
-    }, makeCtx())
-
-    assert.doesNotMatch(listed.content as string, /list_reddit/)
-    assert.doesNotMatch(detailed.content as string, /get_reddit_post/)
-    assert.match(listed.content as string, /\[reddit action=list HTTP 404\]/)
-    assert.match(detailed.content as string, /\[reddit action=get_post HTTP 404\]/)
   })
 
   test('background_task action=list and action=get address the same registry', async () => {
@@ -205,7 +163,7 @@ describe('merged main-agent tools', () => {
     }
   })
 
-  test('fetch_image action=url and action=qq_avatar both produce image handles', async () => {
+  test('internal fetch image implementation produces handles for url and qq_avatar', async () => {
     const cache = new OutboundCache()
     setOutboundCacheForTest(cache)
     try {

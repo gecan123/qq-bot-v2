@@ -77,7 +77,7 @@ describe('fetch_url tool — happy path', () => {
       logPath: '/tmp/test-fetch.ndjson',
     })
     const result = await tool.execute({ url: 'https://example.com/article' }, makeCtx())
-    assert.match((result.content as string), /\[fetch_url 摘要\]/)
+    assert.match((result.content as string), /\[fetch url 摘要\]/)
     assert.match((result.content as string), /Example article/)
     assert.match((result.content as string), /单仓优势/)
     assert.equal(writes.length, 1)

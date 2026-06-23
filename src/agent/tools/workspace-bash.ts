@@ -3,13 +3,30 @@ import { mkdir, writeFile, appendFile } from 'node:fs/promises'
 import { dirname, isAbsolute, normalize, resolve } from 'node:path'
 import { z } from 'zod'
 import type { Tool } from '../tool.js'
+import type { DbReadResult, ExecuteDbReadParams } from '../../database/agent-sql.js'
+import type { GroupCustomization } from '../../config/group-prompts.js'
+import type { TargetMetadataMaps } from '../resolve-target-meta.js'
+import { createDbTool } from './db.js'
+import { createChatStyleTool } from './chat-style.js'
+import { isAllowedOpenbbCommand, maybeCreateOpenbbCliTool } from './openbb-cli.js'
+import { createFetchContentTool } from './fetch-content.js'
+import {
+  appendJournalRecord,
+  listJournalRecords,
+  readJournalRecord,
+  searchJournalRecords,
+  type JournalKind,
+  type JournalRecord,
+} from '../journal-store.js'
 
 const DEFAULT_WORKSPACE_DIR = 'data/agent-workspace'
 const DEFAULT_TIMEOUT_MS = 5_000
-const DB_TIMEOUT_MS = 8_000
 const DEFAULT_OUTPUT_CAP_CHARS = 4_000
-const DB_OUTPUT_CAP_CHARS = 8_000
 const DEFAULT_PATH = process.env.PATH ?? '/usr/bin:/bin'
+const FETCH_ALLOWED_SUBREDDITS = ['technology', 'ClaudeAI', 'OpenAI', 'wallstreetbets', 'memes'] as const
+const FETCH_ALLOWED_SUBREDDIT_SET = new Set<string>(FETCH_ALLOWED_SUBREDDITS)
+const FETCH_REDDIT_POST_REGEX =
+  /^https?:\/\/(?:www\.|old\.)?reddit\.com\/r\/[A-Za-z0-9_]+\/comments\/[A-Za-z0-9]+(?:\/[^?#]*)?\/?(?:[?#].*)?$/
 
 const WORKSPACE_COMMANDS = new Set([
   'pwd',
@@ -53,7 +70,7 @@ const argsSchema = z.object({
     .trim()
     .min(1)
     .max(2000)
-    .describe('受限 Bash 命令. workspace 可操作 data/agent-workspace; repo 可只读查看仓库代码; DB 只通过 pnpm db:query.'),
+    .describe('受限 Bash 命令. workspace 可操作 data/agent-workspace; repo 可只读查看仓库代码; 内置 journal/db/style/openbb 子命令走专用 wrapper.'),
 })
 
 type Args = {
@@ -70,16 +87,65 @@ export interface ParsedWorkspaceCommand {
   redirect?: { mode: 'write' | 'append'; path: string }
 }
 
-export interface ParsedDbQueryCommand {
+export interface ParsedDbToolCommand {
   ok: true
-  kind: 'db_query'
-  cwd: 'workspace' | 'repo'
-  args: string[]
+  kind: 'db_tool'
+  cwd: 'workspace'
+  action: 'schema' | 'query'
+  sql?: string
+  params?: Record<string, string | number | boolean | null>
+}
+
+export interface ParsedStyleCommand {
+  ok: true
+  kind: 'style'
+  cwd: 'workspace'
+  scope: 'global' | 'group'
+  section?: 'base' | 'anti_patterns' | 'special_cases'
+  groupId?: number
+}
+
+export interface ParsedOpenbbCommand {
+  ok: true
+  kind: 'openbb'
+  cwd: 'workspace'
+  command: string
+  output?: unknown
+}
+
+export interface ParsedFetchCommand {
+  ok: true
+  kind: 'fetch'
+  cwd: 'workspace'
+  action: 'url' | 'image_url' | 'qq_avatar' | 'reddit_list' | 'reddit_post'
+  url?: string
+  hint?: string
+  qq?: number
+  size?: '640' | '100' | '40'
+  subreddit?: (typeof FETCH_ALLOWED_SUBREDDITS)[number]
+  sort?: 'hot' | 'top' | 'new'
+  limit?: number
+}
+
+export interface ParsedJournalCommand {
+  ok: true
+  kind: 'journal'
+  cwd: 'workspace'
+  action: 'write' | 'list' | 'search' | 'read'
+  kindArg?: JournalKind
+  content?: string
+  query?: string
+  id?: string
+  limit?: number
 }
 
 export type ParsedWorkspaceBashCommand =
   | ParsedWorkspaceCommand
-  | ParsedDbQueryCommand
+  | ParsedDbToolCommand
+  | ParsedStyleCommand
+  | ParsedOpenbbCommand
+  | ParsedFetchCommand
+  | ParsedJournalCommand
   | { ok: false; error: string }
 
 export interface WorkspaceBashRunInput {
@@ -107,6 +173,13 @@ export interface WorkspaceBashDeps {
   runner?: WorkspaceBashRunner
   timeoutMs?: number
   maxOutputChars?: number
+  groupIdWhitelist?: readonly number[]
+  executeDbRead?: (params: ExecuteDbReadParams) => Promise<DbReadResult | unknown>
+  groupIds?: readonly number[]
+  metadata?: TargetMetadataMaps
+  groupCustomizations?: readonly GroupCustomization[]
+  openbbTool?: Tool | null
+  fetchTool?: Tool | null
 }
 
 function shellTokens(command: string): string[] | null {
@@ -226,6 +299,257 @@ function validateRepoArgs(command: string, args: string[]): string | null {
   return null
 }
 
+function parseJournalKind(value: string | undefined): JournalKind | null {
+  return value === 'diary' || value === 'dream' ? value : null
+}
+
+function parseLimit(value: string | undefined): number | null {
+  if (value == null) return null
+  if (!/^[1-9]\d*$/.test(value)) return null
+  const parsed = Number(value)
+  return parsed >= 1 && parsed <= 20 ? parsed : null
+}
+
+function parseOptionalKindAndLimit(tokens: string[]): { kindArg?: JournalKind; limit?: number } | { error: string } {
+  if (tokens.length > 2) return { error: 'journal command has too many arguments' }
+  let kindArg: JournalKind | undefined
+  let limit: number | undefined
+
+  for (const token of tokens) {
+    const parsedKind = parseJournalKind(token)
+    if (parsedKind) {
+      if (kindArg) return { error: 'journal kind specified more than once' }
+      kindArg = parsedKind
+      continue
+    }
+    const parsedLimit = parseLimit(token)
+    if (parsedLimit != null) {
+      if (limit != null) return { error: 'journal limit specified more than once' }
+      limit = parsedLimit
+      continue
+    }
+    return { error: `invalid journal argument: ${token}` }
+  }
+
+  return { ...(kindArg ? { kindArg } : {}), ...(limit != null ? { limit } : {}) }
+}
+
+function parseJournalCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedJournalCommand | { ok: false; error: string } {
+  if (cwd !== 'workspace') return { ok: false, error: 'journal is only available in workspace mode' }
+  if (tokens.includes('>') || tokens.includes('>>')) return { ok: false, error: 'journal does not support redirection' }
+
+  const action = tokens[1]
+  if (action === 'write') {
+    const kindArg = parseJournalKind(tokens[2])
+    if (!kindArg) return { ok: false, error: 'journal write requires kind diary or dream' }
+    const content = tokens.slice(3).join(' ').trim()
+    if (!content) return { ok: false, error: 'journal write requires content' }
+    if (content.length > 2000) return { ok: false, error: 'journal content exceeds 2000 chars' }
+    return { ok: true, kind: 'journal', cwd: 'workspace', action, kindArg, content }
+  }
+
+  if (action === 'list') {
+    const parsed = parseOptionalKindAndLimit(tokens.slice(2))
+    if ('error' in parsed) return { ok: false, error: parsed.error }
+    return { ok: true, kind: 'journal', cwd: 'workspace', action, ...parsed }
+  }
+
+  if (action === 'search') {
+    const query = tokens[2]?.trim()
+    if (!query) return { ok: false, error: 'journal search requires query' }
+    if (query.length > 100) return { ok: false, error: 'journal query exceeds 100 chars' }
+    const parsed = parseOptionalKindAndLimit(tokens.slice(3))
+    if ('error' in parsed) return { ok: false, error: parsed.error }
+    return { ok: true, kind: 'journal', cwd: 'workspace', action, query, ...parsed }
+  }
+
+  if (action === 'read') {
+    const id = tokens[2]?.trim()
+    if (!id || tokens.length !== 3) return { ok: false, error: 'journal read requires exactly one id' }
+    return { ok: true, kind: 'journal', cwd: 'workspace', action, id }
+  }
+
+  return { ok: false, error: 'journal action must be write, list, search, or read' }
+}
+
+function parseDbToolCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedDbToolCommand | { ok: false; error: string } {
+  if (cwd !== 'workspace') return { ok: false, error: 'db is only available in workspace mode' }
+  if (tokens[1] === 'schema' && tokens.length === 2) {
+    return { ok: true, kind: 'db_tool', cwd: 'workspace', action: 'schema' }
+  }
+  if (tokens[1] !== 'query' || tokens.length !== 3) {
+    return { ok: false, error: 'db command must be `db schema` or `db query <json>`' }
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(tokens[2]!)
+  } catch {
+    return { ok: false, error: 'db query requires JSON payload' }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, error: 'db query payload must be an object' }
+  }
+  const payload = parsed as Record<string, unknown>
+  if (typeof payload.sql !== 'string' || payload.sql.trim().length === 0) {
+    return { ok: false, error: 'db query payload requires sql string' }
+  }
+  const params = payload.params
+  if (params != null && (!params || typeof params !== 'object' || Array.isArray(params))) {
+    return { ok: false, error: 'db query params must be an object' }
+  }
+  return {
+    ok: true,
+    kind: 'db_tool',
+    cwd: 'workspace',
+    action: 'query',
+    sql: payload.sql,
+    ...(params ? { params: params as Record<string, string | number | boolean | null> } : {}),
+  }
+}
+
+function parseStyleCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedStyleCommand | { ok: false; error: string } {
+  if (cwd !== 'workspace') return { ok: false, error: 'style is only available in workspace mode' }
+  if (tokens[1] === 'global') {
+    if (tokens.length > 3) return { ok: false, error: 'style global accepts at most one section' }
+    const section = tokens[2]
+    if (section == null) return { ok: true, kind: 'style', cwd: 'workspace', scope: 'global' }
+    if (section !== 'base' && section !== 'anti_patterns' && section !== 'special_cases') {
+      return { ok: false, error: 'style global section must be base, anti_patterns, or special_cases' }
+    }
+    return { ok: true, kind: 'style', cwd: 'workspace', scope: 'global', section }
+  }
+  if (tokens[1] === 'group') {
+    if (tokens.length !== 3 || !/^\d+$/.test(tokens[2] ?? '')) {
+      return { ok: false, error: 'style group requires numeric groupId' }
+    }
+    return { ok: true, kind: 'style', cwd: 'workspace', scope: 'group', groupId: Number(tokens[2]) }
+  }
+  return { ok: false, error: 'style command must be `style global [section]` or `style group <groupId>`' }
+}
+
+function parseOpenbbCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedOpenbbCommand | { ok: false; error: string } {
+  if (cwd !== 'workspace') return { ok: false, error: 'openbb is only available in workspace mode' }
+  if (tokens.length < 2) return { ok: false, error: 'openbb requires a command' }
+
+  if (tokens.length === 2 && tokens[1]?.trim().startsWith('{')) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(tokens[1])
+    } catch {
+      return { ok: false, error: 'openbb JSON payload is invalid' }
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, error: 'openbb JSON payload must be an object' }
+    }
+    const payload = parsed as Record<string, unknown>
+    if (typeof payload.command !== 'string' || !isAllowedOpenbbCommand(payload.command)) {
+      return { ok: false, error: 'openbb command is not allowed' }
+    }
+    return {
+      ok: true,
+      kind: 'openbb',
+      cwd: 'workspace',
+      command: payload.command,
+      ...(payload.output != null ? { output: payload.output } : {}),
+    }
+  }
+
+  const command = tokens.slice(1).join(' ')
+  if (!isAllowedOpenbbCommand(command)) return { ok: false, error: 'openbb command is not allowed' }
+  return { ok: true, kind: 'openbb', cwd: 'workspace', command }
+}
+
+function isUrl(value: string | undefined): value is string {
+  if (!value) return false
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function parseFetchCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedFetchCommand | { ok: false; error: string } {
+  if (cwd !== 'workspace') return { ok: false, error: 'fetch is only available in workspace mode' }
+  const subject = tokens[1]
+
+  if (subject === 'url') {
+    const url = tokens[2]
+    if (!isUrl(url)) return { ok: false, error: 'fetch url requires an http(s) URL' }
+    const hint = tokens.slice(3).join(' ').trim()
+    if (hint.length > 200) return { ok: false, error: 'fetch url hint exceeds 200 chars' }
+    return {
+      ok: true,
+      kind: 'fetch',
+      cwd: 'workspace',
+      action: 'url',
+      url,
+      ...(hint ? { hint } : {}),
+    }
+  }
+
+  if (subject === 'image') {
+    if (tokens.length !== 3 || !isUrl(tokens[2])) return { ok: false, error: 'fetch image requires exactly one http(s) URL' }
+    return { ok: true, kind: 'fetch', cwd: 'workspace', action: 'image_url', url: tokens[2] }
+  }
+
+  if (subject === 'avatar') {
+    if (!/^[1-9]\d*$/.test(tokens[2] ?? '')) return { ok: false, error: 'fetch avatar requires numeric QQ' }
+    const size = tokens[3] ?? '640'
+    if (tokens.length > 4 || (size !== '640' && size !== '100' && size !== '40')) {
+      return { ok: false, error: 'fetch avatar size must be 640, 100, or 40' }
+    }
+    return {
+      ok: true,
+      kind: 'fetch',
+      cwd: 'workspace',
+      action: 'qq_avatar',
+      qq: Number(tokens[2]),
+      size,
+    }
+  }
+
+  if (subject === 'reddit') {
+    const redditAction = tokens[2]
+    if (redditAction === 'list') {
+      const subreddit = tokens[3]
+      if (!subreddit || !FETCH_ALLOWED_SUBREDDIT_SET.has(subreddit)) {
+        return { ok: false, error: `fetch reddit list subreddit must be one of ${FETCH_ALLOWED_SUBREDDITS.join(', ')}` }
+      }
+      const sort = tokens[4] ?? 'hot'
+      if (sort !== 'hot' && sort !== 'top' && sort !== 'new') {
+        return { ok: false, error: 'fetch reddit list sort must be hot, top, or new' }
+      }
+      const rawLimit = tokens[5] ?? '10'
+      if (tokens.length > 6 || !/^[1-9]\d*$/.test(rawLimit)) {
+        return { ok: false, error: 'fetch reddit list limit must be 1-10' }
+      }
+      const limit = Number(rawLimit)
+      if (limit < 1 || limit > 10) return { ok: false, error: 'fetch reddit list limit must be 1-10' }
+      return {
+        ok: true,
+        kind: 'fetch',
+        cwd: 'workspace',
+        action: 'reddit_list',
+        subreddit: subreddit as (typeof FETCH_ALLOWED_SUBREDDITS)[number],
+        sort,
+        limit,
+      }
+    }
+
+    if (redditAction === 'post') {
+      const url = tokens[3]
+      if (tokens.length !== 4 || !url || !FETCH_REDDIT_POST_REGEX.test(url)) {
+        return { ok: false, error: 'fetch reddit post requires a reddit post URL' }
+      }
+      return { ok: true, kind: 'fetch', cwd: 'workspace', action: 'reddit_post', url }
+    }
+  }
+
+  return { ok: false, error: 'fetch command must be url, image, avatar, reddit list, or reddit post' }
+}
+
 export function parseWorkspaceBashCommand(
   command: string,
   cwd: 'workspace' | 'repo' = 'workspace',
@@ -237,9 +561,24 @@ export function parseWorkspaceBashCommand(
   const tokens = shellTokens(trimmed)
   if (!tokens || tokens.length === 0) return { ok: false, error: 'could not parse command' }
 
-  if (tokens[0] === 'pnpm') {
-    if (tokens[1] !== 'db:query') return { ok: false, error: 'only pnpm db:query is allowed' }
-    return { ok: true, kind: 'db_query', cwd, args: tokens.slice(2) }
+  if (tokens[0] === 'journal') {
+    return parseJournalCommand(tokens, cwd)
+  }
+
+  if (tokens[0] === 'db') {
+    return parseDbToolCommand(tokens, cwd)
+  }
+
+  if (tokens[0] === 'style') {
+    return parseStyleCommand(tokens, cwd)
+  }
+
+  if (tokens[0] === 'openbb') {
+    return parseOpenbbCommand(tokens, cwd)
+  }
+
+  if (tokens[0] === 'fetch') {
+    return parseFetchCommand(tokens, cwd)
   }
 
   const executable = tokens[0]!
@@ -287,6 +626,115 @@ function safeResolve(workspaceDir: string, target: string): string {
     throw new Error(`path escapes workspace: ${target}`)
   }
   return resolved
+}
+
+function boundedJournalLimit(limit: number | undefined): number {
+  return limit == null ? 10 : Math.min(limit, 20)
+}
+
+function journalPreview(content: string): string {
+  return content.length <= 200 ? content : `${content.slice(0, 200)}…`
+}
+
+function renderJournalEntries(entries: JournalRecord[]) {
+  return entries.map((entry) => ({
+    id: entry.id,
+    kind: entry.kind,
+    createdAt: entry.createdAt,
+    preview: journalPreview(entry.content),
+  }))
+}
+
+function fetchArgsFromParsed(parsed: ParsedFetchCommand): Record<string, unknown> {
+  if (parsed.action === 'url') {
+    return parsed.hint === undefined
+      ? { action: 'url', url: parsed.url }
+      : { action: 'url', url: parsed.url, hint: parsed.hint }
+  }
+  if (parsed.action === 'image_url') return { action: 'image_url', url: parsed.url }
+  if (parsed.action === 'qq_avatar') return { action: 'qq_avatar', qq: parsed.qq, size: parsed.size }
+  if (parsed.action === 'reddit_list') {
+    return { action: 'reddit_list', subreddit: parsed.subreddit, sort: parsed.sort, limit: parsed.limit }
+  }
+  return { action: 'reddit_post', url: parsed.url }
+}
+
+async function runJournalCommand(parsed: ParsedJournalCommand, rootDir: string): Promise<WorkspaceBashRunResult> {
+  if (parsed.action === 'write') {
+    const entry = await appendJournalRecord(
+      { rootDir },
+      { kind: parsed.kindArg!, content: parsed.content! },
+    )
+    return {
+      exitCode: 0,
+      stdout: JSON.stringify({ ok: true, id: entry.id, kind: entry.kind }),
+      stderr: '',
+      timedOut: false,
+    }
+  }
+
+  if (parsed.action === 'list') {
+    const result = await listJournalRecords(
+      { rootDir },
+      { kind: parsed.kindArg, limit: boundedJournalLimit(parsed.limit) },
+    )
+    return {
+      exitCode: 0,
+      stdout: JSON.stringify({
+        ok: true,
+        action: 'list',
+        entries: renderJournalEntries(result.entries),
+        skippedCorrupt: result.skippedCorrupt,
+      }),
+      stderr: '',
+      timedOut: false,
+    }
+  }
+
+  if (parsed.action === 'search') {
+    const result = await searchJournalRecords(
+      { rootDir },
+      { query: parsed.query!, kind: parsed.kindArg, limit: boundedJournalLimit(parsed.limit) },
+    )
+    return {
+      exitCode: 0,
+      stdout: JSON.stringify({
+        ok: true,
+        action: 'search',
+        query: parsed.query,
+        entries: renderJournalEntries(result.entries),
+        skippedCorrupt: result.skippedCorrupt,
+      }),
+      stderr: '',
+      timedOut: false,
+    }
+  }
+
+  const result = await readJournalRecord({ rootDir }, parsed.id!)
+  if (!result.entry) {
+    return {
+      exitCode: 0,
+      stdout: JSON.stringify({
+        ok: false,
+        action: 'read',
+        id: parsed.id,
+        error: 'journal entry not found',
+      }),
+      stderr: '',
+      timedOut: false,
+    }
+  }
+  return {
+    exitCode: 0,
+    stdout: JSON.stringify({
+      ok: true,
+      action: 'read',
+      entry: result.entry,
+      skippedCorrupt: result.skippedCorrupt,
+    }),
+    stderr: '',
+    timedOut: false,
+  }
 }
 
 export async function runCommand(input: WorkspaceBashRunInput): Promise<WorkspaceBashRunResult> {
@@ -338,7 +786,7 @@ export async function runCommand(input: WorkspaceBashRunInput): Promise<Workspac
 }
 
 export async function runWorkspaceBashCommand(
-  parsed: ParsedWorkspaceCommand | ParsedDbQueryCommand,
+  parsed: ParsedWorkspaceCommand | ParsedJournalCommand,
   options: {
     workspaceDir: string
     repoDir: string
@@ -350,16 +798,8 @@ export async function runWorkspaceBashCommand(
   const runner = options.runner ?? runCommand
   await mkdir(options.workspaceDir, { recursive: true })
 
-  if (parsed.kind === 'db_query') {
-    return runner({
-      executable: 'pnpm',
-      args: ['db:query', ...parsed.args],
-      cwd: options.repoDir,
-      env: minimalEnv(),
-      stdin: undefined,
-      timeoutMs: DB_TIMEOUT_MS,
-      maxOutputChars: DB_OUTPUT_CAP_CHARS,
-    })
+  if (parsed.kind === 'journal') {
+    return await runJournalCommand(parsed, options.workspaceDir)
   }
 
   const runInput: WorkspaceBashRunInput = {
@@ -389,21 +829,56 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
   const repoDir = resolve(deps.repoDir ?? process.cwd())
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const maxOutputChars = deps.maxOutputChars ?? DEFAULT_OUTPUT_CAP_CHARS
+  const dbTool = createDbTool({ groupIdWhitelist: deps.groupIdWhitelist, executeRead: deps.executeDbRead })
+  const styleTool = createChatStyleTool({
+    groupIds: deps.groupIds ?? [],
+    metadata: deps.metadata ?? { groupNames: new Map() },
+    groupCustomizations: deps.groupCustomizations ?? [],
+  })
+  const openbbTool = deps.openbbTool === undefined ? maybeCreateOpenbbCliTool() : deps.openbbTool
+  const fetchTool = deps.fetchTool === undefined ? createFetchContentTool() : deps.fetchTool
 
   return {
     name: 'workspace_bash',
     description: [
       '受限 Bash. 默认 cwd=workspace, 用来整理你的私有工作文件、日记、梦、草稿和索引; 也可 cwd=repo 只读查看自己的仓库代码.',
-      'workspace 允许少量文件命令: pwd/ls/rg/cat/head/tail/wc/mkdir/touch/printf.',
+      'workspace 允许少量文件命令: pwd/ls/rg/cat/head/tail/wc/mkdir/touch/printf; 还提供内置子命令: journal、db、style、openbb、fetch.',
       'repo 只允许读命令: pwd/ls/rg/cat/head/tail/wc; rg 支持普通搜索和 --files, 不能写, 也不能读 .env/logs/node_modules/.git/data/prompts/groups.yaml.',
       '可以用重定向把 printf 输出写入工作区文件, 例如 `printf "..." > notes/today.md`.',
-      '数据库只允许通过 `pnpm db:query` 做只读查询; 不允许 psql/curl/node/cat .env/路径逃逸/任意 shell 组合.',
+      '日记/梦境用 `journal write|list|search|read`; 数据库用 `db schema` / `db query <json>`; 风格用 `style global|group`; 金融数据用 `openbb <command>`; 外部内容用 `fetch url|image|avatar|reddit list|reddit post`.',
+      '数据库仍只读; openbb 仍走 OpenBB allowlist; 不允许 psql/curl/node/cat .env/路径逃逸/任意 shell 组合.',
     ].join(' '),
     schema: argsSchema,
-    async execute(args) {
+    async execute(args, ctx) {
       const parsed = parseWorkspaceBashCommand(args.command, args.cwd)
       if (!parsed.ok) {
         return { content: JSON.stringify({ ok: false, error: `command not allowed: ${parsed.error}` }) }
+      }
+
+      if (parsed.kind === 'db_tool') {
+        if (parsed.action === 'schema') return await dbTool.execute({ action: 'schema' }, ctx)
+        return await dbTool.execute({ action: 'query', sql: parsed.sql!, params: parsed.params }, ctx)
+      }
+
+      if (parsed.kind === 'style') {
+        if (parsed.scope === 'global') {
+          const next = parsed.section ? { scope: 'global' as const, section: parsed.section } : { scope: 'global' as const }
+          return await styleTool.execute(next, ctx)
+        }
+        return await styleTool.execute({ scope: 'group', groupId: parsed.groupId! }, ctx)
+      }
+
+      if (parsed.kind === 'openbb') {
+        if (!openbbTool) return { content: JSON.stringify({ ok: false, error: 'openbb not configured' }) }
+        return await openbbTool.execute(
+          parsed.output === undefined ? { command: parsed.command } : { command: parsed.command, output: parsed.output },
+          ctx,
+        )
+      }
+
+      if (parsed.kind === 'fetch') {
+        if (!fetchTool) return { content: JSON.stringify({ ok: false, error: 'fetch not configured' }) }
+        return await fetchTool.execute(fetchArgsFromParsed(parsed), ctx)
       }
 
       const result = await runWorkspaceBashCommand(parsed, {

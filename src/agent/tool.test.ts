@@ -133,6 +133,35 @@ describe('createToolExecutor', () => {
     assert.equal(JSON.parse(writes[1]!).sideEffect, false)
   })
 
+  test('classifies fetch_content image actions as side effects', async () => {
+    const writes: string[] = []
+    const fetchContent: Tool<{ action: 'url' | 'image_url' | 'qq_avatar' }> = {
+      name: 'fetch_content',
+      description: 'fetch content',
+      schema: z.object({ action: z.enum(['url', 'image_url', 'qq_avatar']) }),
+      async execute() {
+        return { content: JSON.stringify({ ok: true }) }
+      },
+    }
+    const exec = createToolExecutor([fetchContent], {
+      trace: {
+        now: () => new Date('2026-05-25T12:00:00.000Z'),
+        clockMs: () => 100,
+        appender: async (_path, line) => {
+          writes.push(line)
+        },
+      },
+    })
+
+    await exec.execute({ id: 'url', name: 'fetch_content', args: { action: 'url' } }, makeCtx())
+    await exec.execute({ id: 'image', name: 'fetch_content', args: { action: 'image_url' } }, makeCtx())
+    await exec.execute({ id: 'avatar', name: 'fetch_content', args: { action: 'qq_avatar' } }, makeCtx())
+
+    assert.equal(JSON.parse(writes[0]!).sideEffect, false)
+    assert.equal(JSON.parse(writes[1]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[2]!).sideEffect, true)
+  })
+
   test('routes call to correct tool by name and validates args', async () => {
     const echo: Tool<{ msg: string }> = {
       name: 'echo',

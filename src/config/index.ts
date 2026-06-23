@@ -288,7 +288,7 @@ export function parseConfig(env: EnvSource) {
     groupAmbientSendIds,
     /**
      * Per-group prompt customization yaml 路径. 启动时一次 load, 通过
-     * source_profile 工具按需披露, 不拼进 system prompt.
+     * chat_style 工具按需披露, 不拼进 system prompt.
      * 默认 `./prompts/groups.yaml`. 文件不存在 → loader 返空数组 = 所有群走默认人设
      * (groups.yaml 含真实群号, 不入 git; 模板见 prompts/groups.yaml.example).
      */

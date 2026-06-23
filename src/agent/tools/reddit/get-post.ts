@@ -37,7 +37,7 @@ const argsSchema = z.object({
     .refine((u) => REDDIT_POST_REGEX.test(u), {
       message: 'url 必须是 reddit 帖子页 (形如 https://www.reddit.com/r/X/comments/POSTID/...)',
     })
-    .describe('reddit 帖子链接, 通常从 reddit action=list 输出里复制.'),
+    .describe('reddit 帖子链接, 通常从 fetch reddit list 输出里复制.'),
 })
 
 type Args = z.infer<typeof argsSchema>
@@ -128,11 +128,11 @@ export function createGetRedditPostTool(deps: RedditFetchDeps = {}): Tool<Args> 
     name: 'get_reddit_post',
     description: [
       `读 reddit 一条帖子的 top ${TOP_N_COMMENTS} 评论 (输出 ≤ ${OUTPUT_CAP_CHARS} 字符).`,
-      '典型: reddit action=list 给了 10 条, 挑一条想深读的链接调本工具看评论讨论.',
-      'url 必须是 reddit 帖子页 (含 /r/X/comments/POSTID/...). 其它站不接受, 走 fetch_url.',
+      '典型: fetch reddit list 给了 10 条, 挑一条想深读的链接调本工具看评论讨论.',
+      'url 必须是 reddit 帖子页 (含 /r/X/comments/POSTID/...). 其它站不接受, 走 fetch url.',
       `每条评论 ≤${COMMENT_BODY_MAX_CHARS} 字, 硬截断, 不能让本工具返回更长.`,
-      '如果 RSS 带图片直链, 会输出 图片: https://i.redd.it/... 可交给 fetch_image action=url → generate_image.',
-      'RSS 限制: 正文可用性不稳定, 主要看图片链接 + top 评论. reddit action=list 的摘要里已有部分正文.',
+      '如果 RSS 带图片直链, 会输出 图片: https://i.redd.it/... 可交给 fetch image → generate_image.',
+      'RSS 限制: 正文可用性不稳定, 主要看图片链接 + top 评论. fetch reddit list 的摘要里已有部分正文.',
     ].join(' '),
     schema: argsSchema,
     async execute(rawArgs, ctx) {

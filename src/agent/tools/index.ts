@@ -3,22 +3,13 @@ import type { MessageSender } from '../../messaging/message-sender.js'
 import type { BackgroundTaskRegistry } from '../background-task-registry.js'
 import type { GroupCustomization } from '../../config/group-prompts.js'
 import type { TargetMetadataMaps } from '../resolve-target-meta.js'
-import { waitTool } from './wait.js'
-import { restTool } from './rest.js'
+import { pauseTool } from './pause.js'
 import { createSendMessageTool } from './send-message.js'
-import { createDbTool } from './db.js'
 import { maybeCreateWebSearchTool } from './web-search.js'
-import { redditTool } from './reddit.js'
-import { createFetchUrlTool } from './fetch-url.js'
-import { maybeCreateOpenbbCliTool } from './openbb-cli.js'
 import { createGenerateImageTool } from './generate-image.js'
 import { createBackgroundTaskTool } from './background-task.js'
 import { memoryTool } from './memory.js'
-import { writeJournalTool } from './write-journal.js'
 import { collectStickerTool } from './collect-sticker.js'
-import { fetchImageTool } from './fetch-image.js'
-import { styleGuideTool } from './style-guide.js'
-import { createSourceProfileTool } from './source-profile.js'
 import { createWorkspaceBashTool } from './workspace-bash.js'
 import { maybeCreateBrowserTool } from './browser.js'
 
@@ -34,28 +25,21 @@ export interface BotToolDeps {
 
 export function buildBotTools(deps: BotToolDeps): Tool[] {
   const tools: Tool[] = [
-    waitTool,
-    restTool,
+    pauseTool,
     createSendMessageTool({
       sender: deps.sender,
       groupAmbientSendIds: deps.groupAmbientSendIds,
     }),
-    createDbTool({ groupIdWhitelist: deps.groupIds }),
-    redditTool,
-    createFetchUrlTool(),
     createGenerateImageTool({ taskRegistry: deps.taskRegistry }),
-    fetchImageTool,
-    styleGuideTool,
-    createSourceProfileTool({
+    createBackgroundTaskTool({ taskRegistry: deps.taskRegistry }),
+    memoryTool,
+    collectStickerTool,
+    createWorkspaceBashTool({
+      groupIdWhitelist: deps.groupIds,
       groupIds: deps.groupIds,
       metadata: deps.metadata,
       groupCustomizations: deps.groupCustomizations,
     }),
-    createBackgroundTaskTool({ taskRegistry: deps.taskRegistry }),
-    memoryTool,
-    writeJournalTool,
-    collectStickerTool,
-    createWorkspaceBashTool(),
   ]
 
   const browser = maybeCreateBrowserTool()
@@ -63,9 +47,6 @@ export function buildBotTools(deps: BotToolDeps): Tool[] {
 
   const webSearch = maybeCreateWebSearchTool()
   if (webSearch) tools.push(webSearch)
-
-  const openbbCli = maybeCreateOpenbbCliTool()
-  if (openbbCli) tools.push(openbbCli)
 
   return tools
 }

@@ -49,10 +49,10 @@ export function createRedditTool(deps: RedditFetchDeps = {}): Tool<Args> {
   return {
     name: 'reddit',
     description: [
-      'Reddit 按需读取工具, 一个入口用 action 决定动作.',
+      '内部 Reddit 按需读取工具, 由 workspace_bash fetch reddit list/post 调用.',
       'action=list: 列 subreddit 帖子, 只返回标题/链接/图片直链/短摘要; subreddit 只能用 technology / ClaudeAI / OpenAI / wallstreetbets / memes.',
       'action=get_post: 深读 list 返回的一条 reddit 帖子链接, 返回标题、图片链接和 top 评论.',
-      '不要用 fetch_url 抓 reddit; Reddit 走这个专用工具. 输出有图片直链时可交给 fetch_image action=url.',
+      '不要用 fetch url 抓 reddit. 输出有图片直链时可交给 fetch image.',
     ].join(' '),
     schema: argsSchema,
     async execute(args, ctx) {

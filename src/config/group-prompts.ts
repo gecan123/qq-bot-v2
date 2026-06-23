@@ -7,7 +7,7 @@ import { z } from 'zod'
  * Per-group prompt customization (red line 5: 启动时一次 load + freeze).
  *
  * 这个 loader 只在启动期跑一次. 解析出来的 `GroupCustomization[]` 传给
- * `source_profile` 工具按需读取, 不再拼进 system prompt. 这样同一组运行源下,
+ * `chat_style` 工具按需读取, 不再拼进 system prompt. 这样同一组运行源下,
  * 改群口味正文不会污染常驻 system prompt cache 前缀.
  *
  * fallback 语义: BOT_TARGET_GROUP_IDS 里但 yaml 里没条目的群 → 不渲染该群的

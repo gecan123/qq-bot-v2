@@ -104,11 +104,18 @@ export function isSideEffectTool(toolName: string, args?: unknown): boolean {
   if (toolName === 'memory') {
     return hasAction(args, 'write')
   }
+  if (toolName === 'fetch_content') {
+    return hasAnyAction(args, ['image_url', 'qq_avatar'])
+  }
   return SIDE_EFFECT_TOOLS.has(toolName)
 }
 
 function hasAction(args: unknown, action: string): boolean {
   return !!args && typeof args === 'object' && (args as Record<string, unknown>).action === action
+}
+
+function hasAnyAction(args: unknown, actions: readonly string[]): boolean {
+  return !!args && typeof args === 'object' && actions.includes(String((args as Record<string, unknown>).action))
 }
 
 const SIDE_EFFECT_TOOLS = new Set([
@@ -117,7 +124,6 @@ const SIDE_EFFECT_TOOLS = new Set([
   'fetch_image',
   'download_image',
   'remember',
-  'write_journal',
   'collect_sticker',
   'workspace_bash',
   'browser',

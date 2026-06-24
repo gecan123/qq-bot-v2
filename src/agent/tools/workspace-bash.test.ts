@@ -44,7 +44,7 @@ describe('workspace_bash command parser', () => {
     assert.equal(parsed.ok, false)
   })
 
-  test('accepts controlled db, style, and openbb subcommands in workspace mode', () => {
+  test('accepts controlled db, style, openbb, and ai_tone subcommands in workspace mode', () => {
     assert.deepEqual(parseWorkspaceBashCommand('db schema'), {
       ok: true,
       kind: 'db_tool',
@@ -82,6 +82,14 @@ describe('workspace_bash command parser', () => {
       kind: 'openbb',
       cwd: 'workspace',
       command: '/equity/price/historical --symbol AAPL --provider yfinance',
+    })
+
+    assert.deepEqual(parseWorkspaceBashCommand('ai_tone \'{"text":"这玩意儿真就那样吧","threshold":0.7}\''), {
+      ok: true,
+      kind: 'ai_tone',
+      cwd: 'workspace',
+      text: '这玩意儿真就那样吧',
+      threshold: 0.7,
     })
   })
 
@@ -210,6 +218,9 @@ describe('workspace_bash command parser', () => {
       'fetch reddit post https://example.com/not-reddit',
       'fetch avatar nobody',
       'openbb curl https://example.com',
+      'ai_tone not-json',
+      'ai_tone \'{"text":"","threshold":0.6}\'',
+      'ai_tone \'{"text":"hi","threshold":2}\'',
       'find .',
       "sed -n '1,5p' notes.md",
     ]
@@ -239,6 +250,7 @@ describe('workspace_bash command parser', () => {
       'style global',
       'fetch url https://example.com',
       'openbb /equity/price/historical --symbol AAPL',
+      'ai_tone \'{"text":"hi"}\'',
     ]
 
     for (const command of rejected) {
@@ -486,6 +498,46 @@ describe('workspace_bash tool', () => {
 
     assert.equal(result.content, '[{"symbol":"AAPL"}]')
     assert.deepEqual(calls, [{ command: '/equity/price/historical --symbol AAPL --provider yfinance' }])
+    assert.equal(runnerCalled, false)
+  })
+
+  test('runs ai_tone through the internal classifier without shelling out', async () => {
+    let runnerCalled = false
+    const tool = createWorkspaceBashTool({
+      workspaceDir: '/tmp/agent-workspace',
+      repoDir: '/repo',
+      aiTonePredictor: async (text, threshold) => ({
+        prob: 0.42,
+        isAI: false,
+        label: '人味',
+        threshold: threshold ?? 0.6,
+        textLength: text.length,
+      }),
+      runner: async () => {
+        runnerCalled = true
+        return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
+      },
+    })
+
+    const result = JSON.parse((await tool.execute({
+      command: 'ai_tone \'{"text":"这玩意儿真就那样吧","threshold":0.7}\'',
+    }, makeCtx())).content as string) as {
+      ok: boolean
+      prob: number
+      isAI: boolean
+      label: string
+      threshold: number
+      textLength: number
+    }
+
+    assert.deepEqual(result, {
+      ok: true,
+      prob: 0.42,
+      isAI: false,
+      label: '人味',
+      threshold: 0.7,
+      textLength: 9,
+    })
     assert.equal(runnerCalled, false)
   })
 

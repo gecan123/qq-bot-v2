@@ -85,8 +85,7 @@ function expandObjectVariant(variant: unknown): Record<string, unknown>[] | null
 }
 
 export function zodToOpenAIStrictToolJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
-  const json = zod.toJSONSchema(schema) as Record<string, unknown>
-  delete json.$schema
+  const json = zodToToolJsonSchema(schema)
   return makeOpenAIStrictSchema(json) as Record<string, unknown>
 }
 
@@ -101,6 +100,7 @@ function makeOpenAIStrictSchema(input: unknown): unknown {
   if (!isRecord(input)) return input
 
   const next: Record<string, unknown> = { ...input }
+  delete next.format
   for (const key of ['anyOf', 'oneOf', 'allOf']) {
     if (Array.isArray(next[key])) {
       next[key] = (next[key] as unknown[]).map(makeOpenAIStrictSchema)

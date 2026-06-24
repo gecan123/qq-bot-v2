@@ -94,6 +94,14 @@ export interface BrowserControllerConfig {
   actionLogPath: string
   actionTimeoutMs: number
   headless?: boolean
+  humanize?: boolean
+  humanPreset?: 'default' | 'careful'
+  proxy?: string
+  geoip?: boolean
+  timezone?: string
+  locale?: string
+  extensionPaths?: string[]
+  args?: string[]
 }
 
 export function clampBrowserText(value: string, max = BROWSER_TEXT_OUTPUT_LIMIT): string {

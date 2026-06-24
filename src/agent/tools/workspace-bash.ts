@@ -10,6 +10,7 @@ import { createDbTool } from './db.js'
 import { createChatStyleTool } from './chat-style.js'
 import { isAllowedOpenbbCommand, maybeCreateOpenbbCliTool } from './openbb-cli.js'
 import { createFetchContentTool } from './fetch-content.js'
+import { predictAiTone, type AiTonePrediction, type AiTonePredictor } from './ai-tone.js'
 import {
   appendJournalRecord,
   listJournalRecords,
@@ -70,7 +71,7 @@ const argsSchema = z.object({
     .trim()
     .min(1)
     .max(2000)
-    .describe('受限 Bash 命令. workspace 可操作 data/agent-workspace; repo 可只读查看仓库代码; 内置 journal/db/style/openbb 子命令走专用 wrapper.'),
+    .describe('受限 Bash 命令. workspace 可操作 data/agent-workspace; repo 可只读查看仓库代码; 内置 journal/db/style/openbb/fetch/ai_tone 子命令走专用 wrapper.'),
 })
 
 type Args = {
@@ -127,6 +128,14 @@ export interface ParsedFetchCommand {
   limit?: number
 }
 
+export interface ParsedAiToneCommand {
+  ok: true
+  kind: 'ai_tone'
+  cwd: 'workspace'
+  text: string
+  threshold?: number
+}
+
 export interface ParsedJournalCommand {
   ok: true
   kind: 'journal'
@@ -143,7 +152,7 @@ export interface ParsedHelpCommand {
   ok: true
   kind: 'help'
   cwd: 'workspace'
-  topic?: 'workspace' | 'repo' | 'journal' | 'db' | 'style' | 'openbb' | 'fetch'
+  topic?: 'workspace' | 'repo' | 'journal' | 'db' | 'style' | 'openbb' | 'fetch' | 'ai_tone'
 }
 
 export type ParsedWorkspaceBashCommand =
@@ -152,6 +161,7 @@ export type ParsedWorkspaceBashCommand =
   | ParsedStyleCommand
   | ParsedOpenbbCommand
   | ParsedFetchCommand
+  | ParsedAiToneCommand
   | ParsedJournalCommand
   | ParsedHelpCommand
   | { ok: false; error: string }
@@ -188,6 +198,7 @@ export interface WorkspaceBashDeps {
   groupCustomizations?: readonly GroupCustomization[]
   openbbTool?: Tool | null
   fetchTool?: Tool | null
+  aiTonePredictor?: AiTonePredictor
 }
 
 function shellTokens(command: string): string[] | null {
@@ -392,10 +403,19 @@ function parseHelpCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedHe
   if (tokens.length > 2) return { ok: false, error: 'help accepts at most one topic' }
   const topic = tokens[1]
   if (topic == null) return { ok: true, kind: 'help', cwd: 'workspace' }
-  if (topic === 'workspace' || topic === 'repo' || topic === 'journal' || topic === 'db' || topic === 'style' || topic === 'openbb' || topic === 'fetch') {
+  if (
+    topic === 'workspace'
+    || topic === 'repo'
+    || topic === 'journal'
+    || topic === 'db'
+    || topic === 'style'
+    || topic === 'openbb'
+    || topic === 'fetch'
+    || topic === 'ai_tone'
+  ) {
     return { ok: true, kind: 'help', cwd: 'workspace', topic }
   }
-  return { ok: false, error: 'help topic must be workspace, repo, journal, db, style, openbb, or fetch' }
+  return { ok: false, error: 'help topic must be workspace, repo, journal, db, style, openbb, fetch, or ai_tone' }
 }
 
 function parseDbToolCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedDbToolCommand | { ok: false; error: string } {
@@ -576,6 +596,47 @@ function parseFetchCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedF
   return { ok: false, error: 'fetch command must be url, image, avatar, reddit list, or reddit post' }
 }
 
+function parseAiToneCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedAiToneCommand | { ok: false; error: string } {
+  if (cwd !== 'workspace') return { ok: false, error: 'ai_tone is only available in workspace mode' }
+  if (tokens.length !== 2) return { ok: false, error: 'ai_tone requires JSON payload' }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(tokens[1]!)
+  } catch {
+    return { ok: false, error: 'ai_tone JSON payload is invalid' }
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, error: 'ai_tone payload must be an object' }
+  }
+
+  const payload = parsed as Record<string, unknown>
+  if (typeof payload.text !== 'string' || payload.text.trim().length === 0) {
+    return { ok: false, error: 'ai_tone payload requires non-empty text' }
+  }
+  if (payload.text.length > 2000) return { ok: false, error: 'ai_tone text exceeds 2000 chars' }
+  if (
+    payload.threshold != null
+    && (
+      typeof payload.threshold !== 'number'
+      || !Number.isFinite(payload.threshold)
+      || payload.threshold < 0
+      || payload.threshold > 1
+    )
+  ) {
+    return { ok: false, error: 'ai_tone threshold must be a number between 0 and 1' }
+  }
+
+  return {
+    ok: true,
+    kind: 'ai_tone',
+    cwd: 'workspace',
+    text: payload.text,
+    ...(payload.threshold == null ? {} : { threshold: payload.threshold }),
+  }
+}
+
 export function parseWorkspaceBashCommand(
   command: string,
   cwd: 'workspace' | 'repo' = 'workspace',
@@ -609,6 +670,10 @@ export function parseWorkspaceBashCommand(
 
   if (tokens[0] === 'fetch') {
     return parseFetchCommand(tokens, cwd)
+  }
+
+  if (tokens[0] === 'ai_tone') {
+    return parseAiToneCommand(tokens, cwd)
   }
 
   const executable = tokens[0]!
@@ -743,6 +808,13 @@ function renderHelpCommand(parsed: ParsedHelpCommand): WorkspaceBashRunResult {
         'fetch avatar <qq> [640|100|40]',
         `fetch reddit list ${FETCH_ALLOWED_SUBREDDITS.join('|')} [hot|top|new] [limit]`,
         'fetch reddit post <reddit-post-url>',
+      ],
+    },
+    ai_tone: {
+      purpose: '判断中文文本更像 AI 腔调还是人味; 只做参考, 短文本和技术长文可能误判.',
+      commands: [
+        'ai_tone \'{"text":"要判断的中文文本"}\'',
+        'ai_tone \'{"text":"要判断的中文文本","threshold":0.7}\'',
       ],
     },
   } as const
@@ -951,6 +1023,10 @@ export async function runWorkspaceBashCommand(
   return result
 }
 
+function renderAiToneResult(result: AiTonePrediction): string {
+  return JSON.stringify({ ok: true, ...result })
+}
+
 export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args> {
   const workspaceDir = resolve(deps.workspaceDir ?? DEFAULT_WORKSPACE_DIR)
   const repoDir = resolve(deps.repoDir ?? process.cwd())
@@ -964,16 +1040,17 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
   })
   const openbbTool = deps.openbbTool === undefined ? maybeCreateOpenbbCliTool() : deps.openbbTool
   const fetchTool = deps.fetchTool === undefined ? createFetchContentTool() : deps.fetchTool
+  const aiTonePredictor = deps.aiTonePredictor ?? predictAiTone
 
   return {
     name: 'workspace_bash',
     description: [
       '受限 Bash. 默认 cwd=workspace, 用来整理你的私有工作文件、日记、梦、草稿和索引; 也可 cwd=repo 只读查看自己的仓库代码.',
-      'workspace 允许少量文件命令: pwd/ls/rg/cat/head/tail/wc/mkdir/touch/printf; 还提供内置子命令: help、journal、db、style、openbb、fetch.',
+      'workspace 允许少量文件命令: pwd/ls/rg/cat/head/tail/wc/mkdir/touch/printf; 还提供内置子命令: help、journal、db、style、openbb、fetch、ai_tone.',
       'repo 只允许读命令: pwd/ls/rg/cat/head/tail/wc; rg 支持普通搜索和 --files, 不能写, 也不能读 .env/logs/node_modules/.git/data/prompts/groups.yaml.',
       '可以用重定向把 printf 输出写入工作区文件, 例如 `printf "..." > notes/today.md`.',
-      '不确定语法时先用 `help` 或 `help <topic>`; 日记/梦境用 `journal write|list|search|read`; 数据库用 `db schema` / `db query <json>`; 风格用 `style global|group`; 金融数据用 `openbb <command>`; 外部内容用 `fetch url|image|avatar|reddit list|reddit post`.',
-      '数据库仍只读; openbb 仍走 OpenBB allowlist; 不允许 psql/curl/node/cat .env/路径逃逸/任意 shell 组合.',
+      '不确定语法时先用 `help` 或 `help <topic>`; 日记/梦境用 `journal write|list|search|read`; 数据库用 `db schema` / `db query <json>`; 风格用 `style global|group`; 金融数据用 `openbb <command>`; 外部内容用 `fetch url|image|avatar|reddit list|reddit post`; AI 腔调检测用 `ai_tone <json>`.',
+      '数据库仍只读; openbb 仍走 OpenBB allowlist; ai_tone 只走内置模型; 不允许 psql/curl/node/cat .env/路径逃逸/任意 shell 组合.',
     ].join(' '),
     schema: argsSchema,
     async execute(args, ctx) {
@@ -1006,6 +1083,10 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
       if (parsed.kind === 'fetch') {
         if (!fetchTool) return { content: JSON.stringify({ ok: false, error: 'fetch not configured' }) }
         return await fetchTool.execute(fetchArgsFromParsed(parsed), ctx)
+      }
+
+      if (parsed.kind === 'ai_tone') {
+        return { content: renderAiToneResult(await aiTonePredictor(parsed.text, parsed.threshold)) }
       }
 
       const result = await runWorkspaceBashCommand(parsed, {

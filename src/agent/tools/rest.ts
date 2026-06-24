@@ -16,11 +16,7 @@ export interface RestToolDeps {
 }
 
 const defaultTimer = {
-  setTimeout: (cb: () => void, ms: number) => {
-    const handle = setTimeout(cb, ms)
-    handle.unref()
-    return handle as unknown
-  },
+  setTimeout: (cb: () => void, ms: number) => setTimeout(cb, ms) as unknown,
   clearTimeout: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 }
 

@@ -22,7 +22,7 @@
 - bot 在允许来源之间共享一个 owned `AgentContext`。
 - 新事件源必须通过 event queue 和 dedup 路径渲染为确定性的 `user` message，不要插入历史中段。
 - 跨源知识共享是预期行为。跨源发言仍然依赖显式 `send_message` target，以及 ingress/tool 安全规则。
-- idle hint、curiosity tick、background task 完成等运行时事件如果进入 LLM，必须走稳定事件渲染或 tool-result 路径。
+- curiosity tick、background task 完成等运行时事件如果进入 LLM，必须走稳定事件渲染或 tool-result 路径。
 
 ## 代码地图
 

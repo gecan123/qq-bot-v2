@@ -156,7 +156,7 @@ export function createListRedditTool(deps: RedditFetchDeps = {}): Tool<Args> {
         )
         log.warn({ url, errorKind: outcome.errorKind }, 'list_reddit_failed')
         return {
-          content: `[reddit action=list 失败] ${url}: ${outcome.errorKind}. 可换个 subreddit / 稍后再试 / 或直接 pause action=wait.`,
+          content: `[reddit action=list 失败] ${url}: ${outcome.errorKind}. 可换个 subreddit / 稍后再试 / 或直接 pause action=rest.`,
         }
       }
 

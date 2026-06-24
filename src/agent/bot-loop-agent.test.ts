@@ -143,6 +143,53 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(ctx.getSnapshot().messages.length, 0, 'wake events must not enter context')
   })
 
+  test('空队列等待外部事件时只保活进程, 不注入空闲事件', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    const llm: LlmClient = {
+      async chat() {
+        throw new Error('LLM should not run while there are no events')
+      },
+    }
+    const { repo } = makeMockSnapshotRepo()
+    let opened = 0
+    let closed = 0
+
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: () => null,
+      eventDebounceMs: 0,
+      keepAlive: {
+        open() {
+          opened++
+          return {
+            close() {
+              closed++
+            },
+          }
+        },
+      },
+    })
+
+    const startPromise = agent.start()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    assert.equal(opened, 1)
+    assert.equal(closed, 0)
+    assert.equal(eventQueue.size(), 0, 'waiting must not enqueue wake/idle events')
+    assert.equal(ctx.getSnapshot().messages.length, 0)
+
+    await agent.stop()
+    await startPromise
+
+    assert.equal(closed, 1)
+  })
+
   test('LLM call 非 send_message tool 后立即跑下一轮消化 result', async () => {
     // 双轮意图: round 1 LLM call reddit → tool result 进 context → 主循环立即跑 round 2 →
     // LLM 看到 result 决定 send_message → 真发出去. 但 send_message 之后不再继续空转,

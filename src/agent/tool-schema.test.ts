@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import { z } from 'zod'
 import { zodToOpenAIStrictToolJsonSchema, zodToToolJsonSchema } from './tool-schema.js'
 import { collectStickerTool } from './tools/collect-sticker.js'
+import { pauseTool } from './tools/pause.js'
 
 test('zodToToolJsonSchema flattens collect_sticker union to Anthropic object schema', () => {
   const json = zodToToolJsonSchema(collectStickerTool.schema)
@@ -55,4 +56,40 @@ test('zodToOpenAIStrictToolJsonSchema makes optional object fields required and 
       { type: 'null' },
     ],
   })
+})
+
+test('zodToOpenAIStrictToolJsonSchema keeps pause schema strict and rest-only', () => {
+  const json = zodToOpenAIStrictToolJsonSchema(pauseTool.schema)
+
+  assert.equal(json.type, 'object')
+  assert.equal('oneOf' in json, false)
+  assert.equal('anyOf' in json, false)
+  assert.deepEqual(json.required, ['action', 'durationSeconds', 'reason'])
+
+  const props = json.properties as Record<string, Record<string, unknown>>
+  assert.equal(props.action.const, 'rest')
+  assert.deepEqual(props.reason.anyOf, [
+    { description: '此刻为什么休息的简短说明, 仅用于日志.', type: 'string' },
+    { type: 'null' },
+  ])
+  assert.deepEqual(props.durationSeconds, {
+    default: 30,
+    description: '休息秒数, 默认 30, 最大 300.',
+    type: 'integer',
+    minimum: 1,
+    maximum: 300,
+  })
+})
+
+test('zodToOpenAIStrictToolJsonSchema removes unsupported string formats', () => {
+  const schema = z.object({
+    url: z.string().url().optional(),
+  })
+
+  const json = zodToOpenAIStrictToolJsonSchema(schema)
+  const props = json.properties as Record<string, Record<string, unknown>>
+  assert.deepEqual(props.url.anyOf, [
+    { type: 'string' },
+    { type: 'null' },
+  ])
 })

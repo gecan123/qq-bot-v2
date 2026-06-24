@@ -5,34 +5,6 @@ import { InMemoryEventQueue } from '../event-queue.js'
 import type { BotEvent } from '../event.js'
 import type { ToolContext } from '../tool.js'
 
-interface FakeTimer {
-  setTimeout: (cb: () => void, ms: number) => unknown
-  clearTimeout: (handle: unknown) => void
-  fire(): void
-}
-
-function makeFakeTimer(): FakeTimer {
-  let nextId = 1
-  const handlers = new Map<number, () => void>()
-  return {
-    setTimeout(cb) {
-      const id = nextId++
-      handlers.set(id, cb)
-      return id
-    },
-    clearTimeout(handle) {
-      handlers.delete(handle as number)
-    },
-    fire() {
-      const entries = [...handlers.entries()]
-      for (const [id, cb] of entries) {
-        handlers.delete(id)
-        cb()
-      }
-    },
-  }
-}
-
 function makeCtx(): { ctx: ToolContext; queue: InMemoryEventQueue<BotEvent> } {
   const queue = new InMemoryEventQueue<BotEvent>()
   return { ctx: { eventQueue: queue, roundIndex: 0 }, queue }
@@ -53,25 +25,23 @@ function privateEvent(): BotEvent {
 }
 
 describe('pause tool', () => {
-  test('schema accepts wait and rest actions', () => {
-    assert.equal(pauseTool.schema.safeParse({ action: 'wait' }).success, true)
+  test('schema only accepts rest action', () => {
+    assert.equal(pauseTool.schema.safeParse({ action: 'wait' }).success, false)
 
     const rest = pauseTool.schema.safeParse({ action: 'rest' })
     assert.equal(rest.success, true)
     assert.equal((rest.data as { durationSeconds: number }).durationSeconds, 30)
   })
 
-  test('action=wait delegates to wait behavior', async () => {
-    const timer = makeFakeTimer()
-    const tool = createPauseTool({ wait: { idleHintMs: 600_000, timer } })
-    const { ctx } = makeCtx()
+  test('description no longer advertises wait or idle hints', () => {
+    const tool = createPauseTool()
+    assert.doesNotMatch(tool.description, /action=wait|空闲提示|长时间无事件/)
+  })
 
-    const promise = tool.execute({ action: 'wait' }, ctx)
-    timer.fire()
-    const result = await promise
-
-    assert.match(result.content as string, /\[空闲提示\]/)
-    assert.match(result.content as string, /10 分钟/)
+  test('description prioritizes finding something to do after rest', () => {
+    const tool = createPauseTool()
+    assert.match(tool.description, /醒来后优先找事做/)
+    assert.match(tool.description, /仍然没有真实锚点或任务时才继续休息/)
   })
 
   test('action=rest delegates to rest behavior', async () => {

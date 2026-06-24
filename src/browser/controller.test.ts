@@ -4,9 +4,43 @@ import { createServer, type Server } from 'node:http'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { BrowserController } from './controller.js'
+import { BrowserController, buildCloakLaunchOptions } from './controller.js'
 
 const RUN_REAL_BROWSER = process.env.BOT_BROWSER_REAL_TESTS === '1'
+
+describe('buildCloakLaunchOptions', () => {
+  it('maps controller config to CloakBrowser persistent-context options', () => {
+    assert.deepEqual(
+      buildCloakLaunchOptions({
+        profileDir: 'data/browser-profile/luna',
+        artifactDir: 'data/agent-workspace/browser',
+        actionLogPath: 'logs/browser-actions.ndjson',
+        actionTimeoutMs: 15_000,
+        headless: true,
+        humanize: false,
+        humanPreset: 'careful',
+        proxy: 'http://user:pass@proxy.example:8080',
+        geoip: true,
+        timezone: 'America/New_York',
+        locale: 'en-US',
+        extensionPaths: ['data/browser-extensions/one'],
+        args: ['--fingerprint=12345'],
+      }),
+      {
+        userDataDir: 'data/browser-profile/luna',
+        headless: true,
+        humanize: false,
+        humanPreset: 'careful',
+        proxy: 'http://user:pass@proxy.example:8080',
+        geoip: true,
+        timezone: 'America/New_York',
+        locale: 'en-US',
+        extensionPaths: ['data/browser-extensions/one'],
+        args: ['--fingerprint=12345'],
+      },
+    )
+  })
+})
 
 describe('BrowserController real browser fixture', { skip: !RUN_REAL_BROWSER }, () => {
   let fixtureServer: Server

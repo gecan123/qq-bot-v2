@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { restTool } from './rest.js'
+import { createRestTool, restTool } from './rest.js'
 import { InMemoryEventQueue } from '../event-queue.js'
 import type { BotEvent } from '../event.js'
 import type { ToolContext } from '../tool.js'
@@ -8,6 +8,34 @@ import type { ToolContext } from '../tool.js'
 function makeCtx(): { ctx: ToolContext; queue: InMemoryEventQueue<BotEvent> } {
   const queue = new InMemoryEventQueue<BotEvent>()
   return { ctx: { eventQueue: queue, roundIndex: 0 }, queue }
+}
+
+interface FakeTimer {
+  setTimeout: (cb: () => void, ms: number) => unknown
+  clearTimeout: (handle: unknown) => void
+  fire(): void
+}
+
+function makeFakeTimer(): FakeTimer {
+  let nextId = 1
+  const handlers = new Map<number, () => void>()
+  return {
+    setTimeout(cb) {
+      const id = nextId++
+      handlers.set(id, cb)
+      return id
+    },
+    clearTimeout(handle) {
+      handlers.delete(handle as number)
+    },
+    fire() {
+      const entries = [...handlers.entries()]
+      for (const [id, cb] of entries) {
+        handlers.delete(id)
+        cb()
+      }
+    },
+  }
 }
 
 function groupEvent(overrides: Partial<Extract<BotEvent, { type: 'napcat_message' }>> = {}): BotEvent {
@@ -68,16 +96,23 @@ describe('rest tool', () => {
   })
 
   test('plain group message does not interrupt rest', async () => {
+    const timer = makeFakeTimer()
+    const tool = createRestTool({ timer })
     const { ctx, queue } = makeCtx()
     queue.enqueue(groupEvent({ mentionedSelf: false }))
 
+    const restPromise = tool.execute({ durationSeconds: 30 }, ctx)
     const result = await Promise.race([
-      restTool.execute({ durationSeconds: 30 }, ctx).then(() => 'returned' as const),
+      restPromise.then(() => 'returned' as const),
       tickMicrotasks().then(() => 'pending' as const),
     ])
 
     assert.equal(result, 'pending')
     assert.equal(queue.size(), 1)
+
+    timer.fire()
+    const finalResult = await restPromise
+    assert.match(finalResult.content as string, /\[休息结束\]/)
   })
 })
 

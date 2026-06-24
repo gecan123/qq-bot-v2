@@ -3,6 +3,7 @@ import { basename, dirname, extname, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { BrowserContext, Page } from 'playwright-core'
 import { launchPersistentContext } from 'cloakbrowser'
+import type { LaunchPersistentContextOptions } from 'cloakbrowser'
 import { compressForContext } from '../media/compress-for-context.js'
 import {
   BROWSER_OBSERVE_ELEMENT_LIMIT,
@@ -30,6 +31,21 @@ const INTERACTIVE_SELECTOR = [
   '[contenteditable="true"]',
   'summary',
 ].join(',')
+
+export function buildCloakLaunchOptions(config: BrowserControllerConfig): LaunchPersistentContextOptions {
+  return {
+    userDataDir: config.profileDir,
+    headless: config.headless ?? false,
+    humanize: config.humanize ?? true,
+    ...(config.humanPreset ? { humanPreset: config.humanPreset } : {}),
+    ...(config.proxy ? { proxy: config.proxy } : {}),
+    ...(config.geoip != null ? { geoip: config.geoip } : {}),
+    ...(config.timezone ? { timezone: config.timezone } : {}),
+    ...(config.locale ? { locale: config.locale } : {}),
+    ...(config.extensionPaths?.length ? { extensionPaths: config.extensionPaths } : {}),
+    ...(config.args?.length ? { args: config.args } : {}),
+  }
+}
 
 interface PageRecord {
   pageId: string
@@ -128,6 +144,7 @@ export class BrowserController {
       action: 'help',
       message: [
         'browser 是单步真实浏览器工具. 一次只做一个 action.',
+        '底层是 headed CloakBrowser persistent profile, 登录态和 cookie 可跨 sidecar 重启复用.',
         '常用流程: open -> observe -> click/type/scroll -> screenshot/download/annotate.',
         'observe 返回可交互 elementId; click/type 优先传 elementId. 坐标点击只作为 fallback.',
         'screenshot 会把压缩图作为 image block 返回并进入 AgentContext.',
@@ -408,11 +425,7 @@ export class BrowserController {
     if (this.context) return this.context
     await mkdir(this.config.profileDir, { recursive: true })
     await mkdir(this.config.artifactDir, { recursive: true })
-    this.context = await launchPersistentContext({
-      userDataDir: this.config.profileDir,
-      headless: this.config.headless ?? false,
-      humanize: true,
-    })
+    this.context = await launchPersistentContext(buildCloakLaunchOptions(this.config))
     this.crashed = false
     for (const page of this.context.pages()) {
       await this.createPageRecord(page)

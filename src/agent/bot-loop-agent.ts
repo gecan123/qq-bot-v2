@@ -29,10 +29,25 @@ export interface BotLoopAgentDeps {
   errorBackoffMs?: number
   /** 队列有事件时，drain 前等待更多事件堆积的毫秒数（0 = 不等）。 */
   eventDebounceMs?: number
+  /** 测试可注入。等待外部事件期间用于保活进程；不产生 wake 或 tool result。 */
+  keepAlive?: {
+    open: () => { close: () => void }
+  }
 }
 
 const DEFAULT_ERROR_BACKOFF_MS = 5_000
 const DEFAULT_EVENT_DEBOUNCE_MS = 3_000
+const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 86_400_000
+const defaultKeepAlive = {
+  open() {
+    const timer = setInterval(() => {}, DEFAULT_KEEP_ALIVE_INTERVAL_MS)
+    return {
+      close() {
+        clearInterval(timer)
+      },
+    }
+  },
+}
 
 export interface BotLoopAgent {
   start(): Promise<void>
@@ -192,11 +207,20 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   async function runOnce(): Promise<void> {
     const { ranRound, shouldWaitForExternalEvent } = await step()
     if (!ranRound && !stopRequested) {
-      await deps.eventQueue.waitForEvent()
+      await waitForExternalEvent()
     }
     if (ranRound && shouldWaitForExternalEvent && !stopRequested) {
       log.debug({ roundIndex }, 'round_waiting_after_send_message')
+      await waitForExternalEvent()
+    }
+  }
+
+  async function waitForExternalEvent(): Promise<void> {
+    const keepAlive = (deps.keepAlive ?? defaultKeepAlive).open()
+    try {
       await deps.eventQueue.waitForEvent()
+    } finally {
+      keepAlive.close()
     }
   }
 

@@ -76,7 +76,7 @@ export function createWaitTool(deps: WaitToolDeps = {}): Tool<WaitArgs> {
           log.info({ elapsedMs }, 'wait_idle_fired')
           const minutes = Math.round(idleHintMs / 60_000)
           return {
-            content: `[空闲提示] 当前北京时间: ${now}. 已闲置约 ${minutes} 分钟. 可选动作: 1) 用 workspace_bash 执行 fetch reddit list technology hot 5 / fetch reddit list ClaudeAI hot 5 / fetch reddit list memes hot 5, 先刷一轮外界内容, 看完再决定要不要深读或开话题; 2) 用 journal write diary <内容> 整理自己的想法; 3) 觉得工具太少、事件太少就私聊创作者提需求; 4) 没兴趣就 pause action=wait 继续等.`,
+            content: `[空闲提示] 当前北京时间: ${now}. 已闲置约 ${minutes} 分钟. 先挑一件自己真想做的小任务, 不要默认停机: 1) 用 workspace_bash 执行 fetch reddit list technology hot 5 / fetch reddit list ClaudeAI hot 5 / fetch reddit list memes hot 5, 先刷一轮外界内容, 看完再决定要不要深读或开话题; 2) 回顾上下文或用 journal write diary <内容> 整理自己的想法; 3) 用 workspace_bash cwd=repo 只读自审, 找具体改进点; 4) 真的卡住、真的无聊、或连续觉得工具/事件不够时, 才偶尔私聊创作者提需求, 说清楚: 想做什么 / 现在缺什么 / 建议加什么; 不要频繁发泛泛愿望; 5) 做完一轮或确实没兴趣, 再 pause action=wait 继续等.`,
           }
         }
         log.info({ elapsedMs }, 'wait_resumed_by_event')

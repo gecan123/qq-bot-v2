@@ -102,7 +102,7 @@ export interface ParsedStyleCommand {
   kind: 'style'
   cwd: 'workspace'
   scope: 'global' | 'group'
-  section?: 'base' | 'anti_patterns' | 'special_cases'
+  section?: 'constraints' | 'base' | 'anti_patterns' | 'special_cases'
   groupId?: number
 }
 
@@ -460,8 +460,8 @@ function parseStyleCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedS
     if (tokens.length > 3) return { ok: false, error: 'style global accepts at most one section' }
     const section = tokens[2]
     if (section == null) return { ok: true, kind: 'style', cwd: 'workspace', scope: 'global' }
-    if (section !== 'base' && section !== 'anti_patterns' && section !== 'special_cases') {
-      return { ok: false, error: 'style global section must be base, anti_patterns, or special_cases' }
+    if (section !== 'constraints' && section !== 'base' && section !== 'anti_patterns' && section !== 'special_cases') {
+      return { ok: false, error: 'style global section must be constraints, base, anti_patterns, or special_cases' }
     }
     return { ok: true, kind: 'style', cwd: 'workspace', scope: 'global', section }
   }
@@ -789,7 +789,7 @@ function renderHelpCommand(parsed: ParsedHelpCommand): WorkspaceBashRunResult {
     style: {
       purpose: '按需读取全局或群风格说明.',
       commands: [
-        'style global [base|anti_patterns|special_cases]',
+        'style global [constraints|base|anti_patterns|special_cases]',
         'style group <groupId>',
       ],
     },
@@ -828,6 +828,7 @@ function renderHelpCommand(parsed: ParsedHelpCommand): WorkspaceBashRunResult {
         'help fetch',
         'journal list 5',
         'fetch url https://example.com "要点"',
+        'fetch reddit list technology hot 5',
         'db schema',
       ],
     }
@@ -1027,6 +1028,31 @@ function renderAiToneResult(result: AiTonePrediction): string {
   return JSON.stringify({ ok: true, ...result })
 }
 
+function commandErrorGuidance(error: string): { help: string; try: string } {
+  if (error.startsWith('fetch ')) {
+    return { help: 'help fetch', try: 'fetch reddit list technology hot 5' }
+  }
+  if (error.startsWith('db ')) {
+    return { help: 'help db', try: 'db schema' }
+  }
+  if (error.startsWith('journal ')) {
+    return { help: 'help journal', try: 'journal list 5' }
+  }
+  if (error.startsWith('style ')) {
+    return { help: 'help style', try: 'style global' }
+  }
+  if (error.startsWith('openbb ')) {
+    return { help: 'help openbb', try: 'help openbb' }
+  }
+  if (error.startsWith('ai_tone ')) {
+    return { help: 'help ai_tone', try: 'help ai_tone' }
+  }
+  if (error.startsWith('repo ')) {
+    return { help: 'help repo', try: 'rg --files src' }
+  }
+  return { help: 'help workspace', try: 'help' }
+}
+
 export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args> {
   const workspaceDir = resolve(deps.workspaceDir ?? DEFAULT_WORKSPACE_DIR)
   const repoDir = resolve(deps.repoDir ?? process.cwd())
@@ -1049,14 +1075,21 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
       'workspace 允许少量文件命令: pwd/ls/rg/cat/head/tail/wc/mkdir/touch/printf; 还提供内置子命令: help、journal、db、style、openbb、fetch、ai_tone.',
       'repo 只允许读命令: pwd/ls/rg/cat/head/tail/wc; rg 支持普通搜索和 --files, 不能写, 也不能读 .env/logs/node_modules/.git/data/prompts/groups.yaml.',
       '可以用重定向把 printf 输出写入工作区文件, 例如 `printf "..." > notes/today.md`.',
-      '不确定语法时先用 `help` 或 `help <topic>`; 日记/梦境用 `journal write|list|search|read`; 数据库用 `db schema` / `db query <json>`; 风格用 `style global|group`; 金融数据用 `openbb <command>`; 外部内容用 `fetch url|image|avatar|reddit list|reddit post`; AI 腔调检测用 `ai_tone <json>`.',
+      '常用路由不用先 help: 查网页 `fetch url <url> [hint]`; 刷 Reddit `fetch reddit list technology hot 5`; 看 repo 传 cwd=repo 后用 `rg --files src` / `rg <pattern> src` / `cat <path>`; 查历史先 `db schema` 再 `db query <json>`; 日记/梦境用 `journal write|list|search|read`.',
+      '不确定语法时先用 `help` 或 `help <topic>`; 聊天约束/风格用 `style global constraints|base|anti_patterns|special_cases` 或 `style group`; 金融数据用 `openbb <command>`; 抓图片/头像用 `fetch image <url>` / `fetch avatar <qq>`; AI 腔调检测用 `ai_tone <json>`.',
       '数据库仍只读; openbb 仍走 OpenBB allowlist; ai_tone 只走内置模型; 不允许 psql/curl/node/cat .env/路径逃逸/任意 shell 组合.',
     ].join(' '),
     schema: argsSchema,
     async execute(args, ctx) {
       const parsed = parseWorkspaceBashCommand(args.command, args.cwd)
       if (!parsed.ok) {
-        return { content: JSON.stringify({ ok: false, error: `command not allowed: ${parsed.error}` }) }
+        return {
+          content: JSON.stringify({
+            ok: false,
+            error: `command not allowed: ${parsed.error}`,
+            ...commandErrorGuidance(parsed.error),
+          }),
+        }
       }
 
       if (parsed.kind === 'db_tool') {

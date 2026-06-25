@@ -9,6 +9,10 @@ const argsSchema = z.object({
 
 type Args = z.infer<typeof argsSchema>
 
+export const TASK_RESULT_TEXT_CAP_CHARS = 6000
+export const TASK_RESULT_FIELD_PREVIEW_CHARS = 1000
+export const TASK_RESULT_CONTEXT_IMAGE_MAX_BASE64_CHARS = 1_000_000
+
 export interface GetTaskResultDeps {
   taskRegistry: BackgroundTaskRegistry
 }
@@ -42,7 +46,7 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
 
       if (task.status === 'failed') {
         return {
-          content: JSON.stringify({
+          content: stringifyCappedTaskPayload({
             ok: false,
             taskId: task.id,
             toolName: task.toolName,
@@ -53,10 +57,11 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
       }
 
       const data = task.resultData as Record<string, unknown> | undefined
+      const next = nextStepForTaskResult(data)
       const blocks: ToolResultContentBlock[] = [
         {
           type: 'text',
-          text: JSON.stringify({
+          text: stringifyCappedTaskPayload({
             ok: true,
             taskId: task.id,
             toolName: task.toolName,
@@ -73,13 +78,14 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
             ...(data?.failedCount != null ? { failedCount: data.failedCount } : {}),
             ...(Array.isArray(data?.images) ? { images: data.images } : {}),
             ...(Array.isArray(data?.failures) ? { failures: data.failures } : {}),
+            ...(next ? { next } : {}),
           }),
         },
       ]
 
       if (data?.contextImage && typeof data.contextImage === 'object') {
         const img = data.contextImage as { base64?: string; mediaType?: string }
-        if (img.base64 && img.mediaType) {
+        if (img.base64 && img.mediaType && img.base64.length <= TASK_RESULT_CONTEXT_IMAGE_MAX_BASE64_CHARS) {
           blocks.push({
             type: 'image',
             source: {
@@ -94,4 +100,67 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
       return { content: blocks }
     },
   }
+}
+
+function nextStepForTaskResult(data: Record<string, unknown> | undefined): string | null {
+  if (!data) return null
+  if (typeof data.ephemeralRef === 'string') {
+    return `发图: 调用 send_message imageRef=ephemeral:${data.ephemeralRef}`
+  }
+  if (Array.isArray(data.images)) {
+    const first = data.images.find((image): image is { ephemeralRef: string } => (
+      !!image
+      && typeof image === 'object'
+      && typeof (image as { ephemeralRef?: unknown }).ephemeralRef === 'string'
+    ))
+    if (first) return `发图: 选择 images[].ephemeralRef 后调用 send_message imageRef=ephemeral:${first.ephemeralRef}`
+  }
+  return null
+}
+
+function stringifyCappedTaskPayload(payload: Record<string, unknown>): string {
+  const json = safeStringify(payload)
+  if (json && json.length <= TASK_RESULT_TEXT_CAP_CHARS) return json
+
+  const fallback: Record<string, unknown> = {
+    ok: payload.ok,
+    taskId: payload.taskId,
+    toolName: payload.toolName,
+    status: payload.status,
+    truncated: true,
+  }
+
+  if (typeof payload.summary === 'string') {
+    fallback.summary = truncateString(payload.summary, TASK_RESULT_FIELD_PREVIEW_CHARS)
+  }
+  if (typeof payload.error === 'string') {
+    fallback.error = truncateString(payload.error, TASK_RESULT_FIELD_PREVIEW_CHARS)
+  }
+  if (typeof payload.next === 'string') {
+    fallback.next = payload.next
+  }
+
+  const fallbackJson = safeStringify(fallback)
+  if (fallbackJson && fallbackJson.length <= TASK_RESULT_TEXT_CAP_CHARS) return fallbackJson
+
+  return JSON.stringify({
+    ok: payload.ok,
+    taskId: payload.taskId,
+    toolName: payload.toolName,
+    status: payload.status,
+    truncated: true,
+  })
+}
+
+function safeStringify(value: unknown): string | null {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return null
+  }
+}
+
+function truncateString(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value
+  return `${value.slice(0, Math.max(0, maxChars - 3))}...`
 }

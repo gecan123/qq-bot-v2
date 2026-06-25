@@ -6,6 +6,8 @@ export interface RepoCheckFiles {
   'src/agent/tools/index.ts': string
   'src/agent/tools/workspace-bash.ts': string
   'prompts/bot-system.md': string
+  'prompts/bot-chat-constraints.md': string
+  'prompts/bot-style.md': string
   'prisma/schema.prisma': string
   'docs/README.md': string
   'docs/ARCHITECTURE.md': string
@@ -75,6 +77,7 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   checkAgentEntry('CLAUDE.md', files['CLAUDE.md'], errors)
   checkDocsMap(files, errors)
   checkToolIndexes(files, errors)
+  checkPromptSplit(files, errors)
 
   for (const surface of README_REMOVED_SURFACES) {
     if (files['README.md'].includes(surface)) {
@@ -122,6 +125,21 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   }
 
   return { errors }
+}
+
+function checkPromptSplit(files: RepoCheckFiles, errors: string[]): void {
+  if (!files['prompts/bot-system.md'].includes('style global [constraints|base|anti_patterns|special_cases]')) {
+    errors.push('prompts/bot-system.md must point to style global constraints/base/anti_patterns/special_cases')
+  }
+  if (!files['prompts/bot-chat-constraints.md'].includes('<!-- section:chat_constraints -->')) {
+    errors.push('prompts/bot-chat-constraints.md must define section "chat_constraints"')
+  }
+  if (!files['prompts/bot-style.md'].includes('<!-- section:style_index -->')) {
+    errors.push('prompts/bot-style.md must define section "style_index"')
+  }
+  if (!files['prompts/bot-style.md'].includes('constraints')) {
+    errors.push('prompts/bot-style.md index must mention constraints')
+  }
 }
 
 function checkToolIndexes(files: RepoCheckFiles, errors: string[]): void {

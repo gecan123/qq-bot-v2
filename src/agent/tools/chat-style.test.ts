@@ -13,9 +13,16 @@ describe('chat_style tool', () => {
     assert.equal(tool.name, 'chat_style')
 
     const index = await tool.execute({ scope: 'global' }, undefined as never)
+    const constraints = await tool.execute({ scope: 'global', section: 'constraints' }, undefined as never)
+    const base = await tool.execute({ scope: 'global', section: 'base' }, undefined as never)
     const antiPatterns = await tool.execute({ scope: 'global', section: 'anti_patterns' }, undefined as never)
 
     assert.match(index.content as string, /Luna 按需风格指南/)
+    assert.match(index.content as string, /constraints/)
+    assert.match(constraints.content as string, /聊天约束/)
+    assert.match(constraints.content as string, /单条消息 ≤ 500 字/)
+    assert.match(base.content as string, /半参与/)
+    assert.match(base.content as string, /自由活动/)
     assert.match(antiPatterns.content as string, /反例对照/)
   })
 

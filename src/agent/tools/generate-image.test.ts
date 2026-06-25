@@ -51,6 +51,7 @@ describe('generate_image tool', () => {
     assert.equal(parsed.status, 'started')
     assert.equal(typeof parsed.taskId, 'string')
     assert.ok((parsed.description as string).includes('a cat in space'))
+    assert.equal(parsed.next, `等待 [后台任务完成] 后调用 background_task action=get taskId=${parsed.taskId}`)
 
     await flushMicrotasks()
 

@@ -9,6 +9,7 @@ import type { ToolContext } from '../tool.js'
 import type { MessageSender } from '../../messaging/message-sender.js'
 import { buildBotTools } from './index.js'
 import { createBackgroundTaskTool } from './background-task.js'
+import { TASK_RESULT_TEXT_CAP_CHARS } from './get-task-result.js'
 import { memoryTool } from './memory.js'
 import { createFetchImageTool, runCurlImage } from './fetch-image.js'
 import { prisma } from '../../database/client.js'
@@ -90,6 +91,7 @@ describe('merged main-agent tools', () => {
 
     assert.equal(listed.recentCompleted[0]!.taskId, task.id)
     assert.match(JSON.stringify(detail.content), /abc/)
+    assert.match(JSON.stringify(detail.content), /send_message imageRef=ephemeral:abc/)
   })
 
   test('background_task action=get renders batched image metadata with one preview image', async () => {
@@ -138,6 +140,7 @@ describe('merged main-agent tools', () => {
       succeededCount?: number
       failedCount?: number
       failures?: string[]
+      next?: string
     }
 
     assert.equal(parsed.images?.length, 2)
@@ -148,7 +151,41 @@ describe('merged main-agent tools', () => {
     assert.deepEqual(parsed.failures, ['image 3/3: timeout'])
     assert.equal(parsed.images?.[0]?.ephemeralRef, 'a'.repeat(64))
     assert.equal(parsed.images?.[1]?.ephemeralRef, 'b'.repeat(64))
+    assert.match(parsed.next ?? '', /send_message imageRef=ephemeral:/)
     assert.equal(detail.content.filter((block) => block.type === 'image').length, 1)
+  })
+
+  test('background_task action=get caps oversized text results as valid JSON', async () => {
+    const registry = createInMemoryTaskRegistry()
+    const task = registry.register({ toolName: 'future_tool', description: '生成很大的结果' })
+    registry.complete(task.id, {
+      summary: 'done ' + 's'.repeat(10_000),
+      data: {
+        description: 'd'.repeat(10_000),
+        images: Array.from({ length: 40 }, (_, i) => ({
+          ephemeralRef: `${i}`.padStart(64, 'a'),
+          dataHash: `${i}`.padStart(64, 'b'),
+          byteSize: 10,
+          contentType: 'image/png',
+          description: 'image ' + 'i'.repeat(10_000),
+        })),
+        failures: Array.from({ length: 40 }, () => 'f'.repeat(10_000)),
+      },
+    })
+    const tool = createBackgroundTaskTool({ taskRegistry: registry })
+
+    const detail = await tool.execute({ action: 'get', taskId: task.id }, makeCtx())
+    assert.ok(Array.isArray(detail.content))
+    const text = detail.content.find((block) => block.type === 'text')
+    assert.ok(text && text.type === 'text')
+    const parsed = JSON.parse(text.text) as { ok: boolean; taskId: string; status: string; truncated?: boolean }
+
+    assert.ok(text.text.length <= TASK_RESULT_TEXT_CAP_CHARS)
+    assert.equal(parsed.ok, true)
+    assert.equal(parsed.taskId, task.id)
+    assert.equal(parsed.status, 'completed')
+    assert.equal(parsed.truncated, true)
+    assert.doesNotMatch(text.text, /f{1000}/)
   })
 
   test('memory action=write and action=search preserve remember/recall behavior', async () => {

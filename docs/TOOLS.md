@@ -9,8 +9,8 @@
 - 知识和历史：`memory`、`workspace_bash` 内置的 `help` / `db` / `style` 子命令。
 - 外部内容：`workspace_bash` 内置的 `fetch` 子命令（url/image/avatar/reddit list/reddit post）、配置后可用的 `web_search`、`workspace_bash` 内置的 `openbb` 子命令。
 - 文本判断：`workspace_bash` 内置的 `ai_tone` 子命令，用本地 AIRadar 模型判断中文文本更像 AI 腔调还是人味。
-- 媒体生成和复用：`generate_image`（创建图片生成/编辑后台任务，quality、批量输出、最多 5 张输入图）、`collect_sticker`（collect/list/search/random）。
-- 运行时工作：`background_task`（通用异步任务 list/get）、`workspace_bash`、配置后可用的 `browser`。
+- 媒体生成和复用：`generate_image`（创建图片生成/编辑后台任务，quality、批量输出、最多 5 张输入图）、`collect_sticker`（collect/list/search/random；collect 和 compaction 只注入摘要，更多候选按需 list/search/random）。
+- 运行时工作：`background_task`（通用异步任务 list/get；get 的文本结果有通用上限）、`workspace_bash`、配置后可用的 `browser`。
 
 ## Browser
 
@@ -30,6 +30,8 @@
 - 外部工具必须有输出上限、超时和审计日志。
 - `workspace_bash` 提供可写 private workspace 和只读 repo view。repo view 必须保持 allowlist，不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
 - `workspace_bash` 内置 `help` 子命令用于按需查看语法；`journal write|list|search|read` 把日记和梦境存到 private workspace 文件中；`data/agent-workspace/` 下的 journal 文件是 bot 生成数据，不应提交。
+- `workspace_bash` 的 tool description 保留常用路由示例；复杂细节继续通过 `help <topic>` 按需披露。被拒绝的命令会返回 `help` / `try` 字段，引导下一步。
+- 主 system prompt 只保留身份、运行形态和能力入口；聊天硬约束在 `prompts/bot-chat-constraints.md`，风格细则在 `prompts/bot-style.md`，通过 `workspace_bash` 的 `style global constraints|base|anti_patterns|special_cases` 按需读取。
 - 有副作用的工具通过 `src/ops/tool-call-log.ts` 记录。
 - Bash 类能力必须保留 command allowlist、固定 workspace、最小 env、输出/时间上限和审计日志。敏感访问应通过专门脚本或 capability wrapper。
 - `workspace_bash` 和 `browser` 必须保留现有上限、preview compression、cache、timeout 和 audit 行为；其中 `workspace_bash` 内置的 `db` / `style` / `openbb` / `fetch` / `ai_tone` 子命令仍走对应专用 wrapper。

@@ -221,6 +221,7 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<RawArgs> 
           status: 'started',
           taskId: task.id,
           description,
+          next: `等待 [后台任务完成] 后调用 background_task action=get taskId=${task.id}`,
         }),
       }
     },

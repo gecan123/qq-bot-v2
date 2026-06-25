@@ -9,6 +9,8 @@ const files: RepoCheckFiles = {
   'src/agent/tools/index.ts': readFileSync('src/agent/tools/index.ts', 'utf8'),
   'src/agent/tools/workspace-bash.ts': readFileSync('src/agent/tools/workspace-bash.ts', 'utf8'),
   'prompts/bot-system.md': readFileSync('prompts/bot-system.md', 'utf8'),
+  'prompts/bot-chat-constraints.md': readFileSync('prompts/bot-chat-constraints.md', 'utf8'),
+  'prompts/bot-style.md': readFileSync('prompts/bot-style.md', 'utf8'),
   'prisma/schema.prisma': readFileSync('prisma/schema.prisma', 'utf8'),
   'docs/README.md': readFileSync('docs/README.md', 'utf8'),
   'docs/ARCHITECTURE.md': readFileSync('docs/ARCHITECTURE.md', 'utf8'),

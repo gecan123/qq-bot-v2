@@ -4,21 +4,23 @@ import type { GroupCustomization } from '../../config/group-prompts.js'
 import type { TargetMetadataMaps } from '../resolve-target-meta.js'
 import type { Tool } from '../tool.js'
 
-const PROMPT_PATH = './prompts/bot-system.md'
+const STYLE_PROMPT_PATH = './prompts/bot-style.md'
+const CHAT_CONSTRAINTS_PROMPT_PATH = './prompts/bot-chat-constraints.md'
 
 const sectionNames = {
-  base: 'style_base',
-  anti_patterns: 'style_anti_patterns',
-  special_cases: 'style_special_cases',
+  constraints: { path: CHAT_CONSTRAINTS_PROMPT_PATH, section: 'chat_constraints' },
+  base: { path: STYLE_PROMPT_PATH, section: 'style_base' },
+  anti_patterns: { path: STYLE_PROMPT_PATH, section: 'style_anti_patterns' },
+  special_cases: { path: STYLE_PROMPT_PATH, section: 'style_special_cases' },
 } as const
 
 const argsSchema = z.discriminatedUnion('scope', [
   z.object({
     scope: z.literal('global').describe('读取 Luna 的全局说话风格指南.'),
     section: z
-      .enum(['base', 'anti_patterns', 'special_cases'])
+      .enum(['constraints', 'base', 'anti_patterns', 'special_cases'])
       .optional()
-      .describe('可选. 不传只返回索引; 传 base / anti_patterns / special_cases 获取具体风格内容.'),
+      .describe('可选. 不传只返回索引; 传 constraints / base / anti_patterns / special_cases 获取具体内容.'),
   }),
   z.object({
     scope: z.literal('group').describe('读取某个监听群的在场风格定制.'),
@@ -50,9 +52,10 @@ export function createChatStyleTool(deps: ChatStyleDeps): Tool<Args> {
     async execute(args) {
       if (args.scope === 'global') {
         if (!args.section) {
-          return { content: loadPromptSection(PROMPT_PATH, 'style_index') }
+          return { content: loadPromptSection(STYLE_PROMPT_PATH, 'style_index') }
         }
-        return { content: loadPromptSection(PROMPT_PATH, sectionNames[args.section]) }
+        const target = sectionNames[args.section]
+        return { content: loadPromptSection(target.path, target.section) }
       }
 
       if (!monitoredGroupIds.has(args.groupId)) {

@@ -51,10 +51,12 @@ const validFiles = {
     "if (tokens[0] === 'help')",
   ].join('\n'),
   'prompts/bot-system.md': [
-    '- workspace_bash: 不确定语法先用 `help`; 日记/梦境用 `journal write|list|search|read`; 数据库用 `db schema` / `db query <json>`; 风格用 `style global [base|anti_patterns|special_cases]` / `style group <groupId>`; 金融数据用 `openbb <command>`; 外部内容用 `fetch url|image|avatar|reddit list|reddit post`; 只读查看自己仓库代码、做自审时用 cwd=repo.',
+    '- workspace_bash: 不确定语法先用 `help`; 日记/梦境用 `journal write|list|search|read`; 数据库用 `db schema` / `db query <json>`; 风格用 `style global [constraints|base|anti_patterns|special_cases]` / `style group <groupId>`; 金融数据用 `openbb <command>`; 外部内容用 `fetch url|image|avatar|reddit list|reddit post`; 只读查看自己仓库代码、做自审时用 cwd=repo.',
     '- memory: 涉及具体人/群、关系、偏好、旧话题时先 action=search 翻私人笔记; 需要记下长期有用事实时 action=write.',
     '异步工具返回 taskId 后统一用 background_task action=list/get 查状态和结果',
   ].join('\n'),
+  'prompts/bot-chat-constraints.md': '<!-- section:chat_constraints -->\n聊天约束\n单条消息 ≤ 500 字.\n<!-- /section:chat_constraints -->\n',
+  'prompts/bot-style.md': '<!-- section:style_index -->\nLuna 按需风格指南\nconstraints\n<!-- /section:style_index -->\n',
   'prisma/schema.prisma': 'model BotAgentSnapshot {\n  @@map("bot_agent_snapshot")\n}\n',
   'docs/README.md': 'docs/ARCHITECTURE.md\ndocs/AGENT_CONTEXT.md\ndocs/TOOLS.md\ndocs/OPERATIONS.md\ndocs/TECH_DEBT.md\n',
   'docs/ARCHITECTURE.md': '# Architecture\n',

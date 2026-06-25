@@ -69,6 +69,14 @@ describe('workspace_bash command parser', () => {
       section: 'anti_patterns',
     })
 
+    assert.deepEqual(parseWorkspaceBashCommand('style global constraints'), {
+      ok: true,
+      kind: 'style',
+      cwd: 'workspace',
+      scope: 'global',
+      section: 'constraints',
+    })
+
     assert.deepEqual(parseWorkspaceBashCommand('style group 222'), {
       ok: true,
       kind: 'style',
@@ -342,6 +350,31 @@ describe('workspace_bash tool', () => {
 
     assert.equal(parsed.ok, false)
     assert.match(parsed.error, /not allowed/i)
+    assert.equal(parsed.help, 'help workspace')
+    assert.equal(parsed.try, 'help')
+  })
+
+  test('returns one-hop guidance for rejected subcommands', async () => {
+    const tool = createWorkspaceBashTool({
+      workspaceDir: '/tmp/agent-workspace',
+      repoDir: '/repo',
+      runner: async () => {
+        throw new Error('runner should not be called')
+      },
+    })
+
+    const result = await tool.execute({ command: 'fetch reddit list notallowed hot 5' }, makeCtx())
+    const parsed = JSON.parse(result.content as string) as {
+      ok: boolean
+      error: string
+      help?: string
+      try?: string
+    }
+
+    assert.equal(parsed.ok, false)
+    assert.match(parsed.error, /subreddit must be one of/)
+    assert.equal(parsed.help, 'help fetch')
+    assert.equal(parsed.try, 'fetch reddit list technology hot 5')
   })
 
   test('runs journal write/list/search/read through the workspace store without shelling out', async () => {
@@ -400,6 +433,7 @@ describe('workspace_bash tool', () => {
     const overview = JSON.parse((await tool.execute({ command: 'help' }, makeCtx())).content as string) as {
       ok: boolean
       topics: string[]
+      examples: string[]
     }
     const journal = JSON.parse((await tool.execute({ command: 'help journal' }, makeCtx())).content as string) as {
       ok: boolean
@@ -408,9 +442,20 @@ describe('workspace_bash tool', () => {
 
     assert.equal(overview.ok, true)
     assert.ok(overview.topics.includes('journal'))
+    assert.ok(overview.examples.includes('fetch reddit list technology hot 5'))
     assert.equal(journal.ok, true)
     assert.ok(journal.commands.includes('journal write diary|dream <content>'))
     assert.equal(runnerCalled, false)
+  })
+
+  test('description exposes common routes without requiring help first', () => {
+    const tool = createWorkspaceBashTool()
+
+    assert.match(tool.description, /fetch url <url> \[hint\]/)
+    assert.match(tool.description, /fetch reddit list technology hot 5/)
+    assert.match(tool.description, /cwd=repo/)
+    assert.match(tool.description, /db schema/)
+    assert.match(tool.description, /journal write\|list\|search\|read/)
   })
 
   test('runs db schema/query through the internal db tool without shelling out', async () => {
@@ -458,6 +503,10 @@ describe('workspace_bash tool', () => {
 
     const global = await tool.execute({ command: 'style global' }, makeCtx())
     assert.match(global.content as string, /Luna 按需风格指南/)
+    assert.match(global.content as string, /constraints/)
+
+    const constraints = await tool.execute({ command: 'style global constraints' }, makeCtx())
+    assert.match(constraints.content as string, /聊天约束/)
 
     const group = JSON.parse((await tool.execute({ command: 'style group 222' }, makeCtx())).content as string) as {
       ok: boolean

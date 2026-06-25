@@ -220,6 +220,155 @@ describe('createToolExecutor', () => {
     assert.equal(result.content, 'hi')
   })
 
+  test('beforeTool hook can block execution with a tool result', async () => {
+    let executed = false
+    const tool: Tool<{ text?: string }> = {
+      name: 'echo',
+      description: 'echo',
+      schema: z.object({ text: z.string().optional() }),
+      async execute() {
+        executed = true
+        return { content: 'executed' }
+      },
+    }
+    const exec = createToolExecutor([tool], {
+      hooks: {
+        beforeTool: [() => ({ content: JSON.stringify({ ok: false, error: 'blocked' }) })],
+      },
+    })
+
+    const result = await exec.execute({ id: 'c1', name: 'echo', args: {} }, makeCtx())
+
+    assert.equal(executed, false)
+    assert.match(result.content as string, /blocked/)
+  })
+
+  test('beforeTool hook receives normalized args', async () => {
+    let seen: unknown
+    const tool: Tool<{ value?: string }> = {
+      name: 'optional',
+      description: 'optional',
+      schema: z.object({ value: z.string().optional() }),
+      async execute() {
+        return { content: 'ok' }
+      },
+    }
+    const exec = createToolExecutor([tool], {
+      hooks: {
+        beforeTool: [(ctx) => {
+          seen = ctx.call.args
+        }],
+      },
+    })
+
+    await exec.execute({ id: 'c1', name: 'optional', args: { value: null } }, makeCtx())
+
+    assert.deepEqual(seen, {})
+  })
+
+  test('beforeTool hook errors become structured tool errors', async () => {
+    const tool: Tool<Record<string, never>> = {
+      name: 'echo',
+      description: 'echo',
+      schema: z.object({}),
+      async execute() {
+        return { content: 'executed' }
+      },
+    }
+    const exec = createToolExecutor([tool], {
+      hooks: {
+        beforeTool: [() => {
+          throw new Error('policy exploded')
+        }],
+      },
+    })
+
+    const result = await exec.execute({ id: 'c1', name: 'echo', args: {} }, makeCtx())
+
+    assert.match(result.content as string, /Tool hook failed: policy exploded/)
+  })
+
+  test('afterTool hook runs after successful tool execution', async () => {
+    const events: string[] = []
+    const tool: Tool<Record<string, never>> = {
+      name: 'echo',
+      description: 'echo',
+      schema: z.object({}),
+      async execute() {
+        events.push('execute')
+        return { content: 'ok' }
+      },
+    }
+    const exec = createToolExecutor([tool], {
+      hooks: {
+        afterTool: [({ result }) => {
+          events.push(`after:${result.content}`)
+        }],
+      },
+    })
+
+    await exec.execute({ id: 'c1', name: 'echo', args: {} }, makeCtx())
+
+    assert.deepEqual(events, ['execute', 'after:ok'])
+  })
+
+  test('afterTool hook failure preserves original tool result', async () => {
+    const tool: Tool<Record<string, never>> = {
+      name: 'echo',
+      description: 'echo',
+      schema: z.object({}),
+      async execute() {
+        return { content: 'ok' }
+      },
+    }
+    const exec = createToolExecutor([tool], {
+      hooks: {
+        afterTool: [() => {
+          throw new Error('after exploded')
+        }],
+      },
+    })
+
+    const result = await exec.execute({ id: 'c1', name: 'echo', args: {} }, makeCtx())
+
+    assert.equal(result.content, 'ok')
+  })
+
+  test('traces hook-blocked calls once with normalized args', async () => {
+    const writes: string[] = []
+    const tool: Tool<{ value?: string }> = {
+      name: 'echo',
+      description: 'echo',
+      schema: z.object({ value: z.string().optional() }),
+      async execute() {
+        return { content: 'executed' }
+      },
+    }
+    const exec = createToolExecutor([tool], {
+      hooks: {
+        beforeTool: [() => ({ content: JSON.stringify({ ok: false, error: 'blocked' }) })],
+      },
+      trace: {
+        now: () => new Date('2026-06-25T00:00:00.000Z'),
+        clockMs: (() => {
+          const values = [10, 15]
+          return () => values.shift() ?? 15
+        })(),
+        appender: async (_path, line) => {
+          writes.push(line)
+        },
+      },
+    })
+
+    await exec.execute({ id: 'c1', name: 'echo', args: { value: null } }, makeCtx())
+
+    assert.equal(writes.length, 1)
+    const entry = JSON.parse(writes[0]!)
+    assert.equal(entry.ok, false)
+    assert.deepEqual(entry.argsSummary, {})
+    assert.equal(entry.error, 'blocked')
+  })
+
   test('returns error envelope for unknown tool', async () => {
     const exec = createToolExecutor([])
     const result = await exec.execute({ id: 'c1', name: 'nope', args: {} }, makeCtx())

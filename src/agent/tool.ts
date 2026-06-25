@@ -4,6 +4,9 @@ import type { BotEvent } from './event.js'
 import type { AssistantToolCall, ToolResultContent } from './agent-context.types.js'
 import { isSideEffectTool, logToolCall, summarizeToolArgs } from '../ops/tool-call-log.js'
 import { stripNullsFromOptionalFields } from './tool-schema.js'
+import { createLogger } from '../logger.js'
+
+const log = createLogger('TOOL_EXECUTOR')
 
 /**
  * Tool 接口最简形:name + description + 参数 schema + execute。
@@ -30,6 +33,19 @@ export interface ToolExecutionResult {
   content: ToolResultContent
 }
 
+export interface ToolHookContext extends ToolContext {
+  tool: Tool
+  call: AssistantToolCall
+}
+
+export type BeforeToolHook = (
+  ctx: ToolHookContext,
+) => Promise<ToolExecutionResult | void> | ToolExecutionResult | void
+
+export type AfterToolHook = (
+  ctx: ToolHookContext & { result: ToolExecutionResult },
+) => Promise<void> | void
+
 export interface ToolExecutor {
   list(): Tool[]
   /** 翻译 LLM 给的 toolCall (含 id + name + 已 parsed 的 args), 找对应工具执行。 */
@@ -45,6 +61,10 @@ export interface ToolTraceOptions {
 
 export interface ToolExecutorOptions {
   trace?: ToolTraceOptions
+  hooks?: {
+    beforeTool?: BeforeToolHook[]
+    afterTool?: AfterToolHook[]
+  }
 }
 
 export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions = {}): ToolExecutor {
@@ -86,8 +106,14 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
         await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result, 'Invalid tool arguments')
         return result
       }
+      const blocked = await runBeforeToolHooks(options.hooks?.beforeTool ?? [], { ...ctx, tool, call: normalizedCall })
+      if (blocked) {
+        await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, blocked)
+        return blocked
+      }
       try {
         const result = await tool.execute(parseResult.data as never, ctx)
+        await runAfterToolHooks(options.hooks?.afterTool ?? [], { ...ctx, tool, call: normalizedCall, result })
         await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result)
         return result
       } catch (err) {
@@ -99,6 +125,35 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
         return result
       }
     },
+  }
+}
+
+async function runBeforeToolHooks(
+  hooks: BeforeToolHook[],
+  ctx: ToolHookContext,
+): Promise<ToolExecutionResult | null> {
+  for (const hook of hooks) {
+    try {
+      const blocked = await hook(ctx)
+      if (blocked) return blocked
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      return { content: JSON.stringify({ error: `Tool hook failed: ${message}` }) }
+    }
+  }
+  return null
+}
+
+async function runAfterToolHooks(
+  hooks: AfterToolHook[],
+  ctx: ToolHookContext & { result: ToolExecutionResult },
+): Promise<void> {
+  for (const hook of hooks) {
+    try {
+      await hook(ctx)
+    } catch (err) {
+      log.warn({ err, toolName: ctx.call.name, toolCallId: ctx.call.id }, 'after_tool_hook_failed')
+    }
   }
 }
 

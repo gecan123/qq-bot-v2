@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { z } from 'zod'
-import { createToolExecutor, type Tool } from './tool.js'
+import { createDeferredToolExecutor, createToolExecutor, type Tool } from './tool.js'
 import { InMemoryEventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
+import { createAgentContext } from './agent-context.js'
 
 function makeCtx() {
   return {
@@ -461,5 +462,149 @@ describe('createToolExecutor', () => {
       target: { type: 'group', groupId: 123 },
       params: { nullableDbParam: null },
     })
+  })
+})
+
+describe('createDeferredToolExecutor', () => {
+  test('exposes deferred tools only after activating their capability', async () => {
+    const echo: Tool<{ text: string }> = {
+      name: 'echo',
+      description: 'echo',
+      schema: z.object({ text: z.string() }),
+      async execute(args) {
+        return { content: args.text }
+      },
+    }
+    const browser: Tool<{ action: 'status' }> = {
+      name: 'browser',
+      description: 'browser',
+      schema: z.object({ action: z.literal('status') }),
+      async execute() {
+        return { content: JSON.stringify({ ok: true, action: 'status' }) }
+      },
+    }
+    const exec = createDeferredToolExecutor({
+      alwaysOnTools: [echo],
+      capabilities: [
+        {
+          name: 'browser',
+          description: '真实浏览器操作',
+          tools: [browser],
+        },
+      ],
+    })
+
+    assert.deepEqual(exec.list().map((tool) => tool.name), ['echo', 'toolbox'])
+    assert.match(
+      (await exec.execute({ id: 'b0', name: 'browser', args: { action: 'status' } }, makeCtx())).content as string,
+      /Unknown tool/,
+    )
+
+    const activated = await exec.execute(
+      { id: 'a1', name: 'toolbox', args: { action: 'activate', capability: 'browser' } },
+      makeCtx(),
+    )
+
+    assert.match(activated.content as string, /下一轮/)
+    assert.deepEqual(exec.list().map((tool) => tool.name), ['echo', 'toolbox', 'browser'])
+    assert.match(
+      (await exec.execute({ id: 'b1', name: 'browser', args: { action: 'status' } }, makeCtx())).content as string,
+      /"ok":true/,
+    )
+  })
+
+  test('can store active capabilities in an external runtime state', async () => {
+    const active: string[] = ['browser']
+    const browser: Tool<Record<string, never>> = {
+      name: 'browser',
+      description: 'browser',
+      schema: z.object({}),
+      async execute() {
+        return { content: 'browser-ok' }
+      },
+    }
+    const media: Tool<Record<string, never>> = {
+      name: 'generate_image',
+      description: 'image',
+      schema: z.object({}),
+      async execute() {
+        return { content: 'image-ok' }
+      },
+    }
+    const exec = createDeferredToolExecutor({
+      alwaysOnTools: [],
+      activeCapabilities: {
+        list: () => [...active],
+        activate: (capability) => {
+          if (!active.includes(capability)) active.push(capability)
+        },
+        deactivate: (capability) => {
+          const index = active.indexOf(capability)
+          if (index >= 0) active.splice(index, 1)
+        },
+      },
+      capabilities: [
+        { name: 'browser', description: 'browser', tools: [browser] },
+        { name: 'media_generation', description: 'image', tools: [media] },
+      ],
+    })
+
+    assert.deepEqual(exec.list().map((tool) => tool.name), ['toolbox', 'browser'])
+
+    await exec.execute(
+      { id: 'a1', name: 'toolbox', args: { action: 'activate', capability: 'media_generation' } },
+      makeCtx(),
+    )
+    assert.deepEqual(active, ['browser', 'media_generation'])
+    assert.deepEqual(exec.list().map((tool) => tool.name), ['toolbox', 'browser', 'generate_image'])
+
+    await exec.execute(
+      { id: 'd1', name: 'toolbox', args: { action: 'deactivate', capability: 'browser' } },
+      makeCtx(),
+    )
+    assert.deepEqual(active, ['media_generation'])
+    assert.deepEqual(exec.list().map((tool) => tool.name), ['toolbox', 'generate_image'])
+  })
+
+  test('restored AgentContext state controls the next executor tool list', async () => {
+    const browser: Tool<Record<string, never>> = {
+      name: 'browser',
+      description: 'browser',
+      schema: z.object({}),
+      async execute() {
+        return { content: 'browser-ok' }
+      },
+    }
+    const ctx1 = createAgentContext()
+    const exec1 = createDeferredToolExecutor({
+      alwaysOnTools: [],
+      activeCapabilities: {
+        list: () => ctx1.getSnapshot().activeToolCapabilities,
+        activate: (capability) => ctx1.activateToolCapability(capability),
+        deactivate: (capability) => ctx1.deactivateToolCapability(capability),
+      },
+      capabilities: [{ name: 'browser', description: 'browser', tools: [browser] }],
+    })
+
+    await exec1.execute(
+      { id: 'a1', name: 'toolbox', args: { action: 'activate', capability: 'browser' } },
+      makeCtx(),
+    )
+    const persisted = ctx1.exportPersistedSnapshot()
+
+    const ctx2 = createAgentContext()
+    ctx2.restorePersistedSnapshot(persisted)
+    const exec2 = createDeferredToolExecutor({
+      alwaysOnTools: [],
+      activeCapabilities: {
+        list: () => ctx2.getSnapshot().activeToolCapabilities,
+        activate: (capability) => ctx2.activateToolCapability(capability),
+        deactivate: (capability) => ctx2.deactivateToolCapability(capability),
+      },
+      capabilities: [{ name: 'browser', description: 'browser', tools: [browser] }],
+    })
+
+    assert.deepEqual(ctx2.getSnapshot().activeToolCapabilities, ['browser'])
+    assert.deepEqual(exec2.list().map((tool) => tool.name), ['toolbox', 'browser'])
   })
 })

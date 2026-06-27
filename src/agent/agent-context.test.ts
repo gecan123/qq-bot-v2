@@ -56,14 +56,22 @@ describe('createAgentContext', () => {
     ctx1.appendUserMessage('hello')
     ctx1.appendAssistantTurn({ content: '', toolCalls: [{ id: 'c1', name: 'wait', args: {} }] })
     ctx1.appendToolResult({ toolCallId: 'c1', content: 'ok' })
+    ctx1.activateToolCapability('browser')
+    ctx1.activateToolCapability('media_generation')
 
     const persisted = ctx1.exportPersistedSnapshot()
     assert.equal(persisted.schemaVersion, SNAPSHOT_SCHEMA_VERSION)
     assert.equal(persisted.messages.length, 3)
+    assert.deepEqual(persisted.activeToolCapabilities, ['browser', 'media_generation'])
 
     const ctx2 = createAgentContext()
     ctx2.restorePersistedSnapshot(persisted)
-    assert.deepEqual(ctx2.getSnapshot().messages, persisted.messages)
+    assert.deepEqual(ctx2.getSnapshot(), {
+      messages: persisted.messages,
+      activeToolCapabilities: ['browser', 'media_generation'],
+    })
+    ctx2.deactivateToolCapability('browser')
+    assert.deepEqual(ctx2.getSnapshot().activeToolCapabilities, ['media_generation'])
   })
 
   test('cloning isolates assistant tool call args', () => {

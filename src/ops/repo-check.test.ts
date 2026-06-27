@@ -30,6 +30,7 @@ const validFiles = {
     },
   }),
   'src/agent/tools/index.ts': [
+    'createDeferredToolExecutor',
     'pauseTool,',
     'createSendMessageTool({',
     'createGenerateImageTool({ taskRegistry: deps.taskRegistry }),',
@@ -51,7 +52,8 @@ const validFiles = {
     "if (tokens[0] === 'help')",
   ].join('\n'),
   'prompts/bot-system.md': [
-    '- workspace_bash: 不确定语法先用 `help`; 日记/梦境用 `journal write|list|search|read`; 数据库用 `db schema` / `db query <json>`; 风格用 `style global [constraints|base|anti_patterns|special_cases]` / `style group <groupId>`; 金融数据用 `openbb <command>`; 外部内容用 `fetch url|image|avatar|reddit list|reddit post`; 只读查看自己仓库代码、做自审时用 cwd=repo.',
+    '- toolbox: 需要浏览器、金融数据、外部研究、图片生成/抓取或表情包池时, 先 action=activate 激活对应 capability.',
+    '- workspace_bash: 不确定语法先用 `help`; 日记/梦境用 `journal write|list|search|read`; 数据库用 `db schema` / `db query <json>`; 风格用 `style global [constraints|base|anti_patterns|special_cases]` / `style group <groupId>`; 只读查看自己仓库代码、做自审时用 cwd=repo.',
     '- memory: 涉及具体人/群、关系、偏好、旧话题时先 action=search 翻私人笔记; 需要记下长期有用事实时 action=write.',
     '异步工具返回 taskId 后统一用 background_task action=list/get 查状态和结果',
   ].join('\n'),
@@ -63,7 +65,7 @@ const validFiles = {
   'docs/AGENT_CONTEXT.md': '# Persistent Agent Context\n',
   'docs/TOOLS.md': [
     '# Agent Tools',
-    '`pause` `send_message` `generate_image` `background_task` `memory` `collect_sticker` `workspace_bash` `browser` `web_search`',
+    '`toolbox` `pause` `send_message` `generate_image` `background_task` `memory` `collect_sticker` `workspace_bash` `browser` `web_search`',
     '`help` `journal` `db` `style` `openbb` `fetch`',
   ].join('\n'),
   'docs/OPERATIONS.md': '# Operations\n',
@@ -107,7 +109,7 @@ describe('runRepoChecks', () => {
       ...validFiles,
       'docs/TOOLS.md': [
         '# Agent Tools',
-        '`pause` `send_message` `generate_image` `background_task` `memory` `workspace_bash` `browser` `web_search`',
+        '`toolbox` `pause` `send_message` `generate_image` `background_task` `memory` `workspace_bash` `browser` `web_search`',
         '`help` `journal` `db` `style` `openbb` `fetch` `collect_sticker`',
         '`collect_sticker` belongs under `workspace_bash` for sticker collection.',
       ].join('\n'),
@@ -121,7 +123,7 @@ describe('runRepoChecks', () => {
       ...validFiles,
       'docs/TOOLS.md': [
         '# Agent Tools',
-        '`pause` `send_message` `generate_image` `background_task` `memory` `collect_sticker` `workspace_bash` `browser` `web_search`',
+        '`toolbox` `pause` `send_message` `generate_image` `background_task` `memory` `collect_sticker` `workspace_bash` `browser` `web_search`',
         '`help` `journal` `db` `style` `openbb` `fetch`',
         '`collect_sticker` is not a `workspace_bash` subcommand.',
       ].join('\n'),
@@ -187,6 +189,6 @@ describe('runRepoChecks', () => {
 
     assert.match(result.errors.join('\n'), /docs\/TOOLS\.md must mention registered tool "generate_image"/)
     assert.match(result.errors.join('\n'), /docs\/TOOLS\.md must mention workspace_bash subcommand "help"/)
-    assert.match(result.errors.join('\n'), /prompts\/bot-system\.md must mention workspace_bash subcommand "fetch"/)
+    assert.match(result.errors.join('\n'), /prompts\/bot-system\.md must mention workspace_bash subcommand "help"/)
   })
 })

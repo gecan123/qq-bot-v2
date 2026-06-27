@@ -10,7 +10,7 @@ import { InMemoryEventQueue } from '../event-queue.js'
 import type { BotEvent } from '../event.js'
 import type { ToolContext } from '../tool.js'
 import type { MessageSender } from '../../messaging/message-sender.js'
-import { buildBotTools } from './index.js'
+import { buildBotToolManifest, buildBotTools } from './index.js'
 import { createBackgroundTaskTool } from './background-task.js'
 import { TASK_RESULT_TEXT_CAP_CHARS } from './get-task-result.js'
 import { createMemoryTool, memoryTool } from './memory.js'
@@ -42,7 +42,7 @@ const TINY_PNG = Buffer.from(
 )
 
 describe('merged main-agent tools', () => {
-  test('buildBotTools exposes merged entries and hides their old split entries', () => {
+  test('buildBotTools exposes default entries and defers heavy typed tools', () => {
     const names = buildBotTools({
       sender: mockSender,
       groupAmbientSendIds: new Set(),
@@ -57,12 +57,16 @@ describe('merged main-agent tools', () => {
     assert.ok(names.includes('pause'))
     assert.ok(names.includes('skill'))
     assert.ok(names.includes('todo'))
+    assert.ok(names.includes('toolbox'))
     assert.ok(names.includes('workspace_bash'))
-    assert.ok(names.includes('collect_sticker'))
+    assert.equal(names.includes('generate_image'), false)
+    assert.equal(names.includes('collect_sticker'), false)
     assert.equal(names.includes('fetch_content'), false)
     assert.equal(names.includes('db'), false)
     assert.equal(names.includes('chat_style'), false)
     assert.equal(names.includes('openbb_cli'), false)
+    assert.equal(names.includes('browser'), false)
+    assert.equal(names.includes('web_search'), false)
     assert.equal(names.includes('wait'), false)
     assert.equal(names.includes('rest'), false)
     assert.equal(names.includes('reddit'), false)
@@ -81,6 +85,31 @@ describe('merged main-agent tools', () => {
     assert.equal(names.includes('journal'), false)
     assert.equal(names.includes('download_image'), false)
     assert.equal(names.includes('fetch_avatar'), false)
+  })
+
+  test('buildBotToolManifest groups deferred capabilities by intent', () => {
+    const manifest = buildBotToolManifest({
+      sender: mockSender,
+      groupAmbientSendIds: new Set(),
+      taskRegistry: createInMemoryTaskRegistry(),
+      groupIds: [],
+      metadata: { groupNames: new Map() },
+      groupCustomizations: [],
+    })
+    const capabilities = new Map(manifest.capabilities.map((capability) => [
+      capability.name,
+      capability.tools.map((tool) => tool.name),
+    ]))
+
+    assert.ok(capabilities.get('external_research')?.includes('fetch_content'))
+    if (capabilities.get('external_research')?.includes('web_search')) {
+      assert.deepEqual(capabilities.get('external_research'), ['web_search', 'fetch_content'])
+    }
+    assert.deepEqual(capabilities.get('media_generation'), ['generate_image'])
+    assert.deepEqual(capabilities.get('media_library'), ['collect_sticker'])
+    assert.deepEqual(capabilities.get('media_fetch'), ['fetch_content'])
+    if (capabilities.has('finance')) assert.deepEqual(capabilities.get('finance'), ['openbb_cli'])
+    if (capabilities.has('browser')) assert.deepEqual(capabilities.get('browser'), ['browser'])
   })
 
   test('background_task action=list and action=get address the same registry', async () => {

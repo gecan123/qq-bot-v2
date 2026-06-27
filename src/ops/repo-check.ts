@@ -46,6 +46,7 @@ const REQUIRED_DOCS = [
 const MAX_AGENT_ENTRY_LINES = 120
 
 const TOOL_REGISTRY_MARKERS = [
+  ['createDeferredToolExecutor', 'toolbox'],
   ['pauseTool', 'pause'],
   ['createSendMessageTool', 'send_message'],
   ['createGenerateImageTool', 'generate_image'],
@@ -67,6 +68,8 @@ const WORKSPACE_BASH_SUBCOMMAND_MARKERS = [
   ['parseOpenbbCommand', 'openbb'],
   ['parseFetchCommand', 'fetch'],
 ] as const
+
+const SYSTEM_PROMPT_EXEMPT_WORKSPACE_BASH_SUBCOMMANDS = new Set(['openbb', 'fetch'])
 
 export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   const errors: string[] = []
@@ -163,7 +166,7 @@ function checkToolIndexes(files: RepoCheckFiles, errors: string[]): void {
     if (!mentionsToken(toolsDoc, subcommand)) {
       errors.push(`docs/TOOLS.md must mention workspace_bash subcommand "${subcommand}"`)
     }
-    if (!mentionsToken(systemPrompt, subcommand)) {
+    if (!SYSTEM_PROMPT_EXEMPT_WORKSPACE_BASH_SUBCOMMANDS.has(subcommand) && !mentionsToken(systemPrompt, subcommand)) {
       errors.push(`prompts/bot-system.md must mention workspace_bash subcommand "${subcommand}"`)
     }
   }

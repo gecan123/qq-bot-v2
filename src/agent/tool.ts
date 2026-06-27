@@ -1,4 +1,4 @@
-import type { ZodTypeAny, z } from 'zod'
+import { z, type ZodTypeAny } from 'zod'
 import type { EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { AssistantToolCall, ToolResultContent } from './agent-context.types.js'
@@ -68,6 +68,24 @@ export interface ToolExecutorOptions {
   }
 }
 
+export interface DeferredToolCapability {
+  name: string
+  description: string
+  tools: Tool[]
+}
+
+export interface ActiveToolCapabilityState {
+  list(): string[]
+  activate(capability: string): void
+  deactivate(capability: string): void
+}
+
+export interface DeferredToolExecutorOptions extends ToolExecutorOptions {
+  alwaysOnTools: Tool[]
+  capabilities: DeferredToolCapability[]
+  activeCapabilities?: ActiveToolCapabilityState
+}
+
 export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions = {}): ToolExecutor {
   const byName = new Map<string, Tool>()
   for (const tool of tools) {
@@ -124,6 +142,133 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
         }
         await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result, `Tool execution failed: ${message}`)
         return result
+      }
+    },
+  }
+}
+
+export function createDeferredToolExecutor(options: DeferredToolExecutorOptions): ToolExecutor {
+  const capabilityByName = new Map<string, DeferredToolCapability>()
+  const localActiveCapabilities = new Set<string>()
+  const activeCapabilities = options.activeCapabilities ?? {
+    list: () => [...localActiveCapabilities],
+    activate: (capability: string) => {
+      localActiveCapabilities.add(capability)
+    },
+    deactivate: (capability: string) => {
+      localActiveCapabilities.delete(capability)
+    },
+  }
+
+  for (const capability of options.capabilities) {
+    if (capabilityByName.has(capability.name)) {
+      throw new Error(`Duplicate deferred capability: ${capability.name}`)
+    }
+    capabilityByName.set(capability.name, capability)
+  }
+
+  const toolbox = createToolboxTool({
+    capabilities: options.capabilities,
+    activeCapabilities,
+  })
+
+  function visibleTools(): Tool[] {
+    const byName = new Map<string, Tool>()
+    const activeCapabilityNames = new Set(activeCapabilities.list())
+    for (const tool of options.alwaysOnTools) byName.set(tool.name, tool)
+    byName.set(toolbox.name, toolbox)
+    for (const capability of options.capabilities) {
+      if (!activeCapabilityNames.has(capability.name)) continue
+      for (const tool of capability.tools) {
+        if (!byName.has(tool.name)) byName.set(tool.name, tool)
+      }
+    }
+    return [...byName.values()]
+  }
+
+  return {
+    list() {
+      return visibleTools()
+    },
+    execute(call, ctx) {
+      return createToolExecutor(visibleTools(), options).execute(call, ctx)
+    },
+  }
+}
+
+function createToolboxTool(options: {
+  capabilities: DeferredToolCapability[]
+  activeCapabilities: ActiveToolCapabilityState
+}): Tool<{ action: 'list' | 'activate' | 'deactivate'; capability?: string }> {
+  const capabilityByName = new Map(options.capabilities.map((capability) => [capability.name, capability]))
+  const capabilityNames = options.capabilities.map((capability) => capability.name).join(', ')
+  const schema = z.object({
+    action: z.enum(['list', 'activate', 'deactivate']).describe('list=查看可激活能力; activate=下一轮暴露对应 typed tools; deactivate=收起能力.'),
+    capability: z.string().trim().min(1).optional().describe('要激活或收起的 capability 名称.'),
+  }).superRefine((args, ctx) => {
+    if ((args.action === 'activate' || args.action === 'deactivate') && !args.capability) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['capability'],
+        message: 'capability is required for activate/deactivate',
+      })
+    }
+  })
+
+  return {
+    name: 'toolbox',
+    description: [
+      '按需激活隐藏工具的工具箱. 平时只看到核心工具; 需要浏览器、金融、外部研究或媒体能力时先 activate 对应 capability.',
+      `可用 capability: ${capabilityNames || 'none'}.`,
+      'activate 成功后, 下一轮会暴露该 capability 的 typed tool schema; 完成后可 deactivate 收起.',
+    ].join(' '),
+    schema,
+    async execute(args) {
+      if (args.action === 'list') {
+        return {
+          content: JSON.stringify({
+            ok: true,
+            capabilities: options.capabilities.map((capability) => ({
+              name: capability.name,
+              description: capability.description,
+              active: options.activeCapabilities.list().includes(capability.name),
+              tools: capability.tools.map((tool) => tool.name),
+            })),
+          }),
+        }
+      }
+
+      const capability = args.capability ? capabilityByName.get(args.capability) : null
+      if (!capability) {
+        return {
+          content: JSON.stringify({
+            ok: false,
+            error: `unknown capability: ${args.capability ?? ''}`,
+            capabilities: options.capabilities.map((item) => item.name),
+          }),
+        }
+      }
+
+      if (args.action === 'activate') {
+        options.activeCapabilities.activate(capability.name)
+        return {
+          content: JSON.stringify({
+            ok: true,
+            action: 'activate',
+            capability: capability.name,
+            message: `${capability.name} 已激活; 下一轮会暴露 typed tools: ${capability.tools.map((tool) => tool.name).join(', ')}`,
+          }),
+        }
+      }
+
+      options.activeCapabilities.deactivate(capability.name)
+      return {
+        content: JSON.stringify({
+          ok: true,
+          action: 'deactivate',
+          capability: capability.name,
+          message: `${capability.name} 已收起`,
+        }),
       }
     },
   }

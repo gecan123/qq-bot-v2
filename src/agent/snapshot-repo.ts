@@ -6,6 +6,12 @@ import { createLogger } from '../logger.js'
 const log = createLogger('SNAPSHOT')
 const SINGLE_ROW_ID = 1
 
+type RawPersistedAgentSnapshot = {
+  schemaVersion: number
+  messages: PersistedAgentSnapshot['messages']
+  activeToolCapabilities?: unknown
+}
+
 export interface BotSnapshotRepo {
   load(): Promise<{ snapshot: PersistedAgentSnapshot; lastWakeAt: Date | null } | null>
   save(input: { snapshot: PersistedAgentSnapshot; lastWakeAt: Date | null }): Promise<void>
@@ -58,16 +64,33 @@ export function createBotSnapshotRepo(): BotSnapshotRepo {
   }
 }
 
-function migrateSnapshot(raw: PersistedAgentSnapshot): PersistedAgentSnapshot {
-  if (raw.schemaVersion >= SNAPSHOT_SCHEMA_VERSION) return raw
-  return { ...raw, schemaVersion: SNAPSHOT_SCHEMA_VERSION }
+function migrateSnapshot(raw: RawPersistedAgentSnapshot): PersistedAgentSnapshot {
+  return {
+    schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+    messages: raw.messages,
+    activeToolCapabilities: sanitizeToolCapabilities(raw.activeToolCapabilities),
+  }
 }
 
-function isPersistedAgentSnapshot(value: unknown): value is PersistedAgentSnapshot {
+function isPersistedAgentSnapshot(value: unknown): value is RawPersistedAgentSnapshot {
   if (!value || typeof value !== 'object') return false
   const obj = value as Record<string, unknown>
   return (
     typeof obj['schemaVersion'] === 'number' &&
     Array.isArray(obj['messages'])
   )
+}
+
+function sanitizeToolCapabilities(input: unknown): string[] {
+  if (!Array.isArray(input)) return []
+  const seen = new Set<string>()
+  const output: string[] = []
+  for (const item of input) {
+    if (typeof item !== 'string') continue
+    const capability = item.trim()
+    if (!capability || seen.has(capability)) continue
+    seen.add(capability)
+    output.push(capability)
+  }
+  return output
 }

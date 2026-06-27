@@ -8,15 +8,18 @@ export type { AgentMessage, AssistantToolCall, PersistedAgentSnapshot, ToolResul
  *
  * AGENTS.md / CLAUDE.md「永续上下文契约」红线:
  *  - getSnapshot() 返回深拷贝, 外部修改不影响内部 (字节稳定的前提)
- *  - 仅 appendXxx 和 replaceMessages 两类写口
+ *  - messages 仅 appendXxx 和 replaceMessages 两类写口
  *  - replaceMessages 仅 compaction 调用
- *  - 持久形态 == 运行时形态: snapshot.messages 即 LLM 看到的 messages
+ *  - 持久形态 == 运行时形态; snapshot.messages 是 LLM 看到的 messages,
+ *    activeToolCapabilities 是 runtime control state, 不进 LLM messages。
  */
 export interface AgentContext {
-  getSnapshot(): { messages: AgentMessage[] }
+  getSnapshot(): { messages: AgentMessage[]; activeToolCapabilities: string[] }
   appendUserMessage(content: string): void
   appendAssistantTurn(turn: { content: string; toolCalls: AssistantToolCall[] }): void
   appendToolResult(input: { toolCallId: string; content: ToolResultContent }): void
+  activateToolCapability(capability: string): void
+  deactivateToolCapability(capability: string): void
   /** compaction 唯一写口。原子替换全部 messages。 */
   replaceMessages(messages: AgentMessage[]): void
   exportPersistedSnapshot(): PersistedAgentSnapshot
@@ -31,10 +34,14 @@ interface CreateAgentContextOptions {
 
 export function createAgentContext(options: CreateAgentContextOptions = {}): AgentContext {
   let messages: AgentMessage[] = options.initialMessages ? cloneMessages(options.initialMessages) : []
+  let activeToolCapabilities: string[] = []
 
   const impl: AgentContext = {
-    getSnapshot(): { messages: AgentMessage[] } {
-      return { messages: cloneMessages(messages) }
+    getSnapshot(): { messages: AgentMessage[]; activeToolCapabilities: string[] } {
+      return {
+        messages: cloneMessages(messages),
+        activeToolCapabilities: [...activeToolCapabilities],
+      }
     },
     appendUserMessage(content: string): void {
       messages.push({ role: 'user', content })
@@ -53,6 +60,14 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
         content: input.content,
       })
     },
+    activateToolCapability(capability: string): void {
+      if (!activeToolCapabilities.includes(capability)) {
+        activeToolCapabilities = [...activeToolCapabilities, capability]
+      }
+    },
+    deactivateToolCapability(capability: string): void {
+      activeToolCapabilities = activeToolCapabilities.filter((item) => item !== capability)
+    },
     replaceMessages(next: AgentMessage[]): void {
       messages = cloneMessages(next)
     },
@@ -60,16 +75,33 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
       return {
         schemaVersion: SNAPSHOT_SCHEMA_VERSION,
         messages: cloneMessages(messages),
+        activeToolCapabilities: [...activeToolCapabilities],
       }
     },
     restorePersistedSnapshot(snapshot: PersistedAgentSnapshot): void {
       messages = cloneMessages(snapshot.messages)
+      activeToolCapabilities = sanitizeToolCapabilities(snapshot.activeToolCapabilities)
     },
     reset(): void {
       messages = []
+      activeToolCapabilities = []
     },
   }
   return impl
+}
+
+function sanitizeToolCapabilities(input: unknown): string[] {
+  if (!Array.isArray(input)) return []
+  const seen = new Set<string>()
+  const output: string[] = []
+  for (const item of input) {
+    if (typeof item !== 'string') continue
+    const capability = item.trim()
+    if (!capability || seen.has(capability)) continue
+    seen.add(capability)
+    output.push(capability)
+  }
+  return output
 }
 
 function cloneMessages(input: AgentMessage[]): AgentMessage[] {

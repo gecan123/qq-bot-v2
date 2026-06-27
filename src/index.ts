@@ -23,10 +23,10 @@ import type { BotEvent } from './agent/event.js'
 import { createBotSnapshotRepo } from './agent/snapshot-repo.js'
 import { createLlmClient } from './agent/llm-client.js'
 import { buildBotSystemPrompt } from './agent/bot-system-prompt.js'
-import { createToolExecutor } from './agent/tool.js'
+import { createDeferredToolExecutor } from './agent/tool.js'
 import { createGenerateImageTaskLogHook, createGroupSendAiToneHook } from './agent/tool-policy-hooks.js'
 import { setTokenUsageDbPersistenceEnabled } from './agent/token-stats.js'
-import { buildBotTools } from './agent/tools/index.js'
+import { buildBotToolManifest } from './agent/tools/index.js'
 import { createBotLoopAgent } from './agent/bot-loop-agent.js'
 import { renderBotEvent } from './agent/render-event.js'
 import { replayMissedMessages } from './agent/replay-missed.js'
@@ -261,8 +261,8 @@ async function main() {
     'group customizations loaded',
   )
   const taskRegistry = createInMemoryTaskRegistry()
-  const tools = createToolExecutor(
-    buildBotTools({
+  const tools = createDeferredToolExecutor({
+    ...buildBotToolManifest({
       sender: messageSender,
       groupAmbientSendIds: config.groupAmbientSendIds,
       taskRegistry,
@@ -270,14 +270,17 @@ async function main() {
       metadata: targetMetadata,
       groupCustomizations,
     }),
-    {
-      trace: { path: config.toolCallLogPath, persistToDb: true },
-      hooks: {
-        beforeTool: [createGroupSendAiToneHook()],
-        afterTool: [createGenerateImageTaskLogHook()],
-      },
+    activeCapabilities: {
+      list: () => context.getSnapshot().activeToolCapabilities,
+      activate: (capability) => context.activateToolCapability(capability),
+      deactivate: (capability) => context.deactivateToolCapability(capability),
     },
-  )
+    trace: { path: config.toolCallLogPath, persistToDb: true },
+    hooks: {
+      beforeTool: [createGroupSendAiToneHook()],
+      afterTool: [createGenerateImageTaskLogHook()],
+    },
+  })
 
   const systemPrompt = buildBotSystemPrompt({
     groupIds: config.botTargetGroupIds,

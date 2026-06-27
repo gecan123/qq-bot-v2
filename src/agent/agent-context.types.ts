@@ -45,6 +45,7 @@ export type AgentMessage =
 export interface PersistedAgentSnapshot {
   schemaVersion: number
   messages: AgentMessage[]
+  activeToolCapabilities: string[]
 }
 
-export const SNAPSHOT_SCHEMA_VERSION = 2
+export const SNAPSHOT_SCHEMA_VERSION = 3

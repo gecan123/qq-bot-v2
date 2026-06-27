@@ -71,7 +71,7 @@ const argsSchema = z.object({
     .trim()
     .min(1)
     .max(2000)
-    .describe('受限 Bash 命令. workspace 可操作 data/agent-workspace; repo 可只读查看仓库代码; 内置 journal/db/style/openbb/fetch/ai_tone 子命令走专用 wrapper.'),
+    .describe('受限 Bash 命令. workspace 可操作 data/agent-workspace; repo 可只读查看仓库代码; 内置 journal/db/style/ai_tone 子命令走专用 wrapper.'),
 })
 
 type Args = {
@@ -1072,12 +1072,12 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
     name: 'workspace_bash',
     description: [
       '受限 Bash. 默认 cwd=workspace, 用来整理你的私有工作文件、日记、梦、草稿和索引; 也可 cwd=repo 只读查看自己的仓库代码.',
-      'workspace 允许少量文件命令: pwd/ls/rg/cat/head/tail/wc/mkdir/touch/printf; 还提供内置子命令: help、journal、db、style、openbb、fetch、ai_tone.',
+      'workspace 允许少量文件命令: pwd/ls/rg/cat/head/tail/wc/mkdir/touch/printf; 还提供内置子命令: help、journal、db、style、ai_tone.',
       'repo 只允许读命令: pwd/ls/rg/cat/head/tail/wc; rg 支持普通搜索和 --files, 不能写, 也不能读 .env/logs/node_modules/.git/data/prompts/groups.yaml.',
       '可以用重定向把 printf 输出写入工作区文件, 例如 `printf "..." > notes/today.md`.',
-      '常用路由不用先 help: 查网页 `fetch url <url> [hint]`; 刷 Reddit `fetch reddit list technology hot 5`; 看 repo 传 cwd=repo 后用 `rg --files src` / `rg <pattern> src` / `cat <path>`; 查历史先 `db schema` 再 `db query <json>`; 日记/梦境用 `journal write|list|search|read`.',
-      '不确定语法时先用 `help` 或 `help <topic>`; 聊天约束/风格用 `style global constraints|base|anti_patterns|special_cases` 或 `style group`; 金融数据用 `openbb <command>`; 抓图片/头像用 `fetch image <url>` / `fetch avatar <qq>`; AI 腔调检测用 `ai_tone <json>`.',
-      '数据库仍只读; openbb 仍走 OpenBB allowlist; ai_tone 只走内置模型; 不允许 psql/curl/node/cat .env/路径逃逸/任意 shell 组合.',
+      '常用路由不用先 help: 看 repo 传 cwd=repo 后用 `rg --files src` / `rg <pattern> src` / `cat <path>`; 查历史先 `db schema` 再 `db query <json>`; 日记/梦境用 `journal write|list|search|read`.',
+      '不确定语法时先用 `help` 或 `help <topic>`; 聊天约束/风格用 `style global constraints|base|anti_patterns|special_cases` 或 `style group`; AI 腔调检测用 `ai_tone <json>`.',
+      '数据库仍只读; ai_tone 只走内置模型; 不允许 psql/curl/node/cat .env/路径逃逸/任意 shell 组合.',
     ].join(' '),
     schema: argsSchema,
     async execute(args, ctx) {

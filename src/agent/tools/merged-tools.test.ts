@@ -55,6 +55,8 @@ describe('merged main-agent tools', () => {
     assert.ok(names.includes('background_task'))
     assert.ok(names.includes('memory'))
     assert.ok(names.includes('pause'))
+    assert.ok(names.includes('skill'))
+    assert.ok(names.includes('todo'))
     assert.ok(names.includes('workspace_bash'))
     assert.equal(names.includes('fetch_content'), false)
     assert.equal(names.includes('db'), false)

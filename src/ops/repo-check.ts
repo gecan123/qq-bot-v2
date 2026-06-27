@@ -50,6 +50,8 @@ const TOOL_REGISTRY_MARKERS = [
   ['createSendMessageTool', 'send_message'],
   ['createGenerateImageTool', 'generate_image'],
   ['createBackgroundTaskTool', 'background_task'],
+  ['todoTool', 'todo'],
+  ['skillTool', 'skill'],
   ['memoryTool', 'memory'],
   ['collectStickerTool', 'collect_sticker'],
   ['createWorkspaceBashTool', 'workspace_bash'],

@@ -9,6 +9,8 @@ import { maybeCreateWebSearchTool } from './web-search.js'
 import { createGenerateImageTool } from './generate-image.js'
 import { createBackgroundTaskTool } from './background-task.js'
 import { memoryTool } from './memory.js'
+import { skillTool } from './skill.js'
+import { todoTool } from './todo.js'
 import { collectStickerTool } from './collect-sticker.js'
 import { createWorkspaceBashTool } from './workspace-bash.js'
 import { maybeCreateBrowserTool } from './browser.js'
@@ -32,6 +34,8 @@ export function buildBotTools(deps: BotToolDeps): Tool[] {
     }),
     createGenerateImageTool({ taskRegistry: deps.taskRegistry }),
     createBackgroundTaskTool({ taskRegistry: deps.taskRegistry }),
+    todoTool,
+    skillTool,
     memoryTool,
     collectStickerTool,
     createWorkspaceBashTool({

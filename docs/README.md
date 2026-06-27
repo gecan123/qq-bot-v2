@@ -7,6 +7,7 @@
 - `docs/ARCHITECTURE.md`：运行形态、模块边界和启动流程。
 - `docs/AGENT_CONTEXT.md`：永续上下文不变量和 replay 规则。
 - `docs/TOOLS.md`：bot 工具注册、安全边界和外部能力。
+- `docs/HARNESS_COMPARISON.md`：按 `learn-claude-code` 章节对照当前 Agent harness 能力。
 - `docs/OPERATIONS.md`：本地命令、日志、验证和排查。
 - `docs/TECH_DEBT.md`：已知漂移和清理候选。
 - `plans/`：多步任务的实现计划和决策记录。

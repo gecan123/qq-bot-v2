@@ -24,8 +24,8 @@ describe('logger', () => {
     `
 
     const { stdout, stderr } = await execFileAsync(
-      'pnpm',
-      ['exec', 'tsx', '--eval', script],
+      process.execPath,
+      ['--import', 'tsx', '--eval', script],
       {
         cwd: projectRoot,
         env: {

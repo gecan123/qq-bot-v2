@@ -98,3 +98,43 @@ model StickerPool {
   @@index([useCount(sort: Desc), createdAt(sort: Desc)])
   @@map("sticker_pool")
 }
+
+/// Agent 工具调用观测事件。运行时写入失败不能影响 bot 行为; 查询侧按需聚合。
+model AgentToolCall {
+  id          BigInt   @id @default(autoincrement())
+  ts          DateTime @db.Timestamptz(3)
+  toolCallId  String   @map("tool_call_id") @db.VarChar(191)
+  toolName    String   @map("tool_name") @db.VarChar(191)
+  roundIndex  Int      @map("round_index")
+  argsSummary Json     @map("args_summary")
+  durationMs  Int      @map("duration_ms")
+  ok          Boolean
+  sideEffect  Boolean  @map("side_effect")
+  error       String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([ts(sort: Desc)])
+  @@index([toolName, ts(sort: Desc)])
+  @@index([ok, ts(sort: Desc)])
+  @@index([sideEffect, ts(sort: Desc)])
+  @@map("agent_tool_calls")
+}
+
+/// Agent token/cache 使用观测事件。覆盖主聊天和 compaction 等 LLM operation。
+model AgentTokenUsage {
+  id           BigInt   @id @default(autoincrement())
+  ts           DateTime @db.Timestamptz(3)
+  operation    String   @db.VarChar(64)
+  roundIndex   Int?     @map("round_index")
+  model        String   @db.VarChar(191)
+  inputTokens  Int?     @map("input_tokens")
+  cachedTokens Int?     @map("cached_tokens")
+  outputTokens Int?     @map("output_tokens")
+  cacheHitRate Float?   @map("cache_hit_rate")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([ts(sort: Desc)])
+  @@index([operation, ts(sort: Desc)])
+  @@index([model, ts(sort: Desc)])
+  @@map("agent_token_usage")
+}

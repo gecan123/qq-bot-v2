@@ -3,6 +3,16 @@ export interface AgentMetricsInput {
   toolCallsNdjson: string
 }
 
+export interface AgentMetricsFilters {
+  from?: Date
+  to?: Date
+  toolName?: string
+  operation?: string
+  model?: string
+  ok?: boolean
+  sideEffect?: boolean
+}
+
 export interface TokenUsageBucket {
   entries: number
   inputTokens: number
@@ -37,22 +47,28 @@ export interface AgentMetricsSummary {
 }
 
 interface TokenUsageLine {
+  ts?: unknown
   operation?: unknown
+  model?: unknown
   inputTokens?: unknown
   cachedTokens?: unknown
   outputTokens?: unknown
 }
 
 interface ToolCallLine {
+  ts?: unknown
   toolName?: unknown
   ok?: unknown
   sideEffect?: unknown
   durationMs?: unknown
 }
 
-export function summarizeAgentMetrics(input: AgentMetricsInput): AgentMetricsSummary {
-  const tokenSummary = summarizeTokenUsage(input.tokenUsageNdjson)
-  const toolSummary = summarizeToolCalls(input.toolCallsNdjson)
+export function summarizeAgentMetrics(
+  input: AgentMetricsInput,
+  filters: AgentMetricsFilters = {},
+): AgentMetricsSummary {
+  const tokenSummary = summarizeTokenUsage(input.tokenUsageNdjson, filters)
+  const toolSummary = summarizeToolCalls(input.toolCallsNdjson, filters)
   return {
     tokenUsage: {
       total: finalizeTokenBucket(tokenSummary.total),
@@ -93,7 +109,7 @@ export function summarizeAgentMetrics(input: AgentMetricsInput): AgentMetricsSum
   }
 }
 
-function summarizeTokenUsage(raw: string): {
+function summarizeTokenUsage(raw: string, filters: AgentMetricsFilters): {
   total: MutableTokenBucket
   byOperation: Record<string, MutableTokenBucket>
   malformed: number
@@ -108,6 +124,10 @@ function summarizeTokenUsage(raw: string): {
       continue
     }
     const line = value.value
+    if (!matchesTimeFilter(line.ts, filters)) continue
+    if (filters.operation && line.operation !== filters.operation) continue
+    if (filters.model && line.model !== filters.model) continue
+
     const operation = typeof line.operation === 'string' && line.operation.length > 0
       ? line.operation
       : 'unknown'
@@ -119,7 +139,7 @@ function summarizeTokenUsage(raw: string): {
   return { total, byOperation, malformed }
 }
 
-function summarizeToolCalls(raw: string): {
+function summarizeToolCalls(raw: string, filters: AgentMetricsFilters): {
   total: number
   failed: number
   sideEffects: number
@@ -138,6 +158,11 @@ function summarizeToolCalls(raw: string): {
       continue
     }
     const line = value.value
+    if (!matchesTimeFilter(line.ts, filters)) continue
+    if (filters.toolName && line.toolName !== filters.toolName) continue
+    if (filters.ok != null && line.ok !== filters.ok) continue
+    if (filters.sideEffect != null && line.sideEffect !== filters.sideEffect) continue
+
     const toolName = typeof line.toolName === 'string' && line.toolName.length > 0
       ? line.toolName
       : 'unknown'
@@ -204,6 +229,16 @@ function numeric(value: unknown): number {
 
 function round(value: number): number {
   return Math.round(value * 1000) / 1000
+}
+
+function matchesTimeFilter(ts: unknown, filters: AgentMetricsFilters): boolean {
+  if (!filters.from && !filters.to) return true
+  if (typeof ts !== 'string') return false
+  const time = Date.parse(ts)
+  if (!Number.isFinite(time)) return false
+  if (filters.from && time < filters.from.getTime()) return false
+  if (filters.to && time > filters.to.getTime()) return false
+  return true
 }
 
 function* parseNdjson<T>(raw: string): Generator<{ ok: true; value: T } | { ok: false }> {

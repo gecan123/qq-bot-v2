@@ -57,6 +57,7 @@ export interface ToolTraceOptions {
   appender?: (path: string, line: string) => Promise<void>
   now?: () => Date
   clockMs?: () => number
+  persistToDb?: boolean
 }
 
 export interface ToolExecutorOptions {
@@ -169,20 +170,25 @@ async function traceToolCall(
 
   const finishedAt = trace.clockMs?.() ?? Date.now()
   const classified = classifyToolResult(result, forcedError)
-  await logToolCall(
-    {
-      ts: (trace.now?.() ?? new Date()).toISOString(),
-      toolCallId: call.id,
-      toolName: call.name,
-      roundIndex,
-      argsSummary: summarizeToolArgs(call.args),
-      durationMs: Math.max(0, Math.round(finishedAt - startedAt)),
-      ok: classified.ok,
-      sideEffect: isSideEffectTool(call.name, call.args),
-      ...(classified.error ? { error: classified.error } : {}),
-    },
-    { path: trace.path, appender: trace.appender },
-  )
+  const entry = {
+    ts: (trace.now?.() ?? new Date()).toISOString(),
+    toolCallId: call.id,
+    toolName: call.name,
+    roundIndex,
+    argsSummary: summarizeToolArgs(call.args),
+    durationMs: Math.max(0, Math.round(finishedAt - startedAt)),
+    ok: classified.ok,
+    sideEffect: isSideEffectTool(call.name, call.args),
+    ...(classified.error ? { error: classified.error } : {}),
+  }
+  await logToolCall(entry, { path: trace.path, appender: trace.appender })
+  if (trace.persistToDb) {
+    import('../ops/agent-observability-db.js')
+      .then(({ recordAgentToolCallEvent }) => recordAgentToolCallEvent(entry))
+      .catch((err) => {
+        log.warn({ err, toolName: call.name, toolCallId: call.id }, 'agent_tool_call_db_writer_load_failed')
+      })
+  }
 }
 
 function classifyToolResult(

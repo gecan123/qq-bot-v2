@@ -24,6 +24,8 @@ import { createBotSnapshotRepo } from './agent/snapshot-repo.js'
 import { createLlmClient } from './agent/llm-client.js'
 import { buildBotSystemPrompt } from './agent/bot-system-prompt.js'
 import { createToolExecutor } from './agent/tool.js'
+import { createGenerateImageTaskLogHook, createGroupSendAiToneHook } from './agent/tool-policy-hooks.js'
+import { setTokenUsageDbPersistenceEnabled } from './agent/token-stats.js'
 import { buildBotTools } from './agent/tools/index.js'
 import { createBotLoopAgent } from './agent/bot-loop-agent.js'
 import { renderBotEvent } from './agent/render-event.js'
@@ -98,6 +100,7 @@ async function main() {
     'qq-bot-v2 single-context MVP-2 启动',
   )
   await prisma.$connect()
+  setTokenUsageDbPersistenceEnabled(true)
   log.info('数据库已连接')
 
   // 0. 启动期清理 7 天前的 Message + Media
@@ -267,7 +270,13 @@ async function main() {
       metadata: targetMetadata,
       groupCustomizations,
     }),
-    { trace: { path: config.toolCallLogPath } },
+    {
+      trace: { path: config.toolCallLogPath, persistToDb: true },
+      hooks: {
+        beforeTool: [createGroupSendAiToneHook()],
+        afterTool: [createGenerateImageTaskLogHook()],
+      },
+    },
   )
 
   const systemPrompt = buildBotSystemPrompt({

@@ -69,4 +69,44 @@ describe('summarizeAgentMetrics', () => {
     assert.equal(result.tokenUsage.total.entries, 1)
     assert.equal(result.toolCalls.total, 1)
   })
+
+  test('filters token usage and tool calls by time and dimensions', () => {
+    const result = summarizeAgentMetrics({
+      tokenUsageNdjson: [
+        '{"ts":"2026-06-26T10:00:00.000Z","operation":"agent.chat","model":"gpt-5","inputTokens":100,"cachedTokens":50,"outputTokens":10}',
+        '{"ts":"2026-06-26T11:00:00.000Z","operation":"compaction","model":"gpt-5","inputTokens":200,"cachedTokens":0,"outputTokens":20}',
+        '{"ts":"2026-06-26T12:00:00.000Z","operation":"agent.chat","model":"gpt-4.1","inputTokens":300,"cachedTokens":150,"outputTokens":30}',
+      ].join('\n'),
+      toolCallsNdjson: [
+        '{"ts":"2026-06-26T10:00:00.000Z","toolName":"fetch_url","ok":true,"sideEffect":false,"durationMs":100}',
+        '{"ts":"2026-06-26T10:30:00.000Z","toolName":"fetch_url","ok":false,"sideEffect":false,"durationMs":200}',
+        '{"ts":"2026-06-26T11:00:00.000Z","toolName":"send_message","ok":true,"sideEffect":true,"durationMs":300}',
+      ].join('\n'),
+    }, {
+      from: new Date('2026-06-26T09:30:00.000Z'),
+      to: new Date('2026-06-26T10:30:00.000Z'),
+      operation: 'agent.chat',
+      model: 'gpt-5',
+      toolName: 'fetch_url',
+      ok: true,
+      sideEffect: false,
+    })
+
+    assert.deepEqual(result.tokenUsage.total, {
+      entries: 1,
+      inputTokens: 100,
+      cachedTokens: 50,
+      outputTokens: 10,
+      cacheHitRate: 0.5,
+    })
+    assert.equal(result.toolCalls.total, 1)
+    assert.deepEqual(result.toolCalls.byTool.fetch_url, {
+      calls: 1,
+      failed: 0,
+      sideEffects: 0,
+      avgDurationMs: 100,
+      failedRate: 0,
+      sideEffectRate: 0,
+    })
+  })
 })

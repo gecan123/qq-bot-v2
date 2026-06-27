@@ -107,6 +107,8 @@ BOT_BROWSER_ARGS=--fingerprint=12345
 - `pnpm agent:doctor` 做本地、无网络健康检查：必需文件、必需环境变量、agent 指令镜像、schema anchor、startup anchor 和 tool registry anchor。输出 JSON，有错误时非零退出。
 - `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson` 和 `logs/tool-calls.ndjson` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率和 malformed log line 计数。
 - `pnpm agent:metrics <token-log> <tool-log>` 可以汇总指定日志文件。
+- 运行时会把工具调用和 token/cache 使用 best-effort 写入 Postgres 的 `agent_tool_calls` / `agent_token_usage`，写 DB 失败只记 warning，不影响 bot 执行。
+- `pnpm agent:metrics --db` 从 Postgres 汇总持久化事件；可加 `--from <iso> --to <iso> --tool <name> --operation <name> --model <name> --ok true|false --side-effect true|false` 做筛选。
 
 ## Git
 

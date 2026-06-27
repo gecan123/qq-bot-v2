@@ -15,6 +15,11 @@ export interface TokenUsageEntry {
 }
 
 let dirEnsured = false
+let dbPersistenceEnabled = false
+
+export function setTokenUsageDbPersistenceEnabled(enabled: boolean): void {
+  dbPersistenceEnabled = enabled
+}
 
 export function recordTokenUsage(entry: TokenUsageEntry): void {
   const logPath = config.tokenUsageLogPath
@@ -23,7 +28,7 @@ export function recordTokenUsage(entry: TokenUsageEntry): void {
       ? entry.cachedTokens / entry.inputTokens
       : null
 
-  const line = JSON.stringify({
+  const event = {
     ts: new Date().toISOString(),
     operation: entry.operation,
     ...(entry.roundIndex != null ? { roundIndex: entry.roundIndex } : {}),
@@ -32,7 +37,8 @@ export function recordTokenUsage(entry: TokenUsageEntry): void {
     outputTokens: entry.outputTokens,
     model: entry.model,
     ...(cacheHitRate != null ? { cacheHitRate: Math.round(cacheHitRate * 1000) / 1000 } : {}),
-  })
+  }
+  const line = JSON.stringify(event)
 
   const doWrite = async () => {
     if (!dirEnsured) {
@@ -45,4 +51,12 @@ export function recordTokenUsage(entry: TokenUsageEntry): void {
   doWrite().catch((err) => {
     log.warn({ err, path: logPath }, 'token_usage_write_failed')
   })
+
+  if (dbPersistenceEnabled) {
+    import('../ops/agent-observability-db.js')
+      .then(({ recordAgentTokenUsageEvent }) => recordAgentTokenUsageEvent(event))
+      .catch((err) => {
+        log.warn({ err }, 'agent_token_usage_db_writer_load_failed')
+      })
+  }
 }

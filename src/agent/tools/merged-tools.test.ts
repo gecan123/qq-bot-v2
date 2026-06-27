@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, test } from 'node:test'
 import * as zod from 'zod'
 import { createInMemoryTaskRegistry } from '../background-task-registry.js'
@@ -10,9 +13,8 @@ import type { MessageSender } from '../../messaging/message-sender.js'
 import { buildBotTools } from './index.js'
 import { createBackgroundTaskTool } from './background-task.js'
 import { TASK_RESULT_TEXT_CAP_CHARS } from './get-task-result.js'
-import { memoryTool } from './memory.js'
+import { createMemoryTool, memoryTool } from './memory.js'
 import { createFetchImageTool, runCurlImage } from './fetch-image.js'
-import { prisma } from '../../database/client.js'
 import { OutboundCache, setOutboundCacheForTest } from '../../media/outbound-cache.js'
 
 function makeCtx(): ToolContext {
@@ -188,32 +190,35 @@ describe('merged main-agent tools', () => {
     assert.doesNotMatch(text.text, /f{1000}/)
   })
 
-  test('memory action=write and action=search preserve remember/recall behavior', async () => {
-    const originalCreate = prisma.memoryEntry.create
-    const originalFindMany = prisma.memoryEntry.findMany
+  test('memory action=write/search/read uses markdown-backed memory store', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'merged-memory-'))
     try {
-      prisma.memoryEntry.create = (async () => ({ id: 42 })) as never
-      prisma.memoryEntry.findMany = (async () => [
-        { content: '喜欢冷笑话', createdAt: new Date('2026-06-01T00:00:00.000Z') },
-      ]) as never
+      const tool = createMemoryTool({
+        workspaceDir: workspace,
+        now: () => new Date('2026-06-27T00:00:00.000Z'),
+      })
 
-      const written = JSON.parse((await memoryTool.execute({
+      const written = JSON.parse((await tool.execute({
         action: 'write',
-        target: { kind: 'person', id: 123 },
+        scope: 'self',
+        title: 'working-notes',
         content: '喜欢冷笑话',
-      }, makeCtx())).content as string) as { ok: boolean; id: number }
-      const recalled = JSON.parse((await memoryTool.execute({
+      }, makeCtx())).content as string) as { ok: boolean; file: string }
+      const recalled = JSON.parse((await tool.execute({
         action: 'search',
-        target: { kind: 'person', id: 123 },
-      }, makeCtx())).content as string) as { entries: { content: string }[] }
+        keyword: '冷笑话',
+      }, makeCtx())).content as string) as { matches: { file: string; snippet: string }[] }
+      const read = JSON.parse((await tool.execute({
+        action: 'read',
+        file: written.file,
+      }, makeCtx())).content as string) as { ok: boolean; content: string }
 
       assert.equal(written.ok, true)
-      assert.equal(written.id, 42)
-      assert.equal(recalled.entries[0]!.content, '喜欢冷笑话')
+      assert.equal(recalled.matches[0]!.file, 'self/working-notes.md')
+      assert.match(read.content, /喜欢冷笑话/)
       assert.doesNotThrow(() => zod.toJSONSchema(memoryTool.schema))
     } finally {
-      prisma.memoryEntry.create = originalCreate
-      prisma.memoryEntry.findMany = originalFindMany
+      await rm(workspace, { recursive: true, force: true })
     }
   })
 

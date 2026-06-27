@@ -79,6 +79,7 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   checkAgentEntry('CLAUDE.md', files['CLAUDE.md'], errors)
   checkDocsMap(files, errors)
   checkToolIndexes(files, errors)
+  checkToolBoundaryDocs(files, errors)
   checkPromptSplit(files, errors)
 
   for (const surface of README_REMOVED_SURFACES) {
@@ -164,6 +165,17 @@ function checkToolIndexes(files: RepoCheckFiles, errors: string[]): void {
     }
     if (!mentionsToken(systemPrompt, subcommand)) {
       errors.push(`prompts/bot-system.md must mention workspace_bash subcommand "${subcommand}"`)
+    }
+  }
+}
+
+function checkToolBoundaryDocs(files: RepoCheckFiles, errors: string[]): void {
+  for (const line of files['docs/TOOLS.md'].split('\n')) {
+    if (!line.includes('collect_sticker') || !line.includes('workspace_bash')) continue
+    if (/(不是|并非|不要|不能|not|outside|independent|top-level)/i.test(line)) continue
+    if (/(子命令|subcommand|belongs under|内置|built-in|command)/i.test(line)) {
+      errors.push('docs/TOOLS.md must not document collect_sticker as a workspace_bash subcommand')
+      return
     }
   }
 }

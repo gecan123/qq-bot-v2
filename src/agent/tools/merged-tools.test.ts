@@ -58,6 +58,7 @@ describe('merged main-agent tools', () => {
     assert.ok(names.includes('skill'))
     assert.ok(names.includes('todo'))
     assert.ok(names.includes('workspace_bash'))
+    assert.ok(names.includes('collect_sticker'))
     assert.equal(names.includes('fetch_content'), false)
     assert.equal(names.includes('db'), false)
     assert.equal(names.includes('chat_style'), false)

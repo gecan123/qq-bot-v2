@@ -102,6 +102,34 @@ describe('runRepoChecks', () => {
     assert.match(result.errors.join('\n'), /package\.json scripts\.lint must run repo-check/)
   })
 
+  test('rejects documenting collect_sticker as a workspace_bash subcommand', () => {
+    const result = runRepoChecks({
+      ...validFiles,
+      'docs/TOOLS.md': [
+        '# Agent Tools',
+        '`pause` `send_message` `generate_image` `background_task` `memory` `workspace_bash` `browser` `web_search`',
+        '`help` `journal` `db` `style` `openbb` `fetch` `collect_sticker`',
+        '`collect_sticker` belongs under `workspace_bash` for sticker collection.',
+      ].join('\n'),
+    })
+
+    assert.match(result.errors.join('\n'), /docs\/TOOLS\.md must not document collect_sticker as a workspace_bash subcommand/)
+  })
+
+  test('accepts documenting collect_sticker as explicitly outside workspace_bash', () => {
+    const result = runRepoChecks({
+      ...validFiles,
+      'docs/TOOLS.md': [
+        '# Agent Tools',
+        '`pause` `send_message` `generate_image` `background_task` `memory` `collect_sticker` `workspace_bash` `browser` `web_search`',
+        '`help` `journal` `db` `style` `openbb` `fetch`',
+        '`collect_sticker` is not a `workspace_bash` subcommand.',
+      ].join('\n'),
+    })
+
+    assert.deepEqual(result.errors, [])
+  })
+
   test('rejects missing operational feedback scripts', () => {
     const result = runRepoChecks({
       ...validFiles,

@@ -10,7 +10,7 @@
 - 知识和历史：`memory`（本地 Markdown 长期记忆库，支持 self/person/group/topic）、`skill`、`workspace_bash` 内置的 `help` / `db` / `style` 子命令。
 - 外部内容：`workspace_bash` 内置的 `fetch` 子命令（url/image/avatar/reddit list/reddit post）、配置后可用的 `web_search`、`workspace_bash` 内置的 `openbb` 子命令。
 - 文本判断：`workspace_bash` 内置的 `ai_tone` 子命令，用本地 AIRadar 模型判断中文文本更像 AI 腔调还是人味。
-- 媒体生成和复用：`generate_image`（创建图片生成/编辑后台任务，quality、批量输出、最多 5 张输入图）、`collect_sticker`（collect/list/search/random；collect 和 compaction 只注入摘要，更多候选按需 list/search/random）。
+- 媒体生成和复用：`generate_image`（创建图片生成/编辑后台任务，quality、批量输出、最多 5 张输入图）、`collect_sticker`（top-level 媒体副作用工具，collect/list/search/random；collect 读取 image handle、写表情池，compaction 只注入摘要，更多候选按需 list/search/random）。
 - 运行时工作：`background_task`（通用异步任务 list/get；get 的文本结果有通用上限）、`workspace_bash`、配置后可用的 `browser`。
 
 ## Browser
@@ -31,6 +31,7 @@
 - 外部工具必须有输出上限、超时和审计日志。
 - `workspace_bash` 提供可写 private workspace 和只读 repo view。repo view 必须保持 allowlist，不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
 - `workspace_bash` 内置 `help` 子命令用于按需查看语法；`journal write|list|search|read` 把日记和梦境存到 private workspace 文件中；`data/agent-workspace/` 下的 journal 文件是 bot 生成数据，不应提交。
+- `collect_sticker` 是独立 top-level 工具，不是 `workspace_bash` 子命令；它读取已有 image handle、写表情池，并影响未来可发送候选。
 - `memory` 把长期记忆存到 `data/agent-workspace/memory/` 的 Markdown 文件中；这是 bot 生成数据，默认不提交。记忆文件不是 replay 来源，只有 `memory search/read/write` 的有界工具结果能进入 `AgentContext`。
 - `workspace_bash` 的 tool description 保留常用路由示例；复杂细节继续通过 `help <topic>` 按需披露。被拒绝的命令会返回 `help` / `try` 字段，引导下一步。
 - `skill` 从 `docs/agent-skills/` 读取 curated Markdown，只能按 `skill action=list` 返回的 name 加载，并有输出上限。

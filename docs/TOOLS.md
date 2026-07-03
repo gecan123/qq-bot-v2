@@ -9,6 +9,8 @@
 - 发送：`send_message`。
 - 按需工具箱：`toolbox`（`list` / `activate` / `deactivate` capability；激活成功后下一轮暴露对应 typed tool schema）。
 - 知识和历史：`memory`（本地 Markdown 长期记忆库，支持 self/person/group/topic）、`skill`、`workspace_bash` 内置的 `help` / `db` / `style` 子命令。
+- 知识和历史：`memory`、`inbox`（list/read 多来源消息正文）、`workspace_bash` 内置的 `help` / `db` / `style` 子命令。
+- 外部内容：`workspace_bash` 内置的 `fetch` 子命令（url/image/avatar/reddit list/reddit post）、配置后可用的 `web_search`、`workspace_bash` 内置的 `openbb` 子命令。
 - 文本判断：`workspace_bash` 内置的 `ai_tone` 子命令，用本地 AIRadar 模型判断中文文本更像 AI 腔调还是人味。
 - 运行时工作：`background_task`（通用异步任务 list/get；get 的文本结果有通用上限）、`workspace_bash`。
 
@@ -38,6 +40,7 @@
 - assistant text 是内部历史/推理，不是公开发送通道。
 - group ambient 发送受 ingress allowlist 和 `BOT_GROUP_AMBIENT_SEND_IDS` 保护。reply 和 private 不受 ambient whitelist 控制。
 - 外部工具必须有输出上限、超时和审计日志。
+- `inbox` 的群读取必须显式指定监听白名单内的 groupId；私聊读取必须显式指定 peerId。其结果有行数和字符上限，并作为普通 tool result 进入 AgentContext。
 - `workspace_bash` 提供可写 private workspace 和只读 repo view。repo view 必须保持 allowlist，不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
 - `workspace_bash` 内置 `help` 子命令用于按需查看语法；`journal write|list|search|read` 把日记和梦境存到 private workspace 文件中；`data/agent-workspace/` 下的 journal 文件是 bot 生成数据，不应提交。
 - `collect_sticker` 是 deferred typed tool，不是 `workspace_bash` 子命令；它读取已有 image handle、写表情池，并影响未来可发送候选。

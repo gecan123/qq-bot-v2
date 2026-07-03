@@ -1,0 +1,168 @@
+import { z } from 'zod'
+import { prisma } from '../../database/client.js'
+import type { Tool } from '../tool.js'
+
+const DEFAULT_READ_LIMIT = 20
+const MAX_READ_LIMIT = 50
+const LIST_SCAN_LIMIT = 500
+const MESSAGE_TEXT_CAP_CHARS = 2_000
+export const INBOX_OUTPUT_CAP_CHARS = 12_000
+
+const argsSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('list').describe('列出当前允许访问且最近有消息的 mailbox.'),
+  }),
+  z.object({
+    action: z.literal('read').describe('按明确来源读取消息正文.'),
+    source: z.enum(['group', 'private']).describe('来源类型.'),
+    groupId: z.number().int().positive().optional().describe('source=group 时必填的监听群号.'),
+    peerId: z.number().int().positive().optional().describe('source=private 时必填的好友 QQ.'),
+    afterRowId: z.number().int().nonnegative().optional().describe('只返回 messages.id 大于此值的消息.'),
+    limit: z.number().int().min(1).max(MAX_READ_LIMIT).optional().describe('返回条数, 默认 20, 最大 50.'),
+  }),
+])
+
+type Args = z.infer<typeof argsSchema>
+
+export interface InboxMessageRow {
+  id: number
+  sceneKind: string
+  sceneExternalId: string
+  groupId: bigint | null
+  groupName: string | null
+  messageId: bigint
+  senderId: bigint
+  senderNickname: string | null
+  senderGroupNickname: string | null
+  resolvedText: string | null
+  searchText: string
+  sentAt: Date | null
+  createdAt: Date
+}
+
+interface InboxFindManyArgs {
+  where: Record<string, unknown>
+  orderBy: { id: 'asc' | 'desc' }
+  take: number
+}
+
+export interface InboxToolDeps {
+  groupIds: readonly number[]
+  findMessages?: (args: InboxFindManyArgs) => Promise<InboxMessageRow[]>
+}
+
+export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
+  const monitoredGroups = new Set(deps.groupIds)
+  const findMessages = deps.findMessages ?? defaultFindMessages
+
+  return {
+    name: 'inbox',
+    description: [
+      '按需查看没有自动进入上下文的 QQ mailbox.',
+      'action=list 列出最近有消息的来源; action=read 读取一个明确群或私聊来源.',
+      '群来源必须在监听白名单内. read 结果按 messages rowId 升序, 用 afterRowId 继续分页.',
+      'inbox 更新通知只是元数据; 需要理解或引用正文时再调用本工具.',
+    ].join(' '),
+    schema: argsSchema,
+    async execute(args) {
+      if (args.action === 'list') {
+        const groupIds = [...monitoredGroups].map(BigInt)
+        const sourceFilters: Array<Record<string, unknown>> = [{ sceneKind: 'qq_private' }]
+        if (groupIds.length > 0) {
+          sourceFilters.unshift({ sceneKind: 'qq_group', groupId: { in: groupIds } })
+        }
+        const rows = await findMessages({
+          where: { OR: sourceFilters },
+          orderBy: { id: 'desc' },
+          take: LIST_SCAN_LIMIT,
+        })
+        const seen = new Set<string>()
+        const mailboxes: Array<{ mailbox: string; label: string; latestRowId: number }> = []
+        for (const row of rows) {
+          const mailbox = mailboxKeyForRow(row)
+          if (seen.has(mailbox)) continue
+          seen.add(mailbox)
+          mailboxes.push({
+            mailbox,
+            label: row.sceneKind === 'qq_group'
+              ? row.groupName ?? String(row.groupId)
+              : row.senderNickname ?? row.sceneExternalId,
+            latestRowId: row.id,
+          })
+        }
+        return { content: JSON.stringify({ ok: true, mailboxes }, null, 2) }
+      }
+
+      const afterRowId = args.afterRowId ?? 0
+      const limit = args.limit ?? DEFAULT_READ_LIMIT
+      let mailbox: string
+      let where: Record<string, unknown>
+      if (args.source === 'group') {
+        if (args.groupId == null) return errorResult('source=group requires groupId')
+        if (!monitoredGroups.has(args.groupId)) {
+          return errorResult(`groupId=${args.groupId} is not monitored`)
+        }
+        mailbox = `qq_group:${args.groupId}`
+        where = {
+          sceneKind: 'qq_group',
+          groupId: BigInt(args.groupId),
+          id: { gt: afterRowId },
+        }
+      } else {
+        if (args.peerId == null) return errorResult('source=private requires peerId')
+        mailbox = `qq_private:${args.peerId}`
+        where = {
+          sceneKind: 'qq_private',
+          sceneExternalId: String(args.peerId),
+          id: { gt: afterRowId },
+        }
+      }
+
+      const rows = await findMessages({ where, orderBy: { id: 'asc' }, take: limit })
+      return { content: renderBoundedRead(mailbox, rows, limit) }
+    },
+  }
+}
+
+function mailboxKeyForRow(row: InboxMessageRow): string {
+  return row.sceneKind === 'qq_private'
+    ? `qq_private:${row.sceneExternalId}`
+    : `qq_group:${String(row.groupId)}`
+}
+
+function renderBoundedRead(mailbox: string, rows: readonly InboxMessageRow[], requestedLimit: number): string {
+  const messages: Array<Record<string, unknown>> = []
+  let truncated = false
+  for (const row of rows) {
+    const rawText = row.resolvedText ?? row.searchText
+    const text = rawText.length > MESSAGE_TEXT_CAP_CHARS
+      ? `${rawText.slice(0, MESSAGE_TEXT_CAP_CHARS)}…`
+      : rawText
+    const projected = {
+      rowId: row.id,
+      mailbox: mailboxKeyForRow(row),
+      messageId: String(row.messageId),
+      sentAt: (row.sentAt ?? row.createdAt).toISOString(),
+      senderId: String(row.senderId),
+      senderName: row.senderGroupNickname ?? row.senderNickname ?? String(row.senderId),
+      text,
+    }
+    const candidate = JSON.stringify({ ok: true, mailbox, requestedLimit, truncated: false, messages: [...messages, projected] }, null, 2)
+    if (candidate.length > INBOX_OUTPUT_CAP_CHARS) {
+      truncated = true
+      break
+    }
+    messages.push(projected)
+    if (rawText.length > MESSAGE_TEXT_CAP_CHARS) truncated = true
+  }
+  if (messages.length < rows.length) truncated = true
+  return JSON.stringify({ ok: true, mailbox, requestedLimit, truncated, messages }, null, 2)
+}
+
+function errorResult(error: string): { content: string } {
+  return { content: JSON.stringify({ ok: false, error }) }
+}
+
+async function defaultFindMessages(args: InboxFindManyArgs): Promise<InboxMessageRow[]> {
+  return prisma.message.findMany(args as never) as unknown as Promise<InboxMessageRow[]>
+}

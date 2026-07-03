@@ -183,7 +183,7 @@ async function backfillGroupMessages(groupId: number): Promise<void> {
     if (existingIds.has(msg.message_id)) continue
     try {
       // backfill 不传 onMessageReady, 历史消息只入库, 不进 LLM 视野。
-      // 启动恢复路径 (replay-missed) 已经覆盖了 lastWakeAt 之后该入 LLM 的部分。
+      // 启动恢复只覆盖 mailbox cursor / legacy lastWakeAt 边界后的消息。
       await processMessage({ kind: 'group', groupId }, msg.message_id, {})
     } catch (error) {
       ingressLog.warn({ error, groupId, msgId: msg.message_id }, '补拉消息处理失败,跳过')

@@ -8,6 +8,7 @@ import type { LlmClient, LlmCallOutput } from './llm-client.js'
 import type { ToolExecutor } from './tool.js'
 import type { BotSnapshotRepo } from './snapshot-repo.js'
 import type { PersistedAgentSnapshot } from './agent-context.types.js'
+import type { MailboxCursors } from './mailbox.js'
 
 function makeMockLlm(outputs: LlmCallOutput[]): LlmClient {
   let i = 0
@@ -32,17 +33,26 @@ function makeMockTools(impl: Record<string, () => Promise<{ content: string }>> 
   }
 }
 
-function makeMockSnapshotRepo(): { repo: BotSnapshotRepo; saved: PersistedAgentSnapshot[] } {
+function makeMockSnapshotRepo(): {
+  repo: BotSnapshotRepo
+  saved: PersistedAgentSnapshot[]
+  savedCursors: Array<MailboxCursors | undefined>
+  savedLastWakeAt: Array<Date | null>
+} {
   const saved: PersistedAgentSnapshot[] = []
+  const savedCursors: Array<MailboxCursors | undefined> = []
+  const savedLastWakeAt: Array<Date | null> = []
   const repo: BotSnapshotRepo = {
     async load() {
       return null
     },
     async save(input) {
       saved.push(input.snapshot)
+      savedCursors.push((input as typeof input & { mailboxCursors?: MailboxCursors }).mailboxCursors)
+      savedLastWakeAt.push(input.lastWakeAt)
     },
   }
-  return { repo, saved }
+  return { repo, saved, savedCursors, savedLastWakeAt }
 }
 
 // Note: 'send_group_message' references in fixtures below are intentionally retained as the
@@ -141,6 +151,134 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     await agent.runOnceForTest()
     assert.equal(ctx.getSnapshot().messages.length, 0, 'wake events must not enter context')
+  })
+
+  test('replaces ambient group bodies with metadata notification and persists source cursors', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({
+      type: 'napcat_message',
+      messageRowId: 41,
+      groupId: 999,
+      groupName: '环境群',
+      messageId: 12341,
+      senderId: 100,
+      senderNickname: '路人甲',
+      mentionedSelf: false,
+      sentAt: new Date('2026-07-03T00:00:00Z'),
+      renderedText: 'AMBIENT_BODY_MUST_NOT_ENTER_CONTEXT',
+    })
+    eventQueue.enqueue({
+      type: 'napcat_message',
+      messageRowId: 43,
+      groupId: 999,
+      groupName: '环境群',
+      messageId: 12343,
+      senderId: 101,
+      senderNickname: '路人乙',
+      mentionedSelf: false,
+      sentAt: new Date('2026-07-03T00:00:01Z'),
+      renderedText: 'SECOND_AMBIENT_BODY_MUST_NOT_ENTER_CONTEXT',
+    })
+
+    const llm = makeMockLlm([{
+      content: '',
+      toolCalls: [],
+      usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
+      model: 'mock',
+    }])
+    const { repo, savedCursors } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: (event) => event.type === 'napcat_message' ? event.renderedText : null,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
+    assert.equal(userMessages.length, 1)
+    assert.match(userMessages[0]!.content, /\[inbox 更新 \| 群:环境群/)
+    assert.match(userMessages[0]!.content, /新增 2 条/)
+    assert.doesNotMatch(userMessages[0]!.content, /AMBIENT_BODY/)
+    assert.deepEqual(savedCursors, [
+      { 'qq_group:999': 43 },
+      { 'qq_group:999': 43 },
+    ])
+  })
+
+  test('preserves the restored legacy wake boundary across non-message rounds', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    const restoredWakeAt = new Date('2026-07-02T12:00:00Z')
+    const { repo, savedLastWakeAt } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [],
+        usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      initialLastWakeAt: restoredWakeAt,
+      renderEvent: () => '[好奇心 tick]',
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    assert.deepEqual(savedLastWakeAt, [restoredWakeAt, restoredWakeAt])
+  })
+
+  test('does not rerun the LLM when a redelivered message is already behind its source cursor', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('existing durable history')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({
+      type: 'napcat_message',
+      messageRowId: 10,
+      groupId: 999,
+      messageId: 12345,
+      senderId: 100,
+      senderNickname: 'duplicate',
+      mentionedSelf: true,
+      sentAt: new Date('2026-07-03T00:00:00Z'),
+      renderedText: 'must be ignored',
+    })
+    let llmCalled = false
+    const { repo, saved } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat() {
+          llmCalled = true
+          throw new Error('LLM must not run for cursor-filtered redelivery')
+        },
+      },
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      initialMailboxCursors: { 'qq_group:999': 10 },
+      renderEvent: () => 'must not render',
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(llmCalled, false)
+    assert.equal(saved.length, 0)
+    assert.deepEqual(ctx.getSnapshot().messages, [{ role: 'user', content: 'existing durable history' }])
   })
 
   test('空队列等待外部事件时只保活进程, 不注入空闲事件', async () => {
@@ -582,7 +720,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       messageId: 12347,
       senderId: 100,
       senderNickname: 'spam',
-      mentionedSelf: false,
+      mentionedSelf: true,
       sentAt: new Date(),
       renderedText: 'spam content',
     })

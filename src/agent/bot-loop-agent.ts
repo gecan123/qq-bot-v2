@@ -8,6 +8,11 @@ import { maybeCompactConversation, type MaybeCompactOptions } from './compaction
 import { injectStickerPoolAfterCompaction } from './sticker-pool.js'
 import { recordTokenUsage } from './token-stats.js'
 import { createLogger } from '../logger.js'
+import {
+  planMailboxDisclosures,
+  renderAmbientMailboxNotification,
+  type MailboxCursors,
+} from './mailbox.js'
 
 const log = createLogger('BOT_LOOP')
 
@@ -18,6 +23,10 @@ export interface BotLoopAgentDeps {
   llm: LlmClient
   tools: ToolExecutor
   snapshotRepo: BotSnapshotRepo
+  /** 从持久 snapshot 同行恢复的 per-source 披露游标。 */
+  initialMailboxCursors?: Readonly<MailboxCursors>
+  /** 新来源在尚无 cursor 时使用的旧式恢复边界。 */
+  initialLastWakeAt?: Date | null
   /**
    * 把 BotEvent 翻译成 user-role AgentMessage 的纯函数。
    * 字节稳定 = cache 命中前提:同样的 messageRowId 渲染必须每次输出同样字节。
@@ -59,22 +68,44 @@ export interface BotLoopAgent {
 export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let stopRequested = false
   let cancelDebounceSleep: (() => void) | null = null
-  let lastWakeAt: Date | null = null
+  let lastWakeAt: Date | null = deps.initialLastWakeAt ?? null
+  let mailboxCursors: MailboxCursors = { ...deps.initialMailboxCursors }
   let roundIndex = 0
 
-  async function drainEvents(): Promise<number> {
-    let consumed = 0
+  async function drainEvents(): Promise<{ consumed: number; disclosed: number }> {
+    const events: BotEvent[] = []
+    let disclosed = 0
     while (true) {
       const event = deps.eventQueue.dequeue()
       if (!event) break
-      consumed++
-      if (event.type === 'wake') continue
-      const rendered = await deps.renderEvent(event)
+      events.push(event)
+    }
+
+    const plan = planMailboxDisclosures(events, mailboxCursors)
+    mailboxCursors = plan.cursors
+    for (const disclosure of plan.disclosures) {
+      if (disclosure.kind === 'ambient') {
+        deps.context.appendUserMessage(
+          renderAmbientMailboxNotification(disclosure.mailboxKey, disclosure.events),
+        )
+        disclosed++
+        lastWakeAt = new Date()
+        continue
+      }
+
+      if (disclosure.event.type === 'wake') continue
+      const rendered = await deps.renderEvent(disclosure.event)
       if (rendered == null || rendered.length === 0) continue
       deps.context.appendUserMessage(rendered)
-      lastWakeAt = new Date()
+      disclosed++
+      if (
+        disclosure.event.type === 'napcat_message' ||
+        disclosure.event.type === 'napcat_private_message'
+      ) {
+        lastWakeAt = new Date()
+      }
     }
-    return consumed
+    return { consumed: events.length, disclosed }
   }
 
   async function runRound(): Promise<{
@@ -183,8 +214,12 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         }
       })
     }
-    const consumed = await drainEvents()
-    log.debug({ roundIndex: roundIndex + 1, eventsConsumed: consumed }, 'round_start')
+    const { consumed, disclosed } = await drainEvents()
+    log.debug({ roundIndex: roundIndex + 1, eventsConsumed: consumed, eventsDisclosed: disclosed }, 'round_start')
+
+    if (consumed > 0 && disclosed === 0) {
+      return { ranRound: false, shouldWaitForExternalEvent: false }
+    }
 
     if (deps.context.getSnapshot().messages.length === 0) {
       return { ranRound: false, shouldWaitForExternalEvent: false }
@@ -192,12 +227,14 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
 
     await deps.snapshotRepo.save({
       snapshot: deps.context.exportPersistedSnapshot(),
+      mailboxCursors,
       lastWakeAt,
     })
 
     const { inputTokens, shouldWaitForExternalEvent } = await runRound()
     await deps.snapshotRepo.save({
       snapshot: deps.context.exportPersistedSnapshot(),
+      mailboxCursors,
       lastWakeAt,
     })
     await maybeCompact(inputTokens)

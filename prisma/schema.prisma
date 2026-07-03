@@ -61,6 +61,7 @@ model BotAgentSnapshot {
   id              Int      @id @default(1)
   schemaVersion   Int      @default(1) @map("schema_version")
   contextSnapshot Json     @map("context_snapshot")
+  mailboxCursors  Json     @default("{}") @map("mailbox_cursors")
   lastWakeAt      DateTime? @map("last_wake_at") @db.Timestamptz(3)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 

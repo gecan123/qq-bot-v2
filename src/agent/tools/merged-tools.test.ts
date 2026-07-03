@@ -54,6 +54,7 @@ describe('merged main-agent tools', () => {
 
     assert.ok(names.includes('background_task'))
     assert.ok(names.includes('memory'))
+    assert.ok(names.includes('inbox'))
     assert.ok(names.includes('pause'))
     assert.ok(names.includes('skill'))
     assert.ok(names.includes('todo'))

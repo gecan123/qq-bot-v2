@@ -2,6 +2,7 @@ import { prisma } from '../database/client.js'
 import type { PersistedAgentSnapshot } from './agent-context.types.js'
 import { SNAPSHOT_SCHEMA_VERSION } from './agent-context.types.js'
 import { createLogger } from '../logger.js'
+import type { MailboxCursors } from './mailbox.js'
 
 const log = createLogger('SNAPSHOT')
 const SINGLE_ROW_ID = 1
@@ -13,8 +14,16 @@ type RawPersistedAgentSnapshot = {
 }
 
 export interface BotSnapshotRepo {
-  load(): Promise<{ snapshot: PersistedAgentSnapshot; lastWakeAt: Date | null } | null>
-  save(input: { snapshot: PersistedAgentSnapshot; lastWakeAt: Date | null }): Promise<void>
+  load(): Promise<{
+    snapshot: PersistedAgentSnapshot
+    mailboxCursors: MailboxCursors
+    lastWakeAt: Date | null
+  } | null>
+  save(input: {
+    snapshot: PersistedAgentSnapshot
+    mailboxCursors: MailboxCursors
+    lastWakeAt: Date | null
+  }): Promise<void>
 }
 
 export function createBotSnapshotRepo(): BotSnapshotRepo {
@@ -37,11 +46,16 @@ export function createBotSnapshotRepo(): BotSnapshotRepo {
       lastFingerprint = JSON.stringify(migrated)
       return {
         snapshot: migrated,
+        mailboxCursors: parseMailboxCursors(row.mailboxCursors),
         lastWakeAt: row.lastWakeAt ?? null,
       }
     },
     async save(input) {
-      const fingerprint = JSON.stringify(input.snapshot)
+      const fingerprint = JSON.stringify({
+        snapshot: input.snapshot,
+        mailboxCursors: input.mailboxCursors,
+        lastWakeAt: input.lastWakeAt?.toISOString() ?? null,
+      })
       if (fingerprint === lastFingerprint) {
         return
       }
@@ -51,11 +65,13 @@ export function createBotSnapshotRepo(): BotSnapshotRepo {
           id: SINGLE_ROW_ID,
           schemaVersion: SNAPSHOT_SCHEMA_VERSION,
           contextSnapshot: input.snapshot as never,
+          mailboxCursors: input.mailboxCursors as never,
           lastWakeAt: input.lastWakeAt,
         },
         update: {
           schemaVersion: SNAPSHOT_SCHEMA_VERSION,
           contextSnapshot: input.snapshot as never,
+          mailboxCursors: input.mailboxCursors as never,
           lastWakeAt: input.lastWakeAt,
         },
       })
@@ -64,6 +80,20 @@ export function createBotSnapshotRepo(): BotSnapshotRepo {
   }
 }
 
+function parseMailboxCursors(value: unknown): MailboxCursors {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const cursors: MailboxCursors = {}
+  for (const [key, rawCursor] of Object.entries(value)) {
+    if (!/^qq_(?:group|private):\d+$/.test(key)) continue
+    if (!Number.isSafeInteger(rawCursor) || (rawCursor as number) < 0) continue
+    cursors[key] = rawCursor as number
+  }
+  return cursors
+}
+
+function migrateSnapshot(raw: PersistedAgentSnapshot): PersistedAgentSnapshot {
+  if (raw.schemaVersion >= SNAPSHOT_SCHEMA_VERSION) return raw
+  return { ...raw, schemaVersion: SNAPSHOT_SCHEMA_VERSION }
 function migrateSnapshot(raw: RawPersistedAgentSnapshot): PersistedAgentSnapshot {
   return {
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,

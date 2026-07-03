@@ -16,6 +16,7 @@ import { createWorkspaceBashTool } from './workspace-bash.js'
 import { maybeCreateBrowserTool } from './browser.js'
 import { maybeCreateOpenbbCliTool } from './openbb-cli.js'
 import { createFetchContentTool } from './fetch-content.js'
+import { createInboxTool } from './inbox.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -44,6 +45,8 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     todoTool,
     skillTool,
     memoryTool,
+    createInboxTool({ groupIds: deps.groupIds }),
+    collectStickerTool,
     createWorkspaceBashTool({
       groupIdWhitelist: deps.groupIds,
       groupIds: deps.groupIds,

@@ -4,17 +4,15 @@ import type { Message } from '../generated/prisma/client.js'
 import { ensureMessageReadyForAgent as defaultEnsureReady } from '../media/ensure-message-ready.js'
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
+import type { MailboxCursors } from './mailbox.js'
 
 const log = createLogger('REPLAY')
 
 /**
- * 启动时把 lastWakeAt 之后落库的群消息 + 私聊消息一次性 enqueue 进 BotEventQueue。
+ * 启动时按每个 mailbox 的 message-row cursor 回放尚未披露的群消息 + 私聊消息。
  *
- * lastWakeAt 含义: bot 上次成功 drain 一条消息的时刻。重启后只回放此后的消息——
- * 之前的已经在 snapshot 的 messages 数组里了。
- *
- * 如果 lastWakeAt 是 null (从空启动), 不回放任何消息——避免新 bot 首次启动就被
- * 几千条历史消息淹没。补拉历史走 bot/core.ts 的 backfill (只入库, 不进 context)。
+ * 已有来源按独立 row cursor 判断；旧 snapshot 或首次出现的新来源回退到 lastWakeAt。
+ * 两者都不存在时视为冷启动，不回放历史，避免新 bot 被已有消息淹没。
  *
  * 关键: replay 在 NapCat connect 之后跑 (D2 ordering), 所以可能与 live event 重叠.
  * 调用方传入的 enqueueMessageEvent 必须按 messageRowId 去重, 避免同一条消息被同时
@@ -35,36 +33,80 @@ export interface ReplayMissedDeps {
   ensureReady?: (message: Message) => Promise<{ renderedText: string; fromFrozen: boolean }>
 }
 
+export interface ReplayCheckpoint {
+  mailboxCursors: Readonly<MailboxCursors>
+  /** 旧 snapshot 兼容边界，也用于尚未出现 cursor 的新来源。 */
+  legacyLastWakeAt: Date | null
+}
+
 export async function replayMissedMessages(
-  lastWakeAt: Date | null,
+  checkpoint: ReplayCheckpoint,
   deps: ReplayMissedDeps,
 ): Promise<{ enqueued: number; skippedDuplicates: number }> {
-  if (!lastWakeAt) {
-    log.info('lastWakeAt is null; skipping replay')
+  const cursorEntries = Object.entries(checkpoint.mailboxCursors)
+  if (cursorEntries.length === 0 && !checkpoint.legacyLastWakeAt) {
+    log.info('mailbox cursors and lastWakeAt are empty; skipping replay')
     return { enqueued: 0, skippedDuplicates: 0 }
   }
 
   const groupIds = config.botTargetGroupIds.map((id) => BigInt(id))
-  const orFilters: Array<Record<string, unknown>> = []
-  if (groupIds.length > 0) {
-    orFilters.push({ sceneKind: 'qq_group', groupId: { in: groupIds } })
+  const sourceFilters: Array<Record<string, unknown>> = []
+  for (const groupId of groupIds) {
+    const key = `qq_group:${groupId}`
+    const cursor = checkpoint.mailboxCursors[key]
+    if (cursor != null) {
+      sourceFilters.push({ sceneKind: 'qq_group', groupId, id: { gt: cursor } })
+    } else if (checkpoint.legacyLastWakeAt) {
+      sourceFilters.push({
+        sceneKind: 'qq_group',
+        groupId,
+        createdAt: { gt: checkpoint.legacyLastWakeAt },
+      })
+    }
   }
-  // 私聊不再过滤 peerId — 任意好友 DM 都回放
-  orFilters.push({ sceneKind: 'qq_private' })
+
+  for (const [key, cursor] of cursorEntries) {
+    if (!key.startsWith('qq_private:')) continue
+    sourceFilters.push({
+      sceneKind: 'qq_private',
+      sceneExternalId: key.slice('qq_private:'.length),
+      id: { gt: cursor },
+    })
+  }
+  // 任意好友的新私聊来源没有预注册 cursor，以 legacy 时间边界发现。
+  if (checkpoint.legacyLastWakeAt) {
+    sourceFilters.push({
+      sceneKind: 'qq_private',
+      createdAt: { gt: checkpoint.legacyLastWakeAt },
+    })
+  }
+
+  if (sourceFilters.length === 0) {
+    log.info('no replayable mailbox sources')
+    return { enqueued: 0, skippedDuplicates: 0 }
+  }
 
   const rows = await prisma.message.findMany({
     where: {
-      createdAt: { gt: lastWakeAt },
       senderId: { not: BigInt(deps.selfNumber) },
-      OR: orFilters,
+      OR: sourceFilters,
     },
-    orderBy: { createdAt: 'asc' },
+    orderBy: { id: 'asc' },
   })
 
   const ensureReady = deps.ensureReady ?? defaultEnsureReady
   let enqueued = 0
   let skipped = 0
   for (const row of rows) {
+    const sourceKey = row.sceneKind === 'qq_private'
+      ? `qq_private:${row.sceneExternalId}`
+      : `qq_group:${String(row.groupId)}`
+    const cursor = checkpoint.mailboxCursors[sourceKey]
+    const isAfterSourceBoundary = cursor != null
+      ? row.id > cursor
+      : checkpoint.legacyLastWakeAt != null && row.createdAt > checkpoint.legacyLastWakeAt
+    if (!isAfterSourceBoundary) continue
+
     const ready = await ensureReady(row)
     const segments = row.content as unknown as Array<{ type: string; targetId?: string }>
     const mentionedSelf = segments.some(
@@ -110,7 +152,8 @@ export async function replayMissedMessages(
     {
       enqueued,
       skippedDuplicates: skipped,
-      since: lastWakeAt.toISOString(),
+      cursorSources: cursorEntries.length,
+      legacySince: checkpoint.legacyLastWakeAt?.toISOString() ?? null,
     },
     '回放关机期间消息',
   )

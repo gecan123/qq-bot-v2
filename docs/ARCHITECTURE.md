@@ -1,6 +1,6 @@
 # 架构
 
-`qq-bot-v2` 是一个接入 NapCat 的 QQ Agent。群聊和私聊入站消息先写入 Postgres，再被渲染进单一持久化 `AgentContext`，由 `BotLoopAgent` 驱动。
+`qq-bot-v2` 是一个接入 NapCat 的 QQ Agent。群聊和私聊入站消息先写入 Postgres，再由 `BotLoopAgent` 分级披露给单一持久化 `AgentContext`：私聊和群内 `@bot` 直接进入，普通群消息只进入按来源聚合的 mailbox 通知，正文由 Agent 按需读取。
 
 这是实验性新项目。除非任务明确要求历史兼容或迁移保留，否则优先选择干净的目标模型，不要为了旧 adapter、dual-write bridge 或长期兼容层牺牲架构。
 
@@ -9,13 +9,13 @@
 1. `src/index.ts` 加载 config，连接 Prisma，注册媒体 provider，创建 agent LLM client，恢复 `BotAgentSnapshot`，并启动 event queue。
 2. `src/bot/**` 接收 NapCat 事件，并通过 `src/database/messages.ts` 写入入站事实。
 3. ready 后的消息被投递为 `BotEvent`。
-4. `src/agent/render-event.ts` 把事件渲染成确定性的 user text。
-5. `src/agent/bot-loop-agent.ts` append 事件、调用 LLM、执行 tool calls、append tool results、持久化 snapshot，并运行 compaction。
+4. `src/agent/mailbox.ts` 按来源和 direct/ambient 语义规划披露；direct 事件由 `src/agent/render-event.ts` 渲染，ambient 事件聚合为不含正文的确定性通知。
+5. `src/agent/bot-loop-agent.ts` append 披露结果、调用 LLM、执行 tool calls、append tool results，并把 context snapshot 与 mailbox cursors 同行持久化后运行 compaction。
 
 ## 持久边界
 
 - `messages` 是入站事实账本，不是 LLM ledger。
-- `bot_agent_snapshot` 是持久化的 LLM 可见上下文。
+- `bot_agent_snapshot.context_snapshot` 是持久化的 LLM 可见上下文；`mailbox_cursors` 是与它原子保存的 per-source 披露进度。
 - `logs/*.ndjson` 是运维日志，不能成为 replay 输入。
 - `data/agent-workspace/` 是 bot 生产的 workspace 数据，不是项目源码。
 - 当前范围主要是 bot/backend。不要假设一定存在 admin WebUI。

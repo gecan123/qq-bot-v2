@@ -5,6 +5,8 @@
 ## 不变量
 
 - `AgentContext` 是 LLM ledger。运行时形态和持久化 snapshot 形态必须一致。新的 LLM 可见事实只能通过 append 或受控 compaction 进入，不能从 side table 重建历史。
+- `BotAgentSnapshot.contextSnapshot` 是持久化运行时形态。schema 由 `src/agent/agent-context.types.ts` 定义。
+- `BotAgentSnapshot.mailboxCursors` 是每个 QQ 来源已披露 message row 的高水位。它必须和 `contextSnapshot` 同行保存，不能先推进游标再单独保存上下文。
 - `BotAgentSnapshot.contextSnapshot` 是持久化运行时形态。schema 由 `src/agent/agent-context.types.ts` 定义。`messages` 是 LLM 可见 ledger；`activeToolCapabilities` 是 deferred tools 的运行控制状态，必须随 snapshot 持久化/恢复，但不作为 LLM 可见事实注入 messages。
 - `messages` 是入站事实账本。它服务于搜索、媒体解析、审计和 replay recovery，但不能替代 snapshot。
 - Message scene 不变量：`sceneKind='qq_group'` 时 `groupId` 非空且 `sceneExternalId=''`；`sceneKind='qq_private'` 时 `groupId=null` 且 `sceneExternalId=String(peerId)`。
@@ -21,7 +23,8 @@
 ## 运行模型
 
 - bot 在允许来源之间共享一个 owned `AgentContext`。
-- 新事件源必须通过 event queue 和 dedup 路径渲染为确定性的 `user` message，不要插入历史中段。
+- 新事件源必须通过 event queue 和 dedup 路径进入披露规划，不要插入历史中段。私聊和群内直接呼叫渲染为正文 `user` message；普通群消息聚合为不含正文的稳定 inbox 通知。
+- mailbox 是 `messages` 按 scene 划分的逻辑视图，不复制消息正文。Agent 用有界 `inbox` tool result 按需读取。
 - 跨源知识共享是预期行为。跨源发言仍然依赖显式 `send_message` target，以及 ingress/tool 安全规则。
 - curiosity tick、background task 完成等运行时事件如果进入 LLM，必须走稳定事件渲染或 tool-result 路径。
 
@@ -32,6 +35,7 @@
 - `src/agent/bot-loop-agent.ts`：append、LLM call、tool result、persist cycle。
 - `src/agent/compaction.ts`：基于摘要的历史 compaction。
 - `src/agent/render-event.ts`：确定性的 event-to-user-message 渲染。
+- `src/agent/mailbox.ts`：来源 key、direct/ambient 分类、通知渲染和 cursor 推进。
 - `src/agent/replay-missed.ts`：启动恢复关机期间漏掉的入站事实。
 - `prisma/schema.prisma`：持久数据库契约。
 

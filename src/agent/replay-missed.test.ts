@@ -84,7 +84,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
   test('returns 0 when lastWakeAt is null (cold start avoids drowning bot in history)', async () => {
     const q = new InMemoryEventQueue<BotEvent>()
     const enq = createDedupEnqueue(q)
-    const result = await replayMissedMessages(null, {
+    const result = await replayMissedMessages({ mailboxCursors: {}, legacyLastWakeAt: null }, {
       enqueueMessageEvent: enq,
       selfNumber: 999,
       ensureReady: stubEnsureReady,
@@ -153,7 +153,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
     })
     assert.equal(q.size(), 2, 'pre-replay state')
 
-    const result = await replayMissedMessages(lastWake, {
+    const result = await replayMissedMessages({ mailboxCursors: {}, legacyLastWakeAt: lastWake }, {
       enqueueMessageEvent: enq,
       selfNumber: 999,
       ensureReady: stubEnsureReady,
@@ -203,7 +203,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
 
     const q = new InMemoryEventQueue<BotEvent>()
     const enq = createDedupEnqueue(q)
-    const result = await replayMissedMessages(lastWake, {
+    const result = await replayMissedMessages({ mailboxCursors: {}, legacyLastWakeAt: lastWake }, {
       enqueueMessageEvent: enq,
       selfNumber: 999,
       ensureReady: stubEnsureReady,
@@ -216,5 +216,66 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
       if (ev) types.push(ev.type)
     }
     assert.deepEqual(types.sort(), ['napcat_message', 'napcat_private_message'])
+  })
+
+  test('filters each source by its own message-row cursor', async () => {
+    const rows: Message[] = [
+      makeGroupRow({
+        id: 10,
+        groupId: 672312932,
+        messageId: 1,
+        senderId: 555,
+        text: 'already disclosed group',
+        createdAt: new Date('2026-05-04T01:00:01Z'),
+      }),
+      makePrivateRow({
+        id: 11,
+        peerId: 10001,
+        messageId: 2,
+        senderId: 10001,
+        text: 'new private',
+        createdAt: new Date('2026-05-04T01:00:02Z'),
+      }),
+      makeGroupRow({
+        id: 12,
+        groupId: 672312932,
+        messageId: 3,
+        senderId: 555,
+        text: 'new group',
+        createdAt: new Date('2026-05-04T01:00:03Z'),
+      }),
+      makePrivateRow({
+        id: 13,
+        peerId: 20002,
+        messageId: 4,
+        senderId: 20002,
+        text: 'unknown old source',
+        createdAt: new Date('2026-05-03T23:00:00Z'),
+      }),
+    ]
+    originalFindMany = prisma.message.findMany
+    ;(prisma.message as unknown as { findMany: (args: unknown) => Promise<Message[]> }).findMany = (async () =>
+      rows) as never
+
+    const q = new InMemoryEventQueue<BotEvent>()
+    const result = await replayMissedMessages({
+      mailboxCursors: {
+        'qq_group:672312932': 10,
+        'qq_private:10001': 9,
+      },
+      legacyLastWakeAt: new Date('2026-05-04T00:00:00Z'),
+    }, {
+      enqueueMessageEvent: createDedupEnqueue(q),
+      selfNumber: 999,
+      ensureReady: stubEnsureReady,
+    })
+
+    assert.deepEqual(result, { enqueued: 2, skippedDuplicates: 0 })
+    const rowIds: number[] = []
+    while (q.size() > 0) {
+      const event = q.dequeue()
+      if (event && 'messageRowId' in event) rowIds.push(event.messageRowId)
+    }
+    assert.deepEqual(rowIds, [11, 12])
   })
 })

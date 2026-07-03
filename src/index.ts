@@ -178,6 +178,7 @@ async function main() {
     log.info(
       {
         messages: persisted.snapshot.messages.length,
+        mailboxSources: Object.keys(persisted.mailboxCursors).length,
         lastWakeAt: persisted.lastWakeAt?.toISOString() ?? null,
       },
       '从持久化 snapshot 恢复 AgentContext',
@@ -242,7 +243,10 @@ async function main() {
 
   // 9. 关机期间消息回放. 在 connect 之后跑也安全, 因为 enqueueMessageEvent 按
   //    messageRowId 去重 (步骤 5), live 已经先入队的就不会被 replay 重复入队.
-  const replayResult = await replayMissedMessages(persisted?.lastWakeAt ?? null, {
+  const replayResult = await replayMissedMessages({
+    mailboxCursors: persisted?.mailboxCursors ?? {},
+    legacyLastWakeAt: persisted?.lastWakeAt ?? null,
+  }, {
     enqueueMessageEvent,
     selfNumber: config.selfNumber,
   })
@@ -307,6 +311,8 @@ async function main() {
     llm,
     tools,
     snapshotRepo,
+    initialMailboxCursors: persisted?.mailboxCursors ?? {},
+    initialLastWakeAt: persisted?.lastWakeAt ?? null,
     renderEvent: renderBotEvent,
     eventDebounceMs: config.eventDebounceMs,
   })

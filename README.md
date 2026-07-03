@@ -2,7 +2,7 @@
 
 `qq-bot-v2` 是一个基于 NapCat + Node.js + Prisma + PostgreSQL 的 QQ Agent。
 
-它接收 QQ 群聊和私聊消息，把入站事实写入 Postgres，并在单一持久化 `AgentContext` 上运行 `BotLoopAgent`。
+它接收 QQ 群聊和私聊消息，把入站事实写入 Postgres，并在单一持久化 `AgentContext` 上运行 `BotLoopAgent`。私聊和群内直接呼叫进入上下文；普通群消息留在按来源划分的 mailbox，默认只披露有界通知。
 
 ## 核心契约
 
@@ -10,6 +10,7 @@
 
 - `bot_agent_snapshot` 是持久化的 LLM ledger。它的 `context_snapshot` 字段就是运行时 `AgentContext` 形态。
 - `messages` 是入站事实账本。它服务于搜索、媒体解析、审计和 replay recovery，但不能替代 `AgentContext`。
+- `bot_agent_snapshot.mailbox_cursors` 与 context snapshot 同行持久化，记录各来源已经披露到哪个 message row。
 - 新的 LLM 可见事实只能通过 append 或受控 compaction 进入。
 - late media description 和 side table 更新不得改写已经 append 的历史。
 - 对外 QQ 发言必须走 `send_message`，且 target 必须明确。

@@ -2,7 +2,7 @@
 
 `qq-bot-v2` 是一个基于 NapCat + Node.js + Prisma + PostgreSQL 的 QQ Agent。
 
-它接收 QQ 群聊和私聊消息，把入站事实写入 Postgres，并在单一持久化 `AgentContext` 上运行 `BotLoopAgent`。私聊和群内直接呼叫进入上下文；普通群消息留在按来源划分的 mailbox，默认只披露有界通知。
+它接收 QQ 群聊和私聊消息，把入站事实写入 Postgres，并在单一持久化 `AgentContext` 上运行 `BotLoopAgent`。群内直接呼叫进入上下文；普通群消息按群、私聊消息按联系人形成 mailbox，默认只披露有界通知，正文由 Agent 按需读取。
 
 ## 核心契约
 

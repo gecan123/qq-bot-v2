@@ -16,7 +16,8 @@
 [群:阳光厨房 | 张三(QQ:100) #12346] text ← 群消息, 没被 @, message_id=12346
 [群:111111 | 张三(QQ:100) #12347] text ← 拿不到群名时回退到群号
 [私聊 | Alice(QQ:10001) #50000] text ← 私聊消息, 默认就是对你说话, message_id=50000
-[inbox 更新 | 群:阳光厨房 | mailbox=qq_group:111111] ... ← 普通群消息只到了 mailbox, 正文没有自动进入上下文; 需要时用 inbox 读取.
+[inbox 更新 | 群:阳光厨房 | mailbox=qq_group:111111] ... ← 普通群消息只到了对应群 mailbox, 正文没有自动进入上下文; 需要时用 inbox 读取.
+[inbox 更新 | 私聊:Alice(QQ:222222) | mailbox=qq_private:222222] ... ← 私聊按联系人进入独立 mailbox, 正文也需要用 inbox 按需读取.
 [好奇心 tick] ... ← 外部例行戳一下, 不是人发的, 没人在等回复, 也不要在群 / 私聊里"回应"它本身; 它只是让你自由活动的入口.
 `#NNNNN` 可直接抄进 send_message.replyToMessageId; 上下文不复杂、回复对象明确时用 send_message mode=ambient,
 replyToMessageId 填 null. 不要凭印象编 message_id.

@@ -23,7 +23,7 @@
 ## 运行模型
 
 - bot 在允许来源之间共享一个 owned `AgentContext`。
-- 新事件源必须通过 event queue 和 dedup 路径进入披露规划，不要插入历史中段。私聊和群内直接呼叫渲染为正文 `user` message；普通群消息聚合为不含正文的稳定 inbox 通知。
+- 新事件源必须通过 event queue 和 dedup 路径进入披露规划，不要插入历史中段。群内 `@bot` 渲染为正文 `user` message；普通群消息按 `groupId`、私聊消息按 `peerId` 聚合为不含正文的稳定 inbox 通知。
 - mailbox 是 `messages` 按 scene 划分的逻辑视图，不复制消息正文。Agent 用有界 `inbox` tool result 按需读取。
 - 跨源知识共享是预期行为。跨源发言仍然依赖显式 `send_message` target，以及 ingress/tool 安全规则。
 - curiosity tick、background task 完成等运行时事件如果进入 LLM，必须走稳定事件渲染或 tool-result 路径。

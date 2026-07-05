@@ -271,6 +271,7 @@ async function main() {
       groupAmbientSendIds: config.groupAmbientSendIds,
       taskRegistry,
       groupIds: config.botTargetGroupIds,
+      selfNumber: config.selfNumber,
       metadata: targetMetadata,
       groupCustomizations,
     }),

@@ -57,11 +57,14 @@ export interface ClaudeMessageRequestBody {
   tool_choice?: Record<string, unknown>
 }
 
+export type ClaudeToolChoice = 'any' | 'auto'
+
 export interface BuildClaudeCodeRequestBodyInput {
   model: string
   systemPrompt: string
   messages: AgentMessage[]
   tools: Tool[]
+  toolChoice?: ClaudeToolChoice
 }
 
 export function buildClaudeCodeRequestBody(
@@ -79,7 +82,7 @@ export function buildClaudeCodeRequestBody(
 
   if (toolsEnabled) {
     body.tools = input.tools.map(toAnthropicToolDecl)
-    body.tool_choice = { type: 'any' }
+    body.tool_choice = { type: input.toolChoice ?? 'any' }
   }
 
   // 1h cache breakpoint: 钉在 messages 最后一条的最后一个 content block 上,

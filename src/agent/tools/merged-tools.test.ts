@@ -46,6 +46,7 @@ describe('merged main-agent tools', () => {
     const names = buildBotTools({
       sender: mockSender,
       groupAmbientSendIds: new Set(),
+      selfNumber: 999,
       taskRegistry: createInMemoryTaskRegistry(),
       groupIds: [],
       metadata: { groupNames: new Map() },
@@ -92,6 +93,7 @@ describe('merged main-agent tools', () => {
     const manifest = buildBotToolManifest({
       sender: mockSender,
       groupAmbientSendIds: new Set(),
+      selfNumber: 999,
       taskRegistry: createInMemoryTaskRegistry(),
       groupIds: [],
       metadata: { groupNames: new Map() },

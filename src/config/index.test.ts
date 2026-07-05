@@ -46,6 +46,24 @@ describe('config', () => {
     })
   })
 
+  test('parses Claude tool choice override for Anthropic-compatible providers', () => {
+    const config = parseConfig(createBaseEnv({
+      LLM_PROVIDER_CLAUDE_TOOL_CHOICE: 'auto',
+    }))
+
+    assert.equal(config.llm.claudeToolChoice, 'auto')
+  })
+
+  test('defaults Claude tool choice to any and rejects unsupported values', () => {
+    assert.equal(parseConfig(createBaseEnv()).llm.claudeToolChoice, 'any')
+    assert.throws(
+      () => parseConfig(createBaseEnv({
+        LLM_PROVIDER_CLAUDE_TOOL_CHOICE: 'required',
+      })),
+      /LLM_PROVIDER_CLAUDE_TOOL_CHOICE/,
+    )
+  })
+
   test('omits unconfigured scenarios entirely', () => {
     const config = parseConfig(createBaseEnv())
 

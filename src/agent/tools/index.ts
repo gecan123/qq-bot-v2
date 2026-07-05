@@ -24,6 +24,7 @@ export interface BotToolDeps {
   groupAmbientSendIds: ReadonlySet<number>
   taskRegistry: BackgroundTaskRegistry
   groupIds: readonly number[]
+  selfNumber: number
   metadata: TargetMetadataMaps
   groupCustomizations: readonly GroupCustomization[]
 }
@@ -45,7 +46,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     todoTool,
     skillTool,
     memoryTool,
-    createInboxTool({ groupIds: deps.groupIds }),
+    createInboxTool({ groupIds: deps.groupIds, selfNumber: deps.selfNumber }),
     collectStickerTool,
     createWorkspaceBashTool({
       groupIdWhitelist: deps.groupIds,

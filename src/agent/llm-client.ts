@@ -82,6 +82,7 @@ export function createLlmClient(options: CreateLlmClientOptions = {}): LlmClient
       model: options.model ?? config.llm.defaultModel,
       baseURL: claudeProvider.url,
       apiKey: claudeProvider.apiKey,
+      toolChoice: config.llm.claudeToolChoice,
     })
   }
 

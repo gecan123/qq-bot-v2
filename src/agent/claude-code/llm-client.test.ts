@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
+import { z } from 'zod'
 import { createClaudeCodeLlmClient, ClaudeCodeApiError } from './llm-client.js'
+import type { Tool } from '../tool.js'
 import {
   ANTHROPIC_BETA,
   ANTHROPIC_VERSION,
@@ -9,6 +11,12 @@ import {
 
 const CLIPROXY_BASE_URL = 'http://127.0.0.1:8317/v1'
 const CLIPROXY_API_KEY = 'sk-local'
+const echoTool: Tool = {
+  name: 'echo',
+  description: 'Echo text',
+  schema: z.object({ text: z.string() }),
+  execute: async () => ({ content: 'ok' }),
+}
 
 function ev(type: string, data: Record<string, unknown>): string {
   return `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`
@@ -52,6 +60,26 @@ function makeFetchMock(responses: Array<{ status?: number; body: string }>): {
 }
 
 describe('ClaudeCodeLlmClient.chat', () => {
+  test('forwards configured auto tool choice into the request body', async (t) => {
+    const { fn, calls } = makeFetchMock([{ body: SAMPLE_TEXT_SSE }])
+    t.mock.method(globalThis, 'fetch', fn)
+
+    const client = createClaudeCodeLlmClient({
+      model: 'LongCat-2.0',
+      baseURL: 'https://api.longcat.chat/anthropic/v1',
+      apiKey: 'longcat-key',
+      toolChoice: 'auto',
+    })
+    await client.chat({
+      systemPrompt: 'persona',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [echoTool],
+    })
+
+    const body = JSON.parse(String(calls[0]?.init.body)) as Record<string, unknown>
+    assert.deepEqual(body.tool_choice, { type: 'auto' })
+  })
+
   test('hits cliproxy localhost endpoint with correct cloak headers + Bearer apiKey', async (t) => {
     const { fn, calls } = makeFetchMock([{ body: SAMPLE_TEXT_SSE }])
     t.mock.method(globalThis, 'fetch', fn)

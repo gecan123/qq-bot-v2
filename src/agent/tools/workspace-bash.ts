@@ -434,19 +434,34 @@ function parseHelpCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedHe
   return { ok: false, error: 'help topic must be workspace, repo, journal, db, style, openbb, fetch, or ai_tone' }
 }
 
-function parseDbToolCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedDbToolCommand | { ok: false; error: string } {
+function parseDbToolCommand(
+  tokens: string[],
+  cwd: 'workspace' | 'repo',
+  rawCommand: string,
+): ParsedDbToolCommand | { ok: false; error: string } {
   if (cwd !== 'workspace') return { ok: false, error: 'db is only available in workspace mode' }
   if (tokens[1] === 'schema' && tokens.length === 2) {
     return { ok: true, kind: 'db_tool', cwd: 'workspace', action: 'schema' }
   }
-  if (tokens[1] !== 'query' || tokens.length !== 3) {
+  if (tokens[1] !== 'query') {
     return { ok: false, error: 'db command must be `db schema` or `db query <json>`' }
   }
 
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(tokens[2]!)
-  } catch {
+  const rawPayload = rawCommand.match(/^db\s+query\s+([\s\S]+)$/)?.[1]?.trim()
+  const payloadCandidates = [rawPayload, tokens.length === 3 ? tokens[2] : undefined]
+    .filter((value): value is string => Boolean(value))
+  let parsed: unknown = undefined
+  for (const candidate of payloadCandidates) {
+    try {
+      parsed = JSON.parse(candidate)
+      break
+    } catch {
+      // A shell-quoted payload fails as raw text but succeeds after shellTokens removes
+      // the outer quotes; an unquoted JSON payload succeeds as raw text before its
+      // internal quotes are consumed by shellTokens.
+    }
+  }
+  if (parsed === undefined) {
     return { ok: false, error: 'db query requires JSON payload' }
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -673,7 +688,7 @@ export function parseWorkspaceBashCommand(
   }
 
   if (tokens[0] === 'db') {
-    return parseDbToolCommand(tokens, cwd)
+    return parseDbToolCommand(tokens, cwd, trimmed)
   }
 
   if (tokens[0] === 'style') {
@@ -802,7 +817,7 @@ function renderHelpCommand(parsed: ParsedHelpCommand): WorkspaceBashRunResult {
       purpose: '只读查询消息账本和可公开 schema.',
       commands: [
         'db schema',
-        'db query <json>',
+        'db query {"sql":"SELECT 1","params":{}}',
       ],
     },
     style: {
@@ -1052,7 +1067,7 @@ function commandErrorGuidance(error: string): { help: string; try: string } {
     return { help: 'help fetch', try: 'fetch reddit list technology hot 5' }
   }
   if (error.startsWith('db ')) {
-    return { help: 'help db', try: 'db schema' }
+    return { help: 'help db', try: 'db query {"sql":"SELECT 1"}' }
   }
   if (error.startsWith('journal ')) {
     return { help: 'help journal', try: 'journal list 5' }
@@ -1094,7 +1109,7 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
       'workspace 允许少量文件命令: pwd/ls/rg/cat/head/tail/wc/mkdir/touch/printf; 还提供内置子命令: help、journal、db、style、ai_tone.',
       'repo 只允许读命令: pwd/ls/rg/cat/head/tail/wc; rg 支持普通搜索和 --files, 不能写, 也不能读 .env/logs/node_modules/.git/data/prompts/groups.yaml.',
       '可以用重定向把 printf 输出写入工作区文件, 例如 `printf "..." > notes/today.md`.',
-      '常用路由不用先 help: 看 repo 传 cwd=repo 后用 `rg --files src` / `rg <pattern> src` / `cat <path>`; 查历史先 `db schema` 再 `db query <json>`; 日记/梦境用 `journal write|list|search|read`; 抓网页用 `fetch url <url> [hint]`; 看 reddit 用 `fetch reddit list technology hot 5`.',
+      '常用路由不用先 help: 看 repo 传 cwd=repo 后用 `rg --files src` / `rg <pattern> src` / `cat <path>`; 查历史先 `db schema` 再用 `db query {"sql":"SELECT 1","params":{}}`; 日记/梦境用 `journal write|list|search|read`; 抓网页用 `fetch url <url> [hint]`; 看 reddit 用 `fetch reddit list technology hot 5`.',
       '不确定语法时先用 `help` 或 `help <topic>`; 聊天约束/风格用 `style global constraints|base|anti_patterns|special_cases` 或 `style group`; AI 腔调检测用 `ai_tone <json>`.',
       '数据库仍只读; ai_tone 只走内置模型; 不允许 psql/curl/node/cat .env/路径逃逸/任意 shell 组合.',
     ].join(' '),

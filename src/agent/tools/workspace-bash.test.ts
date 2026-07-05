@@ -61,6 +61,14 @@ describe('workspace_bash command parser', () => {
       params: { group_id: 123 },
     })
 
+    assert.deepEqual(parseWorkspaceBashCommand('db query {"sql":"SELECT * FROM media ORDER BY created_at DESC LIMIT 5"}'), {
+      ok: true,
+      kind: 'db_tool',
+      cwd: 'workspace',
+      action: 'query',
+      sql: 'SELECT * FROM media ORDER BY created_at DESC LIMIT 5',
+    })
+
     assert.deepEqual(parseWorkspaceBashCommand('style global anti_patterns'), {
       ok: true,
       kind: 'style',

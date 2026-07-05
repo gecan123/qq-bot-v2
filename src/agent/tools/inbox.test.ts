@@ -7,6 +7,7 @@ function row(input: {
   kind?: 'qq_group' | 'qq_private'
   sourceId?: string
   text?: string
+  content?: unknown
 }): InboxMessageRow {
   const kind = input.kind ?? 'qq_group'
   const sourceId = input.sourceId ?? '111'
@@ -22,6 +23,7 @@ function row(input: {
     senderGroupNickname: null,
     resolvedText: input.text ?? `message-${input.id}`,
     searchText: input.text ?? `message-${input.id}`,
+    content: input.content ?? [{ type: 'text', content: input.text ?? `message-${input.id}` }],
     sentAt: new Date(`2026-07-03T00:00:${String(input.id % 60).padStart(2, '0')}Z`),
     createdAt: new Date(`2026-07-03T00:00:${String(input.id % 60).padStart(2, '0')}Z`),
   }
@@ -32,6 +34,7 @@ describe('inbox tool', () => {
     const calls: unknown[] = []
     const tool = createInboxTool({
       groupIds: [111],
+      selfNumber: 999,
       async findMessages(args) {
         calls.push(args)
         return [row({ id: 11 }), row({ id: 12 })]
@@ -56,10 +59,43 @@ describe('inbox tool', () => {
     assert.equal(payload.messages[0]!.text, 'message-11')
   })
 
+  test('exposes structured mention targets without treating plain-text @你 as a bot mention', async () => {
+    const tool = createInboxTool({
+      groupIds: [111],
+      selfNumber: 3999414673,
+      async findMessages() {
+        return [
+          row({ id: 1, text: '@你人呢' }),
+          row({ id: 2, text: '@2070979806', content: [{ type: 'at', targetId: '2070979806' }] }),
+          row({ id: 3, text: '@3999414673', content: [{ type: 'at', targetId: '3999414673' }] }),
+        ]
+      },
+    })
+
+    const result = await tool.execute({
+      action: 'read',
+      source: 'group',
+      groupId: 111,
+    }, undefined as never)
+    const payload = JSON.parse(result.content as string) as {
+      messages: Array<{ mentionedSelf: boolean; mentionTargets: string[] }>
+    }
+
+    assert.deepEqual(payload.messages.map(({ mentionedSelf, mentionTargets }) => ({
+      mentionedSelf,
+      mentionTargets,
+    })), [
+      { mentionedSelf: false, mentionTargets: [] },
+      { mentionedSelf: false, mentionTargets: ['2070979806'] },
+      { mentionedSelf: true, mentionTargets: ['3999414673'] },
+    ])
+  })
+
   test('rejects reads from groups outside the monitored allowlist', async () => {
     let queried = false
     const tool = createInboxTool({
       groupIds: [111],
+      selfNumber: 999,
       async findMessages() {
         queried = true
         return []
@@ -76,6 +112,7 @@ describe('inbox tool', () => {
     const calls: unknown[] = []
     const tool = createInboxTool({
       groupIds: [],
+      selfNumber: 999,
       async findMessages(args) {
         calls.push(args)
         return [row({ id: 7, kind: 'qq_private', sourceId: '9001' })]
@@ -100,6 +137,7 @@ describe('inbox tool', () => {
   test('lists one latest entry per allowed mailbox', async () => {
     const tool = createInboxTool({
       groupIds: [111],
+      selfNumber: 999,
       async findMessages() {
         return [
           row({ id: 5, sourceId: '111' }),
@@ -121,6 +159,7 @@ describe('inbox tool', () => {
   test('caps read output even when stored messages are large', async () => {
     const tool = createInboxTool({
       groupIds: [111],
+      selfNumber: 999,
       async findMessages() {
         return Array.from({ length: 20 }, (_, index) => row({
           id: index + 1,

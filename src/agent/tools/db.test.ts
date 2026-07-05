@@ -67,6 +67,7 @@ describe('db tool', () => {
     const names = buildBotTools({
       sender: mockSender,
       groupAmbientSendIds: new Set(),
+      selfNumber: 999,
       taskRegistry: createInMemoryTaskRegistry(),
       groupIds: [],
       metadata: { groupNames: new Map() },

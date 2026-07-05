@@ -62,6 +62,14 @@ function parseBoolean(value: string | undefined, defaultValue: boolean): boolean
   return defaultValue
 }
 
+function parseClaudeToolChoice(value: string | undefined): 'any' | 'auto' {
+  const normalized = value?.trim().toLowerCase() || 'any'
+  if (normalized === 'any' || normalized === 'auto') return normalized
+  throw new Error(
+    `Invalid LLM_PROVIDER_CLAUDE_TOOL_CHOICE "${value}" (expected any or auto)`,
+  )
+}
+
 /**
  * Parse a comma-separated ID list (`123,456` 之类) used for whitelist envs like
  * `BOT_TARGET_GROUP_IDS`.
@@ -174,6 +182,7 @@ function parseLlmConfig(env: EnvSource) {
   const providers = parseProviderConfigs(env)
   const defaultProvider = requireEnv(env, 'LLM_DEFAULT_PROVIDER').toLowerCase()
   const defaultModel = requireEnv(env, 'LLM_DEFAULT_MODEL')
+  const claudeToolChoice = parseClaudeToolChoice(env.LLM_PROVIDER_CLAUDE_TOOL_CHOICE)
 
   if (defaultProvider === CLAUDE_CODE_PROVIDER_NAME) {
     if (!providers[CLAUDE_CODE_BASE_PROVIDER_NAME]) {
@@ -199,6 +208,7 @@ function parseLlmConfig(env: EnvSource) {
   return {
     defaultProvider,
     defaultModel,
+    claudeToolChoice,
     providers,
     scenarios,
   }

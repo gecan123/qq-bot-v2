@@ -34,6 +34,7 @@ export interface InboxMessageRow {
   senderId: bigint
   senderNickname: string | null
   senderGroupNickname: string | null
+  content: unknown
   resolvedText: string | null
   searchText: string
   sentAt: Date | null
@@ -48,11 +49,13 @@ interface InboxFindManyArgs {
 
 export interface InboxToolDeps {
   groupIds: readonly number[]
+  selfNumber: number
   findMessages?: (args: InboxFindManyArgs) => Promise<InboxMessageRow[]>
 }
 
 export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
   const monitoredGroups = new Set(deps.groupIds)
+  const selfNumber = String(deps.selfNumber)
   const findMessages = deps.findMessages ?? defaultFindMessages
 
   return {
@@ -62,6 +65,7 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
       'action=list 列出最近有消息的来源; action=read 读取一个明确群或私聊来源.',
       '群来源必须在监听白名单内. read 结果按 messages rowId 升序, 用 afterRowId 继续分页.',
       'inbox 更新通知只是元数据; 需要理解或引用正文时再调用本工具.',
+      'read 结果中的 mentionedSelf 和 mentionTargets 来自 QQ 结构化 at 段; 正文里的“你”或“@你”只是普通文本, 不代表在叫你.',
     ].join(' '),
     schema: argsSchema,
     async execute(args) {
@@ -119,7 +123,7 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
       }
 
       const rows = await findMessages({ where, orderBy: { id: 'asc' }, take: limit })
-      return { content: renderBoundedRead(mailbox, rows, limit) }
+      return { content: renderBoundedRead(mailbox, rows, limit, selfNumber) }
     },
   }
 }
@@ -130,10 +134,16 @@ function mailboxKeyForRow(row: InboxMessageRow): string {
     : `qq_group:${String(row.groupId)}`
 }
 
-function renderBoundedRead(mailbox: string, rows: readonly InboxMessageRow[], requestedLimit: number): string {
+function renderBoundedRead(
+  mailbox: string,
+  rows: readonly InboxMessageRow[],
+  requestedLimit: number,
+  selfNumber: string,
+): string {
   const messages: Array<Record<string, unknown>> = []
   let truncated = false
   for (const row of rows) {
+    const mentionTargets = extractMentionTargets(row.content)
     const rawText = row.resolvedText ?? row.searchText
     const text = rawText.length > MESSAGE_TEXT_CAP_CHARS
       ? `${rawText.slice(0, MESSAGE_TEXT_CAP_CHARS)}…`
@@ -145,6 +155,8 @@ function renderBoundedRead(mailbox: string, rows: readonly InboxMessageRow[], re
       sentAt: (row.sentAt ?? row.createdAt).toISOString(),
       senderId: String(row.senderId),
       senderName: row.senderGroupNickname ?? row.senderNickname ?? String(row.senderId),
+      mentionedSelf: mentionTargets.includes(selfNumber),
+      mentionTargets,
       text,
     }
     const candidate = JSON.stringify({ ok: true, mailbox, requestedLimit, truncated: false, messages: [...messages, projected] }, null, 2)
@@ -157,6 +169,21 @@ function renderBoundedRead(mailbox: string, rows: readonly InboxMessageRow[], re
   }
   if (messages.length < rows.length) truncated = true
   return JSON.stringify({ ok: true, mailbox, requestedLimit, truncated, messages }, null, 2)
+}
+
+function extractMentionTargets(content: unknown): string[] {
+  if (!Array.isArray(content)) return []
+  const targets: string[] = []
+  const seen = new Set<string>()
+  for (const segment of content) {
+    if (!segment || typeof segment !== 'object') continue
+    const value = segment as Record<string, unknown>
+    if (value.type !== 'at' || typeof value.targetId !== 'string') continue
+    if (seen.has(value.targetId)) continue
+    seen.add(value.targetId)
+    targets.push(value.targetId)
+  }
+  return targets
 }
 
 function errorResult(error: string): { content: string } {

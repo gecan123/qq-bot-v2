@@ -131,6 +131,18 @@ describe('buildClaudeCodeRequestBody', () => {
     assert.equal(inputSchema.type, 'object')
   })
 
+  test('uses configured auto tool choice for compatible providers that reject any', () => {
+    const body = buildClaudeCodeRequestBody({
+      model: 'LongCat-2.0',
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [dummyTool],
+      toolChoice: 'auto',
+    })
+
+    assert.deepEqual(body.tool_choice, { type: 'auto' })
+  })
+
   test('temperature 字段永不写入 body (reasoning model 拒收, 跟真 Claude Code CLI 对齐)', () => {
     const body = buildClaudeCodeRequestBody({
       model: 'claude-opus-4-7',

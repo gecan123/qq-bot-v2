@@ -4,7 +4,7 @@ import type { BotEvent } from './event.js'
 import {
   mailboxKeyForEvent,
   planMailboxDisclosures,
-  renderAmbientMailboxNotification,
+  renderMailboxNotification,
 } from './mailbox.js'
 
 function groupEvent(input: {
@@ -29,34 +29,45 @@ function groupEvent(input: {
   }
 }
 
-function privateEvent(rowId: number): Extract<BotEvent, { type: 'napcat_private_message' }> {
+function privateEvent(input: {
+  rowId: number
+  peerId?: number
+  text?: string
+  senderNickname?: string
+  sentAt?: string
+}): Extract<BotEvent, { type: 'napcat_private_message' }> {
+  const peerId = input.peerId ?? 9001
   return {
     type: 'napcat_private_message',
-    messageRowId: rowId,
-    peerId: 9001,
-    messageId: 20_000 + rowId,
-    senderId: 9001,
-    senderNickname: 'Alice',
+    messageRowId: input.rowId,
+    peerId,
+    messageId: 20_000 + input.rowId,
+    senderId: peerId,
+    senderNickname: input.senderNickname ?? `peer-${peerId}`,
     mentionedSelf: true,
-    sentAt: new Date(`2026-07-03T00:01:${String(rowId).padStart(2, '0')}Z`),
-    renderedText: 'private secret',
+    sentAt: new Date(input.sentAt ?? `2026-07-03T00:01:${String(input.rowId).padStart(2, '0')}Z`),
+    renderedText: input.text ?? 'private secret',
   }
 }
 
 describe('mailbox disclosure planning', () => {
-  test('keeps private and mentioned group messages as direct disclosures', () => {
+  test('keeps mentioned group messages direct but groups private messages by peer mailbox', () => {
     const mentioned = groupEvent({ rowId: 1, groupId: 111, text: 'direct group', mentionedSelf: true })
-    const directPrivate = privateEvent(2)
+    const firstAlice = privateEvent({ rowId: 2, peerId: 9001, text: 'SECRET_ONE' })
+    const bob = privateEvent({ rowId: 3, peerId: 9002, text: 'SECRET_BOB' })
+    const secondAlice = privateEvent({ rowId: 4, peerId: 9001, text: 'SECRET_TWO' })
 
-    const result = planMailboxDisclosures([mentioned, directPrivate], {})
+    const result = planMailboxDisclosures([mentioned, firstAlice, bob, secondAlice], {})
 
     assert.deepEqual(result.disclosures, [
       { kind: 'direct', event: mentioned },
-      { kind: 'direct', event: directPrivate },
+      { kind: 'mailbox', mailboxKey: 'qq_private:9001', events: [firstAlice, secondAlice] },
+      { kind: 'mailbox', mailboxKey: 'qq_private:9002', events: [bob] },
     ])
     assert.deepEqual(result.cursors, {
       'qq_group:111': 1,
-      'qq_private:9001': 2,
+      'qq_private:9001': 4,
+      'qq_private:9002': 3,
     })
   })
 
@@ -69,12 +80,12 @@ describe('mailbox disclosure planning', () => {
 
     assert.equal(result.disclosures.length, 2)
     assert.deepEqual(result.disclosures[0], {
-      kind: 'ambient',
+      kind: 'mailbox',
       mailboxKey: 'qq_group:111',
       events: [first111, second111],
     })
     assert.deepEqual(result.disclosures[1], {
-      kind: 'ambient',
+      kind: 'mailbox',
       mailboxKey: 'qq_group:222',
       events: [group222],
     })
@@ -101,19 +112,34 @@ describe('mailbox disclosure planning', () => {
       groupEvent({ rowId: 12, groupId: 111, text: 'DO_NOT_DISCLOSE_TWO', senderId: 2, sentAt: '2026-07-03T01:03:04Z' }),
     ]
 
-    const rendered = renderAmbientMailboxNotification('qq_group:111', events)
+    const rendered = renderMailboxNotification('qq_group:111', events)
 
     assert.match(rendered, /^\[inbox 更新 \| 群:测试群 \| mailbox=qq_group:111\]/)
     assert.match(rendered, /新增 2 条/)
     assert.match(rendered, /rowId 10\.\.12/)
     assert.match(rendered, /发送者 2 人/)
-    assert.match(rendered, /inbox action=read groupId=111 afterRowId=9/)
+    assert.match(rendered, /inbox action=read source=group groupId=111 afterRowId=9/)
     assert.doesNotMatch(rendered, /DO_NOT_DISCLOSE/)
+  })
+
+  test('renders a bounded private notification without message bodies', () => {
+    const events = [
+      privateEvent({ rowId: 20, peerId: 9001, text: 'SECRET_ONE', senderNickname: 'Alice' }),
+      privateEvent({ rowId: 22, peerId: 9001, text: 'SECRET_TWO', senderNickname: 'Alice' }),
+    ]
+
+    const rendered = renderMailboxNotification('qq_private:9001', events)
+
+    assert.match(rendered, /^\[inbox 更新 \| 私聊:Alice\(QQ:9001\) \| mailbox=qq_private:9001\]/)
+    assert.match(rendered, /新增 2 条/)
+    assert.match(rendered, /rowId 20\.\.22/)
+    assert.match(rendered, /inbox action=read source=private peerId=9001 afterRowId=19/)
+    assert.doesNotMatch(rendered, /SECRET_/)
   })
 
   test('returns stable source keys only for QQ message events', () => {
     assert.equal(mailboxKeyForEvent(groupEvent({ rowId: 1, groupId: 111, text: 'x' })), 'qq_group:111')
-    assert.equal(mailboxKeyForEvent(privateEvent(2)), 'qq_private:9001')
+    assert.equal(mailboxKeyForEvent(privateEvent({ rowId: 2 })), 'qq_private:9001')
     assert.equal(mailboxKeyForEvent({ type: 'wake' }), null)
   })
 })

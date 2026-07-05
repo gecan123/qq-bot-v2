@@ -3,7 +3,7 @@
  *
  *   group event A + private event from peer X + group event B
  *     → render-event labels each correctly
- *     → direct messages enter verbatim while ambient group traffic becomes an inbox notification
+ *     → group @bot enters verbatim while private and ambient group traffic become inbox notifications
  *     → LLM (mocked) produces a send_message tool call targeted at the right source
  *     → tool execution runs the send_message tool with whitelist validation
  *     → group/private cross-source events do NOT leak into each other
@@ -162,15 +162,15 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     await agent.runOnceForTest()
 
     const messages = ctx.getSnapshot().messages
-    // 2 direct user messages + 1 ambient inbox notification + assistant + tool result = 5
+    // 1 direct user message + 2 mailbox notifications + assistant + tool result = 5
     assert.equal(messages.length, 5)
 
     const userMessages = messages.filter((m) => m.role === 'user')
     assert.equal(userMessages.length, 3)
     assert.match(userMessages[0]!.content, /^\[[\d/: ]+ 群:阳光厨房 \| 张三\(QQ:100\) #\d+ \[@bot\]\]/)
-    assert.match(userMessages[1]!.content, /^\[[\d/: ]+ 私聊 \| Alice\(QQ:10001\) #\d+\]/)
+    assert.match(userMessages[1]!.content, /^\[inbox 更新 \| 私聊:Alice\(QQ:10001\) \| mailbox=qq_private:10001\]/)
     assert.match(userMessages[2]!.content, /^\[inbox 更新 \| 群:技术群 \| mailbox=qq_group:222\]/)
-    assert.doesNotMatch(userMessages[2]!.content, /今天天气好/)
+    assert.doesNotMatch(userMessages.map((message) => message.content).join('\n'), /私聊问个事|今天天气好/)
 
     // The send_message tool should have been called via replyToMessage, scoped to group 111.
     assert.equal(calls.length, 1)

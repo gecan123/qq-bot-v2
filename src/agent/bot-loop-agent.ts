@@ -10,7 +10,7 @@ import { recordTokenUsage } from './token-stats.js'
 import { createLogger } from '../logger.js'
 import {
   planMailboxDisclosures,
-  renderAmbientMailboxNotification,
+  renderMailboxNotification,
   type MailboxCursors,
 } from './mailbox.js'
 
@@ -84,9 +84,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     const plan = planMailboxDisclosures(events, mailboxCursors)
     mailboxCursors = plan.cursors
     for (const disclosure of plan.disclosures) {
-      if (disclosure.kind === 'ambient') {
+      if (disclosure.kind === 'mailbox') {
         deps.context.appendUserMessage(
-          renderAmbientMailboxNotification(disclosure.mailboxKey, disclosure.events),
+          renderMailboxNotification(disclosure.mailboxKey, disclosure.events),
         )
         disclosed++
         lastWakeAt = new Date()

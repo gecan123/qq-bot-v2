@@ -212,6 +212,57 @@ describe('BotLoopAgent.runOnceForTest', () => {
     ])
   })
 
+  test('replaces private bodies with one metadata notification per peer and persists cursors', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    const enqueuePrivate = (rowId: number, peerId: number, text: string) => {
+      eventQueue.enqueue({
+        type: 'napcat_private_message',
+        messageRowId: rowId,
+        peerId,
+        messageId: 20_000 + rowId,
+        senderId: peerId,
+        senderNickname: peerId === 9001 ? 'Alice' : 'Bob',
+        mentionedSelf: true,
+        sentAt: new Date(`2026-07-03T00:02:${String(rowId).padStart(2, '0')}Z`),
+        renderedText: text,
+      })
+    }
+    enqueuePrivate(51, 9001, 'PRIVATE_ONE')
+    enqueuePrivate(52, 9002, 'PRIVATE_OTHER')
+    enqueuePrivate(53, 9001, 'PRIVATE_TWO')
+
+    const llm = makeMockLlm([{
+      content: '',
+      toolCalls: [],
+      usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
+      model: 'mock',
+    }])
+    const { repo, savedCursors } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: (event) => event.type === 'napcat_private_message' ? event.renderedText : null,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
+    assert.equal(userMessages.length, 2)
+    assert.match(userMessages[0]!.content, /mailbox=qq_private:9001/)
+    assert.match(userMessages[1]!.content, /mailbox=qq_private:9002/)
+    assert.doesNotMatch(userMessages.map((message) => message.content).join('\n'), /PRIVATE_/)
+    assert.deepEqual(savedCursors.at(-1), {
+      'qq_private:9001': 53,
+      'qq_private:9002': 52,
+    })
+  })
+
   test('preserves the restored legacy wake boundary across non-message rounds', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()

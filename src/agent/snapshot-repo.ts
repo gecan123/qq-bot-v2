@@ -91,9 +91,6 @@ function parseMailboxCursors(value: unknown): MailboxCursors {
   return cursors
 }
 
-function migrateSnapshot(raw: PersistedAgentSnapshot): PersistedAgentSnapshot {
-  if (raw.schemaVersion >= SNAPSHOT_SCHEMA_VERSION) return raw
-  return { ...raw, schemaVersion: SNAPSHOT_SCHEMA_VERSION }
 function migrateSnapshot(raw: RawPersistedAgentSnapshot): PersistedAgentSnapshot {
   return {
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,

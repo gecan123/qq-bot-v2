@@ -231,9 +231,32 @@ describe('workspace_bash command parser', () => {
       'ai_tone \'{"text":"hi","threshold":2}\'',
       'find .',
       "sed -n '1,5p' notes.md",
+      "printf 'bad' > journal/diary/2026-06.md",
+      'touch journal/diary/2026-06.md',
+      'mkdir journal/custom',
     ]
 
     for (const command of rejected) {
+      const parsed = parseWorkspaceBashCommand(command)
+      assert.equal(parsed.ok, false, `${command} should be rejected`)
+    }
+  })
+
+  test('allows reading journal files through workspace_bash but not direct writes', () => {
+    assert.deepEqual(parseWorkspaceBashCommand('cat journal/diary/2026-06.md'), {
+      ok: true,
+      kind: 'workspace',
+      cwd: 'workspace',
+      command: 'cat',
+      args: ['journal/diary/2026-06.md'],
+    })
+
+    for (const command of [
+      "printf 'bad' > journal/diary/2026-06.md",
+      "printf 'bad' >> journal/diary/2026-06.md",
+      'touch journal/diary/2026-06.md',
+      'mkdir journal/custom',
+    ]) {
       const parsed = parseWorkspaceBashCommand(command)
       assert.equal(parsed.ok, false, `${command} should be rejected`)
     }

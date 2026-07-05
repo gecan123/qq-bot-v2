@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, test } from 'node:test'
 import {
   appendJournalRecord,
   listJournalRecords,
+  readJournalRecord,
   searchJournalRecords,
   type JournalStoreOptions,
 } from './journal-store.js'
@@ -29,15 +30,24 @@ describe('workspace journal store', () => {
     }
   }
 
-  test('appendJournalRecord creates the journal directory and appends a JSONL row', async () => {
+  test('appendJournalRecord creates a monthly Markdown journal file', async () => {
     const entry = await appendJournalRecord(storeOptions(), {
       kind: 'diary',
       content: '今天整理了一点自己的想法',
     })
 
-    const raw = await readFile(join(rootDir, 'journal', 'entries.jsonl'), 'utf8')
-    assert.equal(raw.endsWith('\n'), true)
-    assert.deepEqual(JSON.parse(raw.trim()), entry)
+    const raw = await readFile(join(rootDir, 'journal', 'diary', '2026-06.md'), 'utf8')
+    assert.match(raw, /^# Diary 2026-06/)
+    assert.match(raw, /<!-- journal-entry/)
+    assert.match(raw, /id: entry-1/)
+    assert.match(raw, /createdAt: 2026-06-23T01:02:03.000Z/)
+    assert.match(raw, /今天整理了一点自己的想法/)
+    assert.deepEqual(entry, {
+      id: 'entry-1',
+      kind: 'diary',
+      content: '今天整理了一点自己的想法',
+      createdAt: '2026-06-23T01:02:03.000Z',
+    })
   })
 
   test('appended row includes stable fields', async () => {
@@ -89,19 +99,40 @@ describe('workspace journal store', () => {
     assert.deepEqual(result.entries.map((entry) => entry.id), ['a'])
   })
 
-  test('corrupt JSONL lines are skipped and reported through skippedCorrupt', async () => {
-    await mkdir(join(rootDir, 'journal'), { recursive: true })
+  test('readJournalRecord reads a Markdown section by id', async () => {
+    await appendJournalRecord(storeOptions('a', '2026-06-22T01:00:00.000Z'), {
+      kind: 'diary',
+      content: 'Alpha beta',
+    })
+
+    const result = await readJournalRecord({ rootDir }, 'a')
+    assert.deepEqual(result.entry, {
+      id: 'a',
+      kind: 'diary',
+      content: 'Alpha beta',
+      createdAt: '2026-06-22T01:00:00.000Z',
+    })
+  })
+
+  test('corrupt Markdown journal sections are skipped and reported through skippedCorrupt', async () => {
+    await mkdir(join(rootDir, 'journal', 'diary'), { recursive: true })
     await writeFile(
-      join(rootDir, 'journal', 'entries.jsonl'),
+      join(rootDir, 'journal', 'diary', '2026-06.md'),
       [
-        JSON.stringify({
-          id: 'valid',
-          kind: 'diary',
-          content: '能读到的内容',
-          createdAt: '2026-06-23T01:00:00.000Z',
-        }),
-        '{not json',
-        JSON.stringify({ id: 'missing-fields' }),
+        '# Diary 2026-06',
+        '',
+        '<!-- journal-entry',
+        'id: valid',
+        'kind: diary',
+        'createdAt: 2026-06-23T01:00:00.000Z',
+        '-->',
+        '能读到的内容',
+        '<!-- /journal-entry -->',
+        '',
+        '<!-- journal-entry',
+        'id: missing-close',
+        'kind: diary',
+        'createdAt: 2026-06-24T01:00:00.000Z',
         '',
       ].join('\n'),
       'utf8',
@@ -109,6 +140,6 @@ describe('workspace journal store', () => {
 
     const result = await listJournalRecords({ rootDir })
     assert.deepEqual(result.entries.map((entry) => entry.id), ['valid'])
-    assert.equal(result.skippedCorrupt, 2)
+    assert.equal(result.skippedCorrupt, 1)
   })
 })

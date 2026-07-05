@@ -5,7 +5,6 @@ import { predictAiTone, type AiTonePrediction, type AiTonePredictor } from './to
 const log = createLogger('TOOL_POLICY_HOOKS')
 
 const DEFAULT_AI_TONE_THRESHOLD = 0.75
-const DEFAULT_MIN_TEXT_LENGTH = 12
 const DEFAULT_MAX_CONSECUTIVE_BLOCKS = 2
 
 export type AiTonePrecheckDecision = 'allowed' | 'blocked' | 'allowed_after_limit'
@@ -13,8 +12,9 @@ export type AiTonePrecheckDecision = 'allowed' | 'blocked' | 'allowed_after_limi
 export interface AiTonePrecheckLogEntry {
   toolCallId: string
   roundIndex: number
-  targetType: 'group'
-  groupId: number
+  targetType: 'group' | 'private'
+  groupId?: number
+  userId?: number
   textLength: number
   prob: number
   threshold: number
@@ -32,18 +32,21 @@ export interface GenerateImageTaskLogEntry {
   promptPreview?: string
 }
 
-interface GroupSendAiToneHookOptions {
+interface SendMessageAiToneHookOptions {
   predict?: AiTonePredictor
   logger?: (entry: AiTonePrecheckLogEntry) => void
   threshold?: number
-  minTextLength?: number
   maxConsecutiveBlocks?: number
 }
 
 interface SendMessageHookArgs {
-  target?: { type?: unknown; groupId?: unknown }
+  target?: { type?: unknown; groupId?: unknown; userId?: unknown }
   text?: unknown
 }
+
+type SendMessageAiToneTarget =
+  | { type: 'group'; groupId: number }
+  | { type: 'private'; userId: number }
 
 interface GenerateImageHookArgs {
   prompt?: unknown
@@ -85,34 +88,33 @@ export function createGenerateImageTaskLogHook(options: GenerateImageTaskLogHook
   }
 }
 
-export function createGroupSendAiToneHook(options: GroupSendAiToneHookOptions = {}): BeforeToolHook {
+export function createSendMessageAiToneHook(options: SendMessageAiToneHookOptions = {}): BeforeToolHook {
   const predict = options.predict ?? predictAiTone
   const logger = options.logger ?? ((entry) => log.info(entry, 'send_message_ai_tone_precheck'))
   const threshold = options.threshold ?? DEFAULT_AI_TONE_THRESHOLD
-  const minTextLength = options.minTextLength ?? DEFAULT_MIN_TEXT_LENGTH
   const maxConsecutiveBlocks = options.maxConsecutiveBlocks ?? DEFAULT_MAX_CONSECUTIVE_BLOCKS
-  const consecutiveBlockedByGroup = new Map<number, number>()
+  const consecutiveBlockedByTarget = new Map<string, number>()
 
   return async ({ call, roundIndex }) => {
     if (call.name !== 'send_message') return
 
     const args = call.args as SendMessageHookArgs
-    if (args.target?.type !== 'group') return
-    if (typeof args.target.groupId !== 'number') return
     if (typeof args.text !== 'string') return
+    const target = parseSendMessageAiToneTarget(args.target)
+    if (!target) return
 
     const textLength = Array.from(args.text).length
-    if (textLength < minTextLength) return
 
     const prediction = await predict(args.text, threshold)
-    const currentBlocked = consecutiveBlockedByGroup.get(args.target.groupId) ?? 0
+    const targetKey = buildTargetKey(target)
+    const currentBlocked = consecutiveBlockedByTarget.get(targetKey) ?? 0
 
     if (!prediction.isAI) {
-      consecutiveBlockedByGroup.delete(args.target.groupId)
+      consecutiveBlockedByTarget.delete(targetKey)
       logger(buildLogEntry({
         callId: call.id,
         roundIndex,
-        groupId: args.target.groupId,
+        target,
         textLength,
         prediction,
         decision: 'allowed',
@@ -125,7 +127,7 @@ export function createGroupSendAiToneHook(options: GroupSendAiToneHookOptions = 
       logger(buildLogEntry({
         callId: call.id,
         roundIndex,
-        groupId: args.target.groupId,
+        target,
         textLength,
         prediction,
         decision: 'allowed_after_limit',
@@ -135,11 +137,11 @@ export function createGroupSendAiToneHook(options: GroupSendAiToneHookOptions = 
     }
 
     const nextBlocked = currentBlocked + 1
-    consecutiveBlockedByGroup.set(args.target.groupId, nextBlocked)
+    consecutiveBlockedByTarget.set(targetKey, nextBlocked)
     logger(buildLogEntry({
       callId: call.id,
       roundIndex,
-      groupId: args.target.groupId,
+      target,
       textLength,
       prediction,
       decision: 'blocked',
@@ -153,16 +155,32 @@ export function createGroupSendAiToneHook(options: GroupSendAiToneHookOptions = 
         prob: roundPredictionNumber(prediction.prob),
         threshold: prediction.threshold,
         consecutiveBlocked: nextBlocked,
-        instruction: '这条群聊发言 AI 味太重。请改成更短、更具体、更像群友随口说的话，然后重新调用 send_message。',
+        instruction: '这条发言 AI 味太重。请改成更短、更具体、更像真人随口说的话，然后重新调用 send_message。',
       }),
     }
   }
 }
 
+export const createGroupSendAiToneHook = createSendMessageAiToneHook
+
+function parseSendMessageAiToneTarget(target: SendMessageHookArgs['target']): SendMessageAiToneTarget | null {
+  if (target?.type === 'group' && typeof target.groupId === 'number') {
+    return { type: 'group', groupId: target.groupId }
+  }
+  if (target?.type === 'private' && typeof target.userId === 'number') {
+    return { type: 'private', userId: target.userId }
+  }
+  return null
+}
+
+function buildTargetKey(target: SendMessageAiToneTarget): string {
+  return target.type === 'group' ? `group:${target.groupId}` : `private:${target.userId}`
+}
+
 function buildLogEntry(input: {
   callId: string
   roundIndex: number
-  groupId: number
+  target: SendMessageAiToneTarget
   textLength: number
   prediction: AiTonePrediction
   decision: AiTonePrecheckDecision
@@ -171,8 +189,8 @@ function buildLogEntry(input: {
   return {
     toolCallId: input.callId,
     roundIndex: input.roundIndex,
-    targetType: 'group',
-    groupId: input.groupId,
+    targetType: input.target.type,
+    ...(input.target.type === 'group' ? { groupId: input.target.groupId } : { userId: input.target.userId }),
     textLength: input.textLength,
     prob: roundPredictionNumber(input.prediction.prob),
     threshold: input.prediction.threshold,

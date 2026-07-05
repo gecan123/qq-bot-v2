@@ -6,7 +6,7 @@ import type { BotEvent } from './event.js'
 import { createToolExecutor, type Tool } from './tool.js'
 import {
   createGenerateImageTaskLogHook,
-  createGroupSendAiToneHook,
+  createSendMessageAiToneHook,
   type AiTonePrecheckLogEntry,
   type GenerateImageTaskLogEntry,
 } from './tool-policy-hooks.js'
@@ -38,13 +38,13 @@ function createFakeSendTool(calls: unknown[]): Tool<z.infer<typeof sendMessageSc
   }
 }
 
-describe('createGroupSendAiToneHook', () => {
+describe('createSendMessageAiToneHook', () => {
   test('blocks the first two AI-tone group sends and then allows the third consecutive over-threshold send', async () => {
     const calls: unknown[] = []
     const logs: AiTonePrecheckLogEntry[] = []
     const exec = createToolExecutor([createFakeSendTool(calls)], {
       hooks: {
-        beforeTool: [createGroupSendAiToneHook({
+        beforeTool: [createSendMessageAiToneHook({
           predict: (text, threshold) => ({
             prob: 0.91,
             isAI: true,
@@ -80,7 +80,7 @@ describe('createGroupSendAiToneHook', () => {
     let isAI = true
     const exec = createToolExecutor([createFakeSendTool(calls)], {
       hooks: {
-        beforeTool: [createGroupSendAiToneHook({
+        beforeTool: [createSendMessageAiToneHook({
           predict: (text, threshold) => ({
             prob: isAI ? 0.9 : 0.2,
             isAI,
@@ -116,13 +116,13 @@ describe('createGroupSendAiToneHook', () => {
     assert.deepEqual(logs.map((entry) => entry.consecutiveBlocked), [1, 0, 1])
   })
 
-  test('does not run the AI-tone precheck for private or very short sends', async () => {
+  test('runs the AI-tone precheck for private and very short sends', async () => {
     const calls: unknown[] = []
     const logs: AiTonePrecheckLogEntry[] = []
     let predictionCalls = 0
     const exec = createToolExecutor([createFakeSendTool(calls)], {
       hooks: {
-        beforeTool: [createGroupSendAiToneHook({
+        beforeTool: [createSendMessageAiToneHook({
           predict: () => {
             predictionCalls++
             return { prob: 1, isAI: true, label: 'AI味', threshold: 0.75, textLength: 20 }
@@ -132,20 +132,24 @@ describe('createGroupSendAiToneHook', () => {
       },
     })
 
-    await exec.execute({
+    const privateResult = await exec.execute({
       id: 'private',
       name: 'send_message',
       args: { target: { type: 'private', userId: 123 }, text: '综合来看，这个回复也可能很 AI。' },
     }, makeCtx())
-    await exec.execute({
+    const shortGroupResult = await exec.execute({
       id: 'short',
       name: 'send_message',
       args: { target: { type: 'group', groupId: 111 }, text: '别急' },
     }, makeCtx())
 
-    assert.equal(calls.length, 2)
-    assert.equal(predictionCalls, 0)
-    assert.equal(logs.length, 0)
+    assert.equal(calls.length, 0)
+    assert.equal(JSON.parse(privateResult.content as string).ok, false)
+    assert.equal(JSON.parse(shortGroupResult.content as string).ok, false)
+    assert.equal(predictionCalls, 2)
+    assert.deepEqual(logs.map((entry) => entry.targetType), ['private', 'group'])
+    assert.equal((logs[0] as AiTonePrecheckLogEntry & { userId?: number }).userId, 123)
+    assert.equal(logs[1]!.groupId, 111)
   })
 })
 

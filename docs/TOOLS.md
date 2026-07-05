@@ -42,7 +42,7 @@
 - 外部工具必须有输出上限、超时和审计日志。
 - `inbox` 的群读取必须显式指定监听白名单内的 groupId；私聊读取必须显式指定 peerId。其结果有行数和字符上限，并作为普通 tool result 进入 AgentContext。
 - `workspace_bash` 提供可写 private workspace 和只读 repo view。repo view 必须保持 allowlist，不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
-- `workspace_bash` 内置 `help` 子命令用于按需查看语法；`journal write|list|search|read` 把日记和梦境存到 private workspace 文件中；`data/agent-workspace/` 下的 journal 文件是 bot 生成数据，不应提交。
+- `workspace_bash` 内置 `help` 子命令用于按需查看语法；`journal write|list|search|read` 把日记和梦境存到 private workspace 的按月 Markdown 文件中；`data/agent-workspace/` 下的 journal 文件是 bot 生成数据，不应提交。不要用 `printf` / `touch` / `mkdir` 直接维护 `journal/**` 或 `memory/**`，这些路径只能走对应高层工具写入。
 - `collect_sticker` 是 deferred typed tool，不是 `workspace_bash` 子命令；它读取已有 image handle、写表情池，并影响未来可发送候选。
 - `memory` 把长期记忆存到 `data/agent-workspace/memory/` 的 Markdown 文件中；这是 bot 生成数据，默认不提交。记忆文件不是 replay 来源，只有 `memory search/read/write` 的有界工具结果能进入 `AgentContext`。
 - `workspace_bash` 的 tool description 保留常用 repo/db/journal/style 路由示例；复杂细节继续通过 `help <topic>` 按需披露。被拒绝的命令会返回 `help` / `try` 字段，引导下一步。

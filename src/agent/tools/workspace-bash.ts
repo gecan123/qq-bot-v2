@@ -265,6 +265,14 @@ function hasEnvLikePathSegment(value: string): boolean {
     .some((segment) => segment === '.env' || segment.startsWith('.env.'))
 }
 
+function isProtectedWorkspaceWritePath(value: string): boolean {
+  const normalized = normalize(value).replace(/\\/g, '/')
+  return normalized === 'journal'
+    || normalized.startsWith('journal/')
+    || normalized === 'memory'
+    || normalized.startsWith('memory/')
+}
+
 function isSafeRepoPath(value: string): boolean {
   if (!isSafeRelativePath(value)) return false
   const normalized = normalize(value).replace(/\\/g, '/')
@@ -282,6 +290,14 @@ function validateWorkspaceArgs(command: string, args: string[]): string | null {
   }
 
   if (command === 'printf') return null
+
+  if (command === 'mkdir' || command === 'touch') {
+    for (const arg of args) {
+      if (!arg.startsWith('-') && isProtectedWorkspaceWritePath(arg)) {
+        return `workspace path is managed by a dedicated tool: ${arg}`
+      }
+    }
+  }
 
   for (const arg of args) {
     if (arg.startsWith('-')) continue
@@ -693,6 +709,9 @@ export function parseWorkspaceBashCommand(
       return { ok: false, error: 'redirection must be the final operation' }
     }
     if (!isSafeRelativePath(target)) return { ok: false, error: `redirect path is not allowed: ${target}` }
+    if (isProtectedWorkspaceWritePath(target)) {
+      return { ok: false, error: `workspace path is managed by a dedicated tool: ${target}` }
+    }
     redirect = { mode: op === '>>' ? 'append' : 'write', path: target }
     args = args.slice(0, redirectIndex)
   }
@@ -771,7 +790,7 @@ function renderHelpCommand(parsed: ParsedHelpCommand): WorkspaceBashRunResult {
       ],
     },
     journal: {
-      purpose: '写入和回顾日记/梦境, 存在 private workspace 文件中.',
+      purpose: '写入和回顾日记/梦境, 存在 private workspace 的按月 Markdown 文件中; 写入必须走 journal 子命令.',
       commands: [
         'journal write diary|dream <content>',
         'journal list [diary|dream] [limit]',
@@ -1075,7 +1094,7 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
       'workspace 允许少量文件命令: pwd/ls/rg/cat/head/tail/wc/mkdir/touch/printf; 还提供内置子命令: help、journal、db、style、ai_tone.',
       'repo 只允许读命令: pwd/ls/rg/cat/head/tail/wc; rg 支持普通搜索和 --files, 不能写, 也不能读 .env/logs/node_modules/.git/data/prompts/groups.yaml.',
       '可以用重定向把 printf 输出写入工作区文件, 例如 `printf "..." > notes/today.md`.',
-      '常用路由不用先 help: 看 repo 传 cwd=repo 后用 `rg --files src` / `rg <pattern> src` / `cat <path>`; 查历史先 `db schema` 再 `db query <json>`; 日记/梦境用 `journal write|list|search|read`.',
+      '常用路由不用先 help: 看 repo 传 cwd=repo 后用 `rg --files src` / `rg <pattern> src` / `cat <path>`; 查历史先 `db schema` 再 `db query <json>`; 日记/梦境用 `journal write|list|search|read`; 抓网页用 `fetch url <url> [hint]`; 看 reddit 用 `fetch reddit list technology hot 5`.',
       '不确定语法时先用 `help` 或 `help <topic>`; 聊天约束/风格用 `style global constraints|base|anti_patterns|special_cases` 或 `style group`; AI 腔调检测用 `ai_tone <json>`.',
       '数据库仍只读; ai_tone 只走内置模型; 不允许 psql/curl/node/cat .env/路径逃逸/任意 shell 组合.',
     ].join(' '),

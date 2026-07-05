@@ -24,7 +24,7 @@ import { createBotSnapshotRepo } from './agent/snapshot-repo.js'
 import { createLlmClient } from './agent/llm-client.js'
 import { buildBotSystemPrompt } from './agent/bot-system-prompt.js'
 import { createDeferredToolExecutor } from './agent/tool.js'
-import { createGenerateImageTaskLogHook, createGroupSendAiToneHook } from './agent/tool-policy-hooks.js'
+import { createGenerateImageTaskLogHook, createSendMessageAiToneHook } from './agent/tool-policy-hooks.js'
 import { setTokenUsageDbPersistenceEnabled } from './agent/token-stats.js'
 import { buildBotToolManifest } from './agent/tools/index.js'
 import { createBotLoopAgent } from './agent/bot-loop-agent.js'
@@ -281,7 +281,7 @@ async function main() {
     },
     trace: { path: config.toolCallLogPath, persistToDb: true },
     hooks: {
-      beforeTool: [createGroupSendAiToneHook()],
+      beforeTool: [createSendMessageAiToneHook()],
       afterTool: [createGenerateImageTaskLogHook()],
     },
   })

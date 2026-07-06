@@ -10,7 +10,7 @@
 2. `src/bot/**` 接收 NapCat 事件，并通过 `src/database/messages.ts` 写入入站事实。
 3. ready 后的消息被投递为 `BotEvent`。
 4. `src/agent/mailbox.ts` 把所有 QQ 消息按来源聚合为不含正文的确定性通知，并计算批次级 `priority=high|normal`；非 QQ 运行时事件仍走稳定 direct 渲染。
-5. `src/agent/bot-loop-agent.ts` append 披露结果、调用 LLM、执行 tool calls、append tool results，并把 context snapshot 与 mailbox cursors 同行持久化后运行 compaction。
+5. `src/agent/bot-loop-agent.ts` append 披露结果、调用 LLM、执行 tool calls、仅把 `ToolExecutionResult.content` append 为 tool result，并把 context snapshot 与 mailbox cursors 同行持久化后运行 compaction。工具的 `outcome` / `control` 是当前循环的运行时元数据，不进入 ledger。
 
 ## 自主循环
 
@@ -18,6 +18,7 @@
 - `pause action=rest` 由 Agent 选择休息时长和醒来后的 `intention`。计时结束自动继续，私聊、`@bot`、后台任务完成和停止信号可提前打断。
 - runtime 对未主动休息的连续轮次和每日 token 使用设置保护性冷却。保护状态不进入 `AgentContext`，不参与 replay。
 - `curiosity_tick` 只保留为人工调试入口，不是生产自主循环的驱动器。
+- mailbox 和后台任务等运行时事件使用稳定 JSON 披露；外部内容、表情包和命令结果也使用有界结构化载荷。自然语言只存在于明确字段中，不能承担循环控制或成功状态判断。
 
 ## 持久边界
 

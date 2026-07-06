@@ -23,6 +23,14 @@
 - `media_fetch`：暴露 `fetch_content` 的图片 URL / QQ 头像抓取能力。
 - 激活状态保存在 `BotAgentSnapshot.contextSnapshot.activeToolCapabilities`，用于进程重启后恢复可见工具面；它不是 LLM 可见事实，不写入 `messages`。
 
+## 结果契约
+
+- 工具对 LLM 返回的事实只放在 `content`。运行时可以附带 `outcome` 和 `control`，但二者不进入 `AgentContext`；例如 `pause` 用 `control` 驱动循环休息，不反解析结果文本。
+- 需要后续程序判断的结果使用稳定 JSON，并包含明确的成功状态和错误 code。面向人的摘要或错误说明放在具名字段中，不与 JSON 前后拼接自然语言。
+- 外部搜索、网页、Reddit 和表情包结果按字段与条目做上限控制，并用 `truncated` 表示不完整；禁止截断完整 JSON 字符串。
+- `workspace_bash` 的直接命令和 `openbb_cli` 返回命令信封，区分退出码、内容格式、正文、stderr 与截断状态。任意 stdout 只作为字符串装入信封，不因看起来像 JSON 就自动解释。
+- 由 `workspace_bash` 路由到 db、style、fetch 等 typed 工具时，保留被委托工具自己的结构化结果，不额外套重复信封。
+
 ## Browser
 
 - `browser` 是单一 action-driven 工具，配置条件是 `BOT_BROWSER_ENABLED=true`，默认不常驻；先用 `toolbox action=activate capability=browser`，下一轮再调用 `browser`。
@@ -43,14 +51,14 @@
 - `inbox` 的群读取必须显式指定监听白名单内的 groupId；私聊读取必须显式指定 peerId。read 结果用结构化 `media[].mediaId` 披露入站媒体 handle，整体仍有行数和字符上限，并作为普通 tool result 进入 AgentContext。
 - `workspace_bash` 提供可写 private workspace 和只读 repo view。repo view 必须保持 allowlist，不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
 - `workspace_bash` 内置 `help` 子命令用于按需查看语法；`journal write|list|search|read` 把日记和梦境存到 private workspace 的按月 Markdown 文件中；`data/agent-workspace/` 下的 journal 文件是 bot 生成数据，不应提交。不要用 `printf` / `touch` / `mkdir` 直接维护 `journal/**` 或 `memory/**`，这些路径只能走对应高层工具写入。
-- `collect_sticker` 是 always-on typed tool，不是 `workspace_bash` 子命令；它读取已有 image handle、写表情池，并影响未来可发送候选。
+- `collect_sticker` 是 always-on typed tool，不是 `workspace_bash` 子命令；`action=collect|list|search|random` 必填。它读取已有 image handle、写表情池，并返回统一的 `mediaId` / `mediaRef` 候选。
 - `memory` 把长期记忆存到 `data/agent-workspace/memory/` 的 Markdown 文件中；这是 bot 生成数据，默认不提交。记忆文件不是 replay 来源，只有 `memory search/read/write` 的有界工具结果能进入 `AgentContext`。
 - `workspace_bash` 的 tool description 保留常用 repo/db/journal/style 路由示例；复杂细节继续通过 `help <topic>` 按需披露。被拒绝的命令会返回 `help` / `try` 字段，引导下一步。
 - `skill` 从 `docs/agent-skills/` 读取 curated Markdown，只能按 `skill action=list` 返回的 name 加载，并有输出上限。
 - 主 system prompt 只保留身份、运行形态和能力入口；聊天硬约束在 `prompts/bot-chat-constraints.md`，风格细则在 `prompts/bot-style.md`，通过 `workspace_bash` 的 `style global constraints|base|anti_patterns|special_cases` 按需读取。
 - 有副作用的工具通过 `src/ops/tool-call-log.ts` 记录。
 - Bash 类能力必须保留 command allowlist、固定 workspace、最小 env、输出/时间上限和审计日志。敏感访问应通过专门脚本或 capability wrapper。
-- `workspace_bash` 和 deferred tools 必须保留现有上限、preview compression、cache、timeout 和 audit 行为；legacy `workspace_bash openbb/fetch` 路由仍保留专用 wrapper，但默认说明和 prompt 应优先引导 typed deferred tools。
+- `workspace_bash` 和 deferred tools 必须保留现有上限、preview compression、cache、timeout 和 audit 行为；`workspace_bash openbb/fetch` 路由使用专用 wrapper，默认说明和 prompt 应优先引导 typed deferred tools。
 - 有副作用的工具要格外谨慎：`send_message`、图片生成/下载、`workspace_bash` journal 子命令、memory/sticker 工具、browser 写操作，以及未来任何会写 DB 或外部服务的工具。
 
 ## LLM 路径

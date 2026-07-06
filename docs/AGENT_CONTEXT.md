@@ -5,7 +5,6 @@
 ## 不变量
 
 - `AgentContext` 是 LLM ledger。运行时形态和持久化 snapshot 形态必须一致。新的 LLM 可见事实只能通过 append 或受控 compaction 进入，不能从 side table 重建历史。
-- `BotAgentSnapshot.contextSnapshot` 是持久化运行时形态。schema 由 `src/agent/agent-context.types.ts` 定义。
 - `BotAgentSnapshot.mailboxCursors` 是每个 QQ 来源已披露 message row 的高水位。它必须和 `contextSnapshot` 同行保存，不能先推进游标再单独保存上下文。
 - `BotAgentSnapshot.contextSnapshot` 是持久化运行时形态。schema 由 `src/agent/agent-context.types.ts` 定义。`messages` 是 LLM 可见 ledger；`activeToolCapabilities` 是 deferred tools 的运行控制状态，必须随 snapshot 持久化/恢复，但不作为 LLM 可见事实注入 messages。
 - `messages` 是入站事实账本。它服务于搜索、媒体解析、审计和 replay recovery，但不能替代 snapshot。
@@ -16,6 +15,8 @@
 - system prompt 字节和 tool description 会影响 cache identity。修改时要有意、集中处理。
 - replay 必须确定性。同样输入下，snapshot message 字节应当跨运行稳定。
 - 大块外部内容必须通过有边界的 tool result、摘要或受控文件路径进入。raw pages、feeds、长文件和可变日志不能直接注入主 context。
+- `ToolExecutionResult.content` 是唯一进入 `AgentContext` 的工具结果。`outcome` 和 `control` 只服务当前运行时的日志、分支和循环控制，不得 append、持久化或用于 replay 重建。
+- 可供下一轮机器判断的 tool result 使用稳定 JSON；截断必须发生在字段或数组条目层，并用显式标记披露，不能直接切断序列化后的 JSON。
 - generated image bytes 可以放在 `OutboundCache` 或 artifact 路径里，压缩 preview 可以进入 context。preview 压缩失败时，降级为稳定文本结果。
 - 图片 handle 遵循共享 schema：吃图工具接受 `{mediaId}` 或 `{ephemeralRef}`；发送链路使用 `media:N` 或 `ephemeral:<64-hex>` 这类字符串 ref。
 - `logs/*.ndjson` 是运维日志，不是 Prisma 事实，也不是 prompt replay 来源。
@@ -26,7 +27,8 @@
 - 新事件源必须通过 event queue 和 dedup 路径进入披露规划，不要插入历史中段。所有 QQ 消息按 `groupId` 或 `peerId` 聚合为不含正文的稳定 inbox 通知；私聊和包含结构化 `@bot` 的群批次使用 `priority=high`，其余群批次使用 `priority=normal`。
 - mailbox 是 `messages` 按 scene 划分的逻辑视图，不复制消息正文。Agent 用有界 `inbox` tool result 按需读取。
 - 跨源知识共享是预期行为。跨源发言仍然依赖显式 `send_message` target，以及 ingress/tool 安全规则。
-- curiosity tick、background task 完成等运行时事件如果进入 LLM，必须走稳定事件渲染或 tool-result 路径。
+- curiosity tick、background task 完成等运行时事件如果进入 LLM，必须走稳定的结构化事件渲染或 tool-result 路径。事件载荷只包含受控字段，不拼接面向人的临时提示语。
+- 表情包池在 compaction 后以有界 JSON user message 注入，图片引用统一使用 `media:N`。该消息一旦 append 就属于 snapshot ledger；replay 不得重新查询表情池生成它。
 
 ## 代码地图
 

@@ -14,6 +14,7 @@
   - 群批次中只要包含结构化 `@bot`，整个批次为 `high`。
   - 其余群批次为 `normal`。
 - 通知不披露正文或优先消息 ID。调用 `inbox` 后，逐条消息已有的 `mentionedSelf` 仍是精确判断依据。
+- 通知携带完整批次读取窗口：`afterRowId` 是本批首条消息之前的 row id，`throughRowId` 是本批最后一条消息的 row id。读取 high 批次时必须从 `afterRowId` 连续分页到覆盖 `throughRowId`，不能为了直接定位 `@bot` 而跳过前面的群聊消息。
 - system prompt 指导 Agent 优先读取并通常回应 `high` 通知；`normal` 通知按兴趣和当前任务决定是否读取。
 - mailbox cursor、按来源聚合、snapshot 原子持久化和 replay 规则不变。
 

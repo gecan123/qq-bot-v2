@@ -9,6 +9,7 @@ import type { ToolExecutor } from './tool.js'
 import type { BotSnapshotRepo } from './snapshot-repo.js'
 import type { PersistedAgentSnapshot } from './agent-context.types.js'
 import type { MailboxCursors } from './mailbox.js'
+import { renderBotEvent } from './render-event.js'
 
 function makeMockLlm(outputs: LlmCallOutput[]): LlmClient {
   let i = 0
@@ -471,7 +472,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     await startPromise
   })
 
-  test('send_message 后没有新外部事件时主循环阻塞, 不重复回复同一批消息', async () => {
+  test('send_message 成功后继续下一轮, 由 pause 决定何时休息', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({
@@ -499,10 +500,13 @@ describe('BotLoopAgent.runOnceForTest', () => {
             model: 'mock',
           }
         }
-        await agent.stop()
         return {
           content: '',
-          toolCalls: [{ id: 'c2', name: 'send_message', args: { text: '又回一次' } }],
+          toolCalls: [{
+            id: 'c2',
+            name: 'pause',
+            args: { action: 'rest', durationSeconds: 300, intention: '醒来后继续自己的研究' },
+          }],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',
         }
@@ -510,10 +514,16 @@ describe('BotLoopAgent.runOnceForTest', () => {
     }
 
     let sendMessageCount = 0
+    let pauseCalled = false
     const tools = makeMockTools({
       send_message: async () => {
         sendMessageCount++
         return { content: '{"ok":true,"status":"sent"}' }
+      },
+      pause: async () => {
+        pauseCalled = true
+        await agent.stop()
+        return { content: '[休息结束] 继续: 醒来后继续自己的研究' }
       },
     })
     const { repo } = makeMockSnapshotRepo()
@@ -536,8 +546,9 @@ describe('BotLoopAgent.runOnceForTest', () => {
     try {
       await new Promise((resolve) => setTimeout(resolve, 50))
 
-      assert.equal(llmCallCount, 1, 'send_message 后应等新事件, 不能立刻下一轮重看同一条消息')
+      assert.equal(llmCallCount, 2, 'send_message 只是动作, 成功后仍应由 Agent 选择下一步')
       assert.equal(sendMessageCount, 1)
+      assert.equal(pauseCalled, true)
     } finally {
       await agent.stop()
       await startPromise
@@ -615,6 +626,237 @@ describe('BotLoopAgent.runOnceForTest', () => {
       await agent.stop()
       await startPromise
     }
+  })
+
+  test('连续轮次达到上限后自动冷却', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    let llmCallCount = 0
+    let cooldownWaits = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const llm: LlmClient = {
+      async chat() {
+        llmCallCount++
+        if (llmCallCount === 3) await agent.stop()
+        return {
+          content: '',
+          toolCalls: [],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+          model: 'mock',
+        }
+      },
+    }
+    const { repo } = makeMockSnapshotRepo()
+
+    agent = createBotLoopAgent({
+      systemPrompt: 'you are a bot',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        maxConsecutiveRounds: 2,
+        cooldownMs: 60_000,
+        dailyTokenBudget: 1_000_000,
+        async waitForAttentionOrTimeout(_queue, timeoutMs) {
+          cooldownWaits++
+          assert.equal(timeoutMs, 60_000)
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 2)
+    assert.equal(cooldownWaits, 1)
+  })
+
+  test('参数校验失败的 pause 不会重置连续轮次保护', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    let llmCallCount = 0
+    let cooldownWaits = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const llm: LlmClient = {
+      async chat() {
+        llmCallCount++
+        if (llmCallCount === 3) await agent.stop()
+        return {
+          content: '',
+          toolCalls: llmCallCount === 1
+            ? [{ id: 'bad-pause', name: 'pause', args: {} }]
+            : [],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+          model: 'mock',
+        }
+      },
+    }
+    const { repo } = makeMockSnapshotRepo()
+
+    agent = createBotLoopAgent({
+      systemPrompt: 'you are a bot',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools: makeMockTools({
+        pause: async () => ({ content: '{"error":"Invalid tool arguments"}' }),
+      }),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        maxConsecutiveRounds: 2,
+        cooldownMs: 60_000,
+        dailyTokenBudget: 1_000_000,
+        async waitForAttentionOrTimeout() {
+          cooldownWaits++
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 2)
+    assert.equal(cooldownWaits, 1)
+  })
+
+  test('每日预算耗尽后由注意事件唤醒并获得一个连续处理窗口', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    let llmCallCount = 0
+    let budgetWaits = 0
+    let pauseCalled = false
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const llm: LlmClient = {
+      async chat() {
+        llmCallCount++
+        if (llmCallCount === 1) {
+          return {
+            content: '',
+            toolCalls: [],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+            model: 'mock',
+          }
+        }
+        return {
+          content: '',
+          toolCalls: [{ id: 'pause-1', name: 'pause', args: {} }],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+          model: 'mock',
+        }
+      },
+    }
+    const tools = makeMockTools({
+      pause: async () => {
+        pauseCalled = true
+        await agent.stop()
+        return { content: '[休息结束]' }
+      },
+    })
+    const { repo } = makeMockSnapshotRepo()
+
+    agent = createBotLoopAgent({
+      systemPrompt: 'you are a bot',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools,
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        maxConsecutiveRounds: 20,
+        cooldownMs: 60_000,
+        dailyTokenBudget: 15,
+        now: () => new Date('2026-07-06T00:00:00.000Z'),
+        async waitForAttentionOrTimeout(queue) {
+          budgetWaits++
+          queue.enqueue({
+            type: 'napcat_private_message',
+            messageRowId: 99,
+            peerId: 400,
+            messageId: 500,
+            senderId: 400,
+            senderNickname: '朋友',
+            mentionedSelf: true,
+            sentAt: new Date('2026-07-06T00:00:01.000Z'),
+            renderedText: '醒醒',
+          })
+          return 'attention'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(budgetWaits, 1)
+    assert.equal(llmCallCount, 2)
+    assert.equal(pauseCalled, true)
+  })
+
+  test('每日预算在新的一天自动重置', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    let now = new Date('2026-07-06T00:00:00.000Z')
+    let llmCallCount = 0
+    let budgetWaits = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const llm: LlmClient = {
+      async chat() {
+        llmCallCount++
+        return {
+          content: '',
+          toolCalls: llmCallCount === 1 ? [] : [{ id: 'pause-1', name: 'pause', args: {} }],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+          model: 'mock',
+        }
+      },
+    }
+    const tools = makeMockTools({
+      pause: async () => {
+        await agent.stop()
+        return { content: '[休息结束]' }
+      },
+    })
+    const { repo } = makeMockSnapshotRepo()
+
+    agent = createBotLoopAgent({
+      systemPrompt: 'you are a bot',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools,
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        maxConsecutiveRounds: 20,
+        cooldownMs: 60_000,
+        dailyTokenBudget: 15,
+        now: () => now,
+        async waitForAttentionOrTimeout() {
+          budgetWaits++
+          now = new Date('2026-07-07T00:00:00.000Z')
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 2)
+    assert.equal(budgetWaits, 1)
   })
 
   test('assistant 返回 no tool calls 时不把 text-only 思考写入 context', async () => {

@@ -5,8 +5,9 @@ import type { Tool } from '../tool.js'
 
 const log = createLogger('TOOL_REST')
 
-const DEFAULT_DURATION_SECONDS = 30
-const MAX_DURATION_SECONDS = 300
+export const DEFAULT_REST_DURATION_SECONDS = 300
+export const MIN_REST_DURATION_SECONDS = 30
+export const MAX_REST_DURATION_SECONDS = 21_600
 
 export interface RestToolDeps {
   timer?: {
@@ -24,11 +25,11 @@ const argsSchema = z.object({
   durationSeconds: z
     .number()
     .int()
-    .min(1)
-    .max(MAX_DURATION_SECONDS)
-    .default(DEFAULT_DURATION_SECONDS)
-    .describe('休息秒数, 默认 30, 最大 300。'),
-  reason: z.string().optional().describe('此刻为什么休息的简短说明, 仅用于日志。'),
+    .min(MIN_REST_DURATION_SECONDS)
+    .max(MAX_REST_DURATION_SECONDS)
+    .default(DEFAULT_REST_DURATION_SECONDS)
+    .describe('自己安排的休息秒数, 默认 300, 范围 30..21600.'),
+  intention: z.string().trim().min(1).max(200).describe('醒来后准备继续的事情.'),
 })
 
 type RestArgs = z.infer<typeof argsSchema>
@@ -47,19 +48,20 @@ export function createRestTool(deps: RestToolDeps = {}): Tool<RestArgs> {
   return {
     name: 'rest',
     description: [
-      '主动短暂休息一段时间, 默认 30 秒。',
+      '主动安排一次休息, 默认 5 分钟, 最长 6 小时。',
+      'intention 必填, 写清醒来后准备继续的事情; 它会随休息结果回到上下文。',
       '休息期间普通群消息不会打断; 被 @、私聊、后台任务完成或停止信号会立刻唤醒。',
       '事件只用于唤醒, 不会被这个工具消费; 下一轮会正常进入上下文。',
     ].join(' '),
     schema: argsSchema,
     async execute(args, ctx) {
-      const durationSeconds = args.durationSeconds ?? DEFAULT_DURATION_SECONDS
+      const durationSeconds = args.durationSeconds ?? DEFAULT_REST_DURATION_SECONDS
       const durationMs = durationSeconds * 1000
       let timerHandle: unknown = null
       let elapsed = false
       const attentionAbort = new AbortController()
 
-      log.info({ durationSeconds, reason: args.reason ?? null }, 'rest_enter')
+      log.info({ durationSeconds, intention: args.intention }, 'rest_enter')
       const startedAt = Date.now()
 
       const timeoutPromise = new Promise<'elapsed'>((resolve) => {
@@ -80,11 +82,13 @@ export function createRestTool(deps: RestToolDeps = {}): Tool<RestArgs> {
 
         if (result === 'interrupted') {
           log.info({ elapsedMs }, 'rest_interrupted')
-          return { content: '[休息被打断] 收到需要注意的新事件, 下一轮会处理。' }
+          return {
+            content: `[休息被打断] 收到需要注意的新事件, 下一轮先处理事件; 原计划: ${args.intention}`,
+          }
         }
 
         log.info({ elapsedMs }, 'rest_elapsed')
-        return { content: `[休息结束] 已休息约 ${durationSeconds} 秒。` }
+        return { content: `[休息结束] 已休息约 ${durationSeconds} 秒。继续: ${args.intention}` }
       } finally {
         attentionAbort.abort()
         if (!elapsed && timerHandle != null) {

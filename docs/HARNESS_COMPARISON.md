@@ -17,7 +17,7 @@
 | s11 Error Recovery | 部分满足 | 有工具错误隔离、round 失败 backoff、Claude Code 启动自检；缺 `max_tokens` continuation、429/529 retry/fallback、prompt-too-long reactive compact 状态机。 |
 | s12 Task System | 未满足 | 没有持久任务图、依赖、owner、blockedBy、状态流转。 |
 | s13 Background Tasks | 部分满足 | 图片生成等异步任务会注册 task，完成后进 event queue，并用 `background_task get` 取结果；registry 是内存态，不跨重启，也不是通用后台执行器。 |
-| s14 Cron Scheduler | 部分满足 | 有外部 `SIGUSR1` curiosity tick，调度外置给 cron/launchd；没有进程内 durable schedule/list/cancel 工具。 |
+| s14 Cron Scheduler | 部分满足 | `pause` 支持 Agent 自定时休息和自动继续，BotLoop 有冷却/日预算 guard；仍没有 durable schedule/list/cancel 工具。`SIGUSR1` tick 仅用于人工调试。 |
 | s15 Agent Teams | 未满足 | 没有持久 teammate、inbox、多个 LLM loop。 |
 | s16 Team Protocols | 未满足 | 没有 request/response FSM、plan approval、shutdown handshake。 |
 | s17 Autonomous Agents | 部分满足概念，不满足机制 | prompt 和 tick 支持空闲自驱；没有任务板自动认领、idle poll、身份重注入。 |

@@ -4,7 +4,7 @@
 
 ## 默认可见能力
 
-- 对话控制：`pause`。
+- 对话控制：`pause`。`action=rest` 由 Agent 自己选择 30 秒到 6 小时的休息时长，并必须提供醒来后继续事项 `intention`；计时结束会自动进入下一轮。
 - 当前计划：`todo`（当前进程内的短期多步计划，最多一个 `in_progress`）。
 - 发送：`send_message`。
 - 按需工具箱：`toolbox`（`list` / `activate` / `deactivate` capability；激活成功后下一轮暴露对应 typed tool schema）。
@@ -38,6 +38,7 @@
 - 对外 QQ 发言必须走 `send_message`。
 - `send_message` 的 target 必须明确。不能从 memory 里推断群聊或私聊 target。
 - assistant text 是内部历史/推理，不是公开发送通道。
+- `send_message` 成功不会隐式结束 Agent 当前活动；是否继续或休息由下一轮的 `pause` 决定。
 - `send_message` 发送前统一走目标授权：群 reply 仅允许监听群，群 ambient 还必须属于 `BOT_GROUP_AMBIENT_SEND_IDS`，私聊目标必须是 NapCat 当前好友。未授权会明确拒绝，不会模拟成功。
 - 外部工具必须有输出上限、超时和审计日志。
 - `inbox` 的群读取必须显式指定监听白名单内的 groupId；私聊读取必须显式指定 peerId。其结果有行数和字符上限，并作为普通 tool result 进入 AgentContext。

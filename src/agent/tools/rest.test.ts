@@ -68,20 +68,22 @@ function privateEvent(): BotEvent {
 }
 
 describe('rest tool', () => {
-  test('schema defaults to 30 seconds', () => {
-    const parsed = restTool.schema.safeParse({})
+  test('schema requires an intention and defaults to 300 seconds', () => {
+    assert.equal(restTool.schema.safeParse({}).success, false)
+    const parsed = restTool.schema.safeParse({ intention: '继续自己的研究' })
     assert.equal(parsed.success, true)
     const data = parsed.data as { durationSeconds: number }
-    assert.equal(data.durationSeconds, 30)
+    assert.equal(data.durationSeconds, 300)
   })
 
   test('already queued mentioned group message interrupts rest without consuming the event', async () => {
     const { ctx, queue } = makeCtx()
     queue.enqueue(groupEvent({ mentionedSelf: true }))
 
-    const result = await restTool.execute({ durationSeconds: 30 }, ctx)
+    const result = await restTool.execute({ durationSeconds: 30, intention: '继续自己的研究' }, ctx)
 
     assert.match(result.content as string, /\[休息被打断\]/)
+    assert.match(result.content as string, /继续自己的研究/)
     assert.equal(queue.size(), 1)
   })
 
@@ -89,7 +91,7 @@ describe('rest tool', () => {
     const { ctx, queue } = makeCtx()
     queue.enqueue(privateEvent())
 
-    const result = await restTool.execute({ durationSeconds: 30 }, ctx)
+    const result = await restTool.execute({ durationSeconds: 30, intention: '继续自己的研究' }, ctx)
 
     assert.match(result.content as string, /\[休息被打断\]/)
     assert.equal(queue.size(), 1)
@@ -101,7 +103,7 @@ describe('rest tool', () => {
     const { ctx, queue } = makeCtx()
     queue.enqueue(groupEvent({ mentionedSelf: false }))
 
-    const restPromise = tool.execute({ durationSeconds: 30 }, ctx)
+    const restPromise = tool.execute({ durationSeconds: 30, intention: '继续自己的研究' }, ctx)
     const result = await Promise.race([
       restPromise.then(() => 'returned' as const),
       tickMicrotasks().then(() => 'pending' as const),
@@ -113,6 +115,7 @@ describe('rest tool', () => {
     timer.fire()
     const finalResult = await restPromise
     assert.match(finalResult.content as string, /\[休息结束\]/)
+    assert.match(finalResult.content as string, /继续自己的研究/)
   })
 })
 

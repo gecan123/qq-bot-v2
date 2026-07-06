@@ -36,7 +36,7 @@ pnpm toollogf
 
 - 从仓库根目录启动，确保 `.bot.pid`、logs、prompts 和相对路径稳定。
 - `pnpm dev` 使用 watch 模式，文件变化会重启；`pnpm dev:once` 单次启动，不监听文件变化。
-- `pnpm tick` 会读取 `.bot.pid`，向进程发送 `SIGUSR1`，并注入一个 curiosity tick。
+- `pnpm tick` 会读取 `.bot.pid`，向进程发送 `SIGUSR1`，并注入一个仅供人工调试的 curiosity tick。正常自主循环由 Agent 的 `pause` 计时和 BotLoop 连续运行驱动，不依赖这个命令。
 - logs 写在 `logs/` 下，是运维证据，不是 replay 输入。
 - 启动时当前 system prompt 会写入 `logs/system-prompt.txt`，便于检查。
 

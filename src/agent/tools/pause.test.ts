@@ -27,10 +27,21 @@ function privateEvent(): BotEvent {
 describe('pause tool', () => {
   test('schema only accepts rest action', () => {
     assert.equal(pauseTool.schema.safeParse({ action: 'wait' }).success, false)
+    assert.equal(pauseTool.schema.safeParse({ action: 'rest' }).success, false)
 
-    const rest = pauseTool.schema.safeParse({ action: 'rest' })
+    const rest = pauseTool.schema.safeParse({ action: 'rest', intention: '醒来后继续看论文' })
     assert.equal(rest.success, true)
-    assert.equal((rest.data as { durationSeconds: number }).durationSeconds, 30)
+    assert.equal((rest.data as { durationSeconds: number }).durationSeconds, 300)
+    assert.equal(pauseTool.schema.safeParse({
+      action: 'rest',
+      intention: '继续想',
+      durationSeconds: 29,
+    }).success, false)
+    assert.equal(pauseTool.schema.safeParse({
+      action: 'rest',
+      intention: '继续想',
+      durationSeconds: 21_601,
+    }).success, false)
   })
 
   test('description no longer advertises wait or idle hints', () => {
@@ -48,9 +59,14 @@ describe('pause tool', () => {
     const { ctx, queue } = makeCtx()
     queue.enqueue(privateEvent())
 
-    const result = await pauseTool.execute({ action: 'rest', durationSeconds: 30 }, ctx)
+    const result = await pauseTool.execute({
+      action: 'rest',
+      durationSeconds: 30,
+      intention: '醒来后继续整理群聊线索',
+    }, ctx)
 
     assert.match(result.content as string, /\[休息被打断\]/)
+    assert.match(result.content as string, /醒来后继续整理群聊线索/)
     assert.equal(queue.size(), 1)
   })
 })

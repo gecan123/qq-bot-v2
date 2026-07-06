@@ -64,20 +64,22 @@ test('zodToOpenAIStrictToolJsonSchema keeps pause schema strict and rest-only', 
   assert.equal(json.type, 'object')
   assert.equal('oneOf' in json, false)
   assert.equal('anyOf' in json, false)
-  assert.deepEqual(json.required, ['action', 'durationSeconds', 'reason'])
+  assert.deepEqual(json.required, ['action', 'durationSeconds', 'intention'])
 
   const props = json.properties as Record<string, Record<string, unknown>>
   assert.equal(props.action.const, 'rest')
-  assert.deepEqual(props.reason.anyOf, [
-    { description: '此刻为什么休息的简短说明, 仅用于日志.', type: 'string' },
-    { type: 'null' },
-  ])
+  assert.deepEqual(props.intention, {
+    description: '醒来后准备继续的事情.',
+    type: 'string',
+    minLength: 1,
+    maxLength: 200,
+  })
   assert.deepEqual(props.durationSeconds, {
-    default: 30,
-    description: '休息秒数, 默认 30, 最大 300.',
+    default: 300,
+    description: '自己安排的休息秒数, 默认 300, 范围 30..21600.',
     type: 'integer',
-    minimum: 1,
-    maximum: 300,
+    minimum: 30,
+    maximum: 21600,
   })
 })
 

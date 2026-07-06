@@ -18,7 +18,7 @@ import type { BotEvent } from './event.js'
  * send_message 的 replyToMessageId. 不暴露这个数, LLM 就只能瞎猜出一个临近的 id.
  */
 export const CURIOSITY_TICK_TEXT =
-  '[好奇心 tick] 例行戳一下 — 去刷点外面的东西、查个感兴趣的话题, 或整理一下自己的想法. 如果觉得工具/事件不够用, 可以私聊创作者提需求.'
+  '[好奇心 tick] 这是一次人工调试唤醒, 不是你好奇心的来源. 按自己当前的兴趣、todo 和 intention 决定下一步.'
 
 function formatBeijingTime(date: Date): string {
   return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })

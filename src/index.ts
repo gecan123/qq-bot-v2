@@ -43,7 +43,7 @@ const log = createLogger('APP')
 
 /**
  * Bot 进程 PID 文件: 启动时写入, 退出时删除. `pnpm tick` 读这个文件给 SIGUSR1
- * 戳一发好奇心 tick (见 src/agent/event.ts: curiosity_tick).
+ * 注入人工调试 tick (见 src/agent/event.ts: curiosity_tick).
  */
 const BOT_PID_FILE = '.bot.pid'
 
@@ -190,9 +190,8 @@ async function main() {
   const eventQueue = new InMemoryEventQueue<BotEvent>()
   const enqueueMessageEvent = createDedupEnqueue(eventQueue)
 
-  // 5.5 SIGUSR1 → curiosity_tick. 进程内不维护定时器 (节奏甩到外面: pnpm tick / cron / launchd).
-  //     `kill -USR1 <pid>` 戳一发, 走跟 napcat_message 同一条 drainEvents 路径,
-  //     LLM 看到 [好奇心 tick] user message 自己决定要不要调用 reddit.
+  // 5.5 SIGUSR1 → curiosity_tick，仅作为人工调试入口，不承担生产自主调度。
+  //     正常自主节奏由 pause 的自定休息和 BotLoop guard 管理。
   process.on('SIGUSR1', () => {
     log.info({ source: 'sigusr1' }, 'curiosity_tick_manual_trigger')
     eventQueue.enqueue({ type: 'curiosity_tick' })

@@ -168,12 +168,12 @@ describe('renderBotEvent — curiosity tick', () => {
     assert.equal(renderBotEvent({ type: 'curiosity_tick' }), CURIOSITY_TICK_TEXT)
   })
 
-  test('tick text includes creator-facing self-direction as an idle option', () => {
+  test('frames curiosity tick as a manual debug wake, not the source of curiosity', () => {
     const out = renderBotEvent({ type: 'curiosity_tick' })
 
-    assert.match(out!, /创作者/)
-    assert.match(out!, /工具/)
-    assert.match(out!, /事件/)
+    assert.match(out!, /人工调试/)
+    assert.match(out!, /不是你好奇心的来源/)
+    assert.doesNotMatch(out!, /例行戳一下/)
   })
 
   test('tick text is byte-stable across calls (no time / counter embedded)', () => {

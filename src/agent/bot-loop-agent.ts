@@ -42,11 +42,27 @@ export interface BotLoopAgentDeps {
   keepAlive?: {
     open: () => { close: () => void }
   }
+  /** 运行时自主循环保护；不进入 AgentContext 或 snapshot。 */
+  autonomy?: BotLoopAutonomyOptions
+}
+
+export interface BotLoopAutonomyOptions {
+  maxConsecutiveRounds?: number
+  cooldownMs?: number
+  dailyTokenBudget?: number
+  now?: () => Date
+  waitForAttentionOrTimeout?: (
+    queue: EventQueue<BotEvent>,
+    timeoutMs: number,
+  ) => Promise<'attention' | 'elapsed'>
 }
 
 const DEFAULT_ERROR_BACKOFF_MS = 5_000
 const DEFAULT_EVENT_DEBOUNCE_MS = 3_000
 const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 86_400_000
+const DEFAULT_MAX_CONSECUTIVE_ROUNDS = 20
+const DEFAULT_AUTONOMY_COOLDOWN_MS = 60_000
+const DEFAULT_DAILY_TOKEN_BUDGET = 200_000
 const defaultKeepAlive = {
   open() {
     const timer = setInterval(() => {}, DEFAULT_KEEP_ALIVE_INTERVAL_MS)
@@ -66,13 +82,24 @@ export interface BotLoopAgent {
 }
 
 export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
+  const autonomy = {
+    maxConsecutiveRounds: Math.max(1, deps.autonomy?.maxConsecutiveRounds ?? DEFAULT_MAX_CONSECUTIVE_ROUNDS),
+    cooldownMs: Math.max(1, deps.autonomy?.cooldownMs ?? DEFAULT_AUTONOMY_COOLDOWN_MS),
+    dailyTokenBudget: Math.max(1, deps.autonomy?.dailyTokenBudget ?? DEFAULT_DAILY_TOKEN_BUDGET),
+    now: deps.autonomy?.now ?? (() => new Date()),
+    waitForAttentionOrTimeout: deps.autonomy?.waitForAttentionOrTimeout ?? waitForAttentionOrTimeout,
+  }
   let stopRequested = false
   let cancelDebounceSleep: (() => void) | null = null
   let lastWakeAt: Date | null = deps.initialLastWakeAt ?? null
   let mailboxCursors: MailboxCursors = { ...deps.initialMailboxCursors }
   let roundIndex = 0
+  let consecutiveRounds = 0
+  let budgetAttentionAllowance = 0
+  let budgetDay = beijingDayKey(autonomy.now())
+  let dailyTokens = 0
 
-  async function drainEvents(): Promise<{ consumed: number; disclosed: number }> {
+  async function drainEvents(): Promise<{ consumed: number; disclosed: number; hadAttention: boolean }> {
     const events: BotEvent[] = []
     let disclosed = 0
     while (true) {
@@ -105,12 +132,17 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         lastWakeAt = new Date()
       }
     }
-    return { consumed: events.length, disclosed }
+    return {
+      consumed: events.length,
+      disclosed,
+      hadAttention: events.some(isAttentionEvent),
+    }
   }
 
   async function runRound(): Promise<{
     inputTokens: number | null
-    shouldWaitForExternalEvent: boolean
+    tokensUsed: number
+    didPause: boolean
   }> {
     roundIndex++
     const snapshot = deps.context.getSnapshot()
@@ -163,21 +195,26 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       })
     }
 
-    let shouldWaitForExternalEvent = false
+    let didPause = false
     for (const call of completion.toolCalls) {
       const result = await deps.tools.execute(call, {
         eventQueue: deps.eventQueue,
         roundIndex,
       })
-      if (call.name === 'send_message' && isDeliveredSendMessageResult(result.content)) {
-        shouldWaitForExternalEvent = true
+      if (
+        call.name === 'pause'
+        && typeof result.content === 'string'
+        && result.content.startsWith('[休息')
+      ) {
+        didPause = true
       }
       deps.context.appendToolResult({ toolCallId: call.id, content: result.content })
     }
 
     return {
       inputTokens: completion.usage.inputTokens,
-      shouldWaitForExternalEvent,
+      tokensUsed: (completion.usage.inputTokens ?? 0) + (completion.usage.outputTokens ?? 0),
+      didPause,
     }
   }
 
@@ -199,7 +236,12 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     }
   }
 
-  async function step(): Promise<{ ranRound: boolean; shouldWaitForExternalEvent: boolean }> {
+  async function step(): Promise<{
+    ranRound: boolean
+    tokensUsed?: number
+    didPause?: boolean
+    hadAttention?: boolean
+  }> {
     const debounceMs = deps.eventDebounceMs ?? DEFAULT_EVENT_DEBOUNCE_MS
     if (deps.eventQueue.size() > 0 && debounceMs > 0 && !stopRequested) {
       await new Promise<void>((resolve) => {
@@ -214,15 +256,15 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         }
       })
     }
-    const { consumed, disclosed } = await drainEvents()
+    const { consumed, disclosed, hadAttention } = await drainEvents()
     log.debug({ roundIndex: roundIndex + 1, eventsConsumed: consumed, eventsDisclosed: disclosed }, 'round_start')
 
     if (consumed > 0 && disclosed === 0) {
-      return { ranRound: false, shouldWaitForExternalEvent: false }
+      return { ranRound: false }
     }
 
     if (deps.context.getSnapshot().messages.length === 0) {
-      return { ranRound: false, shouldWaitForExternalEvent: false }
+      return { ranRound: false }
     }
 
     await deps.snapshotRepo.save({
@@ -231,25 +273,62 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       lastWakeAt,
     })
 
-    const { inputTokens, shouldWaitForExternalEvent } = await runRound()
+    const { inputTokens, tokensUsed, didPause } = await runRound()
     await deps.snapshotRepo.save({
       snapshot: deps.context.exportPersistedSnapshot(),
       mailboxCursors,
       lastWakeAt,
     })
     await maybeCompact(inputTokens)
-    return { ranRound: true, shouldWaitForExternalEvent }
+    return { ranRound: true, tokensUsed, didPause, hadAttention }
   }
 
   async function runOnce(): Promise<void> {
-    const { ranRound, shouldWaitForExternalEvent } = await step()
+    const { ranRound, tokensUsed = 0, didPause = false, hadAttention = false } = await step()
     if (!ranRound && !stopRequested) {
       await waitForExternalEvent()
+      return
     }
-    if (ranRound && shouldWaitForExternalEvent && !stopRequested) {
-      log.debug({ roundIndex }, 'round_waiting_after_send_message')
-      await waitForExternalEvent()
+    if (!ranRound || stopRequested) return
+
+    resetDailyBudgetIfNeeded()
+    dailyTokens += tokensUsed
+    if (hadAttention) budgetAttentionAllowance = autonomy.maxConsecutiveRounds
+    if (budgetAttentionAllowance > 0) budgetAttentionAllowance--
+
+    if (didPause) {
+      consecutiveRounds = 0
+      budgetAttentionAllowance = Math.max(budgetAttentionAllowance, 1)
+      return
     }
+
+    consecutiveRounds++
+    if (consecutiveRounds >= autonomy.maxConsecutiveRounds) {
+      log.info({ consecutiveRounds, cooldownMs: autonomy.cooldownMs }, 'autonomy_round_cooldown_enter')
+      const result = await autonomy.waitForAttentionOrTimeout(deps.eventQueue, autonomy.cooldownMs)
+      consecutiveRounds = 0
+      if (result === 'attention') budgetAttentionAllowance = autonomy.maxConsecutiveRounds
+      return
+    }
+
+    if (dailyTokens >= autonomy.dailyTokenBudget && budgetAttentionAllowance <= 0) {
+      const timeoutMs = millisecondsUntilNextBeijingDay(autonomy.now())
+      log.info({ dailyTokens, budget: autonomy.dailyTokenBudget, timeoutMs }, 'autonomy_daily_budget_wait')
+      const result = await autonomy.waitForAttentionOrTimeout(deps.eventQueue, timeoutMs)
+      if (result === 'attention') {
+        budgetAttentionAllowance = autonomy.maxConsecutiveRounds
+      } else {
+        resetDailyBudgetIfNeeded()
+      }
+    }
+  }
+
+  function resetDailyBudgetIfNeeded(): void {
+    const nextDay = beijingDayKey(autonomy.now())
+    if (nextDay === budgetDay) return
+    budgetDay = nextDay
+    dailyTokens = 0
+    budgetAttentionAllowance = 0
   }
 
   async function waitForExternalEvent(): Promise<void> {
@@ -295,17 +374,48 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function isDeliveredSendMessageResult(content: unknown): boolean {
-  if (typeof content !== 'string') return false
+function isAttentionEvent(event: BotEvent): boolean {
+  if (event.type === 'napcat_private_message') return true
+  if (event.type === 'napcat_message') return event.mentionedSelf
+  return event.type === 'background_task_completed' || event.type === 'wake'
+}
+
+async function waitForAttentionOrTimeout(
+  queue: EventQueue<BotEvent>,
+  timeoutMs: number,
+): Promise<'attention' | 'elapsed'> {
+  const attentionAbort = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | null = null
   try {
-    const parsed = JSON.parse(content) as unknown
-    return !!(
-      parsed &&
-      typeof parsed === 'object' &&
-      'status' in parsed &&
-      (parsed as { status?: unknown }).status === 'sent'
-    )
-  } catch {
-    return false
+    return await Promise.race([
+      queue
+        .waitForEventWhere(isAttentionEvent, { signal: attentionAbort.signal })
+        .then(() => 'attention' as const),
+      new Promise<'elapsed'>((resolve) => {
+        timer = setTimeout(() => resolve('elapsed'), timeoutMs)
+      }),
+    ])
+  } finally {
+    attentionAbort.abort()
+    if (timer != null) clearTimeout(timer)
   }
+}
+
+function beijingDayKey(date: Date): string {
+  const shifted = new Date(date.getTime() + 8 * 60 * 60 * 1000)
+  return [
+    shifted.getUTCFullYear(),
+    String(shifted.getUTCMonth() + 1).padStart(2, '0'),
+    String(shifted.getUTCDate()).padStart(2, '0'),
+  ].join('-')
+}
+
+function millisecondsUntilNextBeijingDay(date: Date): number {
+  const shifted = new Date(date.getTime() + 8 * 60 * 60 * 1000)
+  const nextMidnightUtc = Date.UTC(
+    shifted.getUTCFullYear(),
+    shifted.getUTCMonth(),
+    shifted.getUTCDate() + 1,
+  )
+  return Math.max(1, nextMidnightUtc - shifted.getTime())
 }

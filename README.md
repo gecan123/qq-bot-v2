@@ -72,7 +72,7 @@ pnpm lint          # typecheck + repo-check
 pnpm db:generate   # 重新生成 Prisma client
 pnpm db:migrate    # 执行 Prisma migrations
 pnpm db:push       # 本地开发时同步 schema
-pnpm tick          # 通过 SIGUSR1 注入 curiosity tick
+pnpm tick          # 通过 SIGUSR1 注入人工调试用 curiosity tick
 pnpm toollog       # 查看最近 tool-call 审计日志
 pnpm toollogf      # follow tool-call 审计日志
 ```

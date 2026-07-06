@@ -31,7 +31,19 @@ export interface Tool<TArgs = unknown> {
 export interface ToolExecutionResult {
   /** 喂给 LLM 的 tool message content。string 或 structured content blocks (含图片)。 */
   content: ToolResultContent
+  /** 仅供 runtime / 审计使用，不进入 AgentContext。 */
+  outcome?: ToolExecutionOutcome
+  /** 仅供主循环控制使用，不进入 AgentContext。 */
+  control?: ToolControl
 }
+
+export interface ToolExecutionOutcome {
+  ok: boolean
+  code?: string
+  error?: string
+}
+
+export type ToolControl = { type: 'pause' }
 
 export interface ToolHookContext extends ToolContext {
   tool: Tool
@@ -103,26 +115,32 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
       const startedAt = options.trace ? (options.trace.clockMs?.() ?? Date.now()) : 0
       const tool = byName.get(call.name)
       if (!tool) {
+        const error = `Unknown tool: ${call.name}`
         const result = {
-          content: JSON.stringify({ error: `Unknown tool: ${call.name}` }),
+          content: JSON.stringify({ ok: false, code: 'unknown_tool', error }),
+          outcome: { ok: false, code: 'unknown_tool', error },
         }
-        await traceToolCall(options.trace, call, ctx.roundIndex, startedAt, result, `Unknown tool: ${call.name}`)
+        await traceToolCall(options.trace, call, ctx.roundIndex, startedAt, result, error)
         return result
       }
       const normalizedArgs = stripNullsFromOptionalFields(tool.schema, call.args) as Record<string, unknown>
       const normalizedCall = { ...call, args: normalizedArgs }
       const parseResult = tool.schema.safeParse(normalizedArgs)
       if (!parseResult.success) {
+        const error = 'Invalid tool arguments'
         const result = {
           content: JSON.stringify({
-            error: 'Invalid tool arguments',
+            ok: false,
+            code: 'invalid_arguments',
+            error,
             issues: parseResult.error.issues.map((issue) => ({
               path: issue.path,
               message: issue.message,
             })),
           }),
+          outcome: { ok: false, code: 'invalid_arguments', error },
         }
-        await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result, 'Invalid tool arguments')
+        await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result, error)
         return result
       }
       const blocked = await runBeforeToolHooks(options.hooks?.beforeTool ?? [], { ...ctx, tool, call: normalizedCall })
@@ -137,10 +155,12 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
         return result
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
+        const error = `Tool execution failed: ${message}`
         const result = {
-          content: JSON.stringify({ error: `Tool execution failed: ${message}` }),
+          content: JSON.stringify({ ok: false, code: 'execution_failed', error }),
+          outcome: { ok: false, code: 'execution_failed', error },
         }
-        await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result, `Tool execution failed: ${message}`)
+        await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result, error)
         return result
       }
     },
@@ -284,7 +304,11 @@ async function runBeforeToolHooks(
       if (blocked) return blocked
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      return { content: JSON.stringify({ error: `Tool hook failed: ${message}` }) }
+      const error = `Tool hook failed: ${message}`
+      return {
+        content: JSON.stringify({ ok: false, code: 'hook_failed', error }),
+        outcome: { ok: false, code: 'hook_failed', error },
+      }
     }
   }
   return null
@@ -341,6 +365,14 @@ function classifyToolResult(
   forcedError?: string,
 ): { ok: boolean; error?: string } {
   if (forcedError) return { ok: false, error: forcedError }
+  if (result.outcome) {
+    return {
+      ok: result.outcome.ok,
+      ...(!result.outcome.ok
+        ? { error: result.outcome.error ?? result.outcome.code ?? 'Tool returned ok=false' }
+        : {}),
+    }
+  }
   if (typeof result.content !== 'string') return { ok: true }
   try {
     const parsed = JSON.parse(result.content) as unknown

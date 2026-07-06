@@ -107,6 +107,36 @@ describe('createToolExecutor', () => {
     assert.equal(entry.error, 'Invalid tool arguments')
   })
 
+  test('prefers explicit outcome metadata when classifying traces', async () => {
+    const writes: string[] = []
+    const tool: Tool<Record<string, never>> = {
+      name: 'external_fetch',
+      description: 'fetch',
+      schema: z.object({}),
+      async execute() {
+        return {
+          content: 'ordinary prose that does not encode an error',
+          outcome: { ok: false, code: 'network_error', error: 'request failed' },
+        }
+      },
+    }
+    const exec = createToolExecutor([tool], {
+      trace: {
+        now: () => new Date('2026-07-06T00:00:00.000Z'),
+        clockMs: () => 100,
+        appender: async (_path, line) => {
+          writes.push(line)
+        },
+      },
+    })
+
+    const result = await exec.execute({ id: 'fetch-1', name: 'external_fetch', args: {} }, makeCtx())
+
+    assert.deepEqual(result.outcome, { ok: false, code: 'network_error', error: 'request failed' })
+    assert.equal(JSON.parse(writes[0]!).ok, false)
+    assert.equal(JSON.parse(writes[0]!).error, 'request failed')
+  })
+
   test('classifies merged memory side effects by action', async () => {
     const writes: string[] = []
     const memory: Tool<{ action: 'write' | 'search' }> = {
@@ -374,6 +404,7 @@ describe('createToolExecutor', () => {
     const exec = createToolExecutor([])
     const result = await exec.execute({ id: 'c1', name: 'nope', args: {} }, makeCtx())
     assert.match(result.content as string, /Unknown tool/)
+    assert.deepEqual(result.outcome, { ok: false, code: 'unknown_tool', error: 'Unknown tool: nope' })
   })
 
   test('invalid args produce structured error, not throw', async () => {
@@ -391,6 +422,8 @@ describe('createToolExecutor', () => {
       makeCtx(),
     )
     assert.match(result.content as string, /Invalid tool arguments/)
+    assert.equal(result.outcome?.ok, false)
+    assert.equal(result.outcome?.code, 'invalid_arguments')
   })
 
   test('thrown errors inside execute become tool error envelope', async () => {
@@ -405,6 +438,11 @@ describe('createToolExecutor', () => {
     const exec = createToolExecutor([t])
     const result = await exec.execute({ id: 'c1', name: 'boom', args: {} }, makeCtx())
     assert.match(result.content as string, /Tool execution failed: kaboom/)
+    assert.deepEqual(result.outcome, {
+      ok: false,
+      code: 'execution_failed',
+      error: 'Tool execution failed: kaboom',
+    })
   })
 
   test('duplicate tool name in registration throws', () => {

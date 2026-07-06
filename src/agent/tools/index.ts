@@ -17,11 +17,11 @@ import { maybeCreateBrowserTool } from './browser.js'
 import { maybeCreateOpenbbCliTool } from './openbb-cli.js'
 import { createFetchContentTool } from './fetch-content.js'
 import { createInboxTool } from './inbox.js'
+import type { SendTargetPolicy } from '../send-target-policy.js'
 
 export interface BotToolDeps {
   sender: MessageSender
-  /** Group-ambient 真发白名单. 透传给 send_message tool. 见 SendMessageDeps. */
-  groupAmbientSendIds: ReadonlySet<number>
+  targetPolicy: SendTargetPolicy
   taskRegistry: BackgroundTaskRegistry
   groupIds: readonly number[]
   selfNumber: number
@@ -40,7 +40,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     pauseTool,
     createSendMessageTool({
       sender: deps.sender,
-      groupAmbientSendIds: deps.groupAmbientSendIds,
+      targetPolicy: deps.targetPolicy,
     }),
     createBackgroundTaskTool({ taskRegistry: deps.taskRegistry }),
     todoTool,

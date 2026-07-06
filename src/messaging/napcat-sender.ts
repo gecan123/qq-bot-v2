@@ -29,6 +29,7 @@ export async function sendGroupReply(groupId: number, segments: NapcatSegment[])
       .join(''),
   )
   const deliveryType = segments.some((segment) => segment.type === 'reply') ? 'reply_to_message' : 'send_message'
+  const mode = deliveryType === 'reply_to_message' ? 'reply' : 'ambient'
   const segmentTypes = segments.map((segment) => segment.type)
 
   for (let attempt = 1; attempt <= RETRY_LIMIT; attempt++) {
@@ -39,6 +40,9 @@ export async function sendGroupReply(groupId: number, segments: NapcatSegment[])
           direction: 'outbound',
           actor: 'bot',
           flow: 'napcat_send',
+          targetType: 'group',
+          targetId: groupId,
+          mode,
           groupId,
           providerMessageId: result.message_id,
           deliveryType,
@@ -59,6 +63,9 @@ export async function sendGroupReply(groupId: number, segments: NapcatSegment[])
           direction: 'outbound',
           actor: 'bot',
           flow: 'napcat_send',
+          targetType: 'group',
+          targetId: groupId,
+          mode,
           groupId,
           deliveryType,
           segmentTypes,
@@ -78,6 +85,9 @@ export async function sendGroupReply(groupId: number, segments: NapcatSegment[])
       direction: 'outbound',
       actor: 'bot',
       flow: 'napcat_send',
+      targetType: 'group',
+      targetId: groupId,
+      mode,
       groupId,
       deliveryType,
       deliveryResult: 'failed',
@@ -107,6 +117,8 @@ export async function sendPrivateMessage(userId: number, segments: NapcatSegment
       .join(''),
   )
   const segmentTypes = segments.map((segment) => segment.type)
+  const deliveryType = segments.some((segment) => segment.type === 'reply') ? 'reply_to_message' : 'send_message'
+  const mode = deliveryType === 'reply_to_message' ? 'reply' : 'ambient'
 
   for (let attempt = 1; attempt <= RETRY_LIMIT; attempt++) {
     try {
@@ -116,9 +128,12 @@ export async function sendPrivateMessage(userId: number, segments: NapcatSegment
           direction: 'outbound',
           actor: 'bot',
           flow: 'napcat_send',
+          targetType: 'private',
+          targetId: userId,
+          mode,
           userId,
           providerMessageId: result.message_id,
-          deliveryType: 'send_private_message',
+          deliveryType,
           segmentTypes,
           deliveryResult: 'sent',
           textPreview,
@@ -136,8 +151,11 @@ export async function sendPrivateMessage(userId: number, segments: NapcatSegment
           direction: 'outbound',
           actor: 'bot',
           flow: 'napcat_send',
+          targetType: 'private',
+          targetId: userId,
+          mode,
           userId,
-          deliveryType: 'send_private_message',
+          deliveryType,
           segmentTypes,
           textPreview,
           attempt,
@@ -155,8 +173,11 @@ export async function sendPrivateMessage(userId: number, segments: NapcatSegment
       direction: 'outbound',
       actor: 'bot',
       flow: 'napcat_send',
+      targetType: 'private',
+      targetId: userId,
+      mode,
       userId,
-      deliveryType: 'send_private_message',
+      deliveryType,
       deliveryResult: 'failed',
       textPreview,
     },

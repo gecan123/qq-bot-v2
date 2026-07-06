@@ -4,19 +4,17 @@ import { createInMemoryTaskRegistry } from '../background-task-registry.js'
 import type { MessageSender } from '../../messaging/message-sender.js'
 import { createDbTool } from './db.js'
 import { buildBotTools } from './index.js'
+import type { SendTargetPolicy } from '../send-target-policy.js'
 
 const mockSender: MessageSender = {
-  async replyToMessage() {
-    return { success: true, attempts: 1, providerMessageId: 1 }
-  },
-  async sendPrivateMessage() {
-    return { success: true, attempts: 1, providerMessageId: 1 }
-  },
-  async sendGroupMessage() {
-    return { success: true, attempts: 1, providerMessageId: 1 }
-  },
   async sendSegments() {
     return { success: true, attempts: 1, providerMessageId: 1 }
+  },
+}
+
+const targetPolicy: SendTargetPolicy = {
+  async authorize() {
+    return { allowed: true }
   },
 }
 
@@ -66,7 +64,7 @@ describe('db tool', () => {
   test('bot tool registry exposes database access through workspace_bash only', () => {
     const names = buildBotTools({
       sender: mockSender,
-      groupAmbientSendIds: new Set(),
+      targetPolicy,
       selfNumber: 999,
       taskRegistry: createInMemoryTaskRegistry(),
       groupIds: [],

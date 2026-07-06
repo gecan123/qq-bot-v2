@@ -1,6 +1,6 @@
 # 架构
 
-`qq-bot-v2` 是一个接入 NapCat 的 QQ Agent。群聊和私聊入站消息先写入 Postgres，再由 `BotLoopAgent` 分级披露给单一持久化 `AgentContext`：群内 `@bot` 直接进入；普通群消息按群、私聊消息按联系人进入 mailbox 通知，正文由 Agent 按需读取。
+`qq-bot-v2` 是一个接入 NapCat 的 QQ Agent。群聊和私聊入站消息先写入 Postgres，再由 `BotLoopAgent` 披露给单一持久化 `AgentContext`：所有 QQ 消息按群或联系人进入 mailbox 通知，正文由 Agent 按需读取；私聊和包含 `@bot` 的群批次标记为高优先级。
 
 这是实验性新项目。除非任务明确要求历史兼容或迁移保留，否则优先选择干净的目标模型，不要为了旧 adapter、dual-write bridge 或长期兼容层牺牲架构。
 
@@ -9,7 +9,7 @@
 1. `src/index.ts` 加载 config，连接 Prisma，注册媒体 provider，创建 agent LLM client，恢复 `BotAgentSnapshot`，并启动 event queue。
 2. `src/bot/**` 接收 NapCat 事件，并通过 `src/database/messages.ts` 写入入站事实。
 3. ready 后的消息被投递为 `BotEvent`。
-4. `src/agent/mailbox.ts` 按来源和 direct/mailbox 语义规划披露；群内 `@bot` 由 `src/agent/render-event.ts` 直接渲染，普通群消息和私聊消息按来源聚合为不含正文的确定性通知。
+4. `src/agent/mailbox.ts` 把所有 QQ 消息按来源聚合为不含正文的确定性通知，并计算批次级 `priority=high|normal`；非 QQ 运行时事件仍走稳定 direct 渲染。
 5. `src/agent/bot-loop-agent.ts` append 披露结果、调用 LLM、执行 tool calls、append tool results，并把 context snapshot 与 mailbox cursors 同行持久化后运行 compaction。
 
 ## 持久边界

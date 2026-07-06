@@ -51,8 +51,8 @@ function privateEvent(input: {
 }
 
 describe('mailbox disclosure planning', () => {
-  test('keeps mentioned group messages direct but groups private messages by peer mailbox', () => {
-    const mentioned = groupEvent({ rowId: 1, groupId: 111, text: 'direct group', mentionedSelf: true })
+  test('groups every QQ message by source mailbox, including mentioned group messages', () => {
+    const mentioned = groupEvent({ rowId: 1, groupId: 111, text: 'mentioned group', mentionedSelf: true })
     const firstAlice = privateEvent({ rowId: 2, peerId: 9001, text: 'SECRET_ONE' })
     const bob = privateEvent({ rowId: 3, peerId: 9002, text: 'SECRET_BOB' })
     const secondAlice = privateEvent({ rowId: 4, peerId: 9001, text: 'SECRET_TWO' })
@@ -60,7 +60,7 @@ describe('mailbox disclosure planning', () => {
     const result = planMailboxDisclosures([mentioned, firstAlice, bob, secondAlice], {})
 
     assert.deepEqual(result.disclosures, [
-      { kind: 'direct', event: mentioned },
+      { kind: 'mailbox', mailboxKey: 'qq_group:111', events: [mentioned] },
       { kind: 'mailbox', mailboxKey: 'qq_private:9001', events: [firstAlice, secondAlice] },
       { kind: 'mailbox', mailboxKey: 'qq_private:9002', events: [bob] },
     ])
@@ -114,12 +114,24 @@ describe('mailbox disclosure planning', () => {
 
     const rendered = renderMailboxNotification('qq_group:111', events)
 
-    assert.match(rendered, /^\[inbox 更新 \| 群:测试群 \| mailbox=qq_group:111\]/)
+    assert.match(rendered, /^\[inbox 更新 \| 群:测试群 \| mailbox=qq_group:111 \| priority=normal\]/)
     assert.match(rendered, /新增 2 条/)
     assert.match(rendered, /rowId 10\.\.12/)
     assert.match(rendered, /发送者 2 人/)
     assert.match(rendered, /inbox action=read source=group groupId=111 afterRowId=9/)
     assert.doesNotMatch(rendered, /DO_NOT_DISCLOSE/)
+  })
+
+  test('marks a group mailbox batch high priority when any message mentions the bot', () => {
+    const events = [
+      groupEvent({ rowId: 13, groupId: 111, text: 'ambient' }),
+      groupEvent({ rowId: 14, groupId: 111, text: 'mentioned', mentionedSelf: true }),
+    ]
+
+    const rendered = renderMailboxNotification('qq_group:111', events)
+
+    assert.match(rendered, /^\[inbox 更新 \| 群:测试群 \| mailbox=qq_group:111 \| priority=high\]/)
+    assert.doesNotMatch(rendered, /mentioned|rowIds/)
   })
 
   test('renders a bounded private notification without message bodies', () => {
@@ -130,7 +142,7 @@ describe('mailbox disclosure planning', () => {
 
     const rendered = renderMailboxNotification('qq_private:9001', events)
 
-    assert.match(rendered, /^\[inbox 更新 \| 私聊:Alice\(QQ:9001\) \| mailbox=qq_private:9001\]/)
+    assert.match(rendered, /^\[inbox 更新 \| 私聊:Alice\(QQ:9001\) \| mailbox=qq_private:9001 \| priority=high\]/)
     assert.match(rendered, /新增 2 条/)
     assert.match(rendered, /rowId 20\.\.22/)
     assert.match(rendered, /inbox action=read source=private peerId=9001 afterRowId=19/)

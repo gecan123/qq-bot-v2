@@ -39,21 +39,14 @@ export function planMailboxDisclosures(
     if (message.messageRowId <= (cursors[mailboxKey] ?? 0)) continue
     cursors[mailboxKey] = message.messageRowId
 
-    const shouldUseMailbox = event.type === 'napcat_private_message'
-      || (event.type === 'napcat_message' && !event.mentionedSelf)
-    if (shouldUseMailbox) {
-      const existing = mailboxEventsByKey.get(mailboxKey)
-      if (existing) {
-        existing.push(message)
-      } else {
-        const batch = [message]
-        mailboxEventsByKey.set(mailboxKey, batch)
-        disclosures.push({ kind: 'mailbox', mailboxKey, events: batch })
-      }
-      continue
+    const existing = mailboxEventsByKey.get(mailboxKey)
+    if (existing) {
+      existing.push(message)
+    } else {
+      const batch = [message]
+      mailboxEventsByKey.set(mailboxKey, batch)
+      disclosures.push({ kind: 'mailbox', mailboxKey, events: batch })
     }
-
-    disclosures.push({ kind: 'direct', event })
   }
 
   return { disclosures, cursors }
@@ -70,6 +63,9 @@ export function renderMailboxNotification(
   const first = events[0]!
   const last = events[events.length - 1]!
   const senderCount = new Set(events.map((event) => event.senderId)).size
+  const priority = events.some((event) => (
+    event.type === 'napcat_private_message' || event.mentionedSelf
+  )) ? 'high' : 'normal'
   const afterRowId = Math.max(0, first.messageRowId - 1)
   const timeRange = first.sentAt.getTime() === last.sentAt.getTime()
     ? first.sentAt.toISOString()
@@ -85,7 +81,7 @@ export function renderMailboxNotification(
       }
 
   return [
-    `[inbox 更新 | ${source.label} | mailbox=${mailboxKey}]`,
+    `[inbox 更新 | ${source.label} | mailbox=${mailboxKey} | priority=${priority}]`,
     `新增 ${events.length} 条; rowId ${first.messageRowId}..${last.messageRowId}; 时间 ${timeRange}; 发送者 ${senderCount} 人.`,
     `正文未自动披露. 需要时调用 ${source.read}.`,
   ].join(' ')

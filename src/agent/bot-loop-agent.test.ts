@@ -60,7 +60,7 @@ function makeMockSnapshotRepo(): {
 // rename look on disk. New code calls the tool 'send_message' (see src/agent/tools/send-message.ts);
 // already-persisted history stays as-is (red line 5: byte stability of historical turns).
 describe('BotLoopAgent.runOnceForTest', () => {
-  test('drains napcat events into context as user messages, runs LLM, executes tools', async () => {
+  test('drains mentioned group events as high-priority mailbox notifications, runs LLM, executes tools', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({
@@ -88,7 +88,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const tools = makeMockTools({
       send_group_message: async () => {
         toolExecuted = true
-        return { content: '{"ok":true}' }
+        return { content: '{"ok":true,"status":"sent"}' }
       },
     })
 
@@ -113,6 +113,10 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const messages = ctx.getSnapshot().messages
     assert.equal(messages.length, 3, 'user + assistant + tool')
     assert.equal(messages[0]?.role, 'user')
+    if (messages[0]?.role === 'user') {
+      assert.match(messages[0].content, /mailbox=qq_group:999 \| priority=high/)
+      assert.doesNotMatch(messages[0].content, /hello/)
+    }
     assert.equal(messages[1]?.role, 'assistant')
     if (messages[1]?.role === 'assistant') {
       assert.equal(messages[1].content, '', 'new assistant text must not enter durable AgentContext')
@@ -433,7 +437,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       reddit: async () => ({ content: '[reddit] r/programming top: foo bar' }),
       send_message: async () => {
         sendMessageCalled = true
-        return { content: '{"ok":true}' }
+        return { content: '{"ok":true,"status":"sent"}' }
       },
       rest: async () => {
         await agent.stop()
@@ -509,7 +513,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const tools = makeMockTools({
       send_message: async () => {
         sendMessageCount++
-        return { content: '{"ok":true}' }
+        return { content: '{"ok":true,"status":"sent"}' }
       },
     })
     const { repo } = makeMockSnapshotRepo()
@@ -540,7 +544,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     }
   })
 
-  test('send_message 返回失败时立即跑下一轮让 LLM 修正', async () => {
+  test('send_message 非 sent 状态即使 ok=true 也立即跑下一轮让 LLM 修正', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({
@@ -579,7 +583,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     let restCalled = false
     const tools = makeMockTools({
-      send_message: async () => ({ content: '{"ok":false,"error":"Invalid tool arguments"}' }),
+      send_message: async () => ({ content: '{"ok":true,"status":"rejected","error":"not allowed"}' }),
       rest: async () => {
         restCalled = true
         await agent.stop()
@@ -603,12 +607,14 @@ describe('BotLoopAgent.runOnceForTest', () => {
     })
 
     const startPromise = agent.start()
-    await new Promise((resolve) => setTimeout(resolve, 50))
-
-    assert.ok(llmCallCount >= 2, `expected LLM to see failed send result, got ${llmCallCount}`)
-    assert.equal(restCalled, true)
-
-    await startPromise
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      assert.ok(llmCallCount >= 2, `expected LLM to see rejected send result, got ${llmCallCount}`)
+      assert.equal(restCalled, true)
+    } finally {
+      await agent.stop()
+      await startPromise
+    }
   })
 
   test('assistant 返回 no tool calls 时不把 text-only 思考写入 context', async () => {
@@ -724,7 +730,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const tools = makeMockTools({
       send_message: async () => {
         toolExecuted = true
-        return { content: '{"ok":true}' }
+        return { content: '{"ok":true,"status":"sent"}' }
       },
     })
     const { repo } = makeMockSnapshotRepo()
@@ -757,7 +763,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const toolResult = messages.find((msg) => msg.role === 'tool')
     assert.equal(toolResult?.role, 'tool')
     if (toolResult?.role === 'tool' && typeof toolResult.content === 'string') {
-      assert.equal(toolResult.content, '{"ok":true}')
+      assert.equal(toolResult.content, '{"ok":true,"status":"sent"}')
     }
   })
 
@@ -765,15 +771,13 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({
-      type: 'napcat_message',
-      messageRowId: 7,
-      groupId: 999,
-      messageId: 12347,
-      senderId: 100,
-      senderNickname: 'spam',
-      mentionedSelf: true,
-      sentAt: new Date(),
-      renderedText: 'spam content',
+      type: 'background_task_completed',
+      taskId: 'task-1',
+      toolName: 'test',
+      description: 'skip me',
+      elapsedMs: 1,
+      ok: true,
+      summary: 'skip me',
     })
 
     const llm = makeMockLlm([

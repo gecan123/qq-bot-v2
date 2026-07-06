@@ -169,7 +169,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         eventQueue: deps.eventQueue,
         roundIndex,
       })
-      if (call.name === 'send_message' && isSuccessfulSendMessageResult(result.content)) {
+      if (call.name === 'send_message' && isDeliveredSendMessageResult(result.content)) {
         shouldWaitForExternalEvent = true
       }
       deps.context.appendToolResult({ toolCallId: call.id, content: result.content })
@@ -295,15 +295,15 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function isSuccessfulSendMessageResult(content: unknown): boolean {
+function isDeliveredSendMessageResult(content: unknown): boolean {
   if (typeof content !== 'string') return false
   try {
     const parsed = JSON.parse(content) as unknown
     return !!(
       parsed &&
       typeof parsed === 'object' &&
-      'ok' in parsed &&
-      (parsed as { ok?: unknown }).ok === true
+      'status' in parsed &&
+      (parsed as { status?: unknown }).status === 'sent'
     )
   } catch {
     return false

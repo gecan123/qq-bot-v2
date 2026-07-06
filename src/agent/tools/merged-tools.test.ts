@@ -16,23 +16,21 @@ import { TASK_RESULT_TEXT_CAP_CHARS } from './get-task-result.js'
 import { createMemoryTool, memoryTool } from './memory.js'
 import { createFetchImageTool, runCurlImage } from './fetch-image.js'
 import { OutboundCache, setOutboundCacheForTest } from '../../media/outbound-cache.js'
+import type { SendTargetPolicy } from '../send-target-policy.js'
 
 function makeCtx(): ToolContext {
   return { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 1 }
 }
 
 const mockSender: MessageSender = {
-  async replyToMessage() {
-    return { success: true, attempts: 1, providerMessageId: 1 }
-  },
-  async sendPrivateMessage() {
-    return { success: true, attempts: 1, providerMessageId: 1 }
-  },
-  async sendGroupMessage() {
-    return { success: true, attempts: 1, providerMessageId: 1 }
-  },
   async sendSegments() {
     return { success: true, attempts: 1, providerMessageId: 1 }
+  },
+}
+
+const targetPolicy: SendTargetPolicy = {
+  async authorize() {
+    return { allowed: true }
   },
 }
 
@@ -45,7 +43,7 @@ describe('merged main-agent tools', () => {
   test('buildBotTools exposes default entries and defers heavy typed tools', () => {
     const names = buildBotTools({
       sender: mockSender,
-      groupAmbientSendIds: new Set(),
+      targetPolicy,
       selfNumber: 999,
       taskRegistry: createInMemoryTaskRegistry(),
       groupIds: [],
@@ -62,7 +60,7 @@ describe('merged main-agent tools', () => {
     assert.ok(names.includes('toolbox'))
     assert.ok(names.includes('workspace_bash'))
     assert.equal(names.includes('generate_image'), false)
-    assert.equal(names.includes('collect_sticker'), false)
+    assert.ok(names.includes('collect_sticker'))
     assert.equal(names.includes('fetch_content'), false)
     assert.equal(names.includes('db'), false)
     assert.equal(names.includes('chat_style'), false)
@@ -92,7 +90,7 @@ describe('merged main-agent tools', () => {
   test('buildBotToolManifest groups deferred capabilities by intent', () => {
     const manifest = buildBotToolManifest({
       sender: mockSender,
-      groupAmbientSendIds: new Set(),
+      targetPolicy,
       selfNumber: 999,
       taskRegistry: createInMemoryTaskRegistry(),
       groupIds: [],

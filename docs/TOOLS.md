@@ -38,7 +38,7 @@
 - 对外 QQ 发言必须走 `send_message`。
 - `send_message` 的 target 必须明确。不能从 memory 里推断群聊或私聊 target。
 - assistant text 是内部历史/推理，不是公开发送通道。
-- group ambient 发送受 ingress allowlist 和 `BOT_GROUP_AMBIENT_SEND_IDS` 保护。reply 和 private 不受 ambient whitelist 控制。
+- `send_message` 发送前统一走目标授权：群 reply 仅允许监听群，群 ambient 还必须属于 `BOT_GROUP_AMBIENT_SEND_IDS`，私聊目标必须是 NapCat 当前好友。未授权会明确拒绝，不会模拟成功。
 - 外部工具必须有输出上限、超时和审计日志。
 - `inbox` 的群读取必须显式指定监听白名单内的 groupId；私聊读取必须显式指定 peerId。其结果有行数和字符上限，并作为普通 tool result 进入 AgentContext。
 - `workspace_bash` 提供可写 private workspace 和只读 repo view。repo view 必须保持 allowlist，不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。

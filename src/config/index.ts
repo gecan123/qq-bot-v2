@@ -284,8 +284,8 @@ export function parseConfig(env: EnvSource) {
     toolCallLogPath,
     /**
      * 主动发言（group-ambient）白名单. 只有在此集合内的群才真发 ambient 消息,
-     * 不在集合内的群走 dry-run (对 LLM 返回假成功, 群友感知不到).
-     * Reply / private 路径不受影响. 空集合 = 全部 dry-run (安全默认值).
+     * 不在集合内的群 ambient 会被明确拒绝。群 reply 仍要求目标属于监听群；
+     * private 发送要求目标属于 NapCat 当前好友。空集合 = 拒绝全部群 ambient.
      * env: `BOT_GROUP_AMBIENT_SEND_IDS=111,222`
      */
     groupAmbientSendIds,

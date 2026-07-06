@@ -3,7 +3,7 @@
  *
  *   group event A + private event from peer X + group event B
  *     → render-event labels each correctly
- *     → group @bot enters verbatim while private and ambient group traffic become inbox notifications
+ *     → all QQ messages become priority-aware inbox notifications
  *     → LLM (mocked) produces a send_message tool call targeted at the right source
  *     → tool execution runs the send_message tool with whitelist validation
  *     → group/private cross-source events do NOT leak into each other
@@ -22,9 +22,10 @@ import type { BotSnapshotRepo } from './snapshot-repo.js'
 import type { PersistedAgentSnapshot } from './agent-context.types.js'
 import type { MessageSender } from '../messaging/message-sender.js'
 import type { SendNapcatResult } from '../messaging/napcat-sender.js'
+import type { SendTargetPolicy } from './send-target-policy.js'
 
 interface RecordedSend {
-  fn: 'replyToMessage' | 'sendGroupMessage' | 'sendPrivateMessage'
+  fn: 'sendSegments'
   args: unknown
 }
 
@@ -34,23 +35,18 @@ function makeMockSender(): { sender: MessageSender; calls: RecordedSend[] } {
   return {
     calls,
     sender: {
-      async replyToMessage(args) {
-        calls.push({ fn: 'replyToMessage', args })
-        return ok
-      },
-      async sendGroupMessage(args) {
-        calls.push({ fn: 'sendGroupMessage', args })
-        return ok
-      },
-      async sendPrivateMessage(args) {
-        calls.push({ fn: 'sendPrivateMessage', args })
-        return ok
-      },
-      async sendSegments() {
+      async sendSegments(args) {
+        calls.push({ fn: 'sendSegments', args })
         return ok
       },
     },
   }
+}
+
+const allowAllTargets: SendTargetPolicy = {
+  async authorize() {
+    return { allowed: true }
+  },
 }
 
 function makeMockLlm(outputs: LlmCallOutput[]): LlmClient {
@@ -129,6 +125,7 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
             name: 'send_message',
             args: {
               target: { type: 'group', groupId: 111 },
+              mode: 'reply',
               text: '在的',
               replyToMessageId: 1001,
             },
@@ -143,7 +140,7 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     const tools = createToolExecutor([
       createSendMessageTool({
         sender,
-        groupAmbientSendIds: new Set<number>(),
+        targetPolicy: allowAllTargets,
       }),
     ])
 
@@ -162,22 +159,23 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     await agent.runOnceForTest()
 
     const messages = ctx.getSnapshot().messages
-    // 1 direct user message + 2 mailbox notifications + assistant + tool result = 5
+    // 3 mailbox notifications + assistant + tool result = 5
     assert.equal(messages.length, 5)
 
     const userMessages = messages.filter((m) => m.role === 'user')
     assert.equal(userMessages.length, 3)
-    assert.match(userMessages[0]!.content, /^\[[\d/: ]+ 群:阳光厨房 \| 张三\(QQ:100\) #\d+ \[@bot\]\]/)
-    assert.match(userMessages[1]!.content, /^\[inbox 更新 \| 私聊:Alice\(QQ:10001\) \| mailbox=qq_private:10001\]/)
-    assert.match(userMessages[2]!.content, /^\[inbox 更新 \| 群:技术群 \| mailbox=qq_group:222\]/)
-    assert.doesNotMatch(userMessages.map((message) => message.content).join('\n'), /私聊问个事|今天天气好/)
+    assert.match(userMessages[0]!.content, /^\[inbox 更新 \| 群:阳光厨房 \| mailbox=qq_group:111 \| priority=high\]/)
+    assert.match(userMessages[1]!.content, /^\[inbox 更新 \| 私聊:Alice\(QQ:10001\) \| mailbox=qq_private:10001 \| priority=high\]/)
+    assert.match(userMessages[2]!.content, /^\[inbox 更新 \| 群:技术群 \| mailbox=qq_group:222 \| priority=normal\]/)
+    assert.doesNotMatch(userMessages.map((message) => message.content).join('\n'), /在吗|私聊问个事|今天天气好/)
 
-    // The send_message tool should have been called via replyToMessage, scoped to group 111.
+    // The send_message tool should have used the unified segment sender, scoped to group 111.
     assert.equal(calls.length, 1)
-    assert.equal(calls[0]!.fn, 'replyToMessage')
-    const args = calls[0]!.args as { groupId: number; replyToMessageId: number }
-    assert.equal(args.groupId, 111)
-    assert.equal(args.replyToMessageId, 1001)
+    assert.equal(calls[0]!.fn, 'sendSegments')
+    const args = calls[0]!.args as { target: { type: string; groupId: number }; segments: Array<{ type: string; data: Record<string, unknown> }> }
+    assert.deepEqual(args.target, { type: 'group', groupId: 111 })
+    assert.equal(args.segments[0]?.type, 'reply')
+    assert.equal(args.segments[0]?.data.id, '1001')
   })
 
   test('private target reaches sendPrivateMessage; group event in same batch does not leak into the private send', async () => {
@@ -216,6 +214,7 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
             name: 'send_message',
             args: {
               target: { type: 'private', userId: 10001 },
+              mode: 'reply',
               text: '私聊回复',
               replyToMessageId: 2,
             },
@@ -230,7 +229,7 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     const tools = createToolExecutor([
       createSendMessageTool({
         sender,
-        groupAmbientSendIds: new Set<number>(),
+        targetPolicy: allowAllTargets,
       }),
     ])
 
@@ -249,11 +248,11 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     await agent.runOnceForTest()
 
     assert.equal(calls.length, 1)
-    assert.equal(calls[0]!.fn, 'sendPrivateMessage')
-    const args = calls[0]!.args as { userId: number; text: string; replyToMessageId?: number }
-    assert.equal(args.userId, 10001)
+    assert.equal(calls[0]!.fn, 'sendSegments')
+    const args = calls[0]!.args as { target: { type: string; userId: number }; segments: Array<{ type: string; data: Record<string, unknown> }> }
+    assert.deepEqual(args.target, { type: 'private', userId: 10001 })
     // The text must be the LLM's intended private reply, NOT something from the group event.
-    assert.equal(args.text, '私聊回复')
-    assert.equal(args.replyToMessageId, 2)
+    assert.equal(args.segments[1]?.data.text, '私聊回复')
+    assert.equal(args.segments[0]?.data.id, '2')
   })
 })

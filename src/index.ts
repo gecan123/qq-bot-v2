@@ -29,6 +29,7 @@ import { setTokenUsageDbPersistenceEnabled } from './agent/token-stats.js'
 import { buildBotToolManifest } from './agent/tools/index.js'
 import { createBotLoopAgent } from './agent/bot-loop-agent.js'
 import { renderBotEvent } from './agent/render-event.js'
+import { createSendTargetPolicy } from './agent/send-target-policy.js'
 import { replayMissedMessages } from './agent/replay-missed.js'
 import { resolveTargetMetadataMaps } from './agent/resolve-target-meta.js'
 import { createDedupEnqueue } from './agent/dedup-enqueue.js'
@@ -106,16 +107,14 @@ async function main() {
   // 0. 启动期清理 7 天前的 Message + Media
   await purgeOldData()
 
-  // ambient 白名单 sanity: 配了群但白名单空 → 所有群 ambient 都走 dry-run, 真发
-  // 一条群消息都不会发出去. 不是配置错误 (空集合是「全部 dry-run」的安全默认), 但
-  // 容易踩坑, 醒目地 warn 一句方便排查.
+  // ambient 白名单 sanity: 配了群但白名单空时，所有群 ambient 发送都会被明确拒绝。
   if (config.groupAmbientSendIds.size === 0 && config.botTargetGroupIds.length > 0) {
     log.warn(
       {
         botTargetGroupIds: config.botTargetGroupIds,
         groupAmbientSendIds: [],
       },
-      'BOT_GROUP_AMBIENT_SEND_IDS 未配置 — 所有群 ambient 发言走 dry-run (假成功, 不真发)',
+      'BOT_GROUP_AMBIENT_SEND_IDS 未配置 — 所有群 ambient 发言都会被拒绝',
     )
   }
 
@@ -265,10 +264,15 @@ async function main() {
     'group customizations loaded',
   )
   const taskRegistry = createInMemoryTaskRegistry()
+  const targetPolicy = createSendTargetPolicy({
+    groupIds: config.botTargetGroupIds,
+    groupAmbientSendIds: config.groupAmbientSendIds,
+    loadFriendIds: async () => (await napcat.get_friend_list()).map((friend) => friend.user_id),
+  })
   const tools = createDeferredToolExecutor({
     ...buildBotToolManifest({
       sender: messageSender,
-      groupAmbientSendIds: config.groupAmbientSendIds,
+      targetPolicy,
       taskRegistry,
       groupIds: config.botTargetGroupIds,
       selfNumber: config.selfNumber,

@@ -748,6 +748,29 @@ function clamp(value: string, maxChars: number): string {
   return value.slice(0, maxChars) + `\n[...truncated at ${maxChars} chars]`
 }
 
+function clipCommandField(value: string, maxChars: number): { value: string; truncated: boolean } {
+  if (value.length <= maxChars) return { value, truncated: false }
+  return { value: value.slice(0, maxChars), truncated: true }
+}
+
+function renderCommandEnvelope(
+  result: Pick<WorkspaceBashRunResult, 'exitCode' | 'stdout' | 'stderr'>,
+  options: { ok: boolean; maxChars: number; format?: 'text' | 'json'; code?: string; error?: string },
+): string {
+  const content = clipCommandField(result.stdout, options.maxChars)
+  const stderr = clipCommandField(result.stderr, options.maxChars)
+  return JSON.stringify({
+    ok: options.ok,
+    exitCode: result.exitCode,
+    format: options.format ?? 'text',
+    content: content.value,
+    stderr: stderr.value,
+    truncated: content.truncated || stderr.truncated,
+    ...(options.code ? { code: options.code } : {}),
+    ...(options.error ? { error: options.error } : {}),
+  })
+}
+
 function safeResolve(workspaceDir: string, target: string): string {
   const root = resolve(workspaceDir)
   const resolved = resolve(root, target)
@@ -1117,12 +1140,20 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
     async execute(args, ctx) {
       const parsed = parseWorkspaceBashCommand(args.command, args.cwd)
       if (!parsed.ok) {
+        const error = `command not allowed: ${parsed.error}`
         return {
           content: JSON.stringify({
             ok: false,
-            error: `command not allowed: ${parsed.error}`,
+            exitCode: null,
+            format: 'text',
+            content: '',
+            stderr: error,
+            truncated: false,
+            code: 'command_not_allowed',
+            error,
             ...commandErrorGuidance(parsed.error),
           }),
+          outcome: { ok: false, code: 'command_not_allowed' },
         }
       }
 
@@ -1140,7 +1171,12 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
       }
 
       if (parsed.kind === 'openbb') {
-        if (!openbbTool) return { content: JSON.stringify({ ok: false, error: 'openbb not configured' }) }
+        if (!openbbTool) {
+          return {
+            content: JSON.stringify({ ok: false, code: 'not_configured', error: 'openbb not configured' }),
+            outcome: { ok: false, code: 'not_configured' },
+          }
+        }
         return await openbbTool.execute(
           parsed.output === undefined ? { command: parsed.command } : { command: parsed.command, output: parsed.output },
           ctx,
@@ -1164,19 +1200,32 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
         runner: deps.runner,
       })
 
-      if (result.timedOut) return { content: JSON.stringify({ ok: false, error: 'command timeout' }) }
+      if (result.timedOut) {
+        return {
+          content: renderCommandEnvelope(result, {
+            ok: false,
+            maxChars: maxOutputChars,
+            code: 'timeout',
+            error: 'command timeout',
+          }),
+          outcome: { ok: false, code: 'timeout' },
+        }
+      }
       if (result.exitCode !== 0) {
         return {
-          content: JSON.stringify({
-            ok: false,
-            exitCode: result.exitCode,
-            stderr: clamp(result.stderr, maxOutputChars),
-            stdout: clamp(result.stdout, maxOutputChars),
-          }),
+          content: renderCommandEnvelope(result, { ok: false, maxChars: maxOutputChars }),
+          outcome: { ok: false, code: `exit_${result.exitCode ?? 'unknown'}` },
         }
       }
 
-      return { content: result.stdout || result.stderr || JSON.stringify({ ok: true }) }
+      return {
+        content: renderCommandEnvelope(result, {
+          ok: true,
+          maxChars: maxOutputChars,
+          format: parsed.kind === 'workspace' ? 'text' : 'json',
+        }),
+        outcome: { ok: true },
+      }
     },
   }
 }

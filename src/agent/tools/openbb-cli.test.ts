@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { createOpenbbCliTool, truncateOutput, type OpenbbCliRunner } from './openbb-cli.js'
+import { createOpenbbCliTool, type OpenbbCliRunner } from './openbb-cli.js'
 import type { ToolContext } from '../tool.js'
 import type { BotEvent } from '../event.js'
 import { InMemoryEventQueue } from '../event-queue.js'
@@ -44,7 +44,7 @@ describe('openbb_cli tool', () => {
     assert.equal(tool.schema.safeParse({ command: 'exe --file secrets' }).success, false)
   })
 
-  test('successful command returns stdout and logs command metadata', async () => {
+  test('successful command returns a command envelope and logs command metadata', async () => {
     const tool = makeTool(async (command, options) => {
       assert.equal(command, '/equity/price/historical --symbol AAPL --provider yfinance')
       assert.equal(options.timeoutMs, 5000)
@@ -57,7 +57,15 @@ describe('openbb_cli tool', () => {
       makeCtx(),
     )
 
-    assert.equal(result.content, '[{"symbol":"AAPL","last_price":299.64}]')
+    assert.deepEqual(JSON.parse(result.content as string), {
+      ok: true,
+      exitCode: 0,
+      format: 'text',
+      content: '[{"symbol":"AAPL","last_price":299.64}]',
+      stderr: '',
+      truncated: false,
+    })
+    assert.deepEqual(result.outcome, { ok: true })
     assert.equal(logEntries.length, 1)
     const entry = JSON.parse(logEntries[0])
     assert.equal(entry.source, 'openbb_cli')
@@ -88,9 +96,12 @@ describe('openbb_cli tool', () => {
       makeCtx(),
     )
 
-    assert.equal(
-      result.content,
-      JSON.stringify({
+    const envelope = JSON.parse(result.content as string)
+    assert.equal(envelope.ok, true)
+    assert.equal(envelope.format, 'json')
+    assert.deepEqual(
+      JSON.parse(envelope.content),
+      {
         exportedFile: '/Users/zzz/OpenBBUserData/exports/quote.json',
         rows: {
           offset: 0,
@@ -100,7 +111,7 @@ describe('openbb_cli tool', () => {
         },
         columns: ['symbol', 'last_price'],
         data: [{ symbol: 'AAPL', last_price: 312.06 }],
-      }),
+      },
     )
   })
 
@@ -129,9 +140,11 @@ describe('openbb_cli tool', () => {
       makeCtx(),
     )
 
-    assert.equal(
-      result.content,
-      JSON.stringify({
+    const envelope = JSON.parse(result.content as string)
+    assert.equal(envelope.format, 'json')
+    assert.deepEqual(
+      JSON.parse(envelope.content),
+      {
         exportedFile: '/Users/zzz/OpenBBUserData/exports/history.json',
         rows: {
           offset: 1,
@@ -144,7 +157,7 @@ describe('openbb_cli tool', () => {
           { date: '2026-01-02', close: 11 },
           { date: '2026-01-03', close: 12 },
         ],
-      }),
+      },
     )
   })
 
@@ -164,7 +177,11 @@ describe('openbb_cli tool', () => {
     const parsed = JSON.parse(result.content as string)
     assert.equal(parsed.ok, false)
     assert.equal(parsed.exitCode, 2)
+    assert.equal(parsed.format, 'text')
+    assert.equal(parsed.content, '')
     assert.equal(parsed.stderr, 'No such command: equity bad')
+    assert.equal(parsed.truncated, false)
+    assert.deepEqual(result.outcome, { ok: false, code: 'exit_2' })
   })
 
   test('timeout returns structured error', async () => {
@@ -180,17 +197,30 @@ describe('openbb_cli tool', () => {
       makeCtx(),
     )
 
-    assert.match(result.content as string, /command timeout/)
+    const parsed = JSON.parse(result.content as string)
+    assert.equal(parsed.ok, false)
+    assert.equal(parsed.exitCode, null)
+    assert.equal(parsed.code, 'timeout')
+    assert.equal(parsed.format, 'text')
+    assert.equal(parsed.truncated, false)
+    assert.deepEqual(result.outcome, { ok: false, code: 'timeout' })
   })
-})
 
-describe('truncateOutput', () => {
-  test('returns original output under cap', () => {
-    assert.equal(truncateOutput('abc', 10), 'abc')
-  })
+  test('successful output is field-truncated without breaking the JSON envelope', async () => {
+    const tool = makeTool(async () => ({
+      exitCode: 0,
+      stdout: 'x'.repeat(2000),
+      stderr: '',
+      timedOut: false,
+    }))
 
-  test('truncates long output with marker', () => {
-    const result = truncateOutput('x'.repeat(20), 10)
-    assert.equal(result, 'xxxxxxxxxx\n[...truncated at 10 chars]')
+    const result = await tool.execute({
+      command: '/equity/price/historical --symbol AAPL',
+      output: { maxChars: 1000 },
+    }, makeCtx())
+
+    const parsed = JSON.parse(result.content as string)
+    assert.equal(parsed.content.length, 1000)
+    assert.equal(parsed.truncated, true)
   })
 })

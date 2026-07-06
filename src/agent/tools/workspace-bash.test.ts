@@ -18,6 +18,13 @@ function makeCtx(): ToolContext {
   return { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 0 }
 }
 
+function unwrapCommandJson(content: unknown): Record<string, unknown> {
+  assert.equal(typeof content, 'string')
+  const envelope = JSON.parse(content as string) as { format: string; content: string }
+  assert.equal(envelope.format, 'json')
+  return JSON.parse(envelope.content) as Record<string, unknown>
+}
+
 describe('workspace_bash command parser', () => {
   test('accepts simple workspace file commands', () => {
     assert.deepEqual(parseWorkspaceBashCommand('pwd'), {
@@ -329,7 +336,15 @@ describe('workspace_bash tool', () => {
 
     const result = await tool.execute({ command: 'ls notes' }, makeCtx())
 
-    assert.equal(result.content, 'notes\n')
+    assert.deepEqual(JSON.parse(result.content as string), {
+      ok: true,
+      exitCode: 0,
+      format: 'text',
+      content: 'notes\n',
+      stderr: '',
+      truncated: false,
+    })
+    assert.deepEqual(result.outcome, { ok: true })
     assert.deepEqual(captured, {
       executable: 'ls',
       args: ['notes'],
@@ -355,7 +370,9 @@ describe('workspace_bash tool', () => {
 
     const result = await tool.execute({ cwd: 'repo', command: 'rg "buildBotTools" src/agent/tools/index.ts' }, makeCtx())
 
-    assert.match(result.content as string, /buildBotTools/)
+    const envelope = JSON.parse(result.content as string)
+    assert.match(envelope.content, /buildBotTools/)
+    assert.equal(envelope.format, 'text')
     assert.deepEqual(captured, {
       executable: 'rg',
       args: ['buildBotTools', 'src/agent/tools/index.ts'],
@@ -380,9 +397,38 @@ describe('workspace_bash tool', () => {
     const parsed = JSON.parse(result.content as string)
 
     assert.equal(parsed.ok, false)
+    assert.equal(parsed.exitCode, null)
+    assert.equal(parsed.format, 'text')
+    assert.equal(parsed.content, '')
+    assert.match(parsed.stderr, /not allowed/i)
+    assert.equal(parsed.truncated, false)
     assert.match(parsed.error, /not allowed/i)
     assert.equal(parsed.help, 'help workspace')
     assert.equal(parsed.try, 'help')
+    assert.deepEqual(result.outcome, { ok: false, code: 'command_not_allowed' })
+  })
+
+  test('wraps non-zero exits and timeout as explicit failed outcomes', async () => {
+    const failedTool = createWorkspaceBashTool({
+      runner: async () => ({ exitCode: 2, stdout: 'partial', stderr: 'bad args', timedOut: false }),
+    })
+    const failed = await failedTool.execute({ command: 'ls notes' }, makeCtx())
+    assert.deepEqual(JSON.parse(failed.content as string), {
+      ok: false,
+      exitCode: 2,
+      format: 'text',
+      content: 'partial',
+      stderr: 'bad args',
+      truncated: false,
+    })
+    assert.deepEqual(failed.outcome, { ok: false, code: 'exit_2' })
+
+    const timeoutTool = createWorkspaceBashTool({
+      runner: async () => ({ exitCode: null, stdout: '', stderr: '', timedOut: true }),
+    })
+    const timedOut = await timeoutTool.execute({ command: 'ls notes' }, makeCtx())
+    assert.equal(JSON.parse(timedOut.content as string).code, 'timeout')
+    assert.deepEqual(timedOut.outcome, { ok: false, code: 'timeout' })
   })
 
   test('returns one-hop guidance for rejected subcommands', async () => {
@@ -421,27 +467,27 @@ describe('workspace_bash tool', () => {
         },
       })
 
-      const written = JSON.parse((await tool.execute({
+      const written = unwrapCommandJson((await tool.execute({
         command: 'journal write diary "Alpha beta"',
-      }, makeCtx())).content as string) as { ok: boolean; id: string; kind: string }
+      }, makeCtx())).content) as { ok: boolean; id: string; kind: string }
       assert.equal(written.ok, true)
       assert.equal(written.kind, 'diary')
 
-      const searched = JSON.parse((await tool.execute({
+      const searched = unwrapCommandJson((await tool.execute({
         command: 'journal search "alpha" diary 5',
-      }, makeCtx())).content as string) as { ok: boolean; entries: { id: string; preview: string }[] }
+      }, makeCtx())).content) as { ok: boolean; entries: { id: string; preview: string }[] }
       assert.equal(searched.ok, true)
       assert.deepEqual(searched.entries.map((entry) => entry.preview), ['Alpha beta'])
 
-      const read = JSON.parse((await tool.execute({
+      const read = unwrapCommandJson((await tool.execute({
         command: `journal read ${written.id}`,
-      }, makeCtx())).content as string) as { ok: boolean; entry: { content: string } }
+      }, makeCtx())).content) as { ok: boolean; entry: { content: string } }
       assert.equal(read.ok, true)
       assert.equal(read.entry.content, 'Alpha beta')
 
-      const listed = JSON.parse((await tool.execute({
+      const listed = unwrapCommandJson((await tool.execute({
         command: 'journal list 5',
-      }, makeCtx())).content as string) as { ok: boolean; entries: { id: string }[] }
+      }, makeCtx())).content) as { ok: boolean; entries: { id: string }[] }
       assert.equal(listed.ok, true)
       assert.equal(listed.entries.length, 1)
       assert.equal(runnerCalled, false)
@@ -461,12 +507,12 @@ describe('workspace_bash tool', () => {
       },
     })
 
-    const overview = JSON.parse((await tool.execute({ command: 'help' }, makeCtx())).content as string) as {
+    const overview = unwrapCommandJson((await tool.execute({ command: 'help' }, makeCtx())).content) as unknown as {
       ok: boolean
       topics: string[]
       examples: string[]
     }
-    const journal = JSON.parse((await tool.execute({ command: 'help journal' }, makeCtx())).content as string) as {
+    const journal = unwrapCommandJson((await tool.execute({ command: 'help journal' }, makeCtx())).content) as unknown as {
       ok: boolean
       commands: string[]
     }

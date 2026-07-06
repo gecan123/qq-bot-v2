@@ -60,9 +60,33 @@ export interface OpenbbCliDeps {
   clockMs?: () => number
 }
 
-export function truncateOutput(raw: string, cap: number): string {
-  if (raw.length <= cap) return raw
-  return raw.slice(0, cap) + '\n[...truncated at ' + cap + ' chars]'
+function clipOutputField(raw: string, cap: number): { value: string; truncated: boolean } {
+  if (raw.length <= cap) return { value: raw, truncated: false }
+  return { value: raw.slice(0, cap), truncated: true }
+}
+
+function commandEnvelope(input: {
+  ok: boolean
+  exitCode: number | null
+  format: 'text' | 'json'
+  content: string
+  stderr: string
+  cap: number
+  code?: string
+  error?: string
+}): string {
+  const content = clipOutputField(input.content, input.cap)
+  const stderr = clipOutputField(input.stderr, input.cap)
+  return JSON.stringify({
+    ok: input.ok,
+    exitCode: input.exitCode,
+    format: input.format,
+    content: content.value,
+    stderr: stderr.value,
+    truncated: content.truncated || stderr.truncated,
+    ...(input.code ? { code: input.code } : {}),
+    ...(input.error ? { error: input.error } : {}),
+  })
 }
 
 function extractSavedFilePath(output: string): string | null {
@@ -262,7 +286,19 @@ export function createOpenbbCliTool(deps: OpenbbCliDeps = {}): Tool<Args> {
           { path: deps.logPath, appender: deps.appender },
         )
         log.warn({ command: args.command }, 'openbb_cli_timeout')
-        return { content: JSON.stringify({ ok: false, error: 'command timeout' }) }
+        return {
+          content: commandEnvelope({
+            ok: false,
+            exitCode: null,
+            format: 'text',
+            content: result.stdout,
+            stderr: result.stderr,
+            cap: outputOptions.maxChars,
+            code: 'timeout',
+            error: 'command timeout',
+          }),
+          outcome: { ok: false, code: 'timeout' },
+        }
       }
 
       if (result.exitCode !== 0) {
@@ -271,29 +307,44 @@ export function createOpenbbCliTool(deps: OpenbbCliDeps = {}): Tool<Args> {
           { path: deps.logPath, appender: deps.appender },
         )
         return {
-          content: JSON.stringify({
+          content: commandEnvelope({
             ok: false,
             exitCode: result.exitCode,
-            stdout: truncateOutput(result.stdout, ERROR_SNIPPET_CAP),
-            stderr: truncateOutput(result.stderr, ERROR_SNIPPET_CAP),
+            format: 'text',
+            content: result.stdout,
+            stderr: result.stderr,
+            cap: ERROR_SNIPPET_CAP,
           }),
+          outcome: { ok: false, code: `exit_${result.exitCode ?? 'unknown'}` },
         }
       }
 
       await logFetch(baseLog, { path: deps.logPath, appender: deps.appender })
 
       let content = result.stdout || result.stderr || '[no output]'
+      let format: 'text' | 'json' = 'text'
       const savedFilePath = extractSavedFilePath(`${result.stdout}\n${result.stderr}`)
       if (savedFilePath) {
         try {
           const exported = await fileReader(savedFilePath)
           content = formatExportedContent(savedFilePath, exported, outputOptions)
+          format = 'json'
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
           content = `${content}\n[export read failed: ${message}]`
         }
       }
-      return { content: truncateOutput(content, outputOptions.maxChars) }
+      return {
+        content: commandEnvelope({
+          ok: true,
+          exitCode: result.exitCode,
+          format,
+          content,
+          stderr: result.stderr,
+          cap: outputOptions.maxChars,
+        }),
+        outcome: { ok: true },
+      }
     },
   }
 }

@@ -7,7 +7,7 @@ const log = createLogger('TOOL_REST')
 
 export const DEFAULT_REST_DURATION_SECONDS = 300
 export const MIN_REST_DURATION_SECONDS = 30
-export const MAX_REST_DURATION_SECONDS = 21_600
+export const MAX_REST_DURATION_SECONDS = 1_800
 
 export interface RestToolDeps {
   timer?: {
@@ -28,7 +28,7 @@ const argsSchema = z.object({
     .min(MIN_REST_DURATION_SECONDS)
     .max(MAX_REST_DURATION_SECONDS)
     .default(DEFAULT_REST_DURATION_SECONDS)
-    .describe('自己安排的休息秒数, 默认 300, 范围 30..21600.'),
+    .describe('自己安排的休息秒数, 默认 300, 范围 30..1800.'),
   intention: z.string().trim().min(1).max(200).describe('醒来后准备继续的事情.'),
 })
 
@@ -48,7 +48,7 @@ export function createRestTool(deps: RestToolDeps = {}): Tool<RestArgs> {
   return {
     name: 'rest',
     description: [
-      '主动安排一次休息, 默认 5 分钟, 最长 6 小时。',
+      '主动安排一次休息, 默认 5 分钟, 最长 30 分钟。',
       'intention 必填, 写清醒来后准备继续的事情; 它会随休息结果回到上下文。',
       '休息期间普通群消息不会打断; 被 @、私聊、后台任务完成或停止信号会立刻唤醒。',
       '事件只用于唤醒, 不会被这个工具消费; 下一轮会正常进入上下文。',

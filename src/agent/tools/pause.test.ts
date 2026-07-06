@@ -40,7 +40,7 @@ describe('pause tool', () => {
     assert.equal(pauseTool.schema.safeParse({
       action: 'rest',
       intention: '继续想',
-      durationSeconds: 21_601,
+      durationSeconds: 1_801,
     }).success, false)
   })
 

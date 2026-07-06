@@ -76,10 +76,10 @@ test('zodToOpenAIStrictToolJsonSchema keeps pause schema strict and rest-only', 
   })
   assert.deepEqual(props.durationSeconds, {
     default: 300,
-    description: '自己安排的休息秒数, 默认 300, 范围 30..21600.',
+    description: '自己安排的休息秒数, 默认 300, 范围 30..1800.',
     type: 'integer',
     minimum: 30,
-    maximum: 21600,
+    maximum: 1800,
   })
 })
 

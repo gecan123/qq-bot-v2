@@ -21,7 +21,7 @@
 
 **Steps:**
 
-1. Write failing tests requiring `intention`, a 300-second default, a 30-second minimum, a 21,600-second maximum, and an elapsed result that includes the intention.
+1. Write failing tests requiring `intention`, a 300-second default, a 30-second minimum, a 1,800-second maximum, and an elapsed result that includes the intention.
 2. Run pause/rest/tool-schema tests and confirm the old schema/result fails.
 3. Replace `reason` with bounded `intention`, update duration limits, and include the intention in elapsed/interrupted tool results.
 4. Re-run focused tests and confirm they pass.

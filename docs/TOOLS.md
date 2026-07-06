@@ -4,7 +4,7 @@
 
 ## 默认可见能力
 
-- 对话控制：`pause`。`action=rest` 由 Agent 自己选择 30 秒到 6 小时的休息时长，并必须提供醒来后继续事项 `intention`；计时结束会自动进入下一轮。
+- 对话控制：`pause`。`action=rest` 由 Agent 自己选择 30 秒到 30 分钟的休息时长，并必须提供醒来后继续事项 `intention`；计时结束会自动进入下一轮。
 - 当前计划：`todo`（当前进程内的短期多步计划，最多一个 `in_progress`）。
 - 发送：`send_message`。
 - 按需工具箱：`toolbox`（`list` / `activate` / `deactivate` capability；激活成功后下一轮暴露对应 typed tool schema）。

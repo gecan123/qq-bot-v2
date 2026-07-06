@@ -48,6 +48,10 @@ export interface RedditPostDetail {
   comments: { author: string; body: string }[]
 }
 
+function clipField(value: string, max: number): string {
+  return value.length <= max ? value : clip(value, max - 1)
+}
+
 /** 把帖子页 URL 转成 .rss 端点. 纯函数. */
 export function toRedditPostRssUrl(url: string): string {
   const stripped = url.replace(/[?#].*$/, '').replace(/\/+$/, '')
@@ -92,30 +96,39 @@ export function parseRedditPostRss(xml: string): RedditPostDetail | null {
   return imageUrl ? { title: rawTitle, imageUrl, comments } : { title: rawTitle, comments }
 }
 
-function clampOutput(value: string): string {
-  if (value.length <= OUTPUT_CAP_CHARS) return value
-  return value.slice(0, OUTPUT_CAP_CHARS - 1).trimEnd() + '…'
-}
-
 function formatPost(detail: RedditPostDetail, sourceUrl: string): string {
-  const lines: string[] = []
-  lines.push(`[reddit post] ${sourceUrl}`)
-  lines.push(`标题: ${clip(collapseWhitespace(detail.title), 200)}`)
-  if (detail.imageUrl) {
-    lines.push(`图片: ${detail.imageUrl}`)
-  }
-  if (detail.comments.length > 0) {
-    lines.push('')
-    lines.push(`top ${detail.comments.length} 评论:`)
-    for (const c of detail.comments) {
-      const body = clip(collapseWhitespace(c.body), COMMENT_BODY_MAX_CHARS)
-      lines.push(`- ${c.author || '(unknown)'}: ${body}`)
+  const url = clipField(sourceUrl, 500)
+  const originalTitle = collapseWhitespace(detail.title)
+  const title = clipField(originalTitle, 200)
+  const imageUrl = detail.imageUrl ? clipField(detail.imageUrl, 500) : undefined
+  const comments = detail.comments.map((comment) => {
+    const body = collapseWhitespace(comment.body)
+    return {
+      author: clipField(comment.author || '(unknown)', 80),
+      body: clipField(body, COMMENT_BODY_MAX_CHARS),
     }
-  } else {
-    lines.push('')
-    lines.push('(还没拿到评论 / 评论被屏蔽)')
+  })
+  let truncated = url !== sourceUrl || title !== originalTitle || imageUrl !== detail.imageUrl
+    || detail.comments.some((comment, index) => (
+      comments[index]!.author !== (comment.author || '(unknown)')
+      || comments[index]!.body !== collapseWhitespace(comment.body)
+    ))
+  const render = () => JSON.stringify({
+    ok: true,
+    source: 'reddit_post',
+    url,
+    title,
+    ...(imageUrl ? { imageUrl } : {}),
+    comments,
+    truncated,
+  })
+  let content = render()
+  while (content.length > OUTPUT_CAP_CHARS && comments.length > 0) {
+    comments.pop()
+    truncated = true
+    content = render()
   }
-  return clampOutput(lines.join('\n'))
+  return content
 }
 
 export function createGetRedditPostTool(deps: RedditFetchDeps = {}): Tool<Args> {
@@ -127,7 +140,7 @@ export function createGetRedditPostTool(deps: RedditFetchDeps = {}): Tool<Args> 
   return {
     name: 'get_reddit_post',
     description: [
-      `读 reddit 一条帖子的 top ${TOP_N_COMMENTS} 评论 (输出 ≤ ${OUTPUT_CAP_CHARS} 字符).`,
+      `以结构化 JSON 读取 reddit 一条帖子的 top ${TOP_N_COMMENTS} 评论 (输出 ≤ ${OUTPUT_CAP_CHARS} 字符).`,
       '典型: fetch reddit list 给了 10 条, 挑一条想深读的链接调本工具看评论讨论.',
       'url 必须是 reddit 帖子页 (含 /r/X/comments/POSTID/...). 其它站不接受, 走 fetch url.',
       `每条评论 ≤${COMMENT_BODY_MAX_CHARS} 字, 硬截断, 不能让本工具返回更长.`,
@@ -158,7 +171,17 @@ export function createGetRedditPostTool(deps: RedditFetchDeps = {}): Tool<Args> 
           { path: deps.logPath, appender: deps.appender },
         )
         log.warn({ url: rssUrl, errorKind: outcome.errorKind }, 'get_reddit_post_failed')
-        return { content: `[reddit action=get_post 失败] ${args.url}: ${outcome.errorKind}.` }
+        return {
+          content: JSON.stringify({
+            ok: false,
+            source: 'reddit_post',
+            url: clipField(args.url, 500),
+            code: outcome.errorKind,
+            error: '抓取 Reddit 帖子失败',
+            status: outcome.status,
+          }),
+          outcome: { ok: false, code: outcome.errorKind },
+        }
       }
 
       if (outcome.status < 200 || outcome.status >= 300) {
@@ -167,7 +190,15 @@ export function createGetRedditPostTool(deps: RedditFetchDeps = {}): Tool<Args> 
           { path: deps.logPath, appender: deps.appender },
         )
         return {
-          content: `[reddit action=get_post HTTP ${outcome.status}] ${args.url}. reddit 拒了, 帖子可能不存在 / 被删 / rate limit. 别原地重试.`,
+          content: JSON.stringify({
+            ok: false,
+            source: 'reddit_post',
+            url: clipField(args.url, 500),
+            code: 'http_error',
+            error: 'Reddit 返回非成功状态',
+            status: outcome.status,
+          }),
+          outcome: { ok: false, code: 'http_error' },
         }
       }
 
@@ -180,7 +211,17 @@ export function createGetRedditPostTool(deps: RedditFetchDeps = {}): Tool<Args> 
           { path: deps.logPath, appender: deps.appender },
         )
         log.warn({ url: rssUrl, err }, 'get_reddit_post_parse_failed')
-        return { content: `[reddit action=get_post 解析失败] ${args.url}: ${(err as Error).message}` }
+        return {
+          content: JSON.stringify({
+            ok: false,
+            source: 'reddit_post',
+            url: clipField(args.url, 500),
+            code: 'parse_error',
+            error: clipField((err as Error).message, 300),
+            status: outcome.status,
+          }),
+          outcome: { ok: false, code: 'parse_error' },
+        }
       }
 
       if (!detail) {
@@ -188,11 +229,21 @@ export function createGetRedditPostTool(deps: RedditFetchDeps = {}): Tool<Args> 
           { ...baseLog, errorKind: 'empty_post' },
           { path: deps.logPath, appender: deps.appender },
         )
-        return { content: `[reddit action=get_post 空] ${args.url}. 拿到响应但解不出帖子结构.` }
+        return {
+          content: JSON.stringify({
+            ok: false,
+            source: 'reddit_post',
+            url: clipField(args.url, 500),
+            code: 'empty_post',
+            error: '响应中没有可解析的帖子结构',
+            status: outcome.status,
+          }),
+          outcome: { ok: false, code: 'empty_post' },
+        }
       }
 
       await logFetch(baseLog, { path: deps.logPath, appender: deps.appender })
-      return { content: formatPost(detail, args.url) }
+      return { content: formatPost(detail, args.url), outcome: { ok: true } }
     },
   }
 }

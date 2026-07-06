@@ -130,7 +130,7 @@ describe('parseRedditPostRss', () => {
 })
 
 describe('get_reddit_post tool', () => {
-  test('happy path: 200 + valid RSS → formatted output + NDJSON line', async () => {
+  test('happy path: 200 + valid RSS → structured output + NDJSON line', async () => {
     const writes: string[] = []
     const tool = createGetRedditPostTool({
       fetcher: async () => new Response(SAMPLE_POST_RSS, { status: 200 }),
@@ -141,11 +141,14 @@ describe('get_reddit_post tool', () => {
       { url: 'https://www.reddit.com/r/programming/comments/abc1/rust_1_99/' },
       makeCtx(),
     )
-    assert.match((result.content as string), /\[reddit post\]/)
-    assert.match((result.content as string), /Rust 1\.99/)
-    assert.match((result.content as string), /\/u\/alice/)
-    assert.match((result.content as string), /async closures/)
-    assert.match((result.content as string), /\/u\/bob/)
+    const payload = JSON.parse(result.content as string)
+    assert.equal(payload.ok, true)
+    assert.equal(payload.source, 'reddit_post')
+    assert.equal(payload.title, 'Rust 1.99 released with great new things')
+    assert.equal(payload.comments.length, 3)
+    assert.equal(payload.comments[0].author, '/u/alice')
+    assert.match(payload.comments[0].body, /async closures/)
+    assert.deepEqual(result.outcome, { ok: true })
     assert.equal(writes.length, 1)
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.source, 'reddit_post')
@@ -169,8 +172,9 @@ describe('get_reddit_post tool', () => {
       { url: 'https://www.reddit.com/r/test/comments/z/t/' },
       makeCtx(),
     )
-    const yRun = (result.content as string).match(/Y+/)?.[0] ?? ''
-    assert.ok(yRun.length <= 200, `comment not clipped (got ${yRun.length})`)
+    const payload = JSON.parse(result.content as string)
+    assert.ok(payload.comments[0].body.length <= 200)
+    assert.equal(payload.truncated, true)
   })
 
   test('total output clamped at 2000 chars', async () => {
@@ -193,6 +197,7 @@ describe('get_reddit_post tool', () => {
       makeCtx(),
     )
     assert.ok((result.content as string).length <= 2000, `output too long (${(result.content as string).length})`)
+    JSON.parse(result.content as string)
   })
 
   test('HTTP 404 → error content, not throw', async () => {
@@ -205,7 +210,10 @@ describe('get_reddit_post tool', () => {
       { url: 'https://www.reddit.com/r/test/comments/deleted/x/' },
       makeCtx(),
     )
-    assert.match((result.content as string), /HTTP 404/)
+    const payload = JSON.parse(result.content as string)
+    assert.equal(payload.code, 'http_error')
+    assert.equal(payload.status, 404)
+    assert.deepEqual(result.outcome, { ok: false, code: 'http_error' })
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.errorKind, 'http_404')
   })
@@ -234,7 +242,9 @@ describe('get_reddit_post tool', () => {
       { url: 'https://www.reddit.com/r/test/comments/z/t/' },
       makeCtx(),
     )
-    assert.match((result.content as string), /失败/)
+    const payload = JSON.parse(result.content as string)
+    assert.equal(payload.code, 'network_error')
+    assert.deepEqual(result.outcome, { ok: false, code: 'network_error' })
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.errorKind, 'network_error')
   })

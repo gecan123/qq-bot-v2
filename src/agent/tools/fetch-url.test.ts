@@ -66,7 +66,7 @@ describe('extractFromHtml', () => {
 })
 
 describe('fetch_url tool — happy path', () => {
-  test('HTML fetch + LLM summary + NDJSON line', async () => {
+  test('HTML fetch + LLM summary + structured result + NDJSON line', async () => {
     const writes: string[] = []
     const tool = createFetchUrlTool({
       fetcher: async () => htmlResponse(SAMPLE_HTML),
@@ -77,9 +77,17 @@ describe('fetch_url tool — happy path', () => {
       logPath: '/tmp/test-fetch.ndjson',
     })
     const result = await tool.execute({ url: 'https://example.com/article' }, makeCtx())
-    assert.match((result.content as string), /\[fetch url 摘要\]/)
-    assert.match((result.content as string), /Example article/)
-    assert.match((result.content as string), /单仓优势/)
+    const payload = JSON.parse(result.content as string)
+    assert.deepEqual(payload, {
+      ok: true,
+      source: 'url',
+      url: 'https://example.com/article',
+      status: 200,
+      title: 'Example article',
+      summary: '单仓优势: 依赖一致; 劣势: 构建复杂度.',
+      truncated: false,
+    })
+    assert.deepEqual(result.outcome, { ok: true })
     assert.equal(writes.length, 1)
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.source, 'url')
@@ -97,7 +105,9 @@ describe('fetch_url tool — happy path', () => {
       appender: async () => {},
     })
     const result = await tool.execute({ url: 'https://example.com/notes.txt' }, makeCtx())
-    assert.match((result.content as string), /讲缓存的笔记/)
+    const payload = JSON.parse(result.content as string)
+    assert.equal(payload.summary, '讲缓存的笔记.')
+    assert.equal(payload.title, '')
   })
 })
 
@@ -111,6 +121,9 @@ describe('fetch_url tool — hard truncation', () => {
     })
     const result = await tool.execute({ url: 'https://example.com/' }, makeCtx())
     assert.ok((result.content as string).length <= 1500, `output too long: ${(result.content as string).length}`)
+    const payload = JSON.parse(result.content as string)
+    assert.equal(payload.ok, true)
+    assert.equal(payload.truncated, true)
   })
 
   test('input cap: huge HTML body is truncated to ≤ 8KB before sending to LLM', async () => {
@@ -174,7 +187,7 @@ describe('fetch_url tool — hard truncation', () => {
 })
 
 describe('fetch_url tool — failure modes', () => {
-  test('LLM throws → fallback returns truncated raw + error tag', async () => {
+  test('LLM throws → structured fallback returns truncated raw', async () => {
     const writes: string[] = []
     const tool = createFetchUrlTool({
       fetcher: async () => htmlResponse(SAMPLE_HTML),
@@ -188,8 +201,12 @@ describe('fetch_url tool — failure modes', () => {
       },
     })
     const result = await tool.execute({ url: 'https://example.com/' }, makeCtx())
-    assert.match((result.content as string), /摘要 LLM 失败/)
-    assert.match((result.content as string), /原文截断/)
+    const payload = JSON.parse(result.content as string)
+    assert.equal(payload.ok, true)
+    assert.equal(payload.code, 'summary_fallback')
+    assert.equal(payload.title, 'Example article')
+    assert.match(payload.fallback, /monorepos sometimes pay off/)
+    assert.deepEqual(result.outcome, { ok: true, code: 'summary_fallback' })
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.errorKind, 'summarize_failed')
   })
@@ -204,7 +221,11 @@ describe('fetch_url tool — failure modes', () => {
       },
     })
     const result = await tool.execute({ url: 'https://example.com/missing' }, makeCtx())
-    assert.match((result.content as string), /HTTP 404/)
+    const payload = JSON.parse(result.content as string)
+    assert.equal(payload.ok, false)
+    assert.equal(payload.code, 'http_error')
+    assert.equal(payload.status, 404)
+    assert.deepEqual(result.outcome, { ok: false, code: 'http_error' })
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.status, 404)
     assert.equal(logged.errorKind, 'http_404')
@@ -240,7 +261,9 @@ describe('fetch_url tool — failure modes', () => {
       },
     })
     const result = await tool.execute({ url: 'https://example.com/' }, makeCtx())
-    assert.match((result.content as string), /timeout/)
+    const payload = JSON.parse(result.content as string)
+    assert.equal(payload.code, 'timeout')
+    assert.deepEqual(result.outcome, { ok: false, code: 'timeout' })
     assert.equal(llmCalled, false)
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.errorKind, 'timeout')
@@ -265,7 +288,9 @@ describe('fetch_url tool — failure modes', () => {
       appender: async () => {},
     })
     const result = await tool.execute({ url: 'https://example.com/empty' }, makeCtx())
-    assert.match((result.content as string), /内容为空/)
+    const payload = JSON.parse(result.content as string)
+    assert.equal(payload.code, 'empty_content')
+    assert.deepEqual(result.outcome, { ok: false, code: 'empty_content' })
     assert.equal(llmCalled, false)
   })
 

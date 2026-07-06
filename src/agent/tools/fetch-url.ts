@@ -174,6 +174,38 @@ function buildSummarizationUser(args: { title: string; description: string; text
   return lines.join('\n')
 }
 
+function clipChars(value: string, cap: number): { value: string; truncated: boolean } {
+  if (value.length <= cap) return { value, truncated: false }
+  return { value: `${value.slice(0, Math.max(0, cap - 1)).trimEnd()}…`, truncated: true }
+}
+
+function serializeWithBoundedText(
+  base: Record<string, unknown>,
+  field: string,
+  value: string,
+  cap: number,
+  alreadyTruncated = false,
+): string {
+  const render = (text: string, truncated: boolean) => JSON.stringify({
+    ...base,
+    [field]: text,
+    truncated,
+  })
+  const complete = render(value, alreadyTruncated)
+  if (complete.length <= cap) return complete
+
+  let low = 0
+  let high = value.length
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2)
+    const candidate = `${value.slice(0, Math.max(0, mid - 1)).trimEnd()}…`
+    if (render(candidate, true).length <= cap) low = mid
+    else high = mid - 1
+  }
+  const clipped = low > 0 ? `${value.slice(0, Math.max(0, low - 1)).trimEnd()}…` : ''
+  return render(clipped, true)
+}
+
 export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
   const fetcher = deps.fetcher ?? fetch
   const timeoutMs = deps.timeoutMs ?? config.fetchUrlTimeoutMs
@@ -184,7 +216,7 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
   return {
     name: 'fetch_url',
     description: [
-      `抓取一个 URL 并返回 ≤ ${OUTPUT_CAP_CHARS} 字符的中文摘要 (目标 ≤ 500 中文字).`,
+      `抓取一个 URL 并返回 ≤ ${OUTPUT_CAP_CHARS} 字符的结构化 JSON 中文摘要 (目标 ≤ 500 中文字).`,
       '返回的不是原文, 是摘要. 如果摘要不够你判断, 没办法让这个工具给你更长 — 要么换工具 / 要么放弃这条.',
       '典型用法: 非 reddit 的外链页面. reddit 帖子请用 workspace_bash `fetch reddit post`, 不要走本工具.',
       'hint 参数可选, 用来影响摘要侧重 (例: "我想知道作者的核心论点").',
@@ -214,7 +246,16 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
         )
         log.warn({ url: args.url, errorKind: outcome.errorKind }, 'fetch_url_failed')
         return {
-          content: `[fetch url 失败] ${args.url}: ${outcome.errorKind}.`,
+          content: JSON.stringify({
+            ok: false,
+            source: 'url',
+            url: clipChars(args.url, 500).value,
+            code: outcome.errorKind,
+            error: '抓取 URL 失败',
+            status: outcome.status,
+            truncated: args.url.length > 500,
+          }),
+          outcome: { ok: false, code: outcome.errorKind },
         }
       }
 
@@ -224,7 +265,16 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
           { path: deps.logPath, appender: deps.appender },
         )
         return {
-          content: `[fetch url HTTP ${outcome.status}] ${args.url}. 抓不到, 别原地重试.`,
+          content: JSON.stringify({
+            ok: false,
+            source: 'url',
+            url: clipChars(args.url, 500).value,
+            code: 'http_error',
+            error: '远端返回非成功状态',
+            status: outcome.status,
+            truncated: args.url.length > 500,
+          }),
+          outcome: { ok: false, code: 'http_error' },
         }
       }
 
@@ -240,7 +290,16 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
           { path: deps.logPath, appender: deps.appender },
         )
         return {
-          content: `[fetch url 内容为空] ${args.url}. 可能是 JS 渲染页或 paywall.`,
+          content: JSON.stringify({
+            ok: false,
+            source: 'url',
+            url: clipChars(args.url, 500).value,
+            code: 'empty_content',
+            error: '响应中没有可提取内容，可能是 JS 渲染页或 paywall',
+            status: outcome.status,
+            truncated: args.url.length > 500,
+          }),
+          outcome: { ok: false, code: 'empty_content' },
         }
       }
 
@@ -273,23 +332,46 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
 
       if (summarizeFailed || summary.length === 0) {
         const fallback = trimmedText.slice(0, FALLBACK_RAW_CAP_CHARS)
-        const errorTag = summarizeFailed ? '摘要 LLM 失败' : '摘要为空'
+        const title = clipChars(extracted.title, 200)
+        const url = clipChars(args.url, 500)
         return {
-          content: clampOutput(
-            `[fetch url ${errorTag}] ${args.url}\n标题: ${extracted.title || '(未知)'}\n原文截断:\n${fallback}`,
+          content: serializeWithBoundedText(
+            {
+              ok: true,
+              source: 'url',
+              url: url.value,
+              status: outcome.status,
+              code: 'summary_fallback',
+              error: summarizeFailed ? '摘要模型调用失败' : '摘要模型返回空内容',
+              title: title.value,
+            },
+            'fallback',
+            fallback,
+            OUTPUT_CAP_CHARS,
+            url.truncated || title.truncated || trimmedText.length > FALLBACK_RAW_CAP_CHARS,
           ),
+          outcome: { ok: true, code: 'summary_fallback' },
         }
       }
 
-      const headerLines = [`[fetch url 摘要] ${args.url}`]
-      if (extracted.title) headerLines.push(`标题: ${extracted.title}`)
-      const output = `${headerLines.join('\n')}\n\n${summary}`
-      return { content: clampOutput(output) }
+      const title = clipChars(extracted.title, 200)
+      const url = clipChars(args.url, 500)
+      return {
+        content: serializeWithBoundedText(
+          {
+            ok: true,
+            source: 'url',
+            url: url.value,
+            status: outcome.status,
+            title: title.value,
+          },
+          'summary',
+          summary,
+          OUTPUT_CAP_CHARS,
+          url.truncated || title.truncated,
+        ),
+        outcome: { ok: true },
+      }
     },
   }
-}
-
-function clampOutput(value: string): string {
-  if (value.length <= OUTPUT_CAP_CHARS) return value
-  return value.slice(0, OUTPUT_CAP_CHARS - 1).trimEnd() + '…'
 }

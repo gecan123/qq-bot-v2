@@ -24,6 +24,7 @@ const log = createLogger('TOOL_LIST_REDDIT')
 const HARD_LIMIT = 10
 const TITLE_MAX_CHARS = 80
 const SUMMARY_MAX_CHARS = 120
+const OUTPUT_CAP_CHARS = 4000
 
 const ALLOWED_SUBREDDITS = ['technology', 'ClaudeAI', 'OpenAI', 'wallstreetbets', 'memes'] as const
 type AllowedSubreddit = (typeof ALLOWED_SUBREDDITS)[number]
@@ -63,6 +64,10 @@ export interface RedditListEntry {
   published?: string
 }
 
+function clipField(value: string, max: number): string {
+  return value.length <= max ? value : clip(value, max - 1)
+}
+
 /** 拼接 reddit RSS URL. 纯函数, 易测试. */
 export function buildRedditRssUrl(
   subreddit: string | undefined,
@@ -99,21 +104,49 @@ export function parseRedditAtom(xml: string): RedditListEntry[] {
   return result
 }
 
-function formatEntries(entries: RedditListEntry[], limit: number): string {
+function formatEntries(entries: RedditListEntry[], limit: number): {
+  items: Record<string, string>[]
+  truncated: boolean
+} {
   const sliced = entries.slice(0, Math.min(limit, HARD_LIMIT))
-  if (sliced.length === 0) return '(没拿到任何条目, RSS 可能为空或被过滤)'
-
-  const lines: string[] = []
+  let truncated = entries.length > sliced.length
+  const items: Record<string, string>[] = []
   for (const entry of sliced) {
-    const title = clip(entry.title, TITLE_MAX_CHARS) || '(无标题)'
-    const summary = clip(entry.summary, SUMMARY_MAX_CHARS)
-    const link = entry.link || '(无链接)'
-    const parts = [`- ${title}`, link]
-    if (entry.imageUrl) parts.push(`image: ${entry.imageUrl}`)
-    if (summary) parts.push(summary)
-    lines.push(parts.join(' | '))
+    const title = clipField(entry.title, TITLE_MAX_CHARS) || '(无标题)'
+    const summary = clipField(entry.summary, SUMMARY_MAX_CHARS)
+    const link = clipField(entry.link, 500)
+    const item: Record<string, string> = { title, url: link, summary }
+    if (entry.imageUrl) item.imageUrl = clipField(entry.imageUrl, 500)
+    if (entry.author) item.author = clipField(entry.author, 80)
+    if (entry.published) item.published = clipField(entry.published, 80)
+    if (
+      title !== (entry.title || '(无标题)')
+      || summary !== entry.summary
+      || link !== entry.link
+      || item.imageUrl !== entry.imageUrl && entry.imageUrl !== undefined
+      || item.author !== entry.author && entry.author !== undefined
+      || item.published !== entry.published && entry.published !== undefined
+    ) truncated = true
+    items.push(item)
   }
-  return lines.join('\n')
+  return { items, truncated }
+}
+
+function serializeListPayload(payload: {
+  subreddit: string
+  sort: string
+  items: Record<string, string>[]
+  truncated: boolean
+}): string {
+  const items = [...payload.items]
+  let truncated = payload.truncated
+  let content = JSON.stringify({ ok: true, source: 'reddit_list', ...payload, items, truncated })
+  while (content.length > OUTPUT_CAP_CHARS && items.length > 0) {
+    items.pop()
+    truncated = true
+    content = JSON.stringify({ ok: true, source: 'reddit_list', ...payload, items, truncated })
+  }
+  return content
 }
 
 export function createListRedditTool(deps: RedditFetchDeps = {}): Tool<Args> {
@@ -125,7 +158,7 @@ export function createListRedditTool(deps: RedditFetchDeps = {}): Tool<Args> {
   return {
     name: 'list_reddit',
     description: [
-      `列 reddit 帖子, 仅返回前 ${HARD_LIMIT} 条简要 (标题 + 链接 + 图片直链 + 短摘要).`,
+      `列 reddit 帖子，以结构化 JSON 返回前 ${HARD_LIMIT} 条简要 (标题 + 链接 + 图片直链 + 短摘要).`,
       '想深读某条 → 拿那条链接调 fetch reddit post 看评论讨论. 别用 fetch url 走 reddit.',
       '如果输出里有 image: https://i.redd.it/... 这类直链 → 用 fetch image 下载, 再用 send_message 发送或 generate_image 编辑.',
       '不要因为没给详情就反复调本工具换 limit, 上限 10 就是 10.',
@@ -156,7 +189,15 @@ export function createListRedditTool(deps: RedditFetchDeps = {}): Tool<Args> {
         )
         log.warn({ url, errorKind: outcome.errorKind }, 'list_reddit_failed')
         return {
-          content: `[reddit action=list 失败] ${url}: ${outcome.errorKind}. 可换个 subreddit / 稍后再试 / 或直接 pause action=rest.`,
+          content: JSON.stringify({
+            ok: false,
+            source: 'reddit_list',
+            url,
+            code: outcome.errorKind,
+            error: '抓取 Reddit 列表失败',
+            status: outcome.status,
+          }),
+          outcome: { ok: false, code: outcome.errorKind },
         }
       }
 
@@ -166,7 +207,15 @@ export function createListRedditTool(deps: RedditFetchDeps = {}): Tool<Args> {
           { path: deps.logPath, appender: deps.appender },
         )
         return {
-          content: `[reddit action=list HTTP ${outcome.status}] ${url}. reddit 拒了, 可能 rate limit / sub 不存在. 别原地重试.`,
+          content: JSON.stringify({
+            ok: false,
+            source: 'reddit_list',
+            url,
+            code: 'http_error',
+            error: 'Reddit 返回非成功状态',
+            status: outcome.status,
+          }),
+          outcome: { ok: false, code: 'http_error' },
         }
       }
 
@@ -179,14 +228,31 @@ export function createListRedditTool(deps: RedditFetchDeps = {}): Tool<Args> {
           { path: deps.logPath, appender: deps.appender },
         )
         log.warn({ url, err }, 'list_reddit_parse_failed')
-        return { content: `[reddit action=list 解析失败] ${url}: ${(err as Error).message}` }
+        return {
+          content: JSON.stringify({
+            ok: false,
+            source: 'reddit_list',
+            url,
+            code: 'parse_error',
+            error: clipField((err as Error).message, 300),
+            status: outcome.status,
+          }),
+          outcome: { ok: false, code: 'parse_error' },
+        }
       }
 
       await logFetch(baseLog, { path: deps.logPath, appender: deps.appender })
 
-      const sub = args.subreddit ? `/r/${args.subreddit}` : '首页'
-      const header = `[reddit ${sub} ${args.sort} — top ${Math.min(args.limit, entries.length)}/${entries.length}]`
-      return { content: `${header}\n${formatEntries(entries, args.limit)}` }
+      const formatted = formatEntries(entries, args.limit)
+      return {
+        content: serializeListPayload({
+          subreddit: args.subreddit,
+          sort: args.sort,
+          items: formatted.items,
+          truncated: formatted.truncated,
+        }),
+        outcome: { ok: true },
+      }
     },
   }
 }

@@ -106,7 +106,7 @@ describe('parseRedditAtom', () => {
 })
 
 describe('list_reddit tool', () => {
-  test('happy path: 200 + valid atom → formatted markdown list + NDJSON line', async () => {
+  test('happy path: 200 + valid atom → structured list + NDJSON line', async () => {
     const writes: string[] = []
     const fetcher: typeof fetch = async (url) => {
       assert.equal(url, 'https://www.reddit.com/r/technology/hot.rss')
@@ -120,9 +120,16 @@ describe('list_reddit tool', () => {
       logPath: '/tmp/test-list-reddit.ndjson',
     })
     const result = await tool.execute({ subreddit: 'technology', sort: 'hot', limit: 10 }, makeCtx())
-    assert.match((result.content as string), /\[reddit \/r\/technology hot/)
-    assert.match((result.content as string), /Rust 1\.99/)
-    assert.match((result.content as string), /async closures/)
+    const payload = JSON.parse(result.content as string)
+    assert.equal(payload.ok, true)
+    assert.equal(payload.source, 'reddit_list')
+    assert.equal(payload.subreddit, 'technology')
+    assert.equal(payload.sort, 'hot')
+    assert.equal(payload.truncated, false)
+    assert.equal(payload.items.length, 2)
+    assert.equal(payload.items[0].title, 'Rust 1.99 released with great new things')
+    assert.match(payload.items[0].summary, /async closures/)
+    assert.deepEqual(result.outcome, { ok: true })
     assert.equal(writes.length, 1, 'exactly one NDJSON line per call')
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.source, 'reddit_list')
@@ -153,14 +160,13 @@ describe('list_reddit tool', () => {
       appender: async () => {},
     })
     const result = await tool.execute({ subreddit: 'technology', sort: 'hot', limit: 10 }, makeCtx())
-    const line = (result.content as string).split('\n').find((l) => l.startsWith('- '))!
-    const aRun = line.match(/A+/)?.[0] ?? ''
-    assert.ok(aRun.length <= 80, `title not clipped (got ${aRun.length})`)
-    const bRun = line.match(/B+/)?.[0] ?? ''
-    assert.ok(bRun.length <= 120, `summary not clipped (got ${bRun.length})`)
+    const payload = JSON.parse(result.content as string)
+    assert.ok(payload.items[0].title.length <= 80)
+    assert.ok(payload.items[0].summary.length <= 120)
+    assert.equal(payload.truncated, true)
   })
 
-  test('HTTP 404 → returns ok content with HTTP error tag', async () => {
+  test('HTTP 404 → structured failure', async () => {
     const writes: string[] = []
     const tool = createListRedditTool({
       fetcher: async () => new Response('not found', { status: 404 }),
@@ -169,7 +175,11 @@ describe('list_reddit tool', () => {
       },
     })
     const result = await tool.execute({ subreddit: 'technology', sort: 'hot', limit: 10 }, makeCtx())
-    assert.match((result.content as string), /HTTP 404/)
+    const payload = JSON.parse(result.content as string)
+    assert.equal(payload.ok, false)
+    assert.equal(payload.code, 'http_error')
+    assert.equal(payload.status, 404)
+    assert.deepEqual(result.outcome, { ok: false, code: 'http_error' })
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.errorKind, 'http_404')
   })
@@ -185,7 +195,9 @@ describe('list_reddit tool', () => {
       },
     })
     const result = await tool.execute({ subreddit: 'ClaudeAI', sort: 'hot', limit: 10 }, makeCtx())
-    assert.match((result.content as string), /失败/)
+    const payload = JSON.parse(result.content as string)
+    assert.equal(payload.code, 'network_error')
+    assert.deepEqual(result.outcome, { ok: false, code: 'network_error' })
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.status, -1)
     assert.equal(logged.errorKind, 'network_error')
@@ -210,7 +222,9 @@ describe('list_reddit tool', () => {
       },
     })
     const result = await tool.execute({ subreddit: 'OpenAI', sort: 'hot', limit: 10 }, makeCtx())
-    assert.match((result.content as string), /timeout/)
+    const payload = JSON.parse(result.content as string)
+    assert.equal(payload.code, 'timeout')
+    assert.deepEqual(result.outcome, { ok: false, code: 'timeout' })
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.errorKind, 'timeout')
   })

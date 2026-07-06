@@ -5,7 +5,7 @@ import { createAgentContext } from './agent-context.js'
 import { InMemoryEventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { LlmClient, LlmCallOutput } from './llm-client.js'
-import type { ToolExecutor } from './tool.js'
+import type { ToolExecutionResult, ToolExecutor } from './tool.js'
 import type { BotSnapshotRepo } from './snapshot-repo.js'
 import type { PersistedAgentSnapshot } from './agent-context.types.js'
 import type { MailboxCursors } from './mailbox.js'
@@ -23,7 +23,7 @@ function makeMockLlm(outputs: LlmCallOutput[]): LlmClient {
   }
 }
 
-function makeMockTools(impl: Record<string, () => Promise<{ content: string }>> = {}): ToolExecutor {
+function makeMockTools(impl: Record<string, () => Promise<ToolExecutionResult>> = {}): ToolExecutor {
   const noop = async () => ({ content: 'ok' })
   return {
     list: () => [],
@@ -553,6 +553,66 @@ describe('BotLoopAgent.runOnceForTest', () => {
       await agent.stop()
       await startPromise
     }
+  })
+
+  test('pause control resets consecutive-round guard without parsing result content', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    let llmCallCount = 0
+    const llm: LlmClient = {
+      async chat() {
+        llmCallCount++
+        return {
+          content: '',
+          toolCalls: [{ id: `pause-${llmCallCount}`, name: 'pause', args: {} }],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+        }
+      },
+    }
+    let agent: ReturnType<typeof createBotLoopAgent>
+    let pauseCallCount = 0
+    let cooldownWaits = 0
+    const tools = makeMockTools({
+      pause: async () => {
+        pauseCallCount++
+        if (pauseCallCount === 2) await agent.stop()
+        return {
+          content: JSON.stringify({ ok: true, status: 'elapsed' }),
+          outcome: { ok: true, code: 'elapsed' },
+          control: { type: 'pause' },
+        }
+      },
+    })
+    const { repo } = makeMockSnapshotRepo()
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools,
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        maxConsecutiveRounds: 1,
+        cooldownMs: 60_000,
+        dailyTokenBudget: 10_000,
+        now: () => new Date('2026-07-06T00:00:00.000Z'),
+        async waitForAttentionOrTimeout() {
+          cooldownWaits++
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(pauseCallCount, 2)
+    assert.equal(llmCallCount, 2)
+    assert.equal(cooldownWaits, 0)
   })
 
   test('send_message 非 sent 状态即使 ok=true 也立即跑下一轮让 LLM 修正', async () => {

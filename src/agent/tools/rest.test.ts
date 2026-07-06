@@ -82,8 +82,14 @@ describe('rest tool', () => {
 
     const result = await restTool.execute({ durationSeconds: 30, intention: '继续自己的研究' }, ctx)
 
-    assert.match(result.content as string, /\[休息被打断\]/)
-    assert.match(result.content as string, /继续自己的研究/)
+    const payload = JSON.parse(result.content as string)
+    assert.equal(payload.ok, true)
+    assert.equal(payload.status, 'interrupted')
+    assert.equal(payload.durationSeconds, 30)
+    assert.equal(typeof payload.elapsedMs, 'number')
+    assert.equal(payload.intention, '继续自己的研究')
+    assert.deepEqual(result.outcome, { ok: true, code: 'interrupted' })
+    assert.deepEqual(result.control, { type: 'pause' })
     assert.equal(queue.size(), 1)
   })
 
@@ -93,7 +99,8 @@ describe('rest tool', () => {
 
     const result = await restTool.execute({ durationSeconds: 30, intention: '继续自己的研究' }, ctx)
 
-    assert.match(result.content as string, /\[休息被打断\]/)
+    assert.equal(JSON.parse(result.content as string).status, 'interrupted')
+    assert.deepEqual(result.control, { type: 'pause' })
     assert.equal(queue.size(), 1)
   })
 
@@ -114,8 +121,14 @@ describe('rest tool', () => {
 
     timer.fire()
     const finalResult = await restPromise
-    assert.match(finalResult.content as string, /\[休息结束\]/)
-    assert.match(finalResult.content as string, /继续自己的研究/)
+    const payload = JSON.parse(finalResult.content as string)
+    assert.equal(payload.ok, true)
+    assert.equal(payload.status, 'elapsed')
+    assert.equal(payload.durationSeconds, 30)
+    assert.equal(payload.intention, '继续自己的研究')
+    assert.equal(typeof payload.elapsedMs, 'number')
+    assert.deepEqual(finalResult.outcome, { ok: true, code: 'elapsed' })
+    assert.deepEqual(finalResult.control, { type: 'pause' })
   })
 })
 

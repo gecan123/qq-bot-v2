@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { createLogger } from '../../logger.js'
 import type { BotEvent } from '../event.js'
-import type { Tool } from '../tool.js'
+import type { Tool, ToolExecutionResult } from '../tool.js'
 
 const log = createLogger('TOOL_REST')
 
@@ -40,6 +40,25 @@ function isAttentionEvent(event: BotEvent): boolean {
   if (event.type === 'background_task_completed') return true
   if (event.type === 'wake') return true
   return false
+}
+
+function restResult(
+  status: 'elapsed' | 'interrupted',
+  durationSeconds: number,
+  elapsedMs: number,
+  intention: string,
+): ToolExecutionResult {
+  return {
+    content: JSON.stringify({
+      ok: true,
+      status,
+      durationSeconds,
+      elapsedMs: Math.max(0, Math.round(elapsedMs)),
+      intention,
+    }),
+    outcome: { ok: true, code: status },
+    control: { type: 'pause' },
+  }
 }
 
 export function createRestTool(deps: RestToolDeps = {}): Tool<RestArgs> {
@@ -82,13 +101,11 @@ export function createRestTool(deps: RestToolDeps = {}): Tool<RestArgs> {
 
         if (result === 'interrupted') {
           log.info({ elapsedMs }, 'rest_interrupted')
-          return {
-            content: `[休息被打断] 收到需要注意的新事件, 下一轮先处理事件; 原计划: ${args.intention}`,
-          }
+          return restResult('interrupted', durationSeconds, elapsedMs, args.intention)
         }
 
         log.info({ elapsedMs }, 'rest_elapsed')
-        return { content: `[休息结束] 已休息约 ${durationSeconds} 秒。继续: ${args.intention}` }
+        return restResult('elapsed', durationSeconds, elapsedMs, args.intention)
       } finally {
         attentionAbort.abort()
         if (!elapsed && timerHandle != null) {

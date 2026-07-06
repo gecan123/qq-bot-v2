@@ -201,11 +201,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         eventQueue: deps.eventQueue,
         roundIndex,
       })
-      if (
-        call.name === 'pause'
-        && typeof result.content === 'string'
-        && result.content.startsWith('[休息')
-      ) {
+      if (call.name === 'pause' && result.control?.type === 'pause') {
         didPause = true
       }
       deps.context.appendToolResult({ toolCallId: call.id, content: result.content })

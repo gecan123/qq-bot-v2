@@ -101,13 +101,15 @@ describe('merged main-agent tools', () => {
       capability.name,
       capability.tools.map((tool) => tool.name),
     ]))
+    const alwaysOnNames = manifest.alwaysOnTools.map((tool) => tool.name)
 
+    assert.ok(alwaysOnNames.includes('collect_sticker'))
     assert.ok(capabilities.get('external_research')?.includes('fetch_content'))
     if (capabilities.get('external_research')?.includes('web_search')) {
       assert.deepEqual(capabilities.get('external_research'), ['web_search', 'fetch_content'])
     }
     assert.deepEqual(capabilities.get('media_generation'), ['generate_image'])
-    assert.deepEqual(capabilities.get('media_library'), ['collect_sticker'])
+    assert.equal(capabilities.has('media_library'), false)
     assert.deepEqual(capabilities.get('media_fetch'), ['fetch_content'])
     if (capabilities.has('finance')) assert.deepEqual(capabilities.get('finance'), ['openbb_cli'])
     if (capabilities.has('browser')) assert.deepEqual(capabilities.get('browser'), ['browser'])

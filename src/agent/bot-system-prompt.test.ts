@@ -25,4 +25,21 @@ describe('buildBotSystemPrompt', () => {
     assert.doesNotMatch(prompt, /单条消息 ≤ 500 字/)
     assert.doesNotMatch(prompt, /反例对照/)
   })
+
+  test('keeps progressive-disclosure guidance aligned with the visible tool surface', () => {
+    const prompt = buildBotSystemPrompt({
+      groupIds: [],
+      metadata: { groupNames: new Map() },
+      selfNumber: 456,
+      owner: null,
+    })
+    const disclosure = prompt.slice(prompt.indexOf('[按需披露]'))
+    const lines = disclosure.split('\n')
+    const toolboxLine = lines.find((line) => line.startsWith('- toolbox:')) ?? ''
+
+    assert.match(disclosure, /- collect_sticker:.*直接调用/)
+    assert.doesNotMatch(toolboxLine, /表情包池/)
+    assert.equal(lines.filter((line) => line.startsWith('- workspace_bash:')).length, 1)
+    assert.equal(lines.filter((line) => line.startsWith('- memory:')).length, 1)
+  })
 })

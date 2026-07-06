@@ -89,11 +89,6 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
       tools: [createGenerateImageTool({ taskRegistry: deps.taskRegistry })],
     },
     {
-      name: 'media_library',
-      description: '表情包池收藏、列表、搜索和随机候选.',
-      tools: [collectStickerTool],
-    },
-    {
       name: 'media_fetch',
       description: '下载图片 URL 或 QQ 头像, 生成可发送、编辑或收藏的 image handle.',
       tools: [fetchContent],

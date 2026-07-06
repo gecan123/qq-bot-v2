@@ -7,6 +7,7 @@ const MAX_READ_LIMIT = 50
 const LIST_SCAN_LIMIT = 500
 const MESSAGE_TEXT_CAP_CHARS = 2_000
 export const INBOX_OUTPUT_CAP_CHARS = 12_000
+const MEDIA_SEGMENT_TYPES = new Set(['image', 'video', 'record', 'file'])
 
 const argsSchema = z.discriminatedUnion('action', [
   z.object({
@@ -65,6 +66,7 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
       'action=list 列出最近有消息的来源; action=read 读取一个明确群或私聊来源.',
       '群来源必须在监听白名单内. read 结果按 messages rowId 升序, 用 afterRowId 继续分页.',
       'inbox 更新通知只是元数据; 需要理解或引用正文时再调用本工具.',
+      'read 结果中的 media 数组提供图片等媒体的 mediaId, 可直接用于 collect_sticker 等接受 image handle 的工具.',
       'read 结果中的 mentionedSelf 和 mentionTargets 来自 QQ 结构化 at 段; 正文里的“你”或“@你”只是普通文本, 不代表在叫你.',
     ].join(' '),
     schema: argsSchema,
@@ -158,6 +160,7 @@ function renderBoundedRead(
       mentionedSelf: mentionTargets.includes(selfNumber),
       mentionTargets,
       text,
+      media: extractMediaHandles(row.content),
     }
     const candidate = JSON.stringify({ ok: true, mailbox, requestedLimit, truncated: false, messages: [...messages, projected] }, null, 2)
     if (candidate.length > INBOX_OUTPUT_CAP_CHARS) {
@@ -169,6 +172,21 @@ function renderBoundedRead(
   }
   if (messages.length < rows.length) truncated = true
   return JSON.stringify({ ok: true, mailbox, requestedLimit, truncated, messages }, null, 2)
+}
+
+function extractMediaHandles(content: unknown): Array<{ type: string; mediaId: number }> {
+  if (!Array.isArray(content)) return []
+  const media: Array<{ type: string; mediaId: number }> = []
+  for (const segment of content) {
+    if (!segment || typeof segment !== 'object') continue
+    const value = segment as Record<string, unknown>
+    if (typeof value.type !== 'string' || !MEDIA_SEGMENT_TYPES.has(value.type)) continue
+    if (typeof value.referenceId !== 'string') continue
+    const mediaId = Number(value.referenceId)
+    if (!Number.isSafeInteger(mediaId) || mediaId <= 0) continue
+    media.push({ type: value.type, mediaId })
+  }
+  return media
 }
 
 function extractMentionTargets(content: unknown): string[] {

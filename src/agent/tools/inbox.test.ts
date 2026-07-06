@@ -91,6 +91,53 @@ describe('inbox tool', () => {
     ])
   })
 
+  test('exposes valid media handles in original segment order', async () => {
+    const tool = createInboxTool({
+      groupIds: [111],
+      selfNumber: 999,
+      async findMessages() {
+        return [
+          row({
+            id: 1,
+            content: [
+              { type: 'text', content: '看看' },
+              { type: 'image', referenceId: '101' },
+              { type: 'video', referenceId: '102' },
+              { type: 'record', referenceId: '103' },
+              { type: 'file', referenceId: '104' },
+              { type: 'face', referenceId: '105' },
+              { type: 'image' },
+              { type: 'image', referenceId: '0' },
+              { type: 'image', referenceId: '-1' },
+              { type: 'image', referenceId: '1.5' },
+              { type: 'image', referenceId: 'not-a-number' },
+            ],
+          }),
+          row({ id: 2 }),
+        ]
+      },
+    })
+
+    assert.match(tool.description, /media.*mediaId/)
+
+    const result = await tool.execute({
+      action: 'read',
+      source: 'group',
+      groupId: 111,
+    }, undefined as never)
+    const payload = JSON.parse(result.content as string) as {
+      messages: Array<{ media: Array<{ type: string; mediaId: number }> }>
+    }
+
+    assert.deepEqual(payload.messages[0]!.media, [
+      { type: 'image', mediaId: 101 },
+      { type: 'video', mediaId: 102 },
+      { type: 'record', mediaId: 103 },
+      { type: 'file', mediaId: 104 },
+    ])
+    assert.deepEqual(payload.messages[1]!.media, [])
+  })
+
   test('rejects reads from groups outside the monitored allowlist', async () => {
     let queried = false
     const tool = createInboxTool({

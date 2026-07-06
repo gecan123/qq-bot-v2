@@ -44,9 +44,15 @@ export function renderBotEvent(event: BotEvent): string | null {
   }
 
   if (event.type === 'background_task_completed') {
-    const status = event.ok ? '完成' : '失败'
-    const elapsed = Math.round(event.elapsedMs / 1000)
-    return `[后台任务${status} | ${event.toolName} #${event.taskId} | 耗时${elapsed}s] ${event.summary}`
+    return JSON.stringify({
+      event: 'background_task_completed',
+      taskId: event.taskId,
+      toolName: event.toolName,
+      ok: event.ok,
+      elapsedMs: event.elapsedMs,
+      description: event.description,
+      summary: event.summary,
+    })
   }
 
   return null

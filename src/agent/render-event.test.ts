@@ -163,6 +163,34 @@ describe('renderBotEvent — control', () => {
   })
 })
 
+describe('renderBotEvent — background tasks', () => {
+  test('renders completion metadata as deterministic JSON', () => {
+    const event = {
+      type: 'background_task_completed' as const,
+      taskId: 'task-7',
+      toolName: 'generate_image',
+      description: '生成犬娘图片',
+      elapsedMs: 1234,
+      ok: true,
+      summary: '图片已生成',
+    }
+
+    const first = renderBotEvent(event)
+    const second = renderBotEvent(event)
+
+    assert.equal(first, second)
+    assert.deepEqual(JSON.parse(first!), {
+      event: 'background_task_completed',
+      taskId: 'task-7',
+      toolName: 'generate_image',
+      ok: true,
+      elapsedMs: 1234,
+      description: '生成犬娘图片',
+      summary: '图片已生成',
+    })
+  })
+})
+
 describe('renderBotEvent — curiosity tick', () => {
   test('returns the constant tick text', () => {
     assert.equal(renderBotEvent({ type: 'curiosity_tick' }), CURIOSITY_TICK_TEXT)

@@ -68,22 +68,30 @@ export function renderMailboxNotification(
   )) ? 'high' : 'normal'
   const afterRowId = Math.max(0, first.messageRowId - 1)
   const throughRowId = last.messageRowId
-  const timeRange = first.sentAt.getTime() === last.sentAt.getTime()
-    ? first.sentAt.toISOString()
-    : `${first.sentAt.toISOString()}..${last.sentAt.toISOString()}`
+  const timeRange = {
+    from: first.sentAt.toISOString(),
+    to: last.sentAt.toISOString(),
+  }
   const source = first.type === 'napcat_private_message'
     ? {
-        label: `私聊:${first.senderNickname}(QQ:${first.peerId})`,
-        read: `inbox action=read source=private peerId=${first.peerId} afterRowId=${afterRowId}`,
+        value: { type: 'private', peerId: first.peerId, senderName: first.senderNickname },
+        readArgs: { action: 'read', source: 'private', peerId: first.peerId, afterRowId },
       }
     : {
-        label: `群:${first.groupName && first.groupName.length > 0 ? first.groupName : first.groupId}`,
-        read: `inbox action=read source=group groupId=${first.groupId} afterRowId=${afterRowId}`,
+        value: { type: 'group', groupId: first.groupId, groupName: first.groupName ?? null },
+        readArgs: { action: 'read', source: 'group', groupId: first.groupId, afterRowId },
       }
 
-  return [
-    `[inbox 更新 | ${source.label} | mailbox=${mailboxKey} | priority=${priority}]`,
-    `新增 ${events.length} 条; rowId ${first.messageRowId}..${last.messageRowId}; 时间 ${timeRange}; 发送者 ${senderCount} 人.`,
-    `正文未自动披露. 需要时调用 ${source.read}; 本批读取至 throughRowId=${throughRowId}.`,
-  ].join(' ')
+  return JSON.stringify({
+    event: 'inbox_update',
+    mailbox: mailboxKey,
+    priority,
+    source: source.value,
+    count: events.length,
+    firstRowId: first.messageRowId,
+    throughRowId,
+    senderCount,
+    timeRange,
+    readArgs: source.readArgs,
+  })
 }

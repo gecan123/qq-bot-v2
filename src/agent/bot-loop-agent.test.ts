@@ -115,7 +115,9 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(messages.length, 3, 'user + assistant + tool')
     assert.equal(messages[0]?.role, 'user')
     if (messages[0]?.role === 'user') {
-      assert.match(messages[0].content, /mailbox=qq_group:999 \| priority=high/)
+      const notification = JSON.parse(messages[0].content)
+      assert.equal(notification.mailbox, 'qq_group:999')
+      assert.equal(notification.priority, 'high')
       assert.doesNotMatch(messages[0].content, /hello/)
     }
     assert.equal(messages[1]?.role, 'assistant')
@@ -208,8 +210,9 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
     assert.equal(userMessages.length, 1)
-    assert.match(userMessages[0]!.content, /\[inbox 更新 \| 群:环境群/)
-    assert.match(userMessages[0]!.content, /新增 2 条/)
+    const notification = JSON.parse(userMessages[0]!.content)
+    assert.equal(notification.source.groupName, '环境群')
+    assert.equal(notification.count, 2)
     assert.doesNotMatch(userMessages[0]!.content, /AMBIENT_BODY/)
     assert.deepEqual(savedCursors, [
       { 'qq_group:999': 43 },
@@ -259,8 +262,10 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
     assert.equal(userMessages.length, 2)
-    assert.match(userMessages[0]!.content, /mailbox=qq_private:9001/)
-    assert.match(userMessages[1]!.content, /mailbox=qq_private:9002/)
+    assert.deepEqual(userMessages.map((message) => JSON.parse(message.content).mailbox), [
+      'qq_private:9001',
+      'qq_private:9002',
+    ])
     assert.doesNotMatch(userMessages.map((message) => message.content).join('\n'), /PRIVATE_/)
     assert.deepEqual(savedCursors.at(-1), {
       'qq_private:9001': 53,

@@ -164,9 +164,15 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
 
     const userMessages = messages.filter((m) => m.role === 'user')
     assert.equal(userMessages.length, 3)
-    assert.match(userMessages[0]!.content, /^\[inbox 更新 \| 群:阳光厨房 \| mailbox=qq_group:111 \| priority=high\]/)
-    assert.match(userMessages[1]!.content, /^\[inbox 更新 \| 私聊:Alice\(QQ:10001\) \| mailbox=qq_private:10001 \| priority=high\]/)
-    assert.match(userMessages[2]!.content, /^\[inbox 更新 \| 群:技术群 \| mailbox=qq_group:222 \| priority=normal\]/)
+    const notifications = userMessages.map((message) => JSON.parse(message.content))
+    assert.deepEqual(notifications.map(({ mailbox, priority }) => ({ mailbox, priority })), [
+      { mailbox: 'qq_group:111', priority: 'high' },
+      { mailbox: 'qq_private:10001', priority: 'high' },
+      { mailbox: 'qq_group:222', priority: 'normal' },
+    ])
+    assert.equal(notifications[0]!.source.groupName, '阳光厨房')
+    assert.equal(notifications[1]!.source.senderName, 'Alice')
+    assert.equal(notifications[2]!.source.groupName, '技术群')
     assert.doesNotMatch(userMessages.map((message) => message.content).join('\n'), /在吗|私聊问个事|今天天气好/)
 
     // The send_message tool should have used the unified segment sender, scoped to group 111.

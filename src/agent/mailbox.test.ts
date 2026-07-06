@@ -113,13 +113,23 @@ describe('mailbox disclosure planning', () => {
     ]
 
     const rendered = renderMailboxNotification('qq_group:111', events)
+    const payload = JSON.parse(rendered)
 
-    assert.match(rendered, /^\[inbox 更新 \| 群:测试群 \| mailbox=qq_group:111 \| priority=normal\]/)
-    assert.match(rendered, /新增 2 条/)
-    assert.match(rendered, /rowId 10\.\.12/)
-    assert.match(rendered, /发送者 2 人/)
-    assert.match(rendered, /inbox action=read source=group groupId=111 afterRowId=9/)
-    assert.match(rendered, /throughRowId=12/)
+    assert.deepEqual(payload, {
+      event: 'inbox_update',
+      mailbox: 'qq_group:111',
+      priority: 'normal',
+      source: { type: 'group', groupId: 111, groupName: '测试群' },
+      count: 2,
+      firstRowId: 10,
+      throughRowId: 12,
+      senderCount: 2,
+      timeRange: {
+        from: '2026-07-03T01:02:03.000Z',
+        to: '2026-07-03T01:03:04.000Z',
+      },
+      readArgs: { action: 'read', source: 'group', groupId: 111, afterRowId: 9 },
+    })
     assert.doesNotMatch(rendered, /DO_NOT_DISCLOSE/)
   })
 
@@ -130,10 +140,11 @@ describe('mailbox disclosure planning', () => {
     ]
 
     const rendered = renderMailboxNotification('qq_group:111', events)
+    const payload = JSON.parse(rendered)
 
-    assert.match(rendered, /^\[inbox 更新 \| 群:测试群 \| mailbox=qq_group:111 \| priority=high\]/)
-    assert.match(rendered, /afterRowId=12/)
-    assert.match(rendered, /throughRowId=14/)
+    assert.equal(payload.priority, 'high')
+    assert.deepEqual(payload.readArgs, { action: 'read', source: 'group', groupId: 111, afterRowId: 12 })
+    assert.equal(payload.throughRowId, 14)
     assert.doesNotMatch(rendered, /mentioned|rowIds/)
   })
 
@@ -144,12 +155,13 @@ describe('mailbox disclosure planning', () => {
     ]
 
     const rendered = renderMailboxNotification('qq_private:9001', events)
+    const payload = JSON.parse(rendered)
 
-    assert.match(rendered, /^\[inbox 更新 \| 私聊:Alice\(QQ:9001\) \| mailbox=qq_private:9001 \| priority=high\]/)
-    assert.match(rendered, /新增 2 条/)
-    assert.match(rendered, /rowId 20\.\.22/)
-    assert.match(rendered, /inbox action=read source=private peerId=9001 afterRowId=19/)
-    assert.match(rendered, /throughRowId=22/)
+    assert.equal(payload.priority, 'high')
+    assert.deepEqual(payload.source, { type: 'private', peerId: 9001, senderName: 'Alice' })
+    assert.deepEqual(payload.readArgs, { action: 'read', source: 'private', peerId: 9001, afterRowId: 19 })
+    assert.equal(payload.firstRowId, 20)
+    assert.equal(payload.throughRowId, 22)
     assert.doesNotMatch(rendered, /SECRET_/)
   })
 

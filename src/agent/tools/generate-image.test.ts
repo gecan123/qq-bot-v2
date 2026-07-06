@@ -15,8 +15,12 @@ function parseResultJson(content: ToolResultContent): Record<string, unknown> {
   return JSON.parse(textBlock.text) as Record<string, unknown>
 }
 
-function flushMicrotasks(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 50))
+async function waitUntil(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(`condition not met within ${timeoutMs}ms`)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
 }
 
 const FAKE_PNG = Buffer.from('fake-png-bytes-for-test')
@@ -53,7 +57,7 @@ describe('generate_image tool', () => {
     assert.ok((parsed.description as string).includes('a cat in space'))
     assert.equal(parsed.next, `等待 [后台任务完成] 后调用 background_task action=get taskId=${parsed.taskId}`)
 
-    await flushMicrotasks()
+    await waitUntil(() => taskRegistry.get(parsed.taskId as string)?.status === 'completed')
 
     const task = taskRegistry.get(parsed.taskId as string)
     assert.ok(task)
@@ -86,7 +90,7 @@ describe('generate_image tool', () => {
     assert.equal(parsed.ok, true)
     assert.equal(parsed.status, 'started')
 
-    await flushMicrotasks()
+    await waitUntil(() => taskRegistry.get(parsed.taskId as string)?.status === 'failed')
 
     const task = taskRegistry.get(parsed.taskId as string)
     assert.ok(task)
@@ -150,7 +154,7 @@ describe('generate_image tool', () => {
     assert.equal(parsed.ok, true)
     assert.equal(parsed.status, 'started')
 
-    await flushMicrotasks()
+    await waitUntil(() => editCalled && taskRegistry.get(parsed.taskId as string)?.status === 'completed')
 
     assert.ok(editCalled, 'edit function should have been called')
 
@@ -231,7 +235,10 @@ describe('generate_image tool', () => {
     const parsed = parseResultJson(result.content)
 
     assert.equal(parsed.ok, true)
-    await flushMicrotasks()
+    await waitUntil(() => (
+      editSources.length === 2
+      && taskRegistry.get(parsed.taskId as string)?.status === 'completed'
+    ))
 
     assert.equal(editSources.length, 2)
     assert.equal(editSources[0].toString(), 'source-image-1')
@@ -255,7 +262,7 @@ describe('generate_image tool', () => {
     const parsed = parseResultJson(result.content)
 
     assert.equal(parsed.ok, true)
-    await flushMicrotasks()
+    await waitUntil(() => taskRegistry.get(parsed.taskId as string)?.status === 'completed')
 
     assert.equal(generateCalls, 3)
     const task = taskRegistry.get(parsed.taskId as string)
@@ -288,7 +295,7 @@ describe('generate_image tool', () => {
     const parsed = parseResultJson(result.content)
 
     assert.equal(parsed.ok, true)
-    await flushMicrotasks()
+    await waitUntil(() => taskRegistry.get(parsed.taskId as string)?.status === 'completed')
 
     const task = taskRegistry.get(parsed.taskId as string)
     assert.equal(task?.status, 'completed')
@@ -315,12 +322,16 @@ describe('generate_image tool', () => {
       taskRegistry,
     })
 
-    await tool.execute(
+    const result = await tool.execute(
       { prompt: 'edit', image: { ephemeralRef: sourceHash } },
       ctx,
     )
+    const parsed = parseResultJson(result.content)
 
-    await flushMicrotasks()
+    await waitUntil(() => (
+      cache.get(sourceHash)?.refcount === 0
+      && taskRegistry.get(parsed.taskId as string)?.status === 'failed'
+    ))
 
     const entry = cache.get(sourceHash)
     assert.ok(entry, 'source should still be in cache')

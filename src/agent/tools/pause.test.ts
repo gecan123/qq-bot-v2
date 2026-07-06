@@ -65,8 +65,15 @@ describe('pause tool', () => {
       intention: '醒来后继续整理群聊线索',
     }, ctx)
 
-    assert.match(result.content as string, /\[休息被打断\]/)
-    assert.match(result.content as string, /醒来后继续整理群聊线索/)
+    assert.deepEqual(JSON.parse(result.content as string), {
+      ok: true,
+      status: 'interrupted',
+      durationSeconds: 30,
+      elapsedMs: 0,
+      intention: '醒来后继续整理群聊线索',
+    })
+    assert.deepEqual(result.outcome, { ok: true, code: 'interrupted' })
+    assert.deepEqual(result.control, { type: 'pause' })
     assert.equal(queue.size(), 1)
   })
 })

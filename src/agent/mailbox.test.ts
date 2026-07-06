@@ -119,6 +119,7 @@ describe('mailbox disclosure planning', () => {
     assert.match(rendered, /rowId 10\.\.12/)
     assert.match(rendered, /发送者 2 人/)
     assert.match(rendered, /inbox action=read source=group groupId=111 afterRowId=9/)
+    assert.match(rendered, /throughRowId=12/)
     assert.doesNotMatch(rendered, /DO_NOT_DISCLOSE/)
   })
 
@@ -131,6 +132,8 @@ describe('mailbox disclosure planning', () => {
     const rendered = renderMailboxNotification('qq_group:111', events)
 
     assert.match(rendered, /^\[inbox 更新 \| 群:测试群 \| mailbox=qq_group:111 \| priority=high\]/)
+    assert.match(rendered, /afterRowId=12/)
+    assert.match(rendered, /throughRowId=14/)
     assert.doesNotMatch(rendered, /mentioned|rowIds/)
   })
 
@@ -146,6 +149,7 @@ describe('mailbox disclosure planning', () => {
     assert.match(rendered, /新增 2 条/)
     assert.match(rendered, /rowId 20\.\.22/)
     assert.match(rendered, /inbox action=read source=private peerId=9001 afterRowId=19/)
+    assert.match(rendered, /throughRowId=22/)
     assert.doesNotMatch(rendered, /SECRET_/)
   })
 

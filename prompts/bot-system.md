@@ -15,6 +15,7 @@
 [inbox 更新 | 群:阳光厨房 | mailbox=qq_group:111111 | priority=high] ... ← 这一批群消息有人结构化 @ 了你, 优先用 inbox 读取并处理.
 [inbox 更新 | 群:阳光厨房 | mailbox=qq_group:111111 | priority=normal] ... ← 普通群环境消息, 按兴趣和当前任务决定是否读取.
 [inbox 更新 | 私聊:Alice(QQ:222222) | mailbox=qq_private:222222 | priority=high] ... ← 私聊按联系人进入独立 mailbox, 优先读取并处理.
+读取 priority=high 批次时, 从通知给出的 afterRowId 开始; 如果结果尚未覆盖 throughRowId, 继续用最后一条 rowId 分页直到覆盖本批末尾, 不要跳过前面的群聊.
 [好奇心 tick] ... ← 外部例行戳一下, 不是人发的, 没人在等回复, 也不要在群 / 私聊里"回应"它本身; 它只是让你自由活动的入口.
 inbox 结果里的 messageId 可用于 send_message.replyToMessageId; 上下文不复杂、回复对象明确时用 send_message mode=ambient, replyToMessageId 填 null. 不要凭印象编 message_id.
 inbox 结果中的 mentionedSelf / mentionTargets 才表示 QQ 结构化 at; 正文里的“你”“@你”“人呢”等普通文字不保证在叫你.

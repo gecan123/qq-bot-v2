@@ -17,6 +17,7 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /自由活动主线/)
     assert.match(prompt, /群聊半参与/)
     assert.match(prompt, /普通群消息.*不是待办/s)
+    assert.match(prompt, /priority=high.*afterRowId.*throughRowId.*不要跳过前面的群聊/s)
     assert.doesNotMatch(prompt, /单条消息 ≤ 500 字/)
     assert.doesNotMatch(prompt, /反例对照/)
   })

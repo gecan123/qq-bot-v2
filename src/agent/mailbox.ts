@@ -67,6 +67,7 @@ export function renderMailboxNotification(
     event.type === 'napcat_private_message' || event.mentionedSelf
   )) ? 'high' : 'normal'
   const afterRowId = Math.max(0, first.messageRowId - 1)
+  const throughRowId = last.messageRowId
   const timeRange = first.sentAt.getTime() === last.sentAt.getTime()
     ? first.sentAt.toISOString()
     : `${first.sentAt.toISOString()}..${last.sentAt.toISOString()}`
@@ -83,6 +84,6 @@ export function renderMailboxNotification(
   return [
     `[inbox 更新 | ${source.label} | mailbox=${mailboxKey} | priority=${priority}]`,
     `新增 ${events.length} 条; rowId ${first.messageRowId}..${last.messageRowId}; 时间 ${timeRange}; 发送者 ${senderCount} 人.`,
-    `正文未自动披露. 需要时调用 ${source.read}.`,
+    `正文未自动披露. 需要时调用 ${source.read}; 本批读取至 throughRowId=${throughRowId}.`,
   ].join(' ')
 }

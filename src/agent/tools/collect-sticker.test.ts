@@ -11,11 +11,6 @@ function makeCtx(): ToolContext {
   return { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 0 }
 }
 
-function firstJsonLine(content: unknown): Record<string, unknown> {
-  assert.equal(typeof content, 'string')
-  return JSON.parse((content as string).split('\n')[0]!) as Record<string, unknown>
-}
-
 const rows = [
   {
     id: 10,
@@ -74,18 +69,31 @@ describe('collect_sticker tool', () => {
     assert.doesNotThrow(() => zod.toJSONSchema(collectStickerTool.schema))
   })
 
-  test('old collect args still upsert sticker metadata', async () => {
+  test('actionless legacy collect args are rejected', () => {
+    const parsed = collectStickerTool.schema.safeParse({
+      image: { mediaId: 101 },
+      name: '无语猫',
+      tags: ['无语', '猫'],
+      description: '一只很无语的猫',
+    })
+    assert.equal(parsed.success, false)
+  })
+
+  test('action=collect returns one structured result and upserts metadata', async () => {
     const result = await collectStickerTool.execute({
+      action: 'collect',
       image: { mediaId: 101 },
       name: '无语猫',
       tags: ['无语', '猫'],
       description: '一只很无语的猫',
     }, makeCtx())
-    const parsed = firstJsonLine(result.content)
+    const parsed = JSON.parse(result.content as string)
 
     assert.equal(parsed.ok, true)
-    assert.equal(parsed.stickerId, 77)
-    assert.equal(parsed.mediaId, 101)
+    assert.equal(parsed.action, 'collect')
+    assert.deepEqual(parsed.sticker, { stickerId: 77, mediaId: 101, mediaRef: 'media:101' })
+    assert.equal(parsed.pool.stickers[0].mediaRef, 'media:101')
+    assert.deepEqual(result.outcome, { ok: true })
     assert.deepEqual(capturedUpsert, {
       where: { mediaId: 101 },
       create: {
@@ -103,17 +111,17 @@ describe('collect_sticker tool', () => {
     })
   })
 
-  test('action=collect also upserts sticker metadata', async () => {
+  test('action=collect auto-fills description', async () => {
     const result = await collectStickerTool.execute({
       action: 'collect',
       image: { mediaId: 101 },
       name: '开心猫',
       tags: ['开心'],
     }, makeCtx())
-    const parsed = firstJsonLine(result.content)
+    const parsed = JSON.parse(result.content as string)
 
     assert.equal(parsed.ok, true)
-    assert.equal(parsed.mediaId, 101)
+    assert.equal(parsed.sticker.mediaId, 101)
     assert.equal((capturedUpsert as { create: { description: string } }).create.description, '自动描述')
   })
 
@@ -121,17 +129,17 @@ describe('collect_sticker tool', () => {
     const result = await collectStickerTool.execute({ action: 'list', limit: 5 }, makeCtx())
     const parsed = JSON.parse(result.content as string) as {
       ok: boolean
-      stickers: { mediaRef: string; name: string; tags: string[]; description: string; useCount: number }[]
+      pool: { stickers: { mediaRef: string; name: string; tags: string[]; description: string; useCount: number }[] }
     }
 
     assert.equal(parsed.ok, true)
-    assert.equal(parsed.stickers.length, 2)
-    assert.equal(parsed.stickers[0]!.mediaRef, 'media:101')
-    assert.equal(parsed.stickers[0]!.name, '无语猫')
+    assert.equal(parsed.pool.stickers.length, 2)
+    assert.equal(parsed.pool.stickers[0]!.mediaRef, 'media:101')
+    assert.equal(parsed.pool.stickers[0]!.name, '无语猫')
     assert.deepEqual(capturedFindMany, {
       where: undefined,
       orderBy: [{ useCount: 'desc' }, { createdAt: 'desc' }],
-      take: 5,
+      take: 6,
       select: {
         id: true,
         mediaId: true,
@@ -146,10 +154,10 @@ describe('collect_sticker tool', () => {
 
   test('action=search matches name, tags, or description and caps limit at 20', async () => {
     const result = await collectStickerTool.execute({ action: 'search', query: '猫', limit: 99 }, makeCtx())
-    const parsed = JSON.parse(result.content as string) as { ok: boolean; stickers: { mediaRef: string }[] }
+    const parsed = JSON.parse(result.content as string) as { ok: boolean; pool: { stickers: { mediaRef: string }[] } }
 
     assert.equal(parsed.ok, true)
-    assert.equal(parsed.stickers[0]!.mediaRef, 'media:101')
+    assert.equal(parsed.pool.stickers[0]!.mediaRef, 'media:101')
     assert.deepEqual(capturedFindMany, {
       where: {
         OR: [
@@ -159,7 +167,7 @@ describe('collect_sticker tool', () => {
         ],
       },
       orderBy: [{ useCount: 'desc' }, { createdAt: 'desc' }],
-      take: 20,
+      take: 21,
       select: {
         id: true,
         mediaId: true,
@@ -174,11 +182,11 @@ describe('collect_sticker tool', () => {
 
   test('action=random returns bounded candidates and accepts optional tag', async () => {
     const result = await collectStickerTool.execute({ action: 'random', tag: '开心', limit: 1 }, makeCtx())
-    const parsed = JSON.parse(result.content as string) as { ok: boolean; stickers: { mediaRef: string }[] }
+    const parsed = JSON.parse(result.content as string) as { ok: boolean; pool: { stickers: { mediaRef: string }[] } }
 
     assert.equal(parsed.ok, true)
-    assert.equal(parsed.stickers.length, 1)
-    assert.match(parsed.stickers[0]!.mediaRef, /^media:\d+$/)
+    assert.equal(parsed.pool.stickers.length, 1)
+    assert.match(parsed.pool.stickers[0]!.mediaRef, /^media:\d+$/)
     assert.deepEqual(capturedFindMany, {
       where: { tags: { has: '开心' } },
       orderBy: [{ useCount: 'desc' }, { createdAt: 'desc' }],

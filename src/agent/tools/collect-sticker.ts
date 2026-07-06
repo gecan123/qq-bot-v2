@@ -4,7 +4,7 @@ import { imageHandleSchema, type ImageHandle } from '../../media/image-handle-sc
 import { resolveImageHandle, releaseHandle } from '../../media/image-handle.js'
 import { promoteToMedia } from '../../media/promote-outbound.js'
 import { prisma } from '../../database/client.js'
-import { renderStickerPoolSummary } from '../sticker-pool.js'
+import { createStickerPoolPayload, loadStickerPoolPayload } from '../sticker-pool.js'
 import { createLogger } from '../../logger.js'
 
 const log = createLogger('TOOL_COLLECT_STICKER')
@@ -47,22 +47,14 @@ const randomArgsSchema = z.object({
   limit: z.number().int().min(1).optional().describe('最多返回多少个, 运行时上限 20.'),
 })
 
-const argsSchema = z.union([
-  collectArgsSchema,
-  z.discriminatedUnion('action', [
-    collectArgsSchema.extend({ action: z.literal('collect').describe('收藏或更新一张表情包.') }),
-    listArgsSchema,
-    searchArgsSchema,
-    randomArgsSchema,
-  ]),
+const argsSchema = z.discriminatedUnion('action', [
+  collectArgsSchema.extend({ action: z.literal('collect').describe('收藏或更新一张表情包.') }),
+  listArgsSchema,
+  searchArgsSchema,
+  randomArgsSchema,
 ])
 
 type Args = z.infer<typeof argsSchema>
-type StickerActionArgs =
-  | (z.infer<typeof collectArgsSchema> & { action: 'collect' })
-  | z.infer<typeof listArgsSchema>
-  | z.infer<typeof searchArgsSchema>
-  | z.infer<typeof randomArgsSchema>
 
 type StickerRow = {
   id: number
@@ -84,24 +76,9 @@ const stickerSelect = {
   createdAt: true,
 } as const
 
-function normalizeArgs(args: Args): StickerActionArgs {
-  return 'action' in args ? args : { action: 'collect', ...args }
-}
-
 function boundedLimit(limit: number | undefined): number {
   if (limit == null) return 10
   return Math.min(limit, 20)
-}
-
-function renderStickerRows(rows: StickerRow[]) {
-  return rows.map((row) => ({
-    mediaRef: `media:${row.mediaId}`,
-    mediaId: row.mediaId,
-    name: row.name,
-    tags: row.tags,
-    description: row.description,
-    useCount: row.useCount,
-  }))
 }
 
 function pickRandomRows(rows: StickerRow[], limit: number): StickerRow[] {
@@ -121,6 +98,7 @@ export const collectStickerTool: Tool<Args> = {
   name: 'collect_sticker',
   description: [
     '收藏一张已有的图片到你的表情包池 — 最常见场景: 群里有人发了好玩的表情, 你想以后也能用, 就传它的 mediaId 收进来.',
+    'action 必填: collect / list / search / random. 返回单个结构化 JSON 对象.',
     '图片必须已经存在 (群友发过的图、你之前 generate_image / workspace_bash `fetch image` 过的图). 不要为了收藏而去 generate_image 重新画一张 — 那是「创作」不是「收藏」.',
     'image 字段: 群聊消息里看到的图片描述旁会标注 mediaId, 直接传 {mediaId:N}; 刚生成/下载的图也可以传 {ephemeralRef}.',
     '每次 collect 后会返回你当前表情包池摘要. compaction 后摘要也会自动注入 context; 需要更多候选时用 action=list/search/random 按需查.',
@@ -128,16 +106,23 @@ export const collectStickerTool: Tool<Args> = {
   ].join(' '),
   schema: argsSchema,
   async execute(rawArgs) {
-    const args = normalizeArgs(argsSchema.parse(rawArgs))
+    const args = argsSchema.parse(rawArgs)
 
     if (args.action === 'list') {
       const rows = await prisma.stickerPool.findMany({
         where: undefined,
         orderBy: [{ useCount: 'desc' }, { createdAt: 'desc' }],
-        take: boundedLimit(args.limit),
+        take: boundedLimit(args.limit) + 1,
         select: stickerSelect,
       })
-      return { content: JSON.stringify({ ok: true, action: 'list', stickers: renderStickerRows(rows) }) }
+      return {
+        content: JSON.stringify({
+          ok: true,
+          action: 'list',
+          pool: createStickerPoolPayload(rows, { limit: boundedLimit(args.limit) }),
+        }),
+        outcome: { ok: true },
+      }
     }
 
     if (args.action === 'search') {
@@ -150,10 +135,18 @@ export const collectStickerTool: Tool<Args> = {
           ],
         },
         orderBy: [{ useCount: 'desc' }, { createdAt: 'desc' }],
-        take: boundedLimit(args.limit),
+        take: boundedLimit(args.limit) + 1,
         select: stickerSelect,
       })
-      return { content: JSON.stringify({ ok: true, action: 'search', query: args.query, stickers: renderStickerRows(rows) }) }
+      return {
+        content: JSON.stringify({
+          ok: true,
+          action: 'search',
+          query: args.query,
+          pool: createStickerPoolPayload(rows, { limit: boundedLimit(args.limit) }),
+        }),
+        outcome: { ok: true },
+      }
     }
 
     if (args.action === 'random') {
@@ -164,7 +157,17 @@ export const collectStickerTool: Tool<Args> = {
         take: 20,
         select: stickerSelect,
       })
-      return { content: JSON.stringify({ ok: true, action: 'random', stickers: renderStickerRows(pickRandomRows(rows, limit)) }) }
+      return {
+        content: JSON.stringify({
+          ok: true,
+          action: 'random',
+          pool: createStickerPoolPayload(pickRandomRows(rows, limit), {
+            limit,
+            truncated: rows.length > limit,
+          }),
+        }),
+        outcome: { ok: true },
+      }
     }
 
     const handle = args.image as ImageHandle
@@ -178,7 +181,15 @@ export const collectStickerTool: Tool<Args> = {
           select: { mediaId: true, descriptionRaw: true },
         })
         if (!media) {
-          return { content: JSON.stringify({ ok: false, error: `Media not found: mediaId=${handle.mediaId}` }) }
+          return {
+            content: JSON.stringify({
+              ok: false,
+              action: 'collect',
+              code: 'media_not_found',
+              error: `Media not found: mediaId=${handle.mediaId}`,
+            }),
+            outcome: { ok: false, code: 'media_not_found' },
+          }
         }
         mediaId = handle.mediaId
         autoDescription = extractDescription(media.descriptionRaw)
@@ -199,7 +210,15 @@ export const collectStickerTool: Tool<Args> = {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       log.warn({ handle, error: message }, 'collect_sticker_resolve_failed')
-      return { content: JSON.stringify({ ok: false, error: `image resolve failed: ${message}` }) }
+      return {
+        content: JSON.stringify({
+          ok: false,
+          action: 'collect',
+          code: 'image_resolve_failed',
+          error: `image resolve failed: ${message}`,
+        }),
+        outcome: { ok: false, code: 'image_resolve_failed' },
+      }
     }
 
     const description = args.description?.trim() || autoDescription || '(无描述)'
@@ -232,9 +251,15 @@ export const collectStickerTool: Tool<Args> = {
       'sticker_collected',
     )
 
-    const pool = await renderStickerPoolSummary()
-    const result = { ok: true, stickerId: row.id, mediaId }
-
-    return { content: pool ? `${JSON.stringify(result)}\n\n${pool}` : JSON.stringify(result) }
+    const pool = await loadStickerPoolPayload() ?? { stickers: [], truncated: false }
+    return {
+      content: JSON.stringify({
+        ok: true,
+        action: 'collect',
+        sticker: { stickerId: row.id, mediaId, mediaRef: `media:${mediaId}` },
+        pool,
+      }),
+      outcome: { ok: true },
+    }
   },
 }

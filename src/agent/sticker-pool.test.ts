@@ -2,10 +2,12 @@ import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, test } from 'node:test'
 import { prisma } from '../database/client.js'
 import {
+  injectStickerPoolAfterCompaction,
   renderStickerPoolSummary,
   STICKER_POOL_SUMMARY_LIMIT,
   STICKER_POOL_SUMMARY_MAX_CHARS,
 } from './sticker-pool.js'
+import { createAgentContext } from './agent-context.js'
 
 describe('sticker pool summary', () => {
   let originalFindMany: typeof prisma.stickerPool.findMany
@@ -20,7 +22,7 @@ describe('sticker pool summary', () => {
     prisma.stickerPool.findMany = originalFindMany
   })
 
-  test('renders a bounded summary and points to on-demand lookup', async () => {
+  test('renders a bounded structured payload with media refs', async () => {
     prisma.stickerPool.findMany = (async (args: unknown) => {
       capturedFindMany = args
       return Array.from({ length: STICKER_POOL_SUMMARY_LIMIT + 1 }, (_, i) => ({
@@ -39,10 +41,30 @@ describe('sticker pool summary', () => {
       take: STICKER_POOL_SUMMARY_LIMIT + 1,
       select: { mediaId: true, name: true, tags: true, description: true },
     })
-    assert.match(summary, /显示前/)
-    assert.match(summary, /按需/)
-    assert.match(summary, /#100/)
-    assert.doesNotMatch(summary, new RegExp(`#${100 + STICKER_POOL_SUMMARY_LIMIT}`))
+    const payload = JSON.parse(summary)
+    assert.equal(payload.source, 'sticker_pool')
+    assert.ok(payload.stickers.length <= STICKER_POOL_SUMMARY_LIMIT)
+    assert.ok(payload.stickers.length > 0)
+    assert.equal(payload.stickers[0].mediaId, 100)
+    assert.equal(payload.stickers[0].mediaRef, 'media:100')
+    assert.equal(payload.truncated, true)
+    assert.equal(summary.includes('#100'), false)
     assert.ok(summary.length <= STICKER_POOL_SUMMARY_MAX_CHARS)
+  })
+
+  test('compaction injection appends one valid JSON user message', async () => {
+    prisma.stickerPool.findMany = (async () => [{
+      mediaId: 100,
+      name: '测试表情',
+      tags: ['测试'],
+      description: '描述',
+    }]) as never
+    const context = createAgentContext()
+
+    await injectStickerPoolAfterCompaction(context)
+
+    const message = context.getSnapshot().messages[0]
+    assert.equal(message?.role, 'user')
+    assert.equal(message?.role === 'user' ? JSON.parse(message.content).stickers[0].mediaRef : '', 'media:100')
   })
 })

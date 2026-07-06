@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
+import { access, mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  deleteMemoryFiles,
+  listMemoryFiles,
   readMemoryFile,
   searchMemoryEntries,
   writeMemoryEntry,
@@ -137,6 +139,66 @@ describe('memory-store', () => {
 
       assert.equal(result.ok, false)
       assert.match(result.error, /not allowed/)
+    })
+  })
+
+  test('list returns bounded metadata filtered by scope and ordered by updatedAt', async () => {
+    await withTempMemory(async (rootDir) => {
+      await writeMemoryEntry({
+        rootDir,
+        now: () => new Date('2026-07-05T00:00:00.000Z'),
+      }, {
+        scope: 'self',
+        title: 'old',
+        content: '旧线索',
+      })
+      await writeMemoryEntry({
+        rootDir,
+        now: () => new Date('2026-07-06T00:00:00.000Z'),
+      }, {
+        scope: 'self',
+        title: 'new',
+        content: '新线索',
+      })
+      await writeMemoryEntry({ rootDir }, {
+        scope: 'topic',
+        title: 'other',
+        content: '其他主题',
+      })
+
+      const result = await listMemoryFiles({ rootDir }, { scope: 'self', limit: 1 })
+
+      assert.equal(result.ok, true)
+      assert.equal(result.total, 2)
+      assert.equal(result.truncated, true)
+      assert.equal(result.files.length, 1)
+      assert.equal(result.files[0]!.file, 'self/new.md')
+      assert.equal(result.files[0]!.scope, 'self')
+      assert.equal(result.files[0]!.updatedAt, '2026-07-06T00:00:00.000Z')
+      assert.ok(result.files[0]!.sizeBytes > 0)
+    })
+  })
+
+  test('delete permanently removes valid files and reports missing or rejected paths', async () => {
+    await withTempMemory(async (rootDir) => {
+      await writeMemoryEntry({ rootDir }, {
+        scope: 'self',
+        title: 'old',
+        content: '应该删除',
+      })
+      const outside = join(rootDir, 'outside.md')
+      await writeFile(outside, 'keep', 'utf8')
+
+      const result = await deleteMemoryFiles({ rootDir }, {
+        files: ['self/old.md', 'self/missing.md', '../outside.md'],
+      })
+
+      assert.deepEqual(result.deleted, ['self/old.md'])
+      assert.deepEqual(result.missing, ['self/missing.md'])
+      assert.equal(result.failed.length, 1)
+      assert.equal(result.failed[0]!.file, '../outside.md')
+      await assert.rejects(access(join(rootDir, 'memory', 'self', 'old.md')))
+      assert.equal(await readFile(outside, 'utf8'), 'keep')
     })
   })
 })

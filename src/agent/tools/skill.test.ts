@@ -91,4 +91,19 @@ describe('skill tool', () => {
     ])
     assert.equal(names.includes('harness_route'), false)
   })
+
+  test('memory hygiene skill describes autonomous consolidation before permanent deletion', async () => {
+    const tool = createSkillTool()
+
+    const loaded = JSON.parse((await tool.execute({
+      action: 'load',
+      name: 'memory_hygiene',
+    }, makeCtx())).content as string) as { ok: boolean; content: string }
+
+    assert.equal(loaded.ok, true)
+    assert.match(loaded.content, /memory.*action=list/s)
+    assert.match(loaded.content, /先写.*保留/s)
+    assert.match(loaded.content, /memory.*action=delete/s)
+    assert.match(loaded.content, /不按固定时间/)
+  })
 })

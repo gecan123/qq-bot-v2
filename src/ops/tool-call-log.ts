@@ -102,7 +102,7 @@ function summarizeString(value: string): string {
 
 export function isSideEffectTool(toolName: string, args?: unknown): boolean {
   if (toolName === 'memory') {
-    return hasAction(args, 'write')
+    return hasAnyAction(args, ['write', 'delete'])
   }
   if (toolName === 'fetch_content') {
     return hasAnyAction(args, ['image_url', 'qq_avatar'])

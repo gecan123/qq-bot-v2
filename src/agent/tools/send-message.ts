@@ -88,6 +88,7 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
     name: 'send_message',
     description: [
       '向 QQ 真实发送一条消息。target 必填并明确区分 group/private。',
+      '文本、图片和图文消息都统一使用 send_message；不存在 send_image 工具。发送图片时把已有句柄传给 imageRef。',
       'mode=ambient 时 replyToMessageId 必须为 null；mode=reply 时必须提供消息标签中 # 后面的 message_id。',
       '群 reply 只能发到监听群，群 ambient 还必须在主动发送白名单；私聊只能发给当前 QQ 好友。未授权会明确拒绝，不会模拟成功。',
       'group target 可选 mentionUserId；private target 不支持 mentionUserId。',

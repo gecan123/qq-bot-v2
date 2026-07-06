@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import type { Tool } from '../tool.js'
 import {
+  deleteMemoryFiles,
+  listMemoryFiles,
   readMemoryFile,
   searchMemoryEntries,
   writeMemoryEntry,
@@ -14,6 +16,13 @@ const DEFAULT_WORKSPACE_DIR = 'data/agent-workspace'
 
 const scopeSchema = z.enum(['self', 'person', 'group', 'topic'])
 const idSchema = z.union([z.string(), z.number()])
+const memoryFileSchema = z.string().trim().min(1).max(200).refine(
+  (file) => file.endsWith('.md')
+    && !file.startsWith('/')
+    && !file.includes('\\')
+    && !file.split('/').includes('..'),
+  '必须是 memory 内的 .md 相对路径',
+)
 
 const argsSchema = z.discriminatedUnion('action', [
   z.object({
@@ -34,6 +43,15 @@ const argsSchema = z.discriminatedUnion('action', [
     action: z.literal('read').describe('读取某个记忆文件.'),
     file: z.string().trim().min(1).max(200).describe('search/write 返回的相对文件路径, 例如 self/working-notes.md.'),
   }),
+  z.object({
+    action: z.literal('list').describe('列出记忆文件元数据, 不返回正文.'),
+    scope: scopeSchema.optional().describe('可选: 限定记忆范围.'),
+    limit: z.number().int().min(1).max(100).optional().describe('最多返回多少个文件 (1-100, 默认 50).'),
+  }),
+  z.object({
+    action: z.literal('delete').describe('永久删除明确指定的记忆文件.'),
+    files: z.array(memoryFileSchema).min(1).max(50).describe('要永久删除的 1-50 个 memory 相对路径.'),
+  }),
 ])
 
 type Args = z.infer<typeof argsSchema>
@@ -53,6 +71,8 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
       'action=write: 写入以后可能用得上的真实信息或经验; scope=self/person/group/topic.',
       'action=search: 搜索自己、人物、群或主题记忆; 不确定旧事、偏好、项目线索或自己做过什么时先查.',
       'action=read: 读取 search/write 返回的某个记忆文件; 只在需要深读时使用.',
+      'action=list: 按 scope 列出有界文件元数据, 用于发现重复或过时记忆.',
+      'action=delete: 永久删除明确指定的记忆文件; 先确认有价值内容已写入保留版本.',
       'person/group 写入需要 id; self/topic 可用 title 表示主题.',
       '写入要用自己的话, 不要照搬原话; 查询结果用于自然说话, 不要像报数据库.',
     ].join(' '),
@@ -93,6 +113,41 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             skippedCorrupt: result.skippedCorrupt,
           }, 'memory_searched')
           return { content: JSON.stringify(result) }
+        }
+
+        if (args.action === 'list') {
+          const result = await listMemoryFiles(
+            { rootDir: workspaceDir },
+            { scope: args.scope, limit: args.limit },
+          )
+          log.info({
+            scope: args.scope ?? null,
+            limit: args.limit ?? null,
+            fileCount: result.files.length,
+            total: result.total,
+            truncated: result.truncated,
+            skippedCorrupt: result.skippedCorrupt,
+          }, 'memory_listed')
+          return { content: JSON.stringify(result), outcome: { ok: true } }
+        }
+
+        if (args.action === 'delete') {
+          const result = await deleteMemoryFiles(
+            { rootDir: workspaceDir },
+            { files: args.files },
+          )
+          log.info({
+            requestedFiles: args.files,
+            deletedCount: result.deleted.length,
+            missingCount: result.missing.length,
+            failedCount: result.failed.length,
+          }, 'memory_deleted')
+          return {
+            content: JSON.stringify(result),
+            outcome: result.ok
+              ? { ok: true }
+              : { ok: false, code: 'delete_failed', error: '部分记忆文件删除失败' },
+          }
         }
 
         const result = await readMemoryFile({ rootDir: workspaceDir }, { file: args.file })

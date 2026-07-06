@@ -102,7 +102,13 @@ describe('merged main-agent tools', () => {
       capability.tools.map((tool) => tool.name),
     ]))
     const alwaysOnNames = manifest.alwaysOnTools.map((tool) => tool.name)
+    const allToolNames = [
+      ...alwaysOnNames,
+      ...manifest.capabilities.flatMap((capability) => capability.tools.map((tool) => tool.name)),
+    ]
 
+    assert.ok(allToolNames.includes('send_message'))
+    assert.equal(allToolNames.includes('send_image'), false)
     assert.ok(alwaysOnNames.includes('collect_sticker'))
     assert.ok(capabilities.get('external_research')?.includes('fetch_content'))
     if (capabilities.get('external_research')?.includes('web_search')) {

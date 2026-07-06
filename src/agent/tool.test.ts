@@ -139,10 +139,10 @@ describe('createToolExecutor', () => {
 
   test('classifies merged memory side effects by action', async () => {
     const writes: string[] = []
-    const memory: Tool<{ action: 'write' | 'search' }> = {
+    const memory: Tool<{ action: 'write' | 'search' | 'list' | 'delete' }> = {
       name: 'memory',
       description: 'memory',
-      schema: z.object({ action: z.enum(['write', 'search']) }),
+      schema: z.object({ action: z.enum(['write', 'search', 'list', 'delete']) }),
       async execute() {
         return { content: JSON.stringify({ ok: true }) }
       },
@@ -159,9 +159,13 @@ describe('createToolExecutor', () => {
 
     await exec.execute({ id: 'write', name: 'memory', args: { action: 'write' } }, makeCtx())
     await exec.execute({ id: 'search', name: 'memory', args: { action: 'search' } }, makeCtx())
+    await exec.execute({ id: 'list', name: 'memory', args: { action: 'list' } }, makeCtx())
+    await exec.execute({ id: 'delete', name: 'memory', args: { action: 'delete' } }, makeCtx())
 
     assert.equal(JSON.parse(writes[0]!).sideEffect, true)
     assert.equal(JSON.parse(writes[1]!).sideEffect, false)
+    assert.equal(JSON.parse(writes[2]!).sideEffect, false)
+    assert.equal(JSON.parse(writes[3]!).sideEffect, true)
   })
 
   test('classifies fetch_content image actions as side effects', async () => {

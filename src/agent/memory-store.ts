@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join, normalize, resolve } from 'node:path'
 
 export type MemoryScope = 'self' | 'person' | 'group' | 'topic'
@@ -28,6 +28,15 @@ export interface ReadMemoryInput {
   file: string
 }
 
+export interface ListMemoryInput {
+  scope?: MemoryScope
+  limit?: number
+}
+
+export interface DeleteMemoryInput {
+  files: string[]
+}
+
 export interface MemoryWriteResult {
   ok: true
   file: string
@@ -53,10 +62,33 @@ export type MemoryReadResult =
   | { ok: true; file: string; content: string; truncated: boolean }
   | { ok: false; error: string }
 
+export interface MemoryListResult {
+  ok: true
+  files: Array<{
+    file: string
+    scope: MemoryScope
+    title: string
+    updatedAt: string | null
+    sizeBytes: number
+  }>
+  total: number
+  truncated: boolean
+  skippedCorrupt: number
+}
+
+export interface MemoryDeleteResult {
+  ok: boolean
+  deleted: string[]
+  missing: string[]
+  failed: Array<{ file: string; error: string }>
+}
+
 const DEFAULT_MAX_READ_CHARS = 4_000
 const DEFAULT_MAX_SNIPPET_CHARS = 240
 const DEFAULT_SEARCH_LIMIT = 10
 const MAX_SEARCH_LIMIT = 20
+const DEFAULT_LIST_LIMIT = 50
+const MAX_LIST_LIMIT = 100
 
 export async function writeMemoryEntry(
   options: MemoryStoreOptions,
@@ -144,6 +176,77 @@ export async function readMemoryFile(
     content: `${raw.slice(0, max)}\n[...truncated at ${max} chars]`,
     truncated: true,
   }
+}
+
+export async function listMemoryFiles(
+  options: MemoryStoreOptions,
+  input: ListMemoryInput = {},
+): Promise<MemoryListResult> {
+  const root = memoryRoot(options.rootDir)
+  const files = await listMarkdownFiles(root)
+  const matches: MemoryListResult['files'] = []
+  let skippedCorrupt = 0
+
+  for (const file of files) {
+    const absoluteFile = join(root, file)
+    const raw = await readFile(absoluteFile, 'utf8')
+    const parsed = parseMarkdownMemory(raw)
+    if (!parsed) {
+      skippedCorrupt += 1
+      continue
+    }
+    if (input.scope && parsed.scope !== input.scope) continue
+    const metadata = await stat(absoluteFile)
+    matches.push({
+      file,
+      scope: parsed.scope,
+      title: parsed.title,
+      updatedAt: parsed.updatedAt,
+      sizeBytes: metadata.size,
+    })
+  }
+
+  matches.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '') || a.file.localeCompare(b.file))
+  const limit = Math.min(Math.max(1, input.limit ?? DEFAULT_LIST_LIMIT), MAX_LIST_LIMIT)
+  return {
+    ok: true,
+    files: matches.slice(0, limit),
+    total: matches.length,
+    truncated: matches.length > limit,
+    skippedCorrupt,
+  }
+}
+
+export async function deleteMemoryFiles(
+  options: MemoryStoreOptions,
+  input: DeleteMemoryInput,
+): Promise<MemoryDeleteResult> {
+  const deleted: string[] = []
+  const missing: string[] = []
+  const failed: MemoryDeleteResult['failed'] = []
+
+  for (const file of input.files) {
+    let absoluteFile: string
+    try {
+      absoluteFile = safeMemoryFile(options.rootDir, file)
+    } catch (err) {
+      failed.push({ file, error: err instanceof Error ? err.message : String(err) })
+      continue
+    }
+
+    try {
+      await unlink(absoluteFile)
+      deleted.push(file)
+    } catch (err) {
+      if (err && typeof err === 'object' && 'code' in err && err.code === 'ENOENT') {
+        missing.push(file)
+      } else {
+        failed.push({ file, error: err instanceof Error ? err.message : String(err) })
+      }
+    }
+  }
+
+  return { ok: failed.length === 0, deleted, missing, failed }
 }
 
 function memoryRoot(rootDir: string): string {

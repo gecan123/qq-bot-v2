@@ -304,6 +304,14 @@ describe('send_message tool — schema rejection', () => {
     assert.equal(tool.name, 'send_message')
   })
 
+  test('description makes send_message the only text and image send tool', () => {
+    const { sender } = makeMockSender()
+    const tool = createAllowedTool(sender)
+
+    assert.match(tool.description, /文本、图片和图文消息都统一使用 send_message/)
+    assert.match(tool.description, /不存在 send_image 工具/)
+  })
+
   test('accepts flattened ambient text args without reply or image fields', async () => {
     const { sender, calls } = makeMockSender()
     const tool = createAllowedTool(sender)

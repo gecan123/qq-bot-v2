@@ -52,6 +52,26 @@ describe('memory tool schema', () => {
     assert.equal(parsed.success, false)
   })
 
+  test('accepts bounded list and delete actions', () => {
+    assert.equal(memoryTool.schema.safeParse({
+      action: 'list',
+      scope: 'self',
+      limit: 50,
+    }).success, true)
+    assert.equal(memoryTool.schema.safeParse({
+      action: 'delete',
+      files: ['self/old.md'],
+    }).success, true)
+  })
+
+  test('rejects empty or escaping delete paths', () => {
+    assert.equal(memoryTool.schema.safeParse({ action: 'delete', files: [] }).success, false)
+    assert.equal(memoryTool.schema.safeParse({
+      action: 'delete',
+      files: ['../old.md'],
+    }).success, false)
+  })
+
   test('schema serializes cleanly to JSON Schema', () => {
     assert.doesNotThrow(() => zod.toJSONSchema(memoryTool.schema))
   })
@@ -103,6 +123,40 @@ describe('memory tool execute', () => {
 
       assert.equal(result.ok, false)
       assert.match(result.error, /requires id/)
+    })
+  })
+
+  test('lists and permanently deletes memory files', async () => {
+    await withTempMemory(async (workspaceDir) => {
+      const tool = createMemoryTool({ workspaceDir })
+      await tool.execute({
+        action: 'write',
+        scope: 'self',
+        title: 'old',
+        content: '待删除',
+      }, makeCtx())
+
+      const listed = JSON.parse((await tool.execute({
+        action: 'list',
+        scope: 'self',
+        limit: 50,
+      }, makeCtx())).content as string) as { ok: boolean; files: { file: string }[] }
+      assert.equal(listed.ok, true)
+      assert.deepEqual(listed.files.map((entry) => entry.file), ['self/old.md'])
+
+      const deleted = JSON.parse((await tool.execute({
+        action: 'delete',
+        files: ['self/old.md'],
+      }, makeCtx())).content as string) as { ok: boolean; deleted: string[] }
+      assert.equal(deleted.ok, true)
+      assert.deepEqual(deleted.deleted, ['self/old.md'])
+
+      const read = JSON.parse((await tool.execute({
+        action: 'read',
+        file: 'self/old.md',
+      }, makeCtx())).content as string) as { ok: boolean; error: string }
+      assert.equal(read.ok, false)
+      assert.match(read.error, /not found/)
     })
   })
 })

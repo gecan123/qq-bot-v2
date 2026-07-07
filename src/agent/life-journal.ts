@@ -88,7 +88,10 @@ function truncateToolContent(content: ToolResultContent, maxChars: number): Tool
   let remaining = maxChars
   return content.map((block) => {
     if (block.type !== 'text') {
-      return block
+      const label = `[non-text tool result omitted: image ${block.source.media_type}]`
+      const text = truncateText(label, remaining)
+      remaining = Math.max(0, remaining - label.length)
+      return { type: 'text', text }
     }
     const text = truncateText(block.text, remaining)
     remaining = Math.max(0, remaining - block.text.length)

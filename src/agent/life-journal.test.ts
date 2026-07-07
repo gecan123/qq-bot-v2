@@ -51,7 +51,8 @@ describe('life journal runtime', () => {
     assert.match(await readFile(join(rootDir, 'life', 'journal', '2026-07-07.md'), 'utf8'), /用户确认/)
     assert.equal(await readFile(join(rootDir, 'life', 'agenda.md'), 'utf8'), '# Agenda\n\n## Active\n- [ ] 继续设计\n')
     assert.ok(captured)
-    assert.deepEqual(captured.messages, [
+    const capturedInput = captured as LlmCallInput
+    assert.deepEqual(capturedInput.messages, [
       { role: 'user', content: '这一轮确认让我自己写 journal' },
     ])
   })
@@ -130,9 +131,50 @@ describe('life journal runtime', () => {
     })
 
     assert.ok(captured)
-    const serialized = JSON.stringify(captured.messages)
+    const capturedInput = captured as LlmCallInput
+    const serialized = JSON.stringify(capturedInput.messages)
     assert.equal(serialized.includes('current round message'), true)
     assert.equal(serialized.includes('far too long'), false)
     assert.equal(serialized.includes('old AgentContext history'), false)
+  })
+
+  test('recordRound replaces non-text tool result blocks with bounded placeholders', async () => {
+    let captured: LlmCallInput | null = null
+    const llm: LlmClient = {
+      async chat(input) {
+        captured = input
+        return {
+          content: JSON.stringify({ shouldWrite: false, journalMarkdown: '', agendaMarkdown: '' }),
+          toolCalls: [],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+        }
+      },
+    }
+    const runtime = createLifeJournalRuntime({ rootDir, llm })
+
+    await runtime.recordRound({
+      roundIndex: 1,
+      messages: [{
+        role: 'tool',
+        toolCallId: 'image-call',
+        content: [
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: 'image/png',
+              data: 'BASE64_IMAGE_DATA_MUST_NOT_REACH_REVIEW_LLM',
+            },
+          },
+        ],
+      }],
+    })
+
+    assert.ok(captured)
+    const capturedInput = captured as LlmCallInput
+    const serialized = JSON.stringify(capturedInput.messages)
+    assert.equal(serialized.includes('BASE64_IMAGE_DATA_MUST_NOT_REACH_REVIEW_LLM'), false)
+    assert.match(serialized, /non-text tool result omitted/)
   })
 })

@@ -62,6 +62,7 @@ describe('merged main-agent tools', () => {
     assert.ok(names.includes('chat_style'))
     assert.ok(names.includes('ai_tone'))
     assert.ok(names.includes('journal'))
+    assert.ok(names.includes('life_journal'))
     assert.equal(names.includes('generate_image'), false)
     assert.ok(names.includes('collect_sticker'))
     assert.equal(names.includes('fetch_content'), false)
@@ -114,6 +115,7 @@ describe('merged main-agent tools', () => {
     assert.ok(alwaysOnNames.includes('chat_style'))
     assert.ok(alwaysOnNames.includes('ai_tone'))
     assert.ok(alwaysOnNames.includes('journal'))
+    assert.ok(alwaysOnNames.includes('life_journal'))
     assert.ok(capabilities.get('external_research')?.includes('fetch_content'))
     if (capabilities.get('external_research')?.includes('web_search')) {
       assert.deepEqual(capabilities.get('external_research'), ['web_search', 'fetch_content'])

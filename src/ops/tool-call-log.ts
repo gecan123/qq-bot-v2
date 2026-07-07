@@ -110,6 +110,9 @@ export function isSideEffectTool(toolName: string, args?: unknown): boolean {
   if (toolName === 'journal') {
     return hasAction(args, 'write')
   }
+  if (toolName === 'life_journal') {
+    return hasAnyAction(args, ['write', 'write_agenda'])
+  }
   if (toolName === 'workspace_bash') {
     return isWorkspaceBashSideEffect(args)
   }

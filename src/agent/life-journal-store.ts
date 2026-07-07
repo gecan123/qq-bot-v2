@@ -56,11 +56,11 @@ function journalPath(rootDir: string, date: string): string {
 }
 
 export async function appendLifeJournalEntry(
-  options: LifeJournalStoreOptions & { roundIndex: number; markdown: string },
+  options: LifeJournalStoreOptions & { roundIndex?: number; markdown: string },
 ): Promise<{ path: string; heading: string }> {
   const { date, time } = shanghaiParts(currentDate(options))
   const path = journalPath(options.rootDir, date)
-  const heading = `## ${time} Round ${options.roundIndex}`
+  const heading = options.roundIndex == null ? `## ${time} Manual` : `## ${time} Round ${options.roundIndex}`
   const body = options.markdown.endsWith('\n') ? options.markdown : `${options.markdown}\n`
 
   await mkdir(journalDir(options.rootDir), { recursive: true })

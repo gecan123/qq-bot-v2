@@ -28,6 +28,7 @@ import { createGenerateImageTaskLogHook, createSendMessageAiToneHook } from './a
 import { setTokenUsageDbPersistenceEnabled } from './agent/token-stats.js'
 import { buildBotToolManifest } from './agent/tools/index.js'
 import { createBotLoopAgent } from './agent/bot-loop-agent.js'
+import { createLifeJournalRuntime } from './agent/life-journal.js'
 import { renderBotEvent } from './agent/render-event.js'
 import { createSendTargetPolicy } from './agent/send-target-policy.js'
 import { replayMissedMessages } from './agent/replay-missed.js'
@@ -134,6 +135,9 @@ async function main() {
 
   // 3. Agent 自己的 LLM 客户端 (走 default provider/model, 后续可以单独换)
   const llm = createLlmClient()
+  const lifeJournal = createLifeJournalRuntime({
+    llm,
+  })
 
   // 3.5 启动期 persona-spoof 自检 (claude-code 路径专用): 若 cliproxy mode=auto
   //     的判定逻辑漂了 (例如升级后 UA 匹配收紧 → 把 qq-bot 也 cloak 了),
@@ -319,6 +323,7 @@ async function main() {
     initialLastWakeAt: persisted?.lastWakeAt ?? null,
     renderEvent: renderBotEvent,
     eventDebounceMs: config.eventDebounceMs,
+    lifeJournal,
   })
 
   // 12. 进入主循环

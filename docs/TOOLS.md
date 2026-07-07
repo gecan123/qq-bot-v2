@@ -8,7 +8,7 @@
 - 当前计划：`todo`（当前进程内的短期多步计划，最多一个 `in_progress`）。
 - 发送：`send_message`。
 - 按需工具箱：`toolbox`（`list` / `activate` / `deactivate` capability；激活成功后下一轮暴露对应 typed tool schema）。
-- 知识和历史：`memory`（本地 Markdown 长期记忆库，支持 self/person/group/topic）、`journal`（日记/梦境）、`skill`、`inbox`（list/read 多来源消息正文）、`workspace_bash` 内置的 `help` / `db` / `style` 子命令。
+- 知识和历史：`memory`（本地 Markdown 长期记忆库，支持 self/person/group/topic）、`journal`（日记/梦境）、`life_journal`（主动 Life Journal / Agenda）、`skill`、`inbox`（list/read 多来源消息正文）、`workspace_bash` 内置的 `help` / `db` / `style` 子命令。
 - 表情包：`collect_sticker`（收藏、列表、搜索和随机候选）。
 - 外部内容：`workspace_bash` 内置的 `fetch` 子命令（url/image/avatar/reddit list/reddit post）、配置后可用的 `web_search`、`workspace_bash` 内置的 `openbb` 子命令。
 - 风格和文本判断：`chat_style` 按需读取聊天约束/风格/群定制；`ai_tone` 用本地 AIRadar 模型判断中文文本更像 AI 腔调还是人味。
@@ -51,6 +51,7 @@
 - `inbox` 的群读取必须显式指定监听白名单内的 groupId；私聊读取必须显式指定 peerId。read 结果用结构化 `media[].mediaId` 披露入站媒体 handle，整体仍有行数和字符上限，并作为普通 tool result 进入 AgentContext。
 - `workspace_bash` 提供可写 private workspace 和只读 repo view。repo view 必须保持 allowlist，不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
 - `journal action=write|list|search|read` 把日记和梦境存到 private workspace 的按月 Markdown 文件中；`data/agent-workspace/` 下的 journal 文件是 bot 生成数据，不应提交。不要用 `printf` / `touch` / `mkdir` 直接维护 `journal/**` 或 `memory/**`，这些路径只能走对应高层工具写入。`workspace_bash journal ...` 作为兼容路由保留，优先使用 `journal` typed tool。
+- `life_journal action=write|read_recent|read_agenda|write_agenda` 让主 agent 主动维护 `data/agent-workspace/life/` 下的 Life Journal 和 Agenda；旁路 Life Journal hook 只做每轮后的保底连续性记录，不替代主 agent 主动 journaling。`write` / `write_agenda` 是副作用操作，会进入工具审计。
 - `collect_sticker` 是 always-on typed tool，不是 `workspace_bash` 子命令；`action=collect|list|search|random` 必填。它读取已有 image handle、写表情池，并返回统一的 `mediaId` / `mediaRef` 候选。
 - `memory` 把长期记忆存到 `data/agent-workspace/memory/` 的 Markdown 文件中；这是 bot 生成数据，默认不提交。记忆文件不是 replay 来源，只有 `memory list/search/read/write/delete` 的有界工具结果能进入 `AgentContext`；`delete` 会永久删除明确指定的文件。
 - `workspace_bash` 的 tool description 保留常用 repo/db/fetch 等路由示例；复杂细节继续通过 `help <topic>` 按需披露。被拒绝的命令会返回 `help` / `try` 字段，引导下一步。`style`、`ai_tone`、`journal` 子命令作为兼容入口保留，日常优先用同名 typed tool。

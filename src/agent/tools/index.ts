@@ -20,6 +20,7 @@ import { createInboxTool } from './inbox.js'
 import { createChatStyleTool } from './chat-style.js'
 import { createAiToneTool } from './ai-tone.js'
 import { journalTool } from './journal.js'
+import { lifeJournalTool } from './life-journal.js'
 import type { SendTargetPolicy } from '../send-target-policy.js'
 
 export interface BotToolDeps {
@@ -58,6 +59,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     }),
     createAiToneTool(),
     journalTool,
+    lifeJournalTool,
     createWorkspaceBashTool({
       groupIdWhitelist: deps.groupIds,
       groupIds: deps.groupIds,

@@ -160,6 +160,164 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(ctx.getSnapshot().messages.length, 0, 'wake events must not enter context')
   })
 
+  test('life journal hook receives bounded round delta after successful round', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('existing durable history')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({
+      type: 'napcat_message',
+      messageRowId: 1,
+      groupId: 999,
+      messageId: 12345,
+      senderId: 100,
+      senderNickname: '张三',
+      mentionedSelf: true,
+      sentAt: new Date('2026-01-01T00:00:00Z'),
+      renderedText: 'hello',
+    })
+    const received: PersistedAgentSnapshot['messages'][] = []
+    const { repo } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: 'you are a bot',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [{ id: 'c1', name: 'send_message', args: { text: '在' } }],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools({
+        send_message: async () => ({ content: '{"ok":true,"status":"sent"}' }),
+      }),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      lifeJournal: {
+        async recordRound({ messages }) {
+          received.push(messages)
+          return { ok: true, wroteJournal: true, updatedAgenda: false }
+        },
+      },
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(received.length, 1)
+    assert.equal(received[0]!.some((message) => message.role === 'user'), true)
+    assert.equal(
+      received[0]!.some((message) => message.role === 'user' && message.content === 'existing durable history'),
+      false,
+    )
+    assert.equal(received[0]!.some((message) => message.role === 'tool'), true)
+  })
+
+  test('life journal failure does not throw and does not prevent compaction', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('older history')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    let summarized = false
+    const { repo } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [{ id: 'c1', name: 'lookup', args: {} }],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools({
+        lookup: async () => ({ content: 'tool result' }),
+      }),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      compactOptions: {
+        triggerTokens: 1,
+        keepRatio: 0.1,
+        summarize: async () => {
+          summarized = true
+          return 'summary'
+        },
+      },
+      lifeJournal: {
+        async recordRound() {
+          throw new Error('journal failed')
+        },
+      },
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(summarized, true)
+  })
+
+  test('life journal does not append review output to AgentContext', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    const { repo } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [],
+        usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      lifeJournal: {
+        async recordRound() {
+          return { ok: true, wroteJournal: true, updatedAgenda: true, secret: 'must not enter context' }
+        },
+      },
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(JSON.stringify(ctx.getSnapshot().messages).includes('must not enter context'), false)
+  })
+
+  test('life journal hook is not called when wake events run no round', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'wake' })
+    let called = false
+    const { repo } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [],
+        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      lifeJournal: {
+        async recordRound() {
+          called = true
+        },
+      },
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(called, false)
+  })
+
   test('replaces ambient group bodies with metadata notification and persists source cursors', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()

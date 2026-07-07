@@ -1,4 +1,5 @@
 import type { AgentContext } from './agent-context.js'
+import type { AgentMessage } from './agent-context.types.js'
 import type { LlmClient } from './llm-client.js'
 import type { ToolExecutor } from './tool.js'
 import type { EventQueue } from './event-queue.js'
@@ -44,6 +45,13 @@ export interface BotLoopAgentDeps {
   }
   /** 运行时自主循环保护；不进入 AgentContext 或 snapshot。 */
   autonomy?: BotLoopAutonomyOptions
+  /** 可选的 Life Journal 自省 hook；输出不进入 AgentContext。 */
+  lifeJournal?: BotLoopLifeJournal
+}
+
+export interface BotLoopLifeJournal {
+  recordRound(input: { roundIndex: number; messages: AgentMessage[] }): Promise<unknown>
+  pickIdleIntention?(): Promise<{ ok: boolean; intention: string | null }>
 }
 
 export interface BotLoopAutonomyOptions {
@@ -238,6 +246,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     didPause?: boolean
     hadAttention?: boolean
   }> {
+    const beforeStepCount = deps.context.getSnapshot().messages.length
     const debounceMs = deps.eventDebounceMs ?? DEFAULT_EVENT_DEBOUNCE_MS
     if (deps.eventQueue.size() > 0 && debounceMs > 0 && !stopRequested) {
       await new Promise<void>((resolve) => {
@@ -275,6 +284,12 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       mailboxCursors,
       lastWakeAt,
     })
+    try {
+      const roundMessages = deps.context.getSnapshot().messages.slice(beforeStepCount)
+      await deps.lifeJournal?.recordRound({ roundIndex, messages: roundMessages })
+    } catch (err) {
+      log.warn({ err, roundIndex }, 'life_journal_record_failed_skipped')
+    }
     await maybeCompact(inputTokens)
     return { ranRound: true, tokensUsed, didPause, hadAttention }
   }

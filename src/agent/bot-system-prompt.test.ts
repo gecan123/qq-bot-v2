@@ -47,6 +47,7 @@ describe('buildBotSystemPrompt', () => {
     assert.match(disclosure, /- ai_tone:.*直接调用/)
     assert.match(disclosure, /- journal:.*直接调用/)
     assert.match(disclosure, /- life_journal:.*Life Journal/)
+    assert.match(disclosure, /- skill_editor:.*草稿/)
     assert.match(disclosure, /- collect_sticker:.*直接调用/)
     assert.doesNotMatch(toolboxLine, /表情包池/)
     assert.equal(lines.filter((line) => line.startsWith('- workspace_bash:')).length, 1)

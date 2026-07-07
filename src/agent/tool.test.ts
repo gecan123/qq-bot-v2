@@ -301,6 +301,39 @@ describe('createToolExecutor', () => {
     assert.equal(JSON.parse(writes[3]!).sideEffect, true)
   })
 
+  test('classifies skill_editor write actions as side effects', async () => {
+    const writes: string[] = []
+    const skillEditor: Tool<{ action: 'draft' | 'validate' | 'install' | 'list_drafts' | 'read_draft' }> = {
+      name: 'skill_editor',
+      description: 'skill editor',
+      schema: z.object({
+        action: z.enum(['draft', 'validate', 'install', 'list_drafts', 'read_draft']),
+      }),
+      async execute() {
+        return { content: JSON.stringify({ ok: true }) }
+      },
+    }
+    const exec = createToolExecutor([skillEditor], {
+      trace: {
+        now: () => new Date('2026-05-25T12:00:00.000Z'),
+        clockMs: () => 100,
+        appender: async (_path, line) => {
+          writes.push(line)
+        },
+      },
+    })
+
+    await exec.execute({ id: 'draft', name: 'skill_editor', args: { action: 'draft' } }, makeCtx())
+    await exec.execute({ id: 'validate', name: 'skill_editor', args: { action: 'validate' } }, makeCtx())
+    await exec.execute({ id: 'install', name: 'skill_editor', args: { action: 'install' } }, makeCtx())
+    await exec.execute({ id: 'list', name: 'skill_editor', args: { action: 'list_drafts' } }, makeCtx())
+
+    assert.equal(JSON.parse(writes[0]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[1]!).sideEffect, false)
+    assert.equal(JSON.parse(writes[2]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[3]!).sideEffect, false)
+  })
+
   test('routes call to correct tool by name and validates args', async () => {
     const echo: Tool<{ msg: string }> = {
       name: 'echo',

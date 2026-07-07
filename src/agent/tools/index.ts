@@ -17,6 +17,9 @@ import { maybeCreateBrowserTool } from './browser.js'
 import { maybeCreateOpenbbCliTool } from './openbb-cli.js'
 import { createFetchContentTool } from './fetch-content.js'
 import { createInboxTool } from './inbox.js'
+import { createChatStyleTool } from './chat-style.js'
+import { createAiToneTool } from './ai-tone.js'
+import { journalTool } from './journal.js'
 import type { SendTargetPolicy } from '../send-target-policy.js'
 
 export interface BotToolDeps {
@@ -48,6 +51,13 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     memoryTool,
     createInboxTool({ groupIds: deps.groupIds, selfNumber: deps.selfNumber }),
     collectStickerTool,
+    createChatStyleTool({
+      groupIds: deps.groupIds,
+      metadata: deps.metadata,
+      groupCustomizations: deps.groupCustomizations,
+    }),
+    createAiToneTool(),
+    journalTool,
     createWorkspaceBashTool({
       groupIdWhitelist: deps.groupIds,
       groupIds: deps.groupIds,

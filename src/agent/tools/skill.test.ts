@@ -82,12 +82,23 @@ describe('skill tool', () => {
     const names = listed.skills.map((skill) => skill.name)
 
     assert.deepEqual(names, [
+      'background_task_workflow',
       'browser_workflow',
+      'context_hygiene',
+      'debugging_workflow',
+      'external_research_hygiene',
+      'media_handle_workflow',
       'memory_hygiene',
+      'observability_hygiene',
+      'qq_interaction_policy',
+      'replay_safety',
+      'repo_change_workflow',
       'repo_map',
       'self_review_repo',
       'todo_workflow',
+      'tool_contract_design',
       'tool_help',
+      'tool_security',
     ])
     assert.equal(names.includes('harness_route'), false)
   })

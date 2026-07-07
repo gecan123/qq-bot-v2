@@ -237,6 +237,37 @@ describe('createToolExecutor', () => {
     assert.equal(JSON.parse(writes[6]!).sideEffect, true)
   })
 
+  test('classifies journal write as a side effect', async () => {
+    const writes: string[] = []
+    const journal: Tool<{ action: 'write' | 'list' | 'search' | 'read' }> = {
+      name: 'journal',
+      description: 'journal',
+      schema: z.object({ action: z.enum(['write', 'list', 'search', 'read']) }),
+      async execute() {
+        return { content: JSON.stringify({ ok: true }) }
+      },
+    }
+    const exec = createToolExecutor([journal], {
+      trace: {
+        now: () => new Date('2026-05-25T12:00:00.000Z'),
+        clockMs: () => 100,
+        appender: async (_path, line) => {
+          writes.push(line)
+        },
+      },
+    })
+
+    await exec.execute({ id: 'write', name: 'journal', args: { action: 'write' } }, makeCtx())
+    await exec.execute({ id: 'list', name: 'journal', args: { action: 'list' } }, makeCtx())
+    await exec.execute({ id: 'search', name: 'journal', args: { action: 'search' } }, makeCtx())
+    await exec.execute({ id: 'read', name: 'journal', args: { action: 'read' } }, makeCtx())
+
+    assert.equal(JSON.parse(writes[0]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[1]!).sideEffect, false)
+    assert.equal(JSON.parse(writes[2]!).sideEffect, false)
+    assert.equal(JSON.parse(writes[3]!).sideEffect, false)
+  })
+
   test('routes call to correct tool by name and validates args', async () => {
     const echo: Tool<{ msg: string }> = {
       name: 'echo',

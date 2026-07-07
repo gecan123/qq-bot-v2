@@ -43,6 +43,9 @@ describe('buildBotSystemPrompt', () => {
     const lines = disclosure.split('\n')
     const toolboxLine = lines.find((line) => line.startsWith('- toolbox:')) ?? ''
 
+    assert.match(disclosure, /- chat_style:.*直接调用/)
+    assert.match(disclosure, /- ai_tone:.*直接调用/)
+    assert.match(disclosure, /- journal:.*直接调用/)
     assert.match(disclosure, /- collect_sticker:.*直接调用/)
     assert.doesNotMatch(toolboxLine, /表情包池/)
     assert.equal(lines.filter((line) => line.startsWith('- workspace_bash:')).length, 1)

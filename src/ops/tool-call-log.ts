@@ -107,6 +107,9 @@ export function isSideEffectTool(toolName: string, args?: unknown): boolean {
   if (toolName === 'fetch_content') {
     return hasAnyAction(args, ['image_url', 'qq_avatar'])
   }
+  if (toolName === 'journal') {
+    return hasAction(args, 'write')
+  }
   if (toolName === 'workspace_bash') {
     return isWorkspaceBashSideEffect(args)
   }

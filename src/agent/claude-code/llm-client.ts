@@ -16,9 +16,14 @@ import {
   type ClaudeMessageResponse,
 } from './sse-parser.js'
 import type { LlmClient, LlmCallInput, LlmCallOutput } from '../llm-client.js'
-import type { AssistantToolCall } from '../agent-context.types.js'
+import type { AssistantToolCall, ClaudeAssistantNativeBlock } from '../agent-context.types.js'
 import { recordCurrentTokenUsage } from '../../llm/token-usage.js'
 import { createLogger } from '../../logger.js'
+import {
+  logClaudeThinkingBlocks,
+  type ClaudeThinkingLogBlock,
+  type ClaudeThinkingLogOptions,
+} from './thinking-log.js'
 
 const log = createLogger('claude-code-llm')
 
@@ -59,10 +64,11 @@ export interface CreateClaudeCodeLlmClientInput {
   apiKey: string
   /** Anthropic tool choice. 默认 any; 部分兼容 provider 仅正确支持 auto。 */
   toolChoice?: ClaudeToolChoice
+  thinkingLog?: ClaudeThinkingLogOptions
 }
 
 export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput): LlmClient {
-  const { model, baseURL, apiKey, toolChoice } = input
+  const { model, baseURL, apiKey, toolChoice, thinkingLog } = input
   const url = `${baseURL}/messages?beta=true`
 
   return {
@@ -128,7 +134,16 @@ export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput)
         )
       }
 
-      return toLlmCallOutput(parsed, model)
+      const output = toLlmCallOutput(parsed, model)
+      void logClaudeThinkingBlocks({
+        model: output.model,
+        blocks: thinkingLogBlocks(parsed),
+        toolCallIds: output.toolCalls.map((toolCall) => toolCall.id),
+        options: thinkingLog,
+      }).catch((err) => {
+        log.warn({ err, model: output.model }, 'claude_thinking_log_unexpected_failure')
+      })
+      return output
     },
   }
 }
@@ -174,10 +189,15 @@ async function callOnce(input: CallOnceInput): Promise<CallOnceOutput> {
 function toLlmCallOutput(parsed: ClaudeMessageResponse, fallbackModel: string): LlmCallOutput {
   const textParts: string[] = []
   const toolCalls: AssistantToolCall[] = []
+  const nativeBlocks: ClaudeAssistantNativeBlock[] = []
 
   for (const block of parsed.content ?? []) {
     if (block.type === 'text') {
       if (block.text) textParts.push(block.text)
+      continue
+    }
+    if (block.type === 'thinking' || block.type === 'redacted_thinking') {
+      nativeBlocks.push({ ...block })
       continue
     }
     if (block.type === 'tool_use' && block.id && block.name) {
@@ -209,6 +229,7 @@ function toLlmCallOutput(parsed: ClaudeMessageResponse, fallbackModel: string): 
   return {
     content: textParts.join('\n'),
     toolCalls,
+    ...(nativeBlocks.length > 0 ? { nativeBlocks } : {}),
     usage: {
       inputTokens,
       cachedTokens: cacheRead,
@@ -216,4 +237,11 @@ function toLlmCallOutput(parsed: ClaudeMessageResponse, fallbackModel: string): 
     },
     model: parsed.model ?? fallbackModel,
   }
+}
+
+function thinkingLogBlocks(parsed: ClaudeMessageResponse): ClaudeThinkingLogBlock[] {
+  return (parsed.content ?? []).flatMap((block, blockIndex) => {
+    if (block.type !== 'thinking' && block.type !== 'redacted_thinking') return []
+    return [{ blockIndex, block: { ...block } }]
+  })
 }

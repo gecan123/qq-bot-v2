@@ -59,6 +59,18 @@ function makeFetchMock(responses: Array<{ status?: number; body: string }>): {
   return { fn, calls }
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function resultWithin<T, U>(
+  promise: Promise<T>,
+  ms: number,
+  timeoutValue: U,
+): Promise<T | U> {
+  return Promise.race([promise, delay(ms).then(() => timeoutValue)])
+}
+
 describe('ClaudeCodeLlmClient.chat', () => {
   test('forwards configured auto tool choice into the request body', async (t) => {
     const { fn, calls } = makeFetchMock([{ body: SAMPLE_TEXT_SSE }])
@@ -156,6 +168,150 @@ describe('ClaudeCodeLlmClient.chat', () => {
     assert.equal(out.toolCalls[0]?.id, 'tu_1')
     assert.equal(out.toolCalls[0]?.name, 'send_message')
     assert.deepEqual(out.toolCalls[0]?.args, { text: 'hi' })
+  })
+
+  test('maps thinking blocks to nativeBlocks and raw thinking log without adding to content', async (t) => {
+    const sse =
+      ev('message_start', { type: 'message_start', message: { model: 'claude-thinking-model' } }) +
+      ev('content_block_start', {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'thinking', thinking: '', signature: '' },
+      }) +
+      ev('content_block_delta', {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'thinking_delta', thinking: 'hidden reasoning' },
+      }) +
+      ev('content_block_delta', {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'signature_delta', signature: 'sig_1' },
+      }) +
+      ev('content_block_stop', { type: 'content_block_stop', index: 0 }) +
+      ev('content_block_start', {
+        type: 'content_block_start',
+        index: 1,
+        content_block: { type: 'tool_use', id: 'tu_1', name: 'send_message' },
+      }) +
+      ev('content_block_delta', {
+        type: 'content_block_delta',
+        index: 1,
+        delta: { type: 'input_json_delta', partial_json: '{"text":"hi"}' },
+      }) +
+      ev('content_block_stop', { type: 'content_block_stop', index: 1 })
+    const { fn } = makeFetchMock([{ body: sse }])
+    t.mock.method(globalThis, 'fetch', fn)
+    const appended: Array<{ path: string; line: string }> = []
+    let resolveLogWritten!: () => void
+    const logWritten = new Promise<true>((resolve) => {
+      resolveLogWritten = () => resolve(true)
+    })
+
+    const client = createClaudeCodeLlmClient({
+      model: 'fallback-model',
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+      thinkingLog: {
+        mode: 'raw',
+        path: 'tmp/thinking.ndjson',
+        appender: async (path, line) => {
+          appended.push({ path, line })
+          resolveLogWritten()
+        },
+      },
+    })
+
+    const out = await client.chat({
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [],
+    })
+    assert.equal(await resultWithin(logWritten, 50, false), true)
+
+    assert.deepEqual(out.nativeBlocks, [
+      { type: 'thinking', thinking: 'hidden reasoning', signature: 'sig_1' },
+    ])
+    assert.equal(out.content.includes('hidden reasoning'), false)
+    assert.equal(out.toolCalls.length, 1)
+    assert.equal(out.toolCalls[0]?.id, 'tu_1')
+    assert.equal(out.toolCalls[0]?.name, 'send_message')
+    assert.deepEqual(out.toolCalls[0]?.args, { text: 'hi' })
+    assert.equal(appended.length, 1)
+    assert.equal(appended[0]?.path, 'tmp/thinking.ndjson')
+    const line = JSON.parse(appended[0]?.line ?? '{}') as Record<string, unknown>
+    assert.equal(line.model, 'claude-thinking-model')
+    assert.equal(line.blockIndex, 0)
+    assert.equal(line.type, 'thinking')
+    assert.equal(line.thinking, 'hidden reasoning')
+    assert.equal(line.signature, 'sig_1')
+    assert.deepEqual(line.toolCallIds, ['tu_1'])
+  })
+
+  test('returns LLM output without waiting for thinking log appender completion', async (t) => {
+    const sse =
+      ev('message_start', { type: 'message_start', message: { model: 'claude-thinking-model' } }) +
+      ev('content_block_start', {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'thinking', thinking: '' },
+      }) +
+      ev('content_block_delta', {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'thinking_delta', thinking: 'slow log text' },
+      }) +
+      ev('content_block_stop', { type: 'content_block_stop', index: 0 }) +
+      ev('content_block_start', {
+        type: 'content_block_start',
+        index: 1,
+        content_block: { type: 'tool_use', id: 'tu_slow', name: 'send_message' },
+      }) +
+      ev('content_block_delta', {
+        type: 'content_block_delta',
+        index: 1,
+        delta: { type: 'input_json_delta', partial_json: '{"text":"hi"}' },
+      }) +
+      ev('content_block_stop', { type: 'content_block_stop', index: 1 })
+    const { fn } = makeFetchMock([{ body: sse }])
+    t.mock.method(globalThis, 'fetch', fn)
+
+    let resolveAppender!: () => void
+    const appenderCanFinish = new Promise<void>((resolve) => {
+      resolveAppender = resolve
+    })
+    let resolveAppenderStarted!: () => void
+    const appenderStarted = new Promise<true>((resolve) => {
+      resolveAppenderStarted = () => resolve(true)
+    })
+
+    const client = createClaudeCodeLlmClient({
+      model: 'fallback-model',
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+      thinkingLog: {
+        mode: 'raw',
+        appender: async () => {
+          resolveAppenderStarted()
+          await appenderCanFinish
+        },
+      },
+    })
+
+    const chatPromise = client.chat({
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [],
+    })
+    assert.equal(await resultWithin(appenderStarted, 50, false), true)
+
+    const out = await resultWithin(chatPromise, 50, null)
+    assert.notEqual(out, null)
+    assert.deepEqual(out?.nativeBlocks, [{ type: 'thinking', thinking: 'slow log text' }])
+    assert.equal(out?.toolCalls[0]?.id, 'tu_slow')
+
+    resolveAppender()
+    await appenderCanFinish
   })
 
   test('non-2xx throws ClaudeCodeApiError with full request/response context (no retry)', async (t) => {

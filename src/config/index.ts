@@ -18,6 +18,16 @@ type LlmScenarioConfig = {
   model?: string
 }
 
+type ClaudeThinkingMode = 'disabled' | 'adaptive'
+type ClaudeThinkingRetention = 'active-tool-cycle' | 'always'
+type ClaudeThinkingLog = 'off' | 'summary' | 'raw'
+
+type ClaudeThinkingConfig = {
+  mode: ClaudeThinkingMode
+  retention: ClaudeThinkingRetention
+  log: ClaudeThinkingLog
+}
+
 export const CLAUDE_CODE_PROVIDER_NAME = 'claude-code'
 export const OPENAI_AGENT_PROVIDER_NAME = 'openai-agent'
 export const OPENAI_AGENT_BASE_PROVIDER_NAME = 'openai'
@@ -37,6 +47,10 @@ const SCENARIO_NAME_MAP: Record<string, LlmScenarioKey> = {
   DESCRIBE_PDF: 'describePdf',
   TRANSCRIBE_AUDIO: 'transcribeAudio',
 }
+
+const CLAUDE_THINKING_MODES: readonly ClaudeThinkingMode[] = ['disabled', 'adaptive']
+const CLAUDE_THINKING_RETENTIONS: readonly ClaudeThinkingRetention[] = ['active-tool-cycle', 'always']
+const CLAUDE_THINKING_LOGS: readonly ClaudeThinkingLog[] = ['off', 'summary', 'raw']
 
 function requireEnv(env: EnvSource, name: string): string {
   const value = env[name]
@@ -68,6 +82,41 @@ function parseClaudeToolChoice(value: string | undefined): 'any' | 'auto' {
   throw new Error(
     `Invalid LLM_PROVIDER_CLAUDE_TOOL_CHOICE "${value}" (expected any or auto)`,
   )
+}
+
+function parseEnumValue<T extends string>(
+  name: string,
+  value: string | undefined,
+  allowed: readonly T[],
+  defaultValue: T,
+): T {
+  const normalized = value?.trim().toLowerCase()
+  if (!normalized) return defaultValue
+  if ((allowed as readonly string[]).includes(normalized)) return normalized as T
+  throw new Error(`Invalid ${name} "${value}" (expected ${allowed.join(' or ')})`)
+}
+
+function parseClaudeThinking(env: EnvSource): ClaudeThinkingConfig {
+  return {
+    mode: parseEnumValue(
+      'LLM_PROVIDER_CLAUDE_THINKING',
+      env.LLM_PROVIDER_CLAUDE_THINKING,
+      CLAUDE_THINKING_MODES,
+      'disabled',
+    ),
+    retention: parseEnumValue(
+      'LLM_PROVIDER_CLAUDE_THINKING_PROMPT_RETENTION',
+      env.LLM_PROVIDER_CLAUDE_THINKING_PROMPT_RETENTION,
+      CLAUDE_THINKING_RETENTIONS,
+      'active-tool-cycle',
+    ),
+    log: parseEnumValue(
+      'LLM_PROVIDER_CLAUDE_THINKING_LOG',
+      env.LLM_PROVIDER_CLAUDE_THINKING_LOG,
+      CLAUDE_THINKING_LOGS,
+      'off',
+    ),
+  }
 }
 
 /**
@@ -183,6 +232,7 @@ function parseLlmConfig(env: EnvSource) {
   const defaultProvider = requireEnv(env, 'LLM_DEFAULT_PROVIDER').toLowerCase()
   const defaultModel = requireEnv(env, 'LLM_DEFAULT_MODEL')
   const claudeToolChoice = parseClaudeToolChoice(env.LLM_PROVIDER_CLAUDE_TOOL_CHOICE)
+  const claudeThinking = parseClaudeThinking(env)
 
   if (defaultProvider === CLAUDE_CODE_PROVIDER_NAME) {
     if (!providers[CLAUDE_CODE_BASE_PROVIDER_NAME]) {
@@ -209,6 +259,7 @@ function parseLlmConfig(env: EnvSource) {
     defaultProvider,
     defaultModel,
     claudeToolChoice,
+    claudeThinking,
     providers,
     scenarios,
   }

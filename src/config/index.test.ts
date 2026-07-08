@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { parseConfig, parseIdList } from './index.js'
 
 function createBaseEnv(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
   return {
@@ -18,6 +17,29 @@ function createBaseEnv(overrides: Record<string, string | undefined> = {}): Node
     ...overrides,
   }
 }
+
+const importEnv = createBaseEnv()
+const originalImportEnv = new Map(
+  Object.keys(importEnv).map((key) => [key, process.env[key]]),
+)
+
+Object.assign(process.env, importEnv)
+let configModule: typeof import('./index.js') | undefined
+try {
+  configModule = await import('./index.js')
+} finally {
+  for (const key of Object.keys(importEnv)) {
+    const originalValue = originalImportEnv.get(key)
+    if (originalValue === undefined) {
+      delete process.env[key]
+    } else {
+      process.env[key] = originalValue
+    }
+  }
+}
+
+if (!configModule) throw new Error('Failed to import config module')
+const { parseConfig, parseIdList } = configModule
 
 describe('config', () => {
   test('parses provider registry and scenario provider/model routing', () => {
@@ -61,6 +83,51 @@ describe('config', () => {
         LLM_PROVIDER_CLAUDE_TOOL_CHOICE: 'required',
       })),
       /LLM_PROVIDER_CLAUDE_TOOL_CHOICE/,
+    )
+  })
+
+  test('defaults Claude thinking toggles to disabled active-tool-cycle off', () => {
+    const config = parseConfig(createBaseEnv())
+
+    assert.deepEqual(config.llm.claudeThinking, {
+      mode: 'disabled',
+      retention: 'active-tool-cycle',
+      log: 'off',
+    })
+  })
+
+  test('parses Claude thinking toggle overrides', () => {
+    const config = parseConfig(createBaseEnv({
+      LLM_PROVIDER_CLAUDE_THINKING: 'adaptive',
+      LLM_PROVIDER_CLAUDE_THINKING_PROMPT_RETENTION: 'always',
+      LLM_PROVIDER_CLAUDE_THINKING_LOG: 'raw',
+    }))
+
+    assert.deepEqual(config.llm.claudeThinking, {
+      mode: 'adaptive',
+      retention: 'always',
+      log: 'raw',
+    })
+  })
+
+  test('rejects invalid Claude thinking toggle values', () => {
+    assert.throws(
+      () => parseConfig(createBaseEnv({
+        LLM_PROVIDER_CLAUDE_THINKING: 'on',
+      })),
+      /LLM_PROVIDER_CLAUDE_THINKING/,
+    )
+    assert.throws(
+      () => parseConfig(createBaseEnv({
+        LLM_PROVIDER_CLAUDE_THINKING_PROMPT_RETENTION: 'forever',
+      })),
+      /LLM_PROVIDER_CLAUDE_THINKING_PROMPT_RETENTION/,
+    )
+    assert.throws(
+      () => parseConfig(createBaseEnv({
+        LLM_PROVIDER_CLAUDE_THINKING_LOG: 'verbose',
+      })),
+      /LLM_PROVIDER_CLAUDE_THINKING_LOG/,
     )
   })
 

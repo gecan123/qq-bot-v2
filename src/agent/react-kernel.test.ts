@@ -50,7 +50,6 @@ describe('runReactRound', () => {
     }
 
     const result = await runReactRound({
-      roundIndex: 7,
       systemPrompt: 'system',
       context,
       llm,
@@ -93,7 +92,6 @@ describe('runReactRound', () => {
     }
 
     const result = await runReactRound({
-      roundIndex: 1,
       systemPrompt: 'system',
       context,
       llm,
@@ -135,7 +133,6 @@ describe('runReactRound', () => {
     }
 
     const result = await runReactRound({
-      roundIndex: 2,
       systemPrompt: 'system',
       context,
       llm,
@@ -143,7 +140,9 @@ describe('runReactRound', () => {
       toolContext: { eventQueue, roundIndex: 2 },
     })
 
-    assert.deepEqual(result.controls, [{ type: 'pause' }])
+    assert.deepEqual(result.controls, [
+      { toolCallId: 'pause-1', toolName: 'pause', control: { type: 'pause' } },
+    ])
     const messages = context.getSnapshot().messages
     assert.deepEqual(messages, [
       { role: 'user', content: 'pause now' },
@@ -155,5 +154,55 @@ describe('runReactRound', () => {
       assert.fail('expected persisted pause result to be a tool message')
     }
     assert.equal('control' in toolMessage, false)
+  })
+
+  test('appends deterministic error tool result when executor rejects after assistant turn is appended', async () => {
+    const context = createAgentContext()
+    context.appendUserMessage('lookup with failure')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    const toolCall = { id: 'lookup-fail-1', name: 'lookup', args: { query: 'boom' } }
+
+    const llm: LlmClient = {
+      async chat(): Promise<LlmCallOutput> {
+        return {
+          content: '',
+          toolCalls: [toolCall],
+          usage: { inputTokens: 6, cachedTokens: 0, outputTokens: 4 },
+          model: 'mock',
+        }
+      },
+    }
+
+    const tools: ToolExecutor = {
+      list: () => [makeTool('lookup', z.object({ query: z.string() }))],
+      async execute(): Promise<ToolExecutionResult> {
+        throw new Error('boom')
+      },
+    }
+
+    const result = await runReactRound({
+      systemPrompt: 'system',
+      context,
+      llm,
+      tools,
+      toolContext: { eventQueue, roundIndex: 3 },
+    })
+
+    assert.equal(result.inputTokens, 6)
+    assert.equal(result.tokensUsed, 10)
+    assert.deepEqual(result.controls, [])
+    assert.deepEqual(context.getSnapshot().messages, [
+      { role: 'user', content: 'lookup with failure' },
+      { role: 'assistant', content: '', toolCalls: [toolCall] },
+      {
+        role: 'tool',
+        toolCallId: 'lookup-fail-1',
+        content: JSON.stringify({
+          ok: false,
+          code: 'execution_failed',
+          error: 'Tool execution failed: boom',
+        }),
+      },
+    ])
   })
 })

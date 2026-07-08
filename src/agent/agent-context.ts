@@ -147,5 +147,24 @@ function cloneToolResultBlock(block: ToolResultContentBlock): ToolResultContentB
 }
 
 function cloneToolCall(call: AssistantToolCall): AssistantToolCall {
-  return { id: call.id, name: call.name, args: { ...call.args } }
+  return { id: call.id, name: call.name, args: cloneToolCallArgs(call.args) }
+}
+
+function cloneToolCallArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const output: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(args)) {
+    output[key] = cloneJsonLike(value)
+  }
+  return output
+}
+
+function cloneJsonLike(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(cloneJsonLike)
+
+  const output: Record<string, unknown> = {}
+  for (const [key, nestedValue] of Object.entries(value)) {
+    output[key] = cloneJsonLike(nestedValue)
+  }
+  return output
 }

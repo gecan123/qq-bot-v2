@@ -90,4 +90,27 @@ describe('createAgentContext', () => {
       assert.fail('expected assistant turn')
     }
   })
+
+  test('cloning isolates nested assistant tool call args', () => {
+    const ctx = createAgentContext()
+    const callArgs = { target: { groupId: '123' }, payload: { text: 'hi' } }
+    ctx.appendAssistantTurn({
+      content: '',
+      toolCalls: [{ id: '1', name: 'send_message', args: callArgs }],
+    })
+
+    callArgs.target.groupId = 'mutated'
+    callArgs.payload.text = 'changed'
+
+    const messages = ctx.getSnapshot().messages
+    const turn = messages[0]
+    if (turn && turn.role === 'assistant') {
+      assert.deepEqual(turn.toolCalls[0]?.args, {
+        target: { groupId: '123' },
+        payload: { text: 'hi' },
+      })
+    } else {
+      assert.fail('expected assistant turn')
+    }
+  })
 })

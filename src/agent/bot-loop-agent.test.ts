@@ -778,6 +778,104 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(cooldownWaits, 0)
   })
 
+  test('delegates tool execution failures to the React kernel durable error result path', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    const { repo } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: 'you are a bot',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [{ id: 'boom-1', name: 'boom', args: {} }],
+        usage: { inputTokens: 4, cachedTokens: 0, outputTokens: 3 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools({
+        boom: async () => {
+          throw new Error('kernel catches this')
+        },
+      }),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    const toolMessage = ctx.getSnapshot().messages.find((message) => message.role === 'tool')
+    assert.equal(toolMessage?.role, 'tool')
+    if (toolMessage?.role === 'tool') {
+      assert.equal(toolMessage.toolCallId, 'boom-1')
+      assert.equal(typeof toolMessage.content, 'string')
+      const content = JSON.parse(toolMessage.content as string) as { code?: unknown; error?: unknown }
+      assert.equal(content.code, 'execution_failed')
+      const error = content.error
+      if (typeof error !== 'string') {
+        assert.fail('expected durable error content to include an error string')
+      }
+      assert.match(error, /kernel catches this/)
+    }
+  })
+
+  test('ignores pause controls returned by non-pause tools', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    let llmCallCount = 0
+    let cooldownWaits = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const llm: LlmClient = {
+      async chat() {
+        llmCallCount++
+        if (llmCallCount === 3) await agent.stop()
+        return {
+          content: '',
+          toolCalls: llmCallCount === 1
+            ? [{ id: 'lookup-1', name: 'lookup', args: {} }]
+            : [],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+          model: 'mock',
+        }
+      },
+    }
+    const tools = makeMockTools({
+      lookup: async () => ({
+        content: '{"ok":true}',
+        control: { type: 'pause' },
+      }),
+    })
+    const { repo } = makeMockSnapshotRepo()
+
+    agent = createBotLoopAgent({
+      systemPrompt: 'you are a bot',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools,
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        maxConsecutiveRounds: 2,
+        cooldownMs: 60_000,
+        dailyTokenBudget: 1_000_000,
+        async waitForAttentionOrTimeout() {
+          cooldownWaits++
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 2)
+    assert.equal(cooldownWaits, 1)
+  })
+
   test('send_message 非 sent 状态即使 ok=true 也立即跑下一轮让 LLM 修正', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()

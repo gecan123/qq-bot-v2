@@ -7,7 +7,7 @@ import type { BotEvent } from './event.js'
 import type { BotSnapshotRepo } from './snapshot-repo.js'
 import { maybeCompactConversation, type MaybeCompactOptions } from './compaction.js'
 import { injectStickerPoolAfterCompaction } from './sticker-pool.js'
-import { recordTokenUsage } from './token-stats.js'
+import { runReactRound } from './react-kernel.js'
 import { createLogger } from '../logger.js'
 import {
   planMailboxDisclosures,
@@ -153,71 +153,23 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     didPause: boolean
   }> {
     roundIndex++
-    const snapshot = deps.context.getSnapshot()
-    const tools = deps.tools.list()
-
-    const completion = await deps.llm.chat({
+    const result = await runReactRound({
       systemPrompt: deps.systemPrompt,
-      messages: snapshot.messages,
-      tools,
-    })
-
-    log.info(
-      {
-        roundIndex,
-        toolCallCount: completion.toolCalls.length,
-        toolNames: completion.toolCalls.map((c) => c.name),
-        contentLen: completion.content.length,
-        inputTokens: completion.usage.inputTokens,
-        cachedTokens: completion.usage.cachedTokens,
-        outputTokens: completion.usage.outputTokens,
-        model: completion.model,
-      },
-      'round_llm_done',
-    )
-
-    recordTokenUsage({
-      operation: 'agent.chat',
-      roundIndex,
-      inputTokens: completion.usage.inputTokens,
-      cachedTokens: completion.usage.cachedTokens,
-      outputTokens: completion.usage.outputTokens,
-      model: completion.model,
-    })
-
-    if (completion.content.length > 0) {
-      log.warn(
-        {
-          roundIndex,
-          contentLen: completion.content.length,
-          toolCallCount: completion.toolCalls.length,
-        },
-        'assistant_text_dropped_from_context',
-      )
-    }
-
-    if (completion.toolCalls.length > 0) {
-      deps.context.appendAssistantTurn({
-        content: '',
-        toolCalls: completion.toolCalls,
-      })
-    }
-
-    let didPause = false
-    for (const call of completion.toolCalls) {
-      const result = await deps.tools.execute(call, {
+      context: deps.context,
+      llm: deps.llm,
+      tools: deps.tools,
+      toolContext: {
         eventQueue: deps.eventQueue,
         roundIndex,
-      })
-      if (call.name === 'pause' && result.control?.type === 'pause') {
-        didPause = true
-      }
-      deps.context.appendToolResult({ toolCallId: call.id, content: result.content })
-    }
+      },
+    })
+    const didPause = result.controls.some(
+      (control) => control.toolName === 'pause' && control.control.type === 'pause',
+    )
 
     return {
-      inputTokens: completion.usage.inputTokens,
-      tokensUsed: (completion.usage.inputTokens ?? 0) + (completion.usage.outputTokens ?? 0),
+      inputTokens: result.inputTokens,
+      tokensUsed: result.tokensUsed,
       didPause,
     }
   }

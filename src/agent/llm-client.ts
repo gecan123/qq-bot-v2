@@ -1,6 +1,6 @@
 import type { AgentMessage } from './agent-context.types.js'
 import type { Tool } from './tool.js'
-import type { AssistantToolCall } from './agent-context.types.js'
+import type { AssistantToolCall, ClaudeAssistantNativeBlock } from './agent-context.types.js'
 import {
   CLAUDE_CODE_BASE_PROVIDER_NAME,
   CLAUDE_CODE_PROVIDER_NAME,
@@ -35,6 +35,7 @@ export interface LlmCallOutput {
   /** Provider 返回的普通 assistant 文本。仅用于观测; BotLoop 不把它写入 AgentContext。 */
   content: string
   toolCalls: AssistantToolCall[]
+  nativeBlocks?: ClaudeAssistantNativeBlock[]
   /** 用于观测 cache 命中的 usage。 */
   usage: {
     inputTokens: number | null

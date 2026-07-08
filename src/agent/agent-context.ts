@@ -1,7 +1,20 @@
-import type { AgentMessage, AssistantToolCall, PersistedAgentSnapshot, ToolResultContent, ToolResultContentBlock } from './agent-context.types.js'
+import type {
+  AgentMessage,
+  AssistantToolCall,
+  ClaudeAssistantNativeBlock,
+  PersistedAgentSnapshot,
+  ToolResultContent,
+  ToolResultContentBlock,
+} from './agent-context.types.js'
 import { SNAPSHOT_SCHEMA_VERSION } from './agent-context.types.js'
 
-export type { AgentMessage, AssistantToolCall, PersistedAgentSnapshot, ToolResultContent } from './agent-context.types.js'
+export type {
+  AgentMessage,
+  AssistantToolCall,
+  ClaudeAssistantNativeBlock,
+  PersistedAgentSnapshot,
+  ToolResultContent,
+} from './agent-context.types.js'
 
 /**
  * Single-context bot 的 AgentContext。
@@ -16,7 +29,11 @@ export type { AgentMessage, AssistantToolCall, PersistedAgentSnapshot, ToolResul
 export interface AgentContext {
   getSnapshot(): { messages: AgentMessage[]; activeToolCapabilities: string[] }
   appendUserMessage(content: string): void
-  appendAssistantTurn(turn: { content: string; toolCalls: AssistantToolCall[] }): void
+  appendAssistantTurn(turn: {
+    content: string
+    toolCalls: AssistantToolCall[]
+    nativeBlocks?: ClaudeAssistantNativeBlock[]
+  }): void
   appendToolResult(input: { toolCallId: string; content: ToolResultContent }): void
   activateToolCapability(capability: string): void
   deactivateToolCapability(capability: string): void
@@ -46,12 +63,20 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
     appendUserMessage(content: string): void {
       messages.push({ role: 'user', content })
     },
-    appendAssistantTurn(turn: { content: string; toolCalls: AssistantToolCall[] }): void {
-      messages.push({
+    appendAssistantTurn(turn: {
+      content: string
+      toolCalls: AssistantToolCall[]
+      nativeBlocks?: ClaudeAssistantNativeBlock[]
+    }): void {
+      const message: AgentMessage = {
         role: 'assistant',
         content: turn.content,
         toolCalls: turn.toolCalls.map(cloneToolCall),
-      })
+      }
+      if (turn.nativeBlocks !== undefined) {
+        message.nativeBlocks = cloneNativeBlocks(turn.nativeBlocks)
+      }
+      messages.push(message)
     },
     appendToolResult(input: { toolCallId: string; content: ToolResultContent }): void {
       messages.push({
@@ -113,10 +138,16 @@ function cloneMessage(input: AgentMessage): AgentMessage {
     case 'user':
       return { role: 'user', content: input.content }
     case 'assistant':
-      return {
-        role: 'assistant',
-        content: input.content,
-        toolCalls: input.toolCalls.map(cloneToolCall),
+      {
+        const output: AgentMessage = {
+          role: 'assistant',
+          content: input.content,
+          toolCalls: input.toolCalls.map(cloneToolCall),
+        }
+        if (input.nativeBlocks !== undefined) {
+          output.nativeBlocks = cloneNativeBlocks(input.nativeBlocks)
+        }
+        return output
       }
     case 'tool':
       return {
@@ -125,6 +156,14 @@ function cloneMessage(input: AgentMessage): AgentMessage {
         content: cloneToolResultContent(input.content),
       }
   }
+}
+
+function cloneNativeBlocks(blocks: ClaudeAssistantNativeBlock[]): ClaudeAssistantNativeBlock[] {
+  return blocks.map(cloneNativeBlock)
+}
+
+function cloneNativeBlock(block: ClaudeAssistantNativeBlock): ClaudeAssistantNativeBlock {
+  return cloneJsonLike(block) as ClaudeAssistantNativeBlock
 }
 
 function cloneToolResultContent(content: ToolResultContent): ToolResultContent {

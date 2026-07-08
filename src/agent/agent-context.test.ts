@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { createAgentContext } from './agent-context.js'
-import type { AgentMessage } from './agent-context.types.js'
+import type { AgentMessage, ClaudeAssistantNativeBlock } from './agent-context.types.js'
 import { SNAPSHOT_SCHEMA_VERSION } from './agent-context.types.js'
 
 describe('createAgentContext', () => {
@@ -109,6 +109,41 @@ describe('createAgentContext', () => {
         target: { groupId: '123' },
         payload: { text: 'hi' },
       })
+    } else {
+      assert.fail('expected assistant turn')
+    }
+  })
+
+  test('cloning isolates assistant native blocks', () => {
+    const ctx = createAgentContext()
+    const nativeBlocks: ClaudeAssistantNativeBlock[] = [
+      { type: 'thinking', thinking: 'plan', signature: 'sig', extra: { nested: 'value' } },
+    ]
+
+    ctx.appendAssistantTurn({
+      content: '',
+      toolCalls: [],
+      nativeBlocks,
+    })
+
+    ;(nativeBlocks[0]!.extra as { nested: string }).nested = 'mutated'
+
+    const expectedNativeBlocks = [
+      { type: 'thinking', thinking: 'plan', signature: 'sig', extra: { nested: 'value' } },
+    ]
+    const snapshot = ctx.getSnapshot()
+    const turn = snapshot.messages[0]
+    if (turn && turn.role === 'assistant') {
+      assert.deepEqual(turn.nativeBlocks, expectedNativeBlocks)
+      ;(turn.nativeBlocks![0]!.extra as { nested: string }).nested = 'snapshot mutation'
+    } else {
+      assert.fail('expected assistant turn')
+    }
+
+    const freshSnapshot = ctx.getSnapshot()
+    const freshTurn = freshSnapshot.messages[0]
+    if (freshTurn && freshTurn.role === 'assistant') {
+      assert.deepEqual(freshTurn.nativeBlocks, expectedNativeBlocks)
     } else {
       assert.fail('expected assistant turn')
     }

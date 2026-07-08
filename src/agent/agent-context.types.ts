@@ -16,6 +16,10 @@ export interface AssistantToolCall {
   args: Record<string, unknown>
 }
 
+export type ClaudeAssistantNativeBlock =
+  | { type: 'thinking'; thinking?: string; signature?: string; [key: string]: unknown }
+  | { type: 'redacted_thinking'; data?: string; [key: string]: unknown }
+
 export interface ToolResultTextBlock {
   type: 'text'
   text: string
@@ -36,7 +40,12 @@ export type ToolResultContent = string | ToolResultContentBlock[]
 
 export type AgentMessage =
   | { role: 'user'; content: string }
-  | { role: 'assistant'; content: string; toolCalls: AssistantToolCall[] }
+  | {
+      role: 'assistant'
+      content: string
+      toolCalls: AssistantToolCall[]
+      nativeBlocks?: ClaudeAssistantNativeBlock[]
+    }
   | { role: 'tool'; toolCallId: string; content: ToolResultContent }
 
 /**

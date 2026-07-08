@@ -57,7 +57,7 @@ function restResult(
       intention,
     }),
     outcome: { ok: true, code: status },
-    control: { type: 'pause' },
+    effects: [{ type: 'pause' }],
   }
 }
 

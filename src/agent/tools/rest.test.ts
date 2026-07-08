@@ -89,7 +89,7 @@ describe('rest tool', () => {
     assert.equal(typeof payload.elapsedMs, 'number')
     assert.equal(payload.intention, '继续自己的研究')
     assert.deepEqual(result.outcome, { ok: true, code: 'interrupted' })
-    assert.deepEqual(result.control, { type: 'pause' })
+    assert.deepEqual(result.effects, [{ type: 'pause' }])
     assert.equal(queue.size(), 1)
   })
 
@@ -100,7 +100,7 @@ describe('rest tool', () => {
     const result = await restTool.execute({ durationSeconds: 30, intention: '继续自己的研究' }, ctx)
 
     assert.equal(JSON.parse(result.content as string).status, 'interrupted')
-    assert.deepEqual(result.control, { type: 'pause' })
+    assert.deepEqual(result.effects, [{ type: 'pause' }])
     assert.equal(queue.size(), 1)
   })
 
@@ -128,7 +128,7 @@ describe('rest tool', () => {
     assert.equal(payload.intention, '继续自己的研究')
     assert.equal(typeof payload.elapsedMs, 'number')
     assert.deepEqual(finalResult.outcome, { ok: true, code: 'elapsed' })
-    assert.deepEqual(finalResult.control, { type: 'pause' })
+    assert.deepEqual(finalResult.effects, [{ type: 'pause' }])
   })
 })
 

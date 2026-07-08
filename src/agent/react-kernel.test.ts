@@ -60,7 +60,7 @@ describe('runReactRound', () => {
     assert.deepEqual(executionOrder, ['7:lookup'])
     assert.equal(result.inputTokens, 10)
     assert.equal(result.tokensUsed, 15)
-    assert.deepEqual(result.controls, [])
+    assert.deepEqual(result.effects, [])
     assert.deepEqual(context.getSnapshot().messages, [
       { role: 'user', content: 'hello' },
       { role: 'assistant', content: '', toolCalls: [toolCall] },
@@ -101,11 +101,11 @@ describe('runReactRound', () => {
 
     assert.equal(result.inputTokens, 4)
     assert.equal(result.tokensUsed, 10)
-    assert.deepEqual(result.controls, [])
+    assert.deepEqual(result.effects, [])
     assert.deepEqual(context.getSnapshot().messages, [{ role: 'user', content: 'hello' }])
   })
 
-  test('returns pause control but only appends tool result content to AgentContext', async () => {
+  test('returns pause effect but only appends tool result content to AgentContext', async () => {
     const context = createAgentContext()
     context.appendUserMessage('pause now')
     const eventQueue = new InMemoryEventQueue<BotEvent>()
@@ -127,7 +127,7 @@ describe('runReactRound', () => {
       async execute(): Promise<ToolExecutionResult> {
         return {
           content: '{"ok":true,"action":"rest"}',
-          control: { type: 'pause' },
+          effects: [{ type: 'pause' }],
         } satisfies ToolExecutionResult
       },
     }
@@ -140,8 +140,8 @@ describe('runReactRound', () => {
       toolContext: { eventQueue, roundIndex: 2 },
     })
 
-    assert.deepEqual(result.controls, [
-      { toolCallId: 'pause-1', toolName: 'pause', control: { type: 'pause' } },
+    assert.deepEqual(result.effects, [
+      { toolCallId: 'pause-1', toolName: 'pause', effect: { type: 'pause' } },
     ])
     const messages = context.getSnapshot().messages
     assert.deepEqual(messages, [
@@ -153,7 +153,7 @@ describe('runReactRound', () => {
     if (toolMessage?.role !== 'tool') {
       assert.fail('expected persisted pause result to be a tool message')
     }
-    assert.equal('control' in toolMessage, false)
+    assert.equal('effects' in toolMessage, false)
   })
 
   test('appends deterministic error tool result when executor rejects after assistant turn is appended', async () => {
@@ -190,7 +190,7 @@ describe('runReactRound', () => {
 
     assert.equal(result.inputTokens, 6)
     assert.equal(result.tokensUsed, 10)
-    assert.deepEqual(result.controls, [])
+    assert.deepEqual(result.effects, [])
     assert.deepEqual(context.getSnapshot().messages, [
       { role: 'user', content: 'lookup with failure' },
       { role: 'assistant', content: '', toolCalls: [toolCall] },

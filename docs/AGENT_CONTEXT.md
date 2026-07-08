@@ -15,7 +15,7 @@
 - system prompt 字节和 tool description 会影响 cache identity。修改时要有意、集中处理。
 - replay 必须确定性。同样输入下，snapshot message 字节应当跨运行稳定。
 - 大块外部内容必须通过有边界的 tool result、摘要或受控文件路径进入。raw pages、feeds、长文件和可变日志不能直接注入主 context。
-- `ToolExecutionResult.content` 是唯一进入 `AgentContext` 的工具结果。`outcome` 和 `control` 只服务当前运行时的日志、分支和循环控制，不得 append、持久化或用于 replay 重建。
+- `ToolExecutionResult.content` 是唯一进入 `AgentContext` 的工具结果。`outcome` 和 `effects` 只服务当前运行时的日志、分支和 EffectInterpreter，不得 append、持久化或用于 replay 重建。
 - 可供下一轮机器判断的 tool result 使用稳定 JSON；截断必须发生在字段或数组条目层，并用显式标记披露，不能直接切断序列化后的 JSON。
 - generated image bytes 可以放在 `OutboundCache` 或 artifact 路径里，压缩 preview 可以进入 context。preview 压缩失败时，降级为稳定文本结果。
 - 图片 handle 遵循共享 schema：吃图工具接受 `{mediaId}` 或 `{ephemeralRef}`；发送链路使用 `media:N` 或 `ephemeral:<64-hex>` 这类字符串 ref。
@@ -35,7 +35,8 @@
 - `src/agent/agent-context.ts`：内存中的 context 操作。
 - `src/agent/snapshot-repo.ts`：`bot_agent_snapshot` 持久化。
 - `src/agent/bot-loop-agent.ts`：Runtime Host，负责事件披露、mailbox cursors、snapshot 原子保存、life journal hook、compaction 和循环控制。
-- `src/agent/react-kernel.ts`：一轮 ReAct transcript append 边界；只把 `ToolExecutionResult.content` 写入 `AgentContext`，`outcome` / `control` 返回 Runtime Host。
+- `src/agent/react-kernel.ts`：一轮 ReAct transcript append 边界；只把 `ToolExecutionResult.content` 写入 `AgentContext`，`outcome` / `effects` 返回 Runtime Host。
+- `src/agent/effect-interpreter.ts`：解释工具声明的 runtime effects，并集中执行合法性判断。
 - `src/agent/compaction.ts`：基于摘要的历史 compaction。
 - `src/agent/render-event.ts`：确定性的 event-to-user-message 渲染。
 - `src/agent/mailbox.ts`：来源 key、direct/ambient 分类、通知渲染和 cursor 推进。

@@ -8,6 +8,7 @@ import type { BotSnapshotRepo } from './snapshot-repo.js'
 import { maybeCompactConversation, type MaybeCompactOptions } from './compaction.js'
 import { injectStickerPoolAfterCompaction } from './sticker-pool.js'
 import { runReactRound } from './react-kernel.js'
+import { interpretToolEffects } from './effect-interpreter.js'
 import { createLogger } from '../logger.js'
 import {
   planMailboxDisclosures,
@@ -163,9 +164,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         roundIndex,
       },
     })
-    const didPause = result.controls.some(
-      (control) => control.toolName === 'pause' && control.control.type === 'pause',
-    )
+    const { didPause } = interpretToolEffects(result.effects)
 
     return {
       inputTokens: result.inputTokens,

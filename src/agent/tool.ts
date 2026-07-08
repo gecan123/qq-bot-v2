@@ -10,7 +10,7 @@ const log = createLogger('TOOL_EXECUTOR')
 
 /**
  * Tool 接口最简形:name + description + 参数 schema + execute。
- * 不区分 control / business / kind, 必要时再加。
+ * 运行时动作通过 ToolExecutionResult.effects 声明，再由 EffectInterpreter 解释。
  *
  * execute 失败 (抛异常) 由调用方 (BotLoopAgent) catch 后写一条 tool result content 表示
  * 失败,而不是把异常向外冒泡——保证 round 不会因为单个 tool 抛异常而崩溃。
@@ -33,8 +33,8 @@ export interface ToolExecutionResult {
   content: ToolResultContent
   /** 仅供 runtime / 审计使用，不进入 AgentContext。 */
   outcome?: ToolExecutionOutcome
-  /** 仅供主循环控制使用，不进入 AgentContext。 */
-  control?: ToolControl
+  /** 工具请求 runtime 执行的声明式动作；不进入 AgentContext。 */
+  effects?: ToolEffect[]
 }
 
 export interface ToolExecutionOutcome {
@@ -43,7 +43,7 @@ export interface ToolExecutionOutcome {
   error?: string
 }
 
-export type ToolControl = { type: 'pause' }
+export type ToolEffect = { type: 'pause' }
 
 export interface ToolHookContext extends ToolContext {
   tool: Tool

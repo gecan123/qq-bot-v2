@@ -11,7 +11,7 @@
 3. ready 后的消息被投递为 `BotEvent`。
 4. `src/agent/mailbox.ts` 把所有 QQ 消息按来源聚合为不含正文的确定性通知，并计算批次级 `priority=high|normal`；非 QQ 运行时事件仍走稳定 direct 渲染。
 5. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责事件披露、mailbox cursors、context snapshot 原子保存、life journal hook、compaction，以及 pause/autonomy 循环控制。
-6. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct：把 system prompt、当前 messages 和可见 tools 发给 LLM，append assistant tool calls，顺序执行工具，并且只把 `ToolExecutionResult.content` append 为 tool result。工具的 `outcome` / `control` 返回 Runtime Host 作为当前循环元数据，不进入 ledger。
+6. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct：把 system prompt、当前 messages 和可见 tools 发给 LLM，append assistant tool calls，顺序执行工具，并且只把 `ToolExecutionResult.content` append 为 tool result。工具的 `outcome` / `effects` 返回 Runtime Host；`src/agent/effect-interpreter.ts` 统一解释 runtime effects，不进入 ledger。
 
 ## 自主循环
 

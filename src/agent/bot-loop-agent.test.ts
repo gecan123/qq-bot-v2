@@ -718,7 +718,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     }
   })
 
-  test('pause control resets consecutive-round guard without parsing result content', async () => {
+  test('pause effect resets consecutive-round guard without parsing result content', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'curiosity_tick' })
@@ -744,7 +744,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         return {
           content: JSON.stringify({ ok: true, status: 'elapsed' }),
           outcome: { ok: true, code: 'elapsed' },
-          control: { type: 'pause' },
+          effects: [{ type: 'pause' }],
         }
       },
     })
@@ -820,7 +820,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     }
   })
 
-  test('ignores pause controls returned by non-pause tools', async () => {
+  test('effect interpreter rejects pause effects returned by non-pause tools', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'curiosity_tick' })
@@ -844,7 +844,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const tools = makeMockTools({
       lookup: async () => ({
         content: '{"ok":true}',
-        control: { type: 'pause' },
+        effects: [{ type: 'pause' }],
       }),
     })
     const { repo } = makeMockSnapshotRepo()

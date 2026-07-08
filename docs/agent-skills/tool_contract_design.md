@@ -23,7 +23,7 @@ description: 新增或修改 bot tool schema、工具注册、tool result、defe
 结果设计:
 
 - 只有 `ToolExecutionResult.content` 进入 `AgentContext`。
-- `outcome` 和 `control` 只服务当前运行时，不能 append、持久化或用于 replay 重建。
+- `outcome` 和 `effects` 只服务当前运行时，不能 append、持久化或用于 replay 重建。
 - 需要后续机器判断的结果使用稳定 JSON。
 - 截断必须发生在字段或数组条目层，并用 `truncated` 或类似字段说明。
 - 不要把 stdout 看起来像 JSON 就自动解释；保留命令信封和退出码。

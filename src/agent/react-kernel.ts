@@ -1,6 +1,6 @@
 import type { AgentContext } from './agent-context.js'
 import type { LlmClient } from './llm-client.js'
-import type { ToolControl, ToolContext, ToolExecutionResult, ToolExecutor } from './tool.js'
+import type { ToolContext, ToolEffect, ToolExecutionResult, ToolExecutor } from './tool.js'
 import { recordTokenUsage } from './token-stats.js'
 import { createLogger } from '../logger.js'
 
@@ -14,16 +14,16 @@ export interface ReactRoundInput {
   toolContext: ToolContext
 }
 
-export interface ReactToolControl {
+export interface ReactToolEffect {
   toolCallId: string
   toolName: string
-  control: ToolControl
+  effect: ToolEffect
 }
 
 export interface ReactRoundResult {
   inputTokens: number | null
   tokensUsed: number
-  controls: ReactToolControl[]
+  effects: ReactToolEffect[]
 }
 
 export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundResult> {
@@ -78,14 +78,14 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
     })
   }
 
-  const controls: ReactToolControl[] = []
+  const effects: ReactToolEffect[] = []
   for (const call of completion.toolCalls) {
     const result = await executeToolCall(input.tools, call, input.toolContext)
-    if (result.control) {
-      controls.push({
+    for (const effect of result.effects ?? []) {
+      effects.push({
         toolCallId: call.id,
         toolName: call.name,
-        control: result.control,
+        effect,
       })
     }
     input.context.appendToolResult({ toolCallId: call.id, content: result.content })
@@ -94,7 +94,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
   return {
     inputTokens: completion.usage.inputTokens,
     tokensUsed: (completion.usage.inputTokens ?? 0) + (completion.usage.outputTokens ?? 0),
-    controls,
+    effects,
   }
 }
 

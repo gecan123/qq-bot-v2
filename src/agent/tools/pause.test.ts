@@ -83,7 +83,7 @@ describe('pause tool', () => {
     assert.equal(content.elapsedMs >= 0, true)
     assert.equal(content.elapsedMs < 100, true)
     assert.deepEqual(result.outcome, { ok: true, code: 'interrupted' })
-    assert.deepEqual(result.control, { type: 'pause' })
+    assert.deepEqual(result.effects, [{ type: 'pause' }])
     assert.equal(queue.size(), 1)
   })
 })

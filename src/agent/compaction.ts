@@ -91,6 +91,13 @@ function splitExistingSummary(messages: AgentMessage[]): {
 
 function stripImagesForSummary(messages: AgentMessage[]): AgentMessage[] {
   return messages.map((m) => {
+    if (m.role === 'assistant' && m.nativeBlocks !== undefined) {
+      return {
+        role: 'assistant',
+        content: m.content,
+        toolCalls: m.toolCalls,
+      }
+    }
     if (m.role !== 'tool' || typeof m.content === 'string') return m
     return {
       ...m,
@@ -99,6 +106,41 @@ function stripImagesForSummary(messages: AgentMessage[]): AgentMessage[] {
       ),
     }
   })
+}
+
+function stripInactiveNativeBlocks(messages: AgentMessage[]): AgentMessage[] {
+  return messages.map((message, index) => {
+    if (
+      message.role !== 'assistant' ||
+      message.nativeBlocks === undefined ||
+      isActiveToolCycleAtTail(messages, index)
+    ) {
+      return message
+    }
+    return {
+      role: 'assistant',
+      content: message.content,
+      toolCalls: message.toolCalls,
+    }
+  })
+}
+
+function isActiveToolCycleAtTail(messages: AgentMessage[], index: number): boolean {
+  const message = messages[index]
+  if (!message || message.role !== 'assistant' || message.toolCalls.length === 0) {
+    return false
+  }
+
+  const pendingToolCallIds = new Set(message.toolCalls.map((call) => call.id))
+  let cursor = index + 1
+  while (cursor < messages.length) {
+    const next = messages[cursor]
+    if (!next || next.role !== 'tool' || !pendingToolCallIds.has(next.toolCallId)) break
+    pendingToolCallIds.delete(next.toolCallId)
+    cursor += 1
+  }
+
+  return pendingToolCallIds.size === 0 && cursor === messages.length
 }
 
 async function defaultSummarize(input: SummarizeInput): Promise<string> {
@@ -164,7 +206,7 @@ export async function maybeCompactConversation(
   }
 
   const toCompress = snapshot.messages.slice(0, cutIndex)
-  const tail = snapshot.messages.slice(cutIndex)
+  const tail = stripInactiveNativeBlocks(snapshot.messages.slice(cutIndex))
   const { previousSummary, rest: historyToSummarize } = splitExistingSummary(toCompress)
 
   const drop = Math.max(1, Math.ceil(historyToSummarize.length * SUMMARIZER_DROP_RATIO))
@@ -181,7 +223,7 @@ export async function maybeCompactConversation(
   try {
     newSummary = await summarize({
       previousSummary,
-      history: trimmedHistory,
+      history: stripImagesForSummary(trimmedHistory),
     })
   } catch (err) {
     log.error({ err, inputTokens: lastInputTokens, cutIndex }, 'summarizer_failed_emergency_truncation')

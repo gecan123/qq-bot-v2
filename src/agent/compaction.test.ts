@@ -17,6 +17,18 @@ function asst(content: string, toolCalls: { id: string; name: string }[] = []): 
   }
 }
 
+function asstWithThinking(
+  content: string,
+  toolCalls: { id: string; name: string }[] = [],
+): AgentMessage {
+  return {
+    role: 'assistant',
+    content,
+    nativeBlocks: [{ type: 'thinking', thinking: 'raw private thought', signature: 'sig' }],
+    toolCalls: toolCalls.map((c) => ({ id: c.id, name: c.name, args: {} })),
+  }
+}
+
 function tool(toolCallId: string, content = 'ok'): AgentMessage {
   return { role: 'tool', toolCallId, content }
 }
@@ -224,4 +236,84 @@ test('maybeCompactConversation: single-pass only (no multi-pass loop)', async ()
   })
 
   assert.equal(summarizeCalls, 1, 'should call summarize exactly once (single-pass)')
+})
+
+test('maybeCompactConversation: summarizer input strips native thinking blocks', async () => {
+  const ctx = createAgentContext({
+    initialMessages: [
+      user('old-0'),
+      asstWithThinking('thinking', [{ id: 'a', name: 'wait' }]),
+      tool('a'),
+      user('old-1'),
+      user('old-2'),
+      user('tail'),
+    ],
+  })
+  let summarizedHistory: AgentMessage[] = []
+
+  await maybeCompactConversation(ctx, 50_000, {
+    triggerTokens: 10,
+    keepRatio: 0.2,
+    summarize: async (input) => {
+      summarizedHistory = input.history
+      return 'summary'
+    },
+  })
+
+  for (const message of summarizedHistory) {
+    if (message.role === 'assistant') {
+      assert.equal(message.nativeBlocks, undefined)
+    }
+  }
+})
+
+test('maybeCompactConversation: strips stale native thinking from kept closed tool cycles', async () => {
+  const ctx = createAgentContext({
+    initialMessages: [
+      user('old-0'),
+      user('old-1'),
+      user('old-2'),
+      asstWithThinking('closed thinking', [{ id: 'a', name: 'wait' }]),
+      tool('a'),
+      user('newer message after tool cycle'),
+    ],
+  })
+
+  await maybeCompactConversation(ctx, 50_000, {
+    triggerTokens: 10,
+    keepRatio: 0.5,
+    summarize: async () => 'summary',
+  })
+
+  const assistant = ctx.getSnapshot().messages.find((message) => message.role === 'assistant')
+  assert.ok(assistant)
+  if (assistant.role === 'assistant') {
+    assert.equal(assistant.nativeBlocks, undefined)
+  }
+})
+
+test('maybeCompactConversation: keeps native thinking for active tool cycle at tail', async () => {
+  const ctx = createAgentContext({
+    initialMessages: [
+      user('old-0'),
+      user('old-1'),
+      user('old-2'),
+      asstWithThinking('active thinking', [{ id: 'a', name: 'wait' }]),
+      tool('a'),
+    ],
+  })
+
+  await maybeCompactConversation(ctx, 50_000, {
+    triggerTokens: 10,
+    keepRatio: 0.4,
+    summarize: async () => 'summary',
+  })
+
+  const assistant = ctx.getSnapshot().messages.find((message) => message.role === 'assistant')
+  assert.ok(assistant)
+  if (assistant.role === 'assistant') {
+    assert.deepEqual(assistant.nativeBlocks, [
+      { type: 'thinking', thinking: 'raw private thought', signature: 'sig' },
+    ])
+  }
 })

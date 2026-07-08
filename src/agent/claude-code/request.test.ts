@@ -227,6 +227,113 @@ describe('buildClaudeCodeRequestBody', () => {
     ])
   })
 
+  test('active tool-cycle retention replays thinking before tool_use when tool_result is at tail', () => {
+    const messages: AgentMessage[] = [
+      {
+        role: 'assistant',
+        content: '',
+        nativeBlocks: [{ type: 'thinking', thinking: 'plan', signature: 'sig' }],
+        toolCalls: [{ id: 'call_1', name: 'send_message', args: { text: 'hi' } }],
+      },
+      { role: 'tool', toolCallId: 'call_1', content: '{"ok":true}' },
+    ]
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 's',
+      messages,
+      tools: [dummyTool],
+      thinking: { mode: 'adaptive', retention: 'active-tool-cycle' },
+    })
+
+    assert.deepEqual(body.messages[0], {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'plan', signature: 'sig' },
+        { type: 'tool_use', id: 'call_1', name: 'send_message', input: { text: 'hi' } },
+      ],
+    })
+  })
+
+  test('native thinking blocks are not replayed when thinking is disabled', () => {
+    const messages: AgentMessage[] = [
+      {
+        role: 'assistant',
+        content: '',
+        nativeBlocks: [{ type: 'thinking', thinking: 'plan', signature: 'sig' }],
+        toolCalls: [{ id: 'call_1', name: 'send_message', args: { text: 'hi' } }],
+      },
+      { role: 'tool', toolCallId: 'call_1', content: '{"ok":true}' },
+    ]
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 's',
+      messages,
+      tools: [dummyTool],
+    })
+
+    assert.deepEqual(body.messages[0], {
+      role: 'assistant',
+      content: [
+        { type: 'tool_use', id: 'call_1', name: 'send_message', input: { text: 'hi' } },
+      ],
+    })
+  })
+
+  test('active tool-cycle retention strips thinking after later user message closes cycle', () => {
+    const messages: AgentMessage[] = [
+      {
+        role: 'assistant',
+        content: '',
+        nativeBlocks: [{ type: 'thinking', thinking: 'old plan', signature: 'sig' }],
+        toolCalls: [{ id: 'call_1', name: 'send_message', args: { text: 'hi' } }],
+      },
+      { role: 'tool', toolCallId: 'call_1', content: '{"ok":true}' },
+      { role: 'user', content: 'new input' },
+    ]
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 's',
+      messages,
+      tools: [dummyTool],
+      thinking: { mode: 'adaptive', retention: 'active-tool-cycle' },
+    })
+
+    assert.deepEqual(body.messages[0], {
+      role: 'assistant',
+      content: [
+        { type: 'tool_use', id: 'call_1', name: 'send_message', input: { text: 'hi' } },
+      ],
+    })
+  })
+
+  test('always retention replays thinking even after tool cycle has later messages', () => {
+    const messages: AgentMessage[] = [
+      {
+        role: 'assistant',
+        content: '',
+        nativeBlocks: [{ type: 'thinking', thinking: 'old plan', signature: 'sig' }],
+        toolCalls: [{ id: 'call_1', name: 'send_message', args: { text: 'hi' } }],
+      },
+      { role: 'tool', toolCallId: 'call_1', content: '{"ok":true}' },
+      { role: 'user', content: 'new input' },
+    ]
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 's',
+      messages,
+      tools: [dummyTool],
+      thinking: { mode: 'adaptive', retention: 'always' },
+    })
+
+    assert.deepEqual(body.messages[0], {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'old plan', signature: 'sig' },
+        { type: 'tool_use', id: 'call_1', name: 'send_message', input: { text: 'hi' } },
+      ],
+    })
+  })
+
   test('tool result → role:user with tool_result content block', () => {
     const messages: AgentMessage[] = [
       {

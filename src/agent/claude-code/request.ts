@@ -26,7 +26,11 @@
  *   挂在最后一块 system block 上 cliproxy 数得到 ≥1 就跳过注入, 字节稳定不变。
  *   形态也跟当前真 Claude Code (issue anthropics/claude-code#49139) 对齐。
  */
-import type { AgentMessage, ToolResultContentBlock } from '../agent-context.types.js'
+import type {
+  AgentMessage,
+  ClaudeAssistantNativeBlock,
+  ToolResultContentBlock,
+} from '../agent-context.types.js'
 import type { Tool } from '../tool.js'
 import { CLAUDE_CODE_BILLING_HEADER } from './headers.js'
 import { zodToToolJsonSchema } from '../tool-schema.js'
@@ -64,9 +68,11 @@ export interface ClaudeMessageRequestBody {
 
 export type ClaudeToolChoice = 'any' | 'auto'
 export type ClaudeThinkingMode = 'disabled' | 'adaptive'
+export type ClaudeThinkingRetention = 'active-tool-cycle' | 'always'
 
 export interface ClaudeThinkingConfig {
   mode: ClaudeThinkingMode
+  retention?: ClaudeThinkingRetention
 }
 
 export interface BuildClaudeCodeRequestBodyInput {
@@ -83,13 +89,20 @@ export function buildClaudeCodeRequestBody(
 ): ClaudeMessageRequestBody {
   const toolsEnabled = input.tools.length > 0
   const adaptiveThinkingEnabled = input.thinking?.mode === 'adaptive'
+  const thinkingRetention = input.thinking?.retention ?? 'active-tool-cycle'
 
   const body: ClaudeMessageRequestBody = {
     model: input.model,
     stream: true,
     max_tokens: resolveMaxTokens(input.model),
     system: toClaudeSystemBlocks(input.systemPrompt),
-    messages: input.messages.flatMap(toClaudeMessage),
+    messages: input.messages.flatMap((message, index) =>
+      toClaudeMessage(
+        message,
+        adaptiveThinkingEnabled &&
+          shouldReplayNativeBlocks(input.messages, index, thinkingRetention),
+      ),
+    ),
   }
 
   if (adaptiveThinkingEnabled) {
@@ -135,6 +148,7 @@ export function toClaudeSystemBlocks(userSystem: string): ClaudeSystemBlock[] {
 
 function toClaudeMessage(
   msg: AgentMessage,
+  replayNativeBlocks = false,
 ): Array<ClaudeMessageRequestBody['messages'][number]> {
   if (msg.role === 'user') {
     return [
@@ -147,6 +161,9 @@ function toClaudeMessage(
 
   if (msg.role === 'assistant') {
     const content: Array<Record<string, unknown>> = []
+    if (replayNativeBlocks) {
+      content.push(...(msg.nativeBlocks ?? []).map(toAnthropicNativeBlock))
+    }
     if (msg.content.length > 0) {
       content.push({ type: 'text', text: msg.content })
     }
@@ -178,6 +195,48 @@ function toClaudeMessage(
       ],
     },
   ]
+}
+
+function shouldReplayNativeBlocks(
+  messages: AgentMessage[],
+  index: number,
+  retention: ClaudeThinkingRetention,
+): boolean {
+  const msg = messages[index]
+  if (!msg || msg.role !== 'assistant' || !msg.nativeBlocks || msg.nativeBlocks.length === 0) {
+    return false
+  }
+  if (retention === 'always') return true
+  if (msg.toolCalls.length === 0) return false
+
+  const pendingToolCallIds = new Set(msg.toolCalls.map((call) => call.id))
+  let cursor = index + 1
+  while (cursor < messages.length) {
+    const next = messages[cursor]
+    if (!next || next.role !== 'tool' || !pendingToolCallIds.has(next.toolCallId)) break
+    pendingToolCallIds.delete(next.toolCallId)
+    cursor += 1
+  }
+
+  return pendingToolCallIds.size === 0 && cursor === messages.length
+}
+
+function toAnthropicNativeBlock(block: ClaudeAssistantNativeBlock): Record<string, unknown> {
+  return cloneJsonObject(block)
+}
+
+function cloneJsonObject(input: Record<string, unknown>): Record<string, unknown> {
+  const output: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(input)) {
+    output[key] = cloneJsonValue(value)
+  }
+  return output
+}
+
+function cloneJsonValue(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(cloneJsonValue)
+  return cloneJsonObject(value as Record<string, unknown>)
 }
 
 function toAnthropicToolResultBlock(

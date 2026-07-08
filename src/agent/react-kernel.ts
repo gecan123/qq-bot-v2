@@ -75,6 +75,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
     input.context.appendAssistantTurn({
       content: '',
       toolCalls: completion.toolCalls,
+      ...(completion.nativeBlocks ? { nativeBlocks: completion.nativeBlocks } : {}),
     })
   }
 

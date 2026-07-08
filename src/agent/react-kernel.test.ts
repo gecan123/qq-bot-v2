@@ -68,6 +68,51 @@ describe('runReactRound', () => {
     ])
   })
 
+  test('persists assistant native thinking blocks with tool calls', async () => {
+    const context = createAgentContext()
+    context.appendUserMessage('use tool')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    const toolCall = { id: 'lookup-thinking-1', name: 'lookup', args: { query: 'hello' } }
+
+    const llm: LlmClient = {
+      async chat(): Promise<LlmCallOutput> {
+        return {
+          content: '',
+          nativeBlocks: [{ type: 'thinking', thinking: 'plan', signature: 'sig' }],
+          toolCalls: [toolCall],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+          model: 'mock',
+        }
+      },
+    }
+
+    const tools: ToolExecutor = {
+      list: () => [makeTool('lookup', z.object({ query: z.string() }))],
+      async execute(): Promise<ToolExecutionResult> {
+        return { content: '{"ok":true}' }
+      },
+    }
+
+    await runReactRound({
+      systemPrompt: 'system',
+      context,
+      llm,
+      tools,
+      toolContext: { eventQueue, roundIndex: 8 },
+    })
+
+    assert.deepEqual(context.getSnapshot().messages, [
+      { role: 'user', content: 'use tool' },
+      {
+        role: 'assistant',
+        content: '',
+        nativeBlocks: [{ type: 'thinking', thinking: 'plan', signature: 'sig' }],
+        toolCalls: [toolCall],
+      },
+      { role: 'tool', toolCallId: 'lookup-thinking-1', content: '{"ok":true}' },
+    ])
+  })
+
   test('does not append an assistant turn when the LLM returns no tool calls', async () => {
     const context = createAgentContext()
     context.appendUserMessage('hello')

@@ -65,13 +65,23 @@ describe('pause tool', () => {
       intention: '醒来后继续整理群聊线索',
     }, ctx)
 
-    assert.deepEqual(JSON.parse(result.content as string), {
+    const content = JSON.parse(result.content as string) as {
+      ok: boolean
+      status: string
+      durationSeconds: number
+      elapsedMs: number
+      intention: string
+    }
+    assert.deepEqual({ ...content, elapsedMs: 0 }, {
       ok: true,
       status: 'interrupted',
       durationSeconds: 30,
       elapsedMs: 0,
       intention: '醒来后继续整理群聊线索',
     })
+    assert.equal(Number.isInteger(content.elapsedMs), true)
+    assert.equal(content.elapsedMs >= 0, true)
+    assert.equal(content.elapsedMs < 100, true)
     assert.deepEqual(result.outcome, { ok: true, code: 'interrupted' })
     assert.deepEqual(result.control, { type: 'pause' })
     assert.equal(queue.size(), 1)

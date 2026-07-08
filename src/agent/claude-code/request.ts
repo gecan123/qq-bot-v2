@@ -13,7 +13,8 @@
  *     直接拒绝 `temperature` 字段, 报 "temperature is deprecated for this model"。
  *     真 Claude Code CLI 也不发, 它用 thinking_config 控制. 跟它对齐 = 字节稳定 + 不撞错。
  *     上层 LlmCallInput.temperature 仍存在, 由 OpenAI 路径单独 honor。
- *   - thinking / output_config / context_management v1 不发 (out of scope)
+ *   - thinking 默认不发; 只有 claudeThinking.mode=adaptive 时发送 summarized adaptive thinking。
+ *   - output_config / context_management v1 不发 (out of scope)
  *
  * 为什么是 per-block 而不是 kagami 那种顶层 cache_control:
  *   kagami 自家 OAuth 直连 Anthropic, 顶层 cache_control 自动模式 work。
@@ -53,11 +54,20 @@ export interface ClaudeMessageRequestBody {
     role: 'user' | 'assistant'
     content: Array<Record<string, unknown>>
   }>
+  thinking?: {
+    type: 'adaptive'
+    display: 'summarized'
+  }
   tools?: Array<Record<string, unknown>>
   tool_choice?: Record<string, unknown>
 }
 
 export type ClaudeToolChoice = 'any' | 'auto'
+export type ClaudeThinkingMode = 'disabled' | 'adaptive'
+
+export interface ClaudeThinkingConfig {
+  mode: ClaudeThinkingMode
+}
 
 export interface BuildClaudeCodeRequestBodyInput {
   model: string
@@ -65,12 +75,14 @@ export interface BuildClaudeCodeRequestBodyInput {
   messages: AgentMessage[]
   tools: Tool[]
   toolChoice?: ClaudeToolChoice
+  thinking?: ClaudeThinkingConfig
 }
 
 export function buildClaudeCodeRequestBody(
   input: BuildClaudeCodeRequestBodyInput,
 ): ClaudeMessageRequestBody {
   const toolsEnabled = input.tools.length > 0
+  const adaptiveThinkingEnabled = input.thinking?.mode === 'adaptive'
 
   const body: ClaudeMessageRequestBody = {
     model: input.model,
@@ -80,9 +92,13 @@ export function buildClaudeCodeRequestBody(
     messages: input.messages.flatMap(toClaudeMessage),
   }
 
+  if (adaptiveThinkingEnabled) {
+    body.thinking = { type: 'adaptive', display: 'summarized' }
+  }
+
   if (toolsEnabled) {
     body.tools = input.tools.map(toAnthropicToolDecl)
-    body.tool_choice = { type: input.toolChoice ?? 'any' }
+    body.tool_choice = { type: adaptiveThinkingEnabled ? 'auto' : input.toolChoice ?? 'any' }
   }
 
   // 1h cache breakpoint: 钉在 messages 最后一条的最后一个 content block 上,

@@ -92,6 +92,28 @@ describe('ClaudeCodeLlmClient.chat', () => {
     assert.deepEqual(body.tool_choice, { type: 'auto' })
   })
 
+  test('forwards adaptive thinking mode into the request body', async (t) => {
+    const { fn, calls } = makeFetchMock([{ body: SAMPLE_TEXT_SSE }])
+    t.mock.method(globalThis, 'fetch', fn)
+
+    const client = createClaudeCodeLlmClient({
+      model: 'claude-sonnet-4-5',
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+      toolChoice: 'any',
+      thinking: { mode: 'adaptive' },
+    })
+    await client.chat({
+      systemPrompt: 'persona',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [echoTool],
+    })
+
+    const body = JSON.parse(String(calls[0]?.init.body)) as Record<string, unknown>
+    assert.deepEqual(body.thinking, { type: 'adaptive', display: 'summarized' })
+    assert.deepEqual(body.tool_choice, { type: 'auto' })
+  })
+
   test('hits cliproxy localhost endpoint with correct cloak headers + Bearer apiKey', async (t) => {
     const { fn, calls } = makeFetchMock([{ body: SAMPLE_TEXT_SSE }])
     t.mock.method(globalThis, 'fetch', fn)

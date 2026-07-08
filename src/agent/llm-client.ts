@@ -84,6 +84,8 @@ export function createLlmClient(options: CreateLlmClientOptions = {}): LlmClient
       baseURL: claudeProvider.url,
       apiKey: claudeProvider.apiKey,
       toolChoice: config.llm.claudeToolChoice,
+      thinking: config.llm.claudeThinking,
+      thinkingLog: { mode: config.llm.claudeThinking.log },
     })
   }
 

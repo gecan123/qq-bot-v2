@@ -114,6 +114,31 @@ describe('buildClaudeCodeRequestBody', () => {
     assert.equal('tool_choice' in body, false)
   })
 
+  test('thinking omitted by default', () => {
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [],
+    })
+
+    assert.equal('thinking' in body, false)
+  })
+
+  test('adaptive thinking adds summarized thinking config without tools', () => {
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [],
+      thinking: { mode: 'adaptive' },
+    })
+
+    assert.deepEqual(body.thinking, { type: 'adaptive', display: 'summarized' })
+    assert.equal('tools' in body, false)
+    assert.equal('tool_choice' in body, false)
+  })
+
   test('tools mapped to {name, description, input_schema}; tool_choice=any', () => {
     const body = buildClaudeCodeRequestBody({
       model: 'claude-sonnet-4-5',
@@ -140,6 +165,20 @@ describe('buildClaudeCodeRequestBody', () => {
       toolChoice: 'auto',
     })
 
+    assert.deepEqual(body.tool_choice, { type: 'auto' })
+  })
+
+  test('adaptive thinking with tools forces tool_choice auto even when any is configured', () => {
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [dummyTool],
+      toolChoice: 'any',
+      thinking: { mode: 'adaptive' },
+    })
+
+    assert.deepEqual(body.thinking, { type: 'adaptive', display: 'summarized' })
     assert.deepEqual(body.tool_choice, { type: 'auto' })
   })
 

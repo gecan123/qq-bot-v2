@@ -10,7 +10,11 @@
  * 不处理 401/403: token 在 cliproxy 端管理, bot 端只发 management apiKey。
  */
 import { buildClaudeCodeHeaders } from './headers.js'
-import { buildClaudeCodeRequestBody, type ClaudeToolChoice } from './request.js'
+import {
+  buildClaudeCodeRequestBody,
+  type ClaudeThinkingConfig,
+  type ClaudeToolChoice,
+} from './request.js'
 import {
   parseClaudeMessageResponse,
   type ClaudeMessageResponse,
@@ -64,11 +68,12 @@ export interface CreateClaudeCodeLlmClientInput {
   apiKey: string
   /** Anthropic tool choice. 默认 any; 部分兼容 provider 仅正确支持 auto。 */
   toolChoice?: ClaudeToolChoice
+  thinking?: ClaudeThinkingConfig
   thinkingLog?: ClaudeThinkingLogOptions
 }
 
 export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput): LlmClient {
-  const { model, baseURL, apiKey, toolChoice, thinkingLog } = input
+  const { model, baseURL, apiKey, toolChoice, thinking, thinkingLog } = input
   const url = `${baseURL}/messages?beta=true`
 
   return {
@@ -81,6 +86,7 @@ export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput)
         messages: req.messages,
         tools: req.tools,
         toolChoice,
+        thinking,
       })
       const bodyJson = JSON.stringify(body)
 

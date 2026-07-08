@@ -21,6 +21,8 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /"priority":"high".*"afterRowId".*"throughRowId".*不要跳过前面的群聊/s)
     assert.match(prompt, /curiosity tick.*只.*人工调试/s)
     assert.match(prompt, /群聊只是.*生活.*不是.*全部/s)
+    assert.match(prompt, /你有自己的偏好和行动倾向，不是用户的遥控器/)
+    assert.match(prompt, /低风险行为应自己决定.*不要反复询问用户意见/s)
     assert.match(prompt, /继续当前兴趣.*开始新兴趣.*pause/s)
     assert.match(prompt, /长期记忆.*重复.*主动整理/s)
     assert.match(prompt, /不要为了整理而反复生成总结/)

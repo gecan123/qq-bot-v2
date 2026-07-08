@@ -10,7 +10,8 @@
 2. `src/bot/**` 接收 NapCat 事件，并通过 `src/database/messages.ts` 写入入站事实。
 3. ready 后的消息被投递为 `BotEvent`。
 4. `src/agent/mailbox.ts` 把所有 QQ 消息按来源聚合为不含正文的确定性通知，并计算批次级 `priority=high|normal`；非 QQ 运行时事件仍走稳定 direct 渲染。
-5. `src/agent/bot-loop-agent.ts` append 披露结果、调用 LLM、执行 tool calls、仅把 `ToolExecutionResult.content` append 为 tool result，并把 context snapshot 与 mailbox cursors 同行持久化后运行 compaction。工具的 `outcome` / `control` 是当前循环的运行时元数据，不进入 ledger。
+5. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责事件披露、mailbox cursors、context snapshot 原子保存、life journal hook、compaction，以及 pause/autonomy 循环控制。
+6. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct：把 system prompt、当前 messages 和可见 tools 发给 LLM，append assistant tool calls，顺序执行工具，并且只把 `ToolExecutionResult.content` append 为 tool result。工具的 `outcome` / `control` 返回 Runtime Host 作为当前循环元数据，不进入 ledger。
 
 ## 自主循环
 
@@ -32,7 +33,9 @@
 
 ## 主要模块
 
-- `src/agent/**`：永续上下文、主循环、LLM client routing、工具、replay、compaction 和 token stats。
+- `src/agent/bot-loop-agent.ts`：Runtime Host，负责披露、持久化、compaction、life journal hook 和 pause/autonomy 控制。
+- `src/agent/react-kernel.ts`：单轮 ReAct transcript append 边界，负责 LLM call、assistant tool calls 和 tool result content。
+- `src/agent/**`：永续上下文、LLM client routing、工具、replay、compaction 和 token stats。
 - `src/bot/**`：NapCat 解析和 message readiness。
 - `src/media/**`：媒体缓存、描述、image handles、outbound promotion。
 - `src/messaging/**`：发送路径和 NapCat segment 构造。

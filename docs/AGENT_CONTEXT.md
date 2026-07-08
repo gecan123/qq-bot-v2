@@ -34,7 +34,8 @@
 
 - `src/agent/agent-context.ts`：内存中的 context 操作。
 - `src/agent/snapshot-repo.ts`：`bot_agent_snapshot` 持久化。
-- `src/agent/bot-loop-agent.ts`：append、LLM call、tool result、persist cycle。
+- `src/agent/bot-loop-agent.ts`：Runtime Host，负责事件披露、mailbox cursors、snapshot 原子保存、life journal hook、compaction 和循环控制。
+- `src/agent/react-kernel.ts`：一轮 ReAct transcript append 边界；只把 `ToolExecutionResult.content` 写入 `AgentContext`，`outcome` / `control` 返回 Runtime Host。
 - `src/agent/compaction.ts`：基于摘要的历史 compaction。
 - `src/agent/render-event.ts`：确定性的 event-to-user-message 渲染。
 - `src/agent/mailbox.ts`：来源 key、direct/ambient 分类、通知渲染和 cursor 推进。

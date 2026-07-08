@@ -78,6 +78,78 @@ describe('parseClaudeStreamResponse', () => {
     }
   })
 
+  test('thinking stream: accumulates thinking_delta and preserves signature', () => {
+    const sse =
+      ev('message_start', { type: 'message_start', message: { model: 'm' } }) +
+      ev('content_block_start', {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'thinking', thinking: '', signature: 'sig_1' },
+      }) +
+      ev('content_block_delta', {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'thinking_delta', thinking: 'first ' },
+      }) +
+      ev('content_block_delta', {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'thinking_delta', thinking: 'second' },
+      }) +
+      ev('content_block_stop', { type: 'content_block_stop', index: 0 })
+
+    const result = parseClaudeStreamResponse(sse)
+
+    assert.ok(result)
+    assert.deepEqual(result.content, [
+      { type: 'thinking', thinking: 'first second', signature: 'sig_1' },
+    ])
+  })
+
+  test('thinking stream: applies signature_delta before block stop', () => {
+    const sse =
+      ev('message_start', { type: 'message_start', message: { model: 'm' } }) +
+      ev('content_block_start', {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'thinking', thinking: '', signature: '' },
+      }) +
+      ev('content_block_delta', {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'thinking_delta', thinking: 'private thought' },
+      }) +
+      ev('content_block_delta', {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'signature_delta', signature: 'sig_final' },
+      }) +
+      ev('content_block_stop', { type: 'content_block_stop', index: 0 })
+
+    const result = parseClaudeStreamResponse(sse)
+
+    assert.ok(result)
+    assert.deepEqual(result.content, [
+      { type: 'thinking', thinking: 'private thought', signature: 'sig_final' },
+    ])
+  })
+
+  test('redacted_thinking block start preserves data', () => {
+    const sse =
+      ev('message_start', { type: 'message_start', message: { model: 'm' } }) +
+      ev('content_block_start', {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'redacted_thinking', data: 'opaque' },
+      }) +
+      ev('content_block_stop', { type: 'content_block_stop', index: 0 })
+
+    const result = parseClaudeStreamResponse(sse)
+
+    assert.ok(result)
+    assert.deepEqual(result.content, [{ type: 'redacted_thinking', data: 'opaque' }])
+  })
+
   test('mixed text + tool_use blocks at different indices', () => {
     const sse =
       ev('message_start', { type: 'message_start', message: { model: 'm' } }) +

@@ -8,15 +8,43 @@
  *   message_start / content_block_start / content_block_delta / content_block_stop / message_delta
  */
 
+interface ClaudeTextBlock {
+  type: 'text'
+  text: string
+}
+
+interface ClaudeToolUseBlock {
+  type: 'tool_use'
+  id?: string
+  name?: string
+  input?: Record<string, unknown>
+}
+
+interface ClaudeThinkingBlock {
+  type: 'thinking'
+  thinking?: string
+  signature?: string
+  [key: string]: unknown
+}
+
+interface ClaudeRedactedThinkingBlock {
+  type: 'redacted_thinking'
+  data?: string
+  [key: string]: unknown
+}
+
+type ClaudeContentBlock =
+  | ClaudeTextBlock
+  | ClaudeToolUseBlock
+  | ClaudeThinkingBlock
+  | ClaudeRedactedThinkingBlock
+
 export interface ClaudeMessageResponse {
   id?: string
   type?: string
   role?: string
   model?: string
-  content?: Array<
-    | { type: 'text'; text: string }
-    | { type: 'tool_use'; id?: string; name?: string; input?: Record<string, unknown> }
-  >
+  content?: ClaudeContentBlock[]
   usage?: {
     input_tokens?: number
     output_tokens?: number
@@ -31,12 +59,14 @@ export interface ClaudeMessageResponse {
 
 type StreamBlock =
   | { kind: 'ignored' }
-  | { kind: 'text'; block: { type: 'text'; text: string } }
+  | { kind: 'text'; block: ClaudeTextBlock }
   | {
       kind: 'tool_use'
-      block: { type: 'tool_use'; id?: string; name?: string; input?: Record<string, unknown> }
+      block: ClaudeToolUseBlock
       partialJson: string
     }
+  | { kind: 'thinking'; block: ClaudeThinkingBlock }
+  | { kind: 'redacted_thinking'; block: ClaudeRedactedThinkingBlock }
 
 export function parseClaudeStreamResponse(value: string): ClaudeMessageResponse | null {
   if (!value.startsWith('event:')) return null
@@ -127,6 +157,29 @@ export function parseClaudeStreamResponse(value: string): ClaudeMessageResponse 
         continue
       }
 
+      if (contentBlock.type === 'thinking') {
+        streamBlocks[index] = {
+          kind: 'thinking',
+          block: {
+            ...stringFields(contentBlock),
+            type: 'thinking',
+            thinking: typeof contentBlock.thinking === 'string' ? contentBlock.thinking : '',
+          },
+        }
+        continue
+      }
+
+      if (contentBlock.type === 'redacted_thinking') {
+        streamBlocks[index] = {
+          kind: 'redacted_thinking',
+          block: {
+            ...stringFields(contentBlock),
+            type: 'redacted_thinking',
+          },
+        }
+        continue
+      }
+
       streamBlocks[index] = { kind: 'ignored' }
       continue
     }
@@ -145,6 +198,18 @@ export function parseClaudeStreamResponse(value: string): ClaudeMessageResponse 
       if (streamBlock.kind === 'tool_use' && delta.type === 'input_json_delta') {
         streamBlock.partialJson +=
           typeof delta.partial_json === 'string' ? delta.partial_json : ''
+      }
+
+      if (streamBlock.kind === 'thinking' && delta.type === 'thinking_delta') {
+        streamBlock.block.thinking =
+          (streamBlock.block.thinking ?? '') +
+          (typeof delta.thinking === 'string' ? delta.thinking : '')
+      }
+
+      if (streamBlock.kind === 'thinking' && delta.type === 'signature_delta') {
+        if (typeof delta.signature === 'string') {
+          streamBlock.block.signature = delta.signature
+        }
       }
       continue
     }
@@ -229,4 +294,14 @@ export function parseClaudeMessageResponse(value: string): ClaudeMessageResponse
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function stringFields(value: Record<string, unknown>): Record<string, string> {
+  const fields: Record<string, string> = {}
+  for (const [key, fieldValue] of Object.entries(value)) {
+    if (typeof fieldValue === 'string') {
+      fields[key] = fieldValue
+    }
+  }
+  return fields
 }

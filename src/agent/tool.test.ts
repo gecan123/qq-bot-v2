@@ -605,7 +605,7 @@ describe('createToolExecutor', () => {
 })
 
 describe('createDeferredToolExecutor', () => {
-  test('exposes deferred tools only after activating their capability', async () => {
+  test('keeps deferred tools behind stable help and invoke tools', async () => {
     const echo: Tool<{ text: string }> = {
       name: 'echo',
       description: 'echo',
@@ -633,21 +633,35 @@ describe('createDeferredToolExecutor', () => {
       ],
     })
 
-    assert.deepEqual(exec.list().map((tool) => tool.name), ['echo', 'toolbox'])
+    assert.deepEqual(exec.list().map((tool) => tool.name), ['echo', 'help', 'invoke'])
     assert.match(
       (await exec.execute({ id: 'b0', name: 'browser', args: { action: 'status' } }, makeCtx())).content as string,
       /Unknown tool/,
     )
+    assert.match(
+      (
+        await exec.execute(
+          { id: 'i0', name: 'invoke', args: { tool: 'browser', args: { action: 'status' } } },
+          makeCtx(),
+        )
+      ).content as string,
+      /capability_inactive/,
+    )
 
     const activated = await exec.execute(
-      { id: 'a1', name: 'toolbox', args: { action: 'activate', capability: 'browser' } },
+      { id: 'a1', name: 'help', args: { action: 'activate', capability: 'browser' } },
       makeCtx(),
     )
 
-    assert.match(activated.content as string, /下一轮/)
-    assert.deepEqual(exec.list().map((tool) => tool.name), ['echo', 'toolbox', 'browser'])
+    assert.match(activated.content as string, /invoke/)
+    assert.deepEqual(exec.list().map((tool) => tool.name), ['echo', 'help', 'invoke'])
     assert.match(
-      (await exec.execute({ id: 'b1', name: 'browser', args: { action: 'status' } }, makeCtx())).content as string,
+      (
+        await exec.execute(
+          { id: 'i1', name: 'invoke', args: { tool: 'browser', args: { action: 'status' } } },
+          makeCtx(),
+        )
+      ).content as string,
       /"ok":true/,
     )
   })
@@ -688,24 +702,51 @@ describe('createDeferredToolExecutor', () => {
       ],
     })
 
-    assert.deepEqual(exec.list().map((tool) => tool.name), ['toolbox', 'browser'])
+    assert.deepEqual(exec.list().map((tool) => tool.name), ['help', 'invoke'])
+    assert.match(
+      (
+        await exec.execute(
+          { id: 'b1', name: 'invoke', args: { tool: 'browser', args: {} } },
+          makeCtx(),
+        )
+      ).content as string,
+      /browser-ok/,
+    )
 
     await exec.execute(
-      { id: 'a1', name: 'toolbox', args: { action: 'activate', capability: 'media_generation' } },
+      { id: 'a1', name: 'help', args: { action: 'activate', capability: 'media_generation' } },
       makeCtx(),
     )
     assert.deepEqual(active, ['browser', 'media_generation'])
-    assert.deepEqual(exec.list().map((tool) => tool.name), ['toolbox', 'browser', 'generate_image'])
+    assert.deepEqual(exec.list().map((tool) => tool.name), ['help', 'invoke'])
+    assert.match(
+      (
+        await exec.execute(
+          { id: 'm1', name: 'invoke', args: { tool: 'generate_image', args: {} } },
+          makeCtx(),
+        )
+      ).content as string,
+      /image-ok/,
+    )
 
     await exec.execute(
-      { id: 'd1', name: 'toolbox', args: { action: 'deactivate', capability: 'browser' } },
+      { id: 'd1', name: 'help', args: { action: 'deactivate', capability: 'browser' } },
       makeCtx(),
     )
     assert.deepEqual(active, ['media_generation'])
-    assert.deepEqual(exec.list().map((tool) => tool.name), ['toolbox', 'generate_image'])
+    assert.deepEqual(exec.list().map((tool) => tool.name), ['help', 'invoke'])
+    assert.match(
+      (
+        await exec.execute(
+          { id: 'b2', name: 'invoke', args: { tool: 'browser', args: {} } },
+          makeCtx(),
+        )
+      ).content as string,
+      /capability_inactive/,
+    )
   })
 
-  test('restored AgentContext state controls the next executor tool list', async () => {
+  test('restored AgentContext state controls invoke access without changing the top-level tool list', async () => {
     const browser: Tool<Record<string, never>> = {
       name: 'browser',
       description: 'browser',
@@ -726,7 +767,7 @@ describe('createDeferredToolExecutor', () => {
     })
 
     await exec1.execute(
-      { id: 'a1', name: 'toolbox', args: { action: 'activate', capability: 'browser' } },
+      { id: 'a1', name: 'help', args: { action: 'activate', capability: 'browser' } },
       makeCtx(),
     )
     const persisted = ctx1.exportPersistedSnapshot()
@@ -744,6 +785,44 @@ describe('createDeferredToolExecutor', () => {
     })
 
     assert.deepEqual(ctx2.getSnapshot().activeToolCapabilities, ['browser'])
-    assert.deepEqual(exec2.list().map((tool) => tool.name), ['toolbox', 'browser'])
+    assert.deepEqual(exec2.list().map((tool) => tool.name), ['help', 'invoke'])
+    assert.match(
+      (
+        await exec2.execute(
+          { id: 'b1', name: 'invoke', args: { tool: 'browser', args: {} } },
+          makeCtx(),
+        )
+      ).content as string,
+      /browser-ok/,
+    )
+  })
+
+  test('help describes deferred tool schemas on demand', async () => {
+    const browser: Tool<{ action: 'status' }> = {
+      name: 'browser',
+      description: 'browser status',
+      schema: z.object({ action: z.literal('status').describe('状态检查') }),
+      async execute() {
+        return { content: 'browser-ok' }
+      },
+    }
+    const exec = createDeferredToolExecutor({
+      alwaysOnTools: [],
+      capabilities: [{ name: 'browser', description: 'browser capability', tools: [browser] }],
+    })
+
+    const described = JSON.parse(
+      (await exec.execute({ id: 'h1', name: 'help', args: { action: 'describe', tool: 'browser' } }, makeCtx()))
+        .content as string,
+    ) as {
+      ok: boolean
+      tool: { name: string; capability: string; active: boolean; inputSchema: { properties?: Record<string, unknown> } }
+    }
+
+    assert.equal(described.ok, true)
+    assert.equal(described.tool.name, 'browser')
+    assert.equal(described.tool.capability, 'browser')
+    assert.equal(described.tool.active, false)
+    assert.ok(described.tool.inputSchema.properties?.action)
   })
 })

@@ -46,7 +46,7 @@ const REQUIRED_DOCS = [
 const MAX_AGENT_ENTRY_LINES = 120
 
 const TOOL_REGISTRY_MARKERS = [
-  ['createDeferredToolExecutor', 'toolbox'],
+  ['createDeferredToolExecutor', 'invoke'],
   ['pauseTool', 'pause'],
   ['createSendMessageTool', 'send_message'],
   ['createGenerateImageTool', 'generate_image'],

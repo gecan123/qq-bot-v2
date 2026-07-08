@@ -41,15 +41,20 @@ describe('buildBotSystemPrompt', () => {
     })
     const disclosure = prompt.slice(prompt.indexOf('[按需披露]'))
     const lines = disclosure.split('\n')
-    const toolboxLine = lines.find((line) => line.startsWith('- toolbox:')) ?? ''
+    const helpLine = lines.find((line) => line.startsWith('- help:')) ?? ''
+    const invokeLine = lines.find((line) => line.startsWith('- invoke:')) ?? ''
 
+    assert.match(disclosure, /- help:.*action=list\/describe/)
+    assert.match(disclosure, /- invoke:.*已激活 capability/)
     assert.match(disclosure, /- chat_style:.*直接调用/)
     assert.match(disclosure, /- ai_tone:.*直接调用/)
     assert.match(disclosure, /- journal:.*直接调用/)
     assert.match(disclosure, /- life_journal:.*Life Journal/)
     assert.match(disclosure, /- skill_editor:.*草稿/)
     assert.match(disclosure, /- collect_sticker:.*直接调用/)
-    assert.doesNotMatch(toolboxLine, /表情包池/)
+    assert.doesNotMatch(helpLine, /表情包池/)
+    assert.doesNotMatch(invokeLine, /下一轮/)
+    assert.equal(lines.filter((line) => line.startsWith('- toolbox:')).length, 0)
     assert.equal(lines.filter((line) => line.startsWith('- workspace_bash:')).length, 1)
     assert.equal(lines.filter((line) => line.startsWith('- memory:')).length, 1)
   })

@@ -3,7 +3,7 @@ import type { EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { AssistantToolCall, ToolResultContent } from './agent-context.types.js'
 import { isSideEffectTool, logToolCall, summarizeToolArgs } from '../ops/tool-call-log.js'
-import { stripNullsFromOptionalFields } from './tool-schema.js'
+import { stripNullsFromOptionalFields, zodToToolJsonSchema } from './tool-schema.js'
 import { createLogger } from '../logger.js'
 
 const log = createLogger('TOOL_EXECUTOR')
@@ -169,6 +169,7 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
 
 export function createDeferredToolExecutor(options: DeferredToolExecutorOptions): ToolExecutor {
   const capabilityByName = new Map<string, DeferredToolCapability>()
+  const deferredToolEntriesByName = new Map<string, DeferredToolEntry[]>()
   const localActiveCapabilities = new Set<string>()
   const activeCapabilities = options.activeCapabilities ?? {
     list: () => [...localActiveCapabilities],
@@ -185,24 +186,25 @@ export function createDeferredToolExecutor(options: DeferredToolExecutorOptions)
       throw new Error(`Duplicate deferred capability: ${capability.name}`)
     }
     capabilityByName.set(capability.name, capability)
+    for (const tool of capability.tools) {
+      const entries = deferredToolEntriesByName.get(tool.name) ?? []
+      entries.push({ capability, tool })
+      deferredToolEntriesByName.set(tool.name, entries)
+    }
   }
 
-  const toolbox = createToolboxTool({
+  const help = createHelpTool({
     capabilities: options.capabilities,
     activeCapabilities,
+    deferredToolEntriesByName,
   })
+  const invoke = createInvokeTool()
 
   function visibleTools(): Tool[] {
     const byName = new Map<string, Tool>()
-    const activeCapabilityNames = new Set(activeCapabilities.list())
     for (const tool of options.alwaysOnTools) byName.set(tool.name, tool)
-    byName.set(toolbox.name, toolbox)
-    for (const capability of options.capabilities) {
-      if (!activeCapabilityNames.has(capability.name)) continue
-      for (const tool of capability.tools) {
-        if (!byName.has(tool.name)) byName.set(tool.name, tool)
-      }
-    }
+    byName.set(help.name, help)
+    byName.set(invoke.name, invoke)
     return [...byName.values()]
   }
 
@@ -211,20 +213,48 @@ export function createDeferredToolExecutor(options: DeferredToolExecutorOptions)
       return visibleTools()
     },
     execute(call, ctx) {
+      if (call.name === invoke.name) {
+        return executeInvokeToolCall({
+          call,
+          ctx,
+          invoke,
+          deferredToolEntriesByName,
+          activeCapabilities,
+          executorOptions: options,
+        })
+      }
       return createToolExecutor(visibleTools(), options).execute(call, ctx)
     },
   }
 }
 
-function createToolboxTool(options: {
+interface DeferredToolEntry {
+  capability: DeferredToolCapability
+  tool: Tool
+}
+
+type HelpToolArgs = {
+  action: 'list' | 'activate' | 'deactivate' | 'describe'
+  capability?: string
+  tool?: string
+}
+
+type InvokeToolArgs = {
+  tool: string
+  args?: Record<string, unknown>
+}
+
+function createHelpTool(options: {
   capabilities: DeferredToolCapability[]
   activeCapabilities: ActiveToolCapabilityState
-}): Tool<{ action: 'list' | 'activate' | 'deactivate'; capability?: string }> {
+  deferredToolEntriesByName: Map<string, DeferredToolEntry[]>
+}): Tool<HelpToolArgs> {
   const capabilityByName = new Map(options.capabilities.map((capability) => [capability.name, capability]))
   const capabilityNames = options.capabilities.map((capability) => capability.name).join(', ')
   const schema = z.object({
-    action: z.enum(['list', 'activate', 'deactivate']).describe('list=查看可激活能力; activate=下一轮暴露对应 typed tools; deactivate=收起能力.'),
+    action: z.enum(['list', 'activate', 'deactivate', 'describe']).describe('list=查看能力; activate=允许 invoke 调用该 capability; deactivate=收起能力; describe=按需查看 capability 或 tool 说明.'),
     capability: z.string().trim().min(1).optional().describe('要激活或收起的 capability 名称.'),
+    tool: z.string().trim().min(1).optional().describe('describe 时要查看的内部工具名.'),
   }).superRefine((args, ctx) => {
     if ((args.action === 'activate' || args.action === 'deactivate') && !args.capability) {
       ctx.addIssue({
@@ -233,14 +263,21 @@ function createToolboxTool(options: {
         message: 'capability is required for activate/deactivate',
       })
     }
+    if (args.action === 'describe' && !args.capability && !args.tool) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['tool'],
+        message: 'capability or tool is required for describe',
+      })
+    }
   })
 
   return {
-    name: 'toolbox',
+    name: 'help',
     description: [
-      '按需激活隐藏工具的工具箱. 平时只看到核心工具; 需要浏览器、金融、外部研究或媒体能力时先 activate 对应 capability.',
+      '稳定工具帮助入口. 用 list 查看可激活 capability; 用 describe 按需查看内部工具 schema; 用 activate 后再通过 invoke 调用内部工具.',
       `可用 capability: ${capabilityNames || 'none'}.`,
-      'activate 成功后, 下一轮会暴露该 capability 的 typed tool schema; 完成后可 deactivate 收起.',
+      '顶层 tools 不会因 activate/deactivate 改变.',
     ].join(' '),
     schema,
     async execute(args) {
@@ -254,6 +291,70 @@ function createToolboxTool(options: {
               active: options.activeCapabilities.list().includes(capability.name),
               tools: capability.tools.map((tool) => tool.name),
             })),
+            next: '需要某个工具的参数时调用 help action=describe tool=<tool>; 需要使用时先 activate capability, 再 invoke tool=<tool> args=<object>.',
+          }),
+        }
+      }
+
+      if (args.action === 'describe') {
+        if (args.tool) {
+          const entries = options.deferredToolEntriesByName.get(args.tool) ?? []
+          if (entries.length === 0) {
+            return {
+              content: JSON.stringify({
+                ok: false,
+                code: 'unknown_tool',
+                error: `unknown deferred tool: ${args.tool}`,
+                tools: [...options.deferredToolEntriesByName.keys()],
+              }),
+              outcome: { ok: false, code: 'unknown_tool', error: `unknown deferred tool: ${args.tool}` },
+            }
+          }
+          const activeNames = new Set(options.activeCapabilities.list())
+          const entry = entries.find((item) => activeNames.has(item.capability.name)) ?? entries[0]!
+          return {
+            content: JSON.stringify({
+              ok: true,
+              tool: {
+                name: entry.tool.name,
+                description: entry.tool.description,
+                capability: entry.capability.name,
+                capabilities: entries.map((item) => item.capability.name),
+                active: entries.some((item) => activeNames.has(item.capability.name)),
+                inputSchema: zodToToolJsonSchema(entry.tool.schema),
+              },
+              next: activeNames.has(entry.capability.name)
+                ? `invoke tool=${entry.tool.name} args=<object>`
+                : `help action=activate capability=${entry.capability.name}`,
+            }),
+          }
+        }
+
+        const capability = args.capability ? capabilityByName.get(args.capability) : null
+        if (!capability) {
+          return {
+            content: JSON.stringify({
+              ok: false,
+              code: 'unknown_capability',
+              error: `unknown capability: ${args.capability ?? ''}`,
+              capabilities: options.capabilities.map((item) => item.name),
+            }),
+            outcome: { ok: false, code: 'unknown_capability', error: `unknown capability: ${args.capability ?? ''}` },
+          }
+        }
+        return {
+          content: JSON.stringify({
+            ok: true,
+            capability: {
+              name: capability.name,
+              description: capability.description,
+              active: options.activeCapabilities.list().includes(capability.name),
+              tools: capability.tools.map((tool) => ({
+                name: tool.name,
+                description: tool.description,
+              })),
+            },
+            next: '需要参数 schema 时调用 help action=describe tool=<tool>.',
           }),
         }
       }
@@ -263,9 +364,11 @@ function createToolboxTool(options: {
         return {
           content: JSON.stringify({
             ok: false,
+            code: 'unknown_capability',
             error: `unknown capability: ${args.capability ?? ''}`,
             capabilities: options.capabilities.map((item) => item.name),
           }),
+          outcome: { ok: false, code: 'unknown_capability', error: `unknown capability: ${args.capability ?? ''}` },
         }
       }
 
@@ -276,7 +379,7 @@ function createToolboxTool(options: {
             ok: true,
             action: 'activate',
             capability: capability.name,
-            message: `${capability.name} 已激活; 下一轮会暴露 typed tools: ${capability.tools.map((tool) => tool.name).join(', ')}`,
+            message: `${capability.name} 已激活; 现在可通过 invoke 调用内部工具: ${capability.tools.map((tool) => tool.name).join(', ')}`,
           }),
         }
       }
@@ -292,6 +395,90 @@ function createToolboxTool(options: {
       }
     },
   }
+}
+
+function createInvokeTool(): Tool<InvokeToolArgs> {
+  return {
+    name: 'invoke',
+    description: '稳定内部工具调用入口. 先用 help list/describe/activate 发现能力; 只能调用已激活 capability 中的内部工具.',
+    schema: z.object({
+      tool: z.string().trim().min(1).describe('要调用的内部工具名, 例如 browser、web_search、fetch_content、generate_image、openbb_cli.'),
+      args: z.record(z.string(), z.unknown()).optional().describe('内部工具参数对象. 具体字段先用 help action=describe tool=<tool> 查看.'),
+    }),
+    async execute(args) {
+      return { content: JSON.stringify({ ok: true, tool: args.tool }) }
+    },
+  }
+}
+
+async function executeInvokeToolCall(options: {
+  call: AssistantToolCall
+  ctx: ToolContext
+  invoke: Tool<InvokeToolArgs>
+  deferredToolEntriesByName: Map<string, DeferredToolEntry[]>
+  activeCapabilities: ActiveToolCapabilityState
+  executorOptions: DeferredToolExecutorOptions
+}): Promise<ToolExecutionResult> {
+  const shellResult = await createToolExecutor([options.invoke], options.executorOptions).execute(options.call, options.ctx)
+  if (!isSuccessfulToolResult(shellResult)) return shellResult
+
+  const normalizedArgs = stripNullsFromOptionalFields(options.invoke.schema, options.call.args)
+  const parseResult = options.invoke.schema.safeParse(normalizedArgs)
+  if (!parseResult.success) return shellResult
+
+  const invokeArgs = parseResult.data as InvokeToolArgs
+  const targetToolName = invokeArgs.tool
+  const targetArgs = invokeArgs.args ?? {}
+  const entries = options.deferredToolEntriesByName.get(targetToolName) ?? []
+  if (entries.length === 0) {
+    const error = `unknown deferred tool: ${targetToolName}`
+    return {
+      content: JSON.stringify({
+        ok: false,
+        code: 'unknown_tool',
+        error,
+        tools: [...options.deferredToolEntriesByName.keys()],
+      }),
+      outcome: { ok: false, code: 'unknown_tool', error },
+    }
+  }
+
+  const activeCapabilityNames = new Set(options.activeCapabilities.list())
+  const entry = entries.find((item) => activeCapabilityNames.has(item.capability.name))
+  if (!entry) {
+    const capabilities = entries.map((item) => item.capability.name)
+    const error = `tool ${targetToolName} is not active; activate one of: ${capabilities.join(', ')}`
+    return {
+      content: JSON.stringify({
+        ok: false,
+        code: 'capability_inactive',
+        error,
+        tool: targetToolName,
+        capabilities,
+        next: `help action=activate capability=${capabilities[0] ?? ''}`,
+      }),
+      outcome: { ok: false, code: 'capability_inactive', error },
+    }
+  }
+
+  return createToolExecutor([entry.tool], options.executorOptions).execute(
+    { id: options.call.id, name: entry.tool.name, args: targetArgs },
+    options.ctx,
+  )
+}
+
+function isSuccessfulToolResult(result: ToolExecutionResult): boolean {
+  if (result.outcome) return result.outcome.ok
+  if (typeof result.content !== 'string') return true
+  try {
+    const parsed = JSON.parse(result.content) as unknown
+    if (parsed && typeof parsed === 'object' && 'ok' in parsed) {
+      return (parsed as { ok?: unknown }).ok !== false
+    }
+  } catch {
+    return true
+  }
+  return true
 }
 
 async function runBeforeToolHooks(

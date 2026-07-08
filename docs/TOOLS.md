@@ -7,7 +7,7 @@
 - 对话控制：`pause`。`action=rest` 由 Agent 自己选择 30 秒到 30 分钟的休息时长，并必须提供醒来后继续事项 `intention`；计时结束会自动进入下一轮。
 - 当前计划：`todo`（当前进程内的短期多步计划，最多一个 `in_progress`）。
 - 发送：`send_message`。
-- 按需工具箱：`toolbox`（`list` / `activate` / `deactivate` capability；激活成功后下一轮暴露对应 typed tool schema）。
+- 稳定按需壳：`help`（`list` / `describe` / `activate` / `deactivate` capability 或内部工具 schema）和 `invoke`（调用已激活 capability 内部工具）。激活不会改变下一轮顶层 tools 列表。
 - 知识和历史：`memory`（本地 Markdown 长期记忆库，支持 self/person/group/topic）、`journal`（日记/梦境）、`life_journal`（主动 Life Journal / Agenda）、`skill`、`skill_editor`（运行时 skill 草稿/安装）、`inbox`（list/read 多来源消息正文）、`workspace_bash` 内置的 `help` / `db` / `style` 子命令。
 - 表情包：`collect_sticker`（收藏、列表、搜索和随机候选）。
 - 外部内容：`workspace_bash` 内置的 `fetch` 子命令（url/image/avatar/reddit list/reddit post）、配置后可用的 `web_search`、`workspace_bash` 内置的 `openbb` 子命令。
@@ -16,12 +16,12 @@
 
 ## Deferred capability
 
-- `browser`：配置 `BOT_BROWSER_ENABLED=true` 后可激活，暴露单一 action-driven `browser` 工具。
-- `finance`：配置 `OPENBB_CLI_ENABLED=true` 后可激活，暴露 typed `openbb_cli`。
-- `external_research`：暴露 `fetch_content`；配置 `TAVILY_API_KEY` 后同时暴露 `web_search`。
-- `media_generation`：暴露 `generate_image`，创建图片生成/编辑后台任务，后续用 `background_task` 查结果。
-- `media_fetch`：暴露 `fetch_content` 的图片 URL / QQ 头像抓取能力。
-- 激活状态保存在 `BotAgentSnapshot.contextSnapshot.activeToolCapabilities`，用于进程重启后恢复可见工具面；它不是 LLM 可见事实，不写入 `messages`。
+- `browser`：配置 `BOT_BROWSER_ENABLED=true` 后可激活，内部工具是单一 action-driven `browser`。
+- `finance`：配置 `OPENBB_CLI_ENABLED=true` 后可激活，内部工具是 `openbb_cli`。
+- `external_research`：内部工具包含 `fetch_content`；配置 `TAVILY_API_KEY` 后同时包含 `web_search`。
+- `media_generation`：内部工具是 `generate_image`，创建图片生成/编辑后台任务，后续用 `background_task` 查结果。
+- `media_fetch`：内部工具是 `fetch_content` 的图片 URL / QQ 头像抓取能力。
+- 激活状态保存在 `BotAgentSnapshot.contextSnapshot.activeToolCapabilities`，用于进程重启后恢复可调用能力；它不是 LLM 可见事实，不写入 `messages`，也不改变顶层 tools 列表。
 
 ## 结果契约
 
@@ -33,7 +33,7 @@
 
 ## Browser
 
-- `browser` 是单一 action-driven 工具，配置条件是 `BOT_BROWSER_ENABLED=true`，默认不常驻；先用 `toolbox action=activate capability=browser`，下一轮再调用 `browser`。
+- `browser` 是单一 action-driven 内部工具，配置条件是 `BOT_BROWSER_ENABLED=true`，默认不常驻；先用 `help action=activate capability=browser`，再用 `invoke tool=browser args={...}` 调用。
 - bot 进程只通过 loopback HTTP 调用 browser sidecar；sidecar 用 `pnpm browser:controller` 启动。
 - sidecar 使用 CloakBrowser `launchPersistentContext()`，默认 headed、persistent profile、`humanize=true`。
 - CloakBrowser 启动参数走 `.env.example` 里的 `BOT_BROWSER_*`：`HEADLESS`、`HUMANIZE`、`HUMAN_PRESET`、`PROXY`、`GEOIP`、`TIMEZONE`、`LOCALE`、`ARGS`、`EXTENSION_PATHS`。
@@ -60,7 +60,7 @@
 - 主 system prompt 只保留身份、运行形态和能力入口；聊天硬约束在 `prompts/bot-chat-constraints.md`，风格细则在 `prompts/bot-style.md`，通过 `workspace_bash` 的 `style global constraints|base|anti_patterns|special_cases` 按需读取。
 - 有副作用的工具通过 `src/ops/tool-call-log.ts` 记录。
 - Bash 类能力必须保留 command allowlist、固定 workspace、最小 env、输出/时间上限和审计日志。敏感访问应通过专门脚本或 capability wrapper。
-- `workspace_bash` 和 deferred tools 必须保留现有上限、preview compression、cache、timeout 和 audit 行为；`workspace_bash openbb/fetch` 路由使用专用 wrapper，默认说明和 prompt 应优先引导 typed deferred tools。
+- `workspace_bash` 和 deferred tools 必须保留现有上限、preview compression、cache、timeout 和 audit 行为；`workspace_bash openbb/fetch` 路由使用专用 wrapper，默认说明和 prompt 应优先引导 `help` / `invoke` 稳定壳。
 - 有副作用的工具要格外谨慎：`send_message`、图片生成/下载、`workspace_bash` journal 子命令、memory/sticker 工具、browser 写操作，以及未来任何会写 DB 或外部服务的工具。
 
 ## LLM 路径

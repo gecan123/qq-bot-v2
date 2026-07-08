@@ -11,7 +11,7 @@ description: 新增或修改 bot tool schema、工具注册、tool result、defe
 
 - 工具注册集中在 `src/agent/tools/index.ts`。
 - 声称某个工具存在前，先查注册表。
-- 默认常驻能力只放高频、低噪音入口；重能力通过 `toolbox` deferred capability 按需激活。
+- 默认常驻能力只放高频、低噪音入口；重能力通过稳定的 `help` / `invoke` 壳按需发现、激活和调用，激活不改变顶层 tools 列表。
 - 新增能力时同步检查 `docs/TOOLS.md` 和 system prompt 的按需披露索引。
 
 参数设计:

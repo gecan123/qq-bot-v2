@@ -55,6 +55,12 @@ describe('pause tool', () => {
     assert.match(tool.description, /仍然没有真实锚点或任务时才继续休息/)
   })
 
+  test('description frames intention as flexible options', () => {
+    const tool = createPauseTool()
+    assert.match(tool.description, /4 到 8 个可选方向/)
+    assert.match(tool.description, /选择一个、合并几个或改道/)
+  })
+
   test('action=rest delegates to rest behavior', async () => {
     const { ctx, queue } = makeCtx()
     queue.enqueue(privateEvent())

@@ -76,6 +76,12 @@ describe('rest tool', () => {
     assert.equal(data.durationSeconds, 300)
   })
 
+  test('description frames intention as flexible options', () => {
+    const tool = createRestTool()
+    assert.match(tool.description, /4 到 8 个可选方向/)
+    assert.match(tool.description, /选择一个、合并几个或改道/)
+  })
+
   test('already queued mentioned group message interrupts rest without consuming the event', async () => {
     const { ctx, queue } = makeCtx()
     queue.enqueue(groupEvent({ mentionedSelf: true }))

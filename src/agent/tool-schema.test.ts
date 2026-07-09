@@ -69,7 +69,7 @@ test('zodToOpenAIStrictToolJsonSchema keeps pause schema strict and rest-only', 
   const props = json.properties as Record<string, Record<string, unknown>>
   assert.equal(props.action.const, 'rest')
   assert.deepEqual(props.intention, {
-    description: '醒来后准备继续的事情.',
+    description: '休息前给自己列 4 到 8 个可选方向; 醒来后可按现场情况选择一个、合并几个或改道.',
     type: 'string',
     minLength: 1,
     maxLength: 200,

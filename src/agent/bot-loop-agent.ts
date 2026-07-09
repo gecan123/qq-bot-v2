@@ -12,6 +12,7 @@ import { interpretToolEffects } from './effect-interpreter.js'
 import { createLogger } from '../logger.js'
 import {
   planMailboxDisclosures,
+  renderMailboxBacklogNotification,
   renderMailboxNotification,
   type MailboxCursors,
 } from './mailbox.js'
@@ -120,6 +121,13 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     const plan = planMailboxDisclosures(events, mailboxCursors)
     mailboxCursors = plan.cursors
     for (const disclosure of plan.disclosures) {
+      if (disclosure.kind === 'backlog') {
+        deps.context.appendUserMessage(renderMailboxBacklogNotification(disclosure.event))
+        disclosed++
+        lastWakeAt = new Date()
+        continue
+      }
+
       if (disclosure.kind === 'mailbox') {
         deps.context.appendUserMessage(
           renderMailboxNotification(disclosure.mailboxKey, disclosure.events),

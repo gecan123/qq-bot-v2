@@ -19,6 +19,7 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /群聊半参与/)
     assert.match(prompt, /普通群消息.*不是待办/s)
     assert.match(prompt, /"priority":"high".*"afterRowId".*"throughRowId".*不要跳过前面的群聊/s)
+    assert.match(prompt, /"mode":"backlog".*"latestReadArgs".*最近几十条/s)
     assert.match(prompt, /curiosity tick.*只.*人工调试/s)
     assert.match(prompt, /群聊只是.*生活.*不是.*全部/s)
     assert.match(prompt, /你有自己的偏好和行动倾向，不是用户的遥控器/)

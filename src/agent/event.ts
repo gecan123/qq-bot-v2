@@ -51,3 +51,17 @@ export type BotEvent =
       ok: boolean
       summary: string
     }
+  | {
+      type: 'mailbox_backlog'
+      mailboxKey: string
+      priority: 'high' | 'normal'
+      source:
+        | { type: 'group'; groupId: number; groupName: string | null }
+        | { type: 'private'; peerId: number; senderName: string }
+      count: number
+      firstRowId: number
+      throughRowId: number
+      recentAfterRowId: number
+      senderCount: number | null
+      timeRange: { from: Date; to: Date }
+    }

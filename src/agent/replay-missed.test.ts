@@ -71,13 +71,86 @@ const stubEnsureReady = async (message: Message) => ({
   fromFrozen: true,
 })
 
-describe('replayMissedMessages — multi-source × live event dedup', () => {
-  let originalFindMany: typeof prisma.message.findMany | undefined
+let originalFindMany: typeof prisma.message.findMany | undefined
+let originalCount: typeof prisma.message.count | undefined
+let originalFindFirst: typeof prisma.message.findFirst | undefined
 
+interface FindManyStubArgs {
+  where?: Record<string, unknown>
+  take?: number
+  distinct?: string[]
+  select?: Record<string, boolean>
+}
+
+interface FindFirstStubArgs {
+  orderBy?: { id?: 'asc' | 'desc' }
+  skip?: number
+}
+
+function messageMatchesWhere(message: Message, args: { where?: Record<string, unknown> }): boolean {
+  const where = args.where ?? {}
+  const filters = Array.isArray(where.OR) ? where.OR as Array<Record<string, unknown>> : [where]
+  return filters.some((filter) => matchesFlatWhere(message, filter, where))
+}
+
+function matchesFlatWhere(
+  message: Message,
+  filter: Record<string, unknown>,
+  root: Record<string, unknown>,
+): boolean {
+  if (!matchesSender(message, root.senderId)) return false
+  if (filter.sceneKind !== undefined && message.sceneKind !== filter.sceneKind) return false
+  if (filter.groupId !== undefined && message.groupId !== filter.groupId) return false
+  if (filter.sceneExternalId !== undefined && message.sceneExternalId !== filter.sceneExternalId) return false
+  if (filter.id && typeof filter.id === 'object' && 'gt' in filter.id) {
+    if (message.id <= Number((filter.id as { gt: number }).gt)) return false
+  }
+  if (filter.createdAt && typeof filter.createdAt === 'object' && 'gt' in filter.createdAt) {
+    if (message.createdAt <= (filter.createdAt as { gt: Date }).gt) return false
+  }
+  return true
+}
+
+function matchesSender(message: Message, filter: unknown): boolean {
+  if (!filter || typeof filter !== 'object' || !('not' in filter)) return true
+  return message.senderId !== (filter as { not: bigint }).not
+}
+
+function installFindManyRows(rows: Message[]): void {
+  originalFindMany = prisma.message.findMany
+  ;(prisma.message as unknown as { findMany: (args: FindManyStubArgs) => Promise<unknown[]> }).findMany = (async (args: FindManyStubArgs) => {
+    let matched = rows.filter((row) => messageMatchesWhere(row, args)).sort((a, b) => a.id - b.id)
+    if (args.distinct?.includes('sceneExternalId')) {
+      const seen = new Set<string>()
+      matched = matched.filter((row) => {
+        if (seen.has(row.sceneExternalId)) return false
+        seen.add(row.sceneExternalId)
+        return true
+      })
+    }
+    const limited = typeof args.take === 'number' ? matched.slice(0, args.take) : matched
+    if (args.select) {
+      return limited.map((row) => Object.fromEntries(
+        Object.keys(args.select ?? {}).map((key) => [key, row[key as keyof Message]]),
+      ))
+    }
+    return limited
+  }) as never
+}
+
+describe('replayMissedMessages — multi-source × live event dedup', () => {
   afterEach(() => {
     if (originalFindMany) {
       ;(prisma.message as unknown as { findMany: typeof originalFindMany }).findMany = originalFindMany
       originalFindMany = undefined
+    }
+    if (originalCount) {
+      ;(prisma.message as unknown as { count: typeof originalCount }).count = originalCount
+      originalCount = undefined
+    }
+    if (originalFindFirst) {
+      ;(prisma.message as unknown as { findFirst: typeof originalFindFirst }).findFirst = originalFindFirst
+      originalFindFirst = undefined
     }
   })
 
@@ -121,9 +194,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
         createdAt: new Date('2026-05-04T01:00:03Z'),
       }),
     ]
-    originalFindMany = prisma.message.findMany
-    ;(prisma.message as unknown as { findMany: (args: unknown) => Promise<Message[]> }).findMany = (async () =>
-      rows) as never
+    installFindManyRows(rows)
 
     const q = new InMemoryEventQueue<BotEvent>()
     const enq = createDedupEnqueue(q)
@@ -197,9 +268,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
         createdAt: new Date('2026-05-04T00:02:00Z'),
       }),
     ]
-    originalFindMany = prisma.message.findMany
-    ;(prisma.message as unknown as { findMany: (args: unknown) => Promise<Message[]> }).findMany = (async () =>
-      rows) as never
+    installFindManyRows(rows)
 
     const q = new InMemoryEventQueue<BotEvent>()
     const enq = createDedupEnqueue(q)
@@ -253,9 +322,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
         createdAt: new Date('2026-05-03T23:00:00Z'),
       }),
     ]
-    originalFindMany = prisma.message.findMany
-    ;(prisma.message as unknown as { findMany: (args: unknown) => Promise<Message[]> }).findMany = (async () =>
-      rows) as never
+    installFindManyRows(rows)
 
     const q = new InMemoryEventQueue<BotEvent>()
     const result = await replayMissedMessages({
@@ -276,6 +343,151 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
       const event = q.dequeue()
       if (event && 'messageRowId' in event) rowIds.push(event.messageRowId)
     }
+    rowIds.sort((a, b) => a - b)
     assert.deepEqual(rowIds, [11, 12])
+  })
+
+  test('discovers new private sources by legacy wake boundary when other cursors exist', async () => {
+    const rows: Message[] = [
+      makePrivateRow({
+        id: 20,
+        peerId: 10001,
+        messageId: 20,
+        senderId: 10001,
+        text: 'known private after cursor',
+        createdAt: new Date('2026-05-04T01:00:00Z'),
+      }),
+      makePrivateRow({
+        id: 21,
+        peerId: 30003,
+        messageId: 21,
+        senderId: 30003,
+        text: 'new private source after wake',
+        createdAt: new Date('2026-05-04T01:01:00Z'),
+      }),
+      makePrivateRow({
+        id: 22,
+        peerId: 30003,
+        messageId: 22,
+        senderId: 30003,
+        text: 'second message from new source',
+        createdAt: new Date('2026-05-04T01:02:00Z'),
+      }),
+      makePrivateRow({
+        id: 23,
+        peerId: 40004,
+        messageId: 23,
+        senderId: 40004,
+        text: 'new private before wake',
+        createdAt: new Date('2026-05-03T23:59:00Z'),
+      }),
+    ]
+    installFindManyRows(rows)
+
+    const q = new InMemoryEventQueue<BotEvent>()
+    const result = await replayMissedMessages({
+      mailboxCursors: {
+        'qq_group:672312932': 10,
+        'qq_private:10001': 19,
+      },
+      legacyLastWakeAt: new Date('2026-05-04T00:00:00Z'),
+    }, {
+      enqueueMessageEvent: createDedupEnqueue(q),
+      selfNumber: 999,
+      ensureReady: stubEnsureReady,
+    })
+
+    assert.deepEqual(result, { enqueued: 3, skippedDuplicates: 0 })
+    const rowIds: number[] = []
+    while (q.size() > 0) {
+      const event = q.dequeue()
+      if (event && 'messageRowId' in event) rowIds.push(event.messageRowId)
+    }
+    rowIds.sort((a, b) => a - b)
+    assert.deepEqual(rowIds, [20, 21, 22])
+  })
+
+  test('large replay backlogs enqueue one metadata event without preparing every message body', async () => {
+    const first = makeGroupRow({
+      id: 1_000,
+      groupId: 672312932,
+      messageId: 10_000,
+      senderId: 555,
+      text: 'first old body',
+      createdAt: new Date('2026-05-04T01:00:00Z'),
+      groupName: '积压群',
+    })
+    const recentFirst = makeGroupRow({
+      id: 1_450,
+      groupId: 672312932,
+      messageId: 10_450,
+      senderId: 556,
+      text: 'recent first body',
+      createdAt: new Date('2026-05-04T02:00:00Z'),
+      groupName: '积压群',
+    })
+    const last = makeGroupRow({
+      id: 1_500,
+      groupId: 672312932,
+      messageId: 10_500,
+      senderId: 557,
+      text: 'last body',
+      createdAt: new Date('2026-05-04T03:00:00Z'),
+      groupName: '积压群',
+    })
+
+    originalCount = prisma.message.count
+    originalFindFirst = prisma.message.findFirst
+    originalFindMany = prisma.message.findMany
+    ;(prisma.message as unknown as { count: (args: unknown) => Promise<number> }).count = (async () => 230) as never
+    ;(prisma.message as unknown as { findFirst: (args: FindFirstStubArgs) => Promise<Message | null> }).findFirst = (async (args: FindFirstStubArgs) => {
+      if (args.skip === 180) return recentFirst
+      return args.orderBy?.id === 'desc' ? last : first
+    }) as never
+    ;(prisma.message as unknown as { findMany: (args: FindManyStubArgs) => Promise<Message[]> }).findMany = (async (args: FindManyStubArgs) => {
+      assert.equal(args.take, 101)
+      return Array.from({ length: 101 }, (_, index) => makeGroupRow({
+        id: 1_000 + index,
+        groupId: 672312932,
+        messageId: 10_000 + index,
+        senderId: 555,
+        text: `probe-${index}`,
+        createdAt: new Date(`2026-05-04T01:${String(index % 60).padStart(2, '0')}:00Z`),
+        groupName: '积压群',
+      }))
+    }) as never
+
+    let ensureReadyCalls = 0
+    const q = new InMemoryEventQueue<BotEvent>()
+    const result = await replayMissedMessages({
+      mailboxCursors: { 'qq_group:672312932': 999 },
+      legacyLastWakeAt: null,
+    }, {
+      enqueueMessageEvent: createDedupEnqueue(q),
+      selfNumber: 999,
+      ensureReady: async (message) => {
+        ensureReadyCalls++
+        return stubEnsureReady(message)
+      },
+    })
+
+    assert.deepEqual(result, { enqueued: 1, skippedDuplicates: 0 })
+    assert.equal(ensureReadyCalls, 0)
+    const event = q.dequeue()
+    assert.deepEqual(event, {
+      type: 'mailbox_backlog',
+      mailboxKey: 'qq_group:672312932',
+      priority: 'normal',
+      source: { type: 'group', groupId: 672312932, groupName: '积压群' },
+      count: 230,
+      firstRowId: 1_000,
+      throughRowId: 1_500,
+      recentAfterRowId: 1_449,
+      senderCount: null,
+      timeRange: {
+        from: new Date('2026-05-04T01:00:00Z'),
+        to: new Date('2026-05-04T03:00:00Z'),
+      },
+    })
   })
 })

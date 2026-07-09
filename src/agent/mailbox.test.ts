@@ -2,8 +2,11 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import type { BotEvent } from './event.js'
 import {
+  MAILBOX_BACKLOG_RECENT_LIMIT,
+  MAILBOX_BACKLOG_THRESHOLD,
   mailboxKeyForEvent,
   planMailboxDisclosures,
+  renderMailboxBacklogNotification,
   renderMailboxNotification,
 } from './mailbox.js'
 
@@ -148,6 +151,87 @@ describe('mailbox disclosure planning', () => {
     assert.doesNotMatch(rendered, /mentioned|rowIds/)
   })
 
+  test('renders large batches as backlog with recent-read args', () => {
+    const events = Array.from({ length: MAILBOX_BACKLOG_THRESHOLD + 1 }, (_, index) =>
+      groupEvent({
+        rowId: 1_000 + index * 3,
+        groupId: 111,
+        text: `body-${index}`,
+        senderId: index % 10,
+        sentAt: `2026-07-03T01:${String(index % 60).padStart(2, '0')}:00Z`,
+      }))
+
+    const rendered = renderMailboxNotification('qq_group:111', events)
+    const payload = JSON.parse(rendered)
+    const firstRecent = events[events.length - MAILBOX_BACKLOG_RECENT_LIMIT]!
+
+    assert.equal(payload.mode, 'backlog')
+    assert.equal(payload.count, MAILBOX_BACKLOG_THRESHOLD + 1)
+    assert.deepEqual(payload.readArgs, { action: 'read', source: 'group', groupId: 111, afterRowId: 999 })
+    assert.deepEqual(payload.latestReadArgs, {
+      action: 'read',
+      source: 'group',
+      groupId: 111,
+      afterRowId: firstRecent.messageRowId - 1,
+      limit: MAILBOX_BACKLOG_RECENT_LIMIT,
+    })
+    assert.equal(payload.throughRowId, events.at(-1)!.messageRowId)
+    assert.doesNotMatch(rendered, /body-/)
+  })
+
+  test('plans backlog events as cursor-advancing metadata disclosures', () => {
+    const backlog: Extract<BotEvent, { type: 'mailbox_backlog' }> = {
+      type: 'mailbox_backlog',
+      mailboxKey: 'qq_group:111',
+      priority: 'normal',
+      source: { type: 'group', groupId: 111, groupName: '测试群' },
+      count: 230,
+      firstRowId: 1_000,
+      throughRowId: 1_500,
+      recentAfterRowId: 1_430,
+      senderCount: 12,
+      timeRange: {
+        from: new Date('2026-07-03T01:00:00Z'),
+        to: new Date('2026-07-03T02:00:00Z'),
+      },
+    }
+
+    const result = planMailboxDisclosures([backlog], {})
+
+    assert.deepEqual(result.disclosures, [{ kind: 'backlog', event: backlog }])
+    assert.deepEqual(result.cursors, { 'qq_group:111': 1_500 })
+  })
+
+  test('renders replay backlog notifications without message bodies', () => {
+    const rendered = renderMailboxBacklogNotification({
+      type: 'mailbox_backlog',
+      mailboxKey: 'qq_private:9001',
+      priority: 'high',
+      source: { type: 'private', peerId: 9001, senderName: 'Alice' },
+      count: 150,
+      firstRowId: 20,
+      throughRowId: 220,
+      recentAfterRowId: 170,
+      senderCount: 1,
+      timeRange: {
+        from: new Date('2026-07-03T01:00:00Z'),
+        to: new Date('2026-07-03T02:00:00Z'),
+      },
+    })
+    const payload = JSON.parse(rendered)
+
+    assert.equal(payload.mode, 'backlog')
+    assert.deepEqual(payload.readArgs, { action: 'read', source: 'private', peerId: 9001, afterRowId: 19 })
+    assert.deepEqual(payload.latestReadArgs, {
+      action: 'read',
+      source: 'private',
+      peerId: 9001,
+      afterRowId: 170,
+      limit: MAILBOX_BACKLOG_RECENT_LIMIT,
+    })
+    assert.doesNotMatch(rendered, /Alice.+SECRET|SECRET/)
+  })
+
   test('renders a bounded private notification without message bodies', () => {
     const events = [
       privateEvent({ rowId: 20, peerId: 9001, text: 'SECRET_ONE', senderNickname: 'Alice' }),
@@ -168,6 +252,18 @@ describe('mailbox disclosure planning', () => {
   test('returns stable source keys only for QQ message events', () => {
     assert.equal(mailboxKeyForEvent(groupEvent({ rowId: 1, groupId: 111, text: 'x' })), 'qq_group:111')
     assert.equal(mailboxKeyForEvent(privateEvent({ rowId: 2 })), 'qq_private:9001')
+    assert.equal(mailboxKeyForEvent({
+      type: 'mailbox_backlog',
+      mailboxKey: 'qq_group:111',
+      priority: 'normal',
+      source: { type: 'group', groupId: 111, groupName: null },
+      count: 1,
+      firstRowId: 1,
+      throughRowId: 1,
+      recentAfterRowId: 0,
+      senderCount: 1,
+      timeRange: { from: new Date('2026-07-03T00:00:00Z'), to: new Date('2026-07-03T00:00:00Z') },
+    }), 'qq_group:111')
     assert.equal(mailboxKeyForEvent({ type: 'wake' }), null)
   })
 })

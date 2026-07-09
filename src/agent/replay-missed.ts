@@ -4,7 +4,11 @@ import type { Message } from '../generated/prisma/client.js'
 import { ensureMessageReadyForAgent as defaultEnsureReady } from '../media/ensure-message-ready.js'
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
-import type { MailboxCursors } from './mailbox.js'
+import {
+  MAILBOX_BACKLOG_RECENT_LIMIT,
+  MAILBOX_BACKLOG_THRESHOLD,
+  type MailboxCursors,
+} from './mailbox.js'
 
 const log = createLogger('REPLAY')
 
@@ -39,6 +43,16 @@ export interface ReplayCheckpoint {
   legacyLastWakeAt: Date | null
 }
 
+interface ReplaySource {
+  mailboxKey: string
+  where: Record<string, unknown>
+}
+
+interface ReplayCounters {
+  enqueued: number
+  skippedDuplicates: number
+}
+
 export async function replayMissedMessages(
   checkpoint: ReplayCheckpoint,
   deps: ReplayMissedDeps,
@@ -51,34 +65,67 @@ export async function replayMissedMessages(
 
   const groupIds = config.botTargetGroupIds.map((id) => BigInt(id))
   const sourceFilters: Array<Record<string, unknown>> = []
+  const replaySources: ReplaySource[] = []
   for (const groupId of groupIds) {
     const key = `qq_group:${groupId}`
     const cursor = checkpoint.mailboxCursors[key]
     if (cursor != null) {
-      sourceFilters.push({ sceneKind: 'qq_group', groupId, id: { gt: cursor } })
+      const where = { sceneKind: 'qq_group', groupId, id: { gt: cursor } }
+      sourceFilters.push(where)
+      replaySources.push({ mailboxKey: key, where })
     } else if (checkpoint.legacyLastWakeAt) {
-      sourceFilters.push({
+      const where = {
         sceneKind: 'qq_group',
         groupId,
         createdAt: { gt: checkpoint.legacyLastWakeAt },
-      })
+      }
+      sourceFilters.push(where)
+      replaySources.push({ mailboxKey: key, where })
     }
   }
 
   for (const [key, cursor] of cursorEntries) {
     if (!key.startsWith('qq_private:')) continue
-    sourceFilters.push({
+    const where = {
       sceneKind: 'qq_private',
       sceneExternalId: key.slice('qq_private:'.length),
       id: { gt: cursor },
-    })
+    }
+    sourceFilters.push(where)
+    replaySources.push({ mailboxKey: key, where })
   }
   // 任意好友的新私聊来源没有预注册 cursor，以 legacy 时间边界发现。
   if (checkpoint.legacyLastWakeAt) {
-    sourceFilters.push({
+    const knownPrivateSourceIds = new Set(
+      cursorEntries
+        .filter(([key]) => key.startsWith('qq_private:'))
+        .map(([key]) => key.slice('qq_private:'.length)),
+    )
+    const privateDiscoveryWhere = {
+      senderId: { not: BigInt(deps.selfNumber) },
       sceneKind: 'qq_private',
       createdAt: { gt: checkpoint.legacyLastWakeAt },
+    }
+    sourceFilters.push({
+      sceneKind: privateDiscoveryWhere.sceneKind,
+      createdAt: privateDiscoveryWhere.createdAt,
     })
+    const privateSources = await prisma.message.findMany({
+      where: privateDiscoveryWhere,
+      distinct: ['sceneExternalId'],
+      orderBy: { sceneExternalId: 'asc' },
+      select: { sceneExternalId: true },
+    })
+    for (const row of privateSources) {
+      const sourceId = row.sceneExternalId
+      if (knownPrivateSourceIds.has(sourceId)) continue
+      const where = {
+        sceneKind: 'qq_private',
+        sceneExternalId: sourceId,
+        createdAt: { gt: checkpoint.legacyLastWakeAt },
+      }
+      replaySources.push({ mailboxKey: `qq_private:${sourceId}`, where })
+    }
   }
 
   if (sourceFilters.length === 0) {
@@ -86,14 +133,94 @@ export async function replayMissedMessages(
     return { enqueued: 0, skippedDuplicates: 0 }
   }
 
+  if (cursorEntries.length === 0) {
+    const rows = await prisma.message.findMany({
+      where: {
+        senderId: { not: BigInt(deps.selfNumber) },
+        OR: sourceFilters,
+      },
+      orderBy: { id: 'asc' },
+    })
+    const result = await enqueueReplayRows(rows, checkpoint, deps)
+    logReplayResult(result, cursorEntries.length, checkpoint.legacyLastWakeAt)
+    return result
+  }
+
+  const totals: ReplayCounters = { enqueued: 0, skippedDuplicates: 0 }
+  for (const source of replaySources) {
+    const result = await replaySource(source, checkpoint, deps)
+    totals.enqueued += result.enqueued
+    totals.skippedDuplicates += result.skippedDuplicates
+  }
+
+  logReplayResult(totals, cursorEntries.length, checkpoint.legacyLastWakeAt)
+  return totals
+}
+
+async function replaySource(
+  source: ReplaySource,
+  checkpoint: ReplayCheckpoint,
+  deps: ReplayMissedDeps,
+): Promise<ReplayCounters> {
+  const where = {
+    senderId: { not: BigInt(deps.selfNumber) },
+    ...source.where,
+  }
   const rows = await prisma.message.findMany({
-    where: {
-      senderId: { not: BigInt(deps.selfNumber) },
-      OR: sourceFilters,
-    },
+    where,
     orderBy: { id: 'asc' },
+    take: MAILBOX_BACKLOG_THRESHOLD + 1,
   })
 
+  if (rows.length <= MAILBOX_BACKLOG_THRESHOLD) {
+    return enqueueReplayRows(rows, checkpoint, deps)
+  }
+
+  const count = await prisma.message.count({ where })
+  const first = rows[0]!
+  const last = await prisma.message.findFirst({ where, orderBy: { id: 'desc' } }) ?? rows[rows.length - 1]!
+  const recentFirst = await prisma.message.findFirst({
+    where,
+    orderBy: { id: 'asc' },
+    skip: Math.max(0, count - MAILBOX_BACKLOG_RECENT_LIMIT),
+  }) ?? last
+
+  const event: BotEvent = {
+    type: 'mailbox_backlog',
+    mailboxKey: source.mailboxKey,
+    priority: first.sceneKind === 'qq_private' ? 'high' : 'normal',
+    source: first.sceneKind === 'qq_private'
+      ? {
+          type: 'private',
+          peerId: Number(first.sceneExternalId),
+          senderName: first.senderNickname ?? first.sceneExternalId,
+        }
+      : {
+          type: 'group',
+          groupId: first.groupId == null ? 0 : Number(first.groupId),
+          groupName: first.groupName,
+        },
+    count,
+    firstRowId: first.id,
+    throughRowId: last.id,
+    recentAfterRowId: Math.max(0, recentFirst.id - 1),
+    senderCount: null,
+    timeRange: {
+      from: first.sentAt ?? first.createdAt,
+      to: last.sentAt ?? last.createdAt,
+    },
+  }
+
+  return deps.enqueueMessageEvent(event)
+    ? { enqueued: 1, skippedDuplicates: 0 }
+    : { enqueued: 0, skippedDuplicates: 1 }
+}
+
+async function enqueueReplayRows(
+  rows: Message[],
+  checkpoint: ReplayCheckpoint,
+  deps: ReplayMissedDeps,
+): Promise<ReplayCounters> {
   const ensureReady = deps.ensureReady ?? defaultEnsureReady
   let enqueued = 0
   let skipped = 0
@@ -148,14 +275,21 @@ export async function replayMissedMessages(
     else skipped++
   }
 
+  return { enqueued, skippedDuplicates: skipped }
+}
+
+function logReplayResult(
+  result: ReplayCounters,
+  cursorSources: number,
+  legacyLastWakeAt: Date | null,
+): void {
   log.info(
     {
-      enqueued,
-      skippedDuplicates: skipped,
-      cursorSources: cursorEntries.length,
-      legacySince: checkpoint.legacyLastWakeAt?.toISOString() ?? null,
+      enqueued: result.enqueued,
+      skippedDuplicates: result.skippedDuplicates,
+      cursorSources,
+      legacySince: legacyLastWakeAt?.toISOString() ?? null,
     },
     '回放关机期间消息',
   )
-  return { enqueued, skippedDuplicates: skipped }
 }

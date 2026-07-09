@@ -431,6 +431,63 @@ describe('BotLoopAgent.runOnceForTest', () => {
     })
   })
 
+  test('appends backlog metadata events and advances their source cursor', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({
+      type: 'mailbox_backlog',
+      mailboxKey: 'qq_group:999',
+      priority: 'normal',
+      source: { type: 'group', groupId: 999, groupName: '积压群' },
+      count: 230,
+      firstRowId: 1_000,
+      throughRowId: 1_500,
+      recentAfterRowId: 1_430,
+      senderCount: 12,
+      timeRange: {
+        from: new Date('2026-07-03T00:00:00Z'),
+        to: new Date('2026-07-03T02:00:00Z'),
+      },
+    })
+
+    const { repo, savedCursors } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
+    assert.equal(userMessages.length, 1)
+    const notification = JSON.parse(userMessages[0]!.content)
+    assert.equal(notification.mode, 'backlog')
+    assert.equal(notification.mailbox, 'qq_group:999')
+    assert.equal(notification.throughRowId, 1_500)
+    assert.deepEqual(notification.latestReadArgs, {
+      action: 'read',
+      source: 'group',
+      groupId: 999,
+      afterRowId: 1_430,
+      limit: 50,
+    })
+    assert.deepEqual(savedCursors, [
+      { 'qq_group:999': 1_500 },
+      { 'qq_group:999': 1_500 },
+    ])
+  })
+
   test('preserves the restored legacy wake boundary across non-message rounds', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()

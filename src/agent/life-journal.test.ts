@@ -22,7 +22,8 @@ describe('life journal runtime', () => {
     const llm: LlmClient = {
       async chat(input) {
         captured = input
-        assert.equal(input.tools.length, 0)
+        assert.equal(input.tools.length, 1)
+        assert.equal(input.tools[0]!.name, 'life_journal_review_result')
         assert.match(input.systemPrompt, /Life Journal/)
         return {
           content: JSON.stringify({
@@ -105,6 +106,160 @@ describe('life journal runtime', () => {
 
     assert.equal(result.ok, false)
     await assert.rejects(readFile(join(rootDir, 'life', 'journal', '2026-07-07.md'), 'utf8'))
+  })
+
+  test('recordRound retries once when review response is not JSON', async () => {
+    let calls = 0
+    const llm: LlmClient = {
+      async chat(input) {
+        calls += 1
+        if (calls === 1) {
+          return {
+            content: 'not json',
+            toolCalls: [],
+            usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+          }
+        }
+        assert.match(input.systemPrompt, /did not call life_journal_review_result/)
+        return {
+          content: JSON.stringify({
+            shouldWrite: true,
+            journalMarkdown: '### Saw\n- 第二次返回了 JSON。\n',
+            agendaMarkdown: '',
+          }),
+          toolCalls: [],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+        }
+      },
+    }
+    const runtime = createLifeJournalRuntime({
+      rootDir,
+      llm,
+      now: () => new Date('2026-07-07T15:18:00.000Z'),
+    })
+
+    const result = await runtime.recordRound({
+      roundIndex: 1,
+      messages: [{ role: 'user', content: 'hello' }],
+    })
+
+    assert.deepEqual(result, { ok: true, wroteJournal: true, updatedAgenda: false })
+    assert.equal(calls, 2)
+    assert.match(await readFile(join(rootDir, 'life', 'journal', '2026-07-07.md'), 'utf8'), /第二次返回了 JSON/)
+  })
+
+  test('recordRound reads structured review from tool call args instead of prose content', async () => {
+    let captured: LlmCallInput | null = null
+    const llm: LlmClient = {
+      async chat(input) {
+        captured = input
+        return {
+          content: 'Luna is being asked by zzz whether she can currently view webpages using Chrome.',
+          toolCalls: [{
+            id: 'review-result',
+            name: 'life_journal_review_result',
+            args: {
+              shouldWrite: true,
+              journalMarkdown: '### Saw\n- zzz 问我现在能不能用 Chrome 看网页。\n',
+              agendaMarkdown: '',
+            },
+          }],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+        }
+      },
+    }
+    const runtime = createLifeJournalRuntime({
+      rootDir,
+      llm,
+      now: () => new Date('2026-07-07T15:18:00.000Z'),
+    })
+
+    const result = await runtime.recordRound({
+      roundIndex: 2,
+      messages: [{ role: 'user', content: '你现在能看到 Chrome 网页吗？' }],
+    })
+
+    assert.deepEqual(result, { ok: true, wroteJournal: true, updatedAgenda: false })
+    assert.ok(captured)
+    const capturedInput = captured as LlmCallInput
+    assert.equal(capturedInput.tools.length, 1)
+    assert.equal(capturedInput.tools[0]!.name, 'life_journal_review_result')
+    assert.match(await readFile(join(rootDir, 'life', 'journal', '2026-07-07.md'), 'utf8'), /Chrome/)
+  })
+
+  test('recordRound treats empty structured review responses as a skipped write', async () => {
+    let calls = 0
+    const llm: LlmClient = {
+      async chat() {
+        calls += 1
+        return {
+          content: '',
+          toolCalls: [],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 0 },
+          model: 'mock',
+        }
+      },
+    }
+    const runtime = createLifeJournalRuntime({ rootDir, llm })
+
+    const result = await runtime.recordRound({
+      roundIndex: 3,
+      messages: [{ role: 'user', content: 'hello' }],
+    })
+
+    assert.deepEqual(result, { ok: true, wroteJournal: false, updatedAgenda: false })
+    assert.equal(calls, 2)
+    await assert.rejects(readFile(join(rootDir, 'life', 'journal', '2026-07-07.md'), 'utf8'))
+  })
+
+  test('recordRound throttles automatic journal writes', async () => {
+    let now = new Date('2026-07-07T15:00:00.000Z')
+    const llm: LlmClient = {
+      async chat() {
+        return {
+          content: JSON.stringify({
+            shouldWrite: true,
+            journalMarkdown: '### Saw\n- 这轮模型觉得要写。\n',
+            agendaMarkdown: '',
+          }),
+          toolCalls: [],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+        }
+      },
+    }
+    const runtime = createLifeJournalRuntime({
+      rootDir,
+      llm,
+      now: () => now,
+      minWriteIntervalMs: 10 * 60 * 1000,
+    })
+
+    const first = await runtime.recordRound({
+      roundIndex: 1,
+      messages: [{ role: 'user', content: 'first' }],
+    })
+    now = new Date('2026-07-07T15:05:00.000Z')
+    const second = await runtime.recordRound({
+      roundIndex: 2,
+      messages: [{ role: 'user', content: 'second' }],
+    })
+    now = new Date('2026-07-07T15:11:00.000Z')
+    const third = await runtime.recordRound({
+      roundIndex: 3,
+      messages: [{ role: 'user', content: 'third' }],
+    })
+
+    assert.deepEqual(first, { ok: true, wroteJournal: true, updatedAgenda: false })
+    assert.deepEqual(second, { ok: true, wroteJournal: false, updatedAgenda: false })
+    assert.deepEqual(third, { ok: true, wroteJournal: true, updatedAgenda: false })
+    const journal = await readFile(join(rootDir, 'life', 'journal', '2026-07-07.md'), 'utf8')
+    assert.match(journal, /Round 1/)
+    assert.doesNotMatch(journal, /Round 2/)
+    assert.match(journal, /Round 3/)
   })
 
   test('recordRound sends only bounded current-round messages', async () => {

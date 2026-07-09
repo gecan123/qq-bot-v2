@@ -28,6 +28,8 @@ export interface WebsiteCommandRunResult {
   stdout: string
   stderr: string
   timedOut: boolean
+  stdoutTruncated?: boolean
+  stderrTruncated?: boolean
 }
 
 export type WebsiteCommandRunner = (input: WebsiteCommandRunInput) => Promise<WebsiteCommandRunResult>
@@ -96,9 +98,8 @@ export function createWebsiteTool(deps: WebsiteToolDeps): Tool<Args> {
     name: 'website',
     description: [
       '管理 Luna 个人网站仓库的受控工具.',
-      '支持 status 查看仓库状态, read 读取允许路径, write 写入允许路径.',
+      '支持 status 查看仓库状态, read 读取允许路径, write 写入允许路径, publish 检查并发布允许路径变更.',
       '路径限制在内容、少量样式、about 页面和 public/images 下的安全文件; 不要读写配置、脚本、隐藏文件或路径逃逸.',
-      'publish 当前未实现, 调用会返回 not_implemented.',
     ].join(' '),
     schema: argsSchema,
     async execute(rawArgs) {
@@ -106,7 +107,7 @@ export function createWebsiteTool(deps: WebsiteToolDeps): Tool<Args> {
       if (args.action === 'status') return status(runtime)
       if (args.action === 'read') return readWebsiteFile(runtime, args)
       if (args.action === 'write') return writeWebsiteFile(runtime, args)
-      return jsonResult({ ok: false, code: 'not_implemented', error: 'publish is not implemented in this task' })
+      return publishWebsite(runtime, args)
     },
   }
 }
@@ -230,6 +231,139 @@ async function writeWebsiteFile(runtime: WebsiteRuntimeConfig, args: Extract<Arg
   return jsonResult({ ok: true, file: relativePath, bytes: bytes.byteLength })
 }
 
+async function publishWebsite(runtime: WebsiteRuntimeConfig, args: Extract<Args, { action: 'publish' }>) {
+  const branchResult = await runGit(runtime, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  if (commandFailed(branchResult)) {
+    return failedCommand('branch_failed', 'failed to read current branch', branchResult)
+  }
+
+  const currentBranch = branchResult.stdout.trim()
+  if (currentBranch !== runtime.branch) {
+    return jsonResult({
+      ok: false,
+      code: 'wrong_branch',
+      branch: currentBranch,
+      expectedBranch: runtime.branch,
+    })
+  }
+
+  const changedFiles = await readPublishChangedFiles(runtime)
+  if ('content' in changedFiles) return changedFiles
+  if (changedFiles.length === 0) {
+    return jsonResult({
+      ok: false,
+      code: 'nothing_to_publish',
+      branch: runtime.branch,
+      changedFiles,
+    })
+  }
+
+  const unsafeFiles = changedFiles.filter((file) => !isAllowedWebsiteWritePath(file))
+  if (unsafeFiles.length > 0) {
+    return jsonResult({
+      ok: false,
+      code: 'unsafe_dirty_worktree',
+      unsafeFiles,
+      changedFiles,
+    })
+  }
+
+  const checkResult = await runConfiguredCheck(
+    runtime.runner,
+    runtime.repoDir,
+    runtime.commandTimeoutMs,
+    runtime.checkCommand,
+  )
+  if (commandFailed(checkResult)) {
+    return failedCommand('check_failed', 'configured check command failed', checkResult)
+  }
+
+  const postCheckChangedFiles = await readPublishChangedFiles(runtime)
+  if ('content' in postCheckChangedFiles) return postCheckChangedFiles
+  const postCheckUnsafeFiles = postCheckChangedFiles.filter((file) => !isAllowedWebsiteWritePath(file))
+  if (postCheckUnsafeFiles.length > 0) {
+    return jsonResult({
+      ok: false,
+      code: 'unsafe_dirty_worktree',
+      unsafeFiles: postCheckUnsafeFiles,
+      changedFiles: postCheckChangedFiles,
+    })
+  }
+
+  const stageSpecs = publishStageSpecs(postCheckChangedFiles)
+  if (stageSpecs.length === 0) {
+    return jsonResult({
+      ok: false,
+      code: 'staging_policy_failed',
+      error: 'no safe staging pathspecs were derived for website changes',
+      changedFiles: postCheckChangedFiles,
+    })
+  }
+  const addResult = await runGit(runtime, ['add', '-A', '--', ...stageSpecs])
+  if (commandFailed(addResult)) {
+    return failedCommand('add_failed', 'failed to stage website changes', addResult)
+  }
+
+  const stagedResult = await runGit(runtime, ['diff', '--cached', '--name-status'])
+  if (commandFailed(stagedResult)) {
+    return failedCommand('staged_diff_failed', 'failed to inspect staged website changes', stagedResult)
+  }
+  if (stagedResult.stdoutTruncated) {
+    const cleanup = await runGit(runtime, ['reset', '--', ...stageSpecs])
+    return truncatedMachineOutput('staged_diff', stagedResult, { cleanup: commandSummary(cleanup) })
+  }
+  const stagedInspection = parseStagedNameStatus(stagedResult.stdout)
+  const unsafeStagedFiles = uniqueStrings([
+    ...stagedInspection.files.filter((file) => !isAllowedWebsiteWritePath(file)),
+    ...stagedInspection.unsupportedFiles,
+  ])
+  if (unsafeStagedFiles.length > 0 || stagedInspection.unsupportedEntries.length > 0) {
+    const cleanup = await runGit(runtime, ['reset', '--', ...stageSpecs])
+    return jsonResult({
+      ok: false,
+      code: 'unsafe_staged_index',
+      unsafeFiles: unsafeStagedFiles,
+      changedFiles: postCheckChangedFiles,
+      stagedFiles: stagedInspection.files,
+      unsupportedStagedEntries: stagedInspection.unsupportedEntries,
+      cleanup: commandSummary(cleanup),
+    })
+  }
+
+  const commitMessage = args.message ?? 'content: Luna 更新个人网站'
+  const commitResult = await runGit(runtime, ['commit', '-m', commitMessage])
+  if (commandFailed(commitResult)) {
+    return failedCommand('commit_failed', 'failed to commit website changes', commitResult)
+  }
+
+  const hashResult = await runGit(runtime, ['rev-parse', '--short', 'HEAD'])
+  if (commandFailed(hashResult)) {
+    return failedCommand('hash_failed', 'failed to read published commit hash', hashResult)
+  }
+
+  const pushResult = await runGit(runtime, ['push', 'origin', runtime.branch])
+  if (commandFailed(pushResult)) {
+    return failedCommand('push_failed', 'failed to push website commit', pushResult, {
+      branch: runtime.branch,
+      commit: hashResult.stdout.trim(),
+    })
+  }
+
+  return jsonResult({
+    ok: true,
+    branch: runtime.branch,
+    commit: hashResult.stdout.trim(),
+    changedFiles: postCheckChangedFiles,
+    ...(runtime.publicUrl ? { publicUrl: runtime.publicUrl } : {}),
+    check: {
+      ok: true,
+      stdout: clip(checkResult.stdout, 1_000),
+      stderr: clip(checkResult.stderr, 1_000),
+    },
+    next: 'Vercel Git integration should deploy this commit from the configured branch.',
+  })
+}
+
 type ExistingSitePathResult = null | 'not_found' | 'not_regular_file' | {
   path: string
   size: number
@@ -324,57 +458,123 @@ function runGit(runtime: WebsiteRuntimeConfig, args: string[]): Promise<WebsiteC
   })
 }
 
+async function readPublishChangedFiles(runtime: WebsiteRuntimeConfig) {
+  const statusResult = await runGit(runtime, ['status', '--porcelain', '--untracked-files=all'])
+  if (commandFailed(statusResult)) {
+    return failedCommand('status_failed', 'failed to read git status', statusResult)
+  }
+  if (statusResult.stdoutTruncated) {
+    return truncatedMachineOutput('status', statusResult)
+  }
+  return parsePorcelainPublishPaths(statusResult.stdout)
+}
+
+function runConfiguredCheck(
+  runner: WebsiteCommandRunner,
+  cwd: string,
+  timeoutMs: number,
+  checkCommand: string,
+): Promise<WebsiteCommandRunResult> {
+  const [executable, ...args] = checkCommand.trim().split(/\s+/).filter(Boolean)
+  if (!executable) {
+    return Promise.resolve({
+      exitCode: null,
+      stdout: '',
+      stderr: 'check command is empty',
+      timedOut: false,
+    })
+  }
+  return runner({ executable, args, cwd, timeoutMs })
+}
+
 export function runWebsiteCommand(input: WebsiteCommandRunInput): Promise<WebsiteCommandRunResult> {
   return new Promise((resolvePromise) => {
+    const useProcessGroup = process.platform !== 'win32'
     const child = spawn(input.executable, input.args, {
       cwd: input.cwd,
+      detached: useProcessGroup,
       env: minimalEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let stdout = ''
     let stderr = ''
+    let stdoutTruncated = false
+    let stderrTruncated = false
     let settled = false
+    let timedOut = false
+    let killTimeout: NodeJS.Timeout | null = null
+    let killEscalated = false
+    let pendingResult: WebsiteCommandRunResult | null = null
 
-    const timeout = setTimeout(() => {
+    const resolveNow = (result: WebsiteCommandRunResult) => {
       if (settled) return
       settled = true
-      child.kill('SIGTERM')
-      resolvePromise({
-        exitCode: null,
-        stdout: clip(stdout, COMMAND_OUTPUT_CAP),
-        stderr: clip(stderr, COMMAND_OUTPUT_CAP),
-        timedOut: true,
-      })
+      clearTimeout(timeout)
+      if (killTimeout) clearTimeout(killTimeout)
+      resolvePromise(result)
+    }
+
+    const resolveAfterCleanup = (result: WebsiteCommandRunResult) => {
+      if (timedOut && !killEscalated) {
+        pendingResult = result
+        return
+      }
+      resolveNow(result)
+    }
+
+    const killChild = (signal: NodeJS.Signals) => {
+      if (useProcessGroup && child.pid) {
+        try {
+          process.kill(-child.pid, signal)
+          return
+        } catch (err) {
+          if (err instanceof Error && 'code' in err && err.code === 'ESRCH') return
+        }
+      }
+      child.kill(signal)
+    }
+
+    const timeout = setTimeout(() => {
+      timedOut = true
+      killChild('SIGTERM')
+      killTimeout = setTimeout(() => {
+        killEscalated = true
+        killChild('SIGKILL')
+        if (pendingResult) resolveNow(pendingResult)
+      }, 1_000)
     }, input.timeoutMs)
 
     child.stdout?.setEncoding('utf8')
     child.stderr?.setEncoding('utf8')
     child.stdout?.on('data', (chunk: string) => {
-      stdout = clip(stdout + chunk, COMMAND_OUTPUT_CAP)
+      const next = stdout + chunk
+      stdoutTruncated = stdoutTruncated || next.length > COMMAND_OUTPUT_CAP
+      stdout = clip(next, COMMAND_OUTPUT_CAP)
     })
     child.stderr?.on('data', (chunk: string) => {
-      stderr = clip(stderr + chunk, COMMAND_OUTPUT_CAP)
+      const next = stderr + chunk
+      stderrTruncated = stderrTruncated || next.length > COMMAND_OUTPUT_CAP
+      stderr = clip(next, COMMAND_OUTPUT_CAP)
     })
     child.on('error', (err) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      resolvePromise({
+      const nextStderr = `${stderr}${stderr ? '\n' : ''}${err.message}`
+      resolveAfterCleanup({
         exitCode: null,
         stdout: clip(stdout, COMMAND_OUTPUT_CAP),
-        stderr: clip(`${stderr}${stderr ? '\n' : ''}${err.message}`, COMMAND_OUTPUT_CAP),
-        timedOut: false,
+        stderr: clip(nextStderr, COMMAND_OUTPUT_CAP),
+        timedOut,
+        stdoutTruncated,
+        stderrTruncated: stderrTruncated || nextStderr.length > COMMAND_OUTPUT_CAP,
       })
     })
     child.on('close', (code) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      resolvePromise({
+      resolveAfterCleanup({
         exitCode: code,
         stdout: clip(stdout, COMMAND_OUTPUT_CAP),
         stderr: clip(stderr, COMMAND_OUTPUT_CAP),
-        timedOut: false,
+        timedOut,
+        stdoutTruncated,
+        stderrTruncated,
       })
     })
   })
@@ -389,6 +589,94 @@ function parsePorcelainFiles(stdout: string): string[] {
     if (file) files.push(file)
   }
   return files
+}
+
+function parsePorcelainPublishPaths(stdout: string): string[] {
+  const files: string[] = []
+  for (const line of stdout.split('\n')) {
+    if (!line.trim()) continue
+    const rawFile = line.slice(3).trim()
+    if (rawFile.includes(' -> ')) {
+      for (const file of rawFile.split(' -> ').map((value) => value.trim())) {
+        if (file && !files.includes(file)) files.push(file)
+      }
+      continue
+    }
+    if (rawFile && !files.includes(rawFile)) files.push(rawFile)
+  }
+  return files
+}
+
+interface StagedNameStatusInspection {
+  files: string[]
+  unsupportedFiles: string[]
+  unsupportedEntries: string[]
+}
+
+function parseStagedNameStatus(stdout: string): StagedNameStatusInspection {
+  const files: string[] = []
+  const unsupportedFiles: string[] = []
+  const unsupportedEntries: string[] = []
+
+  const addFile = (file: string, target = files) => {
+    const trimmed = file.trim()
+    if (trimmed && !target.includes(trimmed)) target.push(trimmed)
+  }
+
+  for (const line of stdout.split('\n')) {
+    if (!line.trim()) continue
+
+    const parts = line.split('\t')
+    const status = parts[0] ?? ''
+    const changeType = status.charAt(0)
+
+    if ((changeType === 'R' || changeType === 'C') && parts.length >= 3) {
+      addFile(parts[1])
+      addFile(parts[2])
+      continue
+    }
+
+    if ((changeType === 'A' || changeType === 'D' || changeType === 'M') && parts.length >= 2) {
+      addFile(parts[1])
+      continue
+    }
+
+    unsupportedEntries.push(line)
+    for (const file of parts.slice(1)) {
+      addFile(file, unsupportedFiles)
+      addFile(file)
+    }
+  }
+
+  return { files, unsupportedFiles, unsupportedEntries }
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const unique: string[] = []
+  for (const value of values) {
+    if (!unique.includes(value)) unique.push(value)
+  }
+  return unique
+}
+
+function publishStageSpecs(changedFiles: string[]): string[] {
+  const specs: string[] = []
+  for (const file of changedFiles) {
+    let spec: string | null = null
+    if (file.startsWith('src/content/')) {
+      spec = 'src/content'
+    } else if (file.startsWith('public/images/')) {
+      spec = 'public/images'
+    } else if (
+      file === 'src/pages/about.astro' ||
+      file === 'src/styles/tokens.css' ||
+      file === 'src/styles/components.css'
+    ) {
+      spec = file
+    }
+    if (spec && !specs.includes(spec)) specs.push(spec)
+  }
+  return specs
 }
 
 function minimalEnv(): NodeJS.ProcessEnv {
@@ -409,12 +697,53 @@ function commandSummary(result: WebsiteCommandRunResult) {
   return {
     exitCode: result.exitCode,
     timedOut: result.timedOut,
+    stdoutTruncated: result.stdoutTruncated === true,
+    stderrTruncated: result.stderrTruncated === true,
     stderr: result.stderr,
   }
 }
 
 function commandFailed(result: WebsiteCommandRunResult): boolean {
   return result.timedOut || result.exitCode !== 0
+}
+
+function truncatedMachineOutput(command: string, result: WebsiteCommandRunResult, extra: Record<string, unknown> = {}) {
+  return jsonResult({
+    ok: false,
+    code: 'git_output_truncated',
+    error: `safety-critical git ${command} output was truncated`,
+    ...extra,
+    command: {
+      exitCode: result.exitCode,
+      stdout: clip(result.stdout, COMMAND_OUTPUT_CAP),
+      stderr: clip(result.stderr, COMMAND_OUTPUT_CAP),
+      timedOut: result.timedOut,
+      stdoutTruncated: result.stdoutTruncated === true,
+      stderrTruncated: result.stderrTruncated === true,
+    },
+  })
+}
+
+function failedCommand(
+  code: string,
+  error: string,
+  result: WebsiteCommandRunResult,
+  extra: Record<string, unknown> = {},
+) {
+  return jsonResult({
+    ok: false,
+    code,
+    error,
+    ...extra,
+    command: {
+      exitCode: result.exitCode,
+      stdout: clip(result.stdout, COMMAND_OUTPUT_CAP),
+      stderr: clip(result.stderr, COMMAND_OUTPUT_CAP),
+      timedOut: result.timedOut,
+      stdoutTruncated: result.stdoutTruncated === true,
+      stderrTruncated: result.stderrTruncated === true,
+    },
+  })
 }
 
 function jsonResult(payload: unknown) {

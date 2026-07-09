@@ -294,6 +294,41 @@ describe('config', () => {
     assert.deepEqual(config.openbb, { cliBin: 'openbb', cliTimeoutMs: 15_000 })
   })
 
+  test('website capability is disabled by default', () => {
+    const config = parseConfig(createBaseEnv())
+
+    assert.equal(config.website, undefined)
+  })
+
+  test('parses website capability config when enabled', () => {
+    const config = parseConfig(createBaseEnv({
+      BOT_WEBSITE_ENABLED: 'true',
+      BOT_WEBSITE_REPO_DIR: '/Users/zzz/WebstormProjects/luna-site',
+      BOT_WEBSITE_PUBLIC_URL: 'https://luna.example.com',
+      BOT_WEBSITE_BRANCH: 'main',
+      BOT_WEBSITE_CHECK_COMMAND: 'pnpm build',
+      BOT_WEBSITE_COMMAND_TIMEOUT_MS: '45000',
+    }))
+
+    assert.deepEqual(config.website, {
+      repoDir: '/Users/zzz/WebstormProjects/luna-site',
+      publicUrl: 'https://luna.example.com',
+      branch: 'main',
+      checkCommand: 'pnpm build',
+      commandTimeoutMs: 45_000,
+    })
+  })
+
+  test('website config requires repo dir when enabled', () => {
+    assert.throws(
+      () => parseConfig(createBaseEnv({
+        BOT_WEBSITE_ENABLED: 'true',
+        BOT_WEBSITE_PUBLIC_URL: 'https://luna.example.com',
+      })),
+      /BOT_WEBSITE_REPO_DIR is required when BOT_WEBSITE_ENABLED=true/,
+    )
+  })
+
   test('compactionTriggerTokens defaults to 16_000 and accepts override', () => {
     const dflt = parseConfig(createBaseEnv())
     assert.equal(dflt.compactionTriggerTokens, 16_000)

@@ -28,6 +28,14 @@ type ClaudeThinkingConfig = {
   log: ClaudeThinkingLog
 }
 
+type WebsiteConfig = {
+  repoDir: string
+  publicUrl?: string
+  branch: string
+  checkCommand: string
+  commandTimeoutMs: number
+}
+
 export const CLAUDE_CODE_PROVIDER_NAME = 'claude-code'
 export const OPENAI_AGENT_PROVIDER_NAME = 'openai-agent'
 export const OPENAI_AGENT_BASE_PROVIDER_NAME = 'openai'
@@ -172,6 +180,28 @@ function parseOwner(env: EnvSource): BotOwner | null {
     throw new Error(`Invalid BOT_OWNER_QQ "${qqRaw}" (must be positive integer)`)
   }
   return { qq, name: nameRaw }
+}
+
+function parseWebsiteConfig(env: EnvSource): WebsiteConfig | undefined {
+  if (!parseBoolean(env.BOT_WEBSITE_ENABLED, false)) return undefined
+
+  const repoDir = env.BOT_WEBSITE_REPO_DIR?.trim() ?? ''
+  if (!repoDir) {
+    throw new Error('BOT_WEBSITE_REPO_DIR is required when BOT_WEBSITE_ENABLED=true')
+  }
+
+  const publicUrl = env.BOT_WEBSITE_PUBLIC_URL?.trim()
+  const branch = env.BOT_WEBSITE_BRANCH?.trim() || 'main'
+  const checkCommand = env.BOT_WEBSITE_CHECK_COMMAND?.trim() || 'pnpm build'
+  const commandTimeoutMs = parsePositiveInteger(env.BOT_WEBSITE_COMMAND_TIMEOUT_MS, 60_000)
+
+  return {
+    repoDir,
+    ...(publicUrl ? { publicUrl } : {}),
+    branch,
+    checkCommand,
+    commandTimeoutMs,
+  }
 }
 
 function parseProviderConfigs(env: EnvSource): Record<string, ProviderConfig> {
@@ -372,6 +402,7 @@ export function parseConfig(env: EnvSource) {
           cliTimeoutMs: parsePositiveInteger(env.OPENBB_CLI_TIMEOUT_MS, 15_000),
         }
       : undefined,
+    website: parseWebsiteConfig(env),
     tavily: env.TAVILY_API_KEY
       ? { apiKey: env.TAVILY_API_KEY }
       : undefined,

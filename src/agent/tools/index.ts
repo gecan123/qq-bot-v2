@@ -61,7 +61,6 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     createAiToneTool(),
     journalTool,
     lifeJournalTool,
-    skillEditorTool,
     createWorkspaceBashTool({
       groupIdWhitelist: deps.groupIds,
       groupIds: deps.groupIds,
@@ -97,6 +96,11 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   })
 
   capabilities.push(
+    {
+      name: 'skill_management',
+      description: '运行时 skill 草稿、校验和安装.',
+      tools: [skillEditorTool],
+    },
     {
       name: 'media_generation',
       description: 'AI 图片生成和基于已有图片的编辑.',

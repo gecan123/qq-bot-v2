@@ -22,19 +22,12 @@ import { InMemoryEventQueue } from './agent/event-queue.js'
 import type { BotEvent } from './agent/event.js'
 import { createBotSnapshotRepo } from './agent/snapshot-repo.js'
 import { createLlmClient } from './agent/llm-client.js'
-import { buildBotSystemPrompt } from './agent/bot-system-prompt.js'
-import { createDeferredToolExecutor } from './agent/tool.js'
-import { createGenerateImageTaskLogHook, createSendMessageAiToneHook } from './agent/tool-policy-hooks.js'
 import { setTokenUsageDbPersistenceEnabled } from './agent/token-stats.js'
-import { buildBotToolManifest } from './agent/tools/index.js'
-import { createBotLoopAgent } from './agent/bot-loop-agent.js'
 import { createLifeJournalRuntime } from './agent/life-journal.js'
-import { renderBotEvent } from './agent/render-event.js'
-import { createSendTargetPolicy } from './agent/send-target-policy.js'
 import { replayMissedMessages } from './agent/replay-missed.js'
 import { resolveTargetMetadataMaps } from './agent/resolve-target-meta.js'
 import { createDedupEnqueue } from './agent/dedup-enqueue.js'
-import { createInMemoryTaskRegistry } from './agent/background-task-registry.js'
+import { createAgentRuntime } from './agent/runtime.js'
 import {
   PersonaSpoofSelfTestMismatchError,
   runPersonaSpoofSelfTest,
@@ -266,39 +259,24 @@ async function main() {
     },
     'group customizations loaded',
   )
-  const taskRegistry = createInMemoryTaskRegistry()
-  const targetPolicy = createSendTargetPolicy({
+  const runtime = createAgentRuntime({
+    context,
+    eventQueue,
+    llm,
+    snapshotRepo,
+    sender: messageSender,
+    loadFriendIds: async () => (await napcat.get_friend_list()).map((friend) => friend.user_id),
     groupIds: config.botTargetGroupIds,
     groupAmbientSendIds: config.groupAmbientSendIds,
-    loadFriendIds: async () => (await napcat.get_friend_list()).map((friend) => friend.user_id),
-  })
-  const tools = createDeferredToolExecutor({
-    ...buildBotToolManifest({
-      sender: messageSender,
-      targetPolicy,
-      taskRegistry,
-      groupIds: config.botTargetGroupIds,
-      selfNumber: config.selfNumber,
-      metadata: targetMetadata,
-      groupCustomizations,
-    }),
-    activeCapabilities: {
-      list: () => context.getSnapshot().activeToolCapabilities,
-      activate: (capability) => context.activateToolCapability(capability),
-      deactivate: (capability) => context.deactivateToolCapability(capability),
-    },
-    trace: { path: config.toolCallLogPath, persistToDb: true },
-    hooks: {
-      beforeTool: [createSendMessageAiToneHook()],
-      afterTool: [createGenerateImageTaskLogHook()],
-    },
-  })
-
-  const systemPrompt = buildBotSystemPrompt({
-    groupIds: config.botTargetGroupIds,
-    metadata: targetMetadata,
     selfNumber: config.selfNumber,
+    metadata: targetMetadata,
+    groupCustomizations,
+    toolCallLogPath: config.toolCallLogPath,
     owner: config.owner,
+    eventDebounceMs: config.eventDebounceMs,
+    initialMailboxCursors: persisted?.mailboxCursors ?? {},
+    initialLastWakeAt: persisted?.lastWakeAt ?? null,
+    lifeJournal,
   })
 
   // 10.5 把 system prompt 写到文件, 方便调试查看
@@ -307,28 +285,13 @@ async function main() {
     const beijingTime = now.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
     const header = `=== System Prompt (${beijingTime} 北京时间) ===\n\n`
     mkdirSync('logs', { recursive: true })
-    writeFileSync('logs/system-prompt.txt', header + systemPrompt + '\n', 'utf-8')
+    writeFileSync('logs/system-prompt.txt', header + runtime.systemPrompt + '\n', 'utf-8')
     log.info('system prompt 已写入 logs/system-prompt.txt')
   }
 
-  // 11. BotLoopAgent
-  const agent = createBotLoopAgent({
-    systemPrompt,
-    context,
-    eventQueue,
-    llm,
-    tools,
-    snapshotRepo,
-    initialMailboxCursors: persisted?.mailboxCursors ?? {},
-    initialLastWakeAt: persisted?.lastWakeAt ?? null,
-    renderEvent: renderBotEvent,
-    eventDebounceMs: config.eventDebounceMs,
-    lifeJournal,
-  })
-
-  // 12. 进入主循环
+  // 11. 进入主循环
   log.info('BotLoopAgent 进入主循环')
-  await agent.start()
+  await runtime.agent.start()
 }
 
 async function shutdown() {

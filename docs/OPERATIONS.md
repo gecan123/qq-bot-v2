@@ -23,6 +23,7 @@ pnpm lint
 pnpm repo-check
 pnpm agent:doctor
 pnpm agent:metrics
+pnpm agent:snapshot-check
 pnpm db:generate
 pnpm db:migrate
 pnpm db:push
@@ -109,6 +110,7 @@ BOT_BROWSER_ARGS=--fingerprint=12345
 - `pnpm agent:metrics <token-log> <tool-log>` 可以汇总指定日志文件。
 - 运行时会把工具调用和 token/cache 使用 best-effort 写入 Postgres 的 `agent_tool_calls` / `agent_token_usage`，写 DB 失败只记 warning，不影响 bot 执行。
 - `pnpm agent:metrics --db` 从 Postgres 汇总持久化事件；可加 `--from <iso> --to <iso> --tool <name> --operation <name> --model <name> --ok true|false --side-effect true|false` 做筛选。
+- `pnpm agent:snapshot-check` 只读检查 `bot_agent_snapshot`：验证 snapshot JSON 可序列化、assistant tool call 与 tool result 相邻匹配、JSON-like tool result 可解析、`activeToolCapabilities` 未混入 messages、mailbox cursor key/value 合法；输出 JSON，有错误时非零退出。
 
 ## Git
 

@@ -6,7 +6,7 @@
 
 ## 核心流程
 
-1. `src/index.ts` 加载 config，连接 Prisma，注册媒体 provider，创建 agent LLM client，恢复 `BotAgentSnapshot`，并启动 event queue。
+1. `src/index.ts` 加载 config，连接 Prisma，注册媒体 provider，创建 agent LLM client，恢复 `BotAgentSnapshot`，并启动 event queue；`src/agent/runtime.ts` 负责把已恢复的 context、tools、system prompt 和 `BotLoopAgent` 装配成运行时。
 2. `src/bot/**` 接收 NapCat 事件，并通过 `src/database/messages.ts` 写入入站事实。
 3. ready 后的消息被投递为 `BotEvent`。
 4. `src/agent/mailbox.ts` 把所有 QQ 消息按来源聚合为不含正文的确定性通知，并计算批次级 `priority=high|normal`；非 QQ 运行时事件仍走稳定 direct 渲染。
@@ -34,6 +34,7 @@
 ## 主要模块
 
 - `src/agent/bot-loop-agent.ts`：Runtime Host，负责披露、持久化、compaction、life journal hook 和 pause/autonomy 控制。
+- `src/agent/runtime.ts`：Agent runtime 装配边界，负责创建 target policy、task registry、deferred tool executor、system prompt 和 `BotLoopAgent`。
 - `src/agent/react-kernel.ts`：单轮 ReAct transcript append 边界，负责 LLM call、assistant tool calls 和 tool result content。
 - `src/agent/**`：永续上下文、LLM client routing、工具、replay、compaction 和 token stats。
 - `src/bot/**`：NapCat 解析和 message readiness。

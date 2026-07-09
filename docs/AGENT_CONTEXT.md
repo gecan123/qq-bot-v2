@@ -34,6 +34,7 @@
 
 - `src/agent/agent-context.ts`：内存中的 context 操作。
 - `src/agent/snapshot-repo.ts`：`bot_agent_snapshot` 持久化。
+- `src/agent/runtime.ts`：Agent runtime 装配边界，把已恢复的 context 接到 deferred tools、system prompt 和 `BotLoopAgent`。
 - `src/agent/bot-loop-agent.ts`：Runtime Host，负责事件披露、mailbox cursors、snapshot 原子保存、life journal hook、compaction 和循环控制。
 - `src/agent/react-kernel.ts`：一轮 ReAct transcript append 边界；只把 `ToolExecutionResult.content` 写入 `AgentContext`，`outcome` / `effects` 返回 Runtime Host。
 - `src/agent/effect-interpreter.ts`：解释工具声明的 runtime effects，并集中执行合法性判断。

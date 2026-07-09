@@ -65,7 +65,7 @@ describe('merged main-agent tools', () => {
     assert.ok(names.includes('ai_tone'))
     assert.ok(names.includes('journal'))
     assert.ok(names.includes('life_journal'))
-    assert.ok(names.includes('skill_editor'))
+    assert.equal(names.includes('skill_editor'), false)
     assert.equal(names.includes('generate_image'), false)
     assert.ok(names.includes('collect_sticker'))
     assert.equal(names.includes('fetch_content'), false)
@@ -119,7 +119,8 @@ describe('merged main-agent tools', () => {
     assert.ok(alwaysOnNames.includes('ai_tone'))
     assert.ok(alwaysOnNames.includes('journal'))
     assert.ok(alwaysOnNames.includes('life_journal'))
-    assert.ok(alwaysOnNames.includes('skill_editor'))
+    assert.equal(alwaysOnNames.includes('skill_editor'), false)
+    assert.deepEqual(capabilities.get('skill_management'), ['skill_editor'])
     assert.ok(capabilities.get('external_research')?.includes('fetch_content'))
     if (capabilities.get('external_research')?.includes('web_search')) {
       assert.deepEqual(capabilities.get('external_research'), ['web_search', 'fetch_content'])
@@ -306,7 +307,7 @@ describe('merged main-agent tools', () => {
 
   test('runCurlImage fetches bytes from a local HTTP endpoint with curl', async () => {
     const server = createServer((_req, res) => {
-      res.writeHead(200, { 'content-type': 'image/png' })
+      res.writeHead(200, { 'content-type': 'image/png', connection: 'close' })
       res.end(TINY_PNG)
     })
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -324,6 +325,7 @@ describe('merged main-agent tools', () => {
       assert.deepEqual(result.bytes, TINY_PNG)
       assert.equal(result.errorKind, undefined)
     } finally {
+      server.closeAllConnections()
       await new Promise<void>((resolve) => server.close(() => resolve()))
     }
   })

@@ -7,7 +7,7 @@
 - 为 docs links 和 prompt entry points 增加更多 `repo-check` 规则。
 - 扩展 `agent:doctor`，增加可选的 database、NapCat、LLM provider 和 prompt-rendering probes。
 - 扩展 `agent:metrics`，增加趋势窗口和 cache-hit 回归阈值。
-- 增加 replay-focused checks，从 `bot_agent_snapshot` 采样并验证稳定序列化。
+- 扩展 replay-focused checks，在 `agent:snapshot-check` 基础上增加更多真实 snapshot 采样和趋势告警。
 - 保持 README 和 `docs/` 与当前 single-context runtime 对齐。
 
 ## 清理规则

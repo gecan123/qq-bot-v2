@@ -86,11 +86,13 @@ describe('life journal runtime', () => {
     assert.match(await readFile(join(rootDir, 'life', 'agenda.md'), 'utf8'), /## Active/)
   })
 
-  test('recordRound returns ok false for invalid JSON and does not throw', async () => {
+  test('recordRound safely skips prose after one retry', async () => {
+    let calls = 0
     const llm: LlmClient = {
       async chat() {
+        calls += 1
         return {
-          content: 'not json',
+          content: '不写日记了，这轮没什么需要记录的。',
           toolCalls: [],
           usage: { inputTokens: null, cachedTokens: null, outputTokens: null },
           model: 'mock',
@@ -104,8 +106,69 @@ describe('life journal runtime', () => {
       messages: [{ role: 'user', content: 'hello' }],
     })
 
-    assert.equal(result.ok, false)
+    assert.deepEqual(result, { ok: true, wroteJournal: false, updatedAgenda: false })
+    assert.equal(calls, 2)
     await assert.rejects(readFile(join(rootDir, 'life', 'journal', '2026-07-07.md'), 'utf8'))
+  })
+
+  test('recordRound accepts SKIP without retrying', async () => {
+    let calls = 0
+    const llm: LlmClient = {
+      async chat() {
+        calls += 1
+        return {
+          content: 'SKIP',
+          toolCalls: [],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+        }
+      },
+    }
+    const runtime = createLifeJournalRuntime({ rootDir, llm })
+
+    const result = await runtime.recordRound({
+      roundIndex: 1,
+      messages: [{ role: 'user', content: '常规群聊' }],
+    })
+
+    assert.deepEqual(result, { ok: true, wroteJournal: false, updatedAgenda: false })
+    assert.equal(calls, 1)
+  })
+
+  test('recordRound writes journal and agenda from RECORD fallback protocol', async () => {
+    const llm: LlmClient = {
+      async chat() {
+        return {
+          content: `RECORD
+<<<JOURNAL>>>
+### Saw
+- LongCat 使用了文本回退协议。
+<<<AGENDA>>>
+# Agenda
+
+## Active
+- [ ] 继续观察回退成功率
+`,
+          toolCalls: [],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+        }
+      },
+    }
+    const runtime = createLifeJournalRuntime({
+      rootDir,
+      llm,
+      now: () => new Date('2026-07-07T15:18:00.000Z'),
+    })
+
+    const result = await runtime.recordRound({
+      roundIndex: 4,
+      messages: [{ role: 'user', content: '记录这个兼容性修复' }],
+    })
+
+    assert.deepEqual(result, { ok: true, wroteJournal: true, updatedAgenda: true })
+    assert.match(await readFile(join(rootDir, 'life', 'journal', '2026-07-07.md'), 'utf8'), /文本回退协议/)
+    assert.match(await readFile(join(rootDir, 'life', 'agenda.md'), 'utf8'), /继续观察回退成功率/)
   })
 
   test('recordRound retries once when review response is not JSON', async () => {
@@ -121,7 +184,7 @@ describe('life journal runtime', () => {
             model: 'mock',
           }
         }
-        assert.match(input.systemPrompt, /did not call life_journal_review_result/)
+        assert.match(input.systemPrompt, /follow the SKIP\/RECORD fallback protocol exactly/)
         return {
           content: JSON.stringify({
             shouldWrite: true,

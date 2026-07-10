@@ -36,6 +36,8 @@ type IdleJson = z.infer<typeof idleResultSchema>
 
 const log = createLogger('LIFE_JOURNAL')
 const DEFAULT_MIN_WRITE_INTERVAL_MS = 10 * 60 * 1000
+const JOURNAL_MARKER = '<<<JOURNAL>>>'
+const AGENDA_MARKER = '<<<AGENDA>>>'
 
 const REVIEW_SYSTEM_PROMPT = `You are Luna writing your own Life Journal.
 
@@ -43,11 +45,25 @@ This is Luna's private notebook for lived continuity, not a mechanical execution
 Write subjectively in first person when a round contains something worth remembering.
 Skip mechanical tool-call logs and transient implementation chatter.
 
-Call life_journal_review_result exactly once. Do not answer with prose.
+Prefer calling life_journal_review_result exactly once.
 Fields:
 - shouldWrite: boolean
 - journalMarkdown: string
 - agendaMarkdown: string
+
+If tool calling is unavailable, use exactly one of these plain-text fallbacks instead of prose:
+
+SKIP
+
+or:
+
+RECORD
+<<<JOURNAL>>>
+<journal markdown, or empty>
+<<<AGENDA>>>
+<full agenda markdown, or empty>
+
+Both markers are required after RECORD. Use SKIP when neither file needs an update.
 
 Journal markdown rules:
 - Use only these section headings when present: Saw, Did, Promised, I care about, Next, Mood.
@@ -169,7 +185,46 @@ function asNonEmptyString(value: unknown): string {
   return typeof value === 'string' && value.trim() ? value : ''
 }
 
-function extractToolResultOrJson<T>(output: Awaited<ReturnType<LlmClient['chat']>>, tool: Tool<T>): T {
+function parseReviewTextProtocol(text: string): ReviewJson | null {
+  const trimmed = text.trim()
+  if (trimmed === 'SKIP') {
+    return { shouldWrite: false, journalMarkdown: '', agendaMarkdown: '' }
+  }
+
+  const firstNewline = trimmed.indexOf('\n')
+  if (firstNewline < 0 || trimmed.slice(0, firstNewline).trim() !== 'RECORD') {
+    return null
+  }
+
+  const payload = trimmed.slice(firstNewline + 1)
+  const journalStart = payload.indexOf(JOURNAL_MARKER)
+  const agendaStart = payload.indexOf(AGENDA_MARKER)
+  if (journalStart < 0 || agendaStart < journalStart + JOURNAL_MARKER.length) {
+    return null
+  }
+
+  const journalMarkdown = payload
+    .slice(journalStart + JOURNAL_MARKER.length, agendaStart)
+    .trim()
+  const agendaMarkdown = payload
+    .slice(agendaStart + AGENDA_MARKER.length)
+    .trim()
+  if (!journalMarkdown && !agendaMarkdown) {
+    return null
+  }
+
+  return {
+    shouldWrite: Boolean(journalMarkdown),
+    journalMarkdown,
+    agendaMarkdown,
+  }
+}
+
+function extractToolResultOrJson<T>(
+  output: Awaited<ReturnType<LlmClient['chat']>>,
+  tool: Tool<T>,
+  parseText?: (text: string) => T | null,
+): T {
   const call = output.toolCalls.find((candidate) => candidate.name === tool.name)
   if (call) {
     const parsed = tool.schema.safeParse(call.args)
@@ -185,14 +240,37 @@ function extractToolResultOrJson<T>(output: Awaited<ReturnType<LlmClient['chat']
   if (!output.content.trim()) {
     throw new EmptyStructuredResultError()
   }
-  return extractJsonObject(output.content) as T
+
+  const textResult = parseText?.(output.content)
+  if (textResult) {
+    return textResult
+  }
+
+  const json = extractJsonObject(output.content)
+  const parsed = tool.schema.safeParse(json)
+  if (!parsed.success) {
+    throw new JsonObjectParseError(
+      `invalid ${tool.name} JSON: ${parsed.error.message}`,
+      output.content,
+    )
+  }
+  return parsed.data as T
 }
 
-async function chatStructuredObject<T>(llm: LlmClient, input: LlmCallInput, tool: Tool<T>): Promise<T> {
+async function chatStructuredObject<T>(
+  llm: LlmClient,
+  input: LlmCallInput,
+  tool: Tool<T>,
+  options: {
+    parseText?: (text: string) => T | null
+    retryInstruction?: string
+    invalidAsEmpty?: boolean
+  } = {},
+): Promise<T> {
   const request = { ...input, tools: [tool] }
   const output = await llm.chat(request)
   try {
-    return extractToolResultOrJson(output, tool)
+    return extractToolResultOrJson(output, tool, options.parseText)
   } catch (error) {
     if (!(error instanceof JsonObjectParseError) && !(error instanceof EmptyStructuredResultError)) {
       throw error
@@ -203,9 +281,23 @@ async function chatStructuredObject<T>(llm: LlmClient, input: LlmCallInput, tool
     ...request,
     systemPrompt: `${input.systemPrompt}
 
-Your previous response did not call ${tool.name} with valid arguments. Call ${tool.name} exactly once and do not answer with prose.`,
+${options.retryInstruction ?? `Your previous response did not call ${tool.name} with valid arguments. Call ${tool.name} exactly once and do not answer with prose.`}`,
   })
-  return extractToolResultOrJson(retryOutput, tool)
+  try {
+    return extractToolResultOrJson(retryOutput, tool, options.parseText)
+  } catch (error) {
+    if (!(error instanceof JsonObjectParseError) && !(error instanceof EmptyStructuredResultError)) {
+      throw error
+    }
+    if (!options.invalidAsEmpty) {
+      throw error
+    }
+    log.debug({
+      toolName: tool.name,
+      outputPreview: error instanceof JsonObjectParseError ? error.outputPreview : '[empty]',
+    }, 'life_journal_structured_result_invalid_skipped')
+    throw new EmptyStructuredResultError()
+  }
 }
 
 export function createLifeJournalRuntime(deps: {
@@ -228,7 +320,11 @@ export function createLifeJournalRuntime(deps: {
           systemPrompt: REVIEW_SYSTEM_PROMPT,
           messages: boundRoundMessages(input.messages, maxRoundChars),
           tools: [],
-        }, reviewResultTool)
+        }, reviewResultTool, {
+          parseText: parseReviewTextProtocol,
+          retryInstruction: `Your previous response was invalid. Either call life_journal_review_result exactly once or follow the SKIP/RECORD fallback protocol exactly. Do not answer with prose.`,
+          invalidAsEmpty: true,
+        })
         const journalMarkdown = asNonEmptyString(parsed.journalMarkdown)
         const agendaMarkdown = asNonEmptyString(parsed.agendaMarkdown)
         const shouldWrite = parsed.shouldWrite === true

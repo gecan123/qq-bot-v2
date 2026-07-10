@@ -18,6 +18,7 @@
 
 - `browser`：配置 `BOT_BROWSER_ENABLED=true` 后可激活，内部工具是单一 action-driven `browser`。
 - `finance`：配置 `OPENBB_CLI_ENABLED=true` 后可激活，内部工具是 `openbb_cli`。
+- `website`：配置 `BOT_WEBSITE_ENABLED=true` 和独立网站仓库路径后可激活，内部工具是 `website`，用于维护 Luna 的 Astro 个人网站并发布到配置分支。
 - `external_research`：内部工具包含 `fetch_content`；配置 `TAVILY_API_KEY` 后同时包含 `web_search`。
 - `media_generation`：内部工具是 `generate_image`，创建图片生成/编辑后台任务，后续用 `background_task` 查结果。
 - `media_fetch`：内部工具是 `fetch_content` 的图片 URL / QQ 头像抓取能力。
@@ -41,6 +42,13 @@
 - screenshot 返回压缩 image block 并进入 `AgentContext`；artifact 和 action log 留在磁盘，不从日志重建 replay。
 - 登录、2FA、账号安全、OAuth、支付、可执行/压缩包下载等高风险动作必须请求 owner help；普通浏览、cookie consent、Cloudflare/Turnstile/人机按钮可自主处理。
 
+## Website
+
+- 网站源码放在独立 Astro 仓库中；owner 负责首次建站、Git 认证、Vercel 项目和域名，bot 通过 `BOT_WEBSITE_REPO_DIR` 访问本机 checkout。
+- `website action=status|read|write|publish` 分别用于查看状态、读取、写入和发布。`BOT_WEBSITE_PUBLIC_URL` 仅用于状态/发布结果提示，不参与部署鉴权。
+- 读写路径只允许 `src/content/**`、`src/pages/about.astro`、`src/styles/tokens.css`、`src/styles/components.css` 和 `public/images/**` 中受支持的文件类型；绝对路径、隐藏路径、路径逃逸、符号链接和非普通文件会被拒绝。
+- `publish` 只接受配置分支上的允许路径变更；先运行 `BOT_WEBSITE_CHECK_COMMAND`，再次校验工作区和暂存区，再 commit 并 push。Vercel 由网站仓库的 push 自动触发。
+
 ## 安全规则
 
 - 对外 QQ 发言必须走 `send_message`。
@@ -58,6 +66,7 @@
 - `workspace_bash` 的 tool description 保留常用 repo/db/fetch 等路由示例；复杂细节继续通过 `help <topic>` 按需披露。被拒绝的命令会返回 `help` / `try` 字段，引导下一步。`style`、`ai_tone`、`journal` 子命令作为兼容入口保留，日常优先用同名 typed tool。
 - `skill` 从 `docs/agent-skills/` 读取 curated Markdown，只能按 `skill action=list` 返回的 name 加载，并有输出上限。
 - `skill_editor` 位于 deferred `skill_management` capability 内；只能写 `data/agent-workspace/skill-drafts/*.md` 草稿和安装新的 `docs/agent-skills/*.md`。安装前必须通过校验，默认拒绝覆盖已有 skill，不提供删除。`draft` 和 `install` 是副作用操作，会进入工具审计。
+- `website` 位于 deferred `website` capability 内；`status` / `read` 是只读操作，`write` / `publish` 是副作用操作并进入工具审计。它不能修改依赖、构建配置、CI、Vercel 配置或网站仓库的隐藏文件。
 - 主 system prompt 只保留身份、运行形态和能力入口；聊天硬约束在 `prompts/bot-chat-constraints.md`，风格细则在 `prompts/bot-style.md`，通过 `workspace_bash` 的 `style global constraints|base|anti_patterns|special_cases` 按需读取。
 - 有副作用的工具通过 `src/ops/tool-call-log.ts` 记录。
 - Bash 类能力必须保留 command allowlist、固定 workspace、最小 env、输出/时间上限和审计日志。敏感访问应通过专门脚本或 capability wrapper。
@@ -78,4 +87,5 @@
 - 更新工具实现和测试。
 - 检查 `src/agent/bot-system-prompt.ts` 里的 progressive-disclosure index。
 - 如果能力面变化，同步更新本文档。
+- 新增可选配置时同步更新 `.env.example`。
 - 运行 `pnpm repo-check`、`pnpm typecheck` 和相关工具的 focused tests。

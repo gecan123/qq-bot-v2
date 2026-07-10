@@ -49,6 +49,8 @@ describe('buildBotSystemPrompt', () => {
 
     assert.match(disclosure, /- help:.*action=list\/describe/)
     assert.match(disclosure, /- invoke:.*已激活 capability/)
+    assert.match(helpLine, /网站维护/)
+    assert.match(invokeLine, /website/)
     assert.match(disclosure, /- chat_style:.*直接调用/)
     assert.match(disclosure, /- ai_tone:.*直接调用/)
     assert.match(disclosure, /- journal:.*直接调用/)

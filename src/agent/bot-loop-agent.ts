@@ -87,6 +87,7 @@ const defaultKeepAlive = {
 export interface BotLoopAgent {
   start(): Promise<void>
   stop(): Promise<void>
+  flush(): Promise<void>
   /** 测试用:跑一次 runOnce 不进入 while 循环。 */
   runOnceForTest(): Promise<void>
 }
@@ -335,6 +336,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       cancelDebounceSleep?.()
       deps.eventQueue.enqueue({ type: 'wake' })
       log.info('bot_loop_stop_requested')
+    },
+    async flush() {
+      await saveSnapshot()
     },
     async runOnceForTest() {
       await step()

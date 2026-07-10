@@ -61,6 +61,26 @@ function makeMockSnapshotRepo(): {
 // rename look on disk. New code calls the tool 'send_message' (see src/agent/tools/send-message.ts);
 // already-persisted history stays as-is (red line 5: byte stability of historical turns).
 describe('BotLoopAgent.runOnceForTest', () => {
+  test('flush persists the current context without running an LLM round', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('durable before shutdown')
+    const { repo, saved } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([]),
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.flush()
+
+    assert.deepEqual(saved, [ctx.exportPersistedSnapshot()])
+  })
+
   test('drains mentioned group events as high-priority mailbox notifications, runs LLM, executes tools', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()

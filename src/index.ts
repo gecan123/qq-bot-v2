@@ -28,6 +28,7 @@ import { replayMissedMessages } from './agent/replay-missed.js'
 import { resolveTargetMetadataMaps } from './agent/resolve-target-meta.js'
 import { createDedupEnqueue } from './agent/dedup-enqueue.js'
 import { createAgentRuntime } from './agent/runtime.js'
+import { createShutdownCoordinator, type ShutdownCoordinator } from './ops/shutdown.js'
 import {
   PersonaSpoofSelfTestMismatchError,
   runPersonaSpoofSelfTest,
@@ -40,6 +41,9 @@ const log = createLogger('APP')
  * 注入人工调试 tick (见 src/agent/event.ts: curiosity_tick).
  */
 const BOT_PID_FILE = '.bot.pid'
+const SHUTDOWN_TIMEOUT_MS = 30_000
+let shutdownCoordinator: ShutdownCoordinator | null = null
+let fallbackShutdownPromise: Promise<void> | null = null
 
 function buildMediaProvider(): RoutingProvider {
   const { defaultProvider: defaultProviderName, defaultModel, providers, scenarios } = config.llm
@@ -297,25 +301,62 @@ async function main() {
 
   // 11. 进入主循环
   log.info('BotLoopAgent 进入主循环')
-  await runtime.agent.start()
+  let agentLoopPromise: Promise<void> | null = null
+  shutdownCoordinator = createShutdownCoordinator({
+    disconnectIngress: () => napcat.disconnect(),
+    stopAgent: () => runtime.agent.stop(),
+    awaitAgent: async () => {
+      await agentLoopPromise
+    },
+    drainIngress: () => napcatLifecycle.drain(),
+    stopJobs: () => {
+      jobQueue.stop()
+      removePidFile()
+    },
+    saveFinal: () => runtime.agent.flush(),
+    disconnectDb: () => prisma.$disconnect(),
+    timeoutMs: SHUTDOWN_TIMEOUT_MS,
+    onPhaseError: (error) => {
+      log.error(error, 'shutdown_phase_failed')
+    },
+  })
+  agentLoopPromise = runtime.agent.start()
+  await agentLoopPromise
 }
 
-async function shutdown() {
-  log.info('Shutting down...')
+function removePidFile(): void {
   try {
     unlinkSync(BOT_PID_FILE)
   } catch {
     // 文件可能不存在 (启动失败 / 已被清理), 忽略.
   }
-  jobQueue.stop()
-  await prisma.$disconnect()
-  process.exit(0)
 }
 
-process.on('SIGINT', shutdown)
-process.on('SIGTERM', shutdown)
+function shutdownBeforeRuntimeReady(): Promise<void> {
+  fallbackShutdownPromise ??= (async () => {
+    napcat.disconnect()
+    jobQueue.stop()
+    removePidFile()
+    await prisma.$disconnect()
+  })()
+  return fallbackShutdownPromise
+}
 
-main().catch((err) => {
+async function requestShutdown(reason: string): Promise<void> {
+  log.info({ reason }, 'Shutting down...')
+  if (!shutdownCoordinator) {
+    await shutdownBeforeRuntimeReady()
+    return
+  }
+  const result = await shutdownCoordinator.shutdown(reason)
+  if (!result.ok) process.exitCode = 1
+}
+
+process.on('SIGINT', () => void requestShutdown('SIGINT'))
+process.on('SIGTERM', () => void requestShutdown('SIGTERM'))
+
+main().catch(async (err) => {
   log.fatal({ err }, 'Failed to start')
-  process.exit(1)
+  process.exitCode = 1
+  await requestShutdown('startup_error')
 })

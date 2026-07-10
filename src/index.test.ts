@@ -11,4 +11,15 @@ describe('main runtime wiring', () => {
     assert.match(source, /const lifeJournal = createLifeJournalRuntime\(\{\s*llm,\s*\}\)/)
     assert.match(source, /createAgentRuntime\(\{[\s\S]*\blifeJournal,\s*[\s\S]*\}\)/)
   })
+
+  test('wires ordered graceful shutdown around the running agent', async () => {
+    const source = await readFile(new URL('./index.ts', import.meta.url), 'utf8')
+
+    assert.match(source, /createShutdownCoordinator/)
+    assert.match(source, /disconnectIngress:\s*\(\) => napcat\.disconnect\(\)/)
+    assert.match(source, /stopAgent:\s*\(\) => runtime\.agent\.stop\(\)/)
+    assert.match(source, /drainIngress:\s*\(\) => napcatLifecycle\.drain\(\)/)
+    assert.match(source, /saveFinal:\s*\(\) => runtime\.agent\.flush\(\)/)
+    assert.doesNotMatch(source, /async function shutdown\(\)[\s\S]*process\.exit\(0\)/)
+  })
 })

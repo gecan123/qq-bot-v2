@@ -116,6 +116,9 @@ export function isSideEffectTool(toolName: string, args?: unknown): boolean {
   if (toolName === 'skill_editor') {
     return hasAnyAction(args, ['draft', 'install'])
   }
+  if (toolName === 'website') {
+    return hasAnyAction(args, ['write', 'publish'])
+  }
   if (toolName === 'workspace_bash') {
     return isWorkspaceBashSideEffect(args)
   }

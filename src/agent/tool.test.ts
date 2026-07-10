@@ -197,6 +197,37 @@ describe('createToolExecutor', () => {
     assert.equal(JSON.parse(writes[2]!).sideEffect, true)
   })
 
+  test('classifies website write and publish actions as side effects', async () => {
+    const writes: string[] = []
+    const website: Tool<{ action: 'status' | 'read' | 'write' | 'publish' }> = {
+      name: 'website',
+      description: 'website',
+      schema: z.object({ action: z.enum(['status', 'read', 'write', 'publish']) }),
+      async execute() {
+        return { content: JSON.stringify({ ok: true }) }
+      },
+    }
+    const exec = createToolExecutor([website], {
+      trace: {
+        now: () => new Date('2026-07-10T00:00:00.000Z'),
+        clockMs: () => 100,
+        appender: async (_path, line) => {
+          writes.push(line)
+        },
+      },
+    })
+
+    await exec.execute({ id: 'status', name: 'website', args: { action: 'status' } }, makeCtx())
+    await exec.execute({ id: 'read', name: 'website', args: { action: 'read' } }, makeCtx())
+    await exec.execute({ id: 'write', name: 'website', args: { action: 'write' } }, makeCtx())
+    await exec.execute({ id: 'publish', name: 'website', args: { action: 'publish' } }, makeCtx())
+
+    assert.equal(JSON.parse(writes[0]!).sideEffect, false)
+    assert.equal(JSON.parse(writes[1]!).sideEffect, false)
+    assert.equal(JSON.parse(writes[2]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[3]!).sideEffect, true)
+  })
+
   test('classifies workspace_bash side effects by command', async () => {
     const writes: string[] = []
     const workspaceBash: Tool<{ cwd?: 'workspace' | 'repo'; command: string }> = {

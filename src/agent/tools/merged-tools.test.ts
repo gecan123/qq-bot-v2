@@ -8,7 +8,7 @@ import * as zod from 'zod'
 import { createInMemoryTaskRegistry } from '../background-task-registry.js'
 import { InMemoryEventQueue } from '../event-queue.js'
 import type { BotEvent } from '../event.js'
-import type { ToolContext } from '../tool.js'
+import type { Tool, ToolContext } from '../tool.js'
 import type { MessageSender } from '../../messaging/message-sender.js'
 import { buildBotToolManifest, buildBotTools } from './index.js'
 import { createBackgroundTaskTool } from './background-task.js'
@@ -31,6 +31,15 @@ const mockSender: MessageSender = {
 const targetPolicy: SendTargetPolicy = {
   async authorize() {
     return { allowed: true }
+  },
+}
+
+const mockWebsiteTool: Tool<{ action: 'status' }> = {
+  name: 'website',
+  description: 'website',
+  schema: zod.object({ action: zod.literal('status') }),
+  async execute() {
+    return { content: JSON.stringify({ ok: true }) }
   },
 }
 
@@ -72,6 +81,7 @@ describe('merged main-agent tools', () => {
     assert.equal(names.includes('db'), false)
     assert.equal(names.includes('openbb_cli'), false)
     assert.equal(names.includes('browser'), false)
+    assert.equal(names.includes('website'), false)
     assert.equal(names.includes('web_search'), false)
     assert.equal(names.includes('wait'), false)
     assert.equal(names.includes('rest'), false)
@@ -101,6 +111,7 @@ describe('merged main-agent tools', () => {
       groupIds: [],
       metadata: { groupNames: new Map() },
       groupCustomizations: [],
+      websiteTool: mockWebsiteTool,
     })
     const capabilities = new Map(manifest.capabilities.map((capability) => [
       capability.name,
@@ -128,6 +139,7 @@ describe('merged main-agent tools', () => {
     assert.deepEqual(capabilities.get('media_generation'), ['generate_image'])
     assert.equal(capabilities.has('media_library'), false)
     assert.deepEqual(capabilities.get('media_fetch'), ['fetch_content'])
+    assert.deepEqual(capabilities.get('website'), ['website'])
     if (capabilities.has('finance')) assert.deepEqual(capabilities.get('finance'), ['openbb_cli'])
     if (capabilities.has('browser')) assert.deepEqual(capabilities.get('browser'), ['browser'])
   })

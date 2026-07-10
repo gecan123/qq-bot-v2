@@ -15,6 +15,7 @@ import { collectStickerTool } from './collect-sticker.js'
 import { createWorkspaceBashTool } from './workspace-bash.js'
 import { maybeCreateBrowserTool } from './browser.js'
 import { maybeCreateOpenbbCliTool } from './openbb-cli.js'
+import { maybeCreateWebsiteTool } from './website.js'
 import { createFetchContentTool } from './fetch-content.js'
 import { createInboxTool } from './inbox.js'
 import { createChatStyleTool } from './chat-style.js'
@@ -32,6 +33,7 @@ export interface BotToolDeps {
   selfNumber: number
   metadata: TargetMetadataMaps
   groupCustomizations: readonly GroupCustomization[]
+  websiteTool?: Tool
 }
 
 export interface BotToolManifest {
@@ -85,6 +87,15 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
       name: 'finance',
       description: 'OpenBB CLI 金融数据查询.',
       tools: [openbb],
+    })
+  }
+
+  const website = deps.websiteTool ?? maybeCreateWebsiteTool()
+  if (website) {
+    capabilities.push({
+      name: 'website',
+      description: 'Luna 个人网站维护: 读取和写入 Astro 内容文件, 构建检查, commit 并 push 到配置分支.',
+      tools: [website],
     })
   }
 

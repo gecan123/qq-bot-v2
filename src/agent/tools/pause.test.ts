@@ -59,6 +59,7 @@ describe('pause tool', () => {
     const tool = createPauseTool()
     assert.match(tool.description, /4 到 8 个可选方向/)
     assert.match(tool.description, /选择一个、合并几个或改道/)
+    assert.match(tool.description, /不要只列等待外部消息/)
   })
 
   test('action=rest delegates to rest behavior', async () => {

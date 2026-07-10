@@ -16,7 +16,7 @@
 ## 自主循环
 
 - `send_message` 成功只是完成一个动作，不再强制 BotLoop 等待外部事件；下一轮由 Agent 自己决定继续做事或休息。
-- `pause action=rest` 由 Agent 选择休息时长和醒来后的 `intention`。计时结束自动继续，私聊、`@bot`、后台任务完成和停止信号可提前打断。
+- `pause action=rest` 由 Agent 选择休息时长，并在 `intention` 里列出 4 到 8 个醒来后可选方向。计时结束自动继续，私聊、`@bot`、后台任务完成和停止信号可提前打断。
 - runtime 对未主动休息的连续轮次和每日 token 使用设置保护性冷却。保护状态不进入 `AgentContext`，不参与 replay。
 - `curiosity_tick` 只保留为人工调试入口，不是生产自主循环的驱动器。
 - mailbox 和后台任务等运行时事件使用稳定 JSON 披露；外部内容、表情包和命令结果也使用有界结构化载荷。自然语言只存在于明确字段中，不能承担循环控制或成功状态判断。

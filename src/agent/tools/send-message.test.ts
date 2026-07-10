@@ -9,6 +9,7 @@ import { InMemoryEventQueue } from '../event-queue.js'
 import { OutboundCache, setOutboundCacheForTest } from '../../media/outbound-cache.js'
 import { prisma } from '../../database/client.js'
 import type { SendTargetPolicy } from '../send-target-policy.js'
+import type { GroupMuteInspector, GroupMuteInspection } from '../../messaging/group-mute-inspector.js'
 
 function makeCtx(): ToolContext {
   return { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 0 }
@@ -45,14 +46,34 @@ function parseToolResult(content: string | unknown): Record<string, unknown> {
   return JSON.parse(content as string)
 }
 
+function makeMockMuteInspector(
+  result: GroupMuteInspection = { muted: false },
+  error?: Error,
+): { inspector: GroupMuteInspector; calls: number[] } {
+  const calls: number[] = []
+  return {
+    calls,
+    inspector: {
+      async inspect(groupId) {
+        calls.push(groupId)
+        if (error) throw error
+        return result
+      },
+    },
+  }
+}
+
 const allowAllTargets: SendTargetPolicy = {
   async authorize() {
     return { allowed: true }
   },
 }
 
-function createAllowedTool(sender: MessageSender) {
-  return createSendMessageTool({ sender, targetPolicy: allowAllTargets })
+function createAllowedTool(
+  sender: MessageSender,
+  groupMuteInspector: GroupMuteInspector = makeMockMuteInspector().inspector,
+) {
+  return createSendMessageTool({ sender, targetPolicy: allowAllTargets, groupMuteInspector })
 }
 
 describe('send_message tool — unified contract', () => {
@@ -189,7 +210,66 @@ describe('send_message tool — group target', () => {
     assert.equal(result.status, 'failed')
     assert.equal(result.attempts, 2)
     assert.equal(result.providerMessageId, null)
+    assert.equal(result.reason, 'send_failed')
     assert.match((result.error as string) ?? '', /failed/i)
+  })
+
+  test('confirms self mute after a failed group send', async () => {
+    const { sender } = makeMockSender({ success: false, attempts: 2 })
+    const mutedUntil = '2026-07-10T12:30:00.000Z'
+    const { inspector, calls } = makeMockMuteInspector({ muted: true, mutedUntil })
+    const tool = createAllowedTool(sender, inspector)
+
+    const out = await tool.execute({
+      target: { type: 'group', groupId: 111 },
+      mode: 'reply',
+      text: 'hi',
+      replyToMessageId: 5,
+    }, makeCtx())
+
+    const result = parseToolResult(out.content)
+    assert.deepEqual(calls, [111])
+    assert.equal(result.reason, 'group_muted')
+    assert.equal(result.mutedUntil, mutedUntil)
+  })
+
+  test('uses send_failed when group mute is not confirmed', async () => {
+    const { sender } = makeMockSender({ success: false, attempts: 2 })
+    const { inspector } = makeMockMuteInspector({ muted: false })
+    const out = await createAllowedTool(sender, inspector).execute({
+      target: { type: 'group', groupId: 111 },
+      mode: 'ambient',
+      text: 'hi',
+      replyToMessageId: null,
+    }, makeCtx())
+
+    assert.equal(parseToolResult(out.content).reason, 'send_failed')
+  })
+
+  test('diagnostic failure degrades to send_failed', async () => {
+    const { sender } = makeMockSender({ success: false, attempts: 2 })
+    const { inspector } = makeMockMuteInspector({ muted: false }, new Error('query failed'))
+    const out = await createAllowedTool(sender, inspector).execute({
+      target: { type: 'group', groupId: 111 },
+      mode: 'ambient',
+      text: 'hi',
+      replyToMessageId: null,
+    }, makeCtx())
+
+    assert.equal(parseToolResult(out.content).reason, 'send_failed')
+  })
+
+  test('does not inspect mute state after a successful group send', async () => {
+    const { sender } = makeMockSender()
+    const { inspector, calls } = makeMockMuteInspector()
+    await createAllowedTool(sender, inspector).execute({
+      target: { type: 'group', groupId: 111 },
+      mode: 'ambient',
+      text: 'hi',
+      replyToMessageId: null,
+    }, makeCtx())
+
+    assert.deepEqual(calls, [])
   })
 })
 
@@ -231,6 +311,20 @@ describe('send_message tool — private target', () => {
     assert.equal(result.status, 'sent')
     assert.equal(calls[0]!.fn, 'sendSegments')
     assert.deepEqual(segmentsCalls[0]!.segments.map((segment) => segment.type), ['text'])
+  })
+
+  test('does not inspect group mute state after a failed private send', async () => {
+    const { sender } = makeMockSender({ success: false, attempts: 2 })
+    const { inspector, calls } = makeMockMuteInspector()
+    const out = await createAllowedTool(sender, inspector).execute({
+      target: { type: 'private', userId: 10001 },
+      mode: 'ambient',
+      text: 'hi',
+      replyToMessageId: null,
+    }, makeCtx())
+
+    assert.deepEqual(calls, [])
+    assert.equal(parseToolResult(out.content).reason, 'send_failed')
   })
 })
 

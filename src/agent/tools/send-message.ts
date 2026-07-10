@@ -9,6 +9,10 @@ import { buildOutboundSegments } from '../../messaging/segment-builder.js'
 import type { SendTarget as NapcatSendTarget } from '../../messaging/napcat-sender.js'
 import { prisma } from '../../database/client.js'
 import { createLogger } from '../../logger.js'
+import {
+  groupMuteInspector as defaultGroupMuteInspector,
+  type GroupMuteInspector,
+} from '../../messaging/group-mute-inspector.js'
 
 const log = createLogger('TOOL_SEND')
 const MAX_TEXT_LENGTH = 500
@@ -16,6 +20,7 @@ const MAX_TEXT_LENGTH = 500
 export interface SendMessageDeps {
   sender: MessageSender
   targetPolicy: SendTargetPolicy
+  groupMuteInspector?: GroupMuteInspector
 }
 
 const groupTargetSchema = z.object({
@@ -79,6 +84,8 @@ interface SendReceipt {
   mode: SendMode
   attempts: number
   providerMessageId: number | null
+  reason?: 'send_failed' | 'group_muted'
+  mutedUntil?: string
   error?: string
   image?: ImageResultPayload
 }
@@ -164,14 +171,18 @@ async function sendResolved(
     segments,
   })
   if (!result.success) {
+    const diagnosis = await diagnoseSendFailure(deps, args.target)
     return {
-      content: JSON.stringify(buildReceipt(
-        args,
-        'failed',
-        result.attempts,
-        null,
-        'send failed (see SEND log)',
-      )),
+      content: JSON.stringify({
+        ...buildReceipt(
+          args,
+          'failed',
+          result.attempts,
+          null,
+          'send failed (see SEND log)',
+        ),
+        ...diagnosis,
+      }),
     }
   }
   return {
@@ -181,6 +192,24 @@ async function sendResolved(
       result.attempts,
       result.providerMessageId ?? null,
     )),
+  }
+}
+
+async function diagnoseSendFailure(
+  deps: SendMessageDeps,
+  target: SendTarget,
+): Promise<Pick<SendReceipt, 'reason' | 'mutedUntil'>> {
+  if (target.type !== 'group') return { reason: 'send_failed' }
+  try {
+    const inspection = await (deps.groupMuteInspector ?? defaultGroupMuteInspector).inspect(target.groupId)
+    if (!inspection.muted) return { reason: 'send_failed' }
+    return {
+      reason: 'group_muted',
+      ...(inspection.mutedUntil ? { mutedUntil: inspection.mutedUntil } : {}),
+    }
+  } catch (error) {
+    log.warn({ groupId: target.groupId, error }, 'send_message_group_mute_inspection_failed')
+    return { reason: 'send_failed' }
   }
 }
 

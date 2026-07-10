@@ -1,5 +1,7 @@
 export type MediaDescription = Record<string, unknown>
 
+export const FORWARD_ITEM_TEXT_CAP = 2_000
+
 export interface TextSegment {
   type: 'text'
   content: string

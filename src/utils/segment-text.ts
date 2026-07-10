@@ -1,5 +1,11 @@
+import { FORWARD_ITEM_TEXT_CAP } from '../types/message-segments.js'
 import type { ParsedSegment } from '../types/message-segments.js'
 import { formatMediaDescription } from '../media/media-description.js'
+
+function capForwardItemText(value: string): string {
+  if (value.length <= FORWARD_ITEM_TEXT_CAP) return value
+  return `${value.slice(0, FORWARD_ITEM_TEXT_CAP - 1)}…`
+}
 
 function renderForwardSegment(segment: Extract<ParsedSegment, { type: 'forward' }>): string {
   if (segment.unavailable) return '[合并转发消息: 内容不可用]'
@@ -8,7 +14,7 @@ function renderForwardSegment(segment: Extract<ParsedSegment, { type: 'forward' 
     const sender = item.senderName && item.senderId
       ? `${item.senderName}(${item.senderId})`
       : item.senderName ?? item.senderId ?? '未知发送者'
-    const content = segmentsToPlainText(item.content) || '[空消息]'
+    const content = capForwardItemText(segmentsToPlainText(item.content) || '[空消息]')
     return `${sender}: ${content}`
   })
   if (segment.truncated) lines.push('…（转发内容已截断）')

@@ -235,6 +235,23 @@ describe('segmentsToPlainText', () => {
     )
   })
 
+  test('caps each rendered forwarded child at two thousand characters including the ellipsis', () => {
+    const segments: ParsedSegment[] = [{
+      type: 'forward',
+      forwardId: 'long-card',
+      items: [{
+        senderId: '101',
+        senderName: 'Alice',
+        content: [{ type: 'json_card', desc: 'x'.repeat(2_100) }],
+      }],
+    }]
+
+    const childLine = segmentsToPlainText(segments).split('\n')[1]!
+    const childContent = childLine.slice('Alice(101): '.length)
+    assert.equal(childContent.length, 2_000)
+    assert.match(childContent, /…$/)
+  })
+
   test('multiple segments are concatenated', () => {
     const segments: ParsedSegment[] = [
       { type: 'at', targetId: '123', targetName: '小明' },

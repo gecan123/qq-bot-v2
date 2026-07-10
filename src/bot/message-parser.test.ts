@@ -159,6 +159,52 @@ describe('parseMessageWithForwards', () => {
     assert.doesNotMatch(JSON.stringify(parsed), /secret upstream detail/)
   })
 
+  test('fetches forward messages when embedded content is empty', async () => {
+    const child = message(13, 103, 'Fetched', [{ type: 'text', data: { text: 'from api' } }])
+    let forwardCalls = 0
+    const loader: ForwardLoader = {
+      async get_forward_msg() {
+        forwardCalls += 1
+        return { messages: [child] }
+      },
+      async get_msg() {
+        return child
+      },
+    }
+
+    const parsed = await forwardParser()(
+      message(8, 100, 'outer', [{ type: 'forward', data: { id: 'empty-embedded', content: [] } }]),
+      loader,
+    )
+
+    assert.equal(forwardCalls, 1)
+    const forward = parsed.content[0] as { items: Array<{ content: unknown[] }> }
+    assert.deepEqual(forward.items[0]!.content, [{ type: 'text', content: 'from api' }])
+  })
+
+  test('marks an empty API result unavailable', async () => {
+    const loader: ForwardLoader = {
+      async get_forward_msg() {
+        return { messages: [] }
+      },
+      async get_msg() {
+        throw new Error('unexpected')
+      },
+    }
+
+    const parsed = await forwardParser()(
+      message(9, 100, 'outer', [{ type: 'forward', data: { id: 'empty-api' } }]),
+      loader,
+    )
+
+    assert.deepEqual(parsed.content, [{
+      type: 'forward',
+      forwardId: 'empty-api',
+      items: [],
+      unavailable: true,
+    }])
+  })
+
   test('limits a forward tree to fifty child messages', async () => {
     const children = Array.from({ length: 51 }, (_, index) => (
       message(100 + index, 200 + index, `sender-${index}`, [{ type: 'text', data: { text: String(index) } }])
@@ -205,7 +251,42 @@ describe('parseMessageWithForwards', () => {
       truncated?: boolean
       items: Array<{ content: Array<{ type: string; content: string }> }>
     }
-    assert.equal(forward.items[0]!.content[0]!.content, `${'x'.repeat(2_000)}…`)
+    assert.equal(forward.items[0]!.content[0]!.content, `${'x'.repeat(1_999)}…`)
+    assert.equal(forward.truncated, true)
+  })
+
+  test('applies the forwarded text budget to json card fields', async () => {
+    const child = message(32, 302, 'Card sender', [{
+      type: 'json',
+      data: {
+        data: JSON.stringify({
+          meta: { news: { title: 'title', desc: 'x'.repeat(2_100), jumpUrl: 'https://example.test' } },
+        }),
+      },
+    }])
+    const loader: ForwardLoader = {
+      async get_forward_msg() {
+        return { messages: [child] }
+      },
+      async get_msg() {
+        return child
+      },
+    }
+
+    const parsed = await forwardParser()(
+      message(10, 100, 'outer', [{ type: 'forward', data: { id: 'long-card' } }]),
+      loader,
+    )
+
+    const forward = parsed.content[0] as {
+      truncated?: boolean
+      items: Array<{ content: Array<{ type: string; title?: string; desc?: string; url?: string; source?: string; prompt?: string }> }>
+    }
+    const card = forward.items[0]!.content[0]!
+    const retainedChars = [card.title, card.desc, card.url, card.source, card.prompt]
+      .reduce((total, value) => total + (value?.length ?? 0), 0)
+    assert.ok(retainedChars <= 2_000)
+    assert.match(card.desc ?? '', /…$/)
     assert.equal(forward.truncated, true)
   })
 

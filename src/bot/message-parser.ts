@@ -1,5 +1,6 @@
 import type { Receive } from 'node-napcat-ts'
 import type { WSSendReturn } from 'node-napcat-ts'
+import { FORWARD_ITEM_TEXT_CAP } from '../types/message-segments.js'
 import type { ForwardMessageItem, ForwardSegment, ParsedSegment } from '../types/message-segments.js'
 
 type NapcatMessage = WSSendReturn['get_msg']
@@ -18,7 +19,6 @@ interface ForwardParseContext {
 
 const MAX_FORWARD_DEPTH = 3
 const MAX_FORWARD_ITEMS = 50
-const MAX_FORWARD_TEXT_CHARS_PER_ITEM = 2_000
 
 export interface ParsedMessage {
   time: number
@@ -178,7 +178,7 @@ function isNapcatMessage(value: unknown): value is NapcatMessage {
 function embeddedForwardMessages(segment: ReceiveSegment): NapcatMessage[] | undefined {
   if (segment.type !== 'forward') return undefined
   const content = (segment.data as { content?: unknown }).content
-  if (!Array.isArray(content) || !content.every(isNapcatMessage)) return undefined
+  if (!Array.isArray(content) || content.length === 0 || !content.every(isNapcatMessage)) return undefined
   return content
 }
 
@@ -222,18 +222,35 @@ async function parseForwardItem(
 }
 
 function truncateForwardText(segments: ParsedSegment[]): { content: ParsedSegment[]; truncated: boolean } {
-  let remaining = MAX_FORWARD_TEXT_CHARS_PER_ITEM
+  let remaining = FORWARD_ITEM_TEXT_CAP
   let truncated = false
-  const content = segments.map((segment): ParsedSegment => {
-    if (segment.type !== 'text') return segment
-    if (segment.content.length <= remaining) {
-      remaining -= segment.content.length
-      return segment
+  const consume = (value: string | undefined): string | undefined => {
+    if (value === undefined) return undefined
+    if (value.length <= remaining) {
+      remaining -= value.length
+      return value
     }
     truncated = true
-    const text = remaining > 0 ? `${segment.content.slice(0, remaining)}…` : ''
+    if (remaining <= 0) return ''
+    const retained = Math.max(0, remaining - 1)
     remaining = 0
-    return { ...segment, content: text }
+    return `${value.slice(0, retained)}…`
+  }
+  const content = segments.map((segment): ParsedSegment => {
+    if (segment.type === 'text') {
+      return { ...segment, content: consume(segment.content) ?? '' }
+    }
+    if (segment.type === 'json_card') {
+      return {
+        ...segment,
+        source: consume(segment.source),
+        title: consume(segment.title),
+        desc: consume(segment.desc),
+        url: consume(segment.url),
+        prompt: consume(segment.prompt),
+      }
+    }
+    return segment
   })
   return { content, truncated }
 }
@@ -258,10 +275,14 @@ async function parseForwardSegment(
     }
   }
 
+  messages = Array.isArray(messages) ? messages.filter(isNapcatMessage) : []
+  if (messages.length === 0) {
+    return { type: 'forward', forwardId, items: [], unavailable: true }
+  }
+
   const items: ForwardMessageItem[] = []
   let truncated = false
   for (const message of messages) {
-    if (!isNapcatMessage(message)) continue
     if (context.remainingItems <= 0) {
       truncated = true
       break

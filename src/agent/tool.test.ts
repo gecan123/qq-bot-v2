@@ -636,6 +636,88 @@ describe('createToolExecutor', () => {
 })
 
 describe('createDeferredToolExecutor', () => {
+  test('traces an active deferred invocation once as the target tool', async () => {
+    const writes: string[] = []
+    const browser: Tool<{ action: 'status' }> = {
+      name: 'browser',
+      description: 'browser',
+      schema: z.object({ action: z.literal('status') }),
+      async execute() {
+        return { content: JSON.stringify({ ok: true }) }
+      },
+    }
+    const exec = createDeferredToolExecutor({
+      alwaysOnTools: [],
+      activeCapabilities: {
+        list: () => ['browser'],
+        activate() {},
+        deactivate() {},
+      },
+      capabilities: [{ name: 'browser', description: 'browser', tools: [browser] }],
+      trace: {
+        clockMs: () => 100,
+        appender: async (_path, line) => {
+          writes.push(line)
+        },
+      },
+    })
+
+    await exec.execute(
+      { id: 'invoke-browser', name: 'invoke', args: { tool: 'browser', args: { action: 'status' } } },
+      makeCtx(),
+    )
+
+    assert.equal(writes.length, 1)
+    const trace = JSON.parse(writes[0]!)
+    assert.equal(trace.toolCallId, 'invoke-browser')
+    assert.equal(trace.toolName, 'browser')
+    assert.equal(trace.ok, true)
+    assert.deepEqual(trace.argsSummary, { action: 'status' })
+  })
+
+  test('traces rejected deferred invocations once as failed invoke calls', async () => {
+    const writes: string[] = []
+    const browser: Tool<Record<string, never>> = {
+      name: 'browser',
+      description: 'browser',
+      schema: z.object({}),
+      async execute() {
+        return { content: 'browser-ok' }
+      },
+    }
+    const exec = createDeferredToolExecutor({
+      alwaysOnTools: [],
+      capabilities: [{ name: 'browser', description: 'browser', tools: [browser] }],
+      trace: {
+        clockMs: () => 100,
+        appender: async (_path, line) => {
+          writes.push(line)
+        },
+      },
+    })
+
+    await exec.execute(
+      { id: 'inactive', name: 'invoke', args: { tool: 'browser', args: {} } },
+      makeCtx(),
+    )
+    await exec.execute(
+      { id: 'unknown', name: 'invoke', args: { tool: 'missing', args: {} } },
+      makeCtx(),
+    )
+
+    assert.equal(writes.length, 2)
+    assert.deepEqual(
+      writes.map((line) => {
+        const trace = JSON.parse(line)
+        return { id: trace.toolCallId, toolName: trace.toolName, ok: trace.ok }
+      }),
+      [
+        { id: 'inactive', toolName: 'invoke', ok: false },
+        { id: 'unknown', toolName: 'invoke', ok: false },
+      ],
+    )
+  })
+
   test('keeps deferred tools behind stable help and invoke tools', async () => {
     const echo: Tool<{ text: string }> = {
       name: 'echo',

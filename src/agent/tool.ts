@@ -419,12 +419,37 @@ async function executeInvokeToolCall(options: {
   activeCapabilities: ActiveToolCapabilityState
   executorOptions: DeferredToolExecutorOptions
 }): Promise<ToolExecutionResult> {
-  const shellResult = await createToolExecutor([options.invoke], options.executorOptions).execute(options.call, options.ctx)
-  if (!isSuccessfulToolResult(shellResult)) return shellResult
+  const startedAt = options.executorOptions.trace
+    ? (options.executorOptions.trace.clockMs?.() ?? Date.now())
+    : 0
+  const normalizedArgs = stripNullsFromOptionalFields(
+    options.invoke.schema,
+    options.call.args,
+  ) as Record<string, unknown>
+  const normalizedCall = { ...options.call, args: normalizedArgs }
+  const shellResult = await createToolExecutor([options.invoke]).execute(normalizedCall, options.ctx)
+  if (!isSuccessfulToolResult(shellResult)) {
+    await traceToolCall(
+      options.executorOptions.trace,
+      normalizedCall,
+      options.ctx.roundIndex,
+      startedAt,
+      shellResult,
+    )
+    return shellResult
+  }
 
-  const normalizedArgs = stripNullsFromOptionalFields(options.invoke.schema, options.call.args)
   const parseResult = options.invoke.schema.safeParse(normalizedArgs)
-  if (!parseResult.success) return shellResult
+  if (!parseResult.success) {
+    await traceToolCall(
+      options.executorOptions.trace,
+      normalizedCall,
+      options.ctx.roundIndex,
+      startedAt,
+      shellResult,
+    )
+    return shellResult
+  }
 
   const invokeArgs = parseResult.data as InvokeToolArgs
   const targetToolName = invokeArgs.tool
@@ -432,7 +457,7 @@ async function executeInvokeToolCall(options: {
   const entries = options.deferredToolEntriesByName.get(targetToolName) ?? []
   if (entries.length === 0) {
     const error = `unknown deferred tool: ${targetToolName}`
-    return {
+    const result = {
       content: JSON.stringify({
         ok: false,
         code: 'unknown_tool',
@@ -441,6 +466,14 @@ async function executeInvokeToolCall(options: {
       }),
       outcome: { ok: false, code: 'unknown_tool', error },
     }
+    await traceToolCall(
+      options.executorOptions.trace,
+      normalizedCall,
+      options.ctx.roundIndex,
+      startedAt,
+      result,
+    )
+    return result
   }
 
   const activeCapabilityNames = new Set(options.activeCapabilities.list())
@@ -448,7 +481,7 @@ async function executeInvokeToolCall(options: {
   if (!entry) {
     const capabilities = entries.map((item) => item.capability.name)
     const error = `tool ${targetToolName} is not active; activate one of: ${capabilities.join(', ')}`
-    return {
+    const result = {
       content: JSON.stringify({
         ok: false,
         code: 'capability_inactive',
@@ -459,6 +492,14 @@ async function executeInvokeToolCall(options: {
       }),
       outcome: { ok: false, code: 'capability_inactive', error },
     }
+    await traceToolCall(
+      options.executorOptions.trace,
+      normalizedCall,
+      options.ctx.roundIndex,
+      startedAt,
+      result,
+    )
+    return result
   }
 
   return createToolExecutor([entry.tool], options.executorOptions).execute(

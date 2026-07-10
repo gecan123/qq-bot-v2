@@ -3,6 +3,7 @@ import { Prisma } from '../generated/prisma/client.js'
 import { createLogger } from '../logger.js'
 import type { AgentMetricsFilters, AgentMetricsSummary } from './agent-metrics.js'
 import { summarizeAgentMetrics } from './agent-metrics.js'
+import type { AgentTokenOperation } from '../agent/token-stats.js'
 
 const log = createLogger('AGENT_OBSERVABILITY_DB')
 
@@ -20,7 +21,7 @@ export interface AgentToolCallEvent {
 
 export interface AgentTokenUsageEvent {
   ts: string
-  operation: 'agent.chat' | 'compaction'
+  operation: AgentTokenOperation
   roundIndex?: number
   inputTokens: number | null
   cachedTokens: number | null

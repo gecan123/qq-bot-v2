@@ -3,6 +3,7 @@ import type { LlmCallInput, LlmClient } from './llm-client.js'
 import type { Tool } from './tool.js'
 import { createLogger } from '../logger.js'
 import { z } from 'zod'
+import { recordTokenUsage, type TokenUsageEntry } from './token-stats.js'
 import {
   appendLifeJournalEntry,
   ensureLifeAgenda,
@@ -36,6 +37,7 @@ type IdleJson = z.infer<typeof idleResultSchema>
 
 const log = createLogger('LIFE_JOURNAL')
 const DEFAULT_MIN_WRITE_INTERVAL_MS = 10 * 60 * 1000
+const DEFAULT_REVIEW_TIMEOUT_MS = 30 * 1000
 const JOURNAL_MARKER = '<<<JOURNAL>>>'
 const AGENDA_MARKER = '<<<AGENDA>>>'
 
@@ -300,23 +302,73 @@ ${options.retryInstruction ?? `Your previous response did not call ${tool.name} 
   }
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs)
+        timeout.unref?.()
+      }),
+    ])
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout)
+    }
+  }
+}
+
 export function createLifeJournalRuntime(deps: {
   rootDir?: string
   llm: LlmClient
   now?: () => Date
   maxRoundChars?: number
   minWriteIntervalMs?: number
+  reviewTimeoutMs?: number
+  recordUsage?: (entry: TokenUsageEntry) => void
 }): LifeJournalRuntime {
   const rootDir = deps.rootDir ?? 'data/agent-workspace'
   const maxRoundChars = deps.maxRoundChars ?? 6000
   const minWriteIntervalMs = Math.max(0, deps.minWriteIntervalMs ?? DEFAULT_MIN_WRITE_INTERVAL_MS)
-  let lastJournalWriteAtMs: number | null = null
+  const reviewTimeoutMs = Math.max(1, deps.reviewTimeoutMs ?? DEFAULT_REVIEW_TIMEOUT_MS)
+  const recordUsage = deps.recordUsage ?? recordTokenUsage
+  let lastReviewAtMs: number | null = null
 
   return {
     async recordRound(input) {
       try {
+        const nowMs = (deps.now?.() ?? new Date()).getTime()
+        if (lastReviewAtMs != null && nowMs - lastReviewAtMs < minWriteIntervalMs) {
+          log.debug({ roundIndex: input.roundIndex, minWriteIntervalMs }, 'life_journal_review_throttled')
+          return { ok: true, wroteJournal: false, updatedAgenda: false }
+        }
+
         await ensureLifeAgenda({ rootDir, now: deps.now })
-        const parsed = await chatStructuredObject<ReviewJson>(deps.llm, {
+        lastReviewAtMs = nowMs
+        const reviewLlm: LlmClient = {
+          async chat(chatInput) {
+            const output = await withTimeout(
+              deps.llm.chat(chatInput),
+              reviewTimeoutMs,
+              'life journal review',
+            )
+            try {
+              recordUsage({
+                operation: 'life_journal.review',
+                roundIndex: input.roundIndex,
+                inputTokens: output.usage.inputTokens,
+                cachedTokens: output.usage.cachedTokens,
+                outputTokens: output.usage.outputTokens,
+                model: output.model,
+              })
+            } catch (error) {
+              log.warn({ err: error }, 'life_journal_usage_record_failed')
+            }
+            return output
+          },
+        }
+        const parsed = await chatStructuredObject<ReviewJson>(reviewLlm, {
           systemPrompt: REVIEW_SYSTEM_PROMPT,
           messages: boundRoundMessages(input.messages, maxRoundChars),
           tools: [],
@@ -331,19 +383,14 @@ export function createLifeJournalRuntime(deps: {
 
         let wroteJournal = false
         let updatedAgenda = false
-        const nowMs = (deps.now?.() ?? new Date()).getTime()
-        const writeAllowed = lastJournalWriteAtMs == null || nowMs - lastJournalWriteAtMs >= minWriteIntervalMs
-        if (shouldWrite && journalMarkdown && writeAllowed) {
+        if (shouldWrite && journalMarkdown) {
           await appendLifeJournalEntry({
             rootDir,
             now: deps.now,
             roundIndex: input.roundIndex,
             markdown: journalMarkdown,
           })
-          lastJournalWriteAtMs = nowMs
           wroteJournal = true
-        } else if (shouldWrite && journalMarkdown) {
-          log.debug({ roundIndex: input.roundIndex, minWriteIntervalMs }, 'life_journal_record_throttled')
         }
         if (agendaMarkdown) {
           await writeLifeAgenda({ rootDir, now: deps.now }, agendaMarkdown)

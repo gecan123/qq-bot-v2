@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, test } from 'node:test'
 import type { LlmClient, LlmCallInput } from './llm-client.js'
 import { createLifeJournalRuntime } from './life-journal.js'
+import type { TokenUsageEntry } from './token-stats.js'
 
 describe('life journal runtime', () => {
   let rootDir: string
@@ -280,8 +281,10 @@ describe('life journal runtime', () => {
 
   test('recordRound throttles automatic journal writes', async () => {
     let now = new Date('2026-07-07T15:00:00.000Z')
+    let calls = 0
     const llm: LlmClient = {
       async chat() {
+        calls += 1
         return {
           content: JSON.stringify({
             shouldWrite: true,
@@ -319,10 +322,65 @@ describe('life journal runtime', () => {
     assert.deepEqual(first, { ok: true, wroteJournal: true, updatedAgenda: false })
     assert.deepEqual(second, { ok: true, wroteJournal: false, updatedAgenda: false })
     assert.deepEqual(third, { ok: true, wroteJournal: true, updatedAgenda: false })
+    assert.equal(calls, 2)
     const journal = await readFile(join(rootDir, 'life', 'journal', '2026-07-07.md'), 'utf8')
     assert.match(journal, /Round 1/)
     assert.doesNotMatch(journal, /Round 2/)
     assert.match(journal, /Round 3/)
+  })
+
+  test('recordRound returns when the review LLM exceeds its timeout', async () => {
+    const llm: LlmClient = {
+      async chat() {
+        return await new Promise(() => {})
+      },
+    }
+    const runtime = createLifeJournalRuntime({
+      rootDir,
+      llm,
+      reviewTimeoutMs: 10,
+    })
+
+    const result = await runtime.recordRound({
+      roundIndex: 1,
+      messages: [{ role: 'user', content: 'hello' }],
+    })
+
+    assert.equal(result.ok, false)
+    assert.match(result.error ?? '', /timed out/i)
+  })
+
+  test('recordRound records completed review token usage', async () => {
+    const usageEntries: TokenUsageEntry[] = []
+    const llm: LlmClient = {
+      async chat() {
+        return {
+          content: 'SKIP',
+          toolCalls: [],
+          usage: { inputTokens: 100, cachedTokens: 20, outputTokens: 5 },
+          model: 'journal-model',
+        }
+      },
+    }
+    const runtime = createLifeJournalRuntime({
+      rootDir,
+      llm,
+      recordUsage: (entry) => usageEntries.push(entry),
+    })
+
+    await runtime.recordRound({
+      roundIndex: 12,
+      messages: [{ role: 'user', content: 'hello' }],
+    })
+
+    assert.deepEqual(usageEntries, [{
+      operation: 'life_journal.review',
+      roundIndex: 12,
+      inputTokens: 100,
+      cachedTokens: 20,
+      outputTokens: 5,
+      model: 'journal-model',
+    }])
   })
 
   test('recordRound sends only bounded current-round messages', async () => {

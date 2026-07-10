@@ -5,8 +5,10 @@ import { createLogger } from '../logger.js'
 
 const log = createLogger('TOKEN_STATS')
 
+export type AgentTokenOperation = 'agent.chat' | 'compaction' | 'life_journal.review'
+
 export interface TokenUsageEntry {
-  operation: 'agent.chat' | 'compaction'
+  operation: AgentTokenOperation
   roundIndex?: number
   inputTokens: number | null
   cachedTokens: number | null

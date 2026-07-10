@@ -181,7 +181,15 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     }
   }
 
-  async function maybeCompact(inputTokens: number | null): Promise<void> {
+  async function saveSnapshot(): Promise<void> {
+    await deps.snapshotRepo.save({
+      snapshot: deps.context.exportPersistedSnapshot(),
+      mailboxCursors,
+      lastWakeAt,
+    })
+  }
+
+  async function maybeCompact(inputTokens: number | null): Promise<boolean> {
     let compacted = false
     try {
       const before = deps.context.getSnapshot().messages.length
@@ -197,6 +205,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         log.warn({ err }, 'sticker_pool_injection_failed')
       }
     }
+    return compacted
   }
 
   async function step(): Promise<{
@@ -231,25 +240,18 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       return { ranRound: false }
     }
 
-    await deps.snapshotRepo.save({
-      snapshot: deps.context.exportPersistedSnapshot(),
-      mailboxCursors,
-      lastWakeAt,
-    })
+    await saveSnapshot()
 
     const { inputTokens, tokensUsed, didPause } = await runRound()
-    await deps.snapshotRepo.save({
-      snapshot: deps.context.exportPersistedSnapshot(),
-      mailboxCursors,
-      lastWakeAt,
-    })
+    await saveSnapshot()
     try {
       const roundMessages = deps.context.getSnapshot().messages.slice(beforeStepCount)
       await deps.lifeJournal?.recordRound({ roundIndex, messages: roundMessages })
     } catch (err) {
       log.warn({ err, roundIndex }, 'life_journal_record_failed_skipped')
     }
-    await maybeCompact(inputTokens)
+    const compacted = await maybeCompact(inputTokens)
+    if (compacted) await saveSnapshot()
     return { ranRound: true, tokensUsed, didPause, hadAttention }
   }
 

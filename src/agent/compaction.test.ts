@@ -173,6 +173,26 @@ test('maybeCompactConversation: above threshold → replaces with [summary, ...t
   assert.match((after[0] as { content: string }).content, /compressed-summary/)
 })
 
+test('maybeCompactConversation: every compressed-prefix message reaches the summarizer', async () => {
+  const ctx = createAgentContext()
+  for (let i = 0; i < 10; i++) ctx.appendUserMessage(`msg-${i}`)
+  let summarizedHistory: AgentMessage[] = []
+
+  await maybeCompactConversation(ctx, 50_000, {
+    triggerTokens: 10,
+    keepRatio: 0.2,
+    summarize: async (input) => {
+      summarizedHistory = input.history
+      return 'complete summary'
+    },
+  })
+
+  assert.deepEqual(
+    summarizedHistory.map((message) => message.role === 'user' ? message.content : message.role),
+    Array.from({ length: 8 }, (_, index) => `msg-${index}`),
+  )
+})
+
 test('maybeCompactConversation: empty summary skipped, no replace', async () => {
   const ctx = createAgentContext()
   for (let i = 0; i < 20; i++) ctx.appendUserMessage(`msg-${i}-padding-for-tokens`)

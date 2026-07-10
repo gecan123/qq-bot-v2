@@ -218,7 +218,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'curiosity_tick' })
     let summarized = false
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, saved } = makeMockSnapshotRepo()
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -253,6 +253,15 @@ describe('BotLoopAgent.runOnceForTest', () => {
     await agent.runOnceForTest()
 
     assert.equal(summarized, true)
+    assert.deepEqual(
+      saved.at(-1),
+      ctx.exportPersistedSnapshot(),
+      'the snapshot saved at the end of the step must include compaction output',
+    )
+    assert.equal(saved.at(-1)?.messages[0]?.role, 'user')
+    if (saved.at(-1)?.messages[0]?.role === 'user') {
+      assert.match(saved.at(-1)!.messages[0]!.content, /^\[历史摘要\]/)
+    }
   })
 
   test('life journal does not append review output to AgentContext', async () => {

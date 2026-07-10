@@ -160,6 +160,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
     const result = await replayMissedMessages({ mailboxCursors: {}, legacyLastWakeAt: null }, {
       enqueueMessageEvent: enq,
       selfNumber: 999,
+      groupIds: [672312932],
       ensureReady: stubEnsureReady,
     })
     assert.deepEqual(result, { enqueued: 0, skippedDuplicates: 0 })
@@ -227,6 +228,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
     const result = await replayMissedMessages({ mailboxCursors: {}, legacyLastWakeAt: lastWake }, {
       enqueueMessageEvent: enq,
       selfNumber: 999,
+      groupIds: [672312932],
       ensureReady: stubEnsureReady,
     })
 
@@ -275,6 +277,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
     const result = await replayMissedMessages({ mailboxCursors: {}, legacyLastWakeAt: lastWake }, {
       enqueueMessageEvent: enq,
       selfNumber: 999,
+      groupIds: [672312932],
       ensureReady: stubEnsureReady,
     })
 
@@ -334,6 +337,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
     }, {
       enqueueMessageEvent: createDedupEnqueue(q),
       selfNumber: 999,
+      groupIds: [672312932],
       ensureReady: stubEnsureReady,
     })
 
@@ -394,6 +398,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
     }, {
       enqueueMessageEvent: createDedupEnqueue(q),
       selfNumber: 999,
+      groupIds: [672312932],
       ensureReady: stubEnsureReady,
     })
 
@@ -465,6 +470,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
     }, {
       enqueueMessageEvent: createDedupEnqueue(q),
       selfNumber: 999,
+      groupIds: [672312932],
       ensureReady: async (message) => {
         ensureReadyCalls++
         return stubEnsureReady(message)

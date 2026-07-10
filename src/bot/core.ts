@@ -6,6 +6,7 @@ import { createLogger } from '../logger.js'
 import { persistMediaReferences } from '../media/media-cache.js'
 import { summarizeSegments } from '../utils/business-log.js'
 import { createMessageReadyDispatcher, type MessageReadyDispatcher } from './message-ready-dispatcher.js'
+import { createBackfillScheduler } from './startup-backfill.js'
 
 const ingressLog = createLogger('INGRESS')
 const napcatLog = createLogger('NAPCAT')
@@ -42,6 +43,11 @@ export interface NapcatHandlerOptions {
    * 不传 (例如 backfill 阶段) 表示「只入库, 不进 LLM 视野」。
    */
   onMessageReady?: (input: IngestedMessage) => void | Promise<void>
+}
+
+export interface NapcatHandlerLifecycle {
+  initialBackfillDone: Promise<void>
+  drain(): Promise<void>
 }
 
 interface ProcessMessageOptions extends NapcatHandlerOptions {
@@ -233,8 +239,17 @@ async function resolveGroupName(context: { group_id: number; group_name?: string
  * 关键: connect 之后, NapCat 收到的实时消息会立刻走 onMessageReady (经过去重).
  *       replay-missed 在 connect 之后跑也安全, 因为它们共享 messageRowId 去重.
  */
-export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): void {
+export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): NapcatHandlerLifecycle {
   const readyDispatcher = createMessageReadyDispatcher({ onMessageReady: options.onMessageReady })
+  const backfillScheduler = createBackfillScheduler(async () => {
+    await Promise.all(config.botTargetGroupIds.map(async (groupId) => {
+      try {
+        await backfillGroupMessages(groupId)
+      } catch (error) {
+        ingressLog.error({ error, groupId }, '群历史消息补拉失败')
+      }
+    }))
+  })
 
   napcat.on('socket.open', () => napcatLog.info('WebSocket 开始连接'))
   napcat.on('socket.error', (ctx) => napcatLog.error({ errorType: ctx.error_type }, 'WebSocket 连接错误'))
@@ -243,11 +258,7 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): void
   napcat.on('meta_event.lifecycle', async (ctx) => {
     if (ctx.sub_type === 'connect') {
       napcatLog.info('NapCat 连接成功')
-      for (const groupId of config.botTargetGroupIds) {
-        backfillGroupMessages(groupId).catch((error) => {
-          ingressLog.error({ error, groupId }, '群历史消息补拉失败')
-        })
-      }
+      void backfillScheduler.schedule()
     }
   })
 
@@ -286,6 +297,13 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): void
     })
     privateChains.set(peerId, next)
   })
+
+  return {
+    initialBackfillDone: backfillScheduler.initialBackfillDone,
+    async drain() {
+      await Promise.all([backfillScheduler.drain(), readyDispatcher.drain()])
+    },
+  }
 }
 
 /**

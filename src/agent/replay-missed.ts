@@ -2,7 +2,6 @@ import { prisma } from '../database/client.js'
 import type { BotEvent } from './event.js'
 import type { Message } from '../generated/prisma/client.js'
 import { ensureMessageReadyForAgent as defaultEnsureReady } from '../media/ensure-message-ready.js'
-import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
 import {
   MAILBOX_BACKLOG_RECENT_LIMIT,
@@ -31,6 +30,7 @@ export interface ReplayMissedDeps {
    */
   enqueueMessageEvent: (event: BotEvent) => boolean
   selfNumber: number
+  groupIds: readonly number[]
   /**
    * 测试可注入. 默认走 src/media/ensure-message-ready.ts 的实现 (等待媒体描述 + 冻结 resolved_text).
    */
@@ -63,7 +63,7 @@ export async function replayMissedMessages(
     return { enqueued: 0, skippedDuplicates: 0 }
   }
 
-  const groupIds = config.botTargetGroupIds.map((id) => BigInt(id))
+  const groupIds = deps.groupIds.map((id) => BigInt(id))
   const sourceFilters: Array<Record<string, unknown>> = []
   const replaySources: ReplaySource[] = []
   for (const groupId of groupIds) {

@@ -253,14 +253,16 @@ describe('BotLoopAgent.runOnceForTest', () => {
     await agent.runOnceForTest()
 
     assert.equal(summarized, true)
+    const lastSaved = saved.at(-1)
     assert.deepEqual(
-      saved.at(-1),
+      lastSaved,
       ctx.exportPersistedSnapshot(),
       'the snapshot saved at the end of the step must include compaction output',
     )
-    assert.equal(saved.at(-1)?.messages[0]?.role, 'user')
-    if (saved.at(-1)?.messages[0]?.role === 'user') {
-      assert.match(saved.at(-1)!.messages[0]!.content, /^\[历史摘要\]/)
+    const head = lastSaved?.messages[0]
+    assert.equal(head?.role, 'user')
+    if (head?.role === 'user') {
+      assert.match(head.content, /^\[历史摘要\]/)
     }
   })
 

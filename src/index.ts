@@ -225,10 +225,15 @@ async function main() {
       })
     }
   }
-  registerNapcatHandlers({ onMessageReady })
+  const napcatLifecycle = registerNapcatHandlers({ onMessageReady })
 
   // 7. NapCat connect (D2: must be before resolveTargetMetadataMaps)
   await connectNapcat()
+
+  // 7.5 等待首次 NapCat 历史补拉全部落库，再做 DB replay。实时消息从 connect 起已经
+  //     进入统一 dedup queue；因此这里既不会漏掉晚入库的 backfill，也不会重复披露。
+  await napcatLifecycle.initialBackfillDone
+  log.info('首次群历史消息补拉完成')
 
   // 8. 启动元数据 (群名) — 用于拼 system prompt
   const targetMetadata = await resolveTargetMetadataMaps({
@@ -244,6 +249,7 @@ async function main() {
   }, {
     enqueueMessageEvent,
     selfNumber: config.selfNumber,
+    groupIds: config.botTargetGroupIds,
   })
   log.info({ enqueued: replayResult.enqueued }, 'replay-missed 完成')
 

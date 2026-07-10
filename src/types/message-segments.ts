@@ -62,6 +62,22 @@ export interface JsonCardSegment {
   prompt?: string
 }
 
+export interface ForwardMessageItem {
+  messageId?: string
+  senderId?: string
+  senderName?: string
+  time?: number
+  content: ParsedSegment[]
+}
+
+export interface ForwardSegment {
+  type: 'forward'
+  forwardId: string
+  items: ForwardMessageItem[]
+  truncated?: boolean
+  unavailable?: boolean
+}
+
 export interface RawSegment {
   type: 'raw'
   originalType: string
@@ -78,4 +94,5 @@ export type ParsedSegment =
   | AtSegment
   | ReplySegment
   | JsonCardSegment
+  | ForwardSegment
   | RawSegment

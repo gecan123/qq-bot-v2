@@ -175,17 +175,27 @@ function renderBoundedRead(
 }
 
 function extractMediaHandles(content: unknown): Array<{ type: string; mediaId: number }> {
-  if (!Array.isArray(content)) return []
   const media: Array<{ type: string; mediaId: number }> = []
-  for (const segment of content) {
-    if (!segment || typeof segment !== 'object') continue
-    const value = segment as Record<string, unknown>
-    if (typeof value.type !== 'string' || !MEDIA_SEGMENT_TYPES.has(value.type)) continue
-    if (typeof value.referenceId !== 'string') continue
-    const mediaId = Number(value.referenceId)
-    if (!Number.isSafeInteger(mediaId) || mediaId <= 0) continue
-    media.push({ type: value.type, mediaId })
+  const visit = (segments: unknown): void => {
+    if (!Array.isArray(segments)) return
+    for (const segment of segments) {
+      if (!segment || typeof segment !== 'object') continue
+      const value = segment as Record<string, unknown>
+      if (value.type === 'forward' && Array.isArray(value.items)) {
+        for (const item of value.items) {
+          if (!item || typeof item !== 'object') continue
+          visit((item as Record<string, unknown>).content)
+        }
+        continue
+      }
+      if (typeof value.type !== 'string' || !MEDIA_SEGMENT_TYPES.has(value.type)) continue
+      if (typeof value.referenceId !== 'string') continue
+      const mediaId = Number(value.referenceId)
+      if (!Number.isSafeInteger(mediaId) || mediaId <= 0) continue
+      media.push({ type: value.type, mediaId })
+    }
   }
+  visit(content)
   return media
 }
 

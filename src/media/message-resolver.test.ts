@@ -193,4 +193,35 @@ describe('resolveMessage', () => {
       },
     ])
   })
+
+  test('resolves descriptions for media nested inside forwarded messages', async () => {
+    let findManyCount = 0
+    prisma.media.findMany = (async () => {
+      findManyCount += 1
+      if (findManyCount === 1) return []
+      return [{ mediaId: 42, descriptionRaw: { description: '转发图片描述' } }]
+    }) as unknown as typeof prisma.media.findMany
+
+    const resolved = await resolveMessage(makeMessage([{
+      type: 'forward',
+      forwardId: 'forward-1',
+      items: [{
+        senderId: '101',
+        content: [{ type: 'image', referenceId: '42' }],
+      }],
+    }]), { timeoutMs: 1000 })
+
+    assert.deepEqual(resolved, [{
+      type: 'forward',
+      forwardId: 'forward-1',
+      items: [{
+        senderId: '101',
+        content: [{
+          type: 'image',
+          referenceId: '42',
+          mediaDescription: { description: '转发图片描述' },
+        }],
+      }],
+    }])
+  })
 })

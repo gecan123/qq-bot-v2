@@ -138,6 +138,46 @@ describe('inbox tool', () => {
     assert.deepEqual(payload.messages[1]!.media, [])
   })
 
+  test('exposes media handles nested inside forwarded messages', async () => {
+    const tool = createInboxTool({
+      groupIds: [111],
+      selfNumber: 999,
+      async findMessages() {
+        return [row({
+          id: 1,
+          content: [{
+            type: 'forward',
+            forwardId: 'forward-1',
+            items: [
+              { content: [{ type: 'image', referenceId: '201' }] },
+              {
+                content: [{
+                  type: 'forward',
+                  forwardId: 'forward-2',
+                  items: [{ content: [{ type: 'video', referenceId: '202' }] }],
+                }],
+              },
+            ],
+          }],
+        })]
+      },
+    })
+
+    const result = await tool.execute({
+      action: 'read',
+      source: 'group',
+      groupId: 111,
+    }, undefined as never)
+    const payload = JSON.parse(result.content as string) as {
+      messages: Array<{ media: Array<{ type: string; mediaId: number }> }>
+    }
+
+    assert.deepEqual(payload.messages[0]!.media, [
+      { type: 'image', mediaId: 201 },
+      { type: 'video', mediaId: 202 },
+    ])
+  })
+
   test('rejects reads from groups outside the monitored allowlist', async () => {
     let queried = false
     const tool = createInboxTool({

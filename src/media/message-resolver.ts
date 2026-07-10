@@ -24,11 +24,36 @@ function hasReferenceId(segment: ParsedSegment): segment is MediaSegment & { ref
 function collectReferenceIds(segments: ParsedSegment[]): number[] {
   const refIds: number[] = []
   for (const seg of segments) {
+    if (seg.type === 'forward') {
+      for (const item of seg.items) refIds.push(...collectReferenceIds(item.content))
+      continue
+    }
     if (!hasReferenceId(seg)) continue
     const mediaId = Number(seg.referenceId)
     if (Number.isInteger(mediaId) && mediaId > 0) refIds.push(mediaId)
   }
   return refIds
+}
+
+function applyDescriptions(
+  segments: ParsedSegment[],
+  descriptionMap: ReadonlyMap<string, Record<string, unknown>>,
+): ParsedSegment[] {
+  return segments.map((segment) => {
+    if (segment.type === 'forward') {
+      return {
+        ...segment,
+        items: segment.items.map((item) => ({
+          ...item,
+          content: applyDescriptions(item.content, descriptionMap),
+        })),
+      }
+    }
+    if (!hasReferenceId(segment)) return segment
+    const desc = descriptionMap.get(segment.referenceId)
+    if (!desc) return segment
+    return { ...segment, mediaDescription: desc }
+  })
 }
 
 async function ensureDescriptions(refIds: number[], options: ResolveMessageOptions): Promise<void> {
@@ -93,13 +118,7 @@ async function resolveDescriptions(segments: ParsedSegment[], refIds: number[]):
     if (isMediaDescription(row.descriptionRaw)) descriptionMap.set(String(row.mediaId), row.descriptionRaw)
   }
 
-  return segments.map((segment) => {
-    if (!hasReferenceId(segment)) return segment
-    const desc = descriptionMap.get(segment.referenceId)
-    if (!desc) return segment
-
-    return { ...segment, mediaDescription: desc }
-  })
+  return applyDescriptions(segments, descriptionMap)
 }
 
 export async function resolveMessage(message: Message, options: ResolveMessageOptions = {}): Promise<ParsedSegment[]> {

@@ -77,4 +77,48 @@ describe('persistMediaReferences', () => {
       },
     ])
   })
+
+  test('persists media nested inside a forwarded child message', async () => {
+    prisma.media.create = (async () => ({ mediaId: 42 })) as unknown as typeof prisma.media.create
+
+    const result = await persistMediaReferences({
+      content: [{
+        type: 'forward',
+        forwardId: 'forward-1',
+        items: [{
+          messageId: '11',
+          senderId: '101',
+          content: [{
+            type: 'image',
+            url: 'https://example.test/nested.png',
+            fileName: 'nested.png',
+            fileSize: String(21 * 1024 * 1024),
+          }],
+        }],
+      }],
+      scope: { kind: 'group', groupId: 1 },
+      messageId: 100,
+      senderId: 200,
+      napcat: {} as never,
+    })
+
+    assert.deepEqual(result, {
+      content: [{
+        type: 'forward',
+        forwardId: 'forward-1',
+        items: [{
+          messageId: '11',
+          senderId: '101',
+          content: [{
+            type: 'image',
+            fileName: 'nested.png',
+            fileSize: String(21 * 1024 * 1024),
+            referenceId: '42',
+            url: undefined,
+          }],
+        }],
+      }],
+      mediaReferenceIds: ['42'],
+    })
+  })
 })

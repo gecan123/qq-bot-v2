@@ -325,6 +325,22 @@ export async function persistMediaReferences(params: {
   const mediaReferenceIds: string[] = []
 
   for (const segment of params.content) {
+    if (segment.type === 'forward') {
+      const items = []
+      for (const item of segment.items) {
+        const nested = await persistMediaReferences({
+          ...params,
+          content: item.content,
+          messageId: Number(item.messageId) || params.messageId,
+          senderId: Number(item.senderId) || params.senderId,
+        })
+        mediaReferenceIds.push(...nested.mediaReferenceIds)
+        items.push({ ...item, content: nested.content })
+      }
+      output.push({ ...segment, items })
+      continue
+    }
+
     if (!isMediaSegment(segment)) {
       output.push(segment)
       continue

@@ -75,6 +75,14 @@ function parsePositiveInteger(value: string | undefined, defaultValue: number): 
   return Math.floor(parsed)
 }
 
+function parsePositiveSafeInteger(name: string, value: string): number {
+  const parsed = Number(value.trim())
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`Invalid ${name} "${value}" (must be positive safe integer)`)
+  }
+  return parsed
+}
+
 function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
   if (value == null) return defaultValue
   const v = value.trim().toLowerCase()
@@ -144,11 +152,7 @@ export function parseIdList(name: string, raw: string | undefined): number[] {
   const segments = raw.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
   const ids: number[] = []
   for (const seg of segments) {
-    const parsed = Number(seg)
-    if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
-      throw new Error(`Invalid id "${seg}" in env ${name} (must be integer)`)
-    }
-    ids.push(parsed)
+    ids.push(parsePositiveSafeInteger(`id "${seg}" in env ${name}`, seg))
   }
   const unique = Array.from(new Set(ids))
   unique.sort((a, b) => a - b)
@@ -175,10 +179,7 @@ function parseOwner(env: EnvSource): BotOwner | null {
   if (hasQq !== hasName) {
     throw new Error('BOT_OWNER_QQ and BOT_OWNER_NAME must be set together (or both empty)')
   }
-  const qq = Number(qqRaw)
-  if (!Number.isFinite(qq) || !Number.isInteger(qq) || qq <= 0) {
-    throw new Error(`Invalid BOT_OWNER_QQ "${qqRaw}" (must be positive integer)`)
-  }
+  const qq = parsePositiveSafeInteger('BOT_OWNER_QQ', qqRaw)
   return { qq, name: nameRaw }
 }
 
@@ -342,7 +343,7 @@ export function parseConfig(env: EnvSource) {
     },
     /** Group whitelist. Bot listens + replies only within these IDs. 私聊不走白名单, 由 ingress 层 sub_type='friend' 过滤. */
     botTargetGroupIds: groupIds,
-    selfNumber: Number(requireEnv(env, 'SELF_NUMBER')),
+    selfNumber: parsePositiveSafeInteger('SELF_NUMBER', requireEnv(env, 'SELF_NUMBER')),
     /** Owner (创造者) — 渲染 [关系基线] 用. null = 未配置 → 那段不渲染. */
     owner: parseOwner(env),
     nodeEnv: env.NODE_ENV || 'development',

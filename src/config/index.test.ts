@@ -188,6 +188,15 @@ describe('config', () => {
     assert.deepEqual(config.botTargetGroupIds, [])
   })
 
+  test('rejects SELF_NUMBER values that are not positive safe integers', () => {
+    for (const value of ['abc', '0', '-1', '9007199254740992']) {
+      assert.throws(
+        () => parseConfig(createBaseEnv({ SELF_NUMBER: value })),
+        /Invalid SELF_NUMBER/,
+      )
+    }
+  })
+
   test('groupAmbientSendIds defaults to empty set and parses comma-separated ids', () => {
     const dflt = parseConfig(createBaseEnv())
     assert.deepEqual(dflt.groupAmbientSendIds, new Set<number>())
@@ -365,5 +374,14 @@ describe('parseIdList', () => {
 
   test('throws on float-like segments (must be integer)', () => {
     assert.throws(() => parseIdList('Z', '111.5'), /Invalid id "111\.5" in env Z/)
+  })
+
+  test('throws on non-positive or unsafe integer ids', () => {
+    for (const value of ['0', '-1', '9007199254740992']) {
+      assert.throws(
+        () => parseIdList('BOT_TARGET_GROUP_IDS', `111,${value}`),
+        /Invalid id/,
+      )
+    }
   })
 })

@@ -167,6 +167,74 @@ describe('segmentsToPlainText', () => {
     assert.equal(segmentsToPlainText(segments), '[location]')
   })
 
+  test('forward segment renders sender-labelled child messages in order', () => {
+    const segments: ParsedSegment[] = [{
+      type: 'forward',
+      forwardId: 'forward-1',
+      items: [
+        {
+          messageId: '11',
+          senderId: '101',
+          senderName: 'Alice',
+          content: [{ type: 'text', content: 'hello' }],
+        },
+        {
+          messageId: '12',
+          senderId: '102',
+          senderName: 'Bob',
+          content: [{ type: 'image' }],
+        },
+      ],
+    }]
+
+    assert.equal(
+      segmentsToPlainText(segments),
+      '[合并转发消息]\nAlice(101): hello\nBob(102): [图片]\n[转发结束]',
+    )
+  })
+
+  test('forward segment renders nested forward messages recursively', () => {
+    const segments: ParsedSegment[] = [{
+      type: 'forward',
+      forwardId: 'outer',
+      items: [{
+        senderId: '101',
+        senderName: 'Alice',
+        content: [{
+          type: 'forward',
+          forwardId: 'inner',
+          items: [{
+            senderId: '102',
+            senderName: 'Bob',
+            content: [{ type: 'text', content: 'nested' }],
+          }],
+        }],
+      }],
+    }]
+
+    assert.equal(
+      segmentsToPlainText(segments),
+      '[合并转发消息]\nAlice(101): [合并转发消息]\nBob(102): nested\n[转发结束]\n[转发结束]',
+    )
+  })
+
+  test('forward segment discloses unavailable and truncated states', () => {
+    const segments: ParsedSegment[] = [
+      { type: 'forward', forwardId: 'missing', items: [], unavailable: true },
+      {
+        type: 'forward',
+        forwardId: 'partial',
+        items: [{ senderId: '103', content: [{ type: 'text', content: 'kept' }] }],
+        truncated: true,
+      },
+    ]
+
+    assert.equal(
+      segmentsToPlainText(segments),
+      '[合并转发消息: 内容不可用][合并转发消息]\n103: kept\n…（转发内容已截断）\n[转发结束]',
+    )
+  })
+
   test('multiple segments are concatenated', () => {
     const segments: ParsedSegment[] = [
       { type: 'at', targetId: '123', targetName: '小明' },

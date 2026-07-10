@@ -1,6 +1,20 @@
 import type { ParsedSegment } from '../types/message-segments.js'
 import { formatMediaDescription } from '../media/media-description.js'
 
+function renderForwardSegment(segment: Extract<ParsedSegment, { type: 'forward' }>): string {
+  if (segment.unavailable) return '[合并转发消息: 内容不可用]'
+
+  const lines = segment.items.map((item) => {
+    const sender = item.senderName && item.senderId
+      ? `${item.senderName}(${item.senderId})`
+      : item.senderName ?? item.senderId ?? '未知发送者'
+    const content = segmentsToPlainText(item.content) || '[空消息]'
+    return `${sender}: ${content}`
+  })
+  if (segment.truncated) lines.push('…（转发内容已截断）')
+  return ['[合并转发消息]', ...lines, '[转发结束]'].join('\n')
+}
+
 function renderMediaSegment(label: string, referenceId: string | undefined, value: unknown): string {
   const tag = referenceId ? `${label}#${referenceId}` : label
   const formatted = formatMediaDescription(value)
@@ -45,6 +59,8 @@ export function segmentsToPlainText(segments: ParsedSegment[]): string {
           }
           return seg.prompt ? `[分享: ${seg.prompt}]` : '[分享]'
         }
+        case 'forward':
+          return renderForwardSegment(seg)
         case 'raw':
           return `[${seg.originalType}]`
         default:

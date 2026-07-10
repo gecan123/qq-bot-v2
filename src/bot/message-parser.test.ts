@@ -45,6 +45,7 @@ type ParseMessageWithForwards = (
 function forwardParser(): ParseMessageWithForwards {
   const candidate = (parser as unknown as { parseMessageWithForwards?: ParseMessageWithForwards }).parseMessageWithForwards
   assert.equal(typeof candidate, 'function', 'parseMessageWithForwards must be exported')
+  if (!candidate) throw new Error('parseMessageWithForwards must be exported')
   return candidate
 }
 

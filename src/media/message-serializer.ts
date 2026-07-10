@@ -1,5 +1,6 @@
 import type { ParsedSegment } from '../types/message-segments.js'
 import { getMediaDescriptionText } from './media-description.js'
+import { segmentsToPlainText } from '../utils/segment-text.js'
 
 function serializeSegment(segment: ParsedSegment): string {
   switch (segment.type) {
@@ -41,6 +42,8 @@ function serializeSegment(segment: ParsedSegment): string {
       }
       return segment.prompt ? `[分享: ${segment.prompt}]` : '[分享]'
     }
+    case 'forward':
+      return segmentsToPlainText([segment])
     case 'raw':
       return `[${segment.originalType}]`
   }

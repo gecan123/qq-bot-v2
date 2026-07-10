@@ -1,5 +1,5 @@
 import { napcat } from './napcat.js'
-import { parseMessage } from './message-parser.js'
+import { parseMessageWithForwards } from './message-parser.js'
 import { findExistingMessageIds, insertMessage } from '../database/messages.js'
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
@@ -64,7 +64,7 @@ async function processMessage(
   options: ProcessMessageOptions,
 ): Promise<void> {
   const qqMsg = await napcat.get_msg({ message_id: messageId })
-  const parsed = parseMessage(qqMsg)
+  const parsed = await parseMessageWithForwards(qqMsg, napcat)
   if (parsed.senderId === config.selfNumber) {
     ingressLog.debug({ scope, messageId: parsed.messageId }, '忽略 bot 自身回灌消息')
     return

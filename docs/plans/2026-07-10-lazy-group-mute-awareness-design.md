@@ -32,7 +32,7 @@ Luna 不主动订阅群成员禁言通知。只有在向群聊发送消息失败
 }
 ```
 
-`mutedUntil` 来自 NapCat 的 `shut_up_time`。上游没有提供有效时间时可以省略该字段，但 `reason` 仍可基于成员列表确认。
+`mutedUntil` 来自当前 `node-napcat-ts@0.4.21` 返回的 `shutUpTime`（Unix 秒），自身 QQ 使用 `qid` 匹配。上游没有提供有效时间时可以省略该字段，但 `reason` 仍可基于成员列表确认。
 
 ## 备选方案
 
@@ -50,19 +50,21 @@ Luna 不主动订阅群成员禁言通知。只有在向群聊发送消息失败
 
 ## 组件边界
 
+### NapCat 状态检查层
+
+新增一个有界 `GroupMuteInspector`，只负责调用 `get_group_shut_list`、按 `qid` 匹配 `config.selfNumber`，并把 `shutUpTime` 规范化为 ISO 时间。它不写 AgentContext，也不维护状态缓存。
+
 ### NapCat 发送层
 
-`src/messaging/napcat-sender.ts` 继续负责重试和发送日志，并在最终失败时保留足够的失败信息供上层诊断。发送层不直接写 AgentContext。
-
-禁言是确定性业务失败。若第一次发送异常已能可靠标识为禁言，可以跳过第二次发送并直接进入查询确认；否则保持现有重试行为，最终失败后再确认。
+`src/messaging/napcat-sender.ts` 继续负责现有重试和发送日志。本次不依赖发送异常文本或 retcode 做禁言判断，也不改变重试策略。
 
 ### MessageSender
 
-`MessageSender` 的失败结果扩展为可携带有界、可序列化的诊断结果。查询异常只能使诊断退化为普通发送失败，不能覆盖原始发送结果，也不能抛出新的工具级异常。
+`MessageSender` 契约保持不变。禁言确认是发送失败后的独立只读诊断，不混入底层发送结果。
 
 ### `send_message` 工具
 
-工具继续返回稳定 JSON。确认禁言后增加：
+工具在群发送最终失败后调用 `GroupMuteInspector`，并继续返回稳定 JSON。确认禁言后增加：
 
 - `reason: "group_muted"`
 - 可选 `mutedUntil`

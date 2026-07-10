@@ -29,6 +29,14 @@ const validFiles = {
       lint: 'pnpm typecheck && pnpm repo-check',
     },
   }),
+  '.env.example': [
+    'BOT_EVENT_DEBOUNCE_MS=3000',
+    'BOT_TOKEN_USAGE_LOG_PATH=logs/token-usage.ndjson',
+    '# Optional group configuration; missing file falls back to no customizations.',
+    '# Copy prompts/groups.yaml.example when needed.',
+    '# BOT_GROUP_PROMPTS_PATH=./prompts/groups.yaml',
+  ].join('\n'),
+  'prompts/groups.yaml.example': 'groups: []\n',
   'src/agent/tools/index.ts': [
     'createDeferredToolExecutor',
     'pauseTool,',
@@ -191,5 +199,37 @@ describe('runRepoChecks', () => {
     assert.match(result.errors.join('\n'), /docs\/TOOLS\.md must mention registered tool "generate_image"/)
     assert.match(result.errors.join('\n'), /docs\/TOOLS\.md must mention workspace_bash subcommand "help"/)
     assert.match(result.errors.join('\n'), /prompts\/bot-system\.md must mention workspace_bash subcommand "help"/)
+  })
+
+  test('rejects missing test and observability env markers', () => {
+    const result = runRepoChecks({
+      ...validFiles,
+      '.env.example': '# BOT_GROUP_PROMPTS_PATH=./prompts/groups.yaml\n',
+    })
+
+    assert.match(result.errors.join('\n'), /.env\.example must mention BOT_EVENT_DEBOUNCE_MS/)
+    assert.match(result.errors.join('\n'), /.env\.example must mention BOT_TOKEN_USAGE_LOG_PATH/)
+  })
+
+  test('rejects a missing group customization template referenced by env docs', () => {
+    const result = runRepoChecks({
+      ...validFiles,
+      'prompts/groups.yaml.example': undefined,
+    })
+
+    assert.match(result.errors.join('\n'), /prompts\/groups\.yaml\.example is referenced but missing/)
+  })
+
+  test('rejects fail-fast documentation for optional group customization files', () => {
+    const result = runRepoChecks({
+      ...validFiles,
+      '.env.example': [
+        'BOT_EVENT_DEBOUNCE_MS=3000',
+        'BOT_TOKEN_USAGE_LOG_PATH=logs/token-usage.ndjson',
+        '# BOT_GROUP_PROMPTS_PATH file must exist (loader fail-fast).',
+      ].join('\n'),
+    })
+
+    assert.match(result.errors.join('\n'), /group customization file must document missing-file fallback/)
   })
 })

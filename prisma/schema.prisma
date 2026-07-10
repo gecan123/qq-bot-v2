@@ -68,10 +68,8 @@ model BotAgentSnapshot {
   @@map("bot_agent_snapshot")
 }
 
-/// Luna 的长期记忆笔记本。bot 通过 remember / recall 工具自主读写,
-/// 不自动注入 prefix (红线 1/4 不变)。content 是 Luna 自己写的笔记内容。
-/// targetId 统一用 String 存 QQ号 / 群号: LLM 通过 z.union([str, num]) → String 传入,
-/// 避免 BigInt JSON 序列化摩擦。
+/// 旧版数据库记忆表。当前 memory 工具使用 data/agent-workspace/memory/ Markdown，
+/// 运行时代码已不再读写本 model；删除前需先确定历史数据处置和 migration 策略。
 model MemoryEntry {
   id               Int      @id @default(autoincrement())
   targetKind       String   @map("target_kind") @db.VarChar(16)
@@ -121,7 +119,7 @@ model AgentToolCall {
   @@map("agent_tool_calls")
 }
 
-/// Agent token/cache 使用观测事件。覆盖主聊天和 compaction 等 LLM operation。
+/// Agent token/cache 使用观测事件。覆盖主聊天、compaction 和 Life Journal review。
 model AgentTokenUsage {
   id           BigInt   @id @default(autoincrement())
   ts           DateTime @db.Timestamptz(3)

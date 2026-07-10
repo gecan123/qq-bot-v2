@@ -380,8 +380,8 @@ export function parseConfig(env: EnvSource) {
     botGroupPromptsPath: groupPromptsPath,
     /**
      * 队列有事件时, drainEvents 前等更多事件堆积的毫秒数. 合并连续消息进同一轮 LLM
-     * 调用. 默认 15s 覆盖图片描述延迟 (~10s) + 用户打字间隔. 非正值或非数字 fallback
-     * 默认. 测试通过 `eventDebounceMs: 0` 直接传给 createBotLoopAgent 绕过.
+     * 调用. 默认 3s 覆盖常见连续输入; 媒体 readiness 在事件入队前单独处理. 非正值或
+     * 非数字 fallback 默认. 测试通过 `eventDebounceMs: 0` 直接传给 createBotLoopAgent 绕过.
      */
     eventDebounceMs,
     outboundCache: {

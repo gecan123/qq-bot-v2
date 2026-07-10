@@ -3,6 +3,8 @@ export interface RepoCheckFiles {
   'CLAUDE.md': string
   'README.md': string
   'package.json': string
+  '.env.example': string
+  'prompts/groups.yaml.example'?: string
   'src/agent/tools/index.ts': string
   'src/agent/tools/workspace-bash.ts': string
   'prompts/bot-system.md': string
@@ -45,6 +47,11 @@ const REQUIRED_DOCS = [
 
 const MAX_AGENT_ENTRY_LINES = 120
 
+const REQUIRED_ENV_MARKERS = [
+  'BOT_EVENT_DEBOUNCE_MS',
+  'BOT_TOKEN_USAGE_LOG_PATH',
+] as const
+
 const TOOL_REGISTRY_MARKERS = [
   ['createDeferredToolExecutor', 'invoke'],
   ['pauseTool', 'pause'],
@@ -84,6 +91,7 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   checkToolIndexes(files, errors)
   checkToolBoundaryDocs(files, errors)
   checkPromptSplit(files, errors)
+  checkEnvExample(files, errors)
 
   for (const surface of README_REMOVED_SURFACES) {
     if (files['README.md'].includes(surface)) {
@@ -131,6 +139,29 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   }
 
   return { errors }
+}
+
+function checkEnvExample(files: RepoCheckFiles, errors: string[]): void {
+  const envExample = files['.env.example']
+  for (const marker of REQUIRED_ENV_MARKERS) {
+    if (!envExample.includes(marker)) {
+      errors.push(`.env.example must mention ${marker}`)
+    }
+  }
+
+  if (
+    envExample.includes('prompts/groups.yaml.example') &&
+    !files['prompts/groups.yaml.example']?.trim()
+  ) {
+    errors.push('prompts/groups.yaml.example is referenced but missing')
+  }
+
+  const groupConfigLine = envExample
+    .split('\n')
+    .find((line) => line.includes('BOT_GROUP_PROMPTS_PATH')) ?? ''
+  if (/fail-fast|file must exist|文件必须存在/i.test(groupConfigLine) || envExample.includes('loader fail-fast')) {
+    errors.push('group customization file must document missing-file fallback')
+  }
 }
 
 function checkPromptSplit(files: RepoCheckFiles, errors: string[]): void {

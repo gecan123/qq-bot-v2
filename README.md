@@ -11,7 +11,7 @@
 - `bot_agent_snapshot` 是持久化的 LLM ledger。它的 `context_snapshot` 字段就是运行时 `AgentContext` 形态。
 - `messages` 是入站事实账本。它服务于搜索、媒体解析、审计和 replay recovery，但不能替代 `AgentContext`。
 - `bot_agent_snapshot.mailbox_cursors` 与 context snapshot 同行持久化，记录各来源已经披露到哪个 message row。
-- 新的 LLM 可见事实只能通过 append 或受控 compaction 进入。
+- 新的 LLM 可见事实只能通过 append 或受控 compaction 进入；compaction 会把完整待压缩 prefix 交给摘要器，并在改写和表情池注入后立即保存 snapshot。
 - late media description 和 side table 更新不得改写已经 append 的历史。
 - 对外 QQ 发言必须走 `send_message`，且 target 必须明确。
 - 工具日志和其它 `logs/*.ndjson` 是运维旁路，不是 prompt replay 输入。
@@ -66,7 +66,7 @@ pnpm dev           # watch 模式启动 bot，文件变化会重启
 pnpm dev:once      # 单次启动 bot，不监听文件变化
 pnpm build         # 编译 TypeScript
 pnpm typecheck     # 只做 TypeScript 检查
-pnpm test          # 运行 src/**/*.test.ts
+pnpm test          # 在隔离的测试环境中运行 src/**/*.test.ts，不读取本机 .env
 pnpm repo-check    # 检查仓库指令和文档漂移
 pnpm lint          # typecheck + repo-check
 pnpm db:generate   # 重新生成 Prisma client
@@ -81,14 +81,14 @@ pnpm toollogf      # follow tool-call 审计日志
 
 启动流程由 `src/index.ts` 组织：
 
-1. 加载 config。
-2. 连接 Prisma。
-3. 注册媒体描述用的 LLM provider。
-4. 把 `BotAgentSnapshot` 恢复进 `AgentContext`。
-5. 创建 event queue 和 dedup 路径。
-6. 注册 NapCat handlers。
-7. 构建工具注册表和 system prompt。
-8. 启动 `BotLoopAgent`。
+1. 加载 config、连接 Prisma，并清理过期的 message/media 数据。
+2. 注册媒体描述 provider、启动 job queue，创建 Agent LLM client。
+3. 把 `BotAgentSnapshot` 恢复进 `AgentContext`，创建 event queue 和 message-row dedup 路径。
+4. 注册 NapCat handlers 并连接 NapCat；实时消息从连接成功起即可进入 dedup queue。
+5. 等待首次群历史 backfill 的所有来源尝试完成，再读取目标元数据并执行 missed-message replay；单群失败会记录错误，其余来源继续。
+6. 构建稳定工具面、system prompt 和 `BotLoopAgent`，随后进入主循环。
+
+`SIGINT` / `SIGTERM` 走幂等的有序退出：先断开 ingress、请求并等待当前 Agent round 结束、drain backfill、停止 job queue、保存最终 snapshot，最后断开 Prisma。每个阶段都有等待上限，单阶段失败不会跳过后续清理。
 
 主要源码区域：
 
@@ -106,4 +106,5 @@ pnpm toollogf      # follow tool-call 审计日志
 - Prisma client 输出目录是 `src/generated/prisma/`。
 - bot 必须从仓库根目录启动，确保相对路径、logs、prompts 和 `.bot.pid` 一致。
 - 生成型 bot workspace 文件位于 `data/agent-workspace/`，默认不是项目源码。
+- QQ 号和群号配置必须是正的 JavaScript safe integer；非法值会在启动期直接报错。
 - 交回代码前，先跑最小有用测试；影响面大时再跑更广的验证。

@@ -6,12 +6,13 @@
 
 ## 核心流程
 
-1. `src/index.ts` 加载 config，连接 Prisma，注册媒体 provider，创建 agent LLM client，恢复 `BotAgentSnapshot`，并启动 event queue；`src/agent/runtime.ts` 负责把已恢复的 context、tools、system prompt 和 `BotLoopAgent` 装配成运行时。
-2. `src/bot/**` 接收 NapCat 事件，并通过 `src/database/messages.ts` 写入入站事实。
-3. ready 后的消息被投递为 `BotEvent`。
+1. `src/index.ts` 加载 config、连接 Prisma、执行 message/media retention、注册媒体 provider，创建 agent LLM client，恢复 `BotAgentSnapshot`，并启动 event queue。
+2. NapCat handlers 注册后先连接 ingress。实时消息立即走 message-row dedup queue；首次群历史 backfill 通过 `initialBackfillDone` barrier 等待所有来源尝试完成后，才执行 missed-message replay。单群失败只记录 source-level error，其余来源继续；重连 backfill 继续串行执行，但不重新阻塞已经启动的 Agent。
+3. `src/bot/**` 接收 NapCat 事件，并通过 `src/database/messages.ts` 写入入站事实；ready 后的消息被投递为 `BotEvent`。
 4. `src/agent/mailbox.ts` 把所有 QQ 消息按来源聚合为不含正文的确定性通知，并计算批次级 `priority=high|normal`；非 QQ 运行时事件仍走稳定 direct 渲染。
-5. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责事件披露、mailbox cursors、context snapshot 原子保存、life journal hook、compaction，以及 pause/autonomy 循环控制。
-6. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct：把 system prompt、当前 messages 和可见 tools 发给 LLM，append assistant tool calls，顺序执行工具，并且只把 `ToolExecutionResult.content` append 为 tool result。工具的 `outcome` / `effects` 返回 Runtime Host；`src/agent/effect-interpreter.ts` 统一解释 runtime effects，不进入 ledger。
+5. `src/agent/runtime.ts` 把已恢复的 context、tools、system prompt 和 `BotLoopAgent` 装配成运行时。
+6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责事件披露、mailbox cursors、context snapshot 原子保存、有界 life journal hook、compaction，以及 pause/autonomy 循环控制。compaction 或其后的表情池注入改写 ledger 后会立即保存 snapshot。
+7. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct：把 system prompt、当前 messages 和可见 tools 发给 LLM，append assistant tool calls，顺序执行工具，并且只把 `ToolExecutionResult.content` append 为 tool result。工具的 `outcome` / `effects` 返回 Runtime Host；`src/agent/effect-interpreter.ts` 统一解释 runtime effects，不进入 ledger。
 
 ## 自主循环
 
@@ -30,6 +31,12 @@
 - 当前范围主要是 bot/backend。不要假设一定存在 admin WebUI。
 - 如果以后重新出现 `apps/admin-web/**`，且任务明确涉及它，先读它自己的局部指令，并把修改限制在对应范围。
 - 做 bot/backend 任务时，不要读或改无关的 UI/admin 面。
+
+## 生命周期边界
+
+- 启动恢复顺序固定为 `connect -> initial backfill barrier -> metadata -> replay -> runtime`。replay 的允许群列表显式注入，不能从可变全局 config 隐式读取。
+- `SIGINT` / `SIGTERM` 触发同一个幂等 shutdown coordinator：断开 ingress、停止并等待 Agent、drain backfill、停止 jobs、保存最终 snapshot，最后断开数据库。
+- shutdown 各阶段 best-effort 且有超时；前一阶段失败不会阻止后续清理，Prisma disconnect 始终最后执行。
 
 ## 主要模块
 

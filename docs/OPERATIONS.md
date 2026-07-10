@@ -40,6 +40,13 @@ pnpm toollogf
 - `pnpm tick` 会读取 `.bot.pid`，向进程发送 `SIGUSR1`，并注入一个仅供人工调试的 curiosity tick。正常自主循环由 Agent 的 `pause` 计时和 BotLoop 连续运行驱动，不依赖这个命令。
 - logs 写在 `logs/` 下，是运维证据，不是 replay 输入。
 - 启动时当前 system prompt 会写入 `logs/system-prompt.txt`，便于检查。
+- 启动恢复会先连接 NapCat，并等待首次群历史 backfill 的所有来源尝试完成，再执行 missed-message replay；单群补拉失败记录 source-level error，其余来源和 replay 继续。
+- `SIGINT` / `SIGTERM` 会触发幂等 graceful shutdown：停止 ingress 和 Agent、等待当前 round、drain backfill、停止 jobs、保存最终 snapshot，最后断开数据库。单阶段超时或失败会记录 `shutdown_phase_failed`，并继续后续清理。
+
+## 数据保留
+
+- 启动时清理 7 天前的 `messages` 和 `media`；StickerPool 正在引用的媒体受保护，不会随普通媒体清理删除。
+- `agent_tool_calls`、`agent_token_usage` 和 NDJSON 日志目前没有自动 retention。生产部署应通过数据库/日志平台设置保留周期；仓库侧统一策略仍记录在 `docs/TECH_DEBT.md`。
 
 ## CloakBrowser / Mac
 
@@ -102,11 +109,12 @@ BOT_BROWSER_ARGS=--fingerprint=12345
 - 只改文档时，检查 diff 并运行 `pnpm repo-check`。
 - 修改 `prisma/schema.prisma` 后运行 `pnpm db:generate`。
 - 如果不能验证，明确说明跳过了什么以及原因。
+- `pnpm test` 会预加载 `scripts/test-env.mjs`，固定必需配置并让 dotenv 读取空文件，因此不会继承开发者 `.env` 中的真实群号、数据库或 LLM 配置。需要真实浏览器等 opt-in 测试时仍使用对应的显式测试开关。
 
 ## Agent 反馈
 
 - `pnpm agent:doctor` 做本地、无网络健康检查：必需文件、必需环境变量、agent 指令镜像、schema anchor、startup anchor 和 tool registry anchor。输出 JSON，有错误时非零退出。
-- `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson` 和 `logs/tool-calls.ndjson` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率和 malformed log line 计数。
+- `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson` 和 `logs/tool-calls.ndjson` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率和 malformed log line 计数。当前 token operations 包括 `agent.chat`、`compaction` 和 `life_journal.review`。
 - `pnpm agent:metrics <token-log> <tool-log>` 可以汇总指定日志文件。
 - 运行时会把工具调用和 token/cache 使用 best-effort 写入 Postgres 的 `agent_tool_calls` / `agent_token_usage`，写 DB 失败只记 warning，不影响 bot 执行。
 - `pnpm agent:metrics --db` 从 Postgres 汇总持久化事件；可加 `--from <iso> --to <iso> --tool <name> --operation <name> --model <name> --ok true|false --side-effect true|false` 做筛选。

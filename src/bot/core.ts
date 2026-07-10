@@ -233,8 +233,8 @@ async function resolveGroupName(context: { group_id: number; group_name?: string
  * 调用方必须随后调 connectNapcat() 才会真正开 WebSocket.
  *
  * 拆 register / connect 两步是为了让 index.ts 可以:
- *   register handlers → connect → resolve metadata → replay missed (按 rowId 去重) →
- *   build system prompt → start agent.
+ *   register handlers → connect → await initial backfill barrier → resolve metadata →
+ *   replay missed (按 rowId 去重) → build system prompt → start agent.
  *
  * 关键: connect 之后, NapCat 收到的实时消息会立刻走 onMessageReady (经过去重).
  *       replay-missed 在 connect 之后跑也安全, 因为它们共享 messageRowId 去重.

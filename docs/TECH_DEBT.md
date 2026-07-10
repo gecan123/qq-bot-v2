@@ -8,7 +8,11 @@
 - 扩展 `agent:doctor`，增加可选的 database、NapCat、LLM provider 和 prompt-rendering probes。
 - 扩展 `agent:metrics`，增加趋势窗口和 cache-hit 回归阈值。
 - 扩展 replay-focused checks，在 `agent:snapshot-check` 基础上增加更多真实 snapshot 采样和趋势告警。
-- 保持 README 和 `docs/` 与当前 single-context runtime 对齐。
+- 为 `agent_tool_calls`、`agent_token_usage` 和 NDJSON 日志定义统一 retention/归档策略；当前启动清理只覆盖 7 天前的 messages/media。
+- 收紧入站媒体去重：当前命中相同 `dataHash` 时会把 canonical `Media.data` 复制进新 placeholder，并保留一份重复 blob。后续应改为规范化引用模型或安全合并行，同时保持 message media handle 稳定。
+- `MemoryEntry` Prisma model 已无运行时代码引用；当前 `memory` 使用 `data/agent-workspace/memory/` Markdown。确认历史数据处置方案后删除旧表/model 和 migration 残留。
+- Life Journal usage 已进入统一观测日志，但 BotLoop 的进程内每日自主预算目前只累计主 Agent round token；是否纳入 compaction/review 需要统一预算接口后再决定。
+- 保持 README 和 `docs/` 与当前 single-context runtime 对齐，并逐步把关键契约转成 `repo-check` 规则。
 
 ## 清理规则
 

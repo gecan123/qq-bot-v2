@@ -11,7 +11,9 @@
 - Message scene 不变量：`sceneKind='qq_group'` 时 `groupId` 非空且 `sceneExternalId=''`；`sceneKind='qq_private'` 时 `groupId=null` 且 `sceneExternalId=String(peerId)`。
 - late media 和 side table 更新不得改写已经 append 的 message。
 - compaction 是正常情况下会破坏性改写 prefix 的路径。它必须保持 assistant tool call 和对应 tool result 的原子性。
+- safe cut 之前除已有摘要外的完整 prefix 都必须进入 summarizer，不能按比例静默丢弃头部消息；图片和过期 native thinking 只能按既定有界规则降级。
 - compaction 只改写 `messages`，不得隐式丢弃或重建 `activeToolCapabilities`。
+- compaction 改写以及随后可能发生的 sticker-pool 注入完成后必须立即保存 snapshot，不能依赖下一轮顺带持久化。
 - system prompt 字节和 tool description 会影响 cache identity。修改时要有意、集中处理。
 - replay 必须确定性。同样输入下，snapshot message 字节应当跨运行稳定。
 - 大块外部内容必须通过有边界的 tool result、摘要或受控文件路径进入。raw pages、feeds、长文件和可变日志不能直接注入主 context。
@@ -25,6 +27,7 @@
 
 - bot 在允许来源之间共享一个 owned `AgentContext`。
 - 新事件源必须通过 event queue 和 dedup 路径进入披露规划，不要插入历史中段。所有 QQ 消息按 `groupId` 或 `peerId` 聚合为不含正文的稳定 inbox 通知；私聊和包含结构化 `@bot` 的群批次使用 `priority=high`，其余群批次使用 `priority=normal`。
+- 启动 replay 必须等待首次 NapCat backfill 的所有允许来源尝试完成，并显式接收本次运行允许的 group IDs。单来源失败可以记录后继续；live/backfill/replay 的重叠只通过 message row ID 去重，不能靠时序猜测。
 - mailbox 是 `messages` 按 scene 划分的逻辑视图，不复制消息正文。Agent 用有界 `inbox` tool result 按需读取。
 - 跨源知识共享是预期行为。跨源发言仍然依赖显式 `send_message` target，以及 ingress/tool 安全规则。
 - curiosity tick、background task 完成等运行时事件如果进入 LLM，必须走稳定的结构化事件渲染或 tool-result 路径。事件载荷只包含受控字段，不拼接面向人的临时提示语。

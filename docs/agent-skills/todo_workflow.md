@@ -1,6 +1,6 @@
 ---
 name: todo_workflow
-description: 多步任务时如何使用 todo 工具保持进度
+description: 需要多个相互依赖步骤、先调查再执行或持续更新当前进度时使用；单步回复、长期目标和跨重启项目管理不要使用。
 ---
 
 # Todo 工作流

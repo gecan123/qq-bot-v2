@@ -69,8 +69,8 @@
 - `collect_sticker` 是 always-on typed tool，不是 `workspace_bash` 子命令；`action=collect|list|search|random|remove` 必填。`remove` 只删除表情池记录，不删除原始 Media。
 - `memory` 把长期记忆存到 `data/agent-workspace/memory/` 的 v1 Markdown 文件中。记录带稳定 entryId；`read` 支持分页并返回 revision，`update_entry` / `delete_entry` / `compact` 要求最新 revision。旧格式不参与 list/search/read，下一次写入同一目标时直接以 v1 文件重建；原有 `delete` 继续用于永久删除明确文件。
 - `workspace_bash` 的 tool description 保留常用 repo/db/fetch 等路由示例；复杂细节继续通过 `help <topic>` 按需披露。被拒绝的命令会返回 `help` / `try` 字段，引导下一步。`style`、`ai_tone` 仍是受控内置入口；journal 只走 typed tool。
-- `skill` 从 `docs/agent-skills/` 读取 curated Markdown，只能按 `skill action=list` 返回的 name 加载，并有输出上限。
-- `skill_editor` 位于 deferred `skill_management` capability 内；只能写/删除 `data/agent-workspace/skill-drafts/*.md` 草稿和安装新的 `docs/agent-skills/*.md`。安装前必须通过校验，默认拒绝覆盖或删除已安装 skill。`draft` / `delete_draft` / `install` 是副作用操作。
+- `skill` 从 `docs/agent-skills/` 读取 curated Markdown，只能按 `skill action=list` 返回的 name 加载，并有输出上限。目录 description 同时说明何时使用和最容易混淆的何时不要使用或替代入口，让模型在加载正文前完成选择。
+- `skill_editor` 位于 deferred `skill_management` capability 内；只能写/删除 `data/agent-workspace/skill-drafts/*.md` 草稿和安装新的 `docs/agent-skills/*.md`。安装前必须通过校验，其中 description 必须包含正触发和负触发/替代入口；默认拒绝覆盖或删除已安装 skill。`draft` / `delete_draft` / `install` 是副作用操作。
 - `website` 位于 deferred `website` capability 内；`status` / `read` 是只读操作，`write` / `delete` / `move` / `publish` 是副作用操作并进入工具审计。它不能修改依赖、构建配置、CI、Vercel 配置或网站仓库的隐藏文件。
 - 主 system prompt 只保留身份、运行形态和能力入口；聊天硬约束在 `prompts/bot-chat-constraints.md`，风格细则在 `prompts/bot-style.md`，通过 `workspace_bash` 的 `style global constraints|base|anti_patterns|special_cases` 按需读取。
 - 有副作用的工具通过 `src/ops/tool-call-log.ts` 记录。

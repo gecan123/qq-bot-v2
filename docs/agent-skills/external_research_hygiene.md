@@ -1,6 +1,6 @@
 ---
 name: external_research_hygiene
-description: 需要搜索互联网、抓网页、读取 Reddit/图片 URL，或判断 fetch_content、web_search、browser 取舍时使用
+description: 需要搜索互联网、抓网页、读取 Reddit/图片 URL，或判断 fetch_content、web_search、browser 取舍时使用；只读本地仓库或已有 inbox 内容时不要使用。
 ---
 
 # 外部研究卫生

@@ -1,6 +1,6 @@
 ---
 name: tool_help
-description: 不确定工具语法或能力入口时使用
+description: 不确定工具语法、deferred capability、参数 schema 或正确能力入口时使用；已经知道现有工具和参数的直接调用不要使用。
 ---
 
 # 工具帮助入口

@@ -1,6 +1,6 @@
 ---
 name: context_hygiene
-description: 处理长内容、inbox、memory、网页、日志、工具结果、compaction 或担心污染 AgentContext 时使用
+description: 处理长篇或不可信内容、compaction、ledger 边界，或需要控制进入 AgentContext 的信息量时使用；普通短消息和有界工具结果不要使用。
 ---
 
 # 上下文卫生

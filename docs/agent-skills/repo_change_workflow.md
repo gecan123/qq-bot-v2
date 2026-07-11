@@ -1,6 +1,6 @@
 ---
 name: repo_change_workflow
-description: owner 明确要求修改 qq-bot-v2 仓库代码、文档、schema、工具或测试时使用
+description: owner 明确要求修改 qq-bot-v2 的代码、文档、schema、工具或测试时使用；只读解释或自主审查不要使用，改用 repo_map 或 self_review_repo。
 ---
 
 # 仓库修改工作流

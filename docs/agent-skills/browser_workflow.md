@@ -1,6 +1,6 @@
 ---
 name: browser_workflow
-description: 需要用真实浏览器访问网页、登录态或视觉判断时使用
+description: 需要真实网页交互、登录态、反爬验证、视觉判断或下载流程时使用；普通公开 URL 的文本抓取或摘要不要使用，改用 external_research。
 ---
 
 # 浏览器工作流

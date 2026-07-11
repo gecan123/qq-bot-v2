@@ -34,6 +34,7 @@ async function makeSkillDir(): Promise<string> {
     '',
     '不确定 workspace_bash 语法时先 help。',
   ].join('\n'))
+  await writeFile(join(dir, 'missing_description.md'), '# Missing description\n')
   return dir
 }
 
@@ -101,6 +102,19 @@ describe('skill tool', () => {
       'tool_security',
     ])
     assert.equal(names.includes('harness_route'), false)
+  })
+
+  test('default catalog descriptions disclose both activation and exclusion boundaries', async () => {
+    const tool = createSkillTool()
+
+    const listed = JSON.parse((await tool.execute({ action: 'list' }, makeCtx())).content as string) as {
+      skills: { name: string; description: string }[]
+    }
+
+    for (const skill of listed.skills) {
+      assert.match(skill.description, /(?:时使用|前使用|用于|需要|当|适合)/, `${skill.name} 缺少正触发条件`)
+      assert.match(skill.description, /(?:不要使用|不适合|无需使用|无须使用|改用|优先用)/, `${skill.name} 缺少负触发或替代入口`)
+    }
   })
 
   test('memory hygiene skill describes autonomous consolidation before permanent deletion', async () => {

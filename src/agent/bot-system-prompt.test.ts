@@ -59,6 +59,7 @@ describe('buildBotSystemPrompt', () => {
     assert.match(disclosure, /- journal:.*直接调用/)
     assert.match(disclosure, /- life_journal:.*Life Journal/)
     assert.match(disclosure, /- skill_management:.*skill_editor.*草稿/)
+    assert.match(disclosure, /- skill:.*专项或多步工作.*简单日常回复.*不要 list/)
     assert.match(disclosure, /- collect_sticker:.*直接调用/)
     assert.doesNotMatch(helpLine, /表情包池/)
     assert.doesNotMatch(invokeLine, /下一轮/)

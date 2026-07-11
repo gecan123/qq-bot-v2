@@ -1,6 +1,6 @@
 ---
 name: debugging_workflow
-description: 测试失败、bot 行为异常、工具报错、日志显示异常或需要排查回归时使用
+description: 测试失败、bot 行为异常、工具报错、日志异常或需要定位回归时使用；没有故障证据的纯新增需求不要使用，改用 repo_change_workflow。
 ---
 
 # 调试工作流

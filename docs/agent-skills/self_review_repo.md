@@ -1,6 +1,6 @@
 ---
 name: self_review_repo
-description: 只读自审自身代码并给创作者反馈时使用
+description: 空闲自驱、用户要求或创作者场景中只读审查自身代码并反馈具体问题时使用；已经授权修改仓库时不要使用，改用 repo_change_workflow。
 ---
 
 # 自审仓库

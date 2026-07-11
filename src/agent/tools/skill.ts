@@ -42,7 +42,8 @@ export function createSkillTool(deps: SkillToolDeps = {}): Tool<Args> {
       '按需加载仓库内的长说明和工作流.',
       'action=list: 查看有哪些 skill.',
       'action=load: 读取指定 skill 正文; 只接受 list 返回的 name, 输出有长度上限.',
-      '复杂工作先 list, 再 load 相关 skill; 不要把长手册塞进常驻上下文.',
+      '遇到专项或多步工作、或者不确定工作流边界时先 list, 再 load 匹配的 skill.',
+      '简单日常回复和已知的单步操作不要 list; 不要把长手册塞进常驻上下文.',
     ].join(' '),
     schema: argsSchema,
     async execute(rawArgs) {
@@ -119,7 +120,7 @@ function parseSkillFile(raw: string, fallbackName: string, path: string): SkillE
     body = raw.slice(match[0].length).trim()
   }
 
-  if (!SKILL_NAME_REGEX.test(name)) return null
+  if (!SKILL_NAME_REGEX.test(name) || !description) return null
   return { name, description, path, body }
 }
 

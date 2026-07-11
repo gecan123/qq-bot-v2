@@ -1,6 +1,6 @@
 ---
 name: tool_contract_design
-description: 新增或修改 bot tool schema、工具注册、tool result、deferred capability、workspace_bash 子命令或工具说明时使用
+description: 新增或修改 bot tool schema、注册、result、deferred capability、workspace_bash 子命令或工具说明时使用；仅调用现有工具且不改变契约时不要使用。
 ---
 
 # 工具契约设计

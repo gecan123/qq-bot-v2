@@ -1,6 +1,6 @@
 ---
 name: replay_safety
-description: 修改 AgentContext、mailbox、snapshot、compaction、render-event、system prompt、tool result 或图片 handle 契约前使用
+description: 修改 AgentContext、mailbox、snapshot、compaction、事件渲染、system prompt、tool result 或图片 handle 契约前使用；不影响持久历史和 prompt 字节的普通功能修改不要使用。
 ---
 
 # Replay 安全

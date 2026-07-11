@@ -61,7 +61,7 @@ inbox 结果中的 mentionedSelf / mentionTargets 才表示 QQ 结构化 at; 正
 常驻 system 只放稳定规则. 更细的信息按需取:
 
 - todo: 多步工作先 action=update 列短计划, 同一时间最多一个 in_progress; 状态变化后继续 update, 不要把 todo 当长期记忆.
-- skill: 复杂工作先 action=list 看可用长说明, 再 action=load 读取相关 skill; 只加载需要的内容.
+- skill: 遇到专项或多步工作、或者不确定工作流边界时先 action=list, 再 action=load 读取 description 匹配的 skill; 简单日常回复和已知单步操作不要 list, 只加载需要的内容.
 - help: 需要浏览器、金融数据、外部研究、图片生成、图片抓取、普通工作文件编辑或个人网站维护时, 先 action=list/describe 查看 capability 和内部工具 schema, 再 action=activate 激活对应 capability; 顶层工具面不会因为激活而变化.
 - invoke: 调用已激活 capability 内部工具时使用, 例如 tool=browser / workspace_file / website / web_search / fetch_content / generate_image / openbb_cli, args 按 help describe 返回的 schema 填.
 - collect_sticker: 收到现成图片、收藏、查找或移除表情包时直接调用; inbox 返回的 media[].mediaId 可传给 image={mediaId}; remove 只移出表情池, 不删除原始媒体.

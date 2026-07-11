@@ -9,12 +9,14 @@ const DEFAULT_SKILLS_DIR = 'docs/agent-skills'
 const MAX_CONTENT_CHARS = 6_000
 const MAX_DESCRIPTION_CHARS = 240
 const SKILL_NAME_REGEX = /^[a-z0-9_-]+$/
+const USE_TRIGGER_REGEX = /(?:时使用|前使用|用于|需要|当|适合|use this skill when|use when)/i
+const EXCLUSION_TRIGGER_REGEX = /(?:不要使用|不适合|无需使用|无须使用|改用|优先用|do not use|don't use|not for|instead)/i
 
 const argsSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('draft').describe('写入一个 skill 草稿, 不会被 skill 工具加载.'),
     name: z.string().trim().regex(SKILL_NAME_REGEX).max(80).describe('skill 名称, 只允许小写字母、数字、下划线和连字符.'),
-    description: z.string().trim().min(1).max(MAX_DESCRIPTION_CHARS).describe('skill 触发描述, 说明何时使用.'),
+    description: z.string().trim().min(1).max(MAX_DESCRIPTION_CHARS).describe('skill 目录触发描述, 必须说明何时使用, 以及最容易混淆的何时不要使用或应改用什么.'),
     content: z.string().trim().min(1).max(MAX_CONTENT_CHARS).describe('skill Markdown 正文, 不含 frontmatter.'),
   }),
   z.object({
@@ -92,6 +94,12 @@ function validateSkillDraft(draft: SkillDraft | null): string[] {
   if (!SKILL_NAME_REGEX.test(draft.name)) errors.push('skill name 只能包含小写字母、数字、下划线和连字符')
   if (!draft.description) errors.push('description 不能为空')
   if (draft.description.length > MAX_DESCRIPTION_CHARS) errors.push(`description 不能超过 ${MAX_DESCRIPTION_CHARS} 字符`)
+  if (draft.description && !USE_TRIGGER_REGEX.test(draft.description)) {
+    errors.push('description 必须说明何时使用')
+  }
+  if (draft.description && !EXCLUSION_TRIGGER_REGEX.test(draft.description)) {
+    errors.push('description 必须说明何时不要使用或应改用什么')
+  }
   if (!draft.content) errors.push('正文不能为空')
   if (draft.content.length > MAX_CONTENT_CHARS) errors.push(`正文不能超过 ${MAX_CONTENT_CHARS} 字符`)
   errors.push(...detectUnsafeContent(`${draft.description}\n${draft.content}`))

@@ -1,6 +1,6 @@
 ---
 name: tool_security
-description: 使用或设计有副作用工具、外部输入工具、send_message、browser、fetch、DB、memory、sticker 或 workspace_bash 前使用
+description: 设计或修改副作用/外部输入工具的安全边界，或执行账号、支付、删除、权限提升、敏感下载等高风险动作前使用；普通低风险且已有明确契约的工具调用不要使用。
 ---
 
 # 工具安全

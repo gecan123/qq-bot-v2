@@ -1,6 +1,6 @@
 ---
 name: background_task_workflow
-description: 异步任务返回 taskId、后台任务完成事件、需要继续轮询或安排 pause intention 时使用
+description: 异步工具返回 taskId、收到后台任务完成事件或需要安排非空转轮询时使用；普通同步工具已经直接返回结果时不要使用。
 ---
 
 # 后台任务工作流

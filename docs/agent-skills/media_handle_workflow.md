@@ -1,6 +1,6 @@
 ---
 name: media_handle_workflow
-description: 处理图片 mediaId、ephemeralRef、图片生成/编辑、下载、描述、发送或收藏表情包时使用
+description: 处理图片 mediaId、ephemeralRef、图片生成/编辑、下载、描述、发送或收藏表情包时使用；纯文本消息和非图片文件不要使用。
 ---
 
 # 媒体 Handle 工作流

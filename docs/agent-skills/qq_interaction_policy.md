@@ -1,6 +1,6 @@
 ---
 name: qq_interaction_policy
-description: 准备对 QQ 群或私聊发言、读取 inbox、处理 @bot、ambient 群聊、跨来源记忆或确认发送 target 时使用
+description: 准备对 QQ 群或私聊发言、读取 inbox、处理 @bot、ambient 群聊、跨来源隐私或确认发送 target 时使用；不涉及 QQ 读取或对外发送的内部工作不要使用。
 ---
 
 # QQ 交互策略

@@ -1,6 +1,6 @@
 ---
 name: repo_map
-description: 被要求看自己仓库、解释代码或做只读自审时使用
+description: 被要求只读查看 qq-bot-v2、解释仓库结构或定位代码入口时使用；日常聊天和已经授权的实际修改不要使用，修改改用 repo_change_workflow。
 ---
 
 # 仓库只读入口

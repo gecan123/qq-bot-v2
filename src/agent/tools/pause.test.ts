@@ -31,7 +31,7 @@ describe('pause tool', () => {
 
     const rest = pauseTool.schema.safeParse({ action: 'rest', intention: '醒来后继续看论文' })
     assert.equal(rest.success, true)
-    assert.equal((rest.data as { durationSeconds: number }).durationSeconds, 300)
+    assert.equal((rest.data as { durationSeconds: number }).durationSeconds, 60)
     assert.equal(pauseTool.schema.safeParse({
       action: 'rest',
       intention: '继续想',
@@ -51,15 +51,17 @@ describe('pause tool', () => {
 
   test('description prioritizes finding something to do after rest', () => {
     const tool = createPauseTool()
-    assert.match(tool.description, /醒来后优先找事做/)
-    assert.match(tool.description, /仍然没有真实锚点或任务时才继续休息/)
+    assert.match(tool.description, /醒来后优先按 intention 选择并尝试/)
+    assert.match(tool.description, /没有实际尝试前不要立刻再次休息/)
   })
 
   test('description frames intention as flexible options', () => {
     const tool = createPauseTool()
-    assert.match(tool.description, /4 到 8 个可选方向/)
-    assert.match(tool.description, /选择一个、合并几个或改道/)
+    assert.match(tool.description, /4 到 8 个具体可执行方向/)
+    assert.match(tool.description, /选择并尝试一个、合并几个或改道/)
     assert.match(tool.description, /不要只列等待外部消息/)
+    assert.match(tool.description, /至少两个能立即用现有工具开始/)
+    assert.match(tool.description, /继续看.*占位句/)
   })
 
   test('action=rest delegates to rest behavior', async () => {
@@ -78,6 +80,7 @@ describe('pause tool', () => {
       durationSeconds: number
       elapsedMs: number
       intention: string
+      resumeGuidance: string
     }
     assert.deepEqual({ ...content, elapsedMs: 0 }, {
       ok: true,
@@ -85,6 +88,7 @@ describe('pause tool', () => {
       durationSeconds: 30,
       elapsedMs: 0,
       intention: '醒来后继续整理群聊线索',
+      resumeGuidance: '醒来后先从 intention 里选择并尝试一个具体方向; 没有实际尝试前不要立刻再次休息.',
     })
     assert.equal(Number.isInteger(content.elapsedMs), true)
     assert.equal(content.elapsedMs >= 0, true)

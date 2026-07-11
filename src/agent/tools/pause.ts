@@ -16,9 +16,9 @@ const argsSchema = z.object({
     .min(MIN_REST_DURATION_SECONDS)
     .max(MAX_REST_DURATION_SECONDS)
     .default(DEFAULT_REST_DURATION_SECONDS)
-    .describe('自己安排的休息秒数, 默认 300, 范围 30..1800.'),
-  intention: z.string().trim().min(1).max(200)
-    .describe('休息前给自己列 4 到 8 个可选方向; 醒来后可按现场情况选择一个、合并几个或改道.'),
+    .describe('自己安排的休息秒数, 默认 60, 通常 30..120, 范围 30..1800.'),
+  intention: z.string().trim().min(1).max(600)
+    .describe('休息前列 4 到 8 个具体可执行的候选方向; 至少两个能立即用现有工具开始, 等待外部消息最多一个. 醒来后先尝试一个, 不要写“继续看”之类占位句.'),
 })
 
 type Args = z.infer<typeof argsSchema>
@@ -34,8 +34,9 @@ export function createPauseTool(deps: PauseToolDeps = {}): Tool<Args> {
     name: 'pause',
     description: [
       '对话节奏控制工具.',
-      'action=rest: 自己安排休息时长, 并在 intention 简短列 4 到 8 个可选方向; 默认 5 分钟, 最长 30 分钟.',
-      '群聊只是生活来源之一; 醒来后优先找事做, 按 intention 选择一个、合并几个或改道继续自己的事; 只有仍然没有真实锚点或任务时才继续休息, 不要依赖外部 tick 才行动.',
+      'action=rest: 一段活动确实告一段落时短暂休息; 默认 1 分钟, 通常 30 到 120 秒, 真想离开更久时可自行延长, 最长 30 分钟.',
+      '在 intention 列 4 到 8 个具体可执行方向, 至少两个能立即用现有工具开始; 不要写“继续看”“随便逛逛”这类占位句.',
+      '群聊只是生活来源之一; 醒来后优先按 intention 选择并尝试一个、合并几个或改道继续自己的事; 没有实际尝试前不要立刻再次休息, 不要依赖外部 tick 才行动.',
       '等待外部消息最多只是其中一个候选, 不要只列等待外部消息。',
       '休息期间普通群消息不会打断, 被 @、私聊、后台任务完成或停止信号会立刻唤醒.',
       '暂时没有要做的动作时调用本工具, 不要只写普通文本然后停住.',

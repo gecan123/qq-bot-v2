@@ -68,19 +68,21 @@ function privateEvent(): BotEvent {
 }
 
 describe('rest tool', () => {
-  test('schema requires an intention and defaults to 300 seconds', () => {
+  test('schema requires an intention and defaults to 60 seconds', () => {
     assert.equal(restTool.schema.safeParse({}).success, false)
     const parsed = restTool.schema.safeParse({ intention: '继续自己的研究' })
     assert.equal(parsed.success, true)
     const data = parsed.data as { durationSeconds: number }
-    assert.equal(data.durationSeconds, 300)
+    assert.equal(data.durationSeconds, 60)
   })
 
   test('description frames intention as flexible options', () => {
     const tool = createRestTool()
-    assert.match(tool.description, /4 到 8 个可选方向/)
+    assert.match(tool.description, /4 到 8 个具体可执行的候选方向/)
     assert.match(tool.description, /选择一个、合并几个或改道/)
     assert.match(tool.description, /不要只列等待外部消息/)
+    assert.match(tool.description, /至少两个能立即用现有工具开始/)
+    assert.match(tool.description, /没有实际尝试前不要立刻再次休息/)
   })
 
   test('already queued mentioned group message interrupts rest without consuming the event', async () => {

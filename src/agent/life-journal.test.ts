@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, test } from 'node:test'
 import type { LlmClient, LlmCallInput } from './llm-client.js'
 import { createLifeJournalRuntime } from './life-journal.js'
+import { appendLifeJournalEntry, writeLifeAgenda } from './life-journal-store.js'
 import type { TokenUsageEntry } from './token-stats.js'
 
 describe('life journal runtime', () => {
@@ -54,9 +55,55 @@ describe('life journal runtime', () => {
     assert.equal(await readFile(join(rootDir, 'life', 'agenda.md'), 'utf8'), '# Agenda\n\n## Active\n- [ ] 继续设计\n')
     assert.ok(captured)
     const capturedInput = captured as LlmCallInput
-    assert.deepEqual(capturedInput.messages, [
-      { role: 'user', content: '这一轮确认让我自己写 journal' },
-    ])
+    assert.equal(capturedInput.messages.length, 2)
+    assert.match(capturedInput.messages[0]!.content as string, /# Current Life Journal state/)
+    assert.match(capturedInput.messages[0]!.content as string, /## Current Agenda/)
+    assert.deepEqual(capturedInput.messages[1], { role: 'user', content: '这一轮确认让我自己写 journal' })
+  })
+
+  test('recordRound reviews the current agenda and recent journal before deciding', async () => {
+    const now = () => new Date('2026-07-07T15:18:00.000Z')
+    await writeLifeAgenda({ rootDir, now }, `# Agenda
+
+## Active
+- [ ] 修复 journal reviewer
+
+## Waiting
+
+## Someday
+
+## Done
+`)
+    await appendLifeJournalEntry({
+      rootDir,
+      now,
+      markdown: '### Promised\n- 我答应继续修 reviewer。',
+    })
+
+    let captured: LlmCallInput | null = null
+    const llm: LlmClient = {
+      async chat(input) {
+        captured = input
+        return {
+          content: 'SKIP',
+          toolCalls: [],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+        }
+      },
+    }
+    const runtime = createLifeJournalRuntime({ rootDir, llm, now })
+
+    await runtime.recordRound({
+      roundIndex: 2,
+      messages: [{ role: 'user', content: '继续处理' }],
+    })
+
+    assert.ok(captured)
+    const state = (captured as LlmCallInput).messages[0]!.content as string
+    assert.match(state, /修复 journal reviewer/)
+    assert.match(state, /我答应继续修 reviewer/)
+    assert.match((captured as LlmCallInput).systemPrompt, /Preserve unrelated items/)
   })
 
   test('recordRound updates agenda only when agenda markdown is non-empty', async () => {
@@ -383,7 +430,7 @@ describe('life journal runtime', () => {
     }])
   })
 
-  test('recordRound sends only bounded current-round messages', async () => {
+  test('recordRound sends bounded state and current-round messages without old AgentContext history', async () => {
     let captured: LlmCallInput | null = null
     const llm: LlmClient = {
       async chat(input) {
@@ -396,7 +443,8 @@ describe('life journal runtime', () => {
         }
       },
     }
-    const runtime = createLifeJournalRuntime({ rootDir, llm, maxRoundChars: 22 })
+    await writeLifeAgenda({ rootDir }, `# Agenda\n\n## Active\n- [ ] ${'state '.repeat(100)}`)
+    const runtime = createLifeJournalRuntime({ rootDir, llm, maxRoundChars: 22, maxStateChars: 100 })
 
     await runtime.recordRound({
       roundIndex: 1,
@@ -412,6 +460,8 @@ describe('life journal runtime', () => {
     assert.equal(serialized.includes('current round message'), true)
     assert.equal(serialized.includes('far too long'), false)
     assert.equal(serialized.includes('old AgentContext history'), false)
+    assert.match((capturedInput.messages[0]!.content as string), /\[truncated\]/)
+    assert.ok((capturedInput.messages[0]!.content as string).length < 120)
   })
 
   test('recordRound replaces non-text tool result blocks with bounded placeholders', async () => {

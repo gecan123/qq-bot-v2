@@ -14,7 +14,7 @@ const argsSchema = z.discriminatedUnion('action', [
   }),
   z.object({
     action: z.literal('load').describe('按名称加载一个 skill 的完整说明.'),
-    name: z.string().trim().min(1).max(80).describe('skill 名称, 来自 action=list 的 name.'),
+    name: z.string().trim().min(1).max(80).describe('精确 skill 名称; 已知名称可直接 load, 不知道候选时先 action=list.'),
   }),
 ])
 
@@ -41,9 +41,9 @@ export function createSkillTool(deps: SkillToolDeps = {}): Tool<Args> {
     description: [
       '按需加载仓库内的长说明和工作流.',
       'action=list: 查看有哪些 skill.',
-      'action=load: 读取指定 skill 正文; 只接受 list 返回的 name, 输出有长度上限.',
-      '遇到专项或多步工作、或者不确定工作流边界时先 list, 再 load 匹配的 skill.',
-      '简单日常回复和已知的单步操作不要 list; 不要把长手册塞进常驻上下文.',
+      'action=load: 按精确 name 读取正文, 输出有长度上限; 已知 name 时直接 load, 不知道候选时才 list.',
+      '遇到不熟悉的专项规则、安全边界或标准工作流时加载匹配 skill; 执行步骤和状态改用 todo.',
+      '简单日常回复、已知单步操作或只是步骤多但规则已清楚的任务不要调用; 不要把长手册塞进常驻上下文.',
     ].join(' '),
     schema: argsSchema,
     async execute(rawArgs) {

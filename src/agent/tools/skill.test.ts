@@ -55,6 +55,9 @@ describe('skill tool', () => {
   test('load returns bounded content by skill name and rejects unknown names', async () => {
     const tool = createSkillTool({ skillsDir: await makeSkillDir(), maxContentChars: 20 })
 
+    assert.match(tool.description, /已知 name 时直接 load.*不知道候选时才 list/)
+    assert.match(tool.description, /执行步骤和状态改用 todo/)
+
     const loaded = JSON.parse((await tool.execute({ action: 'load', name: 'tool_help' }, makeCtx())).content as string) as {
       ok: boolean
       name: string
@@ -86,10 +89,12 @@ describe('skill tool', () => {
       'background_task_workflow',
       'browser_workflow',
       'context_hygiene',
+      'crypto_paper',
       'debugging_workflow',
       'external_research_hygiene',
       'media_handle_workflow',
       'memory_hygiene',
+      'moomooapi',
       'observability_hygiene',
       'qq_interaction_policy',
       'replay_safety',

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { summarizeAgentMetrics, type AgentMetricsFilters } from '../src/ops/agent-metrics.js'
 
 type MetricsSource = 'log' | 'db'
@@ -7,6 +7,7 @@ interface CliOptions {
   source: MetricsSource
   tokenUsagePath: string
   toolCallsPath: string
+  appLogPaths: string[]
   filters: AgentMetricsFilters
 }
 
@@ -16,6 +17,7 @@ const summary = options.source === 'db'
   : summarizeAgentMetrics({
     tokenUsageNdjson: readIfExists(options.tokenUsagePath),
     toolCallsNdjson: readIfExists(options.toolCallsPath),
+    appLogNdjson: options.appLogPaths.map(readIfExists).join('\n'),
   }, options.filters)
 
 console.log(JSON.stringify({
@@ -24,6 +26,7 @@ console.log(JSON.stringify({
     ? {
       tokenUsagePath: options.tokenUsagePath,
       toolCallsPath: options.toolCallsPath,
+      appLogPaths: options.appLogPaths,
     }
     : {}),
   ...summary,
@@ -98,8 +101,17 @@ function parseArgs(argv: string[]): CliOptions {
     source,
     tokenUsagePath: positional[0] ?? 'logs/token-usage.ndjson',
     toolCallsPath: positional[1] ?? 'logs/tool-calls.ndjson',
+    appLogPaths: positional[2] ? [positional[2]] : discoverAppLogPaths(),
     filters,
   }
+}
+
+function discoverAppLogPaths(): string[] {
+  if (!existsSync('logs')) return []
+  return readdirSync('logs')
+    .filter((name) => /^app(?:\.\d+)?\.log$/.test(name))
+    .sort()
+    .map((name) => `logs/${name}`)
 }
 
 function readFlagValue(argv: string[], index: number, flag: string): string {

@@ -17,6 +17,12 @@ describe('summarizeAgentMetrics', () => {
         '{"toolName":"workspace_bash","ok":true,"sideEffect":false,"durationMs":100}',
         '{"toolName":"workspace_bash","ok":true,"sideEffect":true,"durationMs":300}',
       ].join('\n'),
+      appLogNdjson: [
+        '{"time":"2026-07-11 10:00:00","scope":"INBOX","groupId":253631878,"returnedMessages":20,"msg":"inbox_group_read_completed"}',
+        '{"time":"2026-07-11 10:01:00","scope":"TOOL_POLICY_HOOKS","targetType":"group","groupId":253631878,"decision":"blocked","msg":"send_message_ai_tone_precheck"}',
+        '{"time":"2026-07-11 10:02:00","scope":"TOOL_POLICY_HOOKS","targetType":"group","groupId":253631878,"decision":"allowed","msg":"send_message_ai_tone_precheck"}',
+        '{"time":"2026-07-11 10:02:01","scope":"SEND","direction":"outbound","targetType":"group","groupId":253631878,"mode":"ambient","deliveryResult":"sent","msg":"消息发送成功"}',
+      ].join('\n'),
     })
 
     assert.deepEqual(result.tokenUsage.total, {
@@ -56,6 +62,16 @@ describe('summarizeAgentMetrics', () => {
       failedRate: 0,
       sideEffectRate: 0.5,
     })
+    assert.deepEqual(result.groupEngagement.byGroup['253631878'], {
+      inboxReads: 1,
+      messagesRead: 20,
+      sendAttempts: 2,
+      sendBlocked: 1,
+      sendsSuccessful: 1,
+      ambientSuccessful: 1,
+      replySuccessful: 0,
+      readToSendRate: 1,
+    })
   })
 
   test('tracks malformed lines without throwing', () => {
@@ -66,6 +82,7 @@ describe('summarizeAgentMetrics', () => {
 
     assert.equal(result.malformedLines.tokenUsage, 1)
     assert.equal(result.malformedLines.toolCalls, 1)
+    assert.equal(result.malformedLines.appLog, 0)
     assert.equal(result.tokenUsage.total.entries, 1)
     assert.equal(result.toolCalls.total, 1)
   })

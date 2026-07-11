@@ -1,6 +1,7 @@
 export interface AgentMetricsInput {
   tokenUsageNdjson: string
   toolCallsNdjson: string
+  appLogNdjson?: string
 }
 
 export interface AgentMetricsFilters {
@@ -40,9 +41,22 @@ export interface AgentMetricsSummary {
       sideEffectRate: number
     }>
   }
+  groupEngagement: {
+    byGroup: Record<string, {
+      inboxReads: number
+      messagesRead: number
+      sendAttempts: number
+      sendBlocked: number
+      sendsSuccessful: number
+      ambientSuccessful: number
+      replySuccessful: number
+      readToSendRate: number | null
+    }>
+  }
   malformedLines: {
     tokenUsage: number
     toolCalls: number
+    appLog: number
   }
 }
 
@@ -63,12 +77,26 @@ interface ToolCallLine {
   durationMs?: unknown
 }
 
+interface AppLogLine {
+  time?: unknown
+  scope?: unknown
+  msg?: unknown
+  groupId?: unknown
+  targetType?: unknown
+  direction?: unknown
+  deliveryResult?: unknown
+  decision?: unknown
+  mode?: unknown
+  returnedMessages?: unknown
+}
+
 export function summarizeAgentMetrics(
   input: AgentMetricsInput,
   filters: AgentMetricsFilters = {},
 ): AgentMetricsSummary {
   const tokenSummary = summarizeTokenUsage(input.tokenUsageNdjson, filters)
   const toolSummary = summarizeToolCalls(input.toolCallsNdjson, filters)
+  const engagementSummary = summarizeGroupEngagement(input.appLogNdjson ?? '', filters)
   return {
     tokenUsage: {
       total: finalizeTokenBucket(tokenSummary.total),
@@ -102,10 +130,95 @@ export function summarizeAgentMetrics(
         ]),
       ),
     },
+    groupEngagement: {
+      byGroup: Object.fromEntries(
+        Object.entries(engagementSummary.byGroup).map(([groupId, bucket]) => [
+          groupId,
+          {
+            ...bucket,
+            readToSendRate: bucket.inboxReads > 0
+              ? round(bucket.sendsSuccessful / bucket.inboxReads)
+              : null,
+          },
+        ]),
+      ),
+    },
     malformedLines: {
       tokenUsage: tokenSummary.malformed,
       toolCalls: toolSummary.malformed,
+      appLog: engagementSummary.malformed,
     },
+  }
+}
+
+interface MutableGroupEngagementBucket {
+  inboxReads: number
+  messagesRead: number
+  sendAttempts: number
+  sendBlocked: number
+  sendsSuccessful: number
+  ambientSuccessful: number
+  replySuccessful: number
+}
+
+function summarizeGroupEngagement(raw: string, filters: AgentMetricsFilters): {
+  byGroup: Record<string, MutableGroupEngagementBucket>
+  malformed: number
+} {
+  const byGroup: Record<string, MutableGroupEngagementBucket> = {}
+  let malformed = 0
+
+  for (const value of parseNdjson<AppLogLine>(raw)) {
+    if (!value.ok) {
+      malformed++
+      continue
+    }
+    const line = value.value
+    if (!matchesTimeFilter(line.time, filters)) continue
+    if (typeof line.groupId !== 'number' || !Number.isSafeInteger(line.groupId)) continue
+    const groupId = String(line.groupId)
+
+    if (line.scope === 'INBOX' && line.msg === 'inbox_group_read_completed') {
+      const bucket = (byGroup[groupId] ??= createGroupEngagementBucket())
+      bucket.inboxReads++
+      bucket.messagesRead += numeric(line.returnedMessages)
+      continue
+    }
+    if (
+      line.scope === 'TOOL_POLICY_HOOKS'
+      && line.msg === 'send_message_ai_tone_precheck'
+      && line.targetType === 'group'
+    ) {
+      const bucket = (byGroup[groupId] ??= createGroupEngagementBucket())
+      bucket.sendAttempts++
+      if (line.decision === 'blocked') bucket.sendBlocked++
+      continue
+    }
+    if (
+      line.scope === 'SEND'
+      && line.direction === 'outbound'
+      && line.targetType === 'group'
+      && line.deliveryResult === 'sent'
+    ) {
+      const bucket = (byGroup[groupId] ??= createGroupEngagementBucket())
+      bucket.sendsSuccessful++
+      if (line.mode === 'ambient') bucket.ambientSuccessful++
+      if (line.mode === 'reply') bucket.replySuccessful++
+    }
+  }
+
+  return { byGroup, malformed }
+}
+
+function createGroupEngagementBucket(): MutableGroupEngagementBucket {
+  return {
+    inboxReads: 0,
+    messagesRead: 0,
+    sendAttempts: 0,
+    sendBlocked: 0,
+    sendsSuccessful: 0,
+    ambientSuccessful: 0,
+    replySuccessful: 0,
   }
 }
 
@@ -234,7 +347,10 @@ function round(value: number): number {
 function matchesTimeFilter(ts: unknown, filters: AgentMetricsFilters): boolean {
   if (!filters.from && !filters.to) return true
   if (typeof ts !== 'string') return false
-  const time = Date.parse(ts)
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(ts)
+    ? `${ts.replace(' ', 'T')}+08:00`
+    : ts
+  const time = Date.parse(normalized)
   if (!Number.isFinite(time)) return false
   if (filters.from && time < filters.from.getTime()) return false
   if (filters.to && time > filters.to.getTime()) return false

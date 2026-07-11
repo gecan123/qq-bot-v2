@@ -47,11 +47,17 @@ const randomArgsSchema = z.object({
   limit: z.number().int().min(1).optional().describe('最多返回多少个, 运行时上限 20.'),
 })
 
+const removeArgsSchema = z.object({
+  action: z.literal('remove').describe('按 mediaId 从表情包池移除一张图, 不删除原始 Media.'),
+  mediaId: z.number().int().positive().describe('list/search/random 返回的 mediaId.'),
+})
+
 const argsSchema = z.discriminatedUnion('action', [
   collectArgsSchema.extend({ action: z.literal('collect').describe('收藏或更新一张表情包.') }),
   listArgsSchema,
   searchArgsSchema,
   randomArgsSchema,
+  removeArgsSchema,
 ])
 
 type Args = z.infer<typeof argsSchema>
@@ -98,11 +104,12 @@ export const collectStickerTool: Tool<Args> = {
   name: 'collect_sticker',
   description: [
     '收藏一张已有的图片到你的表情包池 — 最常见场景: 群里有人发了好玩的表情, 你想以后也能用, 就传它的 mediaId 收进来.',
-    'action 必填: collect / list / search / random. 返回单个结构化 JSON 对象.',
+    'action 必填: collect / list / search / random / remove. 返回单个结构化 JSON 对象.',
     '图片必须已经存在 (群友发过的图、你之前 generate_image / workspace_bash `fetch image` 过的图). 不要为了收藏而去 generate_image 重新画一张 — 那是「创作」不是「收藏」.',
     'image 字段: 群聊消息里看到的图片描述旁会标注 mediaId, 直接传 {mediaId:N}; 刚生成/下载的图也可以传 {ephemeralRef}.',
     '每次 collect 后会返回你当前表情包池摘要. compaction 后摘要也会自动注入 context; 需要更多候选时用 action=list/search/random 按需查.',
     '同一张图再次 collect 会更新名字/标签/描述. description 可选, 不传自动用图片已有的描述.',
+    'action=remove 只移除表情池记录, 原始 Media 仍保留.',
   ].join(' '),
   schema: argsSchema,
   async execute(rawArgs) {
@@ -166,6 +173,21 @@ export const collectStickerTool: Tool<Args> = {
             truncated: rows.length > limit,
           }),
         }),
+        outcome: { ok: true },
+      }
+    }
+
+    if (args.action === 'remove') {
+      const result = await prisma.stickerPool.deleteMany({ where: { mediaId: args.mediaId } })
+      if (result.count === 0) {
+        return {
+          content: JSON.stringify({ ok: false, action: 'remove', code: 'not_found', mediaId: args.mediaId }),
+          outcome: { ok: false, code: 'not_found' },
+        }
+      }
+      log.info({ mediaId: args.mediaId }, 'sticker_removed')
+      return {
+        content: JSON.stringify({ ok: true, action: 'remove', mediaId: args.mediaId }),
         outcome: { ok: true },
       }
     }

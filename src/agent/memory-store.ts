@@ -1,4 +1,5 @@
-import { appendFile, mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join, normalize, resolve } from 'node:path'
 
 export type MemoryScope = 'self' | 'person' | 'group' | 'topic'
@@ -6,6 +7,7 @@ export type MemoryScope = 'self' | 'person' | 'group' | 'topic'
 export interface MemoryStoreOptions {
   rootDir: string
   now?: () => Date
+  id?: () => string
   maxReadChars?: number
   maxSnippetChars?: number
 }
@@ -26,6 +28,8 @@ export interface SearchMemoryInput {
 
 export interface ReadMemoryInput {
   file: string
+  offset?: number
+  maxChars?: number
 }
 
 export interface ListMemoryInput {
@@ -42,6 +46,15 @@ export interface MemoryWriteResult {
   file: string
   scope: MemoryScope
   title: string
+  entryId: string
+  revision: string
+}
+
+export interface MemoryEntry {
+  id: string
+  createdAt: string
+  content: string
+  sourceMessageIds: number[]
 }
 
 export interface MemorySearchMatch {
@@ -59,7 +72,18 @@ export interface MemorySearchResult {
 }
 
 export type MemoryReadResult =
-  | { ok: true; file: string; content: string; truncated: boolean }
+  | {
+    ok: true
+    file: string
+    content: string
+    truncated: boolean
+    offset: number
+    nextOffset: number | null
+    totalChars: number
+    revision: string
+    entries: MemoryEntry[]
+    entriesTruncated: boolean
+  }
   | { ok: false; error: string }
 
 export interface MemoryListResult {
@@ -83,34 +107,57 @@ export interface MemoryDeleteResult {
   failed: Array<{ file: string; error: string }>
 }
 
+export class MemoryStoreError extends Error {
+  constructor(
+    readonly code: 'not_found' | 'revision_conflict' | 'invalid_selection' | 'invalid_format',
+    message: string,
+  ) {
+    super(message)
+    this.name = 'MemoryStoreError'
+  }
+}
+
+interface MemorySegment extends MemoryEntry {
+  start: number
+  end: number
+}
+
 const DEFAULT_MAX_READ_CHARS = 4_000
 const DEFAULT_MAX_SNIPPET_CHARS = 240
 const DEFAULT_SEARCH_LIMIT = 10
 const MAX_SEARCH_LIMIT = 20
 const DEFAULT_LIST_LIMIT = 50
 const MAX_LIST_LIMIT = 100
+const MAX_READ_ENTRIES = 50
+const ENTRY_START = '<!-- memory-entry'
+const ENTRY_END = '<!-- /memory-entry -->'
 
 export async function writeMemoryEntry(
   options: MemoryStoreOptions,
   input: WriteMemoryInput,
 ): Promise<MemoryWriteResult> {
   const now = options.now?.() ?? new Date()
+  const entryId = options.id?.() ?? `mem_${now.toISOString().replace(/[-:.TZ]/g, '')}_${randomUUID().slice(0, 8)}`
   const relativeFile = fileForInput(input)
   const absoluteFile = safeMemoryFile(options.rootDir, relativeFile)
   await mkdir(dirname(absoluteFile), { recursive: true })
 
   const title = titleForInput(input)
   const existing = await readOptional(absoluteFile)
-  if (existing == null) {
-    const initial = renderNewFile(input.scope, title, now.toISOString())
-    await writeFile(absoluteFile, initial, 'utf8')
-  } else {
-    const updated = replaceUpdatedAt(existing, now.toISOString())
-    if (updated !== existing) await writeFile(absoluteFile, updated, 'utf8')
-  }
-
-  await appendFile(absoluteFile, renderBullet(now, input), 'utf8')
-  return { ok: true, file: relativeFile, scope: input.scope, title }
+  const base = replaceUpdatedAt(
+    existing && parseMarkdownMemory(existing)
+      ? existing
+      : renderNewFile(input.scope, title, now.toISOString()),
+    now.toISOString(),
+  )
+  const raw = `${base.trimEnd()}\n${renderMemoryEntry({
+    id: entryId,
+    createdAt: now.toISOString(),
+    content: input.content.trim(),
+    sourceMessageIds: input.sourceMessageIds ?? [],
+  })}`
+  await atomicWrite(absoluteFile, raw)
+  return { ok: true, file: relativeFile, scope: input.scope, title, entryId, revision: revisionOf(raw) }
 }
 
 export async function searchMemoryEntries(
@@ -132,7 +179,7 @@ export async function searchMemoryEntries(
       continue
     }
     if (input.scope && parsed.scope !== input.scope) continue
-    const haystack = `${file}\n${parsed.title}\n${raw}`.toLocaleLowerCase()
+    const haystack = `${file}\n${parsed.title}\n${searchableMemoryText(raw)}`.toLocaleLowerCase()
     if (needle && !haystack.includes(needle)) continue
     matches.push({
       file,
@@ -167,15 +214,86 @@ export async function readMemoryFile(
     }
     throw err
   }
+  if (!parseMarkdownMemory(raw)) {
+    return { ok: false, error: 'memory file format is not supported' }
+  }
 
-  const max = options.maxReadChars ?? DEFAULT_MAX_READ_CHARS
-  if (raw.length <= max) return { ok: true, file: input.file, content: raw, truncated: false }
+  const offset = Math.min(input.offset ?? 0, raw.length)
+  const max = Math.min(input.maxChars ?? options.maxReadChars ?? DEFAULT_MAX_READ_CHARS, 12_000)
+  const content = raw.slice(offset, offset + max)
+  const nextOffset = offset + content.length
+  const parsedEntries = parseMemoryEntries(raw)
+  const entries = parsedEntries.slice(0, MAX_READ_ENTRIES)
   return {
     ok: true,
     file: input.file,
-    content: `${raw.slice(0, max)}\n[...truncated at ${max} chars]`,
-    truncated: true,
+    content,
+    truncated: nextOffset < raw.length,
+    offset,
+    nextOffset: nextOffset < raw.length ? nextOffset : null,
+    totalChars: raw.length,
+    revision: revisionOf(raw),
+    entries: entries.map(({ start: _start, end: _end, ...entry }) => entry),
+    entriesTruncated: parsedEntries.length > entries.length,
   }
+}
+
+export async function updateMemoryEntry(
+  options: MemoryStoreOptions,
+  input: { file: string; entryId: string; expectedRevision: string; content: string },
+): Promise<{ ok: true; file: string; entryId: string; revision: string }> {
+  return mutateMemoryFile(options, input.file, input.expectedRevision, (raw, entries) => {
+    const target = entries.find((entry) => entry.id === input.entryId)
+    if (!target) throw new MemoryStoreError('not_found', `memory entry not found: ${input.entryId}`)
+    const updated = renderMemoryEntry({ ...target, content: input.content.trim() })
+    return `${raw.slice(0, target.start)}${updated}${raw.slice(target.end)}`
+  }, input.entryId)
+}
+
+export async function deleteMemoryEntry(
+  options: MemoryStoreOptions,
+  input: { file: string; entryId: string; expectedRevision: string },
+): Promise<{ ok: true; file: string; entryId: string; revision: string }> {
+  return mutateMemoryFile(options, input.file, input.expectedRevision, (raw, entries) => {
+    const target = entries.find((entry) => entry.id === input.entryId)
+    if (!target) throw new MemoryStoreError('not_found', `memory entry not found: ${input.entryId}`)
+    return `${raw.slice(0, target.start)}${raw.slice(target.end)}`
+  }, input.entryId)
+}
+
+export async function compactMemoryEntries(
+  options: MemoryStoreOptions,
+  input: { file: string; entryIds: string[]; expectedRevision: string; content: string },
+): Promise<{ ok: true; file: string; entryId: string; compactedEntryIds: string[]; revision: string }> {
+  if (new Set(input.entryIds).size !== input.entryIds.length || input.entryIds.length < 2) {
+    throw new MemoryStoreError('invalid_selection', 'compact requires at least two distinct memory entry ids')
+  }
+  const now = options.now?.() ?? new Date()
+  const entryId = options.id?.() ?? `mem_${now.toISOString().replace(/[-:.TZ]/g, '')}_${randomUUID().slice(0, 8)}`
+  const result = await mutateMemoryFile(options, input.file, input.expectedRevision, (raw, entries) => {
+    const selected = entries.filter((entry) => input.entryIds.includes(entry.id))
+    if (selected.length !== input.entryIds.length) {
+      throw new MemoryStoreError('not_found', 'one or more memory entries were not found')
+    }
+    const firstStart = Math.min(...selected.map((entry) => entry.start))
+    const selectedStarts = new Set(selected.map((entry) => entry.start))
+    const compacted = renderMemoryEntry({
+      id: entryId,
+      createdAt: now.toISOString(),
+      content: input.content.trim(),
+      sourceMessageIds: [...new Set(selected.flatMap((entry) => entry.sourceMessageIds))],
+    })
+    let cursor = 0
+    let output = ''
+    for (const entry of entries) {
+      if (!selectedStarts.has(entry.start)) continue
+      output += raw.slice(cursor, entry.start)
+      if (entry.start === firstStart) output += compacted
+      cursor = entry.end
+    }
+    return output + raw.slice(cursor)
+  }, entryId)
+  return { ...result, compactedEntryIds: input.entryIds }
 }
 
 export async function listMemoryFiles(
@@ -308,6 +426,7 @@ async function readOptional(path: string): Promise<string | null> {
 function renderNewFile(scope: MemoryScope, title: string, updatedAt: string): string {
   return [
     '---',
+    'formatVersion: 1',
     `scope: ${scope}`,
     `title: ${title}`,
     `updatedAt: ${updatedAt}`,
@@ -327,11 +446,101 @@ function replaceUpdatedAt(raw: string, updatedAt: string): string {
   return raw.replace(/^---\n/, `---\nupdatedAt: ${updatedAt}\n`)
 }
 
-function renderBullet(now: Date, input: WriteMemoryInput): string {
-  const suffix = input.sourceMessageIds?.length
-    ? ` (sourceMessageIds: ${input.sourceMessageIds.join(',')})`
-    : ''
-  return `- ${now.toISOString()}: ${input.content.trim()}${suffix}\n`
+function revisionOf(raw: string): string {
+  return createHash('sha256').update(raw).digest('hex')
+}
+
+async function atomicWrite(path: string, raw: string): Promise<void> {
+  const tempPath = `${path}.tmp-${randomUUID()}`
+  try {
+    await writeFile(tempPath, raw, 'utf8')
+    await rename(tempPath, path)
+  } finally {
+    await rm(tempPath, { force: true }).catch(() => undefined)
+  }
+}
+
+function renderMemoryEntry(entry: MemoryEntry): string {
+  return [
+    ENTRY_START,
+    `id: ${entry.id}`,
+    `createdAt: ${entry.createdAt}`,
+    ...(entry.sourceMessageIds.length > 0 ? [`sourceMessageIds: ${entry.sourceMessageIds.join(',')}`] : []),
+    '-->',
+    `- ${entry.content}`,
+    ENTRY_END,
+    '',
+  ].join('\n')
+}
+
+function parseMemoryEntries(raw: string): MemorySegment[] {
+  const entries: MemorySegment[] = []
+  let offset = 0
+  while (offset < raw.length) {
+    const start = raw.indexOf(ENTRY_START, offset)
+    if (start < 0) break
+    const metaEnd = raw.indexOf('-->', start + ENTRY_START.length)
+    if (metaEnd < 0) break
+    const close = raw.indexOf(ENTRY_END, metaEnd + 3)
+    if (close < 0) break
+    const end = close + ENTRY_END.length + (raw.slice(close + ENTRY_END.length).startsWith('\n') ? 1 : 0)
+    const fields = new Map<string, string>()
+    for (const line of raw.slice(start + ENTRY_START.length, metaEnd).split('\n')) {
+      const match = /^([A-Za-z]+):\s*(.+)$/.exec(line.trim())
+      if (match) fields.set(match[1]!, match[2]!)
+    }
+    const id = fields.get('id')
+    const createdAt = fields.get('createdAt')
+    const body = raw.slice(metaEnd + 3, close).replace(/^\n/, '').trim()
+    if (id && createdAt && body.startsWith('- ')) {
+      entries.push({
+        id,
+        createdAt,
+        content: body.slice(2).trim(),
+        sourceMessageIds: parseSourceIds(fields.get('sourceMessageIds')),
+        start,
+        end,
+      })
+    }
+    offset = Math.max(end, close + ENTRY_END.length)
+  }
+  return entries
+}
+
+function parseSourceIds(raw: string | undefined): number[] {
+  if (!raw) return []
+  return raw.split(',').map((value) => Number(value.trim())).filter((value) => Number.isInteger(value))
+}
+
+function searchableMemoryText(raw: string): string {
+  return parseMemoryEntries(raw).map((entry) => entry.content).join('\n')
+}
+
+async function mutateMemoryFile(
+  options: MemoryStoreOptions,
+  file: string,
+  expectedRevision: string,
+  mutate: (raw: string, entries: MemorySegment[]) => string,
+  entryId: string,
+): Promise<{ ok: true; file: string; entryId: string; revision: string }> {
+  const path = safeMemoryFile(options.rootDir, file)
+  let raw: string
+  try {
+    raw = await readFile(path, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new MemoryStoreError('not_found', `memory file not found: ${file}`)
+    throw error
+  }
+  if (!parseMarkdownMemory(raw)) {
+    throw new MemoryStoreError('invalid_format', `memory file uses an unsupported format: ${file}`)
+  }
+  if (revisionOf(raw) !== expectedRevision) {
+    throw new MemoryStoreError('revision_conflict', 'memory file changed; read it again and retry with the latest revision')
+  }
+  const now = options.now?.() ?? new Date()
+  const next = `${replaceUpdatedAt(mutate(raw, parseMemoryEntries(raw)), now.toISOString()).trimEnd()}\n`
+  await atomicWrite(path, next)
+  return { ok: true, file, entryId, revision: revisionOf(next) }
 }
 
 function parseMarkdownMemory(raw: string): { scope: MemoryScope; title: string; updatedAt: string | null } | null {
@@ -346,7 +555,7 @@ function parseMarkdownMemory(raw: string): { scope: MemoryScope; title: string; 
     if (!match) return null
     record[match[1]!] = match[2]!
   }
-  if (!isMemoryScope(record.scope)) return null
+  if (record.formatVersion !== '1' || !isMemoryScope(record.scope)) return null
   return {
     scope: record.scope,
     title: record.title || 'untitled',

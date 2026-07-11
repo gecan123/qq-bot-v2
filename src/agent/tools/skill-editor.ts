@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { z } from 'zod'
 import { parse as parseYaml } from 'yaml'
@@ -30,6 +30,10 @@ const argsSchema = z.discriminatedUnion('action', [
   }),
   z.object({
     action: z.literal('read_draft').describe('读取一个 skill 草稿.'),
+    name: z.string().trim().regex(SKILL_NAME_REGEX).max(80),
+  }),
+  z.object({
+    action: z.literal('delete_draft').describe('永久删除一个明确的未安装 skill 草稿.'),
     name: z.string().trim().regex(SKILL_NAME_REGEX).max(80),
   }),
 ])
@@ -171,6 +175,7 @@ export function createSkillEditorTool(deps: SkillEditorToolDeps = {}): Tool<Args
       '创建和安装运行时 skill 的受控工具.',
       'action=draft 写入草稿到私有工作区, 不会立即影响 skill 列表.',
       'action=validate 校验草稿; action=install 将已验证草稿安装为 docs/agent-skills/<name>.md, 默认拒绝覆盖.',
+      'action=delete_draft 删除不再需要的草稿; 不会删除已安装 skill.',
       '只用于沉淀稳定、可复用的工作流; 不要把普通聊天、一次性总结或危险指令写成 skill.',
     ].join(' '),
     schema: argsSchema,
@@ -218,6 +223,25 @@ export function createSkillEditorTool(deps: SkillEditorToolDeps = {}): Tool<Args
             description: draft.description,
             content: draft.content,
           }),
+        }
+      }
+
+      if (args.action === 'delete_draft') {
+        const path = markdownPath(draftsDir, args.name)
+        try {
+          await unlink(path)
+          return {
+            content: JSON.stringify({ ok: true, action: 'delete_draft', name: args.name, path }),
+            outcome: { ok: true },
+          }
+        } catch (err) {
+          if (err && typeof err === 'object' && 'code' in err && err.code === 'ENOENT') {
+            return {
+              content: JSON.stringify({ ok: false, code: 'not_found', error: 'draft not found' }),
+              outcome: { ok: false, code: 'not_found' },
+            }
+          }
+          throw err
         }
       }
 

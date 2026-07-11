@@ -5,14 +5,8 @@ import { napcat } from './bot/napcat.js'
 import { createLogger } from './logger.js'
 import { jobQueue } from './queue/index.js'
 import { setLlmProvider } from './llm/provider.js'
-import { OpenAIProvider } from './llm/openai-adapter.js'
-import { RoutingProvider } from './llm/routing-provider.js'
-import {
-  CLAUDE_CODE_PROVIDER_NAME,
-  config,
-  OPENAI_AGENT_BASE_PROVIDER_NAME,
-  OPENAI_AGENT_PROVIDER_NAME,
-} from './config/index.js'
+import { CLAUDE_CODE_PROVIDER_NAME, config } from './config/index.js'
+import { buildMediaProvider } from './llm/media-provider.js'
 import { loadGroupCustomizations } from './config/group-prompts.js'
 import { messageSender } from './messaging/message-sender.js'
 
@@ -45,52 +39,6 @@ const SHUTDOWN_TIMEOUT_MS = 30_000
 let shutdownCoordinator: ShutdownCoordinator | null = null
 let fallbackShutdownPromise: Promise<void> | null = null
 
-function buildMediaProvider(): RoutingProvider {
-  const { defaultProvider: defaultProviderName, defaultModel, providers, scenarios } = config.llm
-
-  // Media 路径需要真实 OpenAI 兼容的 baseUrl + apiKey。agent provider 名不一定等于
-  // provider 注册表 key: openai-agent 复用 openai; claude-code 不在 providers 注册表里,
-  // 退回到第一个 provider (字母序保稳定)。用户实际仍要保留 LLM_PROVIDER_*_URL/_API_KEY
-  // (e.g. 走 cliproxy), 否则注册表为空 → 抛错。
-  let mediaDefaultName = defaultProviderName
-  if (defaultProviderName === OPENAI_AGENT_PROVIDER_NAME) {
-    mediaDefaultName = OPENAI_AGENT_BASE_PROVIDER_NAME
-  } else if (defaultProviderName === CLAUDE_CODE_PROVIDER_NAME) {
-    const candidates = Object.keys(providers).sort()
-    if (candidates.length === 0) {
-      throw new Error(
-        'LLM_DEFAULT_PROVIDER=claude-code 时, 媒体路径仍需要至少一个 LLM_PROVIDER_<NAME>_URL/_API_KEY (例如 OPENAI 走 cliproxy)',
-      )
-    }
-    mediaDefaultName = candidates[0]
-  }
-
-  const defaultProviderConfig = providers[mediaDefaultName]
-  if (!defaultProviderConfig) {
-    throw new Error(`Default LLM provider not found: ${mediaDefaultName}`)
-  }
-  const defaultProvider = new OpenAIProvider(
-    defaultProviderConfig.url,
-    defaultProviderConfig.apiKey,
-    defaultModel,
-  )
-
-  const routes: ConstructorParameters<typeof RoutingProvider>[1] = {}
-  for (const [key, s] of Object.entries(scenarios)) {
-    if (!s.provider && !s.model) continue
-    const providerName = s.provider ?? mediaDefaultName
-    const providerConfig = providers[providerName]
-    if (!providerConfig) continue
-    routes[key as keyof typeof routes] = new OpenAIProvider(
-      providerConfig.url,
-      providerConfig.apiKey,
-      s.model ?? defaultModel,
-    )
-  }
-
-  return new RoutingProvider(defaultProvider, routes)
-}
-
 async function main() {
   log.info(
     {
@@ -117,7 +65,7 @@ async function main() {
   }
 
   // 1. 媒体描述用的 LLM provider routing (与 agent 自身的 LLM 客户端独立)
-  const mediaProvider = buildMediaProvider()
+  const mediaProvider = buildMediaProvider(config.llm)
   setLlmProvider(mediaProvider)
   log.info(
     {

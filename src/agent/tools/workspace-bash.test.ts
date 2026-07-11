@@ -26,7 +26,7 @@ function unwrapCommandJson(content: unknown): Record<string, unknown> {
 }
 
 describe('workspace_bash command parser', () => {
-  test('accepts simple workspace file commands', () => {
+  test('accepts simple workspace reads and rejects raw writes', () => {
     assert.deepEqual(parseWorkspaceBashCommand('pwd'), {
       ok: true,
       kind: 'workspace',
@@ -35,14 +35,9 @@ describe('workspace_bash command parser', () => {
       args: [],
     })
 
-    assert.deepEqual(parseWorkspaceBashCommand("printf 'hello\\n' > notes/today.md"), {
-      ok: true,
-      kind: 'workspace',
-      cwd: 'workspace',
-      command: 'printf',
-      args: ['hello\\n'],
-      redirect: { mode: 'write', path: 'notes/today.md' },
-    })
+    assert.equal(parseWorkspaceBashCommand("printf 'hello\\n' > notes/today.md").ok, false)
+    assert.equal(parseWorkspaceBashCommand('touch notes/today.md').ok, false)
+    assert.equal(parseWorkspaceBashCommand('mkdir notes').ok, false)
   })
 
   test('rejects the old pnpm db:query alias for database access', () => {
@@ -162,24 +157,10 @@ describe('workspace_bash command parser', () => {
     })
   })
 
-  test('accepts controlled journal subcommands in workspace mode', () => {
+  test('rejects the removed workspace_bash journal alias', () => {
     assert.deepEqual(parseWorkspaceBashCommand('journal write diary "今天很充实"'), {
-      ok: true,
-      kind: 'journal',
-      cwd: 'workspace',
-      action: 'write',
-      kindArg: 'diary',
-      content: '今天很充实',
-    })
-
-    assert.deepEqual(parseWorkspaceBashCommand('journal search "ALPHA" dream 5'), {
-      ok: true,
-      kind: 'journal',
-      cwd: 'workspace',
-      action: 'search',
-      query: 'ALPHA',
-      kindArg: 'dream',
-      limit: 5,
+      ok: false,
+      error: 'command is not allowed: journal',
     })
   })
 
@@ -190,11 +171,11 @@ describe('workspace_bash command parser', () => {
       cwd: 'workspace',
     })
 
-    assert.deepEqual(parseWorkspaceBashCommand('help journal'), {
+    assert.deepEqual(parseWorkspaceBashCommand('help workspace'), {
       ok: true,
       kind: 'help',
       cwd: 'workspace',
-      topic: 'journal',
+      topic: 'workspace',
     })
   })
 
@@ -247,7 +228,9 @@ describe('workspace_bash command parser', () => {
       'find .',
       "sed -n '1,5p' notes.md",
       "printf 'bad' > journal/diary/2026-06.md",
+      "printf 'bad' > life/journal/2026-07-11.md",
       'touch journal/diary/2026-06.md',
+      'touch life/agenda.md',
       'mkdir journal/custom',
     ]
 
@@ -257,7 +240,7 @@ describe('workspace_bash command parser', () => {
     }
   })
 
-  test('allows reading journal files through workspace_bash but not direct writes', () => {
+  test('allows reading managed files through workspace_bash but not direct writes', () => {
     assert.deepEqual(parseWorkspaceBashCommand('cat journal/diary/2026-06.md'), {
       ok: true,
       kind: 'workspace',
@@ -265,11 +248,20 @@ describe('workspace_bash command parser', () => {
       command: 'cat',
       args: ['journal/diary/2026-06.md'],
     })
+    assert.deepEqual(parseWorkspaceBashCommand('cat life/journal/2026-07-11.md'), {
+      ok: true,
+      kind: 'workspace',
+      cwd: 'workspace',
+      command: 'cat',
+      args: ['life/journal/2026-07-11.md'],
+    })
 
     for (const command of [
       "printf 'bad' > journal/diary/2026-06.md",
       "printf 'bad' >> journal/diary/2026-06.md",
+      "printf 'bad' > life/journal/2026-07-11.md",
       'touch journal/diary/2026-06.md',
+      'touch life/agenda.md',
       'mkdir journal/custom',
     ]) {
       const parsed = parseWorkspaceBashCommand(command)
@@ -454,48 +446,6 @@ describe('workspace_bash tool', () => {
     assert.equal(parsed.try, 'fetch reddit list technology hot 5')
   })
 
-  test('runs journal write/list/search/read through the workspace store without shelling out', async () => {
-    const workspace = await mkdtemp(join(tmpdir(), 'workspace-bash-journal-'))
-    let runnerCalled = false
-    try {
-      const tool = createWorkspaceBashTool({
-        workspaceDir: workspace,
-        repoDir: workspace,
-        runner: async () => {
-          runnerCalled = true
-          return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
-        },
-      })
-
-      const written = unwrapCommandJson((await tool.execute({
-        command: 'journal write diary "Alpha beta"',
-      }, makeCtx())).content) as { ok: boolean; id: string; kind: string }
-      assert.equal(written.ok, true)
-      assert.equal(written.kind, 'diary')
-
-      const searched = unwrapCommandJson((await tool.execute({
-        command: 'journal search "alpha" diary 5',
-      }, makeCtx())).content) as { ok: boolean; entries: { id: string; preview: string }[] }
-      assert.equal(searched.ok, true)
-      assert.deepEqual(searched.entries.map((entry) => entry.preview), ['Alpha beta'])
-
-      const read = unwrapCommandJson((await tool.execute({
-        command: `journal read ${written.id}`,
-      }, makeCtx())).content) as { ok: boolean; entry: { content: string } }
-      assert.equal(read.ok, true)
-      assert.equal(read.entry.content, 'Alpha beta')
-
-      const listed = unwrapCommandJson((await tool.execute({
-        command: 'journal list 5',
-      }, makeCtx())).content) as { ok: boolean; entries: { id: string }[] }
-      assert.equal(listed.ok, true)
-      assert.equal(listed.entries.length, 1)
-      assert.equal(runnerCalled, false)
-    } finally {
-      await rm(workspace, { recursive: true, force: true })
-    }
-  })
-
   test('renders help without shelling out', async () => {
     let runnerCalled = false
     const tool = createWorkspaceBashTool({
@@ -512,16 +462,9 @@ describe('workspace_bash tool', () => {
       topics: string[]
       examples: string[]
     }
-    const journal = unwrapCommandJson((await tool.execute({ command: 'help journal' }, makeCtx())).content) as unknown as {
-      ok: boolean
-      commands: string[]
-    }
-
     assert.equal(overview.ok, true)
-    assert.ok(overview.topics.includes('journal'))
+    assert.equal(overview.topics.includes('journal'), false)
     assert.ok(overview.examples.includes('fetch reddit list technology hot 5'))
-    assert.equal(journal.ok, true)
-    assert.ok(journal.commands.includes('journal write diary|dream <content>'))
     assert.equal(runnerCalled, false)
   })
 
@@ -532,7 +475,7 @@ describe('workspace_bash tool', () => {
     assert.match(tool.description, /fetch reddit list technology hot 5/)
     assert.match(tool.description, /cwd=repo/)
     assert.match(tool.description, /db schema/)
-    assert.match(tool.description, /journal write\|list\|search\|read/)
+    assert.doesNotMatch(tool.description, /journal write\|list\|search\|read/)
   })
 
   test('runs db schema/query through the internal db tool without shelling out', async () => {
@@ -710,34 +653,7 @@ describe('workspace_bash tool', () => {
 })
 
 describe('runWorkspaceBashCommand', () => {
-  test('writes printf output through controlled redirection inside workspace', async () => {
-    const workspace = await mkdtemp(join(tmpdir(), 'workspace-bash-'))
-    try {
-      const parsed = parseWorkspaceBashCommand("printf 'hello' > notes/today.md")
-      assert.equal(parsed.ok, true)
-      if (!parsed.ok || parsed.kind !== 'workspace') return
-
-      const result = await runWorkspaceBashCommand(parsed, {
-        workspaceDir: workspace,
-        repoDir: workspace,
-        timeoutMs: 1000,
-        maxOutputChars: 1000,
-      })
-
-      assert.equal(result.exitCode, 0)
-
-      const read = parseWorkspaceBashCommand('cat notes/today.md')
-      assert.equal(read.ok, true)
-      if (!read.ok || read.kind !== 'workspace') return
-      const readResult = await runWorkspaceBashCommand(read, {
-        workspaceDir: workspace,
-        repoDir: workspace,
-        timeoutMs: 1000,
-        maxOutputChars: 1000,
-      })
-      assert.equal(readResult.stdout, 'hello')
-    } finally {
-      await rm(workspace, { recursive: true, force: true })
-    }
+  test('does not expose a parsed raw-write command', () => {
+    assert.equal(parseWorkspaceBashCommand("printf 'hello' > notes/today.md").ok, false)
   })
 })

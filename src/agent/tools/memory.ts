@@ -1,11 +1,15 @@
 import { z } from 'zod'
 import type { Tool } from '../tool.js'
 import {
+  compactMemoryEntries,
+  deleteMemoryEntry,
   deleteMemoryFiles,
   listMemoryFiles,
   readMemoryFile,
   searchMemoryEntries,
   writeMemoryEntry,
+  updateMemoryEntry,
+  MemoryStoreError,
   type MemoryScope,
 } from '../memory-store.js'
 import { createLogger } from '../../logger.js'
@@ -42,6 +46,8 @@ const argsSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('read').describe('读取某个记忆文件.'),
     file: z.string().trim().min(1).max(200).describe('search/write 返回的相对文件路径, 例如 self/working-notes.md.'),
+    offset: z.number().int().min(0).optional().describe('字符偏移, 默认 0.'),
+    maxChars: z.number().int().min(500).max(12000).optional().describe('本页字符上限, 默认 4000.'),
   }),
   z.object({
     action: z.literal('list').describe('列出记忆文件元数据, 不返回正文.'),
@@ -52,6 +58,26 @@ const argsSchema = z.discriminatedUnion('action', [
     action: z.literal('delete').describe('永久删除明确指定的记忆文件.'),
     files: z.array(memoryFileSchema).min(1).max(50).describe('要永久删除的 1-50 个 memory 相对路径.'),
   }),
+  z.object({
+    action: z.literal('update_entry').describe('按 entryId 修正记忆文件中的一条记录.'),
+    file: memoryFileSchema,
+    entryId: z.string().trim().min(1).max(160),
+    expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
+    content: z.string().trim().min(1).max(500),
+  }),
+  z.object({
+    action: z.literal('delete_entry').describe('按 entryId 永久删除记忆文件中的一条记录.'),
+    file: memoryFileSchema,
+    entryId: z.string().trim().min(1).max(160),
+    expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
+  }),
+  z.object({
+    action: z.literal('compact').describe('把同一记忆文件中的至少两条记录合并成一条稳定摘要.'),
+    file: memoryFileSchema,
+    entryIds: z.array(z.string().trim().min(1).max(160)).min(2).max(50),
+    expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
+    content: z.string().trim().min(1).max(2000),
+  }),
 ])
 
 type Args = z.infer<typeof argsSchema>
@@ -59,6 +85,7 @@ type Args = z.infer<typeof argsSchema>
 export interface MemoryToolDeps {
   workspaceDir?: string
   now?: () => Date
+  id?: () => string
 }
 
 export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
@@ -73,6 +100,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
       'action=read: 读取 search/write 返回的某个记忆文件; 只在需要深读时使用.',
       'action=list: 按 scope 列出有界文件元数据, 用于发现重复或过时记忆.',
       'action=delete: 永久删除明确指定的记忆文件; 先确认有价值内容已写入保留版本.',
+      'action=update_entry/delete_entry/compact: 修改文件内记录; 先 read 取得 entryId 和最新 revision.',
       'person/group 写入需要 id; self/topic 可用 title 表示主题.',
       '写入要用自己的话, 不要照搬原话; 查询结果用于自然说话, 不要像报数据库.',
     ].join(' '),
@@ -81,7 +109,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
       try {
         if (args.action === 'write') {
           const result = await writeMemoryEntry(
-            { rootDir: workspaceDir, now: deps.now },
+            { rootDir: workspaceDir, now: deps.now, id: deps.id },
             {
               scope: args.scope as MemoryScope,
               id: args.id == null ? undefined : String(args.id),
@@ -150,12 +178,53 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
           }
         }
 
-        const result = await readMemoryFile({ rootDir: workspaceDir }, { file: args.file })
+        if (args.action === 'update_entry') {
+          const result = await updateMemoryEntry(
+            { rootDir: workspaceDir, now: deps.now },
+            {
+              file: args.file,
+              entryId: args.entryId,
+              expectedRevision: args.expectedRevision,
+              content: args.content,
+            },
+          )
+          return { content: JSON.stringify(result), outcome: { ok: true } }
+        }
+
+        if (args.action === 'delete_entry') {
+          const result = await deleteMemoryEntry(
+            { rootDir: workspaceDir, now: deps.now },
+            { file: args.file, entryId: args.entryId, expectedRevision: args.expectedRevision },
+          )
+          return { content: JSON.stringify(result), outcome: { ok: true } }
+        }
+
+        if (args.action === 'compact') {
+          const result = await compactMemoryEntries(
+            { rootDir: workspaceDir, now: deps.now, id: deps.id },
+            {
+              file: args.file,
+              entryIds: args.entryIds,
+              expectedRevision: args.expectedRevision,
+              content: args.content,
+            },
+          )
+          return { content: JSON.stringify(result), outcome: { ok: true } }
+        }
+
+        const result = await readMemoryFile(
+          { rootDir: workspaceDir },
+          { file: args.file, offset: args.offset, maxChars: args.maxChars },
+        )
         return { content: JSON.stringify(result) }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         log.warn({ err }, 'memory_tool_failed')
-        return { content: JSON.stringify({ ok: false, error: message }) }
+        const code = err instanceof MemoryStoreError ? err.code : 'memory_failed'
+        return {
+          content: JSON.stringify({ ok: false, code, error: message }),
+          outcome: { ok: false, code, error: message },
+        }
       }
     },
   }

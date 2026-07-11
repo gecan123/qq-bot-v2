@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { BrowserContext, Page } from 'playwright-core'
@@ -17,8 +17,12 @@ import {
 } from './protocol.js'
 import { buildBrowserActionLogEntry, logBrowserAction } from './action-log.js'
 import { classifyBrowserActionRisk, classifyDownload } from './risk.js'
+import { createLogger } from '../logger.js'
 
+const log = createLogger('BROWSER_CONTROLLER')
 const ELEMENT_ATTR = 'data-luna-browser-element-id'
+const DEFAULT_ARTIFACT_MAX_FILES = 50
+const DEFAULT_ARTIFACT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000
 const INTERACTIVE_SELECTOR = [
   'a[href]',
   'button',
@@ -311,6 +315,7 @@ export class BrowserController {
     const artifactPath = resolve(this.config.artifactDir, 'screenshots', `${artifactId}.png`)
     await mkdir(dirname(artifactPath), { recursive: true })
     await writeFile(artifactPath, bytes)
+    await this.pruneArtifacts()
     const compressed = await compressForContext(Buffer.from(bytes))
     const result: BrowserActionJsonResult = {
       ok: true,
@@ -356,6 +361,7 @@ export class BrowserController {
     const artifactPath = resolve(this.config.artifactDir, 'downloads', `${artifactId}-${safeName}`)
     await mkdir(dirname(artifactPath), { recursive: true })
     await download.saveAs(artifactPath)
+    await this.pruneArtifacts()
     return {
       ok: true,
       action: 'download',
@@ -381,6 +387,7 @@ export class BrowserController {
     const body = [`# Browser Annotation`, '', `- URL: ${url}`, `- Title: ${await safeTitle(record.page)}`, `- Time: ${new Date().toISOString()}`, '', input.text, ''].join('\n')
     await mkdir(dirname(artifactPath), { recursive: true })
     await writeFile(artifactPath, body, 'utf8')
+    await this.pruneArtifacts()
     return { ok: true, action: 'annotate', pageId: record.pageId, url, title: await safeTitle(record.page), artifactId, artifactPath }
   }
 
@@ -396,6 +403,20 @@ export class BrowserController {
       url: record?.page.url(),
       title: record ? await safeTitle(record.page) : undefined,
       code: 'requires_owner_help',
+    }
+  }
+
+  private async pruneArtifacts(): Promise<void> {
+    try {
+      const result = await pruneBrowserArtifacts(this.config.artifactDir, {
+        maxFiles: this.config.artifactMaxFiles ?? DEFAULT_ARTIFACT_MAX_FILES,
+        maxAgeMs: this.config.artifactMaxAgeMs ?? DEFAULT_ARTIFACT_MAX_AGE_MS,
+      })
+      if (result.removed.length > 0) {
+        log.info({ removedCount: result.removed.length, kept: result.kept }, 'browser_artifacts_pruned')
+      }
+    } catch (err) {
+      log.warn({ err }, 'browser_artifact_prune_failed')
     }
   }
 
@@ -500,6 +521,39 @@ export class BrowserController {
     }
     return summaries
   }
+}
+
+export async function pruneBrowserArtifacts(
+  artifactDir: string,
+  options: { maxFiles: number; maxAgeMs: number; now?: () => Date },
+): Promise<{ removed: string[]; kept: number }> {
+  const files: Array<{ path: string; mtimeMs: number }> = []
+  const visit = async (directory: string): Promise<void> => {
+    let entries
+    try {
+      entries = await readdir(directory, { withFileTypes: true })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+      throw error
+    }
+    for (const entry of entries) {
+      const path = resolve(directory, entry.name)
+      if (entry.isDirectory()) await visit(path)
+      else if (entry.isFile()) files.push({ path, mtimeMs: (await stat(path)).mtimeMs })
+    }
+  }
+  for (const directory of ['screenshots', 'downloads', 'annotations']) {
+    await visit(resolve(artifactDir, directory))
+  }
+  files.sort((a, b) => b.mtimeMs - a.mtimeMs || a.path.localeCompare(b.path))
+  const cutoff = (options.now?.() ?? new Date()).getTime() - options.maxAgeMs
+  const removed: string[] = []
+  for (const [index, file] of files.entries()) {
+    if (index < options.maxFiles && file.mtimeMs >= cutoff) continue
+    await rm(file.path, { force: true })
+    removed.push(file.path)
+  }
+  return { removed, kept: files.length - removed.length }
 }
 
 async function collectElements(page: Page): Promise<BrowserElementSummary[]> {

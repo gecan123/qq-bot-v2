@@ -2,6 +2,7 @@ import OpenAI from 'openai'
 import { jsonrepair } from 'jsonrepair'
 import sharp from 'sharp'
 import type { LlmProvider, MediaDescriptionResult } from './types.js'
+import type { OpenAiReasoningEffort } from '../config/index.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import { recordCurrentTokenUsage, toTokenUsage } from './token-usage.js'
 
@@ -126,12 +127,19 @@ function assertValidBaseURL(baseURL: string): void {
 export class OpenAIProvider implements LlmProvider {
     private client: OpenAI
     readonly model: string
+    private readonly reasoningEffort?: OpenAiReasoningEffort
     private static readonly MAX_VIDEO_BYTES = 5 * 1024 * 1024
 
-    constructor(baseURL: string, apiKey: string, model: string) {
+    constructor(
+        baseURL: string,
+        apiKey: string,
+        model: string,
+        options: { reasoningEffort?: OpenAiReasoningEffort } = {},
+    ) {
         assertValidBaseURL(baseURL)
         this.client = new OpenAI({ baseURL, apiKey })
         this.model = model
+        this.reasoningEffort = options.reasoningEffort
     }
 
     async describeImage(params: { image: Buffer; contentType: string; mediaType?: string }): Promise<string> {
@@ -148,6 +156,7 @@ export class OpenAIProvider implements LlmProvider {
 
         const response = await this.client.chat.completions.create({
             model: this.model,
+            ...(this.reasoningEffort ? { reasoning_effort: this.reasoningEffort as any } : {}),
             temperature: 0.3,
             response_format: IMAGE_DESCRIPTION_RESPONSE_FORMAT as any,
             messages: [
@@ -224,6 +233,7 @@ export class OpenAIProvider implements LlmProvider {
 
         const response = await this.client.chat.completions.create({
             model: this.model,
+            ...(this.reasoningEffort ? { reasoning_effort: this.reasoningEffort as any } : {}),
             response_format: AUDIO_TRANSCRIPTION_RESPONSE_FORMAT as any,
             messages: [{
                 role: 'user',
@@ -252,6 +262,7 @@ export class OpenAIProvider implements LlmProvider {
     }): Promise<MediaDescriptionResult> {
         const response = await this.client.chat.completions.create({
             model: this.model,
+            ...(this.reasoningEffort ? { reasoning_effort: this.reasoningEffort as any } : {}),
             temperature: 0.3,
             response_format: params.responseFormat,
             messages: [

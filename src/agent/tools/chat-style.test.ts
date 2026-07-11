@@ -24,6 +24,9 @@ describe('chat_style tool', () => {
     assert.match(base.content as string, /半参与/)
     assert.match(base.content as string, /自由活动/)
     assert.match(antiPatterns.content as string, /反例对照/)
+    assert.match(antiPatterns.content as string, /二次加工式接话/)
+    assert.match(antiPatterns.content as string, /巴威：我也要去看漫展/)
+    assert.match(antiPatterns.content as string, /复读、接龙或玩固定格式/)
   })
 
   test('group scope returns group frequency and body', async () => {

@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto'
-import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { appendFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 export type JournalKind = 'diary' | 'dream'
@@ -41,6 +41,36 @@ export interface JournalReadResult {
   skippedCorrupt: number
 }
 
+export interface JournalRecordSnapshot {
+  entry: JournalRecord
+  file: string
+  revision: string
+}
+
+export class JournalStoreError extends Error {
+  constructor(
+    readonly code: 'not_found' | 'revision_conflict' | 'invalid_selection',
+    message: string,
+  ) {
+    super(message)
+    this.name = 'JournalStoreError'
+  }
+}
+
+interface JournalSegment {
+  entry: JournalRecord
+  start: number
+  end: number
+}
+
+interface JournalFileSnapshot {
+  path: string
+  relativeFile: string
+  raw: string
+  revision: string
+  segments: JournalSegment[]
+}
+
 function generateId(now: Date): string {
   return `${now.toISOString().replace(/[-:.TZ]/g, '')}-${randomUUID().slice(0, 8)}`
 }
@@ -51,6 +81,26 @@ function monthKey(date: Date): string {
 
 function journalFilePath(rootDir: string, kind: JournalKind, date: Date): string {
   return join(rootDir, 'journal', kind, `${monthKey(date)}.md`)
+}
+
+function revisionOf(raw: string): string {
+  return createHash('sha256').update(raw).digest('hex')
+}
+
+async function atomicWrite(path: string, raw: string): Promise<void> {
+  const tempPath = `${path}.tmp-${randomUUID()}`
+  try {
+    await writeFile(tempPath, raw, 'utf8')
+    await rename(tempPath, path)
+  } finally {
+    await rm(tempPath, { force: true }).catch(() => undefined)
+  }
+}
+
+function assertRevision(raw: string, expectedRevision: string): void {
+  if (revisionOf(raw) !== expectedRevision) {
+    throw new JournalStoreError('revision_conflict', 'journal file changed; read the entry again and retry with the latest revision')
+  }
 }
 
 export async function appendJournalRecord(
@@ -104,6 +154,99 @@ export async function readJournalRecord(
     entry: result.entries.find((entry) => entry.id === id) ?? null,
     skippedCorrupt: result.skippedCorrupt,
   }
+}
+
+export async function readJournalRecordSnapshot(
+  options: JournalStoreOptions,
+  id: string,
+): Promise<JournalRecordSnapshot | null> {
+  const located = await findJournalFileByEntryId(options.rootDir, id)
+  if (!located) return null
+  const segment = located.segments.find((candidate) => candidate.entry.id === id)!
+  return { entry: segment.entry, file: located.relativeFile, revision: located.revision }
+}
+
+export async function updateJournalRecord(
+  options: JournalStoreOptions & { entryId: string; expectedRevision: string; content: string },
+): Promise<JournalRecordSnapshot> {
+  const located = await findJournalFileByEntryId(options.rootDir, options.entryId)
+  if (!located) throw new JournalStoreError('not_found', `journal entry not found: ${options.entryId}`)
+  assertRevision(located.raw, options.expectedRevision)
+  const target = located.segments.find((candidate) => candidate.entry.id === options.entryId)!
+  const entry = { ...target.entry, content: options.content }
+  const raw = `${located.raw.slice(0, target.start)}${renderMarkdownEntry(entry)}${located.raw.slice(target.end)}`.trimEnd() + '\n'
+  await atomicWrite(located.path, raw)
+  return { entry, file: located.relativeFile, revision: revisionOf(raw) }
+}
+
+export async function deleteJournalRecord(
+  options: JournalStoreOptions & { entryId: string; expectedRevision: string },
+): Promise<{ id: string; file: string; revision: string }> {
+  const located = await findJournalFileByEntryId(options.rootDir, options.entryId)
+  if (!located) throw new JournalStoreError('not_found', `journal entry not found: ${options.entryId}`)
+  assertRevision(located.raw, options.expectedRevision)
+  const target = located.segments.find((candidate) => candidate.entry.id === options.entryId)!
+  const raw = `${located.raw.slice(0, target.start)}${located.raw.slice(target.end)}`.trimEnd() + '\n'
+  await atomicWrite(located.path, raw)
+  return { id: options.entryId, file: located.relativeFile, revision: revisionOf(raw) }
+}
+
+export async function compactJournalRecords(
+  options: JournalStoreOptions & { ids: string[]; expectedRevision: string; content: string },
+): Promise<{ entry: JournalRecord; compactedIds: string[]; file: string; revision: string }> {
+  if (new Set(options.ids).size !== options.ids.length || options.ids.length < 2) {
+    throw new JournalStoreError('invalid_selection', 'compact requires at least two distinct journal entry ids')
+  }
+  const located = await findJournalFileByEntryId(options.rootDir, options.ids[0]!)
+  if (!located) throw new JournalStoreError('not_found', 'one or more journal entries were not found')
+  assertRevision(located.raw, options.expectedRevision)
+  const selected = located.segments.filter((segment) => options.ids.includes(segment.entry.id))
+  if (selected.length !== options.ids.length) {
+    throw new JournalStoreError('invalid_selection', 'compact requires entries from the same journal month and kind')
+  }
+
+  const now = options.now?.() ?? new Date()
+  const entry: JournalRecord = {
+    id: options.id?.() ?? generateId(now),
+    kind: selected[0]!.entry.kind,
+    content: options.content,
+    createdAt: now.toISOString(),
+  }
+  const firstStart = Math.min(...selected.map((segment) => segment.start))
+  const selectedStarts = new Set(selected.map((segment) => segment.start))
+  let cursor = 0
+  let raw = ''
+  for (const segment of located.segments) {
+    if (!selectedStarts.has(segment.start)) continue
+    raw += located.raw.slice(cursor, segment.start)
+    if (segment.start === firstStart) raw += renderMarkdownEntry(entry)
+    cursor = segment.end
+  }
+  raw = `${raw}${located.raw.slice(cursor)}`.trimEnd() + '\n'
+  await atomicWrite(located.path, raw)
+  return { entry, compactedIds: options.ids, file: located.relativeFile, revision: revisionOf(raw) }
+}
+
+async function findJournalFileByEntryId(rootDir: string, id: string): Promise<JournalFileSnapshot | null> {
+  for (const kind of ['diary', 'dream'] as const) {
+    const dir = join(rootDir, 'journal', kind)
+    let files: string[]
+    try {
+      files = await readdir(dir)
+    } catch (err) {
+      if (err && typeof err === 'object' && 'code' in err && err.code === 'ENOENT') continue
+      throw err
+    }
+    for (const file of files.filter((name) => name.endsWith('.md')).sort()) {
+      const path = join(dir, file)
+      const raw = await readFile(path, 'utf8')
+      const segments = parseMarkdownJournalSegments(raw, kind)
+      if (segments.some((segment) => segment.entry.id === id)) {
+        return { path, relativeFile: `${kind}/${file}`, raw, revision: revisionOf(raw), segments }
+      }
+    }
+  }
+  return null
 }
 
 async function readEntries(rootDir: string): Promise<JournalEntriesResult> {
@@ -194,39 +337,38 @@ function parseMarkdownJournalFile(
   expectedKind: JournalKind,
   startIndex: number,
 ): { entries: Array<JournalRecord & { index: number }>; skippedCorrupt: number } {
-  const entries: Array<JournalRecord & { index: number }> = []
-  let skippedCorrupt = 0
-  let offset = 0
-  let index = startIndex
+  const parsed = parseMarkdownJournalSegments(raw, expectedKind)
+  return {
+    entries: parsed.map((segment, offset) => ({ ...segment.entry, index: startIndex + offset })),
+    skippedCorrupt: countCorruptJournalEntries(raw, expectedKind),
+  }
+}
 
+function parseMarkdownJournalSegments(raw: string, expectedKind: JournalKind): JournalSegment[] {
+  const segments: JournalSegment[] = []
+  let offset = 0
   while (offset < raw.length) {
     const start = raw.indexOf('<!-- journal-entry', offset)
     if (start < 0) break
     const metaEnd = raw.indexOf('-->', start)
-    if (metaEnd < 0) {
-      skippedCorrupt += 1
-      break
-    }
+    if (metaEnd < 0) break
     const bodyStart = metaEnd + 3
-    const end = raw.indexOf('<!-- /journal-entry -->', bodyStart)
-    if (end < 0) {
-      skippedCorrupt += 1
-      break
-    }
-
+    const close = raw.indexOf('<!-- /journal-entry -->', bodyStart)
+    if (close < 0) break
+    const endMarker = '<!-- /journal-entry -->'
+    const end = close + endMarker.length + (raw.slice(close + endMarker.length).startsWith('\n') ? 1 : 0)
     const meta = raw.slice(start + '<!-- journal-entry'.length, metaEnd)
-    const content = raw.slice(bodyStart, end).trim()
-    const parsed = parseMarkdownEntryMeta(meta, content)
-    if (!parsed || parsed.kind !== expectedKind) {
-      skippedCorrupt += 1
-    } else {
-      entries.push({ ...parsed, index })
-      index += 1
-    }
-    offset = end + '<!-- /journal-entry -->'.length
+    const content = raw.slice(bodyStart, close).trim()
+    const entry = parseMarkdownEntryMeta(meta, content)
+    if (entry?.kind === expectedKind) segments.push({ entry, start, end })
+    offset = Math.max(end, close + endMarker.length)
   }
+  return segments
+}
 
-  return { entries, skippedCorrupt }
+function countCorruptJournalEntries(raw: string, expectedKind: JournalKind): number {
+  const starts = raw.match(/<!-- journal-entry/g)?.length ?? 0
+  return Math.max(0, starts - parseMarkdownJournalSegments(raw, expectedKind).length)
 }
 
 function parseMarkdownEntryMeta(meta: string, content: string): JournalRecord | null {

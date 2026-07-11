@@ -93,6 +93,8 @@ export interface BrowserControllerConfig {
   artifactDir: string
   actionLogPath: string
   actionTimeoutMs: number
+  artifactMaxFiles?: number
+  artifactMaxAgeMs?: number
   headless?: boolean
   humanize?: boolean
   humanPreset?: 'default' | 'careful'

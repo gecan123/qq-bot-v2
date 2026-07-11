@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
-import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, extname, join, normalize, resolve } from 'node:path'
 import { z } from 'zod'
 import type { Tool } from '../tool.js'
@@ -11,6 +12,7 @@ const READ_MAX_BYTES = 256 * 1024
 const WRITE_MAX_BYTES = 256 * 1024
 const WRITE_CONTENT_MAX_CHARS = Math.ceil(WRITE_MAX_BYTES / 3) * 4 + 16
 const COMMAND_OUTPUT_CAP = 4_000
+const revisionSchema = z.string().regex(/^[a-f0-9]{64}$/)
 
 const CONTENT_WRITE_EXTENSIONS = new Set(['.md', '.mdx', '.json', '.txt'])
 const IMAGE_WRITE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.svg'])
@@ -55,6 +57,18 @@ const argsSchema = z.discriminatedUnion('action', [
     file: z.string().trim().min(1).max(240),
     content: z.string().max(WRITE_CONTENT_MAX_CHARS),
     encoding: z.enum(['utf8', 'base64']).optional(),
+    expectedRevision: revisionSchema.optional(),
+  }),
+  z.object({
+    action: z.literal('delete'),
+    file: z.string().trim().min(1).max(240),
+    expectedRevision: revisionSchema,
+  }),
+  z.object({
+    action: z.literal('move'),
+    source: z.string().trim().min(1).max(240),
+    destination: z.string().trim().min(1).max(240),
+    expectedRevision: revisionSchema,
   }),
   z.object({
     action: z.literal('publish'),
@@ -98,7 +112,8 @@ export function createWebsiteTool(deps: WebsiteToolDeps): Tool<Args> {
     name: 'website',
     description: [
       '管理 Luna 个人网站仓库的受控工具.',
-      '支持 status 查看仓库状态, read 读取允许路径, write 写入允许路径, publish 检查并发布允许路径变更.',
+      '支持 status 查看仓库状态, read 读取允许路径, write 写入, delete 删除, move 移动, publish 检查并发布允许路径变更.',
+      'read 返回 revision; 覆盖、删除或移动已有文件必须携带最新 revision.',
       '路径限制在内容、少量样式、about 页面和 public/images 下的安全文件; 不要读写配置、脚本、隐藏文件或路径逃逸.',
     ].join(' '),
     schema: argsSchema,
@@ -107,6 +122,8 @@ export function createWebsiteTool(deps: WebsiteToolDeps): Tool<Args> {
       if (args.action === 'status') return status(runtime)
       if (args.action === 'read') return readWebsiteFile(runtime, args)
       if (args.action === 'write') return writeWebsiteFile(runtime, args)
+      if (args.action === 'delete') return deleteWebsiteFile(runtime, args)
+      if (args.action === 'move') return moveWebsiteFile(runtime, args)
       return publishWebsite(runtime, args)
     },
   }
@@ -162,9 +179,7 @@ async function readWebsiteFile(runtime: WebsiteRuntimeConfig, args: Extract<Args
   }
 
   const relativePath = safeWebsiteRelativePath(args.file)
-  if (relativePath && !TEXT_READ_EXTENSIONS.has(extname(relativePath).toLowerCase())) {
-    return jsonResult({ ok: false, code: 'binary_read_not_supported', file: relativePath })
-  }
+  const isText = relativePath ? TEXT_READ_EXTENSIONS.has(extname(relativePath).toLowerCase()) : false
 
   const fileTarget = await existingSitePath(runtime.repoDir, args.file)
   if (fileTarget === 'not_found') {
@@ -186,8 +201,21 @@ async function readWebsiteFile(runtime: WebsiteRuntimeConfig, args: Extract<Args
     })
   }
 
+  const bytes = await readFile(fileTarget.path)
+  if (!isText) {
+    return jsonResult({
+      ok: true,
+      file: relativePath,
+      binary: true,
+      bytes: bytes.byteLength,
+      revision: revisionOf(bytes),
+      content: null,
+      truncated: false,
+    })
+  }
+
   const maxChars = args.maxChars ?? DEFAULT_READ_MAX_CHARS
-  const content = await readFile(fileTarget.path, 'utf8')
+  const content = bytes.toString('utf8')
   const truncated = content.length > maxChars
   return jsonResult({
     ok: true,
@@ -196,6 +224,7 @@ async function readWebsiteFile(runtime: WebsiteRuntimeConfig, args: Extract<Args
     truncated,
     chars: Math.min(content.length, maxChars),
     totalChars: content.length,
+    revision: revisionOf(content),
   })
 }
 
@@ -205,6 +234,16 @@ async function writeWebsiteFile(runtime: WebsiteRuntimeConfig, args: Extract<Arg
   }
 
   const relativePath = safeWebsiteRelativePath(args.file)
+  const existing = await existingSitePath(runtime.repoDir, args.file)
+  if (existing !== 'not_found') {
+    if (existing === 'not_regular_file') return jsonResult({ ok: false, code: 'not_regular_file', file: relativePath ?? args.file })
+    if (!existing || !relativePath) return jsonResult({ ok: false, code: 'path_not_allowed', file: args.file })
+    if (!args.expectedRevision) return jsonResult({ ok: false, code: 'revision_required', file: relativePath })
+    const current = await readFile(existing.path)
+    if (revisionOf(current) !== args.expectedRevision) return jsonResult({ ok: false, code: 'revision_conflict', file: relativePath })
+  } else if (args.expectedRevision) {
+    return jsonResult({ ok: false, code: 'file_not_found', file: relativePath ?? args.file })
+  }
   const absolutePath = await writableSitePath(runtime.repoDir, args.file)
   if (absolutePath === 'not_regular_file') {
     return jsonResult({ ok: false, code: 'not_regular_file', file: relativePath ?? args.file })
@@ -227,8 +266,55 @@ async function writeWebsiteFile(runtime: WebsiteRuntimeConfig, args: Extract<Arg
     })
   }
 
-  await writeFile(absolutePath, bytes)
-  return jsonResult({ ok: true, file: relativePath, bytes: bytes.byteLength })
+  await atomicWrite(absolutePath, bytes)
+  return jsonResult({ ok: true, file: relativePath, bytes: bytes.byteLength, revision: revisionOf(bytes) })
+}
+
+async function deleteWebsiteFile(runtime: WebsiteRuntimeConfig, args: Extract<Args, { action: 'delete' }>) {
+  if (!isAllowedWebsiteWritePath(args.file)) return jsonResult({ ok: false, code: 'path_not_allowed', file: args.file })
+  const relativePath = safeWebsiteRelativePath(args.file)
+  const target = await existingSitePath(runtime.repoDir, args.file)
+  if (target === 'not_found') return jsonResult({ ok: false, code: 'file_not_found', file: relativePath ?? args.file })
+  if (target === 'not_regular_file') return jsonResult({ ok: false, code: 'not_regular_file', file: relativePath ?? args.file })
+  if (!relativePath || !target) return jsonResult({ ok: false, code: 'path_not_allowed', file: args.file })
+  const current = await readFile(target.path)
+  if (revisionOf(current) !== args.expectedRevision) return jsonResult({ ok: false, code: 'revision_conflict', file: relativePath })
+  await rm(target.path)
+  return jsonResult({ ok: true, action: 'delete', file: relativePath })
+}
+
+async function moveWebsiteFile(runtime: WebsiteRuntimeConfig, args: Extract<Args, { action: 'move' }>) {
+  if (!isAllowedWebsiteWritePath(args.source) || !isAllowedWebsiteWritePath(args.destination)) {
+    return jsonResult({ ok: false, code: 'path_not_allowed', source: args.source, destination: args.destination })
+  }
+  const source = safeWebsiteRelativePath(args.source)
+  const destination = safeWebsiteRelativePath(args.destination)
+  const sourceTarget = await existingSitePath(runtime.repoDir, args.source)
+  if (sourceTarget === 'not_found') return jsonResult({ ok: false, code: 'file_not_found', file: source ?? args.source })
+  if (sourceTarget === 'not_regular_file') return jsonResult({ ok: false, code: 'not_regular_file', file: source ?? args.source })
+  if (!source || !destination || !sourceTarget) return jsonResult({ ok: false, code: 'path_not_allowed' })
+  const destinationExisting = await existingSitePath(runtime.repoDir, args.destination)
+  if (destinationExisting !== 'not_found') return jsonResult({ ok: false, code: 'destination_exists', file: destination })
+  const current = await readFile(sourceTarget.path)
+  if (revisionOf(current) !== args.expectedRevision) return jsonResult({ ok: false, code: 'revision_conflict', file: source })
+  const destinationPath = await writableSitePath(runtime.repoDir, args.destination)
+  if (!destinationPath || destinationPath === 'not_regular_file') return jsonResult({ ok: false, code: 'path_not_allowed', file: destination })
+  await rename(sourceTarget.path, destinationPath)
+  return jsonResult({ ok: true, action: 'move', source, destination, revision: args.expectedRevision })
+}
+
+function revisionOf(content: Buffer | string): string {
+  return createHash('sha256').update(content).digest('hex')
+}
+
+async function atomicWrite(path: string, bytes: Buffer): Promise<void> {
+  const tempPath = `${path}.tmp-${randomUUID()}`
+  try {
+    await writeFile(tempPath, bytes)
+    await rename(tempPath, path)
+  } finally {
+    await rm(tempPath, { force: true }).catch(() => undefined)
+  }
 }
 
 async function publishWebsite(runtime: WebsiteRuntimeConfig, args: Extract<Args, { action: 'publish' }>) {

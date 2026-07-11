@@ -102,31 +102,33 @@ function summarizeString(value: string): string {
 
 export function isSideEffectTool(toolName: string, args?: unknown): boolean {
   if (toolName === 'memory') {
-    return hasAnyAction(args, ['write', 'delete'])
+    return hasAnyAction(args, ['write', 'delete', 'update_entry', 'delete_entry', 'compact'])
   }
   if (toolName === 'fetch_content') {
     return hasAnyAction(args, ['image_url', 'qq_avatar'])
   }
   if (toolName === 'journal') {
-    return hasAction(args, 'write')
+    return hasAnyAction(args, ['write', 'update', 'delete', 'compact'])
   }
   if (toolName === 'life_journal') {
-    return hasAnyAction(args, ['write', 'write_agenda'])
+    return hasAnyAction(args, ['write', 'update', 'delete', 'compact', 'write_agenda'])
   }
   if (toolName === 'skill_editor') {
-    return hasAnyAction(args, ['draft', 'install'])
+    return hasAnyAction(args, ['draft', 'install', 'delete_draft'])
   }
   if (toolName === 'website') {
-    return hasAnyAction(args, ['write', 'publish'])
+    return hasAnyAction(args, ['write', 'delete', 'move', 'publish'])
+  }
+  if (toolName === 'workspace_file') {
+    return hasAnyAction(args, ['write', 'replace', 'delete', 'move'])
+  }
+  if (toolName === 'collect_sticker') {
+    return hasAnyAction(args, ['collect', 'remove'])
   }
   if (toolName === 'workspace_bash') {
     return isWorkspaceBashSideEffect(args)
   }
   return SIDE_EFFECT_TOOLS.has(toolName)
-}
-
-function hasAction(args: unknown, action: string): boolean {
-  return !!args && typeof args === 'object' && (args as Record<string, unknown>).action === action
 }
 
 function hasAnyAction(args: unknown, actions: readonly string[]): boolean {
@@ -144,18 +146,13 @@ function isWorkspaceBashSideEffect(args: unknown): boolean {
   const first = firstShellToken(command)
   if (!first) return true
   if (command.includes('>')) return true
-  if (first === 'mkdir' || first === 'touch') return true
-  if (first === 'journal') {
-    if (command === 'journal write' || command.startsWith('journal write ')) return true
-    return isKnownWorkspaceSubcommand(command, ['journal list', 'journal search', 'journal read']) ? false : true
-  }
   if (first === 'fetch') {
     if (command === 'fetch image' || command.startsWith('fetch image ')) return true
     if (command === 'fetch avatar' || command.startsWith('fetch avatar ')) return true
     return isKnownWorkspaceSubcommand(command, ['fetch url', 'fetch reddit list', 'fetch reddit post']) ? false : true
   }
   if (first === 'help' || first === 'db' || first === 'style' || first === 'openbb') return false
-  if (first === 'pwd' || first === 'ls' || first === 'rg' || first === 'cat' || first === 'head' || first === 'tail' || first === 'wc' || first === 'printf') {
+  if (first === 'pwd' || first === 'ls' || first === 'rg' || first === 'cat' || first === 'head' || first === 'tail' || first === 'wc') {
     return false
   }
   return true

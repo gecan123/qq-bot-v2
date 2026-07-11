@@ -159,4 +159,52 @@ describe('memory tool execute', () => {
       assert.match(read.error, /not found/)
     })
   })
+
+  test('updates, deletes, and compacts entries through the typed tool', async () => {
+    await withTempMemory(async (workspaceDir) => {
+      let nextId = 0
+      const tool = createMemoryTool({
+        workspaceDir,
+        now: () => new Date('2026-07-02T00:00:00.000Z'),
+        id: () => `memory-${++nextId}`,
+      })
+      for (const content of ['wrong', 'duplicate', 'keep']) {
+        await tool.execute({ action: 'write', scope: 'self', title: 'notes', content }, makeCtx())
+      }
+      const read = async () => JSON.parse((await tool.execute({
+        action: 'read',
+        file: 'self/notes.md',
+      }, makeCtx())).content as string) as { revision: string; entries: Array<{ id: string }> }
+
+      let snapshot = await read()
+      const updated = JSON.parse((await tool.execute({
+        action: 'update_entry',
+        file: 'self/notes.md',
+        entryId: 'memory-1',
+        expectedRevision: snapshot.revision,
+        content: 'corrected',
+      }, makeCtx())).content as string) as { ok: boolean }
+      assert.equal(updated.ok, true)
+
+      snapshot = await read()
+      const compacted = JSON.parse((await tool.execute({
+        action: 'compact',
+        file: 'self/notes.md',
+        entryIds: ['memory-1', 'memory-2'],
+        expectedRevision: snapshot.revision,
+        content: 'combined',
+      }, makeCtx())).content as string) as { ok: boolean; entryId: string }
+      assert.equal(compacted.ok, true)
+      assert.equal(compacted.entryId, 'memory-4')
+
+      snapshot = await read()
+      const deleted = JSON.parse((await tool.execute({
+        action: 'delete_entry',
+        file: 'self/notes.md',
+        entryId: 'memory-3',
+        expectedRevision: snapshot.revision,
+      }, makeCtx())).content as string) as { ok: boolean }
+      assert.equal(deleted.ok, true)
+    })
+  })
 })

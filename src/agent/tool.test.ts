@@ -139,10 +139,10 @@ describe('createToolExecutor', () => {
 
   test('classifies merged memory side effects by action', async () => {
     const writes: string[] = []
-    const memory: Tool<{ action: 'write' | 'search' | 'list' | 'delete' }> = {
+    const memory: Tool<{ action: 'write' | 'search' | 'list' | 'delete' | 'update_entry' | 'delete_entry' | 'compact' }> = {
       name: 'memory',
       description: 'memory',
-      schema: z.object({ action: z.enum(['write', 'search', 'list', 'delete']) }),
+      schema: z.object({ action: z.enum(['write', 'search', 'list', 'delete', 'update_entry', 'delete_entry', 'compact']) }),
       async execute() {
         return { content: JSON.stringify({ ok: true }) }
       },
@@ -161,11 +161,17 @@ describe('createToolExecutor', () => {
     await exec.execute({ id: 'search', name: 'memory', args: { action: 'search' } }, makeCtx())
     await exec.execute({ id: 'list', name: 'memory', args: { action: 'list' } }, makeCtx())
     await exec.execute({ id: 'delete', name: 'memory', args: { action: 'delete' } }, makeCtx())
+    await exec.execute({ id: 'update', name: 'memory', args: { action: 'update_entry' } }, makeCtx())
+    await exec.execute({ id: 'delete-entry', name: 'memory', args: { action: 'delete_entry' } }, makeCtx())
+    await exec.execute({ id: 'compact', name: 'memory', args: { action: 'compact' } }, makeCtx())
 
     assert.equal(JSON.parse(writes[0]!).sideEffect, true)
     assert.equal(JSON.parse(writes[1]!).sideEffect, false)
     assert.equal(JSON.parse(writes[2]!).sideEffect, false)
     assert.equal(JSON.parse(writes[3]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[4]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[5]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[6]!).sideEffect, true)
   })
 
   test('classifies fetch_content image actions as side effects', async () => {
@@ -197,12 +203,12 @@ describe('createToolExecutor', () => {
     assert.equal(JSON.parse(writes[2]!).sideEffect, true)
   })
 
-  test('classifies website write and publish actions as side effects', async () => {
+  test('classifies website mutation and publish actions as side effects', async () => {
     const writes: string[] = []
-    const website: Tool<{ action: 'status' | 'read' | 'write' | 'publish' }> = {
+    const website: Tool<{ action: 'status' | 'read' | 'write' | 'delete' | 'move' | 'publish' }> = {
       name: 'website',
       description: 'website',
-      schema: z.object({ action: z.enum(['status', 'read', 'write', 'publish']) }),
+      schema: z.object({ action: z.enum(['status', 'read', 'write', 'delete', 'move', 'publish']) }),
       async execute() {
         return { content: JSON.stringify({ ok: true }) }
       },
@@ -220,12 +226,64 @@ describe('createToolExecutor', () => {
     await exec.execute({ id: 'status', name: 'website', args: { action: 'status' } }, makeCtx())
     await exec.execute({ id: 'read', name: 'website', args: { action: 'read' } }, makeCtx())
     await exec.execute({ id: 'write', name: 'website', args: { action: 'write' } }, makeCtx())
+    await exec.execute({ id: 'delete', name: 'website', args: { action: 'delete' } }, makeCtx())
+    await exec.execute({ id: 'move', name: 'website', args: { action: 'move' } }, makeCtx())
     await exec.execute({ id: 'publish', name: 'website', args: { action: 'publish' } }, makeCtx())
 
     assert.equal(JSON.parse(writes[0]!).sideEffect, false)
     assert.equal(JSON.parse(writes[1]!).sideEffect, false)
     assert.equal(JSON.parse(writes[2]!).sideEffect, true)
     assert.equal(JSON.parse(writes[3]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[4]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[5]!).sideEffect, true)
+  })
+
+  test('classifies workspace_file and collect_sticker mutations as side effects', async () => {
+    const writes: string[] = []
+    const workspaceFile: Tool<{ action: 'list' | 'read' | 'write' | 'replace' | 'delete' | 'move' }> = {
+      name: 'workspace_file',
+      description: 'workspace file',
+      schema: z.object({ action: z.enum(['list', 'read', 'write', 'replace', 'delete', 'move']) }),
+      async execute() {
+        return { content: JSON.stringify({ ok: true }) }
+      },
+    }
+    const collectSticker: Tool<{ action: 'list' | 'collect' | 'remove' }> = {
+      name: 'collect_sticker',
+      description: 'collect sticker',
+      schema: z.object({ action: z.enum(['list', 'collect', 'remove']) }),
+      async execute() {
+        return { content: JSON.stringify({ ok: true }) }
+      },
+    }
+    const exec = createToolExecutor([workspaceFile, collectSticker], {
+      trace: {
+        now: () => new Date('2026-05-25T12:00:00.000Z'),
+        clockMs: () => 100,
+        appender: async (_path, line) => {
+          writes.push(line)
+        },
+      },
+    })
+
+    for (const action of ['list', 'read', 'write', 'replace', 'delete', 'move'] as const) {
+      await exec.execute({ id: `workspace-${action}`, name: 'workspace_file', args: { action } }, makeCtx())
+    }
+    for (const action of ['list', 'collect', 'remove'] as const) {
+      await exec.execute({ id: `sticker-${action}`, name: 'collect_sticker', args: { action } }, makeCtx())
+    }
+
+    assert.deepEqual(writes.map((line) => JSON.parse(line).sideEffect), [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+    ])
   })
 
   test('classifies workspace_bash side effects by command', async () => {
@@ -252,28 +310,24 @@ describe('createToolExecutor', () => {
     })
 
     await exec.execute({ id: 'repo-read', name: 'workspace_bash', args: { cwd: 'repo', command: 'rg "foo" src' } }, makeCtx())
-    await exec.execute({ id: 'journal-list', name: 'workspace_bash', args: { command: 'journal list' } }, makeCtx())
-    await exec.execute({ id: 'journal-write', name: 'workspace_bash', args: { command: 'journal write diary hi' } }, makeCtx())
     await exec.execute({ id: 'redirect', name: 'workspace_bash', args: { command: 'printf hi > notes/today.md' } }, makeCtx())
     await exec.execute({ id: 'fetch-url', name: 'workspace_bash', args: { command: 'fetch url https://example.com' } }, makeCtx())
     await exec.execute({ id: 'fetch-image', name: 'workspace_bash', args: { command: 'fetch image https://example.com/cat.png' } }, makeCtx())
     await exec.execute({ id: 'unknown', name: 'workspace_bash', args: { command: 'curl https://example.com' } }, makeCtx())
 
     assert.equal(JSON.parse(writes[0]!).sideEffect, false)
-    assert.equal(JSON.parse(writes[1]!).sideEffect, false)
-    assert.equal(JSON.parse(writes[2]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[1]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[2]!).sideEffect, false)
     assert.equal(JSON.parse(writes[3]!).sideEffect, true)
-    assert.equal(JSON.parse(writes[4]!).sideEffect, false)
-    assert.equal(JSON.parse(writes[5]!).sideEffect, true)
-    assert.equal(JSON.parse(writes[6]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[4]!).sideEffect, true)
   })
 
-  test('classifies journal write as a side effect', async () => {
+  test('classifies journal mutations as side effects', async () => {
     const writes: string[] = []
-    const journal: Tool<{ action: 'write' | 'list' | 'search' | 'read' }> = {
+    const journal: Tool<{ action: 'write' | 'list' | 'search' | 'read' | 'update' | 'delete' | 'compact' }> = {
       name: 'journal',
       description: 'journal',
-      schema: z.object({ action: z.enum(['write', 'list', 'search', 'read']) }),
+      schema: z.object({ action: z.enum(['write', 'list', 'search', 'read', 'update', 'delete', 'compact']) }),
       async execute() {
         return { content: JSON.stringify({ ok: true }) }
       },
@@ -292,20 +346,26 @@ describe('createToolExecutor', () => {
     await exec.execute({ id: 'list', name: 'journal', args: { action: 'list' } }, makeCtx())
     await exec.execute({ id: 'search', name: 'journal', args: { action: 'search' } }, makeCtx())
     await exec.execute({ id: 'read', name: 'journal', args: { action: 'read' } }, makeCtx())
+    await exec.execute({ id: 'update', name: 'journal', args: { action: 'update' } }, makeCtx())
+    await exec.execute({ id: 'delete', name: 'journal', args: { action: 'delete' } }, makeCtx())
+    await exec.execute({ id: 'compact', name: 'journal', args: { action: 'compact' } }, makeCtx())
 
     assert.equal(JSON.parse(writes[0]!).sideEffect, true)
     assert.equal(JSON.parse(writes[1]!).sideEffect, false)
     assert.equal(JSON.parse(writes[2]!).sideEffect, false)
     assert.equal(JSON.parse(writes[3]!).sideEffect, false)
+    assert.equal(JSON.parse(writes[4]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[5]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[6]!).sideEffect, true)
   })
 
-  test('classifies life_journal write actions as side effects', async () => {
+  test('classifies life_journal mutation actions as side effects', async () => {
     const writes: string[] = []
-    const lifeJournal: Tool<{ action: 'write' | 'read_recent' | 'read_agenda' | 'write_agenda' }> = {
+    const lifeJournal: Tool<{ action: 'write' | 'read_recent' | 'read_agenda' | 'update' | 'delete' | 'compact' | 'write_agenda' }> = {
       name: 'life_journal',
       description: 'life journal',
       schema: z.object({
-        action: z.enum(['write', 'read_recent', 'read_agenda', 'write_agenda']),
+        action: z.enum(['write', 'read_recent', 'read_agenda', 'update', 'delete', 'compact', 'write_agenda']),
       }),
       async execute() {
         return { content: JSON.stringify({ ok: true }) }
@@ -324,21 +384,27 @@ describe('createToolExecutor', () => {
     await exec.execute({ id: 'write', name: 'life_journal', args: { action: 'write' } }, makeCtx())
     await exec.execute({ id: 'recent', name: 'life_journal', args: { action: 'read_recent' } }, makeCtx())
     await exec.execute({ id: 'read-agenda', name: 'life_journal', args: { action: 'read_agenda' } }, makeCtx())
+    await exec.execute({ id: 'update', name: 'life_journal', args: { action: 'update' } }, makeCtx())
+    await exec.execute({ id: 'delete', name: 'life_journal', args: { action: 'delete' } }, makeCtx())
+    await exec.execute({ id: 'compact', name: 'life_journal', args: { action: 'compact' } }, makeCtx())
     await exec.execute({ id: 'write-agenda', name: 'life_journal', args: { action: 'write_agenda' } }, makeCtx())
 
     assert.equal(JSON.parse(writes[0]!).sideEffect, true)
     assert.equal(JSON.parse(writes[1]!).sideEffect, false)
     assert.equal(JSON.parse(writes[2]!).sideEffect, false)
     assert.equal(JSON.parse(writes[3]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[4]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[5]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[6]!).sideEffect, true)
   })
 
   test('classifies skill_editor write actions as side effects', async () => {
     const writes: string[] = []
-    const skillEditor: Tool<{ action: 'draft' | 'validate' | 'install' | 'list_drafts' | 'read_draft' }> = {
+    const skillEditor: Tool<{ action: 'draft' | 'validate' | 'install' | 'list_drafts' | 'read_draft' | 'delete_draft' }> = {
       name: 'skill_editor',
       description: 'skill editor',
       schema: z.object({
-        action: z.enum(['draft', 'validate', 'install', 'list_drafts', 'read_draft']),
+        action: z.enum(['draft', 'validate', 'install', 'list_drafts', 'read_draft', 'delete_draft']),
       }),
       async execute() {
         return { content: JSON.stringify({ ok: true }) }
@@ -358,11 +424,13 @@ describe('createToolExecutor', () => {
     await exec.execute({ id: 'validate', name: 'skill_editor', args: { action: 'validate' } }, makeCtx())
     await exec.execute({ id: 'install', name: 'skill_editor', args: { action: 'install' } }, makeCtx())
     await exec.execute({ id: 'list', name: 'skill_editor', args: { action: 'list_drafts' } }, makeCtx())
+    await exec.execute({ id: 'delete', name: 'skill_editor', args: { action: 'delete_draft' } }, makeCtx())
 
     assert.equal(JSON.parse(writes[0]!).sideEffect, true)
     assert.equal(JSON.parse(writes[1]!).sideEffect, false)
     assert.equal(JSON.parse(writes[2]!).sideEffect, true)
     assert.equal(JSON.parse(writes[3]!).sideEffect, false)
+    assert.equal(JSON.parse(writes[4]!).sideEffect, true)
   })
 
   test('routes call to correct tool by name and validates args', async () => {

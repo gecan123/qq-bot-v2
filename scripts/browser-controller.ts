@@ -9,6 +9,8 @@ const profileDir = process.env.BOT_BROWSER_PROFILE_DIR?.trim() || 'data/browser-
 const artifactDir = process.env.BOT_BROWSER_ARTIFACT_DIR?.trim() || 'data/agent-workspace/browser'
 const actionLogPath = process.env.BOT_BROWSER_ACTION_LOG_PATH?.trim() || 'logs/browser-actions.ndjson'
 const actionTimeoutMs = parsePositiveInteger(process.env.BOT_BROWSER_ACTION_TIMEOUT_MS, 15_000)
+const artifactMaxFiles = parsePositiveInteger(process.env.BOT_BROWSER_ARTIFACT_MAX_FILES, 50)
+const artifactMaxAgeMs = parsePositiveInteger(process.env.BOT_BROWSER_ARTIFACT_MAX_AGE_MS, 14 * 24 * 60 * 60 * 1000)
 const headless = parseOptionalBoolean(process.env.BOT_BROWSER_HEADLESS)
 const humanize = parseOptionalBoolean(process.env.BOT_BROWSER_HUMANIZE)
 const humanPreset = parseHumanPreset(process.env.BOT_BROWSER_HUMAN_PRESET)
@@ -28,6 +30,8 @@ const controller = new BrowserController({
   artifactDir,
   actionLogPath,
   actionTimeoutMs,
+  artifactMaxFiles,
+  artifactMaxAgeMs,
   ...(headless != null ? { headless } : {}),
   ...(humanize != null ? { humanize } : {}),
   ...(humanPreset ? { humanPreset } : {}),

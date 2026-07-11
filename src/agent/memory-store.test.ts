@@ -4,6 +4,7 @@ import { access, mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promise
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  compactMemoryEntries,
   deleteMemoryFiles,
   listMemoryFiles,
   readMemoryFile,
@@ -39,7 +40,10 @@ describe('memory-store', () => {
       assert.match(raw, /scope: self/)
       assert.match(raw, /title: working-notes/)
       assert.match(raw, /updatedAt: 2026-06-27T00:00:00.000Z/)
-      assert.match(raw, /- 2026-06-27T00:00:00.000Z: 以后做本地记忆优先保持 tool result 有上限/)
+      assert.match(raw, /<!-- memory-entry/)
+      assert.match(raw, /- 以后做本地记忆优先保持 tool result 有上限/)
+      assert.match(result.entryId, /^mem_/)
+      assert.match(result.revision, /^[a-f0-9]{64}$/)
     })
   })
 
@@ -110,8 +114,9 @@ describe('memory-store', () => {
 
       assert.equal(result.ok, true)
       assert.equal(result.truncated, true)
-      assert.ok(result.content.length <= 120)
-      assert.match(result.content, /truncated/)
+      assert.equal(result.content.length, 80)
+      assert.equal(result.nextOffset, 80)
+      assert.match(result.revision, /^[a-f0-9]{64}$/)
     })
   })
 
@@ -199,6 +204,66 @@ describe('memory-store', () => {
       assert.equal(result.failed[0]!.file, '../outside.md')
       await assert.rejects(access(join(rootDir, 'memory', 'self', 'old.md')))
       assert.equal(await readFile(outside, 'utf8'), 'keep')
+    })
+  })
+
+  test('ignores old files and replaces them on the next write', async () => {
+    await withTempMemory(async (rootDir) => {
+      await mkdir(join(rootDir, 'memory', 'self'), { recursive: true })
+      await writeFile(
+        join(rootDir, 'memory', 'self', 'legacy.md'),
+        '---\nscope: self\ntitle: legacy\nupdatedAt: 2026-07-01T00:00:00.000Z\naliases: []\n---\n\n## 最近线索\n\n- 2026-07-01T00:00:00.000Z: wrong\n',
+        'utf8',
+      )
+      const before = await readMemoryFile({ rootDir }, { file: 'self/legacy.md' })
+      assert.deepEqual(before, { ok: false, error: 'memory file format is not supported' })
+      assert.equal((await searchMemoryEntries({ rootDir }, { keyword: 'wrong' })).matches.length, 0)
+      assert.equal((await listMemoryFiles({ rootDir })).skippedCorrupt, 1)
+
+      await writeMemoryEntry(
+        {
+          rootDir,
+          now: () => new Date('2026-07-02T00:00:00.000Z'),
+          id: () => 'new-entry',
+        },
+        { scope: 'self', title: 'legacy', content: 'new format only' },
+      )
+      const after = await readMemoryFile({ rootDir }, { file: 'self/legacy.md' })
+      assert.equal(after.ok, true)
+      if (!after.ok) return
+      assert.equal(after.entries[0]?.id, 'new-entry')
+      assert.equal(after.entries[0]?.content, 'new format only')
+      assert.doesNotMatch(after.content, /wrong/)
+      assert.match(after.content, /formatVersion: 1/)
+    })
+  })
+
+  test('compacts selected memory entries and preserves the rest', async () => {
+    await withTempMemory(async (rootDir) => {
+      let nextId = 0
+      const options = {
+        rootDir,
+        now: () => new Date('2026-07-02T00:00:00.000Z'),
+        id: () => `memory-${++nextId}`,
+      }
+      await writeMemoryEntry(options, { scope: 'self', title: 'notes', content: 'detail a' })
+      await writeMemoryEntry(options, { scope: 'self', title: 'notes', content: 'detail b' })
+      await writeMemoryEntry(options, { scope: 'self', title: 'notes', content: 'keep c' })
+      const before = await readMemoryFile({ rootDir }, { file: 'self/notes.md' })
+      assert.equal(before.ok, true)
+      if (!before.ok) return
+
+      const compacted = await compactMemoryEntries(options, {
+        file: 'self/notes.md',
+        entryIds: ['memory-1', 'memory-2'],
+        expectedRevision: before.revision,
+        content: 'combined',
+      })
+      const after = await readMemoryFile({ rootDir }, { file: 'self/notes.md' })
+      assert.equal(after.ok, true)
+      if (!after.ok) return
+      assert.equal(compacted.entryId, 'memory-4')
+      assert.deepEqual(after.entries.map((entry) => entry.id), ['memory-4', 'memory-3'])
     })
   })
 })

@@ -63,13 +63,13 @@ const TOOL_REGISTRY_MARKERS = [
   ['memoryTool', 'memory'],
   ['collectStickerTool', 'collect_sticker'],
   ['createWorkspaceBashTool', 'workspace_bash'],
+  ['workspaceFileTool', 'workspace_file'],
   ['maybeCreateBrowserTool', 'browser'],
   ['maybeCreateWebSearchTool', 'web_search'],
 ] as const
 
 const WORKSPACE_BASH_SUBCOMMAND_MARKERS = [
   ['parseHelpCommand', 'help'],
-  ['parseJournalCommand', 'journal'],
   ['parseDbToolCommand', 'db'],
   ['parseStyleCommand', 'style'],
   ['parseOpenbbCommand', 'openbb'],

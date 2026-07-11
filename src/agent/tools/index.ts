@@ -23,6 +23,7 @@ import { createAiToneTool } from './ai-tone.js'
 import { journalTool } from './journal.js'
 import { lifeJournalTool } from './life-journal.js'
 import { skillEditorTool } from './skill-editor.js'
+import { workspaceFileTool } from './workspace-file.js'
 import type { SendTargetPolicy } from '../send-target-policy.js'
 
 export interface BotToolDeps {
@@ -94,7 +95,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   if (website) {
     capabilities.push({
       name: 'website',
-      description: 'Luna 个人网站维护: 读取和写入 Astro 内容文件, 构建检查, commit 并 push 到配置分支.',
+      description: 'Luna 个人网站维护: 读取、写入、删除和移动 Astro 内容文件, 构建检查, commit 并 push 到配置分支.',
       tools: [website],
     })
   }
@@ -108,8 +109,13 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
 
   capabilities.push(
     {
+      name: 'workspace_management',
+      description: '普通私有工作文件: 分页读取、创建、覆盖、精确替换、删除和移动.',
+      tools: [workspaceFileTool],
+    },
+    {
       name: 'skill_management',
-      description: '运行时 skill 草稿、校验和安装.',
+      description: '运行时 skill 草稿的创建、删除、校验和安装.',
       tools: [skillEditorTool],
     },
     {

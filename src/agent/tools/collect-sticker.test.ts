@@ -36,15 +36,19 @@ describe('collect_sticker tool', () => {
   let originalMediaFindUnique: typeof prisma.media.findUnique
   let originalStickerUpsert: typeof prisma.stickerPool.upsert
   let originalStickerFindMany: typeof prisma.stickerPool.findMany
+  let originalStickerDeleteMany: typeof prisma.stickerPool.deleteMany
   let capturedFindMany: unknown
   let capturedUpsert: unknown
+  let capturedDeleteMany: unknown
 
   beforeEach(() => {
     capturedFindMany = null
     capturedUpsert = null
+    capturedDeleteMany = null
     originalMediaFindUnique = prisma.media.findUnique
     originalStickerUpsert = prisma.stickerPool.upsert
     originalStickerFindMany = prisma.stickerPool.findMany
+    originalStickerDeleteMany = prisma.stickerPool.deleteMany
     prisma.media.findUnique = (async () => ({
       mediaId: 101,
       descriptionRaw: { description: '自动描述' },
@@ -57,12 +61,17 @@ describe('collect_sticker tool', () => {
       capturedFindMany = args
       return rows
     }) as never
+    prisma.stickerPool.deleteMany = (async (args: unknown) => {
+      capturedDeleteMany = args
+      return { count: 1 }
+    }) as never
   })
 
   afterEach(() => {
     prisma.media.findUnique = originalMediaFindUnique
     prisma.stickerPool.upsert = originalStickerUpsert
     prisma.stickerPool.findMany = originalStickerFindMany
+    prisma.stickerPool.deleteMany = originalStickerDeleteMany
   })
 
   test('schema serializes cleanly to JSON Schema', () => {
@@ -201,5 +210,12 @@ describe('collect_sticker tool', () => {
         createdAt: true,
       },
     })
+  })
+
+  test('action=remove deletes only the sticker-pool row', async () => {
+    const result = await collectStickerTool.execute({ action: 'remove', mediaId: 101 }, makeCtx())
+    const parsed = JSON.parse(result.content as string) as { ok: boolean; action: string; mediaId: number }
+    assert.deepEqual(parsed, { ok: true, action: 'remove', mediaId: 101 })
+    assert.deepEqual(capturedDeleteMany, { where: { mediaId: 101 } })
   })
 })

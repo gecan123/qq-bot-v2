@@ -5,9 +5,14 @@ import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, test } from 'node:test'
 import {
   appendJournalRecord,
+  compactJournalRecords,
+  deleteJournalRecord,
+  JournalStoreError,
   listJournalRecords,
   readJournalRecord,
+  readJournalRecordSnapshot,
   searchJournalRecords,
+  updateJournalRecord,
   type JournalStoreOptions,
 } from './journal-store.js'
 
@@ -112,6 +117,47 @@ describe('workspace journal store', () => {
       content: 'Alpha beta',
       createdAt: '2026-06-22T01:00:00.000Z',
     })
+  })
+
+  test('updates and deletes records with revision protection', async () => {
+    await appendJournalRecord(storeOptions('a'), { kind: 'diary', content: 'wrong' })
+    await appendJournalRecord(storeOptions('b'), { kind: 'diary', content: 'keep' })
+    const before = await readJournalRecordSnapshot({ rootDir }, 'a')
+
+    const updated = await updateJournalRecord({
+      rootDir,
+      entryId: 'a',
+      expectedRevision: before!.revision,
+      content: 'corrected',
+    })
+    assert.equal(updated.entry.content, 'corrected')
+
+    await assert.rejects(
+      deleteJournalRecord({ rootDir, entryId: 'b', expectedRevision: before!.revision }),
+      (error: unknown) => error instanceof JournalStoreError && error.code === 'revision_conflict',
+    )
+    const latest = await readJournalRecordSnapshot({ rootDir }, 'b')
+    await deleteJournalRecord({ rootDir, entryId: 'b', expectedRevision: latest!.revision })
+    assert.equal((await readJournalRecord({ rootDir }, 'b')).entry, null)
+  })
+
+  test('compacts selected records and preserves unselected records', async () => {
+    await appendJournalRecord(storeOptions('a'), { kind: 'diary', content: 'detail a' })
+    await appendJournalRecord(storeOptions('b'), { kind: 'diary', content: 'detail b' })
+    await appendJournalRecord(storeOptions('c'), { kind: 'diary', content: 'keep c' })
+    const before = await readJournalRecordSnapshot({ rootDir }, 'a')
+
+    const result = await compactJournalRecords({
+      rootDir,
+      now: () => new Date('2026-06-23T02:00:00.000Z'),
+      id: () => 'compact',
+      ids: ['a', 'b'],
+      expectedRevision: before!.revision,
+      content: 'combined',
+    })
+
+    assert.equal(result.entry.id, 'compact')
+    assert.deepEqual((await listJournalRecords({ rootDir })).entries.map((entry) => entry.id), ['compact', 'c'])
   })
 
   test('corrupt Markdown journal sections are skipped and reported through skippedCorrupt', async () => {

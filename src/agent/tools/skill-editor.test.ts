@@ -49,6 +49,14 @@ describe('skill_editor tool', () => {
       assert.match(raw, /name: research_hygiene/)
       assert.match(raw, /description: 外部研究上下文卫生/)
       assert.match(raw, /# Research Hygiene/)
+
+      const deletedDraft = JSON.parse((await tool.execute({
+        action: 'delete_draft',
+        name: 'research_hygiene',
+      }, undefined as never)).content as string) as { ok: boolean }
+      assert.equal(deletedDraft.ok, true)
+      const installedRaw = await readFile(join(skillsDir, 'research_hygiene.md'), 'utf8')
+      assert.match(installedRaw, /# Research Hygiene/)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

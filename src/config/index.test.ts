@@ -48,6 +48,7 @@ describe('config', () => {
       LLM_PROVIDER_GEMINI_API_KEY: 'gemini-key',
       LLM_SCENARIO_DESCRIBE_IMAGE_PROVIDER: 'gemini',
       LLM_SCENARIO_DESCRIBE_IMAGE_MODEL: 'gemini-3-flash-preview',
+      LLM_SCENARIO_DESCRIBE_IMAGE_REASONING_EFFORT: 'low',
       LLM_SCENARIO_TRANSCRIBE_AUDIO_PROVIDER: 'gemini',
       LLM_SCENARIO_TRANSCRIBE_AUDIO_MODEL: 'gemini-3-flash-preview',
     }))
@@ -65,7 +66,17 @@ describe('config', () => {
     assert.deepEqual(config.llm.scenarios.describeImage, {
       provider: 'gemini',
       model: 'gemini-3-flash-preview',
+      reasoningEffort: 'low',
     })
+  })
+
+  test('rejects unsupported scenario reasoning effort', () => {
+    assert.throws(
+      () => parseConfig(createBaseEnv({
+        LLM_SCENARIO_DESCRIBE_IMAGE_REASONING_EFFORT: 'ultra',
+      })),
+      /LLM_SCENARIO_DESCRIBE_IMAGE_REASONING_EFFORT/,
+    )
   })
 
   test('parses Claude tool choice override for Anthropic-compatible providers', () => {

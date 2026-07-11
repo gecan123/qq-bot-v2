@@ -1,10 +1,10 @@
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { BrowserController, buildCloakLaunchOptions } from './controller.js'
+import { BrowserController, buildCloakLaunchOptions, pruneBrowserArtifacts } from './controller.js'
 
 const RUN_REAL_BROWSER = process.env.BOT_BROWSER_REAL_TESTS === '1'
 
@@ -39,6 +39,32 @@ describe('buildCloakLaunchOptions', () => {
         args: ['--fingerprint=12345'],
       },
     )
+  })
+})
+
+describe('pruneBrowserArtifacts', () => {
+  it('removes artifacts by age and count', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'browser-artifacts-'))
+    try {
+      await mkdir(join(root, 'screenshots'), { recursive: true })
+      await writeFile(join(root, 'keep.txt'), 'not controller owned')
+      for (const name of ['a.png', 'b.png', 'old.png']) {
+        await writeFile(join(root, 'screenshots', name), name)
+      }
+      const old = new Date('2026-06-01T00:00:00.000Z')
+      await utimes(join(root, 'screenshots', 'old.png'), old, old)
+
+      const result = await pruneBrowserArtifacts(root, {
+        maxFiles: 1,
+        maxAgeMs: 14 * 24 * 60 * 60 * 1000,
+        now: () => new Date('2026-07-11T00:00:00.000Z'),
+      })
+      assert.equal(result.removed.length, 2)
+      assert.equal((await readdir(join(root, 'screenshots'))).length, 1)
+      assert.equal(await readdir(root).then((entries) => entries.includes('keep.txt')), true)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })
 

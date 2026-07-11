@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
-import { mkdir, writeFile, appendFile } from 'node:fs/promises'
-import { dirname, isAbsolute, normalize, resolve } from 'node:path'
+import { mkdir } from 'node:fs/promises'
+import { isAbsolute, normalize, resolve } from 'node:path'
 import { z } from 'zod'
 import type { Tool } from '../tool.js'
 import type { DbReadResult, ExecuteDbReadParams } from '../../database/agent-sql.js'
@@ -11,14 +11,6 @@ import { createChatStyleTool } from './chat-style.js'
 import { isAllowedOpenbbCommand, maybeCreateOpenbbCliTool } from './openbb-cli.js'
 import { createFetchContentTool } from './fetch-content.js'
 import { predictAiTone, type AiTonePrediction, type AiTonePredictor } from './ai-tone.js'
-import {
-  appendJournalRecord,
-  listJournalRecords,
-  readJournalRecord,
-  searchJournalRecords,
-  type JournalKind,
-  type JournalRecord,
-} from '../journal-store.js'
 
 const DEFAULT_WORKSPACE_DIR = 'data/agent-workspace'
 const DEFAULT_TIMEOUT_MS = 5_000
@@ -37,9 +29,6 @@ const WORKSPACE_COMMANDS = new Set([
   'head',
   'tail',
   'wc',
-  'mkdir',
-  'touch',
-  'printf',
 ])
 
 const REPO_READ_COMMANDS = new Set([
@@ -65,13 +54,13 @@ const argsSchema = z.object({
   cwd: z
     .enum(['workspace', 'repo'])
     .default('workspace')
-    .describe('执行视图. workspace=私有工作区, 可写; repo=仓库代码只读视图, 只能读代码/文档, 不能写.'),
+    .describe('执行视图. workspace=私有工作区只读视图和受控子命令; repo=仓库代码只读视图.'),
   command: z
     .string()
     .trim()
     .min(1)
     .max(2000)
-    .describe('受限 Bash 命令. workspace 可操作 data/agent-workspace; repo 可只读查看仓库代码; 内置 journal/db/style/ai_tone 子命令走专用 wrapper.'),
+    .describe('受限 Bash 命令. workspace 和 repo 的普通文件命令只读; 内置 db/style/fetch/ai_tone 子命令走专用 wrapper.'),
 })
 
 type Args = {
@@ -85,7 +74,6 @@ export interface ParsedWorkspaceCommand {
   cwd: 'workspace' | 'repo'
   command: string
   args: string[]
-  redirect?: { mode: 'write' | 'append'; path: string }
 }
 
 export interface ParsedDbToolCommand {
@@ -136,23 +124,11 @@ export interface ParsedAiToneCommand {
   threshold?: number
 }
 
-export interface ParsedJournalCommand {
-  ok: true
-  kind: 'journal'
-  cwd: 'workspace'
-  action: 'write' | 'list' | 'search' | 'read'
-  kindArg?: JournalKind
-  content?: string
-  query?: string
-  id?: string
-  limit?: number
-}
-
 export interface ParsedHelpCommand {
   ok: true
   kind: 'help'
   cwd: 'workspace'
-  topic?: 'workspace' | 'repo' | 'journal' | 'db' | 'style' | 'openbb' | 'fetch' | 'ai_tone'
+  topic?: 'workspace' | 'repo' | 'db' | 'style' | 'openbb' | 'fetch' | 'ai_tone'
 }
 
 export type ParsedWorkspaceBashCommand =
@@ -162,7 +138,6 @@ export type ParsedWorkspaceBashCommand =
   | ParsedOpenbbCommand
   | ParsedFetchCommand
   | ParsedAiToneCommand
-  | ParsedJournalCommand
   | ParsedHelpCommand
   | { ok: false; error: string }
 
@@ -265,14 +240,6 @@ function hasEnvLikePathSegment(value: string): boolean {
     .some((segment) => segment === '.env' || segment.startsWith('.env.'))
 }
 
-function isProtectedWorkspaceWritePath(value: string): boolean {
-  const normalized = normalize(value).replace(/\\/g, '/')
-  return normalized === 'journal'
-    || normalized.startsWith('journal/')
-    || normalized === 'memory'
-    || normalized.startsWith('memory/')
-}
-
 function isSafeRepoPath(value: string): boolean {
   if (!isSafeRelativePath(value)) return false
   const normalized = normalize(value).replace(/\\/g, '/')
@@ -287,16 +254,6 @@ function tokenLooksLikePath(token: string): boolean {
 function validateWorkspaceArgs(command: string, args: string[]): string | null {
   if (command === 'pwd') {
     return args.length === 0 ? null : 'pwd does not accept arguments'
-  }
-
-  if (command === 'printf') return null
-
-  if (command === 'mkdir' || command === 'touch') {
-    for (const arg of args) {
-      if (!arg.startsWith('-') && isProtectedWorkspaceWritePath(arg)) {
-        return `workspace path is managed by a dedicated tool: ${arg}`
-      }
-    }
   }
 
   for (const arg of args) {
@@ -341,79 +298,6 @@ function validateRepoArgs(command: string, args: string[]): string | null {
   return null
 }
 
-function parseJournalKind(value: string | undefined): JournalKind | null {
-  return value === 'diary' || value === 'dream' ? value : null
-}
-
-function parseLimit(value: string | undefined): number | null {
-  if (value == null) return null
-  if (!/^[1-9]\d*$/.test(value)) return null
-  const parsed = Number(value)
-  return parsed >= 1 && parsed <= 20 ? parsed : null
-}
-
-function parseOptionalKindAndLimit(tokens: string[]): { kindArg?: JournalKind; limit?: number } | { error: string } {
-  if (tokens.length > 2) return { error: 'journal command has too many arguments' }
-  let kindArg: JournalKind | undefined
-  let limit: number | undefined
-
-  for (const token of tokens) {
-    const parsedKind = parseJournalKind(token)
-    if (parsedKind) {
-      if (kindArg) return { error: 'journal kind specified more than once' }
-      kindArg = parsedKind
-      continue
-    }
-    const parsedLimit = parseLimit(token)
-    if (parsedLimit != null) {
-      if (limit != null) return { error: 'journal limit specified more than once' }
-      limit = parsedLimit
-      continue
-    }
-    return { error: `invalid journal argument: ${token}` }
-  }
-
-  return { ...(kindArg ? { kindArg } : {}), ...(limit != null ? { limit } : {}) }
-}
-
-function parseJournalCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedJournalCommand | { ok: false; error: string } {
-  if (cwd !== 'workspace') return { ok: false, error: 'journal is only available in workspace mode' }
-  if (tokens.includes('>') || tokens.includes('>>')) return { ok: false, error: 'journal does not support redirection' }
-
-  const action = tokens[1]
-  if (action === 'write') {
-    const kindArg = parseJournalKind(tokens[2])
-    if (!kindArg) return { ok: false, error: 'journal write requires kind diary or dream' }
-    const content = tokens.slice(3).join(' ').trim()
-    if (!content) return { ok: false, error: 'journal write requires content' }
-    if (content.length > 2000) return { ok: false, error: 'journal content exceeds 2000 chars' }
-    return { ok: true, kind: 'journal', cwd: 'workspace', action, kindArg, content }
-  }
-
-  if (action === 'list') {
-    const parsed = parseOptionalKindAndLimit(tokens.slice(2))
-    if ('error' in parsed) return { ok: false, error: parsed.error }
-    return { ok: true, kind: 'journal', cwd: 'workspace', action, ...parsed }
-  }
-
-  if (action === 'search') {
-    const query = tokens[2]?.trim()
-    if (!query) return { ok: false, error: 'journal search requires query' }
-    if (query.length > 100) return { ok: false, error: 'journal query exceeds 100 chars' }
-    const parsed = parseOptionalKindAndLimit(tokens.slice(3))
-    if ('error' in parsed) return { ok: false, error: parsed.error }
-    return { ok: true, kind: 'journal', cwd: 'workspace', action, query, ...parsed }
-  }
-
-  if (action === 'read') {
-    const id = tokens[2]?.trim()
-    if (!id || tokens.length !== 3) return { ok: false, error: 'journal read requires exactly one id' }
-    return { ok: true, kind: 'journal', cwd: 'workspace', action, id }
-  }
-
-  return { ok: false, error: 'journal action must be write, list, search, or read' }
-}
-
 function parseHelpCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedHelpCommand | { ok: false; error: string } {
   if (cwd !== 'workspace') return { ok: false, error: 'help is only available in workspace mode' }
   if (tokens.length > 2) return { ok: false, error: 'help accepts at most one topic' }
@@ -422,7 +306,6 @@ function parseHelpCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedHe
   if (
     topic === 'workspace'
     || topic === 'repo'
-    || topic === 'journal'
     || topic === 'db'
     || topic === 'style'
     || topic === 'openbb'
@@ -431,7 +314,7 @@ function parseHelpCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedHe
   ) {
     return { ok: true, kind: 'help', cwd: 'workspace', topic }
   }
-  return { ok: false, error: 'help topic must be workspace, repo, journal, db, style, openbb, fetch, or ai_tone' }
+  return { ok: false, error: 'help topic must be workspace, repo, db, style, openbb, fetch, or ai_tone' }
 }
 
 function parseDbToolCommand(
@@ -683,10 +566,6 @@ export function parseWorkspaceBashCommand(
     return parseHelpCommand(tokens, cwd)
   }
 
-  if (tokens[0] === 'journal') {
-    return parseJournalCommand(tokens, cwd)
-  }
-
   if (tokens[0] === 'db') {
     return parseDbToolCommand(tokens, cwd, trimmed)
   }
@@ -713,22 +592,10 @@ export function parseWorkspaceBashCommand(
     return { ok: false, error: `command is not allowed: ${executable}` }
   }
 
-  let args = tokens.slice(1)
-  let redirect: ParsedWorkspaceCommand['redirect']
+  const args = tokens.slice(1)
   const redirectIndex = args.findIndex((arg) => arg === '>' || arg === '>>')
   if (redirectIndex >= 0) {
-    if (cwd === 'repo') return { ok: false, error: 'repo view is read-only' }
-    const op = args[redirectIndex]
-    const target = args[redirectIndex + 1]
-    if (!target || args.length !== redirectIndex + 2) {
-      return { ok: false, error: 'redirection must be the final operation' }
-    }
-    if (!isSafeRelativePath(target)) return { ok: false, error: `redirect path is not allowed: ${target}` }
-    if (isProtectedWorkspaceWritePath(target)) {
-      return { ok: false, error: `workspace path is managed by a dedicated tool: ${target}` }
-    }
-    redirect = { mode: op === '>>' ? 'append' : 'write', path: target }
-    args = args.slice(0, redirectIndex)
+    return { ok: false, error: cwd === 'repo' ? 'repo view is read-only' : 'workspace writes require workspace_file' }
   }
 
   const argError = cwd === 'repo'
@@ -736,7 +603,7 @@ export function parseWorkspaceBashCommand(
     : validateWorkspaceArgs(executable, args)
   if (argError) return { ok: false, error: argError }
 
-  return { ok: true, kind: 'workspace', cwd, command: executable, args, ...(redirect ? { redirect } : {}) }
+  return { ok: true, kind: 'workspace', cwd, command: executable, args }
 }
 
 function minimalEnv(): Record<string, string> {
@@ -771,36 +638,10 @@ function renderCommandEnvelope(
   })
 }
 
-function safeResolve(workspaceDir: string, target: string): string {
-  const root = resolve(workspaceDir)
-  const resolved = resolve(root, target)
-  if (resolved !== root && !resolved.startsWith(`${root}/`)) {
-    throw new Error(`path escapes workspace: ${target}`)
-  }
-  return resolved
-}
-
-function boundedJournalLimit(limit: number | undefined): number {
-  return limit == null ? 10 : Math.min(limit, 20)
-}
-
-function journalPreview(content: string): string {
-  return content.length <= 200 ? content : `${content.slice(0, 200)}…`
-}
-
-function renderJournalEntries(entries: JournalRecord[]) {
-  return entries.map((entry) => ({
-    id: entry.id,
-    kind: entry.kind,
-    createdAt: entry.createdAt,
-    preview: journalPreview(entry.content),
-  }))
-}
-
 function renderHelpCommand(parsed: ParsedHelpCommand): WorkspaceBashRunResult {
   const topics = {
     workspace: {
-      purpose: '私有工作区文件整理, cwd 默认就是 workspace.',
+      purpose: '私有工作区只读查看, cwd 默认就是 workspace; 普通文件修改请激活 workspace_management 后调用 workspace_file.',
       commands: [
         'pwd',
         'ls [path]',
@@ -809,9 +650,6 @@ function renderHelpCommand(parsed: ParsedHelpCommand): WorkspaceBashRunResult {
         'head <path>',
         'tail <path>',
         'wc <path>',
-        'mkdir <path>',
-        'touch <path>',
-        'printf <text> > <path>',
       ],
     },
     repo: {
@@ -825,15 +663,6 @@ function renderHelpCommand(parsed: ParsedHelpCommand): WorkspaceBashRunResult {
         'head <path>',
         'tail <path>',
         'wc <path>',
-      ],
-    },
-    journal: {
-      purpose: '写入和回顾日记/梦境, 存在 private workspace 的按月 Markdown 文件中; 写入必须走 journal 子命令.',
-      commands: [
-        'journal write diary|dream <content>',
-        'journal list [diary|dream] [limit]',
-        'journal search <query> [diary|dream] [limit]',
-        'journal read <id>',
       ],
     },
     db: {
@@ -881,9 +710,7 @@ function renderHelpCommand(parsed: ParsedHelpCommand): WorkspaceBashRunResult {
       ok: true,
       topics: Object.keys(topics),
       examples: [
-        'help journal',
         'help fetch',
-        'journal list 5',
         'fetch url https://example.com "要点"',
         'fetch reddit list technology hot 5',
         'db schema',
@@ -910,84 +737,6 @@ function fetchArgsFromParsed(parsed: ParsedFetchCommand): Record<string, unknown
     return { action: 'reddit_list', subreddit: parsed.subreddit, sort: parsed.sort, limit: parsed.limit }
   }
   return { action: 'reddit_post', url: parsed.url }
-}
-
-async function runJournalCommand(parsed: ParsedJournalCommand, rootDir: string): Promise<WorkspaceBashRunResult> {
-  if (parsed.action === 'write') {
-    const entry = await appendJournalRecord(
-      { rootDir },
-      { kind: parsed.kindArg!, content: parsed.content! },
-    )
-    return {
-      exitCode: 0,
-      stdout: JSON.stringify({ ok: true, id: entry.id, kind: entry.kind }),
-      stderr: '',
-      timedOut: false,
-    }
-  }
-
-  if (parsed.action === 'list') {
-    const result = await listJournalRecords(
-      { rootDir },
-      { kind: parsed.kindArg, limit: boundedJournalLimit(parsed.limit) },
-    )
-    return {
-      exitCode: 0,
-      stdout: JSON.stringify({
-        ok: true,
-        action: 'list',
-        entries: renderJournalEntries(result.entries),
-        skippedCorrupt: result.skippedCorrupt,
-      }),
-      stderr: '',
-      timedOut: false,
-    }
-  }
-
-  if (parsed.action === 'search') {
-    const result = await searchJournalRecords(
-      { rootDir },
-      { query: parsed.query!, kind: parsed.kindArg, limit: boundedJournalLimit(parsed.limit) },
-    )
-    return {
-      exitCode: 0,
-      stdout: JSON.stringify({
-        ok: true,
-        action: 'search',
-        query: parsed.query,
-        entries: renderJournalEntries(result.entries),
-        skippedCorrupt: result.skippedCorrupt,
-      }),
-      stderr: '',
-      timedOut: false,
-    }
-  }
-
-  const result = await readJournalRecord({ rootDir }, parsed.id!)
-  if (!result.entry) {
-    return {
-      exitCode: 0,
-      stdout: JSON.stringify({
-        ok: false,
-        action: 'read',
-        id: parsed.id,
-        error: 'journal entry not found',
-      }),
-      stderr: '',
-      timedOut: false,
-    }
-  }
-  return {
-    exitCode: 0,
-    stdout: JSON.stringify({
-      ok: true,
-      action: 'read',
-      entry: result.entry,
-      skippedCorrupt: result.skippedCorrupt,
-    }),
-    stderr: '',
-    timedOut: false,
-  }
 }
 
 export async function runCommand(input: WorkspaceBashRunInput): Promise<WorkspaceBashRunResult> {
@@ -1039,7 +788,7 @@ export async function runCommand(input: WorkspaceBashRunInput): Promise<Workspac
 }
 
 export async function runWorkspaceBashCommand(
-  parsed: ParsedWorkspaceCommand | ParsedJournalCommand | ParsedHelpCommand,
+  parsed: ParsedWorkspaceCommand | ParsedHelpCommand,
   options: {
     workspaceDir: string
     repoDir: string
@@ -1050,10 +799,6 @@ export async function runWorkspaceBashCommand(
 ): Promise<WorkspaceBashRunResult> {
   const runner = options.runner ?? runCommand
   await mkdir(options.workspaceDir, { recursive: true })
-
-  if (parsed.kind === 'journal') {
-    return await runJournalCommand(parsed, options.workspaceDir)
-  }
 
   if (parsed.kind === 'help') {
     return renderHelpCommand(parsed)
@@ -1070,14 +815,6 @@ export async function runWorkspaceBashCommand(
   }
   const result = await runner(runInput)
 
-  if (parsed.redirect && parsed.cwd === 'workspace' && result.exitCode === 0 && !result.timedOut) {
-    const target = safeResolve(options.workspaceDir, parsed.redirect.path)
-    await mkdir(dirname(target), { recursive: true })
-    if (parsed.redirect.mode === 'append') await appendFile(target, result.stdout, 'utf8')
-    else await writeFile(target, result.stdout, 'utf8')
-    return { ...result, stdout: '' }
-  }
-
   return result
 }
 
@@ -1091,9 +828,6 @@ function commandErrorGuidance(error: string): { help: string; try: string } {
   }
   if (error.startsWith('db ')) {
     return { help: 'help db', try: 'db query {"sql":"SELECT 1"}' }
-  }
-  if (error.startsWith('journal ')) {
-    return { help: 'help journal', try: 'journal list 5' }
   }
   if (error.startsWith('style ')) {
     return { help: 'help style', try: 'style global' }
@@ -1128,11 +862,10 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
   return {
     name: 'workspace_bash',
     description: [
-      '受限 Bash. 默认 cwd=workspace, 用来整理你的私有工作文件、日记、梦、草稿和索引; 也可 cwd=repo 只读查看自己的仓库代码.',
-      'workspace 允许少量文件命令: pwd/ls/rg/cat/head/tail/wc/mkdir/touch/printf; 还提供内置子命令: help、journal、db、style、ai_tone.',
+      '受限 Bash. 默认 cwd=workspace, 用来只读查看私有工作文件; 也可 cwd=repo 只读查看自己的仓库代码.',
+      'workspace 允许少量只读文件命令: pwd/ls/rg/cat/head/tail/wc; 普通文件写入、替换、删除和移动使用 deferred workspace_file.',
       'repo 只允许读命令: pwd/ls/rg/cat/head/tail/wc; rg 支持普通搜索和 --files, 不能写, 也不能读 .env/logs/node_modules/.git/data/prompts/groups.yaml.',
-      '可以用重定向把 printf 输出写入工作区文件, 例如 `printf "..." > notes/today.md`.',
-      '常用路由不用先 help: 看 repo 传 cwd=repo 后用 `rg --files src` / `rg <pattern> src` / `cat <path>`; 查历史先 `db schema` 再用 `db query {"sql":"SELECT 1","params":{}}`; 日记/梦境用 `journal write|list|search|read`; 抓网页用 `fetch url <url> [hint]`; 看 reddit 用 `fetch reddit list technology hot 5`.',
+      '常用路由不用先 help: 看 repo 传 cwd=repo 后用 `rg --files src` / `rg <pattern> src` / `cat <path>`; 查历史先 `db schema` 再用 `db query {"sql":"SELECT 1","params":{}}`; 抓网页用 `fetch url <url> [hint]`; 看 reddit 用 `fetch reddit list technology hot 5`.',
       '不确定语法时先用 `help` 或 `help <topic>`; 聊天约束/风格用 `style global constraints|base|anti_patterns|special_cases` 或 `style group`; AI 腔调检测用 `ai_tone <json>`.',
       '数据库仍只读; ai_tone 只走内置模型; 不允许 psql/curl/node/cat .env/路径逃逸/任意 shell 组合.',
     ].join(' '),

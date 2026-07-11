@@ -12,7 +12,12 @@ describe('OpenAIProvider media file inputs', () => {
 
   test('describeImage requests structured output and formats moderate rich description text', async () => {
     const calls: any[] = []
-    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')
+    const provider = new OpenAIProvider(
+      'http://127.0.0.1:8317/v1',
+      'sk-local',
+      'gpt-5.6-luna',
+      { reasoningEffort: 'low' },
+    )
     ;(provider as any).client = {
       chat: {
         completions: {
@@ -48,6 +53,7 @@ describe('OpenAIProvider media file inputs', () => {
     assert.equal(calls.length, 1)
     assert.equal(calls[0].response_format.type, 'json_schema')
     assert.equal(calls[0].response_format.json_schema.name, 'image_description')
+    assert.equal(calls[0].reasoning_effort, 'low')
     assert.equal(calls[0].messages[1].content[0].text, '请描述这张图片：')
     assert.match(result, /微信群聊天截图/)
     assert.match(result, /讨论去静安寺附近吃火锅/)
@@ -210,7 +216,12 @@ describe('OpenAIProvider media file inputs', () => {
 
   test('describeVideo sends video as file input', async () => {
     const calls: any[] = []
-    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')
+    const provider = new OpenAIProvider(
+      'http://127.0.0.1:8317/v1',
+      'sk-local',
+      'gpt-5.1',
+      { reasoningEffort: 'medium' },
+    )
     ;(provider as any).client = {
       chat: {
         completions: {
@@ -248,6 +259,7 @@ describe('OpenAIProvider media file inputs', () => {
     assert.equal(calls.length, 1)
     assert.equal(calls[0].response_format.type, 'json_schema')
     assert.equal(calls[0].response_format.json_schema.name, 'video_description')
+    assert.equal(calls[0].reasoning_effort, 'medium')
     assert.equal(calls[0].messages[1].content[1].type, 'file')
     assert.equal(calls[0].messages[1].content[1].file.filename, 'clip.mp4')
     assert.ok(typeof calls[0].messages[1].content[1].file.file_data === 'string')
@@ -255,7 +267,12 @@ describe('OpenAIProvider media file inputs', () => {
 
   test('describePdf sends pdf as file input', async () => {
     const calls: any[] = []
-    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')
+    const provider = new OpenAIProvider(
+      'http://127.0.0.1:8317/v1',
+      'sk-local',
+      'gpt-5.1',
+      { reasoningEffort: 'minimal' },
+    )
     ;(provider as any).client = {
       chat: {
         completions: {
@@ -275,6 +292,7 @@ describe('OpenAIProvider media file inputs', () => {
 
     assert.equal(result, 'PDF内容摘要')
     assert.equal(calls.length, 1)
+    assert.equal(calls[0].reasoning_effort, 'minimal')
     assert.equal(calls[0].messages[1].content[1].type, 'file')
     assert.equal(calls[0].messages[1].content[1].file.filename, 'doc.pdf')
     assert.ok(typeof calls[0].messages[1].content[1].file.file_data === 'string')
@@ -282,7 +300,12 @@ describe('OpenAIProvider media file inputs', () => {
 
   test('transcribeAudio requests structured output and returns transcription text', async () => {
     const calls: any[] = []
-    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.1')
+    const provider = new OpenAIProvider(
+      'http://127.0.0.1:8317/v1',
+      'sk-local',
+      'gpt-5.1',
+      { reasoningEffort: 'low' },
+    )
     ;(provider as any).client = {
       chat: {
         completions: {
@@ -312,6 +335,7 @@ describe('OpenAIProvider media file inputs', () => {
     assert.equal(calls.length, 1)
     assert.equal(calls[0].response_format.type, 'json_schema')
     assert.equal(calls[0].response_format.json_schema.name, 'audio_transcription')
+    assert.equal(calls[0].reasoning_effort, 'low')
     assert.equal(calls[0].messages[0].content[1].type, 'input_audio')
   })
 

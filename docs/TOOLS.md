@@ -9,10 +9,10 @@
 - 发送：`send_message`。
 - 稳定按需壳：`help`（`list` / `describe` / `activate` / `deactivate` capability 或内部工具 schema）和 `invoke`（调用已激活 capability 内部工具）。激活不会改变下一轮顶层 tools 列表。
 - 知识和历史：`memory`（本地 Markdown 长期记忆库，支持 self/person/group/topic）、`journal`（日记/梦境）、`life_journal`（主动 Life Journal / Agenda）、`skill`、`inbox`（list/read 多来源消息正文）、`workspace_bash` 内置的 `help` / `db` / `style` 子命令。
-- 表情包：`collect_sticker`（收藏、列表、搜索和随机候选）。
+- 表情包：`collect_sticker`（收藏、移除、列表、搜索和随机候选）。
 - 外部内容：`workspace_bash` 内置的 `fetch` 子命令（url/image/avatar/reddit list/reddit post）、配置后可用的 `web_search`、`workspace_bash` 内置的 `openbb` 子命令。
 - 风格和文本判断：`chat_style` 按需读取聊天约束/风格/群定制；`ai_tone` 用本地 AIRadar 模型判断中文文本更像 AI 腔调还是人味。
-- 运行时工作：`background_task`（通用异步任务 list/get；get 的文本结果有通用上限）、`workspace_bash`。
+- 运行时工作：`background_task`（通用异步任务 list/get；get 的文本结果有通用上限）、只读 `workspace_bash`；普通私有工作文件通过 deferred `workspace_management` 内的 `workspace_file` 修改。
 
 ## Deferred capability
 
@@ -23,6 +23,7 @@
 - `media_generation`：内部工具是 `generate_image`，创建图片生成/编辑后台任务，后续用 `background_task` 查结果。
 - `media_fetch`：内部工具是 `fetch_content` 的图片 URL / QQ 头像抓取能力。
 - `skill_management`：内部工具是 `skill_editor`，用于运行时 skill 草稿、校验和安装。
+- `workspace_management`：内部工具是 `workspace_file`，用于普通私有文本工作文件的分页读取、创建、覆盖、精确替换、删除和移动。
 - 激活状态保存在 `BotAgentSnapshot.contextSnapshot.activeToolCapabilities`，用于进程重启后恢复可调用能力；它不是 LLM 可见事实，不写入 `messages`，也不改变顶层 tools 列表。
 - `invoke` 的 schema/capability resolution 是内部路由，不单独记成功 trace。已激活调用只记录一次真实目标工具结果；inactive、unknown 或壳参数失败只记录一次失败的 `invoke`，hooks 也只围绕最终执行路径运行一次。
 
@@ -41,12 +42,13 @@
 - sidecar 使用 CloakBrowser `launchPersistentContext()`，默认 headed、persistent profile、`humanize=true`。
 - CloakBrowser 启动参数走 `.env.example` 里的 `BOT_BROWSER_*`：`HEADLESS`、`HUMANIZE`、`HUMAN_PRESET`、`PROXY`、`GEOIP`、`TIMEZONE`、`LOCALE`、`ARGS`、`EXTENSION_PATHS`。
 - screenshot 返回压缩 image block 并进入 `AgentContext`；artifact 和 action log 留在磁盘，不从日志重建 replay。
+- browser artifact 默认最多保留 50 个且最长 14 天；每次新增截图、下载或 annotation 后，只清理 controller-owned 的 `screenshots/`、`downloads/`、`annotations/`，配置项是 `BOT_BROWSER_ARTIFACT_MAX_FILES` / `BOT_BROWSER_ARTIFACT_MAX_AGE_MS`。清理失败记 warning，但不让当前浏览动作失败。
 - 登录、2FA、账号安全、OAuth、支付、可执行/压缩包下载等高风险动作必须请求 owner help；普通浏览、cookie consent、Cloudflare/Turnstile/人机按钮可自主处理。
 
 ## Website
 
 - 网站源码放在独立 Astro 仓库中；owner 负责首次建站、Git 认证、Vercel 项目和域名，bot 通过 `BOT_WEBSITE_REPO_DIR` 访问本机 checkout。
-- `website action=status|read|write|publish` 分别用于查看状态、读取、写入和发布。`BOT_WEBSITE_PUBLIC_URL` 仅用于状态/发布结果提示，不参与部署鉴权。
+- `website action=status|read|write|delete|move|publish` 分别用于查看状态、读取、写入、删除、移动和发布。读取返回 revision；覆盖、删除或移动已有文件必须带最新 revision。`BOT_WEBSITE_PUBLIC_URL` 仅用于状态/发布结果提示，不参与部署鉴权。
 - 读写路径只允许 `src/content/**`、`src/pages/about.astro`、`src/styles/tokens.css`、`src/styles/components.css` 和 `public/images/**` 中受支持的文件类型；绝对路径、隐藏路径、路径逃逸、符号链接和非普通文件会被拒绝。
 - `publish` 只接受配置分支上的允许路径变更；先运行 `BOT_WEBSITE_CHECK_COMMAND`，再次校验工作区和暂存区，再 commit 并 push。Vercel 由网站仓库的 push 自动触发。
 
@@ -60,20 +62,21 @@
 - 群 `send_message` 最终失败后才按需查询机器人自身的当前禁言状态；确认命中时 tool result 返回 `reason=group_muted` 和可用的 `mutedUntil`，否则返回 `reason=send_failed`。该事实不缓存，也不会阻止后续真实发送。
 - 外部工具必须有输出上限、超时和审计日志。
 - `inbox` 的群读取必须显式指定监听白名单内的 groupId；私聊读取必须显式指定 peerId。read 结果用结构化 `media[].mediaId` 披露入站媒体 handle，整体仍有行数和字符上限，并作为普通 tool result 进入 AgentContext。
-- `workspace_bash` 提供可写 private workspace 和只读 repo view。repo view 必须保持 allowlist，不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
-- `journal action=write|list|search|read` 把日记和梦境存到 private workspace 的按月 Markdown 文件中；`data/agent-workspace/` 下的 journal 文件是 bot 生成数据，不应提交。不要用 `printf` / `touch` / `mkdir` 直接维护 `journal/**` 或 `memory/**`，这些路径只能走对应高层工具写入。`workspace_bash journal ...` 作为兼容路由保留，优先使用 `journal` typed tool。
-- `life_journal action=write|read_recent|read_agenda|write_agenda` 让主 agent 主动维护 `data/agent-workspace/life/` 下的 Life Journal 和 Agenda；旁路 Life Journal hook 只做节流、有超时的保底连续性 review，不替代主 agent 主动 journaling。review 超时或失败不改写 `AgentContext`、不阻塞后续 compaction；已完成的 review LLM 调用记录为 `life_journal.review` token usage。`write` / `write_agenda` 是副作用操作，会进入工具审计。
-- `collect_sticker` 是 always-on typed tool，不是 `workspace_bash` 子命令；`action=collect|list|search|random` 必填。它读取已有 image handle、写表情池，并返回统一的 `mediaId` / `mediaRef` 候选。
-- `memory` 把长期记忆存到 `data/agent-workspace/memory/` 的 Markdown 文件中；这是 bot 生成数据，默认不提交。记忆文件不是 replay 来源，只有 `memory list/search/read/write/delete` 的有界工具结果能进入 `AgentContext`；`delete` 会永久删除明确指定的文件。
-- `workspace_bash` 的 tool description 保留常用 repo/db/fetch 等路由示例；复杂细节继续通过 `help <topic>` 按需披露。被拒绝的命令会返回 `help` / `try` 字段，引导下一步。`style`、`ai_tone`、`journal` 子命令作为兼容入口保留，日常优先用同名 typed tool。
+- `workspace_bash` 的 workspace/repo 文件命令都只读；workspace 内置的 fetch image/avatar 等受控子命令仍可产生专用副作用。普通文件修改必须走 deferred `workspace_file`，不要开放 `printf` 重定向、`rm`、`mv` 或 `sed`。repo view 继续保持 allowlist，不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
+- `workspace_file action=list|read|write|replace|delete|move` 只维护普通文本工作文件。读取返回 revision，修改已有文件必须带最新 revision；拒绝 hidden/symlink/路径逃逸/二进制、重复 `data/agent-workspace` 前缀，以及 `journal/**`、`life/**`、`memory/**`、`skill-drafts/**`、`browser/**` 等 managed path。
+- `journal action=write|list|search|read|update|delete|compact` 把日记和梦境存到 private workspace 的按月 Markdown 文件中。记录带稳定 ID；read 返回月文件 revision，修改要求最新 revision 并原子写回。日记只通过 `journal` typed tool 读写，不提供 `workspace_bash` 别名。
+- `life_journal action=write|read_recent|read_day|read_entry|update|delete|compact|read_agenda|write_agenda` 让主 agent 主动维护 Life Journal 和 Agenda。完整 compact 前用 `read_entry` 或分页 `read_day` 获取原文；journal 和 agenda 修改都要求最新 revision。日文件使用显式 v1 格式标记和稳定 entryId；旧格式不读取，下一次写入同一天时直接以 v1 文件重建。旁路 Life Journal hook 只做节流、有超时的保底连续性 review，不替代主 agent 主动 journaling，也不改写 `AgentContext`。
+- `collect_sticker` 是 always-on typed tool，不是 `workspace_bash` 子命令；`action=collect|list|search|random|remove` 必填。`remove` 只删除表情池记录，不删除原始 Media。
+- `memory` 把长期记忆存到 `data/agent-workspace/memory/` 的 v1 Markdown 文件中。记录带稳定 entryId；`read` 支持分页并返回 revision，`update_entry` / `delete_entry` / `compact` 要求最新 revision。旧格式不参与 list/search/read，下一次写入同一目标时直接以 v1 文件重建；原有 `delete` 继续用于永久删除明确文件。
+- `workspace_bash` 的 tool description 保留常用 repo/db/fetch 等路由示例；复杂细节继续通过 `help <topic>` 按需披露。被拒绝的命令会返回 `help` / `try` 字段，引导下一步。`style`、`ai_tone` 仍是受控内置入口；journal 只走 typed tool。
 - `skill` 从 `docs/agent-skills/` 读取 curated Markdown，只能按 `skill action=list` 返回的 name 加载，并有输出上限。
-- `skill_editor` 位于 deferred `skill_management` capability 内；只能写 `data/agent-workspace/skill-drafts/*.md` 草稿和安装新的 `docs/agent-skills/*.md`。安装前必须通过校验，默认拒绝覆盖已有 skill，不提供删除。`draft` 和 `install` 是副作用操作，会进入工具审计。
-- `website` 位于 deferred `website` capability 内；`status` / `read` 是只读操作，`write` / `publish` 是副作用操作并进入工具审计。它不能修改依赖、构建配置、CI、Vercel 配置或网站仓库的隐藏文件。
+- `skill_editor` 位于 deferred `skill_management` capability 内；只能写/删除 `data/agent-workspace/skill-drafts/*.md` 草稿和安装新的 `docs/agent-skills/*.md`。安装前必须通过校验，默认拒绝覆盖或删除已安装 skill。`draft` / `delete_draft` / `install` 是副作用操作。
+- `website` 位于 deferred `website` capability 内；`status` / `read` 是只读操作，`write` / `delete` / `move` / `publish` 是副作用操作并进入工具审计。它不能修改依赖、构建配置、CI、Vercel 配置或网站仓库的隐藏文件。
 - 主 system prompt 只保留身份、运行形态和能力入口；聊天硬约束在 `prompts/bot-chat-constraints.md`，风格细则在 `prompts/bot-style.md`，通过 `workspace_bash` 的 `style global constraints|base|anti_patterns|special_cases` 按需读取。
 - 有副作用的工具通过 `src/ops/tool-call-log.ts` 记录。
 - Bash 类能力必须保留 command allowlist、固定 workspace、最小 env、输出/时间上限和审计日志。敏感访问应通过专门脚本或 capability wrapper。
 - `workspace_bash` 和 deferred tools 必须保留现有上限、preview compression、cache、timeout 和 audit 行为；`workspace_bash openbb/fetch` 路由使用专用 wrapper，默认说明和 prompt 应优先引导 `help` / `invoke` 稳定壳。
-- 有副作用的工具要格外谨慎：`send_message`、图片生成/下载、`workspace_bash` journal 子命令、memory/sticker 工具、browser 写操作，以及未来任何会写 DB 或外部服务的工具。
+- 有副作用的工具要格外谨慎：`send_message`、图片生成/下载、journal/memory/sticker 工具、browser 写操作，以及未来任何会写 DB 或外部服务的工具。
 
 ## LLM 路径
 

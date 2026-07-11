@@ -16,7 +16,10 @@ type ProviderConfig = {
 type LlmScenarioConfig = {
   provider?: string
   model?: string
+  reasoningEffort?: OpenAiReasoningEffort
 }
+
+export type OpenAiReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 type ClaudeThinkingMode = 'disabled' | 'adaptive'
 type ClaudeThinkingRetention = 'active-tool-cycle' | 'always'
@@ -59,6 +62,15 @@ const SCENARIO_NAME_MAP: Record<string, LlmScenarioKey> = {
 const CLAUDE_THINKING_MODES: readonly ClaudeThinkingMode[] = ['disabled', 'adaptive']
 const CLAUDE_THINKING_RETENTIONS: readonly ClaudeThinkingRetention[] = ['active-tool-cycle', 'always']
 const CLAUDE_THINKING_LOGS: readonly ClaudeThinkingLog[] = ['off', 'summary', 'raw']
+const OPENAI_REASONING_EFFORTS: readonly OpenAiReasoningEffort[] = [
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+]
 
 function requireEnv(env: EnvSource, name: string): string {
   const value = env[name]
@@ -236,7 +248,7 @@ function parseScenarioConfigs(env: EnvSource): Record<LlmScenarioKey, LlmScenari
   const scenarios = Object.fromEntries(
     Object.values(SCENARIO_NAME_MAP).map((key) => [key, {}]),
   ) as Record<LlmScenarioKey, LlmScenarioConfig>
-  const scenarioFields = ['PROVIDER', 'MODEL'] as const
+  const scenarioFields = ['PROVIDER', 'MODEL', 'REASONING_EFFORT'] as const
 
   for (const [name, value] of Object.entries(env)) {
     if (!value) continue
@@ -253,6 +265,14 @@ function parseScenarioConfigs(env: EnvSource): Record<LlmScenarioKey, LlmScenari
 
     if (matchedField === 'PROVIDER') scenarios[scenarioName].provider = value.toLowerCase()
     if (matchedField === 'MODEL') scenarios[scenarioName].model = value
+    if (matchedField === 'REASONING_EFFORT') {
+      scenarios[scenarioName].reasoningEffort = parseEnumValue(
+        name,
+        value,
+        OPENAI_REASONING_EFFORTS,
+        'medium',
+      )
+    }
   }
 
   return scenarios

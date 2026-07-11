@@ -226,7 +226,7 @@ describe('website tool read/write/status', () => {
     }
   })
 
-  test('rejects binary image reads while keeping image writes allowed', async () => {
+  test('returns binary image metadata and revision without returning raw content', async () => {
     const repoDir = await makeSiteRepo()
     try {
       await mkdir(join(repoDir, 'public/images'), { recursive: true })
@@ -242,10 +242,19 @@ describe('website tool read/write/status', () => {
       const result = JSON.parse((await tool.execute({
         action: 'read',
         file: 'public/images/avatar.webp',
-      }, makeCtx())).content as string) as { ok: boolean; code: string }
+      }, makeCtx())).content as string) as {
+        ok: boolean
+        binary: boolean
+        bytes: number
+        revision: string
+        content: null
+      }
 
-      assert.equal(result.ok, false)
-      assert.equal(result.code, 'binary_read_not_supported')
+      assert.equal(result.ok, true)
+      assert.equal(result.binary, true)
+      assert.equal(result.bytes, 4)
+      assert.match(result.revision, /^[a-f0-9]{64}$/)
+      assert.equal(result.content, null)
       assert.equal(isAllowedWebsiteWritePath('public/images/avatar.webp'), true)
     } finally {
       await rm(repoDir, { recursive: true, force: true })
@@ -321,6 +330,55 @@ describe('website tool read/write/status', () => {
       assert.equal(result.file, 'src/content/posts/new.md')
       assert.equal(await readFile(join(repoDir, 'src/content/posts/new.md'), 'utf8'), '# new\n')
       assert.equal(result.bytes, Buffer.byteLength('# new\n'))
+    } finally {
+      await rm(repoDir, { recursive: true, force: true })
+    }
+  })
+
+  test('protects overwrite, move, and delete with revisions', async () => {
+    const repoDir = await makeSiteRepo()
+    try {
+      const tool = createWebsiteTool({
+        repoDir,
+        branch: 'main',
+        checkCommand: 'pnpm build',
+        commandTimeoutMs: 60_000,
+        runner: makeRunner(),
+      })
+      const read = JSON.parse((await tool.execute({
+        action: 'read',
+        file: 'src/content/posts/hello.md',
+      }, makeCtx())).content as string) as { revision: string }
+      const missingRevision = JSON.parse((await tool.execute({
+        action: 'write',
+        file: 'src/content/posts/hello.md',
+        content: '# changed\n',
+      }, makeCtx())).content as string) as { ok: boolean; code: string }
+      assert.deepEqual({ ok: missingRevision.ok, code: missingRevision.code }, { ok: false, code: 'revision_required' })
+
+      const written = JSON.parse((await tool.execute({
+        action: 'write',
+        file: 'src/content/posts/hello.md',
+        content: '# changed\n',
+        expectedRevision: read.revision,
+      }, makeCtx())).content as string) as { ok: boolean; revision: string }
+      assert.equal(written.ok, true)
+
+      const moved = JSON.parse((await tool.execute({
+        action: 'move',
+        source: 'src/content/posts/hello.md',
+        destination: 'src/content/posts/moved.md',
+        expectedRevision: written.revision,
+      }, makeCtx())).content as string) as { ok: boolean; revision: string }
+      assert.equal(moved.ok, true)
+
+      const deleted = JSON.parse((await tool.execute({
+        action: 'delete',
+        file: 'src/content/posts/moved.md',
+        expectedRevision: moved.revision,
+      }, makeCtx())).content as string) as { ok: boolean }
+      assert.equal(deleted.ok, true)
+      await assert.rejects(readFile(join(repoDir, 'src/content/posts/moved.md'), 'utf8'))
     } finally {
       await rm(repoDir, { recursive: true, force: true })
     }

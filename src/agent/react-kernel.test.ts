@@ -113,6 +113,32 @@ describe('runReactRound', () => {
     ])
   })
 
+  test('charges only uncached input plus output against the autonomy budget', async () => {
+    const context = createAgentContext()
+    context.appendUserMessage('cached context')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    const llm: LlmClient = {
+      async chat() {
+        return {
+          content: '',
+          toolCalls: [],
+          usage: { inputTokens: 100_000, cachedTokens: 99_000, outputTokens: 250 },
+          model: 'mock',
+        }
+      },
+    }
+
+    const result = await runReactRound({
+      systemPrompt: 'system',
+      context,
+      llm,
+      tools: { list: () => [], async execute() { return { content: '{}' } } },
+      toolContext: { eventQueue, roundIndex: 1 },
+    })
+
+    assert.equal(result.tokensUsed, 1_250)
+  })
+
   test('does not append an assistant turn when the LLM returns no tool calls', async () => {
     const context = createAgentContext()
     context.appendUserMessage('hello')

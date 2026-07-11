@@ -94,7 +94,9 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
 
   return {
     inputTokens: completion.usage.inputTokens,
-    tokensUsed: (completion.usage.inputTokens ?? 0) + (completion.usage.outputTokens ?? 0),
+    tokensUsed:
+      Math.max(0, (completion.usage.inputTokens ?? 0) - (completion.usage.cachedTokens ?? 0))
+      + (completion.usage.outputTokens ?? 0),
     effects,
   }
 }

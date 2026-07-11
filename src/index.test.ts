@@ -22,4 +22,10 @@ describe('main runtime wiring', () => {
     assert.match(source, /saveFinal:\s*\(\) => runtime\.agent\.flush\(\)/)
     assert.doesNotMatch(source, /async function shutdown\(\)[\s\S]*process\.exit\(0\)/)
   })
+
+  test('bootstraps an empty AgentContext when no persisted snapshot exists', async () => {
+    const source = await readFile(new URL('./index.ts', import.meta.url), 'utf8')
+
+    assert.match(source, /enqueueColdStartBootstrap\(eventQueue, persisted != null\)/)
+  })
 })

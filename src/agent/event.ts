@@ -5,6 +5,7 @@
  *  - napcat_message:         群消息 (含 groupName 用于 per-event 标签).
  *  - napcat_private_message: 私聊消息. mentionedSelf 恒为 true (私聊默认对 bot 说).
  *  - wake:                   "解阻塞"信号, stop() 用, 以及未来 timer wakeup 用.
+ *  - bootstrap:              无持久 snapshot 且没有待处理事件时的首次启动信号.
  *  - curiosity_tick:         SIGUSR1 人工调试唤醒。正常自主节奏由 pause 自定休息和
  *                            BotLoop guard 管理，不依赖 tick。
  *
@@ -41,6 +42,7 @@ export type BotEvent =
       renderedText: string
     }
   | { type: 'wake' }
+  | { type: 'bootstrap' }
   | { type: 'curiosity_tick' }
   | {
       type: 'background_task_completed'

@@ -11,6 +11,7 @@ import type { BotEvent } from './event.js'
  *   群消息 (有群名):    [2026/5/11 14:30:22 群:阳光厨房 | 昵称(QQ:123) #12345 [@bot]] text
  *   群消息 (无群名):    [2026/5/11 14:30:22 群:111111 | 昵称(QQ:123) #12345] text
  *   私聊:              [2026/5/11 14:30:22 私聊 | 昵称(QQ:456) #50000] text
+ *   冷启动:            [冷启动] ...
  *   好奇心 tick:        [好奇心 tick] ...
  *
  * 私聊不带 [@bot] tag —— 私聊默认就是对 bot 说话, 这条规则在 system prompt 里告诉 LLM.
@@ -20,12 +21,17 @@ import type { BotEvent } from './event.js'
 export const CURIOSITY_TICK_TEXT =
   '[好奇心 tick] 这是一次人工调试唤醒, 不是你好奇心的来源. 按自己当前的兴趣、todo 和 intention 决定下一步.'
 
+export const BOOTSTRAP_TEXT =
+  '[冷启动] 这是一次全新 AgentContext 的首次启动, 当前没有待回复的历史消息. 按自己的身份、兴趣、todo 和 intention 决定第一步.'
+
 function formatBeijingTime(date: Date): string {
   return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
 }
 
 export function renderBotEvent(event: BotEvent): string | null {
   if (event.type === 'wake') return null
+
+  if (event.type === 'bootstrap') return BOOTSTRAP_TEXT
 
   if (event.type === 'curiosity_tick') return CURIOSITY_TICK_TEXT
 

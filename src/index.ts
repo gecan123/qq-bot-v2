@@ -22,6 +22,7 @@ import { replayMissedMessages } from './agent/replay-missed.js'
 import { resolveTargetMetadataMaps } from './agent/resolve-target-meta.js'
 import { createDedupEnqueue } from './agent/dedup-enqueue.js'
 import { createAgentRuntime } from './agent/runtime.js'
+import { enqueueColdStartBootstrap } from './agent/cold-start-bootstrap.js'
 import { createShutdownCoordinator, type ShutdownCoordinator } from './ops/shutdown.js'
 import {
   PersonaSpoofSelfTestMismatchError,
@@ -204,6 +205,10 @@ async function main() {
     groupIds: config.botTargetGroupIds,
   })
   log.info({ enqueued: replayResult.enqueued }, 'replay-missed 完成')
+
+  if (enqueueColdStartBootstrap(eventQueue, persisted != null)) {
+    log.info('无持久 snapshot 且事件队列为空，已注入冷启动 bootstrap')
+  }
 
   // 10. 工具集 + bot system prompt (启动后定型, 进程内不变)
   // Per-group customization 启动期一次 load + freeze, 但不拼进 system prompt;

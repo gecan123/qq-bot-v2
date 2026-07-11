@@ -1,0 +1,37 @@
+import { rm } from 'node:fs/promises'
+import { join } from 'node:path'
+
+const MEMORY_DIRECTORIES = ['memory', 'journal', 'life'] as const
+
+export interface AgentMemoryResetDb {
+  botAgentSnapshot: { deleteMany(): Promise<{ count: number }> }
+  memoryEntry: { deleteMany(): Promise<{ count: number }> }
+}
+
+export interface AgentMemoryResetResult {
+  deletedSnapshots: number
+  deletedLegacyMemoryRows: number
+  removedDirectories: string[]
+}
+
+export async function resetAgentMemory(options: {
+  db: AgentMemoryResetDb
+  workspaceDir: string
+}): Promise<AgentMemoryResetResult> {
+  const [snapshots, legacyMemory] = await Promise.all([
+    options.db.botAgentSnapshot.deleteMany(),
+    options.db.memoryEntry.deleteMany(),
+  ])
+
+  const removedDirectories: string[] = []
+  for (const directory of MEMORY_DIRECTORIES) {
+    await rm(join(options.workspaceDir, directory), { recursive: true, force: true })
+    removedDirectories.push(directory)
+  }
+
+  return {
+    deletedSnapshots: snapshots.count,
+    deletedLegacyMemoryRows: legacyMemory.count,
+    removedDirectories,
+  }
+}

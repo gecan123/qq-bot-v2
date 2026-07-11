@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { CURIOSITY_TICK_TEXT, renderBotEvent } from './render-event.js'
+import { BOOTSTRAP_TEXT, CURIOSITY_TICK_TEXT, renderBotEvent } from './render-event.js'
 
 describe('renderBotEvent — group messages', () => {
   test('renders group message with groupName + sender + mention tag', () => {
@@ -209,6 +209,14 @@ describe('renderBotEvent — curiosity tick', () => {
     const b = renderBotEvent({ type: 'curiosity_tick' })
     assert.equal(a, b)
     assert.ok(a && a.startsWith('[好奇心 tick]'))
+  })
+})
+
+describe('renderBotEvent — cold-start bootstrap', () => {
+  test('returns a byte-stable initial-context instruction', () => {
+    assert.equal(renderBotEvent({ type: 'bootstrap' }), BOOTSTRAP_TEXT)
+    assert.match(BOOTSTRAP_TEXT, /全新 AgentContext/)
+    assert.match(BOOTSTRAP_TEXT, /没有待回复的历史消息/)
   })
 })
 

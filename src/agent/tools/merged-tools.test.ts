@@ -134,6 +134,7 @@ describe('merged main-agent tools', () => {
     assert.deepEqual(capabilities.get('workspace_management'), ['workspace_file'])
     assert.deepEqual(capabilities.get('document_reading'), ['read_file'])
     assert.deepEqual(capabilities.get('skill_management'), ['skill_editor'])
+    assert.deepEqual(capabilities.get('media_inspection'), ['inspect_media'])
     assert.ok(capabilities.get('external_research')?.includes('fetch_content'))
     if (capabilities.get('external_research')?.includes('web_search')) {
       assert.deepEqual(capabilities.get('external_research'), ['web_search', 'fetch_content'])

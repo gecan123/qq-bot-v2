@@ -26,6 +26,7 @@ import { skillEditorTool } from './skill-editor.js'
 import { workspaceFileTool } from './workspace-file.js'
 import { createReadFileTool } from './read-file.js'
 import type { SendTargetPolicy } from '../send-target-policy.js'
+import { createInspectMediaTool } from './inspect-media.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -123,6 +124,11 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
       name: 'skill_management',
       description: '运行时 skill 草稿的创建、删除、校验和安装.',
       tools: [skillEditorTool],
+    },
+    {
+      name: 'media_inspection',
+      description: '主动查看已有图片: 补跑入站图片描述并把真实预览作为 image block 放进当前上下文.',
+      tools: [createInspectMediaTool()],
     },
     {
       name: 'media_generation',

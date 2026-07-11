@@ -11,6 +11,11 @@ import type { BackgroundTaskRegistry, JsonValue } from '../background-task-regis
 import { createLogger } from '../../logger.js'
 
 const log = createLogger('TOOL_GENERATE_IMAGE')
+const GENERATION_CONCURRENCY = 2
+
+type GenerationAttempt =
+  | { ok: true; index: number; bytes: Buffer }
+  | { ok: false; index: number; error: string }
 
 const argsSchema = z.object({
   prompt: z
@@ -38,7 +43,7 @@ const argsSchema = z.object({
     .min(1)
     .max(4)
     .default(1)
-    .describe('生成图片数量, 1 到 4 张.'),
+    .describe('生成图片数量, 1 到 4 张; 批量时后台最多同时生成 2 张.'),
 }).superRefine((args, ctx) => {
   if (args.image && args.images) {
     ctx.addIssue({
@@ -109,12 +114,21 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<RawArgs> 
           const failures: string[] = []
           let firstCompressed: Awaited<ReturnType<typeof compressForContext>> | null = null
 
-          for (let index = 0; index < args.count; index++) {
+          const generated = await mapWithConcurrency<GenerationAttempt>(args.count, GENERATION_CONCURRENCY, async (index) => {
             try {
-              const imageBytes = isEdit
+              const bytes = isEdit
                 ? await edit(args.prompt, sourceBytes, { quality: args.quality })
                 : await generate(args.prompt, { quality: args.quality })
+              return { ok: true, index, bytes }
+            } catch (error) {
+              return { ok: false, index, error: error instanceof Error ? error.message : String(error) }
+            }
+          })
 
+          for (const result of generated) {
+            const index = result.index
+            if (result.ok) {
+              const imageBytes = result.bytes
               const dataHash = computeMediaHash(imageBytes)
               const imgDescription = isEdit
                 ? `AI edited image ${index + 1}/${args.count}: ${args.prompt.slice(0, 200)}`
@@ -140,8 +154,8 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<RawArgs> 
               if (!firstCompressed) {
                 firstCompressed = await compressForContext(imageBytes)
               }
-            } catch (err) {
-              failures.push(`image ${index + 1}/${args.count}: ${err instanceof Error ? err.message : String(err)}`)
+            } else {
+              failures.push(`image ${index + 1}/${args.count}: ${result.error}`)
             }
           }
 
@@ -226,4 +240,21 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<RawArgs> 
       }
     },
   }
+}
+
+async function mapWithConcurrency<T>(
+  count: number,
+  concurrency: number,
+  worker: (index: number) => Promise<T>,
+): Promise<T[]> {
+  const results = new Array<T>(count)
+  let nextIndex = 0
+  const runners = Array.from({ length: Math.min(count, concurrency) }, async () => {
+    while (nextIndex < count) {
+      const index = nextIndex++
+      results[index] = await worker(index)
+    }
+  })
+  await Promise.all(runners)
+  return results
 }

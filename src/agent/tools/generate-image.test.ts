@@ -279,6 +279,28 @@ describe('generate_image tool', () => {
     }
   })
 
+  test('count runs at most two image requests concurrently', async () => {
+    const taskRegistry = createInMemoryTaskRegistry()
+    let active = 0
+    let maxActive = 0
+    const tool = createGenerateImageTool({
+      generate: async () => {
+        active++
+        maxActive = Math.max(maxActive, active)
+        await new Promise((resolve) => setTimeout(resolve, 15))
+        active--
+        return Buffer.from(`generated-image-${Date.now()}-${active}`)
+      },
+      taskRegistry,
+    })
+
+    const result = await tool.execute({ prompt: 'four cats', count: 4 }, ctx)
+    const parsed = parseResultJson(result.content)
+    await waitUntil(() => taskRegistry.get(parsed.taskId as string)?.status === 'completed')
+
+    assert.equal(maxActive, 2)
+  })
+
   test('count records partial success metadata when some images fail', async () => {
     const taskRegistry = createInMemoryTaskRegistry()
     let generateCalls = 0

@@ -55,6 +55,35 @@ describe('buildOutboundSegments', () => {
     assert.equal(segments[1].type, 'image')
   })
 
+  test('platform music card', () => {
+    const segments = buildOutboundSegments({ music: { platform: '163', id: '123456' } })
+    assert.deepEqual(segments, [
+      { type: 'music', data: { type: '163', id: '123456' } },
+    ])
+  })
+
+  test('custom music card', () => {
+    const segments = buildOutboundSegments({
+      music: {
+        platform: 'custom',
+        url: 'https://example.com/song',
+        image: 'https://example.com/cover.png',
+        title: 'Luna Song',
+        singer: 'Luna',
+      },
+    })
+    assert.deepEqual(segments, [{
+      type: 'music',
+      data: {
+        type: 'custom',
+        url: 'https://example.com/song',
+        image: 'https://example.com/cover.png',
+        title: 'Luna Song',
+        singer: 'Luna',
+      },
+    }])
+  })
+
   test('full: reply + mention + text + image in correct order', () => {
     const bytes = Buffer.from('img')
     const segments = buildOutboundSegments({
@@ -75,4 +104,3 @@ describe('buildOutboundSegments', () => {
     assert.deepEqual(segments, [])
   })
 })
-

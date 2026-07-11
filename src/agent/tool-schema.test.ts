@@ -8,6 +8,7 @@ import { createGenerateImageTool } from './tools/generate-image.js'
 import { journalTool } from './tools/journal.js'
 import { memoryTool } from './tools/memory.js'
 import { pauseTool } from './tools/pause.js'
+import { createSendMessageTool } from './tools/send-message.js'
 
 test('zodToToolJsonSchema flattens collect_sticker union to Anthropic object schema', () => {
   const json = zodToToolJsonSchema(collectStickerTool.schema)
@@ -52,6 +53,24 @@ test('tool schemas disclose custom validation constraints that JSON Schema canno
   const memoryProps = memoryJson.properties as Record<string, Record<string, unknown>>
   assert.match(String(memoryProps.file.description), /memory 内的 \.md 相对路径/)
   assert.match(String(memoryProps.file.description), /不允许绝对路径、反斜杠或 \.\./)
+})
+
+test('send_message exposes music as one provider-compatible object schema', () => {
+  const sendMessage = createSendMessageTool({
+    sender: { async sendSegments() { return { success: true, attempts: 1 } } },
+    targetPolicy: { async authorize() { return { allowed: true } } },
+  })
+  const json = zodToToolJsonSchema(sendMessage.schema)
+  const props = json.properties as Record<string, Record<string, unknown>>
+  const musicVariants = props.music.anyOf as Array<Record<string, unknown>>
+  const music = musicVariants.find((variant) => variant.type === 'object')
+
+  assert.ok(music)
+  assert.equal('anyOf' in music, false)
+  assert.equal('oneOf' in music, false)
+  const musicProps = music.properties as Record<string, Record<string, unknown>>
+  assert.match(String(musicProps.id.description), /非 custom 时必填/)
+  assert.match(String(musicProps.url.description), /platform=custom 时必填/)
 })
 
 test('zodToOpenAIStrictToolJsonSchema makes optional object fields required and nullable', () => {

@@ -1,5 +1,15 @@
 import type { NapcatSegment } from './napcat-sender.js'
 
+export interface MusicShare {
+  platform: 'qq' | '163' | 'kugou' | 'kuwo' | 'migu' | 'custom'
+  id?: string
+  url?: string
+  image?: string
+  title?: string
+  singer?: string
+  content?: string
+}
+
 export interface BuildReplySegmentsInput {
   replyToMessageId: number
   mentionUserId?: number
@@ -25,6 +35,7 @@ export interface BuildOutboundSegmentsInput {
   mentionUserId?: number
   text?: string
   imageBytes?: Buffer
+  music?: MusicShare
 }
 
 export function buildOutboundSegments(input: BuildOutboundSegmentsInput): NapcatSegment[] {
@@ -50,6 +61,13 @@ export function buildOutboundSegments(input: BuildOutboundSegmentsInput): Napcat
     })
   }
 
+  if (input.music !== undefined) {
+    const { platform, ...data } = input.music
+    segments.push({
+      type: 'music',
+      data: { type: platform, ...data },
+    })
+  }
+
   return segments
 }
-

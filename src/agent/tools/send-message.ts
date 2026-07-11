@@ -5,7 +5,7 @@ import type { SendMode, SendTarget, SendTargetPolicy } from '../send-target-poli
 import type { ImageHandle } from '../../media/image-handle-schema.js'
 import { resolveImageHandle, releaseHandle } from '../../media/image-handle.js'
 import { promoteToMedia } from '../../media/promote-outbound.js'
-import { buildOutboundSegments } from '../../messaging/segment-builder.js'
+import { buildOutboundSegments, type MusicShare } from '../../messaging/segment-builder.js'
 import type { SendTarget as NapcatSendTarget } from '../../messaging/napcat-sender.js'
 import { prisma } from '../../database/client.js'
 import { createLogger } from '../../logger.js'
@@ -36,10 +36,45 @@ const privateTargetSchema = z.object({
 
 const targetSchema = z.union([groupTargetSchema, privateTargetSchema])
 const imageRefSchema = z.string().regex(/^(?:media:\d+|ephemeral:[a-f0-9]{64})$/)
+const httpsUrlSchema = z.string().url().refine((value) => new URL(value).protocol === 'https:', {
+  message: '必须使用 https URL',
+})
+const musicSchema = z.object({
+  platform: z.enum(['qq', '163', 'kugou', 'kuwo', 'migu', 'custom'])
+    .describe('音乐平台. custom 时改用自定义卡片字段.'),
+  id: z.string().min(1).max(100).optional()
+    .describe('platform 非 custom 时必填的平台歌曲 ID.'),
+  url: httpsUrlSchema.optional().describe('platform=custom 时必填的音乐播放或落地页 HTTPS URL.'),
+  image: httpsUrlSchema.optional().describe('platform=custom 时必填的音乐封面 HTTPS URL.'),
+  title: z.string().min(1).max(100).optional().describe('platform=custom 时必填的标题.'),
+  singer: z.string().min(1).max(100).optional(),
+  content: z.string().min(1).max(200).optional(),
+}).superRefine((music, ctx) => {
+  if (music.platform === 'custom') {
+    for (const field of ['url', 'image', 'title'] as const) {
+      if (!music[field]) {
+        ctx.addIssue({ code: 'custom', path: [field], message: `${field} is required when platform=custom` })
+      }
+    }
+    if (music.id) {
+      ctx.addIssue({ code: 'custom', path: ['id'], message: 'id is not allowed when platform=custom' })
+    }
+    return
+  }
+  if (!music.id) {
+    ctx.addIssue({ code: 'custom', path: ['id'], message: 'id is required for platform music' })
+  }
+  for (const field of ['url', 'image', 'title', 'singer', 'content'] as const) {
+    if (music[field]) {
+      ctx.addIssue({ code: 'custom', path: [field], message: `${field} is only allowed when platform=custom` })
+    }
+  }
+})
 const contentFields = {
   target: targetSchema.describe('显式发送目标. group 必传 groupId, private 必传 userId.'),
   text: z.string().min(1).max(MAX_TEXT_LENGTH).nullable().optional(),
   imageRef: imageRefSchema.nullable().optional(),
+  music: musicSchema.nullable().optional(),
 }
 
 const argsSchema = z.discriminatedUnion('mode', [
@@ -53,8 +88,8 @@ const argsSchema = z.discriminatedUnion('mode', [
     mode: z.literal('reply'),
     replyToMessageId: z.number().int(),
   }),
-]).refine((value) => value.text != null || value.imageRef != null, {
-  message: 'text 或 imageRef 至少一个非空',
+]).refine((value) => value.text != null || value.imageRef != null || value.music != null, {
+  message: 'text、imageRef 或 music 至少一个非空',
 })
 
 interface Args {
@@ -64,6 +99,7 @@ interface Args {
   /** 仅供内部测试/调用；LLM schema 只暴露 imageRef。 */
   image?: ImageHandle
   imageRef?: string | null
+  music?: MusicShare | null
   replyToMessageId: number | null
 }
 
@@ -96,10 +132,11 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
     description: [
       '向 QQ 真实发送一条消息。target 必填并明确区分 group/private。',
       '文本、图片和图文消息都统一使用 send_message；不存在 send_image 工具。发送图片时把已有句柄传给 imageRef。',
+      '音乐卡片也走本工具: music.platform 支持 qq/163/kugou/kuwo/migu + id, 或 custom + https url/image/title.',
       'mode=ambient 时 replyToMessageId 必须为 null；mode=reply 时必须提供消息标签中 # 后面的 message_id。',
       '群 ambient 只能发到主动发送白名单；不在主动发送白名单的监听群只允许 reply 明确 @ 机器人的消息。私聊只能发给当前 QQ 好友。未授权会明确拒绝，不会模拟成功。',
       'group target 可选 mentionUserId；private target 不支持 mentionUserId。',
-      'imageRef 使用 media:<id> 或 ephemeral:<64-hex>；text 和 imageRef 至少一个非 null。',
+      'imageRef 使用 media:<id> 或 ephemeral:<64-hex>；text、imageRef 和 music 至少一个非 null。',
       'text 是 QQ 用户可见正文，最多 500 字。只有调用本工具才会真实发送。',
     ].join(' '),
     schema: argsSchema,
@@ -114,7 +151,7 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
         return { content: JSON.stringify(buildReceipt(args, 'rejected', 0, null, authorization.error)) }
       }
 
-      if (!args.text && !args.image) {
+      if (!args.text && !args.image && !args.music) {
         return {
           content: JSON.stringify(buildReceipt(
             args,
@@ -169,6 +206,7 @@ async function sendResolved(
     mentionUserId: args.target.type === 'group' ? args.target.mentionUserId : undefined,
     text: args.text,
     imageBytes,
+    music: args.music ?? undefined,
   })
   const result = await deps.sender.sendSegments({
     target: toNapcatTarget(args.target),

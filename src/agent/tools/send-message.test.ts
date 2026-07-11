@@ -384,7 +384,7 @@ describe('send_message tool — schema rejection', () => {
     assert.equal(r.success, false)
   })
 
-  test('rejects empty args (no text, no image) via Zod refine', () => {
+  test('rejects empty args (no text, no image, no music) via Zod refine', () => {
     const { sender } = makeMockSender()
     const tool = createAllowedTool(sender)
     const r = tool.schema.safeParse({
@@ -417,6 +417,65 @@ describe('send_message tool — schema rejection', () => {
       imageRef: `ephemeral:${'a'.repeat(64)}`,
     })
     assert.equal(r.success, true)
+  })
+
+  test('accepts and sends a platform music card', async () => {
+    const { sender, segmentsCalls } = makeMockSender()
+    const tool = createAllowedTool(sender)
+    const args = {
+      target: { type: 'group' as const, groupId: 111 },
+      mode: 'ambient' as const,
+      text: null,
+      imageRef: null,
+      music: { platform: 'qq' as const, id: '004Z8Ihr0JIu5s' },
+      replyToMessageId: null,
+    }
+    assert.equal(tool.schema.safeParse(args).success, true)
+
+    const result = await tool.execute(args, makeCtx())
+    assert.equal(parseToolResult(result.content).status, 'sent')
+    assert.deepEqual(segmentsCalls[0]?.segments, [
+      { type: 'music', data: { type: 'qq', id: '004Z8Ihr0JIu5s' } },
+    ])
+  })
+
+  test('custom music requires https URLs and bounded fields', () => {
+    const { sender } = makeMockSender()
+    const tool = createAllowedTool(sender)
+    const base = {
+      target: { type: 'private', userId: 10001 },
+      mode: 'ambient',
+      text: null,
+      imageRef: null,
+      replyToMessageId: null,
+    }
+
+    assert.equal(tool.schema.safeParse({
+      ...base,
+      music: {
+        platform: 'custom',
+        url: 'https://example.com/song',
+        image: 'https://example.com/cover.png',
+        title: 'Luna Song',
+      },
+    }).success, true)
+    assert.equal(tool.schema.safeParse({
+      ...base,
+      music: {
+        platform: 'custom',
+        url: 'http://example.com/song',
+        image: 'https://example.com/cover.png',
+        title: 'Luna Song',
+      },
+    }).success, false)
+    assert.equal(tool.schema.safeParse({
+      ...base,
+      music: { platform: 'custom', title: 'Missing URLs' },
+    }).success, false)
+    assert.equal(tool.schema.safeParse({
+      ...base,
+      music: { platform: '163' },
+    }).success, false)
   })
 
   test('tool name is send_message', () => {

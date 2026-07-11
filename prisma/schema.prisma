@@ -137,3 +137,65 @@ model AgentTokenUsage {
   @@index([model, ts(sort: Desc)])
   @@map("agent_token_usage")
 }
+
+/// 本地 Crypto 模拟仓唯一账户。只使用 Moomoo 行情，不连接 Crypto 交易接口。
+/// generation 每次 reset 递增；历史订单保留，当前持仓会清空。
+model CryptoPaperAccount {
+  id          Int      @id @default(1)
+  currency    String   @default("USD") @db.VarChar(16)
+  initialCash Decimal  @map("initial_cash") @db.Decimal(36, 12)
+  cash        Decimal  @db.Decimal(36, 12)
+  realizedPnl Decimal  @default(0) @map("realized_pnl") @db.Decimal(36, 12)
+  feeRateBps  Int      @map("fee_rate_bps")
+  generation  Int      @default(1)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  positions CryptoPaperPosition[]
+  orders    CryptoPaperOrder[]
+
+  @@map("crypto_paper_accounts")
+}
+
+/// 当前 generation 的 Crypto 模拟持仓。averageCost 包含买入手续费。
+model CryptoPaperPosition {
+  id          BigInt   @id @default(autoincrement())
+  accountId   Int      @map("account_id")
+  symbol      String   @db.VarChar(32)
+  quantity    Decimal  @db.Decimal(36, 18)
+  averageCost Decimal  @map("average_cost") @db.Decimal(36, 18)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  account CryptoPaperAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, symbol])
+  @@map("crypto_paper_positions")
+}
+
+/// append-only Crypto 模拟成交账本。clientOrderId 防止 LLM/tool retry 重复成交。
+model CryptoPaperOrder {
+  id                    BigInt   @id @default(autoincrement())
+  clientOrderId         String   @unique @map("client_order_id") @db.VarChar(64)
+  accountId             Int      @map("account_id")
+  generation            Int
+  symbol                String   @db.VarChar(32)
+  side                  String   @db.VarChar(8)
+  quantity              Decimal  @db.Decimal(36, 18)
+  price                 Decimal  @db.Decimal(36, 18)
+  notional              Decimal  @db.Decimal(36, 12)
+  fee                   Decimal  @db.Decimal(36, 12)
+  realizedPnl           Decimal  @map("realized_pnl") @db.Decimal(36, 12)
+  cashAfter             Decimal  @map("cash_after") @db.Decimal(36, 12)
+  positionQuantityAfter Decimal  @map("position_quantity_after") @db.Decimal(36, 18)
+  status                String   @default("FILLED") @db.VarChar(16)
+  quoteTime             DateTime? @map("quote_time") @db.Timestamptz(3)
+  note                  String?  @db.VarChar(200)
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  account CryptoPaperAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, generation, createdAt(sort: Desc)])
+  @@index([symbol, createdAt(sort: Desc)])
+  @@map("crypto_paper_orders")
+}

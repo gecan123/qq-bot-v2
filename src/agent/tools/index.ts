@@ -25,8 +25,9 @@ import { lifeJournalTool } from './life-journal.js'
 import { skillEditorTool } from './skill-editor.js'
 import { workspaceFileTool } from './workspace-file.js'
 import { createReadFileTool } from './read-file.js'
-import type { SendTargetPolicy } from '../send-target-policy.js'
 import { createInspectMediaTool } from './inspect-media.js'
+import { maybeCreateCryptoPaperTool } from './crypto-paper.js'
+import type { SendTargetPolicy } from '../send-target-policy.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -46,6 +47,7 @@ export interface BotToolManifest {
 
 export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   const fetchContent = createFetchContentTool()
+  const cryptoPaper = maybeCreateCryptoPaperTool()
   const tools: Tool[] = [
     pauseTool,
     createSendMessageTool({
@@ -66,6 +68,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     createAiToneTool(),
     journalTool,
     lifeJournalTool,
+    ...(cryptoPaper ? [cryptoPaper] : []),
     createWorkspaceBashTool({
       groupIdWhitelist: deps.groupIds,
       groupIds: deps.groupIds,

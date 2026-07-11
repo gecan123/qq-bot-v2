@@ -102,6 +102,22 @@ describe('workspace_bash command parser', () => {
       command: '/equity/price/historical --symbol AAPL --provider yfinance',
     })
 
+    assert.deepEqual(parseWorkspaceBashCommand('moomoo quote/get_snapshot US.AAPL HK.00700'), {
+      ok: true,
+      kind: 'moomoo',
+      cwd: 'workspace',
+      command: 'quote/get_snapshot US.AAPL HK.00700',
+    })
+
+    assert.deepEqual(parseWorkspaceBashCommand(
+      'moomoo trade/place_order --code US.AAPL --side BUY --quantity 1 --price 100 --trd-env SIMULATE',
+    ), {
+      ok: true,
+      kind: 'moomoo',
+      cwd: 'workspace',
+      command: 'trade/place_order --code US.AAPL --side BUY --quantity 1 --price 100 --trd-env SIMULATE',
+    })
+
     assert.deepEqual(parseWorkspaceBashCommand('ai_tone \'{"text":"这玩意儿真就那样吧","threshold":0.7}\''), {
       ok: true,
       kind: 'ai_tone',
@@ -222,6 +238,9 @@ describe('workspace_bash command parser', () => {
       'fetch reddit post https://example.com/not-reddit',
       'fetch avatar nobody',
       'openbb curl https://example.com',
+      'moomoo quote/get_snapshot.py US.AAPL',
+      'moomoo trade/place_order --code US.AAPL --quantity 1',
+      'moomoo ../../escape',
       'ai_tone not-json',
       'ai_tone \'{"text":"","threshold":0.6}\'',
       'ai_tone \'{"text":"hi","threshold":2}\'',
@@ -567,6 +586,37 @@ describe('workspace_bash tool', () => {
 
     assert.equal(result.content, '[{"symbol":"AAPL"}]')
     assert.deepEqual(calls, [{ command: '/equity/price/historical --symbol AAPL --provider yfinance' }])
+    assert.equal(runnerCalled, false)
+  })
+
+  test('runs moomoo through the configured read-only delegate without shelling out', async () => {
+    const calls: unknown[] = []
+    let runnerCalled = false
+    const moomooTool: Tool = {
+      name: 'moomoo_skill',
+      description: 'test moomoo',
+      schema: {} as never,
+      async execute(args) {
+        calls.push(args)
+        return { content: '{"ok":true}' }
+      },
+    }
+    const tool = createWorkspaceBashTool({
+      workspaceDir: '/tmp/agent-workspace',
+      repoDir: '/repo',
+      moomooTool,
+      runner: async () => {
+        runnerCalled = true
+        return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
+      },
+    })
+
+    const result = await tool.execute({
+      command: 'moomoo quote/get_snapshot US.AAPL HK.00700',
+    }, makeCtx())
+
+    assert.equal(result.content, '{"ok":true}')
+    assert.deepEqual(calls, [{ command: 'quote/get_snapshot US.AAPL HK.00700' }])
     assert.equal(runnerCalled, false)
   })
 

@@ -128,6 +128,9 @@ export function isSideEffectTool(toolName: string, args?: unknown): boolean {
   if (toolName === 'workspace_bash') {
     return isWorkspaceBashSideEffect(args)
   }
+  if (toolName === 'crypto_paper') {
+    return hasAnyAction(args, ['buy', 'sell', 'reset'])
+  }
   return SIDE_EFFECT_TOOLS.has(toolName)
 }
 
@@ -150,6 +153,12 @@ function isWorkspaceBashSideEffect(args: unknown): boolean {
     if (command === 'fetch image' || command.startsWith('fetch image ')) return true
     if (command === 'fetch avatar' || command.startsWith('fetch avatar ')) return true
     return isKnownWorkspaceSubcommand(command, ['fetch url', 'fetch reddit list', 'fetch reddit post']) ? false : true
+  }
+  if (first === 'moomoo') {
+    if (command === 'moomoo check_env' || command.startsWith('moomoo quote/') || command.startsWith('moomoo trade/get_')) {
+      return false
+    }
+    return true
   }
   if (first === 'help' || first === 'db' || first === 'style' || first === 'openbb') return false
   if (first === 'pwd' || first === 'ls' || first === 'rg' || first === 'cat' || first === 'head' || first === 'tail' || first === 'wc') {

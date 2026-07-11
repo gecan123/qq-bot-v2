@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import { isAbsolute } from 'node:path'
 
 type EnvSource = Record<string, string | undefined>
 
@@ -37,6 +38,18 @@ type WebsiteConfig = {
   branch: string
   checkCommand: string
   commandTimeoutMs: number
+}
+
+type MoomooConfig = {
+  skillDir: string
+  pythonBin: string
+  opendPort: number
+  timeoutMs: number
+}
+
+type CryptoPaperConfig = {
+  initialCash: number
+  feeRateBps: number
 }
 
 export const CLAUDE_CODE_PROVIDER_NAME = 'claude-code'
@@ -78,6 +91,32 @@ function requireEnv(env: EnvSource, name: string): string {
     throw new Error(`Missing required environment variable: ${name}`)
   }
   return value
+}
+
+function parseMoomooConfig(env: EnvSource): MoomooConfig | undefined {
+  if (!parseBoolean(env.MOOMOO_SKILL_ENABLED, false)) return undefined
+  const skillDir = env.MOOMOO_SKILL_DIR?.trim()
+  if (!skillDir) throw new Error('MOOMOO_SKILL_DIR is required when MOOMOO_SKILL_ENABLED=true')
+  if (!isAbsolute(skillDir)) throw new Error('MOOMOO_SKILL_DIR must be an absolute path')
+  return {
+    skillDir,
+    pythonBin: env.MOOMOO_PYTHON_BIN?.trim() || 'python3',
+    opendPort: parsePositiveInteger(env.MOOMOO_OPEND_PORT, 11_111),
+    timeoutMs: parsePositiveInteger(env.MOOMOO_SKILL_TIMEOUT_MS, 15_000),
+  }
+}
+
+function parseCryptoPaperConfig(env: EnvSource): CryptoPaperConfig | undefined {
+  if (!parseBoolean(env.CRYPTO_PAPER_ENABLED, false)) return undefined
+  const initialCash = Number(env.CRYPTO_PAPER_INITIAL_CASH?.trim() || '100000')
+  const feeRateBps = Number(env.CRYPTO_PAPER_FEE_RATE_BPS?.trim() || '10')
+  if (!Number.isFinite(initialCash) || initialCash <= 0) {
+    throw new Error('CRYPTO_PAPER_INITIAL_CASH must be a positive number')
+  }
+  if (!Number.isInteger(feeRateBps) || feeRateBps < 0 || feeRateBps > 10_000) {
+    throw new Error('CRYPTO_PAPER_FEE_RATE_BPS must be an integer between 0 and 10000')
+  }
+  return { initialCash, feeRateBps }
 }
 
 function parsePositiveInteger(value: string | undefined, defaultValue: number): number {
@@ -423,6 +462,8 @@ export function parseConfig(env: EnvSource) {
           cliTimeoutMs: parsePositiveInteger(env.OPENBB_CLI_TIMEOUT_MS, 15_000),
         }
       : undefined,
+    moomoo: parseMoomooConfig(env),
+    cryptoPaper: parseCryptoPaperConfig(env),
     website: parseWebsiteConfig(env),
     tavily: env.TAVILY_API_KEY
       ? { apiKey: env.TAVILY_API_KEY }

@@ -58,6 +58,40 @@ pnpm toollogf
 - 启动时清理 7 天前的 `messages` 和 `media`；StickerPool 正在引用的媒体受保护，不会随普通媒体清理删除。
 - `agent_tool_calls`、`agent_token_usage` 和 NDJSON 日志目前没有自动 retention。生产部署应通过数据库/日志平台设置保留周期；仓库侧统一策略仍记录在 `docs/TECH_DEBT.md`。
 
+## Moomoo OpenD / Mac
+
+bot 只调用 owner 已下载并审查的官方 Skill 脚本，不负责保存账号密码或自动登录 OpenD。推荐把 Python SDK 放在独立虚拟环境，Skill 包放在仓库外的 owner 管理目录：
+
+```bash
+python3 -m venv ~/.local/share/qq-bot-v2/moomoo-venv
+~/.local/share/qq-bot-v2/moomoo-venv/bin/python3 -m pip install --upgrade pip moomoo-api
+mkdir -p ~/.local/share/qq-bot-v2/moomoo-skills
+```
+
+从官方页面下载 `opend-skills.zip`，解压后确认存在 `skills/moomooapi/SKILL.md`、`skills/moomooapi/scripts/check_env.py` 和 `skills/moomooapi/scripts/quote/get_snapshot.py`。在 `.env` 中配置：
+
+```bash
+MOOMOO_SKILL_ENABLED=true
+MOOMOO_SKILL_DIR=/Users/your-name/.local/share/qq-bot-v2/moomoo-skills/skills/moomooapi
+MOOMOO_PYTHON_BIN=/Users/your-name/.local/share/qq-bot-v2/moomoo-venv/bin/python3
+MOOMOO_OPEND_PORT=11111
+MOOMOO_SKILL_TIMEOUT_MS=15000
+CRYPTO_PAPER_ENABLED=true
+CRYPTO_PAPER_INITIAL_CASH=100000
+CRYPTO_PAPER_FEE_RATE_BPS=10
+```
+
+启动并手动登录 Moomoo OpenD，保持 API 监听 `127.0.0.1:11111`。不要改成公网监听。重启 bot 后先让 agent 加载 `moomooapi` skill，再依次验证：
+
+```text
+workspace_bash: moomoo check_env
+workspace_bash: moomoo quote/get_snapshot US.AAPL
+```
+
+当前开放行情及账户/订单/资金/持仓查询，以及普通证券模拟仓的 `place_order` / `modify_order` / `cancel_order`。交易写命令必须显式传 `--trd-env SIMULATE`；实盘、`--confirmed`、加密货币、组合订单和实时 push 未进入 allowlist。
+
+`crypto_paper` 是另一条完全本地的 Crypto 模拟仓路径。它只用 Moomoo `CC.*USD` 快照定价，账户、持仓和 append-only 成交写入 PostgreSQL，不调用 Crypto 实盘接口。首次启用或 schema 更新后先运行 `pnpm db:migrate`；可以先用 `action=account` / `portfolio` 验证，除非明确需要测试成交，否则不要为了健康检查创建模拟订单。
+
 ## CloakBrowser / Mac
 
 依据：`cloakbrowser` npm README。当前仓库依赖 `cloakbrowser@^0.4.3`、`playwright-core` 和 `mmdb-lib`。

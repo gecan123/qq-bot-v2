@@ -314,6 +314,65 @@ describe('config', () => {
     assert.deepEqual(config.openbb, { cliBin: 'openbb', cliTimeoutMs: 15_000 })
   })
 
+  test('moomoo: 默认关闭, 启用时解析受控 Skill runner 配置', () => {
+    assert.equal(parseConfig(createBaseEnv()).moomoo, undefined)
+
+    const config = parseConfig(createBaseEnv({
+      MOOMOO_SKILL_ENABLED: 'true',
+      MOOMOO_SKILL_DIR: '  /Users/test/moomooapi  ',
+      MOOMOO_PYTHON_BIN: '  /Users/test/.venv/bin/python3  ',
+      MOOMOO_OPEND_PORT: '12345',
+      MOOMOO_SKILL_TIMEOUT_MS: '30000',
+    }))
+    assert.deepEqual(config.moomoo, {
+      skillDir: '/Users/test/moomooapi',
+      pythonBin: '/Users/test/.venv/bin/python3',
+      opendPort: 12_345,
+      timeoutMs: 30_000,
+    })
+  })
+
+  test('moomoo: 启用时必须配置 Skill 绝对目录', () => {
+    assert.throws(
+      () => parseConfig(createBaseEnv({ MOOMOO_SKILL_ENABLED: 'true' })),
+      /MOOMOO_SKILL_DIR is required when MOOMOO_SKILL_ENABLED=true/,
+    )
+    assert.throws(
+      () => parseConfig(createBaseEnv({
+        MOOMOO_SKILL_ENABLED: 'true',
+        MOOMOO_SKILL_DIR: 'relative/moomooapi',
+      })),
+      /MOOMOO_SKILL_DIR must be an absolute path/,
+    )
+  })
+
+  test('crypto paper: 默认关闭，启用时解析初始资金和手续费', () => {
+    assert.equal(parseConfig(createBaseEnv()).cryptoPaper, undefined)
+    assert.deepEqual(parseConfig(createBaseEnv({
+      CRYPTO_PAPER_ENABLED: 'true',
+      CRYPTO_PAPER_INITIAL_CASH: '250000.5',
+      CRYPTO_PAPER_FEE_RATE_BPS: '8',
+    })).cryptoPaper, {
+      initialCash: 250_000.5,
+      feeRateBps: 8,
+    })
+  })
+
+  test('crypto paper: 拒绝非法初始资金和手续费', () => {
+    assert.throws(
+      () => parseConfig(createBaseEnv({ CRYPTO_PAPER_ENABLED: 'true', CRYPTO_PAPER_INITIAL_CASH: '0' })),
+      /CRYPTO_PAPER_INITIAL_CASH/,
+    )
+    assert.throws(
+      () => parseConfig(createBaseEnv({ CRYPTO_PAPER_ENABLED: 'true', CRYPTO_PAPER_FEE_RATE_BPS: '-1' })),
+      /CRYPTO_PAPER_FEE_RATE_BPS/,
+    )
+    assert.throws(
+      () => parseConfig(createBaseEnv({ CRYPTO_PAPER_ENABLED: 'true', CRYPTO_PAPER_FEE_RATE_BPS: '8.5' })),
+      /CRYPTO_PAPER_FEE_RATE_BPS/,
+    )
+  })
+
   test('website capability is disabled by default', () => {
     const config = parseConfig(createBaseEnv())
 

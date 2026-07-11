@@ -9,6 +9,7 @@ import type { TargetMetadataMaps } from '../resolve-target-meta.js'
 import { createDbTool } from './db.js'
 import { createChatStyleTool } from './chat-style.js'
 import { isAllowedOpenbbCommand, maybeCreateOpenbbCliTool } from './openbb-cli.js'
+import { isAllowedMoomooSkillCommand, maybeCreateMoomooSkillTool } from './moomoo-skill.js'
 import { createFetchContentTool } from './fetch-content.js'
 import { predictAiTone, type AiTonePrediction, type AiTonePredictor } from './ai-tone.js'
 
@@ -60,7 +61,7 @@ const argsSchema = z.object({
     .trim()
     .min(1)
     .max(2000)
-    .describe('受限 Bash 命令. workspace 和 repo 的普通文件命令只读; 内置 db/style/fetch/ai_tone 子命令走专用 wrapper.'),
+    .describe('受限 Bash 命令. workspace 和 repo 的普通文件命令只读; 内置 db/style/fetch/openbb/moomoo/ai_tone 子命令走专用 wrapper.'),
 })
 
 type Args = {
@@ -102,6 +103,13 @@ export interface ParsedOpenbbCommand {
   output?: unknown
 }
 
+export interface ParsedMoomooCommand {
+  ok: true
+  kind: 'moomoo'
+  cwd: 'workspace'
+  command: string
+}
+
 export interface ParsedFetchCommand {
   ok: true
   kind: 'fetch'
@@ -128,7 +136,7 @@ export interface ParsedHelpCommand {
   ok: true
   kind: 'help'
   cwd: 'workspace'
-  topic?: 'workspace' | 'repo' | 'db' | 'style' | 'openbb' | 'fetch' | 'ai_tone'
+  topic?: 'workspace' | 'repo' | 'db' | 'style' | 'openbb' | 'moomoo' | 'fetch' | 'ai_tone'
 }
 
 export type ParsedWorkspaceBashCommand =
@@ -136,6 +144,7 @@ export type ParsedWorkspaceBashCommand =
   | ParsedDbToolCommand
   | ParsedStyleCommand
   | ParsedOpenbbCommand
+  | ParsedMoomooCommand
   | ParsedFetchCommand
   | ParsedAiToneCommand
   | ParsedHelpCommand
@@ -172,6 +181,7 @@ export interface WorkspaceBashDeps {
   metadata?: TargetMetadataMaps
   groupCustomizations?: readonly GroupCustomization[]
   openbbTool?: Tool | null
+  moomooTool?: Tool | null
   fetchTool?: Tool | null
   aiTonePredictor?: AiTonePredictor
 }
@@ -309,12 +319,13 @@ function parseHelpCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedHe
     || topic === 'db'
     || topic === 'style'
     || topic === 'openbb'
+    || topic === 'moomoo'
     || topic === 'fetch'
     || topic === 'ai_tone'
   ) {
     return { ok: true, kind: 'help', cwd: 'workspace', topic }
   }
-  return { ok: false, error: 'help topic must be workspace, repo, db, style, openbb, fetch, or ai_tone' }
+  return { ok: false, error: 'help topic must be workspace, repo, db, style, openbb, moomoo, fetch, or ai_tone' }
 }
 
 function parseDbToolCommand(
@@ -418,6 +429,14 @@ function parseOpenbbCommand(tokens: string[], cwd: 'workspace' | 'repo'): Parsed
   const command = tokens.slice(1).join(' ')
   if (!isAllowedOpenbbCommand(command)) return { ok: false, error: 'openbb command is not allowed' }
   return { ok: true, kind: 'openbb', cwd: 'workspace', command }
+}
+
+function parseMoomooCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedMoomooCommand | { ok: false; error: string } {
+  if (cwd !== 'workspace') return { ok: false, error: 'moomoo is only available in workspace mode' }
+  if (tokens.length < 2) return { ok: false, error: 'moomoo requires a command' }
+  const command = tokens.slice(1).join(' ')
+  if (!isAllowedMoomooSkillCommand(command)) return { ok: false, error: 'moomoo command is not allowed' }
+  return { ok: true, kind: 'moomoo', cwd: 'workspace', command }
 }
 
 function isUrl(value: string | undefined): value is string {
@@ -578,6 +597,10 @@ export function parseWorkspaceBashCommand(
     return parseOpenbbCommand(tokens, cwd)
   }
 
+  if (tokens[0] === 'moomoo') {
+    return parseMoomooCommand(tokens, cwd)
+  }
+
   if (tokens[0] === 'fetch') {
     return parseFetchCommand(tokens, cwd)
   }
@@ -684,6 +707,18 @@ function renderHelpCommand(parsed: ParsedHelpCommand): WorkspaceBashRunResult {
       commands: [
         'openbb <allowed command>',
         'openbb {"command":"<allowed command>","output":{...}}',
+      ],
+    },
+    moomoo: {
+      purpose: '通过本机 Moomoo OpenD 和官方 Skill 脚本查询行情与账户数据, 或操作普通证券模拟仓; 实盘和长时间订阅不开放.',
+      commands: [
+        'moomoo check_env',
+        'moomoo quote/get_snapshot US.AAPL HK.00700',
+        'moomoo quote/get_kline US.AAPL --ktype K_DAY',
+        'moomoo trade/get_portfolio --trd-env SIMULATE',
+        'moomoo trade/place_order --code US.AAPL --side BUY --quantity 1 --price 100 --trd-env SIMULATE',
+        'moomoo trade/modify_order --order-id 123 --price 101 --trd-env SIMULATE',
+        'moomoo trade/cancel_order --order-id 123 --trd-env SIMULATE',
       ],
     },
     fetch: {
@@ -835,6 +870,9 @@ function commandErrorGuidance(error: string): { help: string; try: string } {
   if (error.startsWith('openbb ')) {
     return { help: 'help openbb', try: 'help openbb' }
   }
+  if (error.startsWith('moomoo ')) {
+    return { help: 'help moomoo', try: 'moomoo check_env' }
+  }
   if (error.startsWith('ai_tone ')) {
     return { help: 'help ai_tone', try: 'help ai_tone' }
   }
@@ -856,6 +894,7 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
     groupCustomizations: deps.groupCustomizations ?? [],
   })
   const openbbTool = deps.openbbTool === undefined ? maybeCreateOpenbbCliTool() : deps.openbbTool
+  const moomooTool = deps.moomooTool === undefined ? maybeCreateMoomooSkillTool() : deps.moomooTool
   const fetchTool = deps.fetchTool === undefined ? createFetchContentTool() : deps.fetchTool
   const aiTonePredictor = deps.aiTonePredictor ?? predictAiTone
 
@@ -866,7 +905,7 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
       'workspace 允许少量只读文件命令: pwd/ls/rg/cat/head/tail/wc; 普通文件写入、替换、删除和移动使用 deferred workspace_file.',
       'repo 只允许读命令: pwd/ls/rg/cat/head/tail/wc; rg 支持普通搜索和 --files, 不能写, 也不能读 .env/logs/node_modules/.git/data/prompts/groups.yaml.',
       '常用路由不用先 help: 看 repo 传 cwd=repo 后用 `rg --files src` / `rg <pattern> src` / `cat <path>`; 查历史先 `db schema` 再用 `db query {"sql":"SELECT 1","params":{}}`; 抓网页用 `fetch url <url> [hint]`; 看 reddit 用 `fetch reddit list technology hot 5`.',
-      '不确定语法时先用 `help` 或 `help <topic>`; 聊天约束/风格用 `style global constraints|base|anti_patterns|special_cases` 或 `style group`; AI 腔调检测用 `ai_tone <json>`.',
+      '不确定语法时先用 `help` 或 `help <topic>`; Moomoo 行情、账户查询和证券模拟交易用 `moomoo <allowed command>`, 交易必须显式 SIMULATE; 聊天约束/风格用 `style global constraints|base|anti_patterns|special_cases` 或 `style group`; AI 腔调检测用 `ai_tone <json>`.',
       '数据库仍只读; ai_tone 只走内置模型; 不允许 psql/curl/node/cat .env/路径逃逸/任意 shell 组合.',
     ].join(' '),
     schema: argsSchema,
@@ -914,6 +953,16 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
           parsed.output === undefined ? { command: parsed.command } : { command: parsed.command, output: parsed.output },
           ctx,
         )
+      }
+
+      if (parsed.kind === 'moomoo') {
+        if (!moomooTool) {
+          return {
+            content: JSON.stringify({ ok: false, code: 'not_configured', error: 'moomoo skill not configured' }),
+            outcome: { ok: false, code: 'not_configured' },
+          }
+        }
+        return await moomooTool.execute({ command: parsed.command }, ctx)
       }
 
       if (parsed.kind === 'fetch') {

@@ -2,7 +2,12 @@ import assert from 'node:assert/strict'
 import { afterEach, describe, test } from 'node:test'
 import { Prisma } from '../generated/prisma/client.js'
 import { prisma } from './client.js'
-import { buildMessageUpsertReturningSql, buildMessageUpsertSql, insertMessage } from './messages.js'
+import {
+  buildMessageUpsertReturningSql,
+  buildMessageUpsertSql,
+  insertMessage,
+  isGroupMessageMentioningUser,
+} from './messages.js'
 
 describe('insertMessage update payload', () => {
   let originalExecuteRaw: typeof prisma.$executeRaw | undefined
@@ -180,5 +185,38 @@ describe('insertMessage update payload', () => {
         }),
       /sceneKind=qq_private requires non-empty sceneExternalId/,
     )
+  })
+})
+
+describe('isGroupMessageMentioningUser', () => {
+  const originalFindUnique = prisma.message.findUnique
+
+  afterEach(() => {
+    prisma.message.findUnique = originalFindUnique
+  })
+
+  test('accepts only a structured at for the target user in the requested group', async () => {
+    prisma.message.findUnique = (async () => ({
+      groupId: 222n,
+      content: [
+        { type: 'text', content: '@Luna 看看' },
+        { type: 'at', targetId: '9999', targetName: 'Luna' },
+      ],
+    })) as never
+
+    assert.equal(await isGroupMessageMentioningUser(222, 123, 9999), true)
+    assert.equal(await isGroupMessageMentioningUser(222, 123, 8888), false)
+    assert.equal(await isGroupMessageMentioningUser(333, 123, 9999), false)
+  })
+
+  test('rejects missing messages and plain-text mentions', async () => {
+    prisma.message.findUnique = (async () => ({
+      groupId: 222n,
+      content: [{ type: 'text', content: '@Luna 看看' }],
+    })) as never
+    assert.equal(await isGroupMessageMentioningUser(222, 123, 9999), false)
+
+    prisma.message.findUnique = (async () => null) as never
+    assert.equal(await isGroupMessageMentioningUser(222, 123, 9999), false)
   })
 })

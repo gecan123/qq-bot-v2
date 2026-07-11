@@ -16,6 +16,7 @@ import type { TargetMetadataMaps } from './resolve-target-meta.js'
 import type { GroupCustomization } from '../config/group-prompts.js'
 import type { BotOwner } from '../config/index.js'
 import type { MessageSender } from '../messaging/message-sender.js'
+import { isGroupMessageMentioningUser } from '../database/messages.js'
 
 export interface AgentRuntimeInput {
   context: AgentContext
@@ -49,6 +50,11 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     groupIds: input.groupIds,
     groupAmbientSendIds: input.groupAmbientSendIds,
     loadFriendIds: input.loadFriendIds,
+    isGroupReplyToSelf: ({ groupId, messageId }) => isGroupMessageMentioningUser(
+      groupId,
+      messageId,
+      input.selfNumber,
+    ),
   })
   const tools = createDeferredToolExecutor({
     ...buildBotToolManifest({

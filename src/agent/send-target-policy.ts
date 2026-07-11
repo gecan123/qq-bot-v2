@@ -9,13 +9,18 @@ export type SendAuthorization =
   | { allowed: false; error: string }
 
 export interface SendTargetPolicy {
-  authorize(input: { target: SendTarget; mode: SendMode }): Promise<SendAuthorization>
+  authorize(input: {
+    target: SendTarget
+    mode: SendMode
+    replyToMessageId?: number | null
+  }): Promise<SendAuthorization>
 }
 
 export interface SendTargetPolicyDeps {
   groupIds: readonly number[]
   groupAmbientSendIds: ReadonlySet<number>
   loadFriendIds: () => Promise<readonly number[]>
+  isGroupReplyToSelf: (input: { groupId: number; messageId: number }) => Promise<boolean>
 }
 
 export function createSendTargetPolicy(deps: SendTargetPolicyDeps): SendTargetPolicy {
@@ -31,6 +36,26 @@ export function createSendTargetPolicy(deps: SendTargetPolicyDeps): SendTargetPo
           return {
             allowed: false,
             error: `groupId=${input.target.groupId} does not allow ambient sends`,
+          }
+        }
+        if (input.mode === 'reply' && !deps.groupAmbientSendIds.has(input.target.groupId)) {
+          if (input.replyToMessageId == null) {
+            return { allowed: false, error: 'group reply requires replyToMessageId' }
+          }
+          try {
+            const direct = await deps.isGroupReplyToSelf({
+              groupId: input.target.groupId,
+              messageId: input.replyToMessageId,
+            })
+            if (!direct) {
+              return {
+                allowed: false,
+                error: `groupId=${input.target.groupId} only allows replies to messages that mention the bot`,
+              }
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            return { allowed: false, error: `group reply authorization unavailable: ${message}` }
           }
         }
         return { allowed: true }

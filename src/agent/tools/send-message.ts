@@ -97,7 +97,7 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
       '向 QQ 真实发送一条消息。target 必填并明确区分 group/private。',
       '文本、图片和图文消息都统一使用 send_message；不存在 send_image 工具。发送图片时把已有句柄传给 imageRef。',
       'mode=ambient 时 replyToMessageId 必须为 null；mode=reply 时必须提供消息标签中 # 后面的 message_id。',
-      '群 reply 只能发到监听群，群 ambient 还必须在主动发送白名单；私聊只能发给当前 QQ 好友。未授权会明确拒绝，不会模拟成功。',
+      '群 ambient 只能发到主动发送白名单；不在主动发送白名单的监听群只允许 reply 明确 @ 机器人的消息。私聊只能发给当前 QQ 好友。未授权会明确拒绝，不会模拟成功。',
       'group target 可选 mentionUserId；private target 不支持 mentionUserId。',
       'imageRef 使用 media:<id> 或 ephemeral:<64-hex>；text 和 imageRef 至少一个非 null。',
       'text 是 QQ 用户可见正文，最多 500 字。只有调用本工具才会真实发送。',
@@ -105,7 +105,11 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
     schema: argsSchema,
     async execute(rawArgs) {
       const args = normalizeArgs(rawArgs as Args)
-      const authorization = await deps.targetPolicy.authorize({ target: args.target, mode: args.mode })
+      const authorization = await deps.targetPolicy.authorize({
+        target: args.target,
+        mode: args.mode,
+        replyToMessageId: args.replyToMessageId,
+      })
       if (!authorization.allowed) {
         return { content: JSON.stringify(buildReceipt(args, 'rejected', 0, null, authorization.error)) }
       }

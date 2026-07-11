@@ -77,6 +77,33 @@ function createAllowedTool(
 }
 
 describe('send_message tool — unified contract', () => {
+  test('passes replyToMessageId into target authorization', async () => {
+    const { sender } = makeMockSender()
+    const calls: unknown[] = []
+    const tool = createSendMessageTool({
+      sender,
+      targetPolicy: {
+        async authorize(input) {
+          calls.push(input)
+          return { allowed: false, error: 'blocked for test' }
+        },
+      },
+    })
+
+    await tool.execute({
+      target: { type: 'group', groupId: 111 },
+      mode: 'reply',
+      text: 'hi',
+      replyToMessageId: 555,
+    }, makeCtx())
+
+    assert.deepEqual(calls, [{
+      target: { type: 'group', groupId: 111 },
+      mode: 'reply',
+      replyToMessageId: 555,
+    }])
+  })
+
   test('requires explicit mode with an exact replyToMessageId shape', () => {
     const { sender } = makeMockSender()
     const tool = createSendMessageTool({ sender, targetPolicy: allowAllTargets })

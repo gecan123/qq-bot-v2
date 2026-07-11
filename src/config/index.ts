@@ -386,7 +386,7 @@ export function parseConfig(env: EnvSource) {
     toolCallLogPath,
     /**
      * 主动发言（group-ambient）白名单. 只有在此集合内的群才真发 ambient 消息,
-     * 不在集合内的群 ambient 会被明确拒绝。群 reply 仍要求目标属于监听群；
+     * 不在集合内的群 ambient 会被明确拒绝，reply 也只允许引用结构化 at bot 的入站消息；
      * private 发送要求目标属于 NapCat 当前好友。空集合 = 拒绝全部群 ambient.
      * env: `BOT_GROUP_AMBIENT_SEND_IDS=111,222`
      */

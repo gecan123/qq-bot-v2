@@ -97,6 +97,33 @@ export async function findExistingMessageIds(groupId: number, messageIds: number
   return new Set(rows.map((r) => Number(r.messageId)))
 }
 
+/**
+ * 判断可引用的群消息是否通过 QQ 结构化 at 明确提到了指定用户。
+ * 发送授权必须基于持久化入站事实，而不是 LLM 提供的 mode 或正文猜测。
+ */
+export async function isGroupMessageMentioningUser(
+  groupId: number,
+  messageId: number,
+  userId: number,
+): Promise<boolean> {
+  const row = await prisma.message.findUnique({
+    where: {
+      sceneKind_sceneExternalId_messageId: {
+        sceneKind: 'qq_group',
+        sceneExternalId: '',
+        messageId: BigInt(messageId),
+      },
+    },
+    select: { groupId: true, content: true },
+  })
+  if (row?.groupId !== BigInt(groupId) || !Array.isArray(row.content)) return false
+  return row.content.some((segment) => {
+    if (!segment || typeof segment !== 'object' || Array.isArray(segment)) return false
+    const value = segment as Record<string, unknown>
+    return value.type === 'at' && value.targetId === String(userId)
+  })
+}
+
 function jsonSql(value: Prisma.InputJsonValue | null | undefined): Prisma.Sql {
   if (value === undefined) return Prisma.sql`NULL`
   if (value === null) return Prisma.sql`'null'::jsonb`

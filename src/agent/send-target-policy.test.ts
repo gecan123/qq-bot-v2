@@ -8,6 +8,7 @@ describe('send target policy', () => {
       groupIds: [111],
       groupAmbientSendIds: new Set([111]),
       loadFriendIds: async () => [],
+      isGroupReplyToSelf: async () => false,
     })
 
     assert.deepEqual(
@@ -25,6 +26,7 @@ describe('send target policy', () => {
       groupIds: [111, 222],
       groupAmbientSendIds: new Set([111]),
       loadFriendIds: async () => [],
+      isGroupReplyToSelf: async () => false,
     })
 
     assert.deepEqual(
@@ -37,6 +39,63 @@ describe('send target policy', () => {
     )
   })
 
+  test('allows only direct replies in a group with ambient sends disabled', async () => {
+    const calls: Array<{ groupId: number; messageId: number }> = []
+    const policy = createSendTargetPolicy({
+      groupIds: [222],
+      groupAmbientSendIds: new Set(),
+      loadFriendIds: async () => [],
+      async isGroupReplyToSelf(input) {
+        calls.push(input)
+        return input.messageId === 123
+      },
+    })
+
+    assert.deepEqual(
+      await policy.authorize({
+        target: { type: 'group', groupId: 222 },
+        mode: 'reply',
+        replyToMessageId: 123,
+      }),
+      { allowed: true },
+    )
+    assert.deepEqual(
+      await policy.authorize({
+        target: { type: 'group', groupId: 222 },
+        mode: 'reply',
+        replyToMessageId: 456,
+      }),
+      {
+        allowed: false,
+        error: 'groupId=222 only allows replies to messages that mention the bot',
+      },
+    )
+    assert.deepEqual(calls, [
+      { groupId: 222, messageId: 123 },
+      { groupId: 222, messageId: 456 },
+    ])
+  })
+
+  test('fails closed when direct-reply authorization cannot be loaded', async () => {
+    const policy = createSendTargetPolicy({
+      groupIds: [222],
+      groupAmbientSendIds: new Set(),
+      loadFriendIds: async () => [],
+      isGroupReplyToSelf: async () => {
+        throw new Error('database offline')
+      },
+    })
+
+    assert.deepEqual(
+      await policy.authorize({
+        target: { type: 'group', groupId: 222 },
+        mode: 'reply',
+        replyToMessageId: 123,
+      }),
+      { allowed: false, error: 'group reply authorization unavailable: database offline' },
+    )
+  })
+
   test('checks the current NapCat friend list for every private send', async () => {
     let calls = 0
     const policy = createSendTargetPolicy({
@@ -46,6 +105,7 @@ describe('send target policy', () => {
         calls++
         return calls === 1 ? [9001] : [9002]
       },
+      isGroupReplyToSelf: async () => false,
     })
 
     assert.deepEqual(
@@ -66,6 +126,7 @@ describe('send target policy', () => {
       loadFriendIds: async () => {
         throw new Error('NapCat offline')
       },
+      isGroupReplyToSelf: async () => false,
     })
 
     assert.deepEqual(

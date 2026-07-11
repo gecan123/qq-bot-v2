@@ -27,7 +27,9 @@
 
 - bot 在允许来源之间共享一个 owned `AgentContext`。
 - 新事件源必须通过 event queue 和 dedup 路径进入披露规划，不要插入历史中段。所有 QQ 消息按 `groupId` 或 `peerId` 聚合为不含正文的稳定 inbox 通知；私聊和包含结构化 `@bot` 的群批次使用 `priority=high`，其余群批次使用 `priority=normal`。
+- NapCat `group_upload` notice 也进入对应群 mailbox：用 notice 稳定字段生成负数 synthetic messageId 以便落库去重，`inbox.replyable=false` 明确禁止把它当 QQ 消息号引用回复；文件二进制仍走 Media handle。
 - 启动 replay 必须等待首次 NapCat backfill 的所有允许来源尝试完成，并显式接收本次运行允许的 group IDs。单来源失败可以记录后继续；live/backfill/replay 的重叠只通过 message row ID 去重，不能靠时序猜测。
+- 无持久 snapshot 且启动事件队列为空时，runtime 必须注入一次字节稳定的 `bootstrap` 事件来建立首个 `AgentContext` 和 snapshot；启动期间已有实时事件时不得额外注入。单纯存在一条空 snapshot 记录不能替代该启动事实。
 - mailbox 是 `messages` 按 scene 划分的逻辑视图，不复制消息正文。Agent 用有界 `inbox` tool result 按需读取。
 - 跨源知识共享是预期行为。跨源发言仍然依赖显式 `send_message` target，以及 ingress/tool 安全规则。
 - curiosity tick、background task 完成等运行时事件如果进入 LLM，必须走稳定的结构化事件渲染或 tool-result 路径。事件载荷只包含受控字段，不拼接面向人的临时提示语。

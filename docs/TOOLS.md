@@ -4,7 +4,7 @@
 
 ## 默认可见能力
 
-- 对话控制：`pause`。`action=rest` 由 Agent 自己选择 30 秒到 30 分钟的休息时长，并用 `intention` 简短列出 4 到 8 个醒来后可选方向；计时结束会自动进入下一轮，届时可选择一个、合并几个或改道。
+- 对话控制：`pause`。`action=rest` 用于一段活动确实告一段落后的短暂休息，默认 60 秒、通常 30–120 秒，仍可自主选择最长 30 分钟。`intention` 列出 4–8 个具体可执行方向，其中至少两个能立即用现有工具开始、等待外部消息最多一个；计时结束后先实际尝试一个方向，没有尝试前不应立刻再次休息。
 - 当前计划：`todo`（当前进程内的短期多步计划，最多一个 `in_progress`）。
 - 发送：`send_message`。
 - 稳定按需壳：`help`（`list` / `describe` / `activate` / `deactivate` capability 或内部工具 schema）和 `invoke`（调用已激活 capability 内部工具）。激活不会改变下一轮顶层 tools 列表。
@@ -24,6 +24,7 @@
 - `media_fetch`：内部工具是 `fetch_content` 的图片 URL / QQ 头像抓取能力。
 - `skill_management`：内部工具是 `skill_editor`，用于运行时 skill 草稿、校验和安装。
 - `workspace_management`：内部工具是 `workspace_file`，用于普通私有文本工作文件的分页读取、创建、覆盖、精确替换、删除和移动。
+- `document_reading`：内部工具是 `read_file`，只接受 `inbox` 返回的 `type=file` 的 `mediaId`；支持有界分页读取纯文本、PDF、DOCX、XLSX、PPTX、RTF 和 OpenDocument，不接受路径或 URL，也不执行文件内容。
 - 激活状态保存在 `BotAgentSnapshot.contextSnapshot.activeToolCapabilities`，用于进程重启后恢复可调用能力；它不是 LLM 可见事实，不写入 `messages`，也不改变顶层 tools 列表。
 - `invoke` 的 schema/capability resolution 是内部路由，不单独记成功 trace。已激活调用只记录一次真实目标工具结果；inactive、unknown 或壳参数失败只记录一次失败的 `invoke`，hooks 也只围绕最终执行路径运行一次。
 
@@ -58,14 +59,16 @@
 - `send_message` 的 target 必须明确。不能从 memory 里推断群聊或私聊 target。
 - assistant text 是内部历史/推理，不是公开发送通道。
 - `send_message` 成功不会隐式结束 Agent 当前活动；是否继续或休息由下一轮的 `pause` 决定。
-- `send_message` 发送前统一走目标授权：群 reply 仅允许监听群，群 ambient 还必须属于 `BOT_GROUP_AMBIENT_SEND_IDS`，私聊目标必须是 NapCat 当前好友。未授权会明确拒绝，不会模拟成功。
+- 自主循环的 daily token budget 按“未缓存 input tokens + output tokens”计量；完整命中的 cached prefix 不重复消耗自主预算，避免长上下文高缓存命中时被误判为当天预算耗尽。
+- `send_message` 发送前统一走目标授权：群 ambient 必须属于 `BOT_GROUP_AMBIENT_SEND_IDS`；不在该集合的监听群只允许 reply 持久化入站消息中通过 QQ 结构化 at 明确提到 bot 的消息，不能靠引用普通群消息绕过主动发言开关；私聊目标必须是 NapCat 当前好友。未授权会明确拒绝，不会模拟成功。
 - 群 `send_message` 最终失败后才按需查询机器人自身的当前禁言状态；确认命中时 tool result 返回 `reason=group_muted` 和可用的 `mutedUntil`，否则返回 `reason=send_failed`。该事实不缓存，也不会阻止后续真实发送。
 - 外部工具必须有输出上限、超时和审计日志。
-- `inbox` 的群读取必须显式指定监听白名单内的 groupId；私聊读取必须显式指定 peerId。read 结果用结构化 `media[].mediaId` 披露入站媒体 handle，整体仍有行数和字符上限，并作为普通 tool result 进入 AgentContext。
+- `inbox` 的群读取必须显式指定监听白名单内的 groupId；私聊读取必须显式指定 peerId。read 结果用结构化 `media[].mediaId` 披露入站媒体 handle，整体仍有行数和字符上限，并作为普通 tool result 进入 AgentContext。群文件上传 notice 会用稳定的负数 synthetic messageId 落入同一 mailbox，此时 `replyable=false`，只能 ambient 回复。
+- `read_file` 位于 deferred `document_reading` capability 内，只能解析已落库的 QQ 文件 handle；单次返回和可解析输入都有上限，压缩包与旧版 DOC/XLS/PPT 明确拒绝。
 - `workspace_bash` 的 workspace/repo 文件命令都只读；workspace 内置的 fetch image/avatar 等受控子命令仍可产生专用副作用。普通文件修改必须走 deferred `workspace_file`，不要开放 `printf` 重定向、`rm`、`mv` 或 `sed`。repo view 继续保持 allowlist，不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
 - `workspace_file action=list|read|write|replace|delete|move` 只维护普通文本工作文件。读取返回 revision，修改已有文件必须带最新 revision；拒绝 hidden/symlink/路径逃逸/二进制、重复 `data/agent-workspace` 前缀，以及 `journal/**`、`life/**`、`memory/**`、`skill-drafts/**`、`browser/**` 等 managed path。
 - `journal action=write|list|search|read|update|delete|compact` 把日记和梦境存到 private workspace 的按月 Markdown 文件中。记录带稳定 ID；read 返回月文件 revision，修改要求最新 revision 并原子写回。日记只通过 `journal` typed tool 读写，不提供 `workspace_bash` 别名。
-- `life_journal action=write|read_recent|read_day|read_entry|update|delete|compact|read_agenda|write_agenda` 让主 agent 主动维护 Life Journal 和 Agenda。完整 compact 前用 `read_entry` 或分页 `read_day` 获取原文；journal 和 agenda 修改都要求最新 revision。日文件使用显式 v1 格式标记和稳定 entryId；旧格式不读取，下一次写入同一天时直接以 v1 文件重建。旁路 Life Journal hook 只做节流、有超时的保底连续性 review，不替代主 agent 主动 journaling，也不改写 `AgentContext`。
+- `life_journal action=write|read_recent|read_day|read_entry|update|delete|compact|read_agenda|write_agenda` 让主 agent 主动维护 Life Journal 和 Agenda。完整 compact 前用 `read_entry` 或分页 `read_day` 获取原文；journal 和 agenda 修改都要求最新 revision。日文件使用显式 v1 格式标记和稳定 entryId；旧格式不读取，下一次写入同一天时直接以 v1 文件重建。旁路 Life Journal hook 会把当前 Agenda、最近两天 Journal 和有界本轮消息交给 reviewer，按 10 分钟节流并受超时保护；它只做保底连续性 review，不替代主 agent 主动 journaling，也不改写 `AgentContext`。review 日志用 `life_journal_review_completed` 区分 `record` / `skip`，协议连续无效则记录 `life_journal_review_invalid_skipped`。
 - `collect_sticker` 是 always-on typed tool，不是 `workspace_bash` 子命令；`action=collect|list|search|random|remove` 必填。`remove` 只删除表情池记录，不删除原始 Media。
 - `memory` 把长期记忆存到 `data/agent-workspace/memory/` 的 v1 Markdown 文件中。记录带稳定 entryId；`read` 支持分页并返回 revision，`update_entry` / `delete_entry` / `compact` 要求最新 revision。旧格式不参与 list/search/read，下一次写入同一目标时直接以 v1 文件重建；原有 `delete` 继续用于永久删除明确文件。
 - `workspace_bash` 的 tool description 保留常用 repo/db/fetch 等路由示例；复杂细节继续通过 `help <topic>` 按需披露。被拒绝的命令会返回 `help` / `try` 字段，引导下一步。`style`、`ai_tone` 仍是受控内置入口；journal 只走 typed tool。

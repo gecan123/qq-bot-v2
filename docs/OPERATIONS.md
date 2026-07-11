@@ -13,6 +13,16 @@
 
 ## 常用命令
 
+### 重置 Agent 记忆（本地调试）
+
+先停止 bot，再运行：
+
+```bash
+pnpm agent:reset-memory
+```
+
+该命令删除 `bot_agent_snapshot`、旧 `memory_entries` 数据，以及 `data/agent-workspace/{memory,journal,life}`。无 snapshot 的冷启动不会回放既有消息。消息/媒体账本、表情池、浏览器 profile/artifact 和普通 workspace 文件会保留。命令可重复执行；检测到 `.bot.pid` 对应进程仍存活时会拒绝运行，避免 bot 退出时重新保存旧 snapshot。
+
 ```bash
 pnpm dev
 pnpm dev:once
@@ -116,8 +126,8 @@ BOT_BROWSER_ARGS=--fingerprint=12345
 ## Agent 反馈
 
 - `pnpm agent:doctor` 做本地、无网络健康检查：必需文件、必需环境变量、agent 指令镜像、schema anchor、startup anchor 和 tool registry anchor。输出 JSON，有错误时非零退出。
-- `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson` 和 `logs/tool-calls.ndjson` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率和 malformed log line 计数。当前 token operations 包括 `agent.chat`、`compaction` 和 `life_journal.review`。
-- `pnpm agent:metrics <token-log> <tool-log>` 可以汇总指定日志文件。
+- `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson`、`logs/tool-calls.ndjson` 和当前保留的 `logs/app*.log` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率，以及按群 `inboxReads`、`messagesRead`、`sendAttempts`、`sendBlocked`、成功 ambient/reply 和 `readToSendRate`。当前 token operations 包括 `agent.chat`、`compaction` 和 `life_journal.review`。
+- `pnpm agent:metrics <token-log> <tool-log> [app-log]` 可以汇总指定日志文件；省略 `app-log` 时自动读取当前 `logs/app*.log` 滚动文件。
 - 运行时会把工具调用和 token/cache 使用 best-effort 写入 Postgres 的 `agent_tool_calls` / `agent_token_usage`，写 DB 失败只记 warning，不影响 bot 执行。
 - `pnpm agent:metrics --db` 从 Postgres 汇总持久化事件；可加 `--from <iso> --to <iso> --tool <name> --operation <name> --model <name> --ok true|false --side-effect true|false` 做筛选。
 - `pnpm agent:snapshot-check` 只读检查 `bot_agent_snapshot`：验证 snapshot JSON 可序列化、assistant tool call 与 tool result 相邻匹配、JSON-like tool result 可解析、`activeToolCapabilities` 未混入 messages、mailbox cursor key/value 合法；输出 JSON，有错误时非零退出。

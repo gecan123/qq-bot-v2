@@ -8,12 +8,10 @@ type ReceiveSegment = Receive[keyof Receive]
 
 export interface ForwardMessageLoader {
   get_forward_msg(args: { message_id: string }): Promise<{ messages: NapcatMessage[] }>
-  get_msg(args: { message_id: number }): Promise<NapcatMessage>
 }
 
 interface ForwardParseContext {
   loader: ForwardMessageLoader
-  messageCache: Map<number, Promise<NapcatMessage | undefined>>
   remainingItems: number
 }
 
@@ -182,18 +180,6 @@ function embeddedForwardMessages(segment: ReceiveSegment): NapcatMessage[] | und
   return content
 }
 
-async function getCanonicalMessage(
-  messageId: number,
-  context: ForwardParseContext,
-): Promise<NapcatMessage | undefined> {
-  const cached = context.messageCache.get(messageId)
-  if (cached) return cached
-
-  const pending = context.loader.get_msg({ message_id: messageId }).catch(() => undefined)
-  context.messageCache.set(messageId, pending)
-  return pending
-}
-
 function senderName(message: NapcatMessage): string | undefined {
   const card = message.sender.card?.trim()
   const nickname = message.sender.nickname?.trim()
@@ -201,12 +187,10 @@ function senderName(message: NapcatMessage): string | undefined {
 }
 
 async function parseForwardItem(
-  source: NapcatMessage,
+  message: NapcatMessage,
   context: ForwardParseContext,
   depth: number,
 ): Promise<{ item: ForwardMessageItem; truncated: boolean }> {
-  const canonical = await getCanonicalMessage(source.message_id, context)
-  const message = canonical ?? source
   const parsedContent = await parseSegmentsWithForwards(message.message, context, depth)
   const { content, truncated } = truncateForwardText(parsedContent)
   return {
@@ -341,7 +325,6 @@ export async function parseMessageWithForwards(
     ...parsed,
     content: await parseSegmentsWithForwards(qqMsg.message, {
       loader,
-      messageCache: new Map(),
       remainingItems: MAX_FORWARD_ITEMS,
     }, 0),
   }

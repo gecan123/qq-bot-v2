@@ -34,7 +34,7 @@ function message(
 
 interface ForwardLoader {
   get_forward_msg(args: { message_id: string }): Promise<{ messages: NapcatMessage[] }>
-  get_msg(args: { message_id: number }): Promise<NapcatMessage>
+  get_msg?(args: { message_id: number }): Promise<NapcatMessage>
 }
 
 type ParseMessageWithForwards = (
@@ -50,18 +50,13 @@ function forwardParser(): ParseMessageWithForwards {
 }
 
 describe('parseMessageWithForwards', () => {
-  test('loads forward children and normalizes each child through get_msg', async () => {
-    const childStub = message(11, 101, 'stub', [{ type: 'text', data: { text: 'stub text' } }])
-    const childFull = message(11, 101, 'Alice', [{ type: 'text', data: { text: 'full text' } }])
+  test('uses the child messages returned by get_forward_msg without refetching them', async () => {
+    const child = message(11, 101, 'Alice', [{ type: 'text', data: { text: 'full text' } }])
     const calls: string[] = []
     const loader: ForwardLoader = {
       async get_forward_msg(args) {
         calls.push(`forward:${args.message_id}`)
-        return { messages: [childStub] }
-      },
-      async get_msg(args) {
-        calls.push(`message:${args.message_id}`)
-        return childFull
+        return { messages: [child] }
       },
     }
 
@@ -70,7 +65,7 @@ describe('parseMessageWithForwards', () => {
       loader,
     )
 
-    assert.deepEqual(calls, ['forward:forward-1', 'message:11'])
+    assert.deepEqual(calls, ['forward:forward-1'])
     assert.deepEqual(parsed.content, [{
       type: 'forward',
       forwardId: 'forward-1',
@@ -84,14 +79,11 @@ describe('parseMessageWithForwards', () => {
     }])
   })
 
-  test('falls back to the forward payload when child get_msg fails', async () => {
+  test('preserves the child payload returned by get_forward_msg', async () => {
     const childStub = message(12, 102, 'Bob', [{ type: 'text', data: { text: 'fallback text' } }])
     const loader: ForwardLoader = {
       async get_forward_msg() {
         return { messages: [childStub] }
-      },
-      async get_msg() {
-        throw new Error('transient failure must not be persisted')
       },
     }
 
@@ -209,13 +201,13 @@ describe('parseMessageWithForwards', () => {
     const children = Array.from({ length: 51 }, (_, index) => (
       message(100 + index, 200 + index, `sender-${index}`, [{ type: 'text', data: { text: String(index) } }])
     ))
-    let getMessageCalls = 0
+    let unexpectedGetMessageCalls = 0
     const loader: ForwardLoader = {
       async get_forward_msg() {
         return { messages: children }
       },
       async get_msg({ message_id }) {
-        getMessageCalls += 1
+        unexpectedGetMessageCalls += 1
         return children.find((child) => child.message_id === message_id)!
       },
     }
@@ -228,7 +220,7 @@ describe('parseMessageWithForwards', () => {
     const forward = parsed.content[0] as { items: unknown[]; truncated?: boolean }
     assert.equal(forward.items.length, 50)
     assert.equal(forward.truncated, true)
-    assert.equal(getMessageCalls, 50)
+    assert.equal(unexpectedGetMessageCalls, 0)
   })
 
   test('truncates forwarded text after two thousand characters', async () => {

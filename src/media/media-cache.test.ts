@@ -121,4 +121,38 @@ describe('persistMediaReferences', () => {
       mediaReferenceIds: ['42'],
     })
   })
+
+  test('resolves a group upload notice file through get_group_file_url', async () => {
+    const apiCalls: unknown[] = []
+    prisma.media.create = (async () => ({ mediaId: 43 })) as unknown as typeof prisma.media.create
+    prisma.media.findUnique = (async () => null) as typeof prisma.media.findUnique
+    prisma.media.update = (async () => ({ mediaId: 43 })) as unknown as typeof prisma.media.update
+    jobQueue.enqueue = (() => undefined) as typeof jobQueue.enqueue
+    globalThis.fetch = (async (url) => {
+      assert.equal(url, 'https://example.test/report.docx')
+      return new Response(new Uint8Array([1, 2, 3]), { status: 200 })
+    }) as typeof fetch
+
+    const result = await persistMediaReferences({
+      content: [{
+        type: 'file',
+        fileId: 'group-file-1',
+        fileName: 'report.docx',
+        fileSize: '3',
+      }],
+      scope: { kind: 'group', groupId: 123 },
+      messageId: -99,
+      senderId: 456,
+      napcat: {
+        async get_group_file_url(args: unknown) {
+          apiCalls.push(args)
+          return { url: 'https://example.test/report.docx' }
+        },
+      } as never,
+    })
+
+    assert.deepEqual(result.mediaReferenceIds, ['43'])
+    assert.deepEqual(apiCalls, [{ group_id: 123, file_id: 'group-file-1' }])
+    await waitForPendingMediaDownloads([43], 1_000)
+  })
 })

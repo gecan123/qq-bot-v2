@@ -132,6 +132,7 @@ describe('merged main-agent tools', () => {
     assert.ok(alwaysOnNames.includes('life_journal'))
     assert.equal(alwaysOnNames.includes('skill_editor'), false)
     assert.deepEqual(capabilities.get('workspace_management'), ['workspace_file'])
+    assert.deepEqual(capabilities.get('document_reading'), ['read_file'])
     assert.deepEqual(capabilities.get('skill_management'), ['skill_editor'])
     assert.ok(capabilities.get('external_research')?.includes('fetch_content'))
     if (capabilities.get('external_research')?.includes('web_search')) {

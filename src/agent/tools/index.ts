@@ -24,6 +24,7 @@ import { journalTool } from './journal.js'
 import { lifeJournalTool } from './life-journal.js'
 import { skillEditorTool } from './skill-editor.js'
 import { workspaceFileTool } from './workspace-file.js'
+import { createReadFileTool } from './read-file.js'
 import type { SendTargetPolicy } from '../send-target-policy.js'
 
 export interface BotToolDeps {
@@ -110,8 +111,13 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   capabilities.push(
     {
       name: 'workspace_management',
-      description: '普通私有工作文件: 分页读取、创建、覆盖、精确替换、删除和移动.',
+      description: '普通私有工作文件: 分页读取、创建、覆盖、精确替换、删除和移动; 包括持续维护 notes/wishes.md 愿望清单.',
       tools: [workspaceFileTool],
+    },
+    {
+      name: 'document_reading',
+      description: '读取 QQ 收到的文件: 从 inbox 的 file mediaId 提取纯文本、PDF、Office 或 OpenDocument 内容并分页查看.',
+      tools: [createReadFileTool()],
     },
     {
       name: 'skill_management',

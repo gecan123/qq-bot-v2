@@ -1,6 +1,9 @@
 import { z } from 'zod'
 import { prisma } from '../../database/client.js'
+import { createLogger } from '../../logger.js'
 import type { Tool } from '../tool.js'
+
+const log = createLogger('INBOX')
 
 const DEFAULT_READ_LIMIT = 20
 const MAX_READ_LIMIT = 50
@@ -66,7 +69,7 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
       'action=list 列出最近有消息的来源; action=read 读取一个明确群或私聊来源.',
       '群来源必须在监听白名单内. read 结果按 messages rowId 升序, 用 afterRowId 继续分页.',
       'inbox 更新通知只是元数据; 需要理解或引用正文时再调用本工具.',
-      'read 结果中的 media 数组提供图片等媒体的 mediaId, 可直接用于 collect_sticker 等接受 image handle 的工具.',
+      'read 结果中的 media 数组提供媒体的 mediaId、文件名和大小; type=file 时可激活 document_reading 后调用 read_file 查看内容.',
       'read 结果中的 mentionedSelf 和 mentionTargets 来自 QQ 结构化 at 段; 正文里的“你”或“@你”只是普通文本, 不代表在叫你.',
     ].join(' '),
     schema: argsSchema,
@@ -125,6 +128,14 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
       }
 
       const rows = await findMessages({ where, orderBy: { id: 'asc' }, take: limit })
+      if (args.source === 'group' && args.groupId != null) {
+        log.info({
+          groupId: args.groupId,
+          afterRowId,
+          requestedLimit: limit,
+          returnedMessages: rows.length,
+        }, 'inbox_group_read_completed')
+      }
       return { content: renderBoundedRead(mailbox, rows, limit, selfNumber) }
     },
   }
@@ -157,6 +168,7 @@ function renderBoundedRead(
       sentAt: (row.sentAt ?? row.createdAt).toISOString(),
       senderId: String(row.senderId),
       senderName: row.senderGroupNickname ?? row.senderNickname ?? String(row.senderId),
+      replyable: row.messageId > 0n,
       mentionedSelf: mentionTargets.includes(selfNumber),
       mentionTargets,
       text,
@@ -174,8 +186,15 @@ function renderBoundedRead(
   return JSON.stringify({ ok: true, mailbox, requestedLimit, truncated, messages }, null, 2)
 }
 
-function extractMediaHandles(content: unknown): Array<{ type: string; mediaId: number }> {
-  const media: Array<{ type: string; mediaId: number }> = []
+interface InboxMediaHandle {
+  type: string
+  mediaId: number
+  fileName?: string
+  fileSize?: string
+}
+
+function extractMediaHandles(content: unknown): InboxMediaHandle[] {
+  const media: InboxMediaHandle[] = []
   const visit = (segments: unknown): void => {
     if (!Array.isArray(segments)) return
     for (const segment of segments) {
@@ -192,7 +211,12 @@ function extractMediaHandles(content: unknown): Array<{ type: string; mediaId: n
       if (typeof value.referenceId !== 'string') continue
       const mediaId = Number(value.referenceId)
       if (!Number.isSafeInteger(mediaId) || mediaId <= 0) continue
-      media.push({ type: value.type, mediaId })
+      media.push({
+        type: value.type,
+        mediaId,
+        ...(typeof value.fileName === 'string' ? { fileName: value.fileName } : {}),
+        ...(typeof value.fileSize === 'string' ? { fileSize: value.fileSize } : {}),
+      })
     }
   }
   visit(content)

@@ -7,6 +7,8 @@ import { persistMediaReferences } from '../media/media-cache.js'
 import { summarizeSegments } from '../utils/business-log.js'
 import { createMessageReadyDispatcher, type MessageReadyDispatcher } from './message-ready-dispatcher.js'
 import { createBackfillScheduler } from './startup-backfill.js'
+import type { ParsedSegment } from '../types/message-segments.js'
+import { groupUploadSyntheticMessageId, type GroupUploadNotice } from './group-upload.js'
 
 const ingressLog = createLogger('INGRESS')
 const napcatLog = createLogger('NAPCAT')
@@ -177,6 +179,86 @@ async function processMessage(
   }
 }
 
+async function processGroupUpload(
+  context: GroupUploadNotice,
+  options: ProcessMessageOptions,
+): Promise<void> {
+  if (context.user_id === config.selfNumber) return
+
+  const groupName = await resolveGroupName({ group_id: context.group_id })
+  let senderNickname = String(context.user_id)
+  let senderGroupNickname: string | undefined
+  try {
+    const member = await napcat.get_group_member_info({
+      group_id: context.group_id,
+      user_id: context.user_id,
+    })
+    senderNickname = member.nickname || senderNickname
+    senderGroupNickname = member.card?.trim() || undefined
+  } catch (error) {
+    napcatLog.warn(
+      { error, groupId: context.group_id, userId: context.user_id },
+      '获取群文件上传者昵称失败',
+    )
+  }
+
+  const messageId = groupUploadSyntheticMessageId(context)
+  const content: ParsedSegment[] = [{
+    type: 'file',
+    fileId: context.file.id,
+    fileName: context.file.name,
+    fileSize: String(context.file.size),
+  }]
+  const mediaResult = await persistMediaReferences({
+    content,
+    scope: { kind: 'group', groupId: context.group_id },
+    messageId,
+    senderId: context.user_id,
+    napcat,
+  })
+  const persisted = await insertMessage({
+    sceneKind: 'qq_group',
+    groupId: context.group_id,
+    groupName,
+    mediaReferenceIds: mediaResult.mediaReferenceIds,
+    messageId,
+    senderId: context.user_id,
+    senderNickname,
+    senderGroupNickname,
+    content: mediaResult.content,
+    rawContent: { noticeType: 'group_upload', file: context.file },
+    rawMessage: `[群文件上传: ${context.file.name}]`,
+    sentAt: context.time,
+  })
+
+  ingressLog.info({
+    direction: 'inbound',
+    flow: 'group_file_upload_ingress',
+    groupId: context.group_id,
+    groupName,
+    messageId,
+    messageRowId: persisted.id,
+    senderId: context.user_id,
+    senderNickname: senderGroupNickname ?? senderNickname,
+    fileId: context.file.id,
+    fileName: context.file.name,
+    fileSize: context.file.size,
+    mediaReferences: mediaResult.mediaReferenceIds.length,
+  }, '群文件上传已入库')
+
+  options.readyDispatcher?.schedule({
+    kind: 'group',
+    messageRowId: persisted.id,
+    groupId: context.group_id,
+    groupName,
+    messageId,
+    senderId: context.user_id,
+    senderNickname: senderGroupNickname ?? senderNickname,
+    mentionedSelf: false,
+    sentAt: persisted.sentAt ?? persisted.createdAt,
+  })
+}
+
 async function backfillGroupMessages(groupId: number): Promise<void> {
   const { messages } = await napcat.get_group_msg_history({
     group_id: groupId,
@@ -277,6 +359,23 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): Napc
         await processMessage({ kind: 'group', groupId }, context.message_id, { ...options, readyDispatcher })
       } catch (error) {
         ingressLog.error({ error, group: groupId, msgId: context.message_id }, '处理群消息失败')
+      }
+    })
+    groupChains.set(groupId, next)
+  })
+
+  napcat.on('notice.group_upload', (context) => {
+    if (!config.botTargetGroupIds.includes(context.group_id)) return
+    const groupId = context.group_id
+    const prev = groupChains.get(groupId) ?? Promise.resolve()
+    const next = prev.then(async () => {
+      try {
+        await processGroupUpload(context, { ...options, readyDispatcher })
+      } catch (error) {
+        ingressLog.error(
+          { error, group: groupId, fileId: context.file.id, fileName: context.file.name },
+          '处理群文件上传失败',
+        )
       }
     })
     groupChains.set(groupId, next)

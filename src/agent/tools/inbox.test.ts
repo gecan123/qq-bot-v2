@@ -54,9 +54,12 @@ describe('inbox tool', () => {
       orderBy: { id: 'asc' },
       take: 2,
     }])
-    const payload = JSON.parse(result.content as string) as { messages: Array<{ rowId: number; text: string }> }
+    const payload = JSON.parse(result.content as string) as {
+      messages: Array<{ rowId: number; text: string; replyable: boolean }>
+    }
     assert.deepEqual(payload.messages.map((message) => message.rowId), [11, 12])
     assert.equal(payload.messages[0]!.text, 'message-11')
+    assert.equal(payload.messages[0]!.replyable, true)
   })
 
   test('exposes structured mention targets without treating plain-text @你 as a bot mention', async () => {
@@ -104,7 +107,7 @@ describe('inbox tool', () => {
               { type: 'image', referenceId: '101' },
               { type: 'video', referenceId: '102' },
               { type: 'record', referenceId: '103' },
-              { type: 'file', referenceId: '104' },
+              { type: 'file', referenceId: '104', fileName: 'report.pdf', fileSize: '12345' },
               { type: 'face', referenceId: '105' },
               { type: 'image' },
               { type: 'image', referenceId: '0' },
@@ -133,7 +136,7 @@ describe('inbox tool', () => {
       { type: 'image', mediaId: 101 },
       { type: 'video', mediaId: 102 },
       { type: 'record', mediaId: 103 },
-      { type: 'file', mediaId: 104 },
+      { type: 'file', mediaId: 104, fileName: 'report.pdf', fileSize: '12345' },
     ])
     assert.deepEqual(payload.messages[1]!.media, [])
   })

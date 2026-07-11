@@ -100,7 +100,11 @@ function isUniqueConstraintError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === 'P2002'
 }
 
-async function resolveMediaUrl(segment: MediaSegment, napcat: NCWebsocket): Promise<string | undefined> {
+async function resolveMediaUrl(
+  segment: MediaSegment,
+  scope: MediaScope,
+  napcat: NCWebsocket,
+): Promise<string | undefined> {
   // All media types may have a URL directly
   if (segment.url) return segment.url
 
@@ -113,6 +117,17 @@ async function resolveMediaUrl(segment: MediaSegment, napcat: NCWebsocket): Prom
   }
 
   if (segment.type === 'file') {
+    if (segment.fileId && scope.kind === 'group') {
+      const result = await napcat.get_group_file_url({
+        group_id: scope.groupId,
+        file_id: segment.fileId,
+      })
+      return result.url
+    }
+    if (segment.fileId && scope.kind === 'private') {
+      const result = await napcat.get_private_file_url({ file_id: segment.fileId })
+      return result.url
+    }
     const result = await napcat.get_file({ file: segment.fileName })
     return (result as { url?: string }).url
   }
@@ -127,8 +142,7 @@ function parseFileSize(fileSize?: string): number | undefined {
 }
 
 async function cacheMediaSegment(input: CacheInput): Promise<string | undefined> {
-  const { segment, napcat } = input
-  void input.scope
+  const { segment, scope, napcat } = input
 
   const fileSizeBytes = parseFileSize(segment.fileSize)
 
@@ -165,7 +179,7 @@ async function cacheMediaSegment(input: CacheInput): Promise<string | undefined>
   })
   const mediaId = media.mediaId
 
-  const download = downloadMediaIntoPlaceholder(mediaId, segment, napcat)
+  const download = downloadMediaIntoPlaceholder(mediaId, segment, scope, napcat)
     .catch((error) => {
       log.warn(
         {
@@ -189,9 +203,10 @@ async function cacheMediaSegment(input: CacheInput): Promise<string | undefined>
 async function downloadMediaIntoPlaceholder(
   mediaId: number,
   segment: MediaSegment,
+  scope: MediaScope,
   napcat: NCWebsocket,
 ): Promise<void> {
-  const url = await resolveMediaUrl(segment, napcat)
+  const url = await resolveMediaUrl(segment, scope, napcat)
   if (!url) {
     log.warn({ mediaId, mediaType: segment.type }, '媒体 URL 缺失，保留占位记录')
     return

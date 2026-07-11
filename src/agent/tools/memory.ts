@@ -26,7 +26,7 @@ const memoryFileSchema = z.string().trim().min(1).max(200).refine(
     && !file.includes('\\')
     && !file.split('/').includes('..'),
   '必须是 memory 内的 .md 相对路径',
-)
+).describe('memory 内的 .md 相对路径, 必须来自 memory list/search/read 结果; 不允许绝对路径、反斜杠或 .. 路径段.')
 
 const argsSchema = z.discriminatedUnion('action', [
   z.object({
@@ -45,7 +45,7 @@ const argsSchema = z.discriminatedUnion('action', [
   }),
   z.object({
     action: z.literal('read').describe('读取某个记忆文件.'),
-    file: z.string().trim().min(1).max(200).describe('search/write 返回的相对文件路径, 例如 self/working-notes.md.'),
+    file: memoryFileSchema,
     offset: z.number().int().min(0).optional().describe('字符偏移, 默认 0.'),
     maxChars: z.number().int().min(500).max(12000).optional().describe('本页字符上限, 默认 4000.'),
   }),

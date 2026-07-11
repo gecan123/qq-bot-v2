@@ -137,6 +137,8 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
               path: issue.path,
               message: issue.message,
             })),
+            retryable: true,
+            hint: '根据 issues 修正参数，然后立即重试同一工具；不要只解释错误。',
           }),
           outcome: { ok: false, code: 'invalid_arguments', error },
         }
@@ -253,8 +255,8 @@ function createHelpTool(options: {
   const capabilityNames = options.capabilities.map((capability) => capability.name).join(', ')
   const schema = z.object({
     action: z.enum(['list', 'activate', 'deactivate', 'describe']).describe('list=查看能力; activate=允许 invoke 调用该 capability; deactivate=收起能力; describe=按需查看 capability 或 tool 说明.'),
-    capability: z.string().trim().min(1).optional().describe('要激活或收起的 capability 名称.'),
-    tool: z.string().trim().min(1).optional().describe('describe 时要查看的内部工具名.'),
+    capability: z.string().trim().min(1).optional().describe('action=activate/deactivate 时必填; action=describe 时与 tool 至少提供一个.'),
+    tool: z.string().trim().min(1).optional().describe('action=describe 时与 capability 至少提供一个.'),
   }).superRefine((args, ctx) => {
     if ((args.action === 'activate' || args.action === 'deactivate') && !args.capability) {
       ctx.addIssue({

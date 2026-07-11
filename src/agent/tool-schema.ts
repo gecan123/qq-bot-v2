@@ -50,6 +50,7 @@ export function zodToToolJsonSchema(schema: z.ZodTypeAny): Record<string, unknow
     } else {
       delete json.required
     }
+    annotateConditionalRequirements(finalProps, variants, requiredSets, requiredIntersection)
     return json
   }
 
@@ -57,6 +58,86 @@ export function zodToToolJsonSchema(schema: z.ZodTypeAny): Record<string, unknow
     json.properties = {}
   }
   return json
+}
+
+function annotateConditionalRequirements(
+  properties: Record<string, unknown>,
+  variants: Record<string, unknown>[],
+  requiredSets: Set<string>[],
+  globallyRequired: Set<string>,
+): void {
+  const discriminator = findDiscriminator(variants)
+  if (!discriminator) return
+
+  const branchRequirements = variants.map((variant, index) => {
+    const variantProperties = variant.properties as Record<string, Record<string, unknown>>
+    return {
+      value: variantProperties[discriminator].const,
+      required: [...requiredSets[index]!].filter((key) => !globallyRequired.has(key)),
+    }
+  })
+  const contract = branchRequirements
+    .map(({ value, required }) => required.length > 0
+      ? `${discriminator}=${formatSchemaValue(value)} 时必须提供 ${required.join(', ')}`
+      : `${discriminator}=${formatSchemaValue(value)} 时无额外必填字段`)
+    .join('; ')
+
+  properties[discriminator] = appendSchemaDescription(
+    properties[discriminator],
+    `条件参数契约: ${contract}.`,
+  )
+
+  for (const key of Object.keys(properties)) {
+    if (key === discriminator || globallyRequired.has(key)) continue
+    const requiredBy = branchRequirements
+      .filter((branch) => branch.required.includes(key))
+      .map((branch) => `${discriminator}=${formatSchemaValue(branch.value)}`)
+    if (requiredBy.length === 0) continue
+    properties[key] = appendSchemaDescription(
+      properties[key],
+      `${requiredBy.join(' 或 ')} 时必填.`,
+    )
+  }
+}
+
+function findDiscriminator(variants: Record<string, unknown>[]): string | null {
+  const firstProperties = isRecord(variants[0]?.properties)
+    ? variants[0].properties as Record<string, unknown>
+    : null
+  if (!firstProperties) return null
+
+  for (const key of Object.keys(firstProperties)) {
+    const values: unknown[] = []
+    let isDiscriminator = true
+    for (const variant of variants) {
+      const properties = isRecord(variant.properties)
+        ? variant.properties as Record<string, unknown>
+        : null
+      const property = properties?.[key]
+      if (!isRecord(property) || property.const === undefined) {
+        isDiscriminator = false
+        break
+      }
+      values.push(property.const)
+    }
+    if (isDiscriminator && new Set(values.map((value) => JSON.stringify(value))).size === variants.length) {
+      return key
+    }
+  }
+  return null
+}
+
+function appendSchemaDescription(schema: unknown, addition: string): unknown {
+  if (!isRecord(schema)) return schema
+  const description = typeof schema.description === 'string' ? schema.description.trim() : ''
+  return {
+    ...schema,
+    description: description ? `${description} ${addition}` : addition,
+  }
+}
+
+function formatSchemaValue(value: unknown): string {
+  return typeof value === 'string' ? value : JSON.stringify(value)
 }
 
 function getFlattenableObjectVariants(json: Record<string, unknown>): Record<string, unknown>[] | null {

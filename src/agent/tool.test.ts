@@ -97,6 +97,9 @@ describe('createToolExecutor', () => {
     )
 
     assert.match(result.content as string, /Invalid tool arguments/)
+    const payload = JSON.parse(result.content as string)
+    assert.equal(payload.retryable, true)
+    assert.match(payload.hint, /修正参数.*立即重试同一工具/)
     assert.equal(writes.length, 1)
     const entry = JSON.parse(writes[0]!.trim())
     assert.equal(entry.toolName, 'inc')

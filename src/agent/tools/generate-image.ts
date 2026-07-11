@@ -25,11 +25,11 @@ const argsSchema = z.object({
     ),
   image: imageHandleSchema
     .optional()
-    .describe('可选: 要编辑的源图片. 传 {mediaId} 或 {ephemeralRef}. 不传则从零生成.'),
+    .describe('可选: 要编辑的单张源图片. 传 {mediaId} 或 {ephemeralRef}. 与 images 二选一, 不能同时提供; 两者都不传则从零生成.'),
   images: z.array(imageHandleSchema)
     .max(5)
     .optional()
-    .describe('可选: 要编辑/参考的源图片数组, 最多 5 张. 多图时请在 prompt 里说明保留主体、布局、风格和合成目标.'),
+    .describe('可选: 要编辑/参考的源图片数组, 最多 5 张. 与 image 二选一, 不能同时提供. 多图时请在 prompt 里说明保留主体、布局、风格和合成目标.'),
   quality: z.enum(['low', 'medium', 'high'])
     .default('low')
     .describe('图片生成质量. low 更省, high 更精细, 默认 low.'),
@@ -67,7 +67,7 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<RawArgs> 
     description: [
       '用 AI 从零生成一张新图片, 或基于已有图片进行编辑/改图.',
       '这是「创作」工具 — 想画新东西、改图、加文字时用. 不要用来「收藏」已有的图 (收藏走 collect_sticker).',
-      '只传 prompt → 从零生成; 同时传 image → 在该图基础上按 prompt 编辑.',
+      '只传 prompt → 从零生成; 单图编辑传 image, 多图编辑/参考传 images; image 和 images 不能同时提供.',
       '编辑图片时注意区分意图: 用户想「微调」(改文字/局部修改/保持风格) 还是「大改」(换风格/重构). 如果对方说得模糊 (比如只说「帮我改一下这图」), 先 send_message 问一句是想保持原样微调还是大改, 再动手.',
       '本工具只负责创建图片生成/编辑后台任务, 立即返回 taskId; 不直接返回最终图片. 完成后你会收到 [后台任务完成] 消息.',
       '后续统一用 background_task action=list/get 查看状态或取结果 (含预览图 + ephemeralRef, 可传给 send_message 发送).',

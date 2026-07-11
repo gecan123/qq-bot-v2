@@ -99,7 +99,8 @@ describe('createToolExecutor', () => {
     assert.match(result.content as string, /Invalid tool arguments/)
     const payload = JSON.parse(result.content as string)
     assert.equal(payload.retryable, true)
-    assert.match(payload.hint, /修正参数.*立即重试同一工具/)
+    assert.match(payload.hint, /inc 的当前 schema.*修正参数.*立即重试同一工具/)
+    assert.match(payload.hint, /不要改用相似但不存在的工具/)
     assert.equal(writes.length, 1)
     const entry = JSON.parse(writes[0]!.trim())
     assert.equal(entry.toolName, 'inc')
@@ -604,10 +605,31 @@ describe('createToolExecutor', () => {
   })
 
   test('returns error envelope for unknown tool', async () => {
-    const exec = createToolExecutor([])
+    const workspaceBash: Tool<Record<string, never>> = {
+      name: 'workspace_bash',
+      description: 'workspace bash',
+      schema: z.object({}),
+      async execute() {
+        return { content: 'unused' }
+      },
+    }
+    const exec = createToolExecutor([workspaceBash])
     const result = await exec.execute({ id: 'c1', name: 'nope', args: {} }, makeCtx())
     assert.match(result.content as string, /Unknown tool/)
+    const payload = JSON.parse(result.content as string)
+    assert.deepEqual(payload.availableTools, ['workspace_bash'])
+    assert.equal(payload.retryable, true)
+    assert.match(payload.hint, /availableTools.*help describe\/activate/)
     assert.deepEqual(result.outcome, { ok: false, code: 'unknown_tool', error: 'Unknown tool: nope' })
+  })
+
+  test('returns targeted recovery hints for removed tool names', async () => {
+    const exec = createToolExecutor([])
+    const sendImage = JSON.parse((await exec.execute({ id: 'c1', name: 'send_image', args: {} }, makeCtx())).content as string)
+    const workspaceCommand = JSON.parse((await exec.execute({ id: 'c2', name: 'workspace_command', args: {} }, makeCtx())).content as string)
+
+    assert.match(sendImage.hint, /send_message.*imageRef/)
+    assert.match(workspaceCommand.hint, /workspace_bash.*cwd.*command/)
   })
 
   test('invalid args produce structured error, not throw', async () => {

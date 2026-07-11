@@ -116,8 +116,16 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
       const tool = byName.get(call.name)
       if (!tool) {
         const error = `Unknown tool: ${call.name}`
+        const availableTools = [...byName.keys()]
         const result = {
-          content: JSON.stringify({ ok: false, code: 'unknown_tool', error }),
+          content: JSON.stringify({
+            ok: false,
+            code: 'unknown_tool',
+            error,
+            availableTools,
+            retryable: availableTools.length > 0,
+            hint: buildUnknownToolHint(call.name, availableTools),
+          }),
           outcome: { ok: false, code: 'unknown_tool', error },
         }
         await traceToolCall(options.trace, call, ctx.roundIndex, startedAt, result, error)
@@ -138,7 +146,7 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
               message: issue.message,
             })),
             retryable: true,
-            hint: '根据 issues 修正参数，然后立即重试同一工具；不要只解释错误。',
+            hint: `根据 issues 和 ${call.name} 的当前 schema 修正参数，然后立即重试同一工具；字段名和参数类型必须精确匹配，不要改用相似但不存在的工具。`,
           }),
           outcome: { ok: false, code: 'invalid_arguments', error },
         }
@@ -167,6 +175,19 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
       }
     },
   }
+}
+
+function buildUnknownToolHint(toolName: string, availableTools: string[]): string {
+  if (toolName === 'send_image') {
+    return '不存在 send_image；发送已有图片时改用 send_message，并把 media:<id> 或 ephemeral:<hash> 传给 imageRef。'
+  }
+  if (toolName === 'workspace_command') {
+    return '不存在 workspace_command；只读工作区或仓库时改用 workspace_bash，并提供 cwd 和 command。'
+  }
+  if (availableTools.length > 0) {
+    return '从 availableTools 选择精确工具名；需要 deferred 能力时先用 help describe/activate，再通过 invoke 调用。'
+  }
+  return '当前执行器没有可用工具；不要继续猜测相似工具名。'
 }
 
 export function createDeferredToolExecutor(options: DeferredToolExecutorOptions): ToolExecutor {

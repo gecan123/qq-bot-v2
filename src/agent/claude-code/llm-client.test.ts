@@ -368,6 +368,59 @@ describe('ClaudeCodeLlmClient.chat', () => {
     assert.equal(reqBody.messages.length, 1)
   })
 
+  test('transport failure retries once and returns the second response', async (t) => {
+    const calls: Array<{ url: string; init: RequestInit }> = []
+    let attempt = 0
+    const fn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init: init ?? {} })
+      attempt++
+      if (attempt === 1) throw new TypeError('temporary network failure')
+      return new Response(SAMPLE_TEXT_SSE, { status: 200 })
+    }) as unknown as typeof fetch
+    t.mock.method(globalThis, 'fetch', fn)
+
+    const client = createClaudeCodeLlmClient({
+      model: 'LongCat-2.0',
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+    })
+    const output = await client.chat({
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [],
+    })
+
+    assert.equal(output.content, 'hello')
+    assert.equal(calls.length, 2)
+    assert.equal(calls[0]?.init.body, calls[1]?.init.body)
+  })
+
+  test('transport failure is thrown after one retry', async (t) => {
+    let calls = 0
+    const fn = (async () => {
+      calls++
+      throw new TypeError('network remains unavailable')
+    }) as unknown as typeof fetch
+    t.mock.method(globalThis, 'fetch', fn)
+
+    const client = createClaudeCodeLlmClient({
+      model: 'LongCat-2.0',
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+    })
+
+    await assert.rejects(
+      () => client.chat({ systemPrompt: 's', messages: [{ role: 'user', content: 'h' }], tools: [] }),
+      (err: unknown) => {
+        assert.ok(err instanceof ClaudeCodeApiError)
+        assert.equal(err.status, null)
+        assert.equal(err.responseText, null)
+        return true
+      },
+    )
+    assert.equal(calls, 2)
+  })
+
   test('401 不再做 forceRefresh 重试 - 直接抛 (cliproxy 端管 token)', async (t) => {
     const { fn, calls } = makeFetchMock([{ status: 401, body: '{"error":"unauthorized"}' }])
     t.mock.method(globalThis, 'fetch', fn)

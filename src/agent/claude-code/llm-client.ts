@@ -32,6 +32,8 @@ import {
 const log = createLogger('claude-code-llm')
 
 const HTTP_TIMEOUT_MS = 120_000
+const TRANSPORT_MAX_RETRIES = 1
+const TRANSPORT_RETRY_DELAY_MS = 500
 
 /**
  * 失败时附完整 native request/response payload, 让出问题时能直接在日志里看清出去的 system blocks /
@@ -90,7 +92,7 @@ export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput)
       })
       const bodyJson = JSON.stringify(body)
 
-      const { response } = await callOnce({
+      const { response } = await callWithTransportRetry({
         url,
         body: bodyJson,
         requestBody: body,
@@ -166,19 +168,44 @@ interface CallOnceOutput {
   response: { status: number; ok: boolean; text: string }
 }
 
+async function callWithTransportRetry(input: CallOnceInput): Promise<CallOnceOutput> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await callOnce(input)
+    } catch (err) {
+      const retryable =
+        err instanceof ClaudeCodeApiError && err.status === null && err.responseText === null
+      if (!retryable || attempt >= TRANSPORT_MAX_RETRIES) throw err
+
+      log.warn(
+        {
+          error: err.message,
+          cause: err.cause instanceof Error ? err.cause.message : undefined,
+          attempt: attempt + 1,
+          maxRetries: TRANSPORT_MAX_RETRIES,
+          delayMs: TRANSPORT_RETRY_DELAY_MS,
+        },
+        'claude_transport_retry',
+      )
+      await delay(TRANSPORT_RETRY_DELAY_MS)
+    }
+  }
+}
+
 async function callOnce(input: CallOnceInput): Promise<CallOnceOutput> {
   const headers = buildClaudeCodeHeaders({
     accessToken: input.accessToken,
     timeoutMs: HTTP_TIMEOUT_MS,
   })
-  let raw: Response
   try {
-    raw = await fetch(input.url, {
+    const raw = await fetch(input.url, {
       method: 'POST',
       headers,
       body: input.body,
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     })
+    const text = await raw.text()
+    return { response: { status: raw.status, ok: raw.ok, text } }
   } catch (err) {
     throw new ClaudeCodeApiError({
       message: 'Anthropic API 调用失败 (transport)',
@@ -188,8 +215,6 @@ async function callOnce(input: CallOnceInput): Promise<CallOnceOutput> {
       cause: err,
     })
   }
-  const text = await raw.text()
-  return { response: { status: raw.status, ok: raw.ok, text } }
 }
 
 function toLlmCallOutput(parsed: ClaudeMessageResponse, fallbackModel: string): LlmCallOutput {
@@ -243,6 +268,10 @@ function toLlmCallOutput(parsed: ClaudeMessageResponse, fallbackModel: string): 
     },
     model: parsed.model ?? fallbackModel,
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function thinkingLogBlocks(parsed: ClaudeMessageResponse): ClaudeThinkingLogBlock[] {

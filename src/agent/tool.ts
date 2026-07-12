@@ -20,6 +20,8 @@ export interface ToolContext {
   eventQueue: EventQueue<BotEvent>
   /** 当前 round 的元信息,用于工具内日志。 */
   roundIndex: number
+  /** active Goal 内单调递增的 round；只在主循环执行 Goal 时存在，并跨重启恢复。 */
+  goalRoundIndex?: number
 }
 
 export interface Tool<TArgs = unknown> {
@@ -71,6 +73,8 @@ export interface ToolTraceOptions {
   now?: () => Date
   clockMs?: () => number
   persistToDb?: boolean
+  /** all=全部调用; side_effects=只记副作用; off=关闭。未传时保持 all 兼容测试/嵌入方。 */
+  mode?: 'all' | 'side_effects' | 'off'
 }
 
 export interface ToolExecutorOptions {
@@ -610,6 +614,9 @@ async function traceToolCall(
 ): Promise<void> {
   if (!trace) return
 
+  const sideEffect = isSideEffectTool(call.name, call.args)
+  if (trace.mode === 'off' || (trace.mode === 'side_effects' && !sideEffect)) return
+
   const finishedAt = trace.clockMs?.() ?? Date.now()
   const classified = classifyToolResult(result, forcedError)
   const entry = {
@@ -620,7 +627,7 @@ async function traceToolCall(
     argsSummary: summarizeToolArgs(call.args),
     durationMs: Math.max(0, Math.round(finishedAt - startedAt)),
     ok: classified.ok,
-    sideEffect: isSideEffectTool(call.name, call.args),
+    sideEffect,
     ...(classified.error ? { error: classified.error } : {}),
   }
   await logToolCall(entry, { path: trace.path, appender: trace.appender })

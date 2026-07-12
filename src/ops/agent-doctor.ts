@@ -55,12 +55,12 @@ export function runAgentDoctor(input: AgentDoctorInput): AgentDoctorResult {
     errors.push('prisma/schema.prisma does not map bot_agent_snapshot')
   }
 
-  if (!(input.files['src/index.ts'] ?? '').includes('createBotLoopAgent')) {
-    errors.push('src/index.ts does not reference createBotLoopAgent')
+  if (!(input.files['src/index.ts'] ?? '').includes('createAgentRuntime')) {
+    errors.push('src/index.ts does not reference createAgentRuntime')
   }
 
-  if (!(input.files['src/agent/tools/index.ts'] ?? '').includes('buildBotTools')) {
-    errors.push('src/agent/tools/index.ts does not reference buildBotTools')
+  if (!(input.files['src/agent/tools/index.ts'] ?? '').includes('buildBotToolManifest')) {
+    errors.push('src/agent/tools/index.ts does not reference buildBotToolManifest')
   }
 
   for (const name of REQUIRED_ENV) {

@@ -8,6 +8,8 @@ import {
   deleteMemoryFiles,
   listMemoryFiles,
   readMemoryFile,
+  recallMemoryEntries,
+  proposeMemoryReview,
   searchMemoryEntries,
   writeMemoryEntry,
 } from './memory-store.js'
@@ -97,6 +99,70 @@ describe('memory-store', () => {
       assert.equal(result.matches[0]!.scope, 'self')
       assert.match(result.matches[0]!.snippet, /Markdown memory/)
       assert.equal(result.skippedCorrupt, 0)
+    })
+  })
+
+  test('recall ranks entry-level matches with explainable lexical terms and provenance', async () => {
+    await withTempMemory(async (rootDir) => {
+      let index = 0
+      const options = {
+        rootDir,
+        now: () => new Date('2026-06-27T00:00:00.000Z'),
+        id: () => `entry-${++index}`,
+      }
+      await writeMemoryEntry(options, {
+        scope: 'person', id: '123', content: '主人喜欢手冲咖啡', sourceMessageIds: [10],
+      })
+      await writeMemoryEntry(options, {
+        scope: 'person', id: '123', content: '主人最近在研究 TypeScript', sourceMessageIds: [11],
+      })
+      await writeMemoryEntry(options, {
+        scope: 'topic', title: '咖啡器具', content: '咖啡滤杯需要预热', sourceMessageIds: [12],
+      })
+
+      const result = await recallMemoryEntries({ rootDir }, {
+        query: '主人喜欢什么咖啡',
+        scope: 'person',
+        limit: 5,
+      })
+
+      assert.equal(result.matches[0]?.entryId, 'entry-1')
+      assert.deepEqual(result.matches[0]?.sourceMessageIds, [10])
+      assert.equal(result.matches[0]!.score > 0, true)
+      assert.equal(result.matches[0]!.matchedTerms.includes('主人'), true)
+      assert.equal(result.matches.some((match) => match.entryId === 'entry-3'), false)
+    })
+  })
+
+  test('review proposes duplicates and possible conflicts without mutating markdown', async () => {
+    await withTempMemory(async (rootDir) => {
+      let index = 0
+      const options = {
+        rootDir,
+        now: () => new Date('2026-06-27T00:00:00.000Z'),
+        id: () => `review-${++index}`,
+      }
+      await writeMemoryEntry(options, {
+        scope: 'person', id: '123', content: '主人喜欢喝咖啡', sourceMessageIds: [20],
+      })
+      await writeMemoryEntry(options, {
+        scope: 'person', id: '123', content: '主人喜欢喝咖啡', sourceMessageIds: [21],
+      })
+      await writeMemoryEntry(options, {
+        scope: 'person', id: '123', content: '主人不喜欢喝咖啡', sourceMessageIds: [22],
+      })
+      const file = join(rootDir, 'memory', 'people', '123.md')
+      const before = await readFile(file, 'utf8')
+
+      const result = await proposeMemoryReview({ rootDir }, {
+        file: 'people/123.md',
+        limit: 10,
+      })
+
+      assert.equal(result.proposals.some((proposal) => proposal.relation === 'duplicate'), true)
+      assert.equal(result.proposals.some((proposal) => proposal.relation === 'possible_conflict'), true)
+      assert.equal(result.proposals.every((proposal) => proposal.next.includes('memory read')), true)
+      assert.equal(await readFile(file, 'utf8'), before)
     })
   })
 

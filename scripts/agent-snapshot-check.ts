@@ -21,6 +21,8 @@ try {
   const result = validateBotSnapshotIntegrity({
     snapshot: row.contextSnapshot as unknown as PersistedAgentSnapshot,
     mailboxCursors: row.mailboxCursors,
+    mailboxContinuity: row.mailboxContinuity,
+    goalRevision: row.goalRevision,
   })
 
   console.log(JSON.stringify({

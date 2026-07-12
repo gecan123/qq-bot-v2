@@ -178,20 +178,37 @@ export async function maybeCompactConversation(
   context: AgentContext,
   lastInputTokens: number | null,
   options: MaybeCompactOptions = {},
-): Promise<void> {
-  if (lastInputTokens == null) return
+): Promise<boolean> {
+  return await compactConversation(context, lastInputTokens, options, false)
+}
+
+/** Provider 已拒绝当前 prompt 时强制压缩；调用方负责限制每轮恢复次数。 */
+export async function compactConversationForRecovery(
+  context: AgentContext,
+  options: MaybeCompactOptions = {},
+): Promise<boolean> {
+  return await compactConversation(context, null, options, true)
+}
+
+async function compactConversation(
+  context: AgentContext,
+  lastInputTokens: number | null,
+  options: MaybeCompactOptions,
+  force: boolean,
+): Promise<boolean> {
+  if (lastInputTokens == null && !force) return false
 
   const summarize = options.summarize ?? defaultSummarize
   const triggerTokens = options.triggerTokens ?? config.compactionTriggerTokens ?? DEFAULT_COMPACTION_TRIGGER_TOKENS
   const keepRatio = options.keepRatio ?? DEFAULT_COMPACTION_KEEP_RATIO
 
-  if (lastInputTokens <= triggerTokens) return
+  if (!force && lastInputTokens! <= triggerTokens) return false
 
   const snapshot = context.getSnapshot()
 
   log.info(
-    { inputTokens: lastInputTokens, messageCount: snapshot.messages.length, triggerTokens },
-    'compaction_triggered',
+    { inputTokens: lastInputTokens, messageCount: snapshot.messages.length, triggerTokens, force },
+    force ? 'compaction_recovery_triggered' : 'compaction_triggered',
   )
 
   const keepCount = Math.max(1, Math.ceil(snapshot.messages.length * keepRatio))
@@ -201,7 +218,7 @@ export async function maybeCompactConversation(
       { inputTokens: lastInputTokens, messageCount: snapshot.messages.length, keepCount },
       'compaction_no_safe_cut',
     )
-    return
+    return false
   }
 
   const toCompress = snapshot.messages.slice(0, cutIndex)
@@ -209,7 +226,7 @@ export async function maybeCompactConversation(
   const { previousSummary, rest: historyToSummarize } = splitExistingSummary(toCompress)
 
   if (historyToSummarize.length === 0 && !previousSummary) {
-    return
+    return false
   }
 
   let newSummary: string
@@ -224,7 +241,7 @@ export async function maybeCompactConversation(
   }
   if (!newSummary.trim()) {
     log.warn({ inputTokens: lastInputTokens, cutIndex, tailLen: tail.length }, 'compaction_skipped_empty_summary')
-    return
+    return false
   }
 
   const summaryMessage: AgentMessage = {
@@ -243,4 +260,5 @@ export async function maybeCompactConversation(
     },
     'compaction_replaced',
   )
+  return true
 }

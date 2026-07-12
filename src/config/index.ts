@@ -364,6 +364,7 @@ function parseLlmConfig(env: EnvSource) {
   const providers = parseProviderConfigs(env)
   const defaultProvider = requireEnv(env, 'LLM_DEFAULT_PROVIDER').toLowerCase()
   const defaultModel = requireEnv(env, 'LLM_DEFAULT_MODEL')
+  const fallbackModel = env.LLM_FALLBACK_MODEL?.trim() || null
   const claudeToolChoice = parseClaudeToolChoice(env.LLM_PROVIDER_CLAUDE_TOOL_CHOICE)
   const claudeThinking = parseClaudeThinking(env)
 
@@ -391,6 +392,7 @@ function parseLlmConfig(env: EnvSource) {
   return {
     defaultProvider,
     defaultModel,
+    fallbackModel,
     claudeToolChoice,
     claudeThinking,
     providers,
@@ -413,6 +415,33 @@ export function parseConfig(env: EnvSource) {
   const toolCallLogPath = env.BOT_TOOL_CALL_LOG_PATH && env.BOT_TOOL_CALL_LOG_PATH.trim().length > 0
     ? env.BOT_TOOL_CALL_LOG_PATH.trim()
     : 'logs/tool-calls.ndjson'
+  const toolAuditMode = parseEnumValue(
+    'BOT_TOOL_AUDIT_MODE',
+    env.BOT_TOOL_AUDIT_MODE,
+    ['off', 'side_effects', 'all'] as const,
+    'side_effects',
+  )
+  const toolAuditDbEnabled = parseBoolean(env.BOT_TOOL_AUDIT_DB_ENABLED, false)
+  const backgroundTaskStatePath = env.BOT_BACKGROUND_TASK_STATE_PATH
+    && env.BOT_BACKGROUND_TASK_STATE_PATH.trim().length > 0
+    ? env.BOT_BACKGROUND_TASK_STATE_PATH.trim()
+    : 'data/agent-workspace/runtime/background-tasks.json'
+  const approvalStatePath = env.BOT_APPROVAL_STATE_PATH && env.BOT_APPROVAL_STATE_PATH.trim().length > 0
+    ? env.BOT_APPROVAL_STATE_PATH.trim()
+    : 'data/agent-workspace/runtime/approvals.json'
+  const approvalMode = parseEnumValue(
+    'BOT_APPROVAL_MODE',
+    env.BOT_APPROVAL_MODE,
+    ['off', 'thin', 'strict'] as const,
+    'thin',
+  )
+  const mcpConfigPath = env.BOT_MCP_CONFIG_PATH && env.BOT_MCP_CONFIG_PATH.trim().length > 0
+    ? env.BOT_MCP_CONFIG_PATH.trim()
+    : undefined
+  const mcpSchemaSnapshotDir = env.BOT_MCP_SCHEMA_SNAPSHOT_DIR
+    && env.BOT_MCP_SCHEMA_SNAPSHOT_DIR.trim().length > 0
+    ? env.BOT_MCP_SCHEMA_SNAPSHOT_DIR.trim()
+    : 'data/agent-workspace/runtime/mcp-schemas'
   const groupAmbientSendIds = new Set(parseIdList('BOT_GROUP_AMBIENT_SEND_IDS', env.BOT_GROUP_AMBIENT_SEND_IDS))
 
   const outboundCacheMaxEntries = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_MAX_ENTRIES, 32)
@@ -466,6 +495,13 @@ export function parseConfig(env: EnvSource) {
     tokenUsageLogPath,
     /** Unified tool-call NDJSON sidecar log path. Override via BOT_TOOL_CALL_LOG_PATH env. */
     toolCallLogPath,
+    toolAuditMode,
+    toolAuditDbEnabled,
+    backgroundTaskStatePath,
+    approvalStatePath,
+    approvalMode,
+    mcpConfigPath,
+    mcpSchemaSnapshotDir,
     /**
      * 主动发言（group-ambient）白名单. 只有在此集合内的群才真发 ambient 消息,
      * 不在集合内的群 ambient 会被明确拒绝，reply 也只允许引用结构化 at bot 的入站消息；

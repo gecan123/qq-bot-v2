@@ -4,6 +4,8 @@ import type { MailboxCursors } from './mailbox.js'
 export interface BotSnapshotIntegrityInput {
   snapshot: PersistedAgentSnapshot
   mailboxCursors: unknown
+  mailboxContinuity?: unknown
+  goalRevision: unknown
 }
 
 export interface BotSnapshotIntegrityResult {
@@ -16,6 +18,7 @@ export interface BotSnapshotIntegrityResult {
     toolResults: number
     activeToolCapabilities: number
     mailboxCursors: number
+    goalRevision: number
   }
 }
 
@@ -32,6 +35,8 @@ export function validateBotSnapshotIntegrity(input: BotSnapshotIntegrityInput): 
   validateActiveCapabilities(activeToolCapabilities, errors)
   validateMessages(messages, errors, warnings)
   validateMailboxCursors(mailboxCursors, errors)
+  validateMailboxContinuity(input.mailboxContinuity, errors)
+  const goalRevision = validateGoalRevision(input.goalRevision, errors)
 
   return {
     ok: errors.length === 0,
@@ -45,8 +50,17 @@ export function validateBotSnapshotIntegrity(input: BotSnapshotIntegrityInput): 
       toolResults: messages.filter((message) => message.role === 'tool').length,
       activeToolCapabilities: activeToolCapabilities.length,
       mailboxCursors: mailboxCursors.length,
+      goalRevision,
     },
   }
+}
+
+function validateGoalRevision(value: unknown, errors: string[]): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    errors.push('goalRevision must be a non-negative safe integer')
+    return 0
+  }
+  return value as number
 }
 
 function validateStableJson(snapshot: PersistedAgentSnapshot, errors: string[]): void {
@@ -159,6 +173,52 @@ function validateMailboxCursors(entries: Array<[string, unknown]>, errors: strin
     }
     if (!Number.isSafeInteger(value) || (value as number) < 0) {
       errors.push(`mailboxCursors.${key} must be a non-negative safe integer`)
+    }
+  }
+}
+
+function validateMailboxContinuity(value: unknown, errors: string[]): void {
+  if (value == null) return
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    errors.push('mailboxContinuity must be an object')
+    return
+  }
+  const obj = value as Record<string, unknown>
+  for (const field of ['roundSeq', 'compactionEpoch']) {
+    const fieldValue = obj[field]
+    if (fieldValue != null && (!Number.isSafeInteger(fieldValue) || (fieldValue as number) < 0)) {
+      errors.push(`mailboxContinuity.${field} must be a non-negative safe integer`)
+    }
+  }
+  const lastInputTokens = obj.lastInputTokens
+  if (lastInputTokens != null && (!Number.isSafeInteger(lastInputTokens) || (lastInputTokens as number) < 0)) {
+    errors.push('mailboxContinuity.lastInputTokens must be null or a non-negative safe integer')
+  }
+  const mailboxes = obj.mailboxes
+  if (mailboxes == null) return
+  if (typeof mailboxes !== 'object' || Array.isArray(mailboxes)) {
+    errors.push('mailboxContinuity.mailboxes must be an object')
+    return
+  }
+  for (const [key, anchor] of Object.entries(mailboxes as Record<string, unknown>)) {
+    if (!/^qq_(?:group|private):\d+$/.test(key)) {
+      errors.push(`mailboxContinuity.mailboxes.${key} has invalid key`)
+      continue
+    }
+    if (!anchor || typeof anchor !== 'object' || Array.isArray(anchor)) {
+      errors.push(`mailboxContinuity.mailboxes.${key} must be an object`)
+      continue
+    }
+    const anchorObj = anchor as Record<string, unknown>
+    for (const field of ['lastMessageAtMs', 'roundSeq', 'compactionEpoch']) {
+      const fieldValue = anchorObj[field]
+      if (!Number.isSafeInteger(fieldValue) || (fieldValue as number) < 0) {
+        errors.push(`mailboxContinuity.mailboxes.${key}.${field} must be a non-negative safe integer`)
+      }
+    }
+    const inputTokens = anchorObj.inputTokens
+    if (inputTokens != null && (!Number.isSafeInteger(inputTokens) || (inputTokens as number) < 0)) {
+      errors.push(`mailboxContinuity.mailboxes.${key}.inputTokens must be null or a non-negative safe integer`)
     }
   }
 }

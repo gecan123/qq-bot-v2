@@ -30,6 +30,17 @@ import { maybeCreateCryptoPaperTool } from './crypto-paper.js'
 import { maybeCreateTradingAgentTool } from './trading-agent.js'
 import type { SendTargetPolicy } from '../send-target-policy.js'
 import { createAgentTaskScheduler, type TaskScheduler } from '../task-scheduler.js'
+import { createQqDirectoryTool, type QqDirectoryDeps } from './qq-directory.js'
+import { createScheduleTool } from './schedule.js'
+import type { DurableWakeScheduler } from '../durable-wake-scheduler.js'
+import type { LlmClient } from '../llm-client.js'
+import { createDelegateTool } from './delegate.js'
+import type { ApprovalManager } from '../approval-manager.js'
+import { createApprovalTool } from './approval.js'
+import type { McpManager } from '../mcp-manager.js'
+import { createMcpTool } from './mcp.js'
+import { createGoalTool } from './goal.js'
+import type { GoalStore } from '../goal-store.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -39,8 +50,23 @@ export interface BotToolDeps {
   selfNumber: number
   metadata: TargetMetadataMaps
   groupCustomizations: readonly GroupCustomization[]
-  websiteTool?: Tool
+  qqDirectory: QqDirectoryDeps
+  optionalTools?: BotOptionalTools
   taskScheduler?: TaskScheduler
+  wakeScheduler?: DurableWakeScheduler
+  llm?: LlmClient
+  approvalManager?: ApprovalManager
+  mcpManager?: McpManager
+  goalStore?: GoalStore
+}
+
+export interface BotOptionalTools {
+  browser?: Tool | null
+  openbb?: Tool | null
+  tradingAgent?: Tool | null
+  website?: Tool | null
+  webSearch?: Tool | null
+  cryptoPaper?: Tool | null
 }
 
 export interface BotToolManifest {
@@ -54,39 +80,68 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     taskRegistry: deps.taskRegistry,
     taskScheduler,
   })
-  const cryptoPaper = maybeCreateCryptoPaperTool()
-  const tradingAgent = maybeCreateTradingAgentTool({ taskRegistry: deps.taskRegistry })
+  const cryptoPaper = resolveOptionalTool(deps.optionalTools, 'cryptoPaper', maybeCreateCryptoPaperTool)
+  const tradingAgent = resolveOptionalTool(
+    deps.optionalTools,
+    'tradingAgent',
+    () => maybeCreateTradingAgentTool({ taskRegistry: deps.taskRegistry }) ?? null,
+  )
+  const qqDirectory = createQqDirectoryTool(deps.qqDirectory)
+  const backgroundTask = createBackgroundTaskTool({ taskRegistry: deps.taskRegistry })
+  const inbox = createInboxTool({ groupIds: deps.groupIds, selfNumber: deps.selfNumber })
+  const chatStyle = createChatStyleTool({
+    groupIds: deps.groupIds,
+    metadata: deps.metadata,
+    groupCustomizations: deps.groupCustomizations,
+  })
+  const aiTone = createAiToneTool()
+  const workspaceBash = createWorkspaceBashTool({
+    groupIdWhitelist: deps.groupIds,
+    groupIds: deps.groupIds,
+    metadata: deps.metadata,
+    groupCustomizations: deps.groupCustomizations,
+  })
+  const delegate = deps.llm ? createDelegateTool({
+    llm: deps.llm,
+    taskRegistry: deps.taskRegistry,
+    taskScheduler,
+    safeTools: [workspaceBash, inbox, qqDirectory, chatStyle, aiTone, skillTool, backgroundTask],
+  }) : null
   const tools: Tool[] = [
     pauseTool,
     createSendMessageTool({
       sender: deps.sender,
       targetPolicy: deps.targetPolicy,
     }),
-    createBackgroundTaskTool({ taskRegistry: deps.taskRegistry }),
+    qqDirectory,
+    backgroundTask,
+    ...(deps.wakeScheduler ? [createScheduleTool(deps.wakeScheduler)] : []),
+    ...(delegate ? [delegate] : []),
+    ...(deps.approvalManager ? [createApprovalTool(deps.approvalManager)] : []),
+    ...(deps.goalStore ? [createGoalTool(deps.goalStore)] : []),
     todoTool,
     skillTool,
     memoryTool,
-    createInboxTool({ groupIds: deps.groupIds, selfNumber: deps.selfNumber }),
+    inbox,
     collectStickerTool,
-    createChatStyleTool({
-      groupIds: deps.groupIds,
-      metadata: deps.metadata,
-      groupCustomizations: deps.groupCustomizations,
-    }),
-    createAiToneTool(),
+    chatStyle,
+    aiTone,
     journalTool,
     lifeJournalTool,
     ...(cryptoPaper ? [cryptoPaper] : []),
-    createWorkspaceBashTool({
-      groupIdWhitelist: deps.groupIds,
-      groupIds: deps.groupIds,
-      metadata: deps.metadata,
-      groupCustomizations: deps.groupCustomizations,
-    }),
+    workspaceBash,
   ]
   const capabilities: DeferredToolCapability[] = []
 
-  const browser = maybeCreateBrowserTool()
+  if (deps.mcpManager?.hasServers()) {
+    capabilities.push({
+      name: 'mcp_connectors',
+      description: '按需连接 operator 配置的 MCP server；提供命名空间工具、版本化 schema 快照、结果上限和 owner 审批.',
+      tools: [createMcpTool(deps.mcpManager)],
+    })
+  }
+
+  const browser = resolveOptionalTool(deps.optionalTools, 'browser', maybeCreateBrowserTool)
   if (browser) {
     capabilities.push({
       name: 'browser',
@@ -95,7 +150,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     })
   }
 
-  const openbb = maybeCreateOpenbbCliTool()
+  const openbb = resolveOptionalTool(deps.optionalTools, 'openbb', maybeCreateOpenbbCliTool)
   if (openbb) {
     capabilities.push({
       name: 'finance',
@@ -112,7 +167,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     })
   }
 
-  const website = deps.websiteTool ?? maybeCreateWebsiteTool()
+  const website = resolveOptionalTool(deps.optionalTools, 'website', maybeCreateWebsiteTool)
   if (website) {
     capabilities.push({
       name: 'website',
@@ -121,7 +176,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     })
   }
 
-  const webSearch = maybeCreateWebSearchTool()
+  const webSearch = resolveOptionalTool(deps.optionalTools, 'webSearch', maybeCreateWebSearchTool)
   capabilities.push({
     name: 'external_research',
     description: '外部内容与研究: 搜索互联网、抓普通网页、Reddit、图片 URL 和 QQ 头像.',
@@ -162,6 +217,17 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   )
 
   return { alwaysOnTools: tools, capabilities }
+}
+
+function resolveOptionalTool(
+  overrides: BotOptionalTools | undefined,
+  name: keyof BotOptionalTools,
+  factory: () => Tool | null,
+): Tool | null {
+  if (overrides && Object.prototype.hasOwnProperty.call(overrides, name)) {
+    return overrides[name] ?? null
+  }
+  return factory()
 }
 
 export function buildBotTools(deps: BotToolDeps): Tool[] {

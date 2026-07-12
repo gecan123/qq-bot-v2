@@ -45,20 +45,23 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
         }
       }
 
-      if (task.status === 'failed') {
+      if (task.status !== 'completed') {
         return {
           content: stringifyCappedTaskPayload({
             ok: false,
             taskId: task.id,
             toolName: task.toolName,
-            status: 'failed',
+            status: task.status,
             error: task.error,
+            ...(task.recovery ? { recovery: task.recovery } : {}),
           }),
         }
       }
 
       const data = task.resultData as Record<string, unknown> | undefined
       const next = nextStepForTaskResult(data)
+      const ephemeralResultExpired = task.restoredFromDisk
+        && (typeof data?.ephemeralRef === 'string' || Array.isArray(data?.images))
       const blocks: ToolResultContentBlock[] = [
         {
           type: 'text',
@@ -68,7 +71,7 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
             toolName: task.toolName,
             status: 'completed',
             summary: task.resultSummary,
-            ...(data?.ephemeralRef != null ? { ephemeralRef: data.ephemeralRef } : {}),
+            ...(!ephemeralResultExpired && data?.ephemeralRef != null ? { ephemeralRef: data.ephemeralRef } : {}),
             ...(data?.dataHash != null ? { dataHash: data.dataHash } : {}),
             ...(data?.byteSize != null ? { byteSize: data.byteSize } : {}),
             ...(data?.contentType != null ? { contentType: data.contentType } : {}),
@@ -77,7 +80,7 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
             ...(data?.requestedCount != null ? { requestedCount: data.requestedCount } : {}),
             ...(data?.succeededCount != null ? { succeededCount: data.succeededCount } : {}),
             ...(data?.failedCount != null ? { failedCount: data.failedCount } : {}),
-            ...(Array.isArray(data?.images) ? { images: data.images } : {}),
+            ...(!ephemeralResultExpired && Array.isArray(data?.images) ? { images: data.images } : {}),
             ...(Array.isArray(data?.failures) ? { failures: data.failures } : {}),
             ...(data?.sessionId != null ? { sessionId: data.sessionId } : {}),
             ...(data?.attemptId != null ? { attemptId: data.attemptId } : {}),
@@ -85,7 +88,10 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
             ...(data?.truncated != null ? { truncated: data.truncated } : {}),
             ...(data?.runId != null ? { runId: data.runId } : {}),
             ...(data?.metrics != null ? { metrics: data.metrics } : {}),
-            ...(next ? { next } : {}),
+            ...(ephemeralResultExpired ? {
+              ephemeralResultExpired: true,
+              next: '进程重启后 ephemeralRef 已失效；请重新生成图片。',
+            } : next ? { next } : {}),
           }),
         },
       ]

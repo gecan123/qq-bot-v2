@@ -76,6 +76,92 @@ describe('life journal runtime', () => {
     assert.match(capturedInput.messages[0]!.content as string, /# Current Life Journal state/)
     assert.match(capturedInput.messages[0]!.content as string, /## Current Agenda/)
     assert.deepEqual(capturedInput.messages[1], { role: 'user', content: '这一轮确认让我自己写 journal' })
+    assert.match(capturedInput.systemPrompt, /completing a nap is not a lived achievement/)
+  })
+
+  test('recordRound skips pause-only rounds without calling the reviewer', async () => {
+    let calls = 0
+    const llm: LlmClient = {
+      async chat() {
+        calls++
+        throw new Error('pause-only round should not reach reviewer')
+      },
+    }
+    const runtime = createLifeJournalRuntime({ rootDir, llm })
+
+    const queued = await runtime.recordRound({
+      roundIndex: 8,
+      messages: [
+        { role: 'user', content: '{"event":"inbox_update","priority":"normal"}' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{
+            id: 'pause-1',
+            name: 'pause',
+            args: {
+              action: 'rest',
+              durationSeconds: 60,
+              reason: '短暂放空',
+              intention: {
+                preferredIndex: 0,
+                immediateDirections: [
+                  '复核 SOL 观察记录',
+                  '读一篇具体论文',
+                  '回看 journal 的未完线索',
+                  '只读检查一个代码模块',
+                  '整理一条市场假设',
+                  '挑一篇群友文章读第一节',
+                ],
+              },
+            },
+          }],
+        },
+        { role: 'tool', toolCallId: 'pause-1', content: '{"ok":true,"status":"elapsed"}' },
+      ],
+    })
+
+    assert.deepEqual(queued, { ok: true, queued: false, coalesced: false })
+    assert.equal(await runtime.drain(), null)
+    assert.equal(calls, 0)
+  })
+
+  test('recordRound removes mechanical rest completions from an agenda update', async () => {
+    const llm: LlmClient = {
+      async chat() {
+        return {
+          content: JSON.stringify({
+            shouldWrite: false,
+            journalMarkdown: '',
+            agendaMarkdown: `## Active
+- [ ] 继续研究
+
+## Waiting
+
+## Someday
+
+## Done
+- [x] 30分钟休息（Round 58）
+- [x] 休息10分钟
+- [x] 修复重复休息问题`,
+          }),
+          toolCalls: [],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+        }
+      },
+    }
+    const runtime = createLifeJournalRuntime({ rootDir, llm })
+
+    const result = await recordAndDrain(runtime, {
+      roundIndex: 9,
+      messages: [{ role: 'user', content: '完成了一个真正的研究步骤' }],
+    })
+
+    assert.deepEqual(result, { ok: true, wroteJournal: false, updatedAgenda: true })
+    const agenda = await readFile(join(rootDir, 'life', 'agenda.md'), 'utf8')
+    assert.doesNotMatch(agenda, /30分钟休息|休息10分钟/)
+    assert.match(agenda, /修复重复休息问题/)
   })
 
   test('recordRound reviews the current agenda and recent journal before deciding', async () => {

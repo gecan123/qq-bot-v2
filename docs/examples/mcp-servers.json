@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "servers": {
+    "example": {
+      "command": "/absolute/path/to/mcp-server",
+      "args": [],
+      "cwd": "/absolute/path/to/server-workspace",
+      "env": {},
+      "inheritEnv": ["EXAMPLE_API_TOKEN"],
+      "readOnlyTools": ["search", "get_item"],
+      "timeoutMs": 30000,
+      "resultMaxChars": 12000
+    }
+  }
+}

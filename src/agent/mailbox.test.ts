@@ -249,6 +249,24 @@ describe('mailbox disclosure planning', () => {
     assert.doesNotMatch(rendered, /SECRET_/)
   })
 
+  test('adds bounded same-mailbox compensation to notification read args', () => {
+    const events = [
+      privateEvent({ rowId: 30, peerId: 9001, text: 'CURRENT', senderNickname: 'Alice' }),
+    ]
+
+    const rendered = renderMailboxNotification('qq_private:9001', events, { contextBefore: 8 })
+    const payload = JSON.parse(rendered)
+
+    assert.deepEqual(payload.readArgs, {
+      action: 'read',
+      source: 'private',
+      peerId: 9001,
+      afterRowId: 29,
+      contextBefore: 8,
+    })
+    assert.doesNotMatch(rendered, /CURRENT/)
+  })
+
   test('returns stable source keys only for QQ message events', () => {
     assert.equal(mailboxKeyForEvent(groupEvent({ rowId: 1, groupId: 111, text: 'x' })), 'qq_group:111')
     assert.equal(mailboxKeyForEvent(privateEvent({ rowId: 2 })), 'qq_private:9001')

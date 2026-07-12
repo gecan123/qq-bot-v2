@@ -125,6 +125,38 @@ export async function isGroupMessageMentioningUser(
   })
 }
 
+export async function findApprovalEvidenceMessage(rowId: number): Promise<{
+  rowId: number
+  sceneKind: string
+  sceneExternalId: string
+  senderId: bigint
+  text: string
+  sentAt: Date
+} | null> {
+  const row = await prisma.message.findUnique({
+    where: { id: rowId },
+    select: {
+      id: true,
+      sceneKind: true,
+      sceneExternalId: true,
+      senderId: true,
+      resolvedText: true,
+      searchText: true,
+      sentAt: true,
+      createdAt: true,
+    },
+  })
+  if (!row) return null
+  return {
+    rowId: row.id,
+    sceneKind: row.sceneKind,
+    sceneExternalId: row.sceneExternalId,
+    senderId: row.senderId,
+    text: row.resolvedText ?? row.searchText,
+    sentAt: row.sentAt ?? row.createdAt,
+  }
+}
+
 function jsonSql(value: Prisma.InputJsonValue | null | undefined): Prisma.Sql {
   if (value === undefined) return Prisma.sql`NULL`
   if (value === null) return Prisma.sql`'null'::jsonb`

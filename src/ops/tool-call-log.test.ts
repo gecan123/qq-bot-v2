@@ -39,4 +39,12 @@ describe('tool-call-log side effect classification', () => {
       assert.equal(isSideEffectTool('trading_agent', { action }), true, action)
     }
   })
+
+  test('classifies goal reads separately from state transitions', () => {
+    assert.equal(isSideEffectTool('goal', { action: 'get' }), false)
+    assert.equal(isSideEffectTool('goal', { action: 'create_self' }), true)
+    assert.equal(isSideEffectTool('goal', { action: 'complete' }), true)
+    assert.equal(isSideEffectTool('goal', { action: 'report_blocker' }), true)
+    assert.equal(isSideEffectTool('goal', { action: 'abandon_self' }), true)
+  })
 })

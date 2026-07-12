@@ -8,8 +8,8 @@ const healthyFiles = {
   'package.json': '{"scripts":{"repo-check":"tsx scripts/repo-check.ts","agent:doctor":"tsx scripts/agent-doctor.ts","agent:metrics":"tsx scripts/agent-metrics.ts"}}',
   'prisma/schema.prisma': '@@map("bot_agent_snapshot")\n',
   '.env.example': 'BOT_TARGET_GROUP_IDS=\nLLM_DEFAULT_PROVIDER=openai-agent\n',
-  'src/index.ts': 'createBotLoopAgent()\n',
-  'src/agent/tools/index.ts': 'buildBotTools\n',
+  'src/index.ts': 'createAgentRuntime()\n',
+  'src/agent/tools/index.ts': 'buildBotToolManifest\n',
 }
 
 const healthyEnv = {

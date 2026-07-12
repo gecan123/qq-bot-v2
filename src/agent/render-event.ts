@@ -1,4 +1,5 @@
 import type { BotEvent } from './event.js'
+import { formatBeijingIso } from '../utils/beijing-time.js'
 
 /**
  * 把 BotEvent 翻译成喂给 LLM 的 user-role 文本。
@@ -34,6 +35,15 @@ export function renderBotEvent(event: BotEvent): string | null {
   if (event.type === 'bootstrap') return BOOTSTRAP_TEXT
 
   if (event.type === 'curiosity_tick') return CURIOSITY_TICK_TEXT
+
+  if (event.type === 'scheduled_wake') {
+    return JSON.stringify({
+      event: 'scheduled_wake',
+      scheduleId: event.scheduleId,
+      dueAt: formatBeijingIso(event.dueAt),
+      reason: event.reason,
+    })
+  }
 
   if (event.type === 'napcat_message') {
     const ts = formatBeijingTime(event.sentAt)

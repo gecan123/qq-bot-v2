@@ -25,6 +25,7 @@ export function createCheckTasksTool(deps: CheckTasksDeps): Tool<z.infer<typeof 
         taskId: t.id,
         toolName: t.toolName,
         description: t.description,
+        status: t.status,
         ok: t.status === 'completed',
         elapsedMs: t.completedAt
           ? t.completedAt.getTime() - t.startedAt.getTime()

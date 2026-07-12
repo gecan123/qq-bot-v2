@@ -19,6 +19,10 @@ export interface MailboxDisclosurePlan {
   cursors: MailboxCursors
 }
 
+export interface MailboxNotificationOptions {
+  contextBefore?: number
+}
+
 export function mailboxKeyForEvent(event: BotEvent): string | null {
   if (event.type === 'napcat_message') return `qq_group:${event.groupId}`
   if (event.type === 'napcat_private_message') return `qq_private:${event.peerId}`
@@ -68,6 +72,7 @@ export function planMailboxDisclosures(
 export function renderMailboxNotification(
   mailboxKey: string,
   events: readonly MailboxEvent[],
+  options: MailboxNotificationOptions = {},
 ): string {
   if (events.length === 0) {
     throw new Error('mailbox notification requires at least one event')
@@ -85,14 +90,17 @@ export function renderMailboxNotification(
     from: formatBeijingIso(first.sentAt),
     to: formatBeijingIso(last.sentAt),
   }
+  const contextArgs = options.contextBefore == null || options.contextBefore <= 0
+    ? {}
+    : { contextBefore: options.contextBefore }
   const source = first.type === 'napcat_private_message'
     ? {
         value: { type: 'private', peerId: first.peerId, senderName: first.senderNickname },
-        readArgs: { action: 'read', source: 'private', peerId: first.peerId, afterRowId },
+        readArgs: { action: 'read', source: 'private', peerId: first.peerId, afterRowId, ...contextArgs },
       }
     : {
         value: { type: 'group', groupId: first.groupId, groupName: first.groupName ?? null },
-        readArgs: { action: 'read', source: 'group', groupId: first.groupId, afterRowId },
+        readArgs: { action: 'read', source: 'group', groupId: first.groupId, afterRowId, ...contextArgs },
       }
 
   const payload = {

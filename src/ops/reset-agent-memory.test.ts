@@ -20,12 +20,14 @@ describe('resetAgentMemory', () => {
         workspaceDir,
         db: {
           botAgentSnapshot: { deleteMany: async () => ({ count: 1 }) },
+          botAgentGoal: { deleteMany: async () => ({ count: 1 }) },
           memoryEntry: { deleteMany: async () => ({ count: 7 }) },
         },
       })
 
       assert.deepEqual(result, {
         deletedSnapshots: 1,
+        deletedGoals: 1,
         deletedLegacyMemoryRows: 7,
         removedDirectories: ['memory', 'journal', 'life'],
       })
@@ -45,10 +47,12 @@ describe('resetAgentMemory', () => {
         workspaceDir,
         db: {
           botAgentSnapshot: { deleteMany: async () => ({ count: 0 }) },
+          botAgentGoal: { deleteMany: async () => ({ count: 0 }) },
           memoryEntry: { deleteMany: async () => ({ count: 0 }) },
         },
       })
       assert.equal(result.deletedSnapshots, 0)
+      assert.equal(result.deletedGoals, 0)
       assert.equal(result.deletedLegacyMemoryRows, 0)
     } finally {
       await rm(workspaceDir, { recursive: true, force: true })

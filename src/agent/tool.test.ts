@@ -68,6 +68,40 @@ describe('createToolExecutor', () => {
     assert.equal(entry.argsSummary.text, 'hello')
   })
 
+  test('supports thin side-effect-only audit and fully disabled audit modes', async () => {
+    const writes: string[] = []
+    const read: Tool<Record<string, never>> = {
+      name: 'skill',
+      description: 'read',
+      schema: z.object({}),
+      async execute() { return { content: '{"ok":true}' } },
+    }
+    const send: Tool<Record<string, never>> = {
+      name: 'send_message',
+      description: 'send',
+      schema: z.object({}),
+      async execute() { return { content: '{"ok":true}' } },
+    }
+    const thin = createToolExecutor([read, send], {
+      trace: {
+        mode: 'side_effects',
+        appender: async (_path, line) => { writes.push(line) },
+      },
+    })
+    await thin.execute({ id: 'read', name: 'skill', args: {} }, makeCtx())
+    await thin.execute({ id: 'send', name: 'send_message', args: {} }, makeCtx())
+    assert.deepEqual(writes.map((line) => JSON.parse(line).toolName), ['send_message'])
+
+    const off = createToolExecutor([send], {
+      trace: {
+        mode: 'off',
+        appender: async (_path, line) => { writes.push(line) },
+      },
+    })
+    await off.execute({ id: 'off', name: 'send_message', args: {} }, makeCtx())
+    assert.equal(writes.length, 1)
+  })
+
   test('writes a failed tool trace for invalid args without entering AgentContext-specific content', async () => {
     const writes: string[] = []
     const inc: Tool<{ n: number }> = {

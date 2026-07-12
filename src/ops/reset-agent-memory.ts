@@ -5,11 +5,13 @@ const MEMORY_DIRECTORIES = ['memory', 'journal', 'life'] as const
 
 export interface AgentMemoryResetDb {
   botAgentSnapshot: { deleteMany(): Promise<{ count: number }> }
+  botAgentGoal: { deleteMany(): Promise<{ count: number }> }
   memoryEntry: { deleteMany(): Promise<{ count: number }> }
 }
 
 export interface AgentMemoryResetResult {
   deletedSnapshots: number
+  deletedGoals: number
   deletedLegacyMemoryRows: number
   removedDirectories: string[]
 }
@@ -18,8 +20,9 @@ export async function resetAgentMemory(options: {
   db: AgentMemoryResetDb
   workspaceDir: string
 }): Promise<AgentMemoryResetResult> {
-  const [snapshots, legacyMemory] = await Promise.all([
+  const [snapshots, goals, legacyMemory] = await Promise.all([
     options.db.botAgentSnapshot.deleteMany(),
+    options.db.botAgentGoal.deleteMany(),
     options.db.memoryEntry.deleteMany(),
   ])
 
@@ -31,6 +34,7 @@ export async function resetAgentMemory(options: {
 
   return {
     deletedSnapshots: snapshots.count,
+    deletedGoals: goals.count,
     deletedLegacyMemoryRows: legacyMemory.count,
     removedDirectories,
   }

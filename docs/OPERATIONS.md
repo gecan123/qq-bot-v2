@@ -21,7 +21,7 @@
 pnpm agent:reset-memory
 ```
 
-该命令删除 `bot_agent_snapshot`、旧 `memory_entries` 数据，以及 `data/agent-workspace/{memory,journal,life}`。无 snapshot 的冷启动不会回放既有消息。消息/媒体账本、表情池、浏览器 profile/artifact 和普通 workspace 文件会保留。命令可重复执行；检测到 `.bot.pid` 对应进程仍存活时会拒绝运行，避免 bot 退出时重新保存旧 snapshot。
+该命令删除 `bot_agent_snapshot`、`bot_agent_goal`、旧 `memory_entries` 数据，以及 `data/agent-workspace/{memory,journal,life}`。无 snapshot 的冷启动不会回放既有消息。消息/媒体账本、表情池、浏览器 profile/artifact 和普通 workspace 文件会保留。命令可重复执行；检测到 `.bot.pid` 对应进程仍存活时会拒绝运行，避免 bot 退出时重新保存旧 snapshot。
 
 ```bash
 pnpm dev
@@ -45,9 +45,75 @@ pnpm toollogf
 
 ## 本地运行
 
+`LLM_FALLBACK_MODEL` 默认不配置。需要时填写与 `LLM_DEFAULT_MODEL` 使用同一 `LLM_DEFAULT_PROVIDER` wire path 的模型；它只接管 overload/5xx，不用于鉴权、限流、参数错误或 context overflow。
+
 - 从仓库根目录启动，确保 `.bot.pid`、logs、prompts 和相对路径稳定。
 - `pnpm dev` 使用 watch 模式，文件变化会重启；`pnpm dev:once` 单次启动，不监听文件变化。
 - `pnpm tick` 会读取 `.bot.pid`，向进程发送 `SIGUSR1`，并注入一个仅供人工调试的 curiosity tick。正常自主循环由 Agent 的 `pause` 计时和 BotLoop 连续运行驱动，不依赖这个命令。
+
+## Owner Goal
+
+配置的 owner 与 bot 的 QQ 私聊是最高优先级 Goal 控制面。Agent 也可以通过 `goal action=create_self` 创建自己的持久 Goal，但不能改写或放弃 owner Goal；新的 owner Goal 会直接抢占当前 self Goal。owner 命令必须从消息开头精确使用 `/goal`：
+
+```text
+/goal
+/goal 完成目标描述
+/goal --tokens 50000 完成目标描述
+/goal pause
+/goal resume
+/goal resume --tokens 80000
+/goal clear
+```
+
+不带参数用于查询。新的 owner Goal 不会覆盖仍未完成的 owner Goal，必须先完成或 `clear`；但会抢占 self Goal。达到 token budget 后状态变为 `budget_limited`；恢复时的新预算必须大于已经使用的 token。`clear` 是取消而非物理删除，便于 revision 和迟到调用保持单调、可判旧。Goal 跨重启继续，missed owner 私聊命令会在普通 mailbox replay 前按 message row 顺序补应用。
+
+self Goal 默认 1,000,000 tokens，允许自行指定到 10,000,000；滚动 24 小时最多 64 个、相邻创建至少 60 秒。两项限制只用于阻止失控循环，不是日常行为准入。Agent 用 `abandon_self` 放弃自己的 Goal 时必须保留理由；该动作不能作用于 owner Goal。
+
+## Owner 审批
+
+开发默认是 `BOT_APPROVAL_MODE=thin`：只审批网站 `publish` 和未列入 MCP `readOnlyTools` 的调用。本地 memory/journal/Life Journal/workspace 删除、网站本地删除和 skill 安装直接执行，不再打断迭代。`strict` 恢复这些本地审批，`off` 关闭统一审批 hook；三种模式都不会改变工具自身的 revision、路径、target、schema、allowlist 和 timeout 边界。
+
+需要审批的调用第一次会返回 `approval_required`。标准流程是：
+
+1. 记录返回的 `approvalId`、原因和过期时间。
+2. owner 在与 bot 的 QQ 私聊里发送精确文本 `批准 <approvalId>`，不要附加其他文字。
+3. Agent 用 `inbox` 找到这条私聊的 `rowId`，调用 `approval action=approve approvalId=<id> messageRowId=<rowId>`。
+4. 以完全相同的 tool name 和 args 重试原调用。审批在这次成功授权时即消费，再次执行必须重新申请。
+
+审批状态默认写入 `data/agent-workspace/runtime/approvals.json`，可用 `BOT_APPROVAL_STATE_PATH` 修改。owner 未配置、证据不是 owner 私聊、证据早于请求或晚于过期时间、参数变化、重复消费都会被拒绝。
+
+## 薄审计模式
+
+默认配置适合快速迭代：
+
+```bash
+BOT_TOOL_AUDIT_MODE=side_effects
+BOT_TOOL_AUDIT_DB_ENABLED=false
+BOT_APPROVAL_MODE=thin
+```
+
+`side_effects` 只把写操作和外部动作记录到本地 `logs/tool-calls.ndjson`；普通读取不记录。`all` 用于集中排障，`off` 完全关闭 tool trace。Postgres `agent_tool_calls` 只有显式打开 `BOT_TOOL_AUDIT_DB_ENABLED=true` 才写入。token usage 仍是独立的性能观测，不参与权限判断。
+
+## Deferred MCP
+
+复制 [MCP 配置示例](./examples/mcp-servers.json) 到不提交的 bot 自管目录，例如 `data/agent-workspace/config/mcp-servers.json`，再设置：
+
+```bash
+BOT_MCP_CONFIG_PATH=./data/agent-workspace/config/mcp-servers.json
+BOT_MCP_SCHEMA_SNAPSHOT_DIR=data/agent-workspace/runtime/mcp-schemas
+```
+
+配置文件只支持本机 stdio server；`command` / `args` 由 operator 固定，运行时不用 shell。`env` 适合非敏感固定值；密钥优先通过 `inheritEnv` 写变量名，再由 bot 进程环境提供真实值。`readOnlyTools` 必须使用 server 暴露的原始 tool name，未列出的调用默认需要 owner 审批。
+
+重启后先通过 `help action=activate capability=mcp_connectors` 激活，再按以下顺序使用：
+
+```text
+invoke tool=mcp args={"action":"servers"}
+invoke tool=mcp args={"action":"tools","server":"example"}
+invoke tool=mcp args={"action":"call","tool":"mcp__example__search","arguments":{"query":"..."}}
+```
+
+`servers` 不启动子进程；第一次 `tools` / `connect` / `call` 才连接。`tools` 默认每页 5 项，返回 `nextOffset` 时继续分页。schema 快照带 `schemaVersion` 哈希；它是调试和变更审计依据，不是 replay 数据源。当前不支持 Streamable HTTP、resources、prompts 或远端自动安装。
 - logs 写在 `logs/` 下，是运维证据，不是 replay 输入。
 - 仓库对外展示的机器可读时间统一为北京时间 `YYYY-MM-DDTHH:mm:ss.SSS+08:00`；PostgreSQL `timestamptz` 仍保存绝对时刻。
 - 启动时当前 system prompt 会写入 `logs/system-prompt.txt`，便于检查。
@@ -55,6 +121,10 @@ pnpm toollogf
 - `SIGINT` / `SIGTERM` 会触发幂等 graceful shutdown：停止 ingress 和 Agent、等待当前 round、drain backfill、停止 jobs、保存最终 snapshot，最后断开数据库。单阶段超时或失败会记录 `shutdown_phase_failed`，并继续后续清理。
 
 ## 数据保留
+
+- 后台任务状态默认原子写入 `data/agent-workspace/runtime/background-tasks.json`，可用 `BOT_BACKGROUND_TASK_STATE_PATH` 改路径。重启时普通 running 会变成 `interrupted` 并通知 Agent；`schedule` 任务带稳定 recovery descriptor，会按原 deadline 重新挂载。
+- 图片任务的 metadata/预览可随 registry 保留，但 `ephemeralRef` 属于进程内 OutboundCache；重启后结果会明确标记失效，需重新生成，不能假装原图仍可发送。
+- MCP schema 快照默认位于 `data/agent-workspace/runtime/mcp-schemas/*.json`；每次成功 discovery 原子覆盖当前版本。这里不保存远端调用结果或认证密钥。
 
 - 启动时清理 7 天前的 `messages` 和 `media`；StickerPool 正在引用的媒体受保护，不会随普通媒体清理删除。
 - `agent_tool_calls`、`agent_token_usage` 和 NDJSON 日志目前没有自动 retention。生产部署应通过数据库/日志平台设置保留周期；仓库侧统一策略仍记录在 `docs/TECH_DEBT.md`。
@@ -216,9 +286,9 @@ VIBE_TRADING_RESULT_MAX_CHARS=12000
 - `pnpm agent:doctor` 做本地、无网络健康检查：必需文件、必需环境变量、agent 指令镜像、schema anchor、startup anchor 和 tool registry anchor。输出 JSON，有错误时非零退出。
 - `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson`、`logs/tool-calls.ndjson` 和当前保留的 `logs/app*.log` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率，以及按群 `inboxReads`、`messagesRead`、`sendAttempts`、`sendBlocked`、成功 ambient/reply 和 `readToSendRate`。当前 token operations 包括 `agent.chat`、`compaction` 和 `life_journal.review`。
 - `pnpm agent:metrics <token-log> <tool-log> [app-log]` 可以汇总指定日志文件；省略 `app-log` 时自动读取当前 `logs/app*.log` 滚动文件。
-- 运行时会把工具调用和 token/cache 使用 best-effort 写入 Postgres 的 `agent_tool_calls` / `agent_token_usage`，写 DB 失败只记 warning，不影响 bot 执行。
+- token/cache 使用继续 best-effort 写入 Postgres `agent_token_usage`；工具调用只有 `BOT_TOOL_AUDIT_DB_ENABLED=true` 时写入 `agent_tool_calls`。写 DB 失败只记 warning，不影响 bot 执行。
 - `pnpm agent:metrics --db` 从 Postgres 汇总持久化事件；可加 `--from <iso> --to <iso> --tool <name> --operation <name> --model <name> --ok true|false --side-effect true|false` 做筛选。
-- `pnpm agent:snapshot-check` 只读检查 `bot_agent_snapshot`：验证 snapshot JSON 可序列化、assistant tool call 与 tool result 相邻匹配、JSON-like tool result 可解析、`activeToolCapabilities` 未混入 messages、mailbox cursor key/value 合法；输出 JSON，有错误时非零退出。
+- `pnpm agent:snapshot-check` 只读检查 `bot_agent_snapshot`：验证 snapshot JSON 可序列化、assistant tool call 与 tool result 相邻匹配、JSON-like tool result 可解析、`activeToolCapabilities` 未混入 messages、mailbox cursor 与 continuity 元数据合法；输出 JSON，有错误时非零退出。
 
 ## Git
 

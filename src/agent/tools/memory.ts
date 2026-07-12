@@ -7,6 +7,8 @@ import {
   listMemoryFiles,
   readMemoryFile,
   searchMemoryEntries,
+  recallMemoryEntries,
+  proposeMemoryReview,
   writeMemoryEntry,
   updateMemoryEntry,
   MemoryStoreError,
@@ -42,6 +44,18 @@ const argsSchema = z.discriminatedUnion('action', [
     scope: scopeSchema.optional().describe('可选: 限定搜索范围.'),
     keyword: z.string().trim().min(1).max(100).optional().describe('可选: 关键词. 不传则按更新时间返回最近文件摘要.'),
     limit: z.number().int().min(1).max(20).optional().describe('可选: 最多返回多少条 (1-20, 默认 10).'),
+  }),
+  z.object({
+    action: z.literal('recall').describe('按相关性召回 entry 级长期记忆并返回可解释分数.'),
+    query: z.string().trim().min(1).max(300),
+    scope: scopeSchema.optional(),
+    limit: z.number().int().min(1).max(20).optional(),
+  }),
+  z.object({
+    action: z.literal('review').describe('只读扫描重复、近重复和可能冲突，返回整理 proposal，不自动改写.'),
+    scope: scopeSchema.optional(),
+    file: memoryFileSchema.optional(),
+    limit: z.number().int().min(1).max(20).optional(),
   }),
   z.object({
     action: z.literal('read').describe('读取某个记忆文件.'),
@@ -97,6 +111,8 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
       '本地 Markdown 长期记忆库, 一个入口用 action 决定动作.',
       'action=write: 写入以后可能用得上的真实信息或经验; scope=self/person/group/topic.',
       'action=search: 搜索自己、人物、群或主题记忆; 不确定旧事、偏好、项目线索或自己做过什么时先查.',
+      'action=recall: 用自然查询召回 entry 级相关记忆，返回 matchedTerms 和可解释 score.',
+      'action=review: 只读提出重复/近重复/可能冲突候选；不会自动删除或合并，确认后仍需 read + revision mutation.',
       'action=read: 读取 search/write 返回的某个记忆文件; 只在需要深读时使用.',
       'action=list: 按 scope 列出有界文件元数据, 用于发现重复或过时记忆.',
       'action=delete: 永久删除明确指定的记忆文件; 先确认有价值内容已写入保留版本.',
@@ -141,6 +157,34 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             skippedCorrupt: result.skippedCorrupt,
           }, 'memory_searched')
           return { content: JSON.stringify(result) }
+        }
+
+        if (args.action === 'recall') {
+          const result = await recallMemoryEntries(
+            { rootDir: workspaceDir },
+            { query: args.query, scope: args.scope, limit: args.limit },
+          )
+          log.info({
+            query: args.query,
+            scope: args.scope ?? null,
+            hitCount: result.matches.length,
+            skippedCorrupt: result.skippedCorrupt,
+          }, 'memory_recalled')
+          return { content: JSON.stringify(result), outcome: { ok: true } }
+        }
+
+        if (args.action === 'review') {
+          const result = await proposeMemoryReview(
+            { rootDir: workspaceDir },
+            { scope: args.scope, file: args.file, limit: args.limit },
+          )
+          log.info({
+            scope: args.scope ?? null,
+            file: args.file ?? null,
+            proposalCount: result.proposals.length,
+            scannedEntries: result.scannedEntries,
+          }, 'memory_review_proposed')
+          return { content: JSON.stringify(result), outcome: { ok: true } }
         }
 
         if (args.action === 'list') {

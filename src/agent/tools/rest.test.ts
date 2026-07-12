@@ -70,7 +70,10 @@ function privateEvent(): BotEvent {
 describe('rest tool', () => {
   test('schema requires an intention and defaults to 60 seconds', () => {
     assert.equal(restTool.schema.safeParse({}).success, false)
-    const parsed = restTool.schema.safeParse({ intention: '继续自己的研究' })
+    const parsed = restTool.schema.safeParse({
+      reason: '刚完成一段活动，想短暂放空',
+      intention: TEST_INTENTION,
+    })
     assert.equal(parsed.success, true)
     const data = parsed.data as { durationSeconds: number }
     assert.equal(data.durationSeconds, 60)
@@ -78,10 +81,11 @@ describe('rest tool', () => {
 
   test('description frames intention as flexible options', () => {
     const tool = createRestTool()
-    assert.match(tool.description, /4 到 8 个具体可执行的候选方向/)
+    assert.match(tool.description, /immediateDirections 必须恰好列 6 个/)
     assert.match(tool.description, /选择一个、合并几个或改道/)
-    assert.match(tool.description, /不要只列等待外部消息/)
-    assert.match(tool.description, /至少两个能立即用现有工具开始/)
+    assert.match(tool.description, /外部消息不是行动方向/)
+    assert.match(tool.description, /不与做自己的事冲突/)
+    assert.match(tool.description, /现在无需等待任何人就能开始/)
     assert.match(tool.description, /没有实际尝试前不要立刻再次休息/)
     assert.match(tool.description, /不是“今天全部完成”.*不要回顾已完成清单.*醒来后真能开始的新方向/)
   })
@@ -90,14 +94,19 @@ describe('rest tool', () => {
     const { ctx, queue } = makeCtx()
     queue.enqueue(groupEvent({ mentionedSelf: true }))
 
-    const result = await restTool.execute({ durationSeconds: 30, intention: '继续自己的研究' }, ctx)
+    const result = await restTool.execute({
+      durationSeconds: 30,
+      reason: '短暂放空',
+      intention: TEST_INTENTION,
+    }, ctx)
 
     const payload = JSON.parse(result.content as string)
     assert.equal(payload.ok, true)
     assert.equal(payload.status, 'interrupted')
     assert.equal(payload.durationSeconds, 30)
     assert.equal(typeof payload.elapsedMs, 'number')
-    assert.equal(payload.intention, '继续自己的研究')
+    assert.equal(payload.restReason, '短暂放空')
+    assert.deepEqual(payload.resumePlan.immediateDirections, TEST_INTENTION.immediateDirections)
     assert.deepEqual(result.outcome, { ok: true, code: 'interrupted' })
     assert.deepEqual(result.effects, [{ type: 'pause' }])
     assert.equal(queue.size(), 1)
@@ -107,7 +116,11 @@ describe('rest tool', () => {
     const { ctx, queue } = makeCtx()
     queue.enqueue(privateEvent())
 
-    const result = await restTool.execute({ durationSeconds: 30, intention: '继续自己的研究' }, ctx)
+    const result = await restTool.execute({
+      durationSeconds: 30,
+      reason: '短暂放空',
+      intention: TEST_INTENTION,
+    }, ctx)
 
     assert.equal(JSON.parse(result.content as string).status, 'interrupted')
     assert.deepEqual(result.effects, [{ type: 'pause' }])
@@ -120,7 +133,11 @@ describe('rest tool', () => {
     const { ctx, queue } = makeCtx()
     queue.enqueue(groupEvent({ mentionedSelf: false }))
 
-    const restPromise = tool.execute({ durationSeconds: 30, intention: '继续自己的研究' }, ctx)
+    const restPromise = tool.execute({
+      durationSeconds: 30,
+      reason: '短暂放空',
+      intention: TEST_INTENTION,
+    }, ctx)
     const result = await Promise.race([
       restPromise.then(() => 'returned' as const),
       tickMicrotasks().then(() => 'pending' as const),
@@ -135,12 +152,24 @@ describe('rest tool', () => {
     assert.equal(payload.ok, true)
     assert.equal(payload.status, 'elapsed')
     assert.equal(payload.durationSeconds, 30)
-    assert.equal(payload.intention, '继续自己的研究')
+    assert.equal(payload.resumePlan.preferredDirection, TEST_INTENTION.immediateDirections[TEST_INTENTION.preferredIndex])
     assert.equal(typeof payload.elapsedMs, 'number')
     assert.deepEqual(finalResult.outcome, { ok: true, code: 'elapsed' })
     assert.deepEqual(finalResult.effects, [{ type: 'pause' }])
   })
 })
+
+const TEST_INTENTION = {
+  preferredIndex: 0,
+  immediateDirections: [
+    '复核 SOL 观察记录',
+    '读一篇具体论文',
+    '回看 journal 的未完线索',
+    '只读检查一个代码模块',
+    '整理一条市场假设',
+    '挑一篇群友文章读第一节',
+  ],
+}
 
 function tickMicrotasks(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve))

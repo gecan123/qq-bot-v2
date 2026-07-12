@@ -7,7 +7,12 @@ import type {
   ChatCompletionMessageToolCall,
   ChatCompletionTool,
 } from 'openai/resources/chat/completions/completions'
-import type { LlmClient, LlmCallInput, LlmCallOutput } from '../llm-client.js'
+import type {
+  LlmClient,
+  LlmCallInput,
+  LlmCallOutput,
+  LlmStopReason,
+} from '../llm-client.js'
 import type {
   AgentMessage,
   AssistantToolCall,
@@ -47,6 +52,7 @@ export function createOpenAIAgentLlmClient(input: CreateOpenAIAgentLlmClientInpu
           systemPrompt: req.systemPrompt,
           messages: req.messages,
           tools: req.tools,
+          maxOutputTokens: req.maxOutputTokens,
         }),
         req.signal ? { signal: req.signal } : undefined,
       )
@@ -60,6 +66,7 @@ interface BuildOpenAIAgentRequestInput {
   systemPrompt: string
   messages: AgentMessage[]
   tools: Tool[]
+  maxOutputTokens?: number
 }
 
 function buildOpenAIAgentRequest(input: BuildOpenAIAgentRequestInput): ChatCompletionCreateParamsNonStreaming {
@@ -81,6 +88,9 @@ function buildOpenAIAgentRequest(input: BuildOpenAIAgentRequestInput): ChatCompl
       : {}),
     prompt_cache_key: 'qq-bot-v2-main-agent',
     prompt_cache_retention: '24h',
+    ...(input.maxOutputTokens != null
+      ? { max_completion_tokens: Math.max(1, Math.floor(input.maxOutputTokens)) }
+      : {}),
   }
 }
 
@@ -197,6 +207,23 @@ function toLlmCallOutput(response: ChatCompletion, fallbackModel: string, tools:
       outputTokens,
     },
     model: response.model ?? fallbackModel,
+    stopReason: normalizeOpenAIStopReason(response.choices[0]?.finish_reason),
+  }
+}
+
+function normalizeOpenAIStopReason(value: string | null | undefined): LlmStopReason {
+  switch (value) {
+    case 'tool_calls':
+    case 'function_call':
+      return 'tool_use'
+    case 'stop':
+      return 'end_turn'
+    case 'length':
+      return 'max_tokens'
+    case 'content_filter':
+      return 'content_filter'
+    default:
+      return 'unknown'
   }
 }
 

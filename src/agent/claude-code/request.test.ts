@@ -103,6 +103,18 @@ describe('buildClaudeCodeRequestBody', () => {
     assert.equal(b.max_tokens, 4096)
   })
 
+  test('call-level maxOutputTokens overrides the model default', () => {
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [],
+      maxOutputTokens: 12_345.9,
+    })
+
+    assert.equal(body.max_tokens, 12_345)
+  })
+
   test('tools omitted entirely when empty (NOT tools:[])', () => {
     const body = buildClaudeCodeRequestBody({
       model: 'claude-sonnet-4-5',

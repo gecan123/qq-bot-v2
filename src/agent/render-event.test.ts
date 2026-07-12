@@ -2,6 +2,20 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { BOOTSTRAP_TEXT, CURIOSITY_TICK_TEXT, renderBotEvent } from './render-event.js'
 
+describe('renderBotEvent — scheduled wake', () => {
+  test('renders stable structured context', () => {
+    assert.equal(
+      renderBotEvent({
+        type: 'scheduled_wake',
+        scheduleId: 'wake-1',
+        dueAt: new Date('2026-07-12T00:01:00.000Z'),
+        reason: '检查任务',
+      }),
+      '{"event":"scheduled_wake","scheduleId":"wake-1","dueAt":"2026-07-12T08:01:00.000+08:00","reason":"检查任务"}',
+    )
+  })
+})
+
 describe('renderBotEvent — group messages', () => {
   test('renders group message with groupName + sender + mention tag', () => {
     const out = renderBotEvent({

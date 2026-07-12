@@ -3,6 +3,10 @@ import type { PersistedAgentSnapshot } from './agent-context.types.js'
 import { SNAPSHOT_SCHEMA_VERSION } from './agent-context.types.js'
 import { createLogger } from '../logger.js'
 import type { MailboxCursors } from './mailbox.js'
+import {
+  parseMailboxContinuityState,
+  type MailboxContinuityState,
+} from './mailbox-continuity.js'
 
 const log = createLogger('SNAPSHOT')
 const SINGLE_ROW_ID = 1
@@ -17,11 +21,15 @@ export interface BotSnapshotRepo {
   load(): Promise<{
     snapshot: PersistedAgentSnapshot
     mailboxCursors: MailboxCursors
+    mailboxContinuity: MailboxContinuityState
+    goalRevision: number
     lastWakeAt: Date | null
   } | null>
   save(input: {
     snapshot: PersistedAgentSnapshot
     mailboxCursors: MailboxCursors
+    mailboxContinuity?: MailboxContinuityState
+    goalRevision: number
     lastWakeAt: Date | null
   }): Promise<void>
 }
@@ -43,17 +51,31 @@ export function createBotSnapshotRepo(): BotSnapshotRepo {
       }
 
       const migrated = migrateSnapshot(persistedRaw)
-      lastFingerprint = JSON.stringify(migrated)
+      const mailboxCursors = parseMailboxCursors(row.mailboxCursors)
+      const mailboxContinuity = parseMailboxContinuityState(row.mailboxContinuity)
+      const goalRevision = parseGoalRevision(row.goalRevision)
+      const lastWakeAt = row.lastWakeAt ?? null
+      lastFingerprint = JSON.stringify({
+        snapshot: migrated,
+        mailboxCursors,
+        mailboxContinuity,
+        goalRevision,
+        lastWakeAtMs: lastWakeAt?.getTime() ?? null,
+      })
       return {
         snapshot: migrated,
-        mailboxCursors: parseMailboxCursors(row.mailboxCursors),
-        lastWakeAt: row.lastWakeAt ?? null,
+        mailboxCursors,
+        mailboxContinuity,
+        goalRevision,
+        lastWakeAt,
       }
     },
     async save(input) {
       const fingerprint = JSON.stringify({
         snapshot: input.snapshot,
         mailboxCursors: input.mailboxCursors,
+        mailboxContinuity: input.mailboxContinuity,
+        goalRevision: input.goalRevision,
         lastWakeAtMs: input.lastWakeAt?.getTime() ?? null,
       })
       if (fingerprint === lastFingerprint) {
@@ -66,18 +88,26 @@ export function createBotSnapshotRepo(): BotSnapshotRepo {
           schemaVersion: SNAPSHOT_SCHEMA_VERSION,
           contextSnapshot: input.snapshot as never,
           mailboxCursors: input.mailboxCursors as never,
+          mailboxContinuity: (input.mailboxContinuity ?? {}) as never,
+          goalRevision: input.goalRevision,
           lastWakeAt: input.lastWakeAt,
         },
         update: {
           schemaVersion: SNAPSHOT_SCHEMA_VERSION,
           contextSnapshot: input.snapshot as never,
           mailboxCursors: input.mailboxCursors as never,
+          mailboxContinuity: (input.mailboxContinuity ?? {}) as never,
+          goalRevision: input.goalRevision,
           lastWakeAt: input.lastWakeAt,
         },
       })
       lastFingerprint = fingerprint
     },
   }
+}
+
+function parseGoalRevision(value: unknown): number {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
 }
 
 function parseMailboxCursors(value: unknown): MailboxCursors {

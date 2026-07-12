@@ -3,7 +3,11 @@ import assert from 'node:assert/strict'
 
 import { createAgentContext } from './agent-context.js'
 import type { AgentMessage } from './agent-context.types.js'
-import { findSafeCutIndex, maybeCompactConversation } from './compaction.js'
+import {
+  compactConversationForRecovery,
+  findSafeCutIndex,
+  maybeCompactConversation,
+} from './compaction.js'
 
 function user(content: string): AgentMessage {
   return { role: 'user', content }
@@ -285,6 +289,23 @@ test('maybeCompactConversation: summarizer input strips native thinking blocks',
       assert.equal(message.nativeBlocks, undefined)
     }
   }
+})
+
+test('compactConversationForRecovery: forces one safe compaction without prior token usage', async () => {
+  const ctx = createAgentContext({
+    initialMessages: [user('old-0'), user('old-1'), user('old-2'), user('tail')],
+  })
+
+  const compacted = await compactConversationForRecovery(ctx, {
+    keepRatio: 0.25,
+    summarize: async ({ history }) => `recovered ${history.length}`,
+  })
+
+  assert.equal(compacted, true)
+  assert.deepEqual(ctx.getSnapshot().messages, [
+    user('[历史摘要]\nrecovered 3'),
+    user('tail'),
+  ])
 })
 
 test('maybeCompactConversation: strips stale native thinking from kept closed tool cycles', async () => {

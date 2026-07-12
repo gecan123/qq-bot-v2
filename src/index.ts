@@ -23,6 +23,7 @@ import { replayMissedMessages } from './agent/replay-missed.js'
 import { resolveTargetMetadataMaps } from './agent/resolve-target-meta.js'
 import { createDedupEnqueue } from './agent/dedup-enqueue.js'
 import { createAgentRuntime } from './agent/runtime.js'
+import { createPersistentTaskRegistry } from './agent/background-task-registry.js'
 import { enqueueColdStartBootstrap } from './agent/cold-start-bootstrap.js'
 import { createShutdownCoordinator, type ShutdownCoordinator } from './ops/shutdown.js'
 import {
@@ -30,6 +31,12 @@ import {
   runPersonaSpoofSelfTest,
 } from './agent/persona-spoof-self-test.js'
 import { createAgentTaskScheduler } from './agent/task-scheduler.js'
+import { createBotGoalStore } from './agent/goal-store.js'
+import {
+  createStartupGoalControlGate,
+  replayOwnerGoalCommands,
+  tryHandleOwnerGoalMessage,
+} from './agent/goal-control.js'
 
 const log = createLogger('APP')
 
@@ -127,6 +134,7 @@ async function main() {
 
   // 4. 永续上下文 + 持久化 + 启动恢复
   const snapshotRepo = createBotSnapshotRepo()
+  const goalStore = createBotGoalStore()
   const persisted = await snapshotRepo.load()
   const context = createAgentContext()
   if (persisted) {
@@ -135,6 +143,8 @@ async function main() {
       {
         messages: persisted.snapshot.messages.length,
         mailboxSources: Object.keys(persisted.mailboxCursors).length,
+        mailboxContinuitySources: Object.keys(persisted.mailboxContinuity.mailboxes).length,
+        goalRevision: persisted.goalRevision,
         lastWakeAt: persisted.lastWakeAt ? formatBeijingIso(persisted.lastWakeAt) : null,
       },
       '从持久化 snapshot 恢复 AgentContext',
@@ -145,7 +155,54 @@ async function main() {
 
   // 5. 事件队列 + messageRowId 去重 (replay-missed × live event 重叠时去重, 见 dedup-enqueue.ts)
   const eventQueue = new InMemoryEventQueue<BotEvent>()
-  const enqueueMessageEvent = createDedupEnqueue(eventQueue)
+  const persistentTasks = createPersistentTaskRegistry({ path: config.backgroundTaskStatePath })
+  for (const task of persistentTasks.interruptedAtStartup) {
+    eventQueue.enqueue({
+      type: 'background_task_completed',
+      taskId: task.id,
+      toolName: task.toolName,
+      description: task.description,
+      elapsedMs: Math.max(0, (task.completedAt?.getTime() ?? Date.now()) - task.startedAt.getTime()),
+      ok: false,
+      summary: '后台任务因进程重启中断；可查看任务详情或按原参数重新发起。',
+    })
+  }
+  const enqueueDedupedMessageEvent = createDedupEnqueue(eventQueue)
+  const processOwnerGoalControl = async (
+    event: Extract<BotEvent, { type: 'napcat_private_message' }>,
+  ): Promise<void> => {
+    try {
+      const control = await tryHandleOwnerGoalMessage({
+        owner: config.owner,
+        peerId: event.peerId,
+        senderId: event.senderId,
+        messageRowId: event.messageRowId,
+        renderedText: event.renderedText,
+        goalStore,
+      })
+      if (control.handled) {
+        log.info(
+          {
+            messageRowId: event.messageRowId,
+            action: control.command?.action ?? 'invalid',
+            ok: control.mutation?.ok ?? false,
+            code: control.mutation?.code,
+            error: control.error ?? control.mutation?.error,
+          },
+          'owner_goal_control_processed',
+        )
+      }
+    } catch (error) {
+      log.error({ error, messageRowId: event.messageRowId }, 'owner_goal_control_failed_message_still_enqueued')
+    }
+  }
+  const startupGoalControlGate = createStartupGoalControlGate(processOwnerGoalControl)
+  const enqueueMessageEvent = async (event: BotEvent): Promise<boolean> => {
+    if (event.type === 'napcat_private_message') {
+      await startupGoalControlGate.submit(event)
+    }
+    return enqueueDedupedMessageEvent(event)
+  }
 
   // 5.5 SIGUSR1 → curiosity_tick，仅作为人工调试入口，不承担生产自主调度。
   //     正常自主节奏由 pause 的自定休息和 BotLoop guard 管理。
@@ -159,7 +216,7 @@ async function main() {
   // 6. NapCat: register handlers (sync). 实时消息会进 onMessageReady → enqueueMessageEvent.
   const onMessageReady = async (input: IngestedMessage) => {
     if (input.kind === 'group') {
-      enqueueMessageEvent({
+      await enqueueMessageEvent({
         type: 'napcat_message',
         messageRowId: input.messageRowId,
         groupId: input.groupId,
@@ -172,7 +229,7 @@ async function main() {
         renderedText: input.renderedText,
       })
     } else {
-      enqueueMessageEvent({
+      await enqueueMessageEvent({
         type: 'napcat_private_message',
         messageRowId: input.messageRowId,
         peerId: input.peerId,
@@ -203,6 +260,16 @@ async function main() {
 
   // 9. 关机期间消息回放. 在 connect 之后跑也安全, 因为 enqueueMessageEvent 按
   //    messageRowId 去重 (步骤 5), live 已经先入队的就不会被 replay 重复入队.
+  const replayedGoalControls = await replayOwnerGoalCommands({
+    owner: config.owner,
+    mailboxCursors: persisted?.mailboxCursors ?? {},
+    legacyLastWakeAt: persisted?.lastWakeAt ?? null,
+    goalStore,
+  })
+  if (replayedGoalControls.matched > 0) {
+    log.info(replayedGoalControls, 'owner goal control replay 完成')
+  }
+  await startupGoalControlGate.finishReplay()
   const replayResult = await replayMissedMessages({
     mailboxCursors: persisted?.mailboxCursors ?? {},
     legacyLastWakeAt: persisted?.lastWakeAt ?? null,
@@ -235,19 +302,40 @@ async function main() {
     llm,
     snapshotRepo,
     sender: messageSender,
-    loadFriendIds: async () => (await napcat.get_friend_list()).map((friend) => friend.user_id),
+    loadFriends: async () => (await napcat.get_friend_list()).map((friend) => ({
+      userId: friend.user_id,
+      nickname: friend.nickname,
+      remark: friend.remark,
+    })),
+    loadGroups: async () => (await napcat.get_group_list()).map((group) => ({
+      groupId: group.group_id,
+      groupName: group.group_name,
+      groupRemark: group.group_remark,
+      memberCount: group.member_count,
+      maxMemberCount: group.max_member_count,
+    })),
     groupIds: config.botTargetGroupIds,
     groupAmbientSendIds: config.groupAmbientSendIds,
     selfNumber: config.selfNumber,
     metadata: targetMetadata,
     groupCustomizations,
     toolCallLogPath: config.toolCallLogPath,
+    toolAuditMode: config.toolAuditMode,
+    toolAuditDbEnabled: config.toolAuditDbEnabled,
     owner: config.owner,
     eventDebounceMs: config.eventDebounceMs,
     initialMailboxCursors: persisted?.mailboxCursors ?? {},
+    initialMailboxContinuity: persisted?.mailboxContinuity,
     initialLastWakeAt: persisted?.lastWakeAt ?? null,
+    initialGoalRevision: persisted?.goalRevision ?? 0,
+    goalStore,
     lifeJournal,
     taskScheduler,
+    taskRegistry: persistentTasks.registry,
+    approvalStatePath: config.approvalStatePath,
+    approvalMode: config.approvalMode,
+    mcpConfigPath: config.mcpConfigPath,
+    mcpSchemaSnapshotDir: config.mcpSchemaSnapshotDir,
   })
 
   // 10.5 把 system prompt 写到文件, 方便调试查看
@@ -272,6 +360,7 @@ async function main() {
     drainIngress: () => napcatLifecycle.drain(),
     stopJobs: async () => {
       jobQueue.stop()
+      await runtime.stopBackgroundServices()
       await taskScheduler.drain()
       removePidFile()
     },

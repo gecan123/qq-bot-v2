@@ -45,6 +45,7 @@ export interface ClaudeMessageResponse {
   role?: string
   model?: string
   content?: ClaudeContentBlock[]
+  stop_reason?: string | null
   usage?: {
     input_tokens?: number
     output_tokens?: number
@@ -78,6 +79,7 @@ export function parseClaudeStreamResponse(value: string): ClaudeMessageResponse 
   let cacheReadInputTokens: number | undefined
   let cacheCreationInputTokens: number | undefined
   let error: ClaudeMessageResponse['error'] | undefined
+  let stopReason: string | null | undefined
 
   for (const chunk of value.split('\n\n')) {
     const lines = chunk
@@ -233,6 +235,10 @@ export function parseClaudeStreamResponse(value: string): ClaudeMessageResponse 
     }
 
     if (parsed.type === 'message_delta') {
+      const delta = isRecord(parsed.delta) ? parsed.delta : null
+      if (typeof delta?.stop_reason === 'string' || delta?.stop_reason === null) {
+        stopReason = delta.stop_reason
+      }
       const usage = isRecord(parsed.usage) ? parsed.usage : null
       if (usage) {
         if (typeof usage.input_tokens === 'number') inputTokens = usage.input_tokens
@@ -260,6 +266,7 @@ export function parseClaudeStreamResponse(value: string): ClaudeMessageResponse 
     role: 'assistant',
     ...(model ? { model } : {}),
     content,
+    ...(stopReason !== undefined ? { stop_reason: stopReason } : {}),
     ...(error ? { error } : {}),
     ...(inputTokens !== undefined ||
     outputTokens !== undefined ||

@@ -10,6 +10,12 @@ import type { BotSnapshotRepo } from './snapshot-repo.js'
 import type { PersistedAgentSnapshot } from './agent-context.types.js'
 import type { MailboxCursors } from './mailbox.js'
 import { renderBotEvent } from './render-event.js'
+import {
+  createEmptyMailboxContinuityState,
+  MAILBOX_LIGHT_COMPENSATION_AFTER_MS,
+  recordMailboxDisclosure,
+  type MailboxContinuityState,
+} from './mailbox-continuity.js'
 
 function makeMockLlm(outputs: LlmCallOutput[]): LlmClient {
   let i = 0
@@ -39,10 +45,12 @@ function makeMockSnapshotRepo(): {
   saved: PersistedAgentSnapshot[]
   savedCursors: Array<MailboxCursors | undefined>
   savedLastWakeAt: Array<Date | null>
+  savedContinuity: Array<MailboxContinuityState | undefined>
 } {
   const saved: PersistedAgentSnapshot[] = []
   const savedCursors: Array<MailboxCursors | undefined> = []
   const savedLastWakeAt: Array<Date | null> = []
+  const savedContinuity: Array<MailboxContinuityState | undefined> = []
   const repo: BotSnapshotRepo = {
     async load() {
       return null
@@ -51,9 +59,12 @@ function makeMockSnapshotRepo(): {
       saved.push(input.snapshot)
       savedCursors.push((input as typeof input & { mailboxCursors?: MailboxCursors }).mailboxCursors)
       savedLastWakeAt.push(input.lastWakeAt)
+      savedContinuity.push(input.mailboxContinuity == null
+        ? undefined
+        : structuredClone(input.mailboxContinuity))
     },
   }
-  return { repo, saved, savedCursors, savedLastWakeAt }
+  return { repo, saved, savedCursors, savedLastWakeAt, savedContinuity }
 }
 
 // Note: 'send_group_message' references in fixtures below are intentionally retained as the
@@ -147,6 +158,54 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(messages[2]?.role, 'tool')
     assert.equal(toolExecuted, true)
     assert.equal(saved.length, 2, 'snapshot persisted twice (pre-round + post-round)')
+  })
+
+  test('adds one prior-message compensation after a durable two-hour mailbox gap', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    const firstAt = new Date('2026-01-01T00:00:00Z')
+    eventQueue.enqueue({
+      type: 'napcat_private_message',
+      messageRowId: 30,
+      peerId: 9001,
+      messageId: 20_030,
+      senderId: 9001,
+      senderNickname: 'Alice',
+      mentionedSelf: true,
+      sentAt: new Date(firstAt.getTime() + MAILBOX_LIGHT_COMPENSATION_AFTER_MS),
+      renderedText: 'follow up',
+    })
+    const continuity = createEmptyMailboxContinuityState()
+    recordMailboxDisclosure(continuity, 'qq_private:9001', firstAt.getTime())
+    const { repo, savedContinuity } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [],
+        usage: { inputTokens: 100, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      initialMailboxContinuity: continuity,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    const notification = ctx.getSnapshot().messages[0]
+    assert.equal(notification?.role, 'user')
+    if (notification?.role === 'user') {
+      const payload = JSON.parse(notification.content)
+      assert.equal(payload.readArgs.contextBefore, 1)
+    }
+    assert.equal(savedContinuity.at(-1)?.roundSeq, 1)
+    assert.equal(savedContinuity.at(-1)?.mailboxes['qq_private:9001']?.lastMessageAtMs,
+      firstAt.getTime() + MAILBOX_LIGHT_COMPENSATION_AFTER_MS)
   })
 
   test('wake events drain without appending to context', async () => {
@@ -284,6 +343,165 @@ describe('BotLoopAgent.runOnceForTest', () => {
     if (head?.role === 'user') {
       assert.match(head.content, /^\[历史摘要\]/)
     }
+  })
+
+  test('context overflow forces one compaction, saves it, and retries the LLM round once', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('old-0')
+    ctx.appendUserMessage('old-1')
+    ctx.appendUserMessage('old-2')
+    ctx.appendUserMessage('old-3')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    let chatCalls = 0
+    const llm: LlmClient = {
+      async chat() {
+        chatCalls += 1
+        if (chatCalls === 1) {
+          throw Object.assign(new Error('prompt too long'), { kind: 'context_overflow' })
+        }
+        return {
+          content: '',
+          toolCalls: [],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 0 },
+          model: 'mock',
+        }
+      },
+    }
+    const { repo, saved } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      compactOptions: {
+        triggerTokens: 100_000,
+        keepRatio: 0.2,
+        summarize: async ({ history }) => `recovered ${history.length}`,
+      },
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(chatCalls, 2)
+    assert.equal(saved.length, 3, 'pre-round, recovery-compacted, post-round snapshots')
+    const messages = ctx.getSnapshot().messages
+    assert.equal(messages[0]?.role, 'user')
+    if (messages[0]?.role === 'user') assert.match(messages[0].content, /^\[历史摘要\]\nrecovered /)
+    assert.equal(messages.some((message) => message.role === 'assistant'), false)
+    assert.deepEqual(saved.at(-1), ctx.exportPersistedSnapshot())
+  })
+
+  test('context overflow recovery is bounded to one compaction attempt per round', async () => {
+    const ctx = createAgentContext()
+    for (let i = 0; i < 5; i += 1) ctx.appendUserMessage(`old-${i}`)
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    let chatCalls = 0
+    let summarizeCalls = 0
+    const { repo } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat() {
+          chatCalls += 1
+          throw Object.assign(new Error('still too long'), { kind: 'context_overflow' })
+        },
+      },
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      compactOptions: {
+        keepRatio: 0.2,
+        summarize: async () => {
+          summarizeCalls += 1
+          return 'summary'
+        },
+      },
+    })
+
+    await assert.rejects(() => agent.runOnceForTest(), /still too long/)
+    assert.equal(chatCalls, 2)
+    assert.equal(summarizeCalls, 1)
+  })
+
+  test('checkpoints text-only truncated output and continues without replaying partial tool calls', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    const seenMessages: PersistedAgentSnapshot['messages'][] = []
+    let chatCalls = 0
+    let toolExecutions = 0
+    const llm: LlmClient = {
+      async chat(input) {
+        seenMessages.push(input.messages)
+        chatCalls++
+        if (chatCalls <= 2) {
+          return {
+            content: chatCalls === 1 ? 'first partial' : 'second partial',
+            toolCalls: [],
+            usage: { inputTokens: 10, cachedTokens: 5, outputTokens: 8 },
+            model: 'mock',
+            stopReason: 'max_tokens',
+          }
+        }
+        return {
+          content: '',
+          toolCalls: [{ id: 'done-1', name: 'done', args: {} }],
+          usage: { inputTokens: 12, cachedTokens: 6, outputTokens: 2 },
+          model: 'mock',
+          stopReason: 'tool_use',
+        }
+      },
+    }
+    const { repo, saved } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools: makeMockTools({
+        done: async () => {
+          toolExecutions++
+          return { content: '{"ok":true}' }
+        },
+      }),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(chatCalls, 3)
+    assert.equal(toolExecutions, 1)
+    assert.equal(saved.length, 3, 'pre-round, continuation checkpoint, post-round')
+    assert.equal(
+      seenMessages[2]?.some(
+        (message) => message.role === 'assistant' && message.content === 'second partial',
+      ),
+      true,
+    )
+    const messages = ctx.getSnapshot().messages
+    const partial = messages.find(
+      (message) => message.role === 'assistant' && message.content === 'second partial',
+    )
+    assert.ok(partial)
+    assert.equal(
+      messages.some(
+        (message) => message.role === 'assistant' && message.content === 'first partial',
+      ),
+      false,
+      'the first same-request retry is not durable',
+    )
+    assert.equal(messages.at(-1)?.role, 'tool')
   })
 
   test('life journal does not append review output to AgentContext', async () => {
@@ -756,7 +974,22 @@ describe('BotLoopAgent.runOnceForTest', () => {
           toolCalls: [{
             id: 'c2',
             name: 'pause',
-            args: { action: 'rest', durationSeconds: 300, intention: '醒来后继续自己的研究' },
+            args: {
+              action: 'rest',
+              durationSeconds: 300,
+              reason: '完成一段活动后短暂放空',
+              intention: {
+                preferredIndex: 0,
+                immediateDirections: [
+                  '继续自己的研究并验证下一条证据',
+                  '回看 journal 的未完线索',
+                  '读一篇具体论文',
+                  '只读检查一个代码模块',
+                  '整理一条市场假设',
+                  '挑一篇群友文章读第一节',
+                ],
+              },
+            },
           }],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',

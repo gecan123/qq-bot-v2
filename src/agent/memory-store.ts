@@ -27,6 +27,18 @@ export interface SearchMemoryInput {
   limit?: number
 }
 
+export interface RecallMemoryInput {
+  query: string
+  scope?: MemoryScope
+  limit?: number
+}
+
+export interface ReviewMemoryInput {
+  scope?: MemoryScope
+  file?: string
+  limit?: number
+}
+
 export interface ReadMemoryInput {
   file: string
   offset?: number
@@ -69,6 +81,40 @@ export interface MemorySearchMatch {
 export interface MemorySearchResult {
   ok: true
   matches: MemorySearchMatch[]
+  skippedCorrupt: number
+}
+
+export interface MemoryRecallResult {
+  ok: true
+  matches: Array<{
+    file: string
+    scope: MemoryScope
+    title: string
+    updatedAt: string | null
+    entryId: string
+    createdAt: string
+    content: string
+    sourceMessageIds: number[]
+    score: number
+    matchedTerms: string[]
+  }>
+  skippedCorrupt: number
+}
+
+export interface MemoryReviewResult {
+  ok: true
+  proposals: Array<{
+    relation: 'duplicate' | 'near_duplicate' | 'possible_conflict'
+    file: string
+    entryIds: [string, string]
+    contents: [string, string]
+    sourceMessageIds: number[]
+    confidence: number
+    reason: string
+    next: string
+  }>
+  scannedEntries: number
+  truncatedEntries: boolean
   skippedCorrupt: number
 }
 
@@ -130,6 +176,7 @@ const MAX_SEARCH_LIMIT = 20
 const DEFAULT_LIST_LIMIT = 50
 const MAX_LIST_LIMIT = 100
 const MAX_READ_ENTRIES = 50
+const MAX_REVIEW_ENTRIES = 500
 const ENTRY_START = '<!-- memory-entry'
 const ENTRY_END = '<!-- /memory-entry -->'
 
@@ -194,6 +241,149 @@ export async function searchMemoryEntries(
 
   matches.sort((a, b) => compareTimestampsDesc(a.updatedAt, b.updatedAt) || a.file.localeCompare(b.file))
   return { ok: true, matches: matches.slice(0, limit), skippedCorrupt }
+}
+
+export async function recallMemoryEntries(
+  options: MemoryStoreOptions,
+  input: RecallMemoryInput,
+): Promise<MemoryRecallResult> {
+  const query = normalizeSearchText(input.query)
+  const queryTerms = lexicalTerms(input.query)
+  const limit = Math.min(Math.max(1, input.limit ?? DEFAULT_SEARCH_LIMIT), MAX_SEARCH_LIMIT)
+  const root = memoryRoot(options.rootDir)
+  const files = await listMarkdownFiles(root)
+  const matches: MemoryRecallResult['matches'] = []
+  let skippedCorrupt = 0
+
+  for (const file of files) {
+    const raw = await readFile(join(root, file), 'utf8')
+    const parsed = parseMarkdownMemory(raw)
+    if (!parsed) {
+      skippedCorrupt++
+      continue
+    }
+    if (input.scope && parsed.scope !== input.scope) continue
+    const titleText = normalizeSearchText(`${file} ${parsed.title}`)
+    for (const entry of parseMemoryEntries(raw)) {
+      const contentText = normalizeSearchText(entry.content)
+      const matchedTerms = queryTerms.filter((term) => contentText.includes(term) || titleText.includes(term))
+      const exactContent = query.length > 0 && contentText.includes(query)
+      const exactTitle = query.length > 0 && titleText.includes(query)
+      if (!exactContent && !exactTitle && matchedTerms.length === 0) continue
+      const score = (exactContent ? 100 : 0)
+        + (exactTitle ? 30 : 0)
+        + matchedTerms.reduce((sum, term) => (
+          sum + (contentText.includes(term) ? 5 : 0) + (titleText.includes(term) ? 2 : 0)
+        ), 0)
+      matches.push({
+        file,
+        scope: parsed.scope,
+        title: parsed.title,
+        updatedAt: parsed.updatedAt,
+        entryId: entry.id,
+        createdAt: entry.createdAt,
+        content: entry.content,
+        sourceMessageIds: entry.sourceMessageIds,
+        score,
+        matchedTerms: matchedTerms.slice(0, 12),
+      })
+    }
+  }
+
+  matches.sort((a, b) => (
+    b.score - a.score
+    || compareTimestampsDesc(a.updatedAt, b.updatedAt)
+    || a.file.localeCompare(b.file)
+    || a.entryId.localeCompare(b.entryId)
+  ))
+  return { ok: true, matches: matches.slice(0, limit), skippedCorrupt }
+}
+
+export async function proposeMemoryReview(
+  options: MemoryStoreOptions,
+  input: ReviewMemoryInput = {},
+): Promise<MemoryReviewResult> {
+  const root = memoryRoot(options.rootDir)
+  const files = input.file ? [input.file] : await listMarkdownFiles(root)
+  const entries: Array<{
+    file: string
+    scope: MemoryScope
+    entry: MemoryEntry
+    terms: Set<string>
+    normalized: string
+  }> = []
+  let skippedCorrupt = 0
+
+  for (const file of files) {
+    let raw: string
+    try {
+      raw = await readFile(input.file ? safeMemoryFile(options.rootDir, file) : join(root, file), 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      throw error
+    }
+    const parsed = parseMarkdownMemory(raw)
+    if (!parsed) {
+      skippedCorrupt++
+      continue
+    }
+    if (input.scope && parsed.scope !== input.scope) continue
+    for (const entry of parseMemoryEntries(raw)) {
+      if (entries.length >= MAX_REVIEW_ENTRIES) break
+      entries.push({
+        file,
+        scope: parsed.scope,
+        entry,
+        terms: new Set(lexicalTerms(entry.content)),
+        normalized: normalizeSearchText(entry.content),
+      })
+    }
+    if (entries.length >= MAX_REVIEW_ENTRIES) break
+  }
+
+  const proposals: MemoryReviewResult['proposals'] = []
+  const limit = Math.min(Math.max(1, input.limit ?? DEFAULT_SEARCH_LIMIT), MAX_SEARCH_LIMIT)
+  for (let leftIndex = 0; leftIndex < entries.length; leftIndex++) {
+    for (let rightIndex = leftIndex + 1; rightIndex < entries.length; rightIndex++) {
+      const left = entries[leftIndex]!
+      const right = entries[rightIndex]!
+      if (left.file !== right.file) continue
+      const similarity = jaccard(left.terms, right.terms)
+      const exact = left.normalized === right.normalized
+      const polarityDiffers = hasNegation(left.entry.content) !== hasNegation(right.entry.content)
+      const relation = exact
+        ? 'duplicate'
+        : polarityDiffers && similarity >= 0.4
+          ? 'possible_conflict'
+          : similarity >= 0.65
+            ? 'near_duplicate'
+            : null
+      if (!relation) continue
+      proposals.push({
+        relation,
+        file: left.file,
+        entryIds: [left.entry.id, right.entry.id],
+        contents: [left.entry.content, right.entry.content],
+        sourceMessageIds: [...new Set([
+          ...left.entry.sourceMessageIds,
+          ...right.entry.sourceMessageIds,
+        ])],
+        confidence: Number((exact ? 1 : similarity).toFixed(3)),
+        reason: relation === 'possible_conflict'
+          ? '两条记忆词项高度重合但否定/变更语气不同，需要人工确认当前事实。'
+          : '两条记忆内容相同或高度重合，可以在 read 后用 compact 合并。',
+        next: `先 memory read file=${left.file} 获取最新 revision，再决定 compact/update_entry/delete_entry。`,
+      })
+    }
+  }
+  proposals.sort((a, b) => b.confidence - a.confidence || a.entryIds[0].localeCompare(b.entryIds[0]))
+  return {
+    ok: true,
+    proposals: proposals.slice(0, limit),
+    scannedEntries: entries.length,
+    truncatedEntries: entries.length >= MAX_REVIEW_ENTRIES,
+    skippedCorrupt,
+  }
 }
 
 export async function readMemoryFile(
@@ -597,4 +787,36 @@ function snippetFor(raw: string, needle: string, maxChars: number): string {
   const start = Math.max(0, idx - 60)
   const snippet = body.slice(start, start + maxChars)
   return `${start > 0 ? '...' : ''}${snippet}${start + maxChars < body.length ? '...' : ''}`
+}
+
+function normalizeSearchText(value: string): string {
+  return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+}
+
+function lexicalTerms(value: string): string[] {
+  const normalized = value.toLocaleLowerCase()
+  const terms = new Set<string>()
+  for (const match of normalized.matchAll(/[a-z0-9][a-z0-9_-]+|[\u3400-\u9fff]+/g)) {
+    const chunk = match[0]
+    if (/^[\u3400-\u9fff]+$/.test(chunk)) {
+      if (chunk.length <= 20) terms.add(chunk)
+      for (let index = 0; index < chunk.length - 1; index++) {
+        terms.add(chunk.slice(index, index + 2))
+      }
+    } else if (chunk.length >= 2) {
+      terms.add(chunk)
+    }
+  }
+  return [...terms]
+}
+
+function jaccard(left: ReadonlySet<string>, right: ReadonlySet<string>): number {
+  if (left.size === 0 || right.size === 0) return 0
+  let intersection = 0
+  for (const term of left) if (right.has(term)) intersection++
+  return intersection / (left.size + right.size - intersection)
+}
+
+function hasNegation(value: string): boolean {
+  return /(?:不再|不喜欢|不是|不要|取消|停止|改为|改成|\bnot\b|\bno longer\b)/iu.test(value)
 }

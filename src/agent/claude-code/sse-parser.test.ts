@@ -36,6 +36,7 @@ describe('parseClaudeStreamResponse', () => {
       ev('content_block_stop', { type: 'content_block_stop', index: 0 }) +
       ev('message_delta', {
         type: 'message_delta',
+        delta: { stop_reason: 'end_turn' },
         usage: { output_tokens: 8, cache_read_input_tokens: 100 },
       })
     const result = parseClaudeStreamResponse(sse)
@@ -45,6 +46,7 @@ describe('parseClaudeStreamResponse', () => {
     assert.equal(result.usage?.input_tokens, 10)
     assert.equal(result.usage?.output_tokens, 8)
     assert.equal(result.usage?.cache_read_input_tokens, 100)
+    assert.equal(result.stop_reason, 'end_turn')
   })
 
   test('tool_use stream: accumulates input_json_delta into parsed input', () => {

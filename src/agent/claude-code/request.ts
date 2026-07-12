@@ -80,6 +80,7 @@ export interface BuildClaudeCodeRequestBodyInput {
   systemPrompt: string
   messages: AgentMessage[]
   tools: Tool[]
+  maxOutputTokens?: number
   toolChoice?: ClaudeToolChoice
   thinking?: ClaudeThinkingConfig
 }
@@ -94,7 +95,7 @@ export function buildClaudeCodeRequestBody(
   const body: ClaudeMessageRequestBody = {
     model: input.model,
     stream: true,
-    max_tokens: resolveMaxTokens(input.model),
+    max_tokens: normalizeMaxOutputTokens(input.maxOutputTokens) ?? resolveMaxTokens(input.model),
     system: toClaudeSystemBlocks(input.systemPrompt),
     messages: input.messages.flatMap((message, index) =>
       toClaudeMessage(
@@ -128,6 +129,11 @@ export function buildClaudeCodeRequestBody(
   }
 
   return body
+}
+
+function normalizeMaxOutputTokens(value: number | undefined): number | undefined {
+  if (value == null || !Number.isFinite(value)) return undefined
+  return Math.max(1, Math.floor(value))
 }
 
 export function toClaudeSystemBlocks(userSystem: string): ClaudeSystemBlock[] {

@@ -11,6 +11,9 @@ import {
 import { createClaudeCodeLlmClient } from './claude-code/llm-client.js'
 import { createOpenAIAgentLlmClient } from './openai-agent/llm-client.js'
 import type { ClaudeThinkingConfig } from './claude-code/request.js'
+import { createLogger } from '../logger.js'
+
+const log = createLogger('llm-client')
 
 /**
  * LLM 调用契约 (BotLoopAgent runRound 用)。
@@ -30,9 +33,22 @@ export interface LlmCallInput {
   systemPrompt: string
   messages: AgentMessage[]
   tools: Tool[]
+  /** 单次生成的输出 token 上限；不改变输入上下文窗口。 */
+  maxOutputTokens?: number
   /** 可选调用级取消信号，供旁路/有界任务真正终止底层 HTTP 请求。 */
   signal?: AbortSignal
 }
+
+export type LlmStopReason =
+  | 'tool_use'
+  | 'end_turn'
+  | 'max_tokens'
+  | 'model_context_window_exceeded'
+  | 'stop_sequence'
+  | 'pause_turn'
+  | 'refusal'
+  | 'content_filter'
+  | 'unknown'
 
 export interface LlmCallOutput {
   /** Provider 返回的普通 assistant 文本。仅用于观测; BotLoop 不把它写入 AgentContext。 */
@@ -46,10 +62,70 @@ export interface LlmCallOutput {
     outputTokens: number | null
   }
   model: string
+  /** Provider-neutral 的生成停止原因；unknown 表示上游未提供或无法映射。 */
+  stopReason?: LlmStopReason
 }
 
 export interface LlmClient {
   chat(input: LlmCallInput): Promise<LlmCallOutput>
+}
+
+/** Provider adapter 暴露的稳定失败分类；Runtime Host 不依赖具体 error class。 */
+export function isLlmContextOverflowError(error: unknown): boolean {
+  return Boolean(
+    error
+    && typeof error === 'object'
+    && 'kind' in error
+    && error.kind === 'context_overflow',
+  )
+}
+
+/** 只识别明确的硬额度/账单上限；普通可恢复 429 仍由 provider retry/backoff 处理。 */
+export function isLlmUsageLimitError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const record = error as Record<string, unknown>
+  const code = typeof record.code === 'string' ? record.code.toLowerCase() : ''
+  if (['insufficient_quota', 'billing_hard_limit_reached', 'usage_limit_reached'].includes(code)) {
+    return true
+  }
+  if (record.kind === 'usage_limit') return true
+  if (record.kind !== 'rate_limit') return false
+  const message = typeof record.message === 'string' ? record.message : ''
+  return /(?:usage|spend(?:ing)?|billing|credit|quota).{0,40}(?:limit|exceed|exhaust|deplet)|insufficient.{0,20}(?:quota|credit)/i.test(message)
+}
+
+/** 只允许 overload/server 触发 model fallback；鉴权、参数、限流和上下文错误保持原样。 */
+export function isLlmFallbackEligibleError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  if ('kind' in error) return error.kind === 'overloaded' || error.kind === 'server'
+  if (!('status' in error) || typeof error.status !== 'number') return false
+  return error.status >= 500 && error.status <= 599
+}
+
+export function createFallbackLlmClient(input: {
+  primary: LlmClient
+  fallback: LlmClient
+  primaryModel: string
+  fallbackModel: string
+}): LlmClient {
+  return {
+    async chat(request) {
+      try {
+        return await input.primary.chat(request)
+      } catch (err) {
+        if (!isLlmFallbackEligibleError(err)) throw err
+        log.warn(
+          {
+            err,
+            primaryModel: input.primaryModel,
+            fallbackModel: input.fallbackModel,
+          },
+          'primary_model_unavailable_using_fallback',
+        )
+        return input.fallback.chat(request)
+      }
+    },
+  }
 }
 
 interface CreateLlmClientOptions {
@@ -64,13 +140,27 @@ interface CreateLlmClientOptions {
  * 其它 `LLM_DEFAULT_PROVIDER` 会启动期 throw。
  */
 export function createLlmClient(options: CreateLlmClientOptions = {}): LlmClient {
+  const primaryModel = options.model ?? config.llm.defaultModel
+  const primary = createProviderLlmClient(primaryModel, options)
+  const fallbackModel = options.model == null ? config.llm.fallbackModel : null
+  if (!fallbackModel || fallbackModel === primaryModel) return primary
+
+  return createFallbackLlmClient({
+    primary,
+    fallback: createProviderLlmClient(fallbackModel, options),
+    primaryModel,
+    fallbackModel,
+  })
+}
+
+function createProviderLlmClient(model: string, options: CreateLlmClientOptions): LlmClient {
   if (config.llm.defaultProvider === OPENAI_AGENT_PROVIDER_NAME) {
     const openaiProvider = config.llm.providers[OPENAI_AGENT_BASE_PROVIDER_NAME]
     if (!openaiProvider) {
       throw new Error('需要 LLM_PROVIDER_OPENAI_URL / _API_KEY 指向 OpenAI-compatible endpoint')
     }
     return createOpenAIAgentLlmClient({
-      model: options.model ?? config.llm.defaultModel,
+      model,
       baseURL: openaiProvider.url,
       apiKey: openaiProvider.apiKey,
     })
@@ -84,7 +174,7 @@ export function createLlmClient(options: CreateLlmClientOptions = {}): LlmClient
       )
     }
     return createClaudeCodeLlmClient({
-      model: options.model ?? config.llm.defaultModel,
+      model,
       baseURL: claudeProvider.url,
       apiKey: claudeProvider.apiKey,
       toolChoice: config.llm.claudeToolChoice,

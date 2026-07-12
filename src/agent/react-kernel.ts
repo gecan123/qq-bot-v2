@@ -1,8 +1,13 @@
 import type { AgentContext } from './agent-context.js'
-import type { LlmClient } from './llm-client.js'
+import type { LlmCallOutput, LlmClient } from './llm-client.js'
 import type { ToolContext, ToolEffect, ToolExecutionResult, ToolExecutor } from './tool.js'
 import { recordTokenUsage } from './token-stats.js'
 import { createLogger } from '../logger.js'
+import {
+  buildWorkingContextProjection,
+  type WorkingContextOptions,
+} from './working-context.js'
+import { isParallelSafeToolCall } from './tool-concurrency.js'
 
 const log = createLogger('REACT_KERNEL')
 
@@ -12,6 +17,8 @@ export interface ReactRoundInput {
   llm: LlmClient
   tools: ToolExecutor
   toolContext: ToolContext
+  workingContext?: WorkingContextOptions
+  signal?: AbortSignal
 }
 
 export interface ReactToolEffect {
@@ -26,16 +33,83 @@ export interface ReactRoundResult {
   effects: ReactToolEffect[]
 }
 
+const DEFAULT_ESCALATED_OUTPUT_TOKENS = 8_192
+const MAX_ESCALATED_OUTPUT_TOKENS = 65_536
+
+/**
+ * max_tokens 命中后的有界失败。completion 只用于安全续写，里面的 tool call 尚未执行，
+ * 也尚未写入 AgentContext。
+ */
+export class LlmOutputTruncatedError extends Error {
+  readonly completion: LlmCallOutput
+  readonly tokensUsed: number
+
+  constructor(completion: LlmCallOutput, tokensUsed: number) {
+    super('LLM output remained truncated after one max-output escalation')
+    this.name = 'LlmOutputTruncatedError'
+    this.completion = completion
+    this.tokensUsed = tokensUsed
+  }
+}
+
+class LlmContextWindowStopError extends Error {
+  readonly kind = 'context_overflow'
+
+  constructor() {
+    super('LLM stopped because the model context window was exhausted')
+    this.name = 'LlmContextWindowStopError'
+  }
+}
+
 export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundResult> {
   const roundIndex = input.toolContext.roundIndex
   const snapshot = input.context.getSnapshot()
+  const workingContext = buildWorkingContextProjection(snapshot.messages, input.workingContext)
   const visibleTools = input.tools.list()
 
-  const completion = await input.llm.chat({
-    systemPrompt: input.systemPrompt,
-    messages: snapshot.messages,
-    tools: visibleTools,
-  })
+  if (workingContext.stats.omittedImages > 0) {
+    log.info(
+      { roundIndex, ...workingContext.stats },
+      'working_context_projected',
+    )
+  }
+
+  const completions: LlmCallOutput[] = []
+  let maxOutputTokens: number | undefined
+  let didEscalateOutputBudget = false
+  let completion: LlmCallOutput
+
+  while (true) {
+    completion = await input.llm.chat({
+      systemPrompt: input.systemPrompt,
+      messages: workingContext.messages,
+      tools: visibleTools,
+      signal: input.signal,
+      ...(maxOutputTokens != null ? { maxOutputTokens } : {}),
+    })
+    completions.push(completion)
+    recordCompletion(roundIndex, completion)
+
+    if (completion.stopReason === 'model_context_window_exceeded') {
+      throw new LlmContextWindowStopError()
+    }
+    if (completion.stopReason !== 'max_tokens') break
+
+    if (didEscalateOutputBudget) {
+      throw new LlmOutputTruncatedError(completion, sumTokensUsed(completions))
+    }
+    const escalated = resolveEscalatedOutputTokens(maxOutputTokens, completion.usage.outputTokens)
+    maxOutputTokens = escalated
+    didEscalateOutputBudget = true
+    log.warn(
+      {
+        roundIndex,
+        previousOutputTokens: completion.usage.outputTokens,
+        maxOutputTokens,
+      },
+      'round_output_truncated_retrying_with_larger_budget',
+    )
+  }
 
   log.info(
     {
@@ -47,18 +121,10 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
       cachedTokens: completion.usage.cachedTokens,
       outputTokens: completion.usage.outputTokens,
       model: completion.model,
+      stopReason: completion.stopReason ?? 'unknown',
     },
     'round_llm_done',
   )
-
-  recordTokenUsage({
-    operation: 'agent.chat',
-    roundIndex,
-    inputTokens: completion.usage.inputTokens,
-    cachedTokens: completion.usage.cachedTokens,
-    outputTokens: completion.usage.outputTokens,
-    model: completion.model,
-  })
 
   if (completion.content.length > 0) {
     log.warn(
@@ -80,25 +146,90 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
   }
 
   const effects: ReactToolEffect[] = []
-  for (const call of completion.toolCalls) {
-    const result = await executeToolCall(input.tools, call, input.toolContext)
-    for (const effect of result.effects ?? []) {
-      effects.push({
-        toolCallId: call.id,
-        toolName: call.name,
-        effect,
-      })
+  let cursor = 0
+  while (cursor < completion.toolCalls.length) {
+    const call = completion.toolCalls[cursor]!
+    const batch = isParallelSafeToolCall(call)
+      ? takeParallelSafeBatch(completion.toolCalls, cursor)
+      : [call]
+    if (batch.length > 1) {
+      log.info(
+        { roundIndex, toolNames: batch.map((item) => item.name), batchSize: batch.length },
+        'parallel_read_only_tool_batch_started',
+      )
     }
-    input.context.appendToolResult({ toolCallId: call.id, content: result.content })
+    const results = batch.length > 1
+      ? await Promise.all(batch.map((item) => executeToolCall(input.tools, item, input.toolContext)))
+      : [await executeToolCall(input.tools, batch[0]!, input.toolContext)]
+
+    for (let index = 0; index < batch.length; index++) {
+      const batchCall = batch[index]!
+      const result = results[index]!
+      for (const effect of result.effects ?? []) {
+        effects.push({
+          toolCallId: batchCall.id,
+          toolName: batchCall.name,
+          effect,
+        })
+      }
+      input.context.appendToolResult({ toolCallId: batchCall.id, content: result.content })
+    }
+    cursor += batch.length
   }
 
   return {
     inputTokens: completion.usage.inputTokens,
-    tokensUsed:
-      Math.max(0, (completion.usage.inputTokens ?? 0) - (completion.usage.cachedTokens ?? 0))
-      + (completion.usage.outputTokens ?? 0),
+    tokensUsed: sumTokensUsed(completions),
     effects,
   }
+}
+
+function takeParallelSafeBatch(
+  calls: readonly Parameters<ToolExecutor['execute']>[0][],
+  start: number,
+): Parameters<ToolExecutor['execute']>[0][] {
+  const batch: Parameters<ToolExecutor['execute']>[0][] = []
+  for (let index = start; index < calls.length; index++) {
+    const call = calls[index]!
+    if (!isParallelSafeToolCall(call)) break
+    batch.push(call)
+  }
+  return batch
+}
+
+function recordCompletion(roundIndex: number, completion: LlmCallOutput): void {
+  recordTokenUsage({
+    operation: 'agent.chat',
+    roundIndex,
+    inputTokens: completion.usage.inputTokens,
+    cachedTokens: completion.usage.cachedTokens,
+    outputTokens: completion.usage.outputTokens,
+    model: completion.model,
+  })
+}
+
+function sumTokensUsed(completions: readonly LlmCallOutput[]): number {
+  return completions.reduce(
+    (sum, completion) => sum
+      + Math.max(
+        0,
+        (completion.usage.inputTokens ?? 0) - (completion.usage.cachedTokens ?? 0),
+      )
+      + (completion.usage.outputTokens ?? 0),
+    0,
+  )
+}
+
+function resolveEscalatedOutputTokens(
+  current: number | undefined,
+  observedOutputTokens: number | null,
+): number {
+  const candidate = Math.max(
+    DEFAULT_ESCALATED_OUTPUT_TOKENS,
+    (current ?? 0) * 2,
+    (observedOutputTokens ?? 0) * 2,
+  )
+  return Math.min(MAX_ESCALATED_OUTPUT_TOKENS, Math.max(1, Math.ceil(candidate)))
 }
 
 async function executeToolCall(

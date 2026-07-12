@@ -29,7 +29,7 @@ export interface ReplayMissedDeps {
    *   false → 已被 live 路径入过队, skip
    * 这个 hook 是与 src/index.ts 的 enqueueMessageEvent 绑定的, 不要在 replay 里另起一份去重 set.
    */
-  enqueueMessageEvent: (event: BotEvent) => boolean
+  enqueueMessageEvent: (event: BotEvent) => boolean | Promise<boolean>
   selfNumber: number
   groupIds: readonly number[]
   /**
@@ -212,7 +212,7 @@ async function replaySource(
     },
   }
 
-  return deps.enqueueMessageEvent(event)
+  return await deps.enqueueMessageEvent(event)
     ? { enqueued: 1, skippedDuplicates: 0 }
     : { enqueued: 0, skippedDuplicates: 1 }
 }
@@ -271,7 +271,7 @@ async function enqueueReplayRows(
       }
     }
 
-    const accepted = deps.enqueueMessageEvent(event)
+    const accepted = await deps.enqueueMessageEvent(event)
     if (accepted) enqueued++
     else skipped++
   }

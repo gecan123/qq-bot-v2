@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
+import type { LlmClient } from './llm-client.js'
 
 describe('createLlmClient provider routing', () => {
   test('allows openai-agent as a main agent provider', async () => {
@@ -35,6 +36,85 @@ describe('createLlmClient provider routing', () => {
       restoreEnv('BOT_TARGET_GROUP_IDS', originalBotTargetGroupIds)
       restoreEnv('SELF_NUMBER', originalSelfNumber)
     }
+  })
+})
+
+const request = {
+  systemPrompt: 'system',
+  messages: [{ role: 'user' as const, content: 'hello' }],
+  tools: [],
+}
+
+describe('fallback llm client', () => {
+  test('uses the fallback once after an exhausted overload/server failure', async () => {
+    const { createFallbackLlmClient } = await import('./llm-client.js')
+    const calls: string[] = []
+    const primary: LlmClient = {
+      async chat() {
+        calls.push('primary')
+        throw Object.assign(new Error('overloaded'), { kind: 'overloaded' })
+      },
+    }
+    const fallback: LlmClient = {
+      async chat() {
+        calls.push('fallback')
+        return {
+          content: '',
+          toolCalls: [],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+          model: 'fallback-model',
+          stopReason: 'end_turn',
+        }
+      },
+    }
+
+    const result = await createFallbackLlmClient({
+      primary,
+      fallback,
+      primaryModel: 'primary-model',
+      fallbackModel: 'fallback-model',
+    }).chat(request)
+
+    assert.deepEqual(calls, ['primary', 'fallback'])
+    assert.equal(result.model, 'fallback-model')
+  })
+
+  test('does not fallback for auth, rate-limit, context, or invalid-request failures', async () => {
+    const { createFallbackLlmClient } = await import('./llm-client.js')
+    for (const kind of ['auth', 'rate_limit', 'context_overflow', 'invalid_request']) {
+      let fallbackCalls = 0
+      const error = Object.assign(new Error(kind), { kind })
+      const client = createFallbackLlmClient({
+        primary: { async chat() { throw error } },
+        fallback: {
+          async chat() {
+            fallbackCalls++
+            throw new Error('must not run')
+          },
+        },
+        primaryModel: 'primary',
+        fallbackModel: 'fallback',
+      })
+
+      await assert.rejects(client.chat(request), error)
+      assert.equal(fallbackCalls, 0)
+    }
+  })
+
+  test('recognizes generic OpenAI-style 5xx errors only when no stable kind exists', async () => {
+    const { isLlmFallbackEligibleError } = await import('./llm-client.js')
+    assert.equal(isLlmFallbackEligibleError({ status: 503 }), true)
+    assert.equal(isLlmFallbackEligibleError({ status: 429 }), false)
+    assert.equal(isLlmFallbackEligibleError({ status: 503, kind: 'auth' }), false)
+  })
+
+  test('distinguishes hard usage limits from ordinary temporary rate limits', async () => {
+    const { isLlmUsageLimitError } = await import('./llm-client.js')
+    assert.equal(isLlmUsageLimitError({ kind: 'rate_limit', message: 'too many requests' }), false)
+    assert.equal(isLlmUsageLimitError({
+      kind: 'rate_limit', message: 'organization usage limit exceeded',
+    }), true)
+    assert.equal(isLlmUsageLimitError({ code: 'insufficient_quota' }), true)
   })
 })
 

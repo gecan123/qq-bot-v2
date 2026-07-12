@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { z } from 'zod'
-import { createClaudeCodeLlmClient, ClaudeCodeApiError } from './llm-client.js'
+import {
+  calculateRetryDelayMs,
+  createClaudeCodeLlmClient,
+  ClaudeCodeApiError,
+  parseRetryAfterMs,
+} from './llm-client.js'
 import type { Tool } from '../tool.js'
 import {
   ANTHROPIC_BETA,
@@ -41,9 +46,13 @@ const SAMPLE_TEXT_SSE =
     delta: { type: 'text_delta', text: 'hello' },
   }) +
   ev('content_block_stop', { type: 'content_block_stop', index: 0 }) +
-  ev('message_delta', { type: 'message_delta', usage: { output_tokens: 5 } })
+  ev('message_delta', {
+    type: 'message_delta',
+    delta: { stop_reason: 'end_turn' },
+    usage: { output_tokens: 5 },
+  })
 
-function makeFetchMock(responses: Array<{ status?: number; body: string }>): {
+function makeFetchMock(responses: Array<{ status?: number; body: string; headers?: HeadersInit }>): {
   fn: typeof fetch
   calls: Array<{ url: string; init: RequestInit }>
 } {
@@ -54,9 +63,14 @@ function makeFetchMock(responses: Array<{ status?: number; body: string }>): {
     if (!next) throw new Error('fetch mock ran out')
     i++
     calls.push({ url: String(input), init: init ?? {} })
-    return new Response(next.body, { status: next.status ?? 200 })
+    return new Response(next.body, { status: next.status ?? 200, headers: next.headers })
   }) as unknown as typeof fetch
   return { fn, calls }
+}
+
+const noWaitRetry = {
+  sleep: async () => {},
+  random: () => 0.5,
 }
 
 function delay(ms: number): Promise<void> {
@@ -157,6 +171,27 @@ describe('ClaudeCodeLlmClient.chat', () => {
     // inputTokens = uncached(50) + cache_read(200) + cache_create(0) = 250
     assert.equal(out.usage.inputTokens, 250)
     assert.equal(out.model, 'claude-sonnet-4-5')
+    assert.equal(out.stopReason, 'end_turn')
+  })
+
+  test('forwards maxOutputTokens to max_tokens', async (t) => {
+    const { fn, calls } = makeFetchMock([{ body: SAMPLE_TEXT_SSE }])
+    t.mock.method(globalThis, 'fetch', fn)
+    const client = createClaudeCodeLlmClient({
+      model: 'claude-sonnet-4-5',
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+    })
+
+    await client.chat({
+      systemPrompt: 'persona',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [],
+      maxOutputTokens: 48_000,
+    })
+
+    const body = JSON.parse(String(calls[0]?.init.body)) as { max_tokens?: number }
+    assert.equal(body.max_tokens, 48_000)
   })
 
   test('extracts toolCalls from tool_use stream blocks', async (t) => {
@@ -336,8 +371,12 @@ describe('ClaudeCodeLlmClient.chat', () => {
     await appenderCanFinish
   })
 
-  test('non-2xx throws ClaudeCodeApiError with full request/response context (no retry)', async (t) => {
-    const { fn, calls } = makeFetchMock([{ status: 500, body: '{"error":"internal"}' }])
+  test('non-retryable 400 throws structured ClaudeCodeApiError with full request/response context', async (t) => {
+    const { fn, calls } = makeFetchMock([{
+      status: 400,
+      body: '{"error":{"type":"invalid_request_error","message":"bad input"}}',
+      headers: { 'request-id': 'req-invalid' },
+    }])
     t.mock.method(globalThis, 'fetch', fn)
 
     const client = createClaudeCodeLlmClient({
@@ -356,9 +395,11 @@ describe('ClaudeCodeLlmClient.chat', () => {
       caught = err
     }
     assert.ok(caught instanceof ClaudeCodeApiError)
-    assert.equal(caught.status, 500)
-    assert.equal(caught.responseText, '{"error":"internal"}')
-    // 不重试: 失败一次直接抛 (cliproxy 端管 token, bot 不刷新)
+    assert.equal(caught.status, 400)
+    assert.equal(caught.kind, 'invalid_request')
+    assert.equal(caught.retryable, false)
+    assert.equal(caught.providerErrorType, 'invalid_request_error')
+    assert.equal(caught.requestId, 'req-invalid')
     assert.equal(calls.length, 1)
     // 完整 request body 应该挂在 error 上, 让 pino log {err} 时能直接 dump
     const reqBody = caught.requestBody as { system: Array<{ text: string }>; messages: unknown[] }
@@ -366,6 +407,32 @@ describe('ClaudeCodeLlmClient.chat', () => {
     assert.equal(reqBody.system.length, 2)
     assert.equal(reqBody.system[1]?.text, 's')
     assert.equal(reqBody.messages.length, 1)
+  })
+
+  test('classifies provider prompt-too-long responses for Runtime Host recovery without ordinary retry', async (t) => {
+    const { fn, calls } = makeFetchMock([{
+      status: 400,
+      body: '{"error":{"type":"invalid_request_error","message":"prompt is too long: 250000 tokens exceed the 200000 maximum"}}',
+    }])
+    t.mock.method(globalThis, 'fetch', fn)
+
+    const client = createClaudeCodeLlmClient({
+      model: 'm',
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+      retry: noWaitRetry,
+    })
+
+    await assert.rejects(
+      () => client.chat({ systemPrompt: 's', messages: [{ role: 'user', content: 'h' }], tools: [] }),
+      (err: unknown) => {
+        assert.ok(err instanceof ClaudeCodeApiError)
+        assert.equal(err.kind, 'context_overflow')
+        assert.equal(err.retryable, false)
+        return true
+      },
+    )
+    assert.equal(calls.length, 1)
   })
 
   test('transport failure retries once and returns the second response', async (t) => {
@@ -383,6 +450,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
       model: 'LongCat-2.0',
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
+      retry: noWaitRetry,
     })
     const output = await client.chat({
       systemPrompt: 's',
@@ -395,7 +463,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
     assert.equal(calls[0]?.init.body, calls[1]?.init.body)
   })
 
-  test('transport failure is thrown after one retry', async (t) => {
+  test('transport failure is thrown after two retries', async (t) => {
     let calls = 0
     const fn = (async () => {
       calls++
@@ -407,6 +475,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
       model: 'LongCat-2.0',
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
+      retry: noWaitRetry,
     })
 
     await assert.rejects(
@@ -414,11 +483,75 @@ describe('ClaudeCodeLlmClient.chat', () => {
       (err: unknown) => {
         assert.ok(err instanceof ClaudeCodeApiError)
         assert.equal(err.status, null)
+        assert.equal(err.kind, 'transport')
+        assert.equal(err.retryable, true)
         assert.equal(err.responseText, null)
         return true
       },
     )
-    assert.equal(calls, 2)
+    assert.equal(calls, 3)
+  })
+
+  test('529 honors retry-after and retries the same request body', async (t) => {
+    const { fn, calls } = makeFetchMock([
+      {
+        status: 529,
+        body: '{"error":{"type":"overloaded_error","message":"busy"}}',
+        headers: { 'retry-after': '2', 'request-id': 'req-overloaded' },
+      },
+      { body: SAMPLE_TEXT_SSE },
+    ])
+    t.mock.method(globalThis, 'fetch', fn)
+    const delays: number[] = []
+
+    const client = createClaudeCodeLlmClient({
+      model: 'm',
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+      retry: {
+        sleep: async (ms) => { delays.push(ms) },
+        random: () => 0.5,
+      },
+    })
+    const output = await client.chat({
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [],
+    })
+
+    assert.equal(output.content, 'hello')
+    assert.deepEqual(delays, [2_000])
+    assert.equal(calls.length, 2)
+    assert.equal(calls[0]?.init.body, calls[1]?.init.body)
+  })
+
+  test('500 retries twice then preserves the final structured error', async (t) => {
+    const { fn, calls } = makeFetchMock([{
+      status: 500,
+      body: '{"error":{"type":"api_error","message":"internal"}}',
+      headers: { 'request-id': 'req-server' },
+    }])
+    t.mock.method(globalThis, 'fetch', fn)
+
+    const client = createClaudeCodeLlmClient({
+      model: 'm',
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+      retry: noWaitRetry,
+    })
+
+    await assert.rejects(
+      () => client.chat({ systemPrompt: 's', messages: [{ role: 'user', content: 'h' }], tools: [] }),
+      (err: unknown) => {
+        assert.ok(err instanceof ClaudeCodeApiError)
+        assert.equal(err.kind, 'server')
+        assert.equal(err.retryable, true)
+        assert.equal(err.providerErrorType, 'api_error')
+        assert.equal(err.requestId, 'req-server')
+        return true
+      },
+    )
+    assert.equal(calls.length, 3)
   })
 
   test('call-level abort cancels fetch without transport retry', async (t) => {
@@ -471,7 +604,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
     assert.equal(calls.length, 1)
   })
 
-  test('SSE error event throws instead of becoming an empty completion', async (t) => {
+  test('SSE overloaded error retries instead of becoming an empty completion', async (t) => {
     const sse = ev('error', {
       type: 'error',
       error: {
@@ -479,25 +612,43 @@ describe('ClaudeCodeLlmClient.chat', () => {
         message: 'Overloaded',
       },
     })
-    const { fn } = makeFetchMock([{ body: sse }])
+    const { fn, calls } = makeFetchMock([{ body: sse }, { body: SAMPLE_TEXT_SSE }])
     t.mock.method(globalThis, 'fetch', fn)
 
     const client = createClaudeCodeLlmClient({
       model: 'claude-sonnet-4-6',
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
+      retry: noWaitRetry,
     })
 
-    await assert.rejects(
-      () => client.chat({ systemPrompt: 's', messages: [{ role: 'user', content: 'h' }], tools: [] }),
-      (err: unknown) => {
-        assert.ok(err instanceof ClaudeCodeApiError)
-        assert.equal(err.status, 200)
-        assert.match(err.message, /overloaded_error/)
-        assert.match(err.message, /Overloaded/)
-        return true
-      },
-    )
+    const output = await client.chat({
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [],
+    })
+    assert.equal(output.content, 'hello')
+    assert.equal(calls.length, 2)
+  })
+
+  test('retry delay parses seconds and HTTP-date and caps exponential jitter', () => {
+    assert.equal(parseRetryAfterMs('1.5', 0), 1_500)
+    assert.equal(parseRetryAfterMs('Thu, 01 Jan 1970 00:00:05 GMT', 1_000), 4_000)
+    assert.equal(parseRetryAfterMs('not-a-date', 0), null)
+    assert.equal(calculateRetryDelayMs({
+      attempt: 3,
+      retryAfterMs: null,
+      baseDelayMs: 500,
+      maxDelayMs: 3_000,
+      random: () => 0.5,
+    }), 3_000)
+    assert.equal(calculateRetryDelayMs({
+      attempt: 0,
+      retryAfterMs: 40_000,
+      baseDelayMs: 500,
+      maxDelayMs: 30_000,
+      random: () => 0.5,
+    }), 30_000)
   })
 
   test('request body: stream:true, 2 system blocks, cache_control 1h 挂最后一块', async (t) => {

@@ -7,11 +7,36 @@ import type { LlmClient } from './llm-client.js'
 import type { BotSnapshotRepo } from './snapshot-repo.js'
 import { createAgentRuntime } from './runtime.js'
 import type { MessageSender } from '../messaging/message-sender.js'
+import { McpManager } from './mcp-manager.js'
+import { createInMemoryGoalStore } from './goal-store.js'
 
 describe('createAgentRuntime', () => {
   test('wires deferred tool activation state through AgentContext', async () => {
     const context = createAgentContext()
     context.activateToolCapability('external_research')
+    let mcpConnections = 0
+    const mcpManager = new McpManager({
+      servers: {
+        local: {
+          command: '/bin/echo',
+          args: [],
+          env: {},
+          inheritEnv: [],
+          readOnlyTools: ['search'],
+          timeoutMs: 30_000,
+          resultMaxChars: 12_000,
+        },
+      },
+      snapshotDir: '/tmp/qq-bot-v2-runtime-test-mcp-schemas',
+      factory: async () => {
+        mcpConnections++
+        return {
+          async listTools() { return [] },
+          async callTool() { return {} },
+          async close() {},
+        }
+      },
+    })
 
     const runtime = createAgentRuntime({
       context,
@@ -19,7 +44,8 @@ describe('createAgentRuntime', () => {
       llm: makeMockLlm(),
       snapshotRepo: makeSnapshotRepo(),
       sender: makeMessageSender(),
-      loadFriendIds: async () => [2002],
+      loadFriends: async () => [{ userId: 2002, nickname: '好友', remark: '主人' }],
+      loadGroups: async () => [{ groupId: 1001, groupName: '测试群' }],
       groupIds: [1001],
       groupAmbientSendIds: new Set([1001]),
       selfNumber: 9999,
@@ -28,13 +54,21 @@ describe('createAgentRuntime', () => {
       toolCallLogPath: '/tmp/qq-bot-v2-runtime-test-tool-calls.ndjson',
       owner: { qq: 2002, name: 'zzz' },
       eventDebounceMs: 0,
+      optionalTools: disabledOptionalTools(),
+      mcpManager,
+      goalStore: createInMemoryGoalStore(),
     })
 
     assert.match(runtime.systemPrompt, /测试群/)
     assert.deepEqual(runtime.tools.list().map((tool) => tool.name), [
       'pause',
       'send_message',
+      'qq_directory',
       'background_task',
+      'schedule',
+      'delegate',
+      'approval',
+      'goal',
       'todo',
       'skill',
       'memory',
@@ -64,8 +98,13 @@ describe('createAgentRuntime', () => {
     const payload = JSON.parse(helpResult.content)
     const externalResearch = payload.capabilities.find((item: { name: string }) => item.name === 'external_research')
     const skillManagement = payload.capabilities.find((item: { name: string }) => item.name === 'skill_management')
+    const mcpConnectors = payload.capabilities.find((item: { name: string }) => item.name === 'mcp_connectors')
     assert.equal(externalResearch.active, true)
     assert.equal(skillManagement.active, false)
+    assert.equal(mcpConnectors.active, false)
+    assert.deepEqual(mcpConnectors.tools, ['mcp'])
+    assert.equal(mcpConnections, 0)
+    await runtime.stopBackgroundServices()
   })
 })
 
@@ -79,6 +118,17 @@ function makeMockLlm(): LlmClient {
         model: 'mock',
       }
     },
+  }
+}
+
+function disabledOptionalTools() {
+  return {
+    browser: null,
+    openbb: null,
+    tradingAgent: null,
+    website: null,
+    webSearch: null,
+    cryptoPaper: null,
   }
 }
 

@@ -43,6 +43,15 @@ const mockWebsiteTool: Tool<{ action: 'status' }> = {
   },
 }
 
+const disabledOptionalTools = {
+  browser: null,
+  openbb: null,
+  tradingAgent: null,
+  website: null,
+  webSearch: null,
+  cryptoPaper: null,
+} as const
+
 const TINY_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
   'base64',
@@ -58,9 +67,16 @@ describe('merged main-agent tools', () => {
       groupIds: [],
       metadata: { groupNames: new Map() },
       groupCustomizations: [],
+      qqDirectory: {
+        groupIds: [],
+        async loadFriends() { return [] },
+        async loadGroups() { return [] },
+      },
+      optionalTools: disabledOptionalTools,
     }).map((tool) => tool.name)
 
     assert.ok(names.includes('background_task'))
+    assert.ok(names.includes('qq_directory'))
     assert.ok(names.includes('memory'))
     assert.ok(names.includes('inbox'))
     assert.ok(names.includes('pause'))
@@ -111,7 +127,12 @@ describe('merged main-agent tools', () => {
       groupIds: [],
       metadata: { groupNames: new Map() },
       groupCustomizations: [],
-      websiteTool: mockWebsiteTool,
+      qqDirectory: {
+        groupIds: [],
+        async loadFriends() { return [] },
+        async loadGroups() { return [] },
+      },
+      optionalTools: { ...disabledOptionalTools, website: mockWebsiteTool },
     })
     const capabilities = new Map(manifest.capabilities.map((capability) => [
       capability.name,
@@ -124,6 +145,7 @@ describe('merged main-agent tools', () => {
     ]
 
     assert.ok(allToolNames.includes('send_message'))
+    assert.ok(alwaysOnNames.includes('qq_directory'))
     assert.equal(allToolNames.includes('send_image'), false)
     assert.ok(alwaysOnNames.includes('collect_sticker'))
     assert.ok(alwaysOnNames.includes('chat_style'))

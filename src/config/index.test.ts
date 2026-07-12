@@ -55,6 +55,7 @@ describe('config', () => {
 
     assert.equal(config.llm.defaultProvider, 'claude-code')
     assert.equal(config.llm.defaultModel, 'claude-sonnet-4-6')
+    assert.equal(config.llm.fallbackModel, null)
     assert.deepEqual(config.llm.providers.claude, {
       url: 'http://127.0.0.1:8317/v1',
       apiKey: 'sk-local',
@@ -163,6 +164,14 @@ describe('config', () => {
       url: 'http://127.0.0.1:8317/v1',
       apiKey: 'sk-local',
     })
+  })
+
+  test('parses an explicit same-provider fallback model', () => {
+    const config = parseConfig(createBaseEnv({
+      LLM_FALLBACK_MODEL: 'claude-haiku-4-5',
+    }))
+
+    assert.equal(config.llm.fallbackModel, 'claude-haiku-4-5')
   })
 
   test('throws when default provider is not an agent provider', () => {
@@ -290,6 +299,64 @@ describe('config', () => {
 
     const blank = parseConfig(createBaseEnv({ BOT_TOOL_CALL_LOG_PATH: '   ' }))
     assert.equal(blank.toolCallLogPath, 'logs/tool-calls.ndjson')
+  })
+
+  test('defaults to thin local audit and accepts strict/off overrides', () => {
+    const defaults = parseConfig(createBaseEnv())
+    assert.equal(defaults.toolAuditMode, 'side_effects')
+    assert.equal(defaults.toolAuditDbEnabled, false)
+    assert.equal(defaults.approvalMode, 'thin')
+
+    const strict = parseConfig(createBaseEnv({
+      BOT_TOOL_AUDIT_MODE: 'all',
+      BOT_TOOL_AUDIT_DB_ENABLED: 'true',
+      BOT_APPROVAL_MODE: 'strict',
+    }))
+    assert.equal(strict.toolAuditMode, 'all')
+    assert.equal(strict.toolAuditDbEnabled, true)
+    assert.equal(strict.approvalMode, 'strict')
+
+    assert.equal(parseConfig(createBaseEnv({ BOT_TOOL_AUDIT_MODE: 'off' })).toolAuditMode, 'off')
+    assert.equal(parseConfig(createBaseEnv({ BOT_APPROVAL_MODE: 'off' })).approvalMode, 'off')
+    assert.throws(
+      () => parseConfig(createBaseEnv({ BOT_APPROVAL_MODE: 'maybe' })),
+      /Invalid BOT_APPROVAL_MODE/,
+    )
+  })
+
+  test('background task state path defaults to bot workspace and accepts override', () => {
+    assert.equal(
+      parseConfig(createBaseEnv()).backgroundTaskStatePath,
+      'data/agent-workspace/runtime/background-tasks.json',
+    )
+    assert.equal(
+      parseConfig(createBaseEnv({ BOT_BACKGROUND_TASK_STATE_PATH: 'tmp/tasks.json' })).backgroundTaskStatePath,
+      'tmp/tasks.json',
+    )
+  })
+
+  test('approval state path defaults to bot workspace and accepts override', () => {
+    assert.equal(
+      parseConfig(createBaseEnv()).approvalStatePath,
+      'data/agent-workspace/runtime/approvals.json',
+    )
+    assert.equal(
+      parseConfig(createBaseEnv({ BOT_APPROVAL_STATE_PATH: 'tmp/approvals.json' })).approvalStatePath,
+      'tmp/approvals.json',
+    )
+  })
+
+  test('keeps MCP disabled by default and parses deferred MCP paths', () => {
+    const defaults = parseConfig(createBaseEnv())
+    assert.equal(defaults.mcpConfigPath, undefined)
+    assert.equal(defaults.mcpSchemaSnapshotDir, 'data/agent-workspace/runtime/mcp-schemas')
+
+    const configured = parseConfig(createBaseEnv({
+      BOT_MCP_CONFIG_PATH: './private/mcp.json',
+      BOT_MCP_SCHEMA_SNAPSHOT_DIR: 'tmp/mcp-schemas',
+    }))
+    assert.equal(configured.mcpConfigPath, './private/mcp.json')
+    assert.equal(configured.mcpSchemaSnapshotDir, 'tmp/mcp-schemas')
   })
 
   test('openbb: 不启用 OPENBB_CLI_ENABLED → undefined', () => {

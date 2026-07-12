@@ -224,6 +224,55 @@ describe('inbox tool', () => {
     assert.match(result.content as string, /qq_private:9001/)
   })
 
+  test('returns compensated prior messages separately from the new mailbox batch', async () => {
+    const calls: unknown[] = []
+    const tool = createInboxTool({
+      groupIds: [],
+      selfNumber: 999,
+      async findMessages(args) {
+        calls.push(args)
+        const idFilter = args.where.id as { gt?: number; lte?: number }
+        if (idFilter.gt != null) {
+          return [row({ id: 30, kind: 'qq_private', sourceId: '9001', text: 'current' })]
+        }
+        return [
+          row({ id: 29, kind: 'qq_private', sourceId: '9001', text: 'previous-nearest' }),
+          row({ id: 28, kind: 'qq_private', sourceId: '9001', text: 'previous-older' }),
+        ]
+      },
+    })
+
+    const result = await tool.execute({
+      action: 'read',
+      source: 'private',
+      peerId: 9001,
+      afterRowId: 29,
+      contextBefore: 2,
+      limit: 1,
+    }, undefined as never)
+
+    assert.deepEqual(calls, [
+      {
+        where: { sceneKind: 'qq_private', sceneExternalId: '9001', id: { gt: 29 } },
+        orderBy: { id: 'asc' },
+        take: 1,
+      },
+      {
+        where: { sceneKind: 'qq_private', sceneExternalId: '9001', id: { lte: 29 } },
+        orderBy: { id: 'desc' },
+        take: 2,
+      },
+    ])
+    const payload = JSON.parse(result.content as string) as {
+      requestedContextBefore: number
+      previousMessages: Array<{ rowId: number; text: string }>
+      messages: Array<{ rowId: number; text: string }>
+    }
+    assert.equal(payload.requestedContextBefore, 2)
+    assert.deepEqual(payload.previousMessages.map((message) => message.rowId), [28, 29])
+    assert.deepEqual(payload.messages.map((message) => message.rowId), [30])
+  })
+
   test('lists one latest entry per allowed mailbox', async () => {
     const tool = createInboxTool({
       groupIds: [111],

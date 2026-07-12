@@ -100,6 +100,7 @@ describe('openai-agent llm client', () => {
         model: 'gpt-5.1-2025-11-13',
         choices: [
           {
+            finish_reason: 'tool_calls',
             message: {
               role: 'assistant',
               content: 'thinking',
@@ -138,6 +139,30 @@ describe('openai-agent llm client', () => {
       outputTokens: 7,
     })
     assert.equal(result.model, 'gpt-5.1-2025-11-13')
+    assert.equal(result.stopReason, 'tool_use')
+  })
+
+  test('maps length to max_tokens and forwards call-level output budget', async () => {
+    const calls: ChatCompletionCreateParamsNonStreaming[] = []
+    const client = createOpenAIAgentLlmClient({
+      model: 'gpt-5.1',
+      baseURL: 'http://127.0.0.1:8317/v1',
+      apiKey: 'sk-local',
+      client: createFakeClient({
+        model: 'gpt-5.1',
+        choices: [{ finish_reason: 'length', message: { role: 'assistant', content: 'partial' } }],
+      }, calls),
+    })
+
+    const result = await client.chat({
+      systemPrompt: 'system',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [],
+      maxOutputTokens: 9_000,
+    })
+
+    assert.equal(calls[0]?.max_completion_tokens, 9_000)
+    assert.equal(result.stopReason, 'max_tokens')
   })
 
   test('normalizes strict-mode null optional tool arguments before returning tool calls', async () => {

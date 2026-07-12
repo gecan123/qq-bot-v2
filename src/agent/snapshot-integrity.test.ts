@@ -22,6 +22,21 @@ describe('validateBotSnapshotIntegrity', () => {
     const result = validateBotSnapshotIntegrity({
       snapshot,
       mailboxCursors: { 'qq_group:1001': 10, 'qq_private:2002': 3 },
+      mailboxContinuity: {
+        schemaVersion: 1,
+        roundSeq: 12,
+        lastInputTokens: 20_000,
+        compactionEpoch: 1,
+        mailboxes: {
+          'qq_private:2002': {
+            lastMessageAtMs: 1_700_000_000_000,
+            roundSeq: 10,
+            inputTokens: 10_000,
+            compactionEpoch: 1,
+          },
+        },
+      },
+      goalRevision: 4,
     })
 
     assert.deepEqual(result, {
@@ -34,6 +49,7 @@ describe('validateBotSnapshotIntegrity', () => {
         toolResults: 1,
         activeToolCapabilities: 1,
         mailboxCursors: 2,
+        goalRevision: 4,
       },
     })
   })
@@ -53,6 +69,7 @@ describe('validateBotSnapshotIntegrity', () => {
         ],
       },
       mailboxCursors: {},
+      goalRevision: 0,
     })
 
     assert.equal(result.ok, false)
@@ -75,6 +92,7 @@ describe('validateBotSnapshotIntegrity', () => {
         ],
       },
       mailboxCursors: { 'bad-key': -1 },
+      goalRevision: -1,
     })
 
     assert.equal(result.ok, false)
@@ -82,6 +100,7 @@ describe('validateBotSnapshotIntegrity', () => {
     assert.match(result.errors.join('\n'), /messages\[2\] tool JSON content is invalid/)
     assert.match(result.errors.join('\n'), /mailboxCursors\.bad-key has invalid key/)
     assert.match(result.errors.join('\n'), /mailboxCursors\.bad-key must be a non-negative safe integer/)
+    assert.match(result.errors.join('\n'), /goalRevision must be a non-negative safe integer/)
   })
 
   test('rejects duplicate tool results after a matched assistant tool call', () => {
@@ -100,9 +119,33 @@ describe('validateBotSnapshotIntegrity', () => {
         ],
       },
       mailboxCursors: {},
+      goalRevision: 0,
     })
 
     assert.equal(result.ok, false)
     assert.match(result.errors.join('\n'), /messages\[2\] is duplicate tool result call-1/)
+  })
+
+  test('rejects malformed mailbox continuity metadata', () => {
+    const result = validateBotSnapshotIntegrity({
+      snapshot: {
+        schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+        activeToolCapabilities: [],
+        messages: [],
+      },
+      mailboxCursors: {},
+      mailboxContinuity: {
+        roundSeq: -1,
+        lastInputTokens: 'many',
+        compactionEpoch: 0,
+        mailboxes: { bad: {} },
+      },
+      goalRevision: 0,
+    })
+
+    assert.equal(result.ok, false)
+    assert.match(result.errors.join('\n'), /mailboxContinuity\.roundSeq/)
+    assert.match(result.errors.join('\n'), /mailboxContinuity\.lastInputTokens/)
+    assert.match(result.errors.join('\n'), /mailboxContinuity\.mailboxes\.bad has invalid key/)
   })
 })

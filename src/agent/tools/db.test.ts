@@ -70,6 +70,11 @@ describe('db tool', () => {
       groupIds: [],
       metadata: { groupNames: new Map() },
       groupCustomizations: [],
+      qqDirectory: {
+        groupIds: [],
+        async loadFriends() { return [] },
+        async loadGroups() { return [] },
+      },
     }).map((tool) => tool.name)
 
     assert.ok(names.includes('workspace_bash'))

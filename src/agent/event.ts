@@ -45,6 +45,12 @@ export type BotEvent =
   | { type: 'bootstrap' }
   | { type: 'curiosity_tick' }
   | {
+      type: 'scheduled_wake'
+      scheduleId: string
+      dueAt: Date
+      reason: string
+    }
+  | {
       type: 'background_task_completed'
       taskId: string
       toolName: string

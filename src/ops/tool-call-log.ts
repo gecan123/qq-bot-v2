@@ -134,6 +134,12 @@ export function isSideEffectTool(toolName: string, args?: unknown): boolean {
   if (toolName === 'trading_agent') {
     return hasAnyAction(args, ['start', 'continue', 'cancel'])
   }
+  if (toolName === 'goal') {
+    return hasAnyAction(args, ['create_self', 'complete', 'report_blocker', 'abandon_self'])
+  }
+  if (toolName === 'mcp') {
+    return hasAnyAction(args, ['connect', 'tools', 'call', 'disconnect'])
+  }
   return SIDE_EFFECT_TOOLS.has(toolName)
 }
 

@@ -177,10 +177,10 @@ describe('createToolExecutor', () => {
 
   test('classifies merged memory side effects by action', async () => {
     const writes: string[] = []
-    const memory: Tool<{ action: 'write' | 'search' | 'list' | 'delete' | 'update_entry' | 'delete_entry' | 'compact' }> = {
+    const memory: Tool<{ action: 'write' | 'search' | 'list' | 'delete' | 'update_entry' | 'delete_entry' | 'promote_entry' | 'compact' }> = {
       name: 'memory',
       description: 'memory',
-      schema: z.object({ action: z.enum(['write', 'search', 'list', 'delete', 'update_entry', 'delete_entry', 'compact']) }),
+      schema: z.object({ action: z.enum(['write', 'search', 'list', 'delete', 'update_entry', 'delete_entry', 'promote_entry', 'compact']) }),
       async execute() {
         return { content: JSON.stringify({ ok: true }) }
       },
@@ -201,6 +201,7 @@ describe('createToolExecutor', () => {
     await exec.execute({ id: 'delete', name: 'memory', args: { action: 'delete' } }, makeCtx())
     await exec.execute({ id: 'update', name: 'memory', args: { action: 'update_entry' } }, makeCtx())
     await exec.execute({ id: 'delete-entry', name: 'memory', args: { action: 'delete_entry' } }, makeCtx())
+    await exec.execute({ id: 'promote-entry', name: 'memory', args: { action: 'promote_entry' } }, makeCtx())
     await exec.execute({ id: 'compact', name: 'memory', args: { action: 'compact' } }, makeCtx())
 
     assert.equal(JSON.parse(writes[0]!).sideEffect, true)
@@ -210,6 +211,7 @@ describe('createToolExecutor', () => {
     assert.equal(JSON.parse(writes[4]!).sideEffect, true)
     assert.equal(JSON.parse(writes[5]!).sideEffect, true)
     assert.equal(JSON.parse(writes[6]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[7]!).sideEffect, true)
   })
 
   test('classifies fetch_content image actions as side effects', async () => {

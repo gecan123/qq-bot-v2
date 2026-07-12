@@ -17,6 +17,7 @@ import { InMemoryEventQueue } from './agent/event-queue.js'
 import type { BotEvent } from './agent/event.js'
 import { createBotSnapshotRepo } from './agent/snapshot-repo.js'
 import { createLlmClient } from './agent/llm-client.js'
+import { createMemoryMaintenanceRuntime } from './agent/memory-maintenance.js'
 import { setTokenUsageDbPersistenceEnabled } from './agent/token-stats.js'
 import { createLifeJournalRuntime } from './agent/life-journal.js'
 import { replayMissedMessages } from './agent/replay-missed.js'
@@ -95,6 +96,10 @@ async function main() {
     claudeThinking: { mode: 'disabled' },
   })
   const lifeJournal = createLifeJournalRuntime({
+    llm: lifeJournalLlm,
+    taskScheduler,
+  })
+  const memoryMaintenance = createMemoryMaintenanceRuntime({
     llm: lifeJournalLlm,
     taskScheduler,
   })
@@ -331,6 +336,7 @@ async function main() {
     goalStore,
     lifeJournal,
     taskScheduler,
+    memoryMaintenance,
     taskRegistry: persistentTasks.registry,
     approvalStatePath: config.approvalStatePath,
     approvalMode: config.approvalMode,

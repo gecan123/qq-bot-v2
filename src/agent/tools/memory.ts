@@ -9,12 +9,14 @@ import {
   searchMemoryEntries,
   recallMemoryEntries,
   proposeMemoryReview,
+  promoteMemoryEntry,
   writeMemoryEntry,
   updateMemoryEntry,
   MemoryStoreError,
   type MemoryScope,
 } from '../memory-store.js'
 import { createLogger } from '../../logger.js'
+import type { MemoryMaintenanceRuntime } from '../memory-maintenance.js'
 
 const log = createLogger('TOOL_MEMORY')
 
@@ -35,7 +37,7 @@ const argsSchema = z.discriminatedUnion('action', [
     action: z.literal('write').describe('写入一条长期记忆.'),
     scope: scopeSchema.describe('记忆范围: self=自己做事/经验, person=某个 QQ 用户, group=某个群, topic=某个主题.'),
     id: idSchema.optional().describe('person/group 需要: QQ 号或群号. topic/self 通常不需要.'),
-    title: z.string().trim().min(1).max(80).optional().describe('self/topic 可选: 文件主题标题.'),
+    title: z.string().trim().min(1).max(80).optional().describe('topic 必填稳定主题标题; self 可选. 不要用“今日速记”这类日期流水账标题.'),
     content: z.string().trim().min(1).max(500).describe('要记下来的内容. ≤500 字, 用自己的话写, 一条记一件事.'),
     sourceMessageIds: z.array(z.number().int()).optional().describe('可选: 来源 Message.id 列表, 仅供人工排查.'),
   }),
@@ -86,6 +88,13 @@ const argsSchema = z.discriminatedUnion('action', [
     expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
   }),
   z.object({
+    action: z.literal('promote_entry').describe('把一条 recent 线索提升为 stable 长期记忆，可同时精炼措辞.'),
+    file: memoryFileSchema,
+    entryId: z.string().trim().min(1).max(160),
+    expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
+    content: z.string().trim().min(1).max(1000).optional(),
+  }),
+  z.object({
     action: z.literal('compact').describe('把同一记忆文件中的至少两条记录合并成一条稳定摘要.'),
     file: memoryFileSchema,
     entryIds: z.array(z.string().trim().min(1).max(160)).min(2).max(50),
@@ -100,6 +109,7 @@ export interface MemoryToolDeps {
   workspaceDir?: string
   now?: () => Date
   id?: () => string
+  maintenance?: MemoryMaintenanceRuntime
 }
 
 export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
@@ -109,15 +119,15 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
     name: 'memory',
     description: [
       '本地 Markdown 长期记忆库, 一个入口用 action 决定动作.',
-      'action=write: 写入以后可能用得上的真实信息或经验; scope=self/person/group/topic.',
+      'action=write: 写入以后可能用得上的真实信息或经验; 写前先 recall，已有事实优先 update_entry/compact，避免重复追加.',
       'action=search: 搜索自己、人物、群或主题记忆; 不确定旧事、偏好、项目线索或自己做过什么时先查.',
       'action=recall: 用自然查询召回 entry 级相关记忆，返回 matchedTerms 和可解释 score.',
       'action=review: 只读提出重复/近重复/可能冲突候选；不会自动删除或合并，确认后仍需 read + revision mutation.',
       'action=read: 读取 search/write 返回的某个记忆文件; 只在需要深读时使用.',
       'action=list: 按 scope 列出有界文件元数据, 用于发现重复或过时记忆.',
       'action=delete: 永久删除明确指定的记忆文件; 先确认有价值内容已写入保留版本.',
-      'action=update_entry/delete_entry/compact: 修改文件内记录; 先 read 取得 entryId 和最新 revision.',
-      'person/group 写入需要 id; self/topic 可用 title 表示主题.',
+      'action=update_entry/delete_entry/promote_entry/compact: 修改文件内记录; 先 read 取得 entryId 和最新 revision. compact 会生成 stable 记忆.',
+      'person/group 写入需要 id; topic 写入必须提供稳定 title，禁止落入无主题 topic.md; self 可用 title 分主题.',
       '写入要用自己的话, 不要照搬原话; 查询结果用于自然说话, 不要像报数据库.',
     ].join(' '),
     schema: argsSchema,
@@ -140,7 +150,10 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             title: result.title,
             contentLength: args.content.length,
             sourceCount: args.sourceMessageIds?.length ?? 0,
+            created: result.created,
+            deduplicated: result.deduplicated,
           }, 'memory_written')
+          if (result.created) deps.maintenance?.enqueue(result.file)
           return { content: JSON.stringify(result) }
         }
 
@@ -232,6 +245,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
               content: args.content,
             },
           )
+          log.info({ file: args.file, entryId: args.entryId }, 'memory_entry_updated')
           return { content: JSON.stringify(result), outcome: { ok: true } }
         }
 
@@ -240,6 +254,21 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             { rootDir: workspaceDir, now: deps.now },
             { file: args.file, entryId: args.entryId, expectedRevision: args.expectedRevision },
           )
+          log.info({ file: args.file, entryId: args.entryId }, 'memory_entry_deleted')
+          return { content: JSON.stringify(result), outcome: { ok: true } }
+        }
+
+        if (args.action === 'promote_entry') {
+          const result = await promoteMemoryEntry(
+            { rootDir: workspaceDir, now: deps.now },
+            {
+              file: args.file,
+              entryId: args.entryId,
+              expectedRevision: args.expectedRevision,
+              content: args.content,
+            },
+          )
+          log.info({ file: args.file, entryId: args.entryId }, 'memory_entry_promoted')
           return { content: JSON.stringify(result), outcome: { ok: true } }
         }
 
@@ -253,6 +282,11 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
               content: args.content,
             },
           )
+          log.info({
+            file: args.file,
+            entryId: result.entryId,
+            compactedCount: args.entryIds.length,
+          }, 'memory_entries_compacted')
           return { content: JSON.stringify(result), outcome: { ok: true } }
         }
 

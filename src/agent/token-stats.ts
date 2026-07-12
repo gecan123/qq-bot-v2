@@ -6,7 +6,7 @@ import { formatBeijingIso } from '../utils/beijing-time.js'
 
 const log = createLogger('TOKEN_STATS')
 
-export type AgentTokenOperation = 'agent.chat' | 'compaction' | 'life_journal.review'
+export type AgentTokenOperation = 'agent.chat' | 'compaction' | 'life_journal.review' | 'memory.maintenance'
 
 export interface TokenUsageEntry {
   operation: AgentTokenOperation

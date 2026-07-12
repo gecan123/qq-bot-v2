@@ -8,7 +8,7 @@ import { createSendMessageTool } from './send-message.js'
 import { maybeCreateWebSearchTool } from './web-search.js'
 import { createGenerateImageTool } from './generate-image.js'
 import { createBackgroundTaskTool } from './background-task.js'
-import { memoryTool } from './memory.js'
+import { createMemoryTool } from './memory.js'
 import { skillTool } from './skill.js'
 import { todoTool } from './todo.js'
 import { collectStickerTool } from './collect-sticker.js'
@@ -41,6 +41,7 @@ import type { McpManager } from '../mcp-manager.js'
 import { createMcpTool } from './mcp.js'
 import { createGoalTool } from './goal.js'
 import type { GoalStore } from '../goal-store.js'
+import type { MemoryMaintenanceRuntime } from '../memory-maintenance.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -58,6 +59,7 @@ export interface BotToolDeps {
   approvalManager?: ApprovalManager
   mcpManager?: McpManager
   goalStore?: GoalStore
+  memoryMaintenance?: MemoryMaintenanceRuntime
 }
 
 export interface BotOptionalTools {
@@ -121,7 +123,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     ...(deps.goalStore ? [createGoalTool(deps.goalStore)] : []),
     todoTool,
     skillTool,
-    memoryTool,
+    createMemoryTool({ maintenance: deps.memoryMaintenance }),
     inbox,
     collectStickerTool,
     chatStyle,

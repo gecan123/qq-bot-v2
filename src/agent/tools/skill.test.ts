@@ -131,9 +131,10 @@ describe('skill tool', () => {
     }, makeCtx())).content as string) as { ok: boolean; content: string }
 
     assert.equal(loaded.ok, true)
-    assert.match(loaded.content, /memory.*action=list/s)
-    assert.match(loaded.content, /先写.*保留/s)
-    assert.match(loaded.content, /memory.*action=delete/s)
+    assert.match(loaded.content, /memory.*action=recall/s)
+    assert.match(loaded.content, /memory.*action=review/s)
+    assert.match(loaded.content, /promote_entry.*update_entry.*compact.*delete_entry/s)
+    assert.match(loaded.content, /maintenance lane/)
     assert.match(loaded.content, /不按固定时间/)
   })
 })

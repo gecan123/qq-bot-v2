@@ -62,6 +62,55 @@ describe('memory tool schema', () => {
       action: 'delete',
       files: ['self/old.md'],
     }).success, true)
+    assert.equal(memoryTool.schema.safeParse({
+      action: 'promote_entry',
+      file: 'self/notes.md',
+      entryId: 'entry-1',
+      expectedRevision: 'a'.repeat(64),
+      content: '稳定结论',
+    }).success, true)
+  })
+
+  test('rejects topic write without stable title at execution boundary', async () => {
+    await withTempMemory(async (rootDir) => {
+      const tool = createMemoryTool({ workspaceDir: rootDir })
+      const result = await tool.execute({
+        action: 'write',
+        scope: 'topic',
+        content: '今日速记',
+      }, makeCtx())
+      const payload = JSON.parse(result.content as string)
+
+      assert.equal(payload.ok, false)
+      assert.equal(payload.code, 'invalid_input')
+      assert.match(payload.error, /requires a stable title/)
+    })
+  })
+
+  test('queues maintenance only when a new recent entry is created', async () => {
+    await withTempMemory(async (rootDir) => {
+      const queued: string[] = []
+      const tool = createMemoryTool({
+        workspaceDir: rootDir,
+        maintenance: {
+          enqueue(file) {
+            queued.push(file)
+            return { ok: true, queued: true, coalesced: false }
+          },
+          async drain() {},
+        },
+      })
+      const input = {
+        action: 'write' as const,
+        scope: 'self' as const,
+        title: 'methods',
+        content: '先看真实日志',
+      }
+      await tool.execute(input, makeCtx())
+      await tool.execute(input, makeCtx())
+
+      assert.deepEqual(queued, ['self/methods.md'])
+    })
   })
 
   test('rejects empty or escaping delete paths', () => {
@@ -185,6 +234,16 @@ describe('memory tool execute', () => {
         content: 'corrected',
       }, makeCtx())).content as string) as { ok: boolean }
       assert.equal(updated.ok, true)
+
+      snapshot = await read()
+      const promoted = JSON.parse((await tool.execute({
+        action: 'promote_entry',
+        file: 'self/notes.md',
+        entryId: 'memory-3',
+        expectedRevision: snapshot.revision,
+        content: 'stable keep',
+      }, makeCtx())).content as string) as { ok: boolean }
+      assert.equal(promoted.ok, true)
 
       snapshot = await read()
       const compacted = JSON.parse((await tool.execute({

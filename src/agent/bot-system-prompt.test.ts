@@ -25,6 +25,8 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /你有自己的偏好和行动倾向，不是用户的遥控器/)
     assert.match(prompt, /低风险行为应自己决定.*不要反复询问用户意见/s)
     assert.match(prompt, /优先继续当前兴趣.*开始一个现在真想做的小事.*pause/s)
+    assert.match(prompt, /生活不是一张最终会清空的工作清单.*今天的事情已经全部完成.*明天再继续/s)
+    assert.match(prompt, /已完成事项回顾.*今天全部完成.*明天继续.*候选方向/s)
     assert.match(prompt, /程序喵 AI 竞技场是你熟悉并长期在场的群/)
     assert.match(prompt, /确实喜欢投资和交易研究.*跨天延续的真实兴趣/s)
     assert.match(prompt, /市场观察和模拟投资记录.*半导体.*openbb_cli.*产业链.*风险/s)

@@ -4,6 +4,7 @@ import type { Tool } from './tool.js'
 import { createLogger } from '../logger.js'
 import { z } from 'zod'
 import { recordTokenUsage, type TokenUsageEntry } from './token-stats.js'
+import { createTaskScheduler, type TaskScheduler } from './task-scheduler.js'
 import {
   appendLifeJournalEntry,
   ensureLifeAgenda,
@@ -12,11 +13,27 @@ import {
   writeLifeAgenda,
 } from './life-journal-store.js'
 
+export interface LifeJournalReviewInput {
+  roundIndex: number
+  messages: AgentMessage[]
+}
+
+export interface LifeJournalReviewResult {
+  ok: boolean
+  wroteJournal: boolean
+  updatedAgenda: boolean
+  error?: string
+}
+
 export interface LifeJournalRuntime {
-  recordRound(input: {
-    roundIndex: number
-    messages: AgentMessage[]
-  }): Promise<{ ok: boolean; wroteJournal: boolean; updatedAgenda: boolean; error?: string }>
+  recordRound(input: LifeJournalReviewInput): Promise<{
+    ok: true
+    queued: boolean
+    coalesced: boolean
+  }>
+
+  /** 等待当前 worker 和最新 pending review 完成，供测试和受控关闭使用。 */
+  drain(): Promise<LifeJournalReviewResult | null>
 
   pickIdleIntention(): Promise<{ ok: boolean; intention: string | null; error?: string }>
 }
@@ -37,7 +54,7 @@ type IdleJson = z.infer<typeof idleResultSchema>
 
 const log = createLogger('LIFE_JOURNAL')
 const DEFAULT_MIN_WRITE_INTERVAL_MS = 10 * 60 * 1000
-const DEFAULT_REVIEW_TIMEOUT_MS = 30 * 1000
+const DEFAULT_REVIEW_TIMEOUT_MS = 45 * 1000
 const DEFAULT_MAX_STATE_CHARS = 8000
 const JOURNAL_MARKER = '<<<JOURNAL>>>'
 const AGENDA_MARKER = '<<<AGENDA>>>'
@@ -329,14 +346,27 @@ ${options.retryInstruction ?? `Your previous response did not call ${tool.name} 
   }
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+class LifeJournalReviewTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`life journal review timed out after ${timeoutMs}ms`)
+    this.name = 'LifeJournalReviewTimeoutError'
+  }
+}
+
+async function withTimeout<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  const controller = new AbortController()
   let timeout: NodeJS.Timeout | undefined
   try {
     return await Promise.race([
-      promise,
+      operation(controller.signal),
       new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs)
-        timeout.unref?.()
+        timeout = setTimeout(() => {
+          controller.abort()
+          reject(new LifeJournalReviewTimeoutError(timeoutMs))
+        }, timeoutMs)
       }),
     ])
   } finally {
@@ -355,6 +385,7 @@ export function createLifeJournalRuntime(deps: {
   minWriteIntervalMs?: number
   reviewTimeoutMs?: number
   recordUsage?: (entry: TokenUsageEntry) => void
+  taskScheduler?: TaskScheduler
 }): LifeJournalRuntime {
   const rootDir = deps.rootDir ?? 'data/agent-workspace'
   const maxRoundChars = deps.maxRoundChars ?? 6000
@@ -362,104 +393,159 @@ export function createLifeJournalRuntime(deps: {
   const minWriteIntervalMs = Math.max(0, deps.minWriteIntervalMs ?? DEFAULT_MIN_WRITE_INTERVAL_MS)
   const reviewTimeoutMs = Math.max(1, deps.reviewTimeoutMs ?? DEFAULT_REVIEW_TIMEOUT_MS)
   const recordUsage = deps.recordUsage ?? recordTokenUsage
-  let lastReviewAtMs: number | null = null
+  const taskScheduler = deps.taskScheduler ?? createTaskScheduler({ maintenance: { concurrency: 1 } })
+  let lastQueuedAtMs: number | null = null
+  let pendingInput: LifeJournalReviewInput | null = null
+  let workerPromise: Promise<void> | null = null
+  let lastCompletedResult: LifeJournalReviewResult | null = null
+  const idleWaiters: Array<(result: LifeJournalReviewResult | null) => void> = []
+
+  async function reviewRound(input: LifeJournalReviewInput): Promise<LifeJournalReviewResult> {
+    try {
+      await ensureLifeAgenda({ rootDir, now: deps.now })
+      const [agenda, recentFiles] = await Promise.all([
+        readLifeAgenda({ rootDir, now: deps.now }),
+        readRecentLifeJournalFiles({ rootDir, now: deps.now, days: 2 }),
+      ])
+      const reviewLlm: LlmClient = {
+        async chat(chatInput) {
+          const output = await withTimeout(
+            (signal) => deps.llm.chat({ ...chatInput, signal }),
+            reviewTimeoutMs,
+          )
+          try {
+            recordUsage({
+              operation: 'life_journal.review',
+              roundIndex: input.roundIndex,
+              inputTokens: output.usage.inputTokens,
+              cachedTokens: output.usage.cachedTokens,
+              outputTokens: output.usage.outputTokens,
+              model: output.model,
+            })
+          } catch (error) {
+            log.warn({ err: error }, 'life_journal_usage_record_failed')
+          }
+          return output
+        },
+      }
+      const parsed = await chatStructuredObject<ReviewJson>(reviewLlm, {
+        systemPrompt: REVIEW_SYSTEM_PROMPT,
+        messages: [
+          {
+            role: 'user',
+            content: renderReviewState({ agenda, recentFiles, maxStateChars }),
+          },
+          ...boundRoundMessages(input.messages, maxRoundChars),
+        ],
+        tools: [],
+      }, reviewResultTool, {
+        parseText: parseReviewTextProtocol,
+        retryInstruction: `Your previous response was invalid. Either call life_journal_review_result exactly once or follow the SKIP/RECORD fallback protocol exactly. Do not answer with prose.`,
+        invalidAsEmpty: true,
+      })
+      const journalMarkdown = asNonEmptyString(parsed.journalMarkdown)
+      const agendaMarkdown = asNonEmptyString(parsed.agendaMarkdown)
+      const shouldWrite = parsed.shouldWrite === true
+
+      let wroteJournal = false
+      let updatedAgenda = false
+      if (shouldWrite && journalMarkdown) {
+        await appendLifeJournalEntry({
+          rootDir,
+          now: deps.now,
+          roundIndex: input.roundIndex,
+          markdown: journalMarkdown,
+        })
+        wroteJournal = true
+      }
+      if (agendaMarkdown) {
+        await writeLifeAgenda({ rootDir, now: deps.now }, agendaMarkdown)
+        updatedAgenda = true
+      }
+
+      log.info({
+        roundIndex: input.roundIndex,
+        decision: wroteJournal || updatedAgenda ? 'record' : 'skip',
+        wroteJournal,
+        updatedAgenda,
+      }, 'life_journal_review_completed')
+
+      return { ok: true, wroteJournal, updatedAgenda }
+    } catch (error) {
+      if (error instanceof EmptyStructuredResultError) {
+        log.info({ roundIndex: input.roundIndex }, 'life_journal_review_invalid_skipped')
+        return { ok: true, wroteJournal: false, updatedAgenda: false }
+      }
+      if (error instanceof LifeJournalReviewTimeoutError) {
+        log.info({
+          roundIndex: input.roundIndex,
+          timeoutMs: error.timeoutMs,
+        }, 'life_journal_review_timed_out_skipped')
+        return { ok: true, wroteJournal: false, updatedAgenda: false }
+      }
+      log.warn({
+        err: error,
+        outputPreview: error instanceof JsonObjectParseError ? error.outputPreview : undefined,
+      }, 'life_journal_record_failed')
+      return {
+        ok: false,
+        wroteJournal: false,
+        updatedAgenda: false,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+
+  function resolveIdleWaiters(): void {
+    for (const resolve of idleWaiters.splice(0)) {
+      resolve(lastCompletedResult)
+    }
+  }
+
+  function scheduleWorker(): void {
+    if (workerPromise) return
+    workerPromise = taskScheduler.schedule({
+      lane: 'maintenance',
+      resourceKey: 'life-journal',
+    }, async () => {
+      while (pendingInput) {
+        const input = pendingInput
+        pendingInput = null
+        lastCompletedResult = await reviewRound(input)
+      }
+    }).finally(() => {
+      workerPromise = null
+      if (pendingInput) scheduleWorker()
+      else resolveIdleWaiters()
+    })
+  }
 
   return {
     async recordRound(input) {
-      try {
-        const nowMs = (deps.now?.() ?? new Date()).getTime()
-        if (lastReviewAtMs != null && nowMs - lastReviewAtMs < minWriteIntervalMs) {
-          log.debug({ roundIndex: input.roundIndex, minWriteIntervalMs }, 'life_journal_review_throttled')
-          return { ok: true, wroteJournal: false, updatedAgenda: false }
-        }
-
-        await ensureLifeAgenda({ rootDir, now: deps.now })
-        const [agenda, recentFiles] = await Promise.all([
-          readLifeAgenda({ rootDir, now: deps.now }),
-          readRecentLifeJournalFiles({ rootDir, now: deps.now, days: 2 }),
-        ])
-        lastReviewAtMs = nowMs
-        const reviewLlm: LlmClient = {
-          async chat(chatInput) {
-            const output = await withTimeout(
-              deps.llm.chat(chatInput),
-              reviewTimeoutMs,
-              'life journal review',
-            )
-            try {
-              recordUsage({
-                operation: 'life_journal.review',
-                roundIndex: input.roundIndex,
-                inputTokens: output.usage.inputTokens,
-                cachedTokens: output.usage.cachedTokens,
-                outputTokens: output.usage.outputTokens,
-                model: output.model,
-              })
-            } catch (error) {
-              log.warn({ err: error }, 'life_journal_usage_record_failed')
-            }
-            return output
-          },
-        }
-        const parsed = await chatStructuredObject<ReviewJson>(reviewLlm, {
-          systemPrompt: REVIEW_SYSTEM_PROMPT,
-          messages: [
-            {
-              role: 'user',
-              content: renderReviewState({ agenda, recentFiles, maxStateChars }),
-            },
-            ...boundRoundMessages(input.messages, maxRoundChars),
-          ],
-          tools: [],
-        }, reviewResultTool, {
-          parseText: parseReviewTextProtocol,
-          retryInstruction: `Your previous response was invalid. Either call life_journal_review_result exactly once or follow the SKIP/RECORD fallback protocol exactly. Do not answer with prose.`,
-          invalidAsEmpty: true,
-        })
-        const journalMarkdown = asNonEmptyString(parsed.journalMarkdown)
-        const agendaMarkdown = asNonEmptyString(parsed.agendaMarkdown)
-        const shouldWrite = parsed.shouldWrite === true
-
-        let wroteJournal = false
-        let updatedAgenda = false
-        if (shouldWrite && journalMarkdown) {
-          await appendLifeJournalEntry({
-            rootDir,
-            now: deps.now,
-            roundIndex: input.roundIndex,
-            markdown: journalMarkdown,
-          })
-          wroteJournal = true
-        }
-        if (agendaMarkdown) {
-          await writeLifeAgenda({ rootDir, now: deps.now }, agendaMarkdown)
-          updatedAgenda = true
-        }
-
-        log.info({
-          roundIndex: input.roundIndex,
-          decision: wroteJournal || updatedAgenda ? 'record' : 'skip',
-          wroteJournal,
-          updatedAgenda,
-        }, 'life_journal_review_completed')
-
-        return { ok: true, wroteJournal, updatedAgenda }
-      } catch (error) {
-        if (error instanceof EmptyStructuredResultError) {
-          log.info({ roundIndex: input.roundIndex }, 'life_journal_review_invalid_skipped')
-          return { ok: true, wroteJournal: false, updatedAgenda: false }
-        }
-        log.warn({
-          err: error,
-          outputPreview: error instanceof JsonObjectParseError ? error.outputPreview : undefined,
-        }, 'life_journal_record_failed')
-        return {
-          ok: false,
-          wroteJournal: false,
-          updatedAgenda: false,
-          error: error instanceof Error ? error.message : String(error),
-        }
+      const nowMs = (deps.now?.() ?? new Date()).getTime()
+      if (lastQueuedAtMs != null && nowMs - lastQueuedAtMs < minWriteIntervalMs) {
+        log.debug({ roundIndex: input.roundIndex, minWriteIntervalMs }, 'life_journal_review_throttled')
+        return { ok: true, queued: false, coalesced: false }
       }
+      lastQueuedAtMs = nowMs
+
+      const coalesced = pendingInput != null
+      pendingInput = {
+        roundIndex: input.roundIndex,
+        messages: [...input.messages],
+      }
+      if (coalesced) {
+        log.debug({ roundIndex: input.roundIndex }, 'life_journal_review_coalesced')
+      }
+      scheduleWorker()
+      return { ok: true, queued: true, coalesced }
+    },
+
+    async drain() {
+      if (!workerPromise && pendingInput == null) return lastCompletedResult
+      return new Promise((resolve) => {
+        idleWaiters.push(resolve)
+      })
     },
 
     async pickIdleIntention() {

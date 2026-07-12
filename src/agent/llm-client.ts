@@ -10,6 +10,7 @@ import {
 } from '../config/index.js'
 import { createClaudeCodeLlmClient } from './claude-code/llm-client.js'
 import { createOpenAIAgentLlmClient } from './openai-agent/llm-client.js'
+import type { ClaudeThinkingConfig } from './claude-code/request.js'
 
 /**
  * LLM 调用契约 (BotLoopAgent runRound 用)。
@@ -29,6 +30,8 @@ export interface LlmCallInput {
   systemPrompt: string
   messages: AgentMessage[]
   tools: Tool[]
+  /** 可选调用级取消信号，供旁路/有界任务真正终止底层 HTTP 请求。 */
+  signal?: AbortSignal
 }
 
 export interface LlmCallOutput {
@@ -51,6 +54,7 @@ export interface LlmClient {
 
 interface CreateLlmClientOptions {
   model?: string
+  claudeThinking?: ClaudeThinkingConfig
 }
 
 /**
@@ -84,7 +88,7 @@ export function createLlmClient(options: CreateLlmClientOptions = {}): LlmClient
       baseURL: claudeProvider.url,
       apiKey: claudeProvider.apiKey,
       toolChoice: config.llm.claudeToolChoice,
-      thinking: config.llm.claudeThinking,
+      thinking: options.claudeThinking ?? config.llm.claudeThinking,
       thinkingLog: { mode: config.llm.claudeThinking.log },
     })
   }

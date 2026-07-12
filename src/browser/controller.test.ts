@@ -4,7 +4,13 @@ import { createServer, type Server } from 'node:http'
 import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { BrowserController, buildCloakLaunchOptions, pruneBrowserArtifacts } from './controller.js'
+import {
+  BrowserController,
+  buildCloakLaunchOptions,
+  pruneBrowserArtifacts,
+  scheduleBrowserArtifactPrune,
+} from './controller.js'
+import { createTaskScheduler } from '../agent/task-scheduler.js'
 
 const RUN_REAL_BROWSER = process.env.BOT_BROWSER_REAL_TESTS === '1'
 
@@ -65,6 +71,27 @@ describe('pruneBrowserArtifacts', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe('scheduleBrowserArtifactPrune', () => {
+  it('coalesces repeated housekeeping triggers and runs them off the action path', async () => {
+    const scheduler = createTaskScheduler({ housekeeping: { concurrency: 1 } })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let calls = 0
+    const task = async () => {
+      calls++
+      await gate
+    }
+
+    scheduleBrowserArtifactPrune(scheduler, '/tmp/browser-artifacts', task)
+    scheduleBrowserArtifactPrune(scheduler, '/tmp/browser-artifacts', task)
+    assert.equal(calls, 1)
+
+    release()
+    await scheduler.drain()
+    assert.equal(calls, 1)
   })
 })
 

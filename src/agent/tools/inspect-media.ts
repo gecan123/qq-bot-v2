@@ -9,6 +9,10 @@ import { getMediaDescriptionText } from '../../media/media-description.js'
 import { prisma } from '../../database/client.js'
 import { waitForPendingMediaDownloads } from '../../media/media-cache.js'
 import { config } from '../../config/index.js'
+import { createLogger } from '../../logger.js'
+import { createTaskScheduler, type TaskScheduler } from '../task-scheduler.js'
+
+const log = createLogger('TOOL_INSPECT_MEDIA')
 
 const argsSchema = z.object({
   image: imageHandleSchema.describe('要查看的图片句柄. 入站图片传 {mediaId}; 临时生成图传 {ephemeralRef}.'),
@@ -27,6 +31,7 @@ export interface InspectMediaDeps {
   waitForMedia?: (mediaId: number) => Promise<void>
   loadMediaMetadata?: (mediaId: number) => Promise<MediaMetadata | null>
   compress?: (bytes: Buffer) => Promise<CompressedImage | null>
+  taskScheduler?: TaskScheduler
 }
 
 async function loadMediaMetadata(mediaId: number): Promise<MediaMetadata | null> {
@@ -44,19 +49,21 @@ export function createInspectMediaTool(deps: InspectMediaDeps = {}): Tool<Args> 
   ))
   const loadMetadata = deps.loadMediaMetadata ?? loadMediaMetadata
   const compress = deps.compress ?? compressForContext
+  const taskScheduler = deps.taskScheduler ?? createTaskScheduler({ 'media-description': { concurrency: 1 } })
 
   return {
     name: 'inspect_media',
     description: [
       '主动查看一张已有图片, 返回有界文字描述和真实图片预览 image block.',
       '当消息里的图片没有描述、描述超时、需要核对视觉细节, 或用户说“看一下这张图”时使用.',
+      '真实图片预览优先立即返回; 缺失的文字描述会放入后台媒体 worker, 不阻塞当前工具结果.',
       '入站图片使用 inbox 返回的 mediaId; 生成图可使用 background_task 返回的 ephemeralRef.',
       '本工具只负责查看已有图片; 创作或改图使用 generate_image.',
     ].join(' '),
     schema: argsSchema,
     async execute({ image }) {
       let metadata: MediaMetadata | null = null
-      let descriptionError: string | undefined
+      let descriptionPending = false
 
       if ('mediaId' in image) {
         await waitForMedia(image.mediaId)
@@ -68,12 +75,17 @@ export function createInspectMediaTool(deps: InspectMediaDeps = {}): Tool<Args> 
           return errorResult('unsupported_media_type', `inspect_media only supports image/sticker, got ${metadata.mediaType ?? 'unknown'}`)
         }
         if (!getMediaDescriptionText(metadata.descriptionRaw)) {
-          try {
-            await describeMedia(image.mediaId)
-            metadata = await loadMetadata(image.mediaId)
-          } catch (error) {
-            descriptionError = truncate(error instanceof Error ? error.message : String(error), 300)
-          }
+          descriptionPending = true
+          void taskScheduler.schedule({
+            lane: 'media-description',
+            resourceKey: `media:${image.mediaId}`,
+            dedupeKey: `media-description:${image.mediaId}`,
+          }, () => describeMedia(image.mediaId)).catch((error) => {
+            log.warn({
+              err: error,
+              mediaId: image.mediaId,
+            }, 'inspect_media_description_background_failed')
+          })
         }
       }
 
@@ -100,8 +112,7 @@ export function createInspectMediaTool(deps: InspectMediaDeps = {}): Tool<Args> 
               contentType: resolved.contentType,
               byteSize: resolved.byteSize,
               description,
-              descriptionStatus: description ? 'available' : descriptionError ? 'failed' : 'unavailable',
-              ...(descriptionError ? { descriptionError } : {}),
+              descriptionStatus: description ? 'available' : descriptionPending ? 'pending' : 'unavailable',
               previewIncluded: true,
             }),
           },
@@ -125,8 +136,4 @@ function errorResult(code: string, error: string): { content: string; outcome: {
     content: JSON.stringify({ ok: false, code, error }),
     outcome: { ok: false, code, error },
   }
-}
-
-function truncate(value: string, maxChars: number): string {
-  return value.length <= maxChars ? value : `${value.slice(0, maxChars - 1)}…`
 }

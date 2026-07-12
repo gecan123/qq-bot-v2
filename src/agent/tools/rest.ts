@@ -21,7 +21,7 @@ const defaultTimer = {
   clearTimeout: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 }
 
-const INTENTION_DESCRIPTION = '休息前列 4 到 8 个具体可执行的候选方向; 至少两个能立即用现有工具开始, 等待外部消息最多一个. 醒来后先尝试一个, 不要用“继续看”之类没有对象和动作的占位句.'
+const INTENTION_DESCRIPTION = '休息前列 4 到 8 个具体可执行的候选方向; 至少两个能立即用现有工具开始, 等待外部消息最多一个. 醒来后先尝试一个; 不要用已完成事项回顾、“今天全部完成”或“明天继续”代替候选方向, 也不要用“继续看”之类没有对象和动作的占位句.'
 
 const argsSchema = z.object({
   durationSeconds: z
@@ -72,6 +72,7 @@ export function createRestTool(deps: RestToolDeps = {}): Tool<RestArgs> {
     description: [
       '一段活动确实告一段落时主动安排短暂休息, 默认 1 分钟; 通常选择 30 到 120 秒, 真想离开更久时可自行延长, 最长 30 分钟。',
       'intention 必填, 列 4 到 8 个具体可执行的候选方向; 至少两个能立即用现有工具开始, 它会随休息结果回到上下文。',
+      '一个任务做完只是注意力重新自由, 不是“今天全部完成”; intention 不要回顾已完成清单或把事情推到明天, 要留下醒来后真能开始的新方向。',
       '醒来后先选择并尝试一个方向; 没有实际尝试前不要立刻再次休息。方向不是硬计划, 可按现场情况选择一个、合并几个或改道。',
       '等待外部消息最多只是其中一个候选, 不要只列等待外部消息。',
       '不要用“继续看”“随便逛逛”这类没有对象和动作的句子充当方向。',

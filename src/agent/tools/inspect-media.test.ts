@@ -4,6 +4,7 @@ import { createInspectMediaTool } from './inspect-media.js'
 import type { ToolContext } from '../tool.js'
 import { InMemoryEventQueue } from '../event-queue.js'
 import type { BotEvent } from '../event.js'
+import { createTaskScheduler } from '../task-scheduler.js'
 
 const ctx: ToolContext = { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 0 }
 const resolvedImage = {
@@ -47,8 +48,9 @@ describe('inspect_media tool', () => {
     assert.equal(describeCalls, 0)
   })
 
-  test('actively generates a missing inbound description before returning', async () => {
+  test('returns the preview immediately and generates a missing description in the background', async () => {
     let described = false
+    const taskScheduler = createTaskScheduler({ 'media-description': { concurrency: 1 } })
     const tool = createInspectMediaTool({
       loadMediaMetadata: async () => ({
         mediaType: 'sticker',
@@ -57,32 +59,37 @@ describe('inspect_media tool', () => {
       describeMedia: async () => { described = true },
       resolveImage: async () => resolvedImage,
       compress: async () => compressed,
+      taskScheduler,
     })
 
     const result = await tool.execute({ image: { mediaId: 7 } }, ctx)
-    assert.equal(described, true)
     assert.ok(Array.isArray(result.content))
     const text = result.content.find((block) => block.type === 'text')
     assert.ok(text && text.type === 'text')
-    assert.equal(JSON.parse(text.text).description, '猫猫挥手')
+    assert.equal(JSON.parse(text.text).description, null)
+    assert.equal(JSON.parse(text.text).descriptionStatus, 'pending')
+    await taskScheduler.drain()
+    assert.equal(described, true)
   })
 
-  test('still returns the image block when description generation fails', async () => {
+  test('still returns the image block while background description generation later fails', async () => {
+    const taskScheduler = createTaskScheduler({ 'media-description': { concurrency: 1 } })
     const tool = createInspectMediaTool({
       loadMediaMetadata: async () => ({ mediaType: 'image', descriptionRaw: null }),
       describeMedia: async () => { throw new Error('vision unavailable') },
       resolveImage: async () => resolvedImage,
       compress: async () => compressed,
+      taskScheduler,
     })
 
     const result = await tool.execute({ image: { mediaId: 9 } }, ctx)
     assert.ok(Array.isArray(result.content))
     const text = result.content.find((block) => block.type === 'text')
     assert.ok(text && text.type === 'text')
-    const payload = JSON.parse(text.text) as { descriptionStatus: string; descriptionError: string }
-    assert.equal(payload.descriptionStatus, 'failed')
-    assert.equal(payload.descriptionError, 'vision unavailable')
+    const payload = JSON.parse(text.text) as { descriptionStatus: string }
+    assert.equal(payload.descriptionStatus, 'pending')
     assert.equal(result.content.some((block) => block.type === 'image'), true)
+    await taskScheduler.drain()
   })
 
   test('rejects non-image media handles', async () => {

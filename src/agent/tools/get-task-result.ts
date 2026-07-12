@@ -11,6 +11,7 @@ type Args = z.infer<typeof argsSchema>
 
 export const TASK_RESULT_TEXT_CAP_CHARS = 6000
 export const TASK_RESULT_FIELD_PREVIEW_CHARS = 1000
+export const TASK_RESULT_LONG_FIELD_PREVIEW_CHARS = 4000
 export const TASK_RESULT_CONTEXT_IMAGE_MAX_BASE64_CHARS = 1_000_000
 
 export interface GetTaskResultDeps {
@@ -78,6 +79,12 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
             ...(data?.failedCount != null ? { failedCount: data.failedCount } : {}),
             ...(Array.isArray(data?.images) ? { images: data.images } : {}),
             ...(Array.isArray(data?.failures) ? { failures: data.failures } : {}),
+            ...(data?.sessionId != null ? { sessionId: data.sessionId } : {}),
+            ...(data?.attemptId != null ? { attemptId: data.attemptId } : {}),
+            ...(data?.result != null ? { result: data.result } : {}),
+            ...(data?.truncated != null ? { truncated: data.truncated } : {}),
+            ...(data?.runId != null ? { runId: data.runId } : {}),
+            ...(data?.metrics != null ? { metrics: data.metrics } : {}),
             ...(next ? { next } : {}),
           }),
         },
@@ -135,6 +142,12 @@ function stringifyCappedTaskPayload(payload: Record<string, unknown>): string {
   }
   if (typeof payload.error === 'string') {
     fallback.error = truncateString(payload.error, TASK_RESULT_FIELD_PREVIEW_CHARS)
+  }
+  if (typeof payload.result === 'string') {
+    fallback.result = truncateString(payload.result, TASK_RESULT_LONG_FIELD_PREVIEW_CHARS)
+  }
+  for (const field of ['sessionId', 'attemptId', 'runId'] as const) {
+    if (typeof payload[field] === 'string') fallback[field] = payload[field]
   }
   if (typeof payload.next === 'string') {
     fallback.next = payload.next

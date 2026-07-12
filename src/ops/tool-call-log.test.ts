@@ -30,4 +30,13 @@ describe('tool-call-log side effect classification', () => {
       assert.equal(isSideEffectTool('crypto_paper', { action }), true, action)
     }
   })
+
+  test('classifies trading sub-agent lifecycle actions', () => {
+    for (const action of ['status', 'result']) {
+      assert.equal(isSideEffectTool('trading_agent', { action }), false, action)
+    }
+    for (const action of ['start', 'continue', 'cancel']) {
+      assert.equal(isSideEffectTool('trading_agent', { action }), true, action)
+    }
+  })
 })

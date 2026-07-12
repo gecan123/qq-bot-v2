@@ -27,7 +27,9 @@ import { workspaceFileTool } from './workspace-file.js'
 import { createReadFileTool } from './read-file.js'
 import { createInspectMediaTool } from './inspect-media.js'
 import { maybeCreateCryptoPaperTool } from './crypto-paper.js'
+import { maybeCreateTradingAgentTool } from './trading-agent.js'
 import type { SendTargetPolicy } from '../send-target-policy.js'
+import { createAgentTaskScheduler, type TaskScheduler } from '../task-scheduler.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -38,6 +40,7 @@ export interface BotToolDeps {
   metadata: TargetMetadataMaps
   groupCustomizations: readonly GroupCustomization[]
   websiteTool?: Tool
+  taskScheduler?: TaskScheduler
 }
 
 export interface BotToolManifest {
@@ -46,8 +49,13 @@ export interface BotToolManifest {
 }
 
 export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
-  const fetchContent = createFetchContentTool()
+  const taskScheduler = deps.taskScheduler ?? createAgentTaskScheduler()
+  const fetchContent = createFetchContentTool({
+    taskRegistry: deps.taskRegistry,
+    taskScheduler,
+  })
   const cryptoPaper = maybeCreateCryptoPaperTool()
+  const tradingAgent = maybeCreateTradingAgentTool({ taskRegistry: deps.taskRegistry })
   const tools: Tool[] = [
     pauseTool,
     createSendMessageTool({
@@ -96,6 +104,14 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     })
   }
 
+  if (tradingAgent) {
+    capabilities.push({
+      name: 'trading_research',
+      description: '委派多步金融研究、策略设计和历史回测给本机 Vibe-Trading 子 Agent; 只允许研究与模拟分析.',
+      tools: [tradingAgent],
+    })
+  }
+
   const website = deps.websiteTool ?? maybeCreateWebsiteTool()
   if (website) {
     capabilities.push({
@@ -131,7 +147,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     {
       name: 'media_inspection',
       description: '主动查看已有图片: 补跑入站图片描述并把真实预览作为 image block 放进当前上下文.',
-      tools: [createInspectMediaTool()],
+      tools: [createInspectMediaTool({ taskScheduler })],
     },
     {
       name: 'media_generation',

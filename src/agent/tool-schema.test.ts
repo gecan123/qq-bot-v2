@@ -125,7 +125,7 @@ test('zodToOpenAIStrictToolJsonSchema keeps pause schema strict and rest-only', 
   const props = json.properties as Record<string, Record<string, unknown>>
   assert.equal(props.action.const, 'rest')
   assert.deepEqual(props.intention, {
-    description: '休息前列 4 到 8 个具体可执行的候选方向; 至少两个能立即用现有工具开始, 等待外部消息最多一个. 醒来后先尝试一个, 不要写“继续看”之类占位句.',
+    description: '休息前列 4 到 8 个具体可执行的候选方向; 至少两个能立即用现有工具开始, 等待外部消息最多一个. 醒来后先尝试一个; 不要用已完成事项回顾、“今天全部完成”或“明天继续”代替候选方向, 也不要写“继续看”之类占位句.',
     type: 'string',
     minLength: 1,
     maxLength: 600,

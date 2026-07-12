@@ -870,6 +870,47 @@ describe('createDeferredToolExecutor', () => {
       ).content as string,
       /"ok":true/,
     )
+    assert.match(
+      (
+        await exec.execute(
+          { id: 'i2', name: 'invoke', args: { tool: 'browser', args: '{"action":"status"}', action: 'status' } },
+          makeCtx(),
+        )
+      ).content as string,
+      /"ok":true/,
+    )
+  })
+
+  test('returns a concrete read then replace hint for invalid workspace_file arguments', async () => {
+    const workspaceFile: Tool<{ action: 'read'; file: string }> = {
+      name: 'workspace_file',
+      description: 'workspace file',
+      schema: z.object({ action: z.literal('read'), file: z.string().min(1) }),
+      async execute() {
+        return { content: 'workspace-ok' }
+      },
+    }
+    const exec = createDeferredToolExecutor({
+      alwaysOnTools: [],
+      activeCapabilities: {
+        list: () => ['workspace_management'],
+        activate() {},
+        deactivate() {},
+      },
+      capabilities: [{ name: 'workspace_management', description: 'workspace', tools: [workspaceFile] }],
+    })
+
+    const result = JSON.parse(
+      (await exec.execute(
+        { id: 'workspace-invalid', name: 'invoke', args: { tool: 'workspace_file', args: {} } },
+        makeCtx(),
+      )).content as string,
+    ) as { ok: boolean; hint: string }
+
+    assert.equal(result.ok, false)
+    assert.match(result.hint, /action":"read/)
+    assert.match(result.hint, /action":"replace/)
+    assert.match(result.hint, /expectedRevision/)
   })
 
   test('can store active capabilities in an external runtime state', async () => {

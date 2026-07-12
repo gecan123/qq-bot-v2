@@ -18,6 +18,38 @@ function createFakeClient(response: unknown, calls: ChatCompletionCreateParamsNo
 }
 
 describe('openai-agent llm client', () => {
+  test('forwards a call-level abort signal to the OpenAI SDK', async () => {
+    const controller = new AbortController()
+    let receivedSignal: AbortSignal | undefined
+    const client = createOpenAIAgentLlmClient({
+      model: 'gpt-5.1',
+      baseURL: 'http://127.0.0.1:8317/v1',
+      apiKey: 'sk-local',
+      client: {
+        chat: {
+          completions: {
+            async create(_body, options) {
+              receivedSignal = options?.signal
+              return {
+                model: 'gpt-5.1',
+                choices: [{ message: { role: 'assistant', content: 'ok' } }],
+              } as never
+            },
+          },
+        },
+      },
+    })
+
+    await client.chat({
+      systemPrompt: 'system',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [],
+      signal: controller.signal,
+    })
+
+    assert.equal(receivedSignal, controller.signal)
+  })
+
   test('sends the same tool names and schemas through OpenAI function tools', async () => {
     const calls: ChatCompletionCreateParamsNonStreaming[] = []
     const client = createOpenAIAgentLlmClient({

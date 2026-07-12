@@ -421,6 +421,36 @@ describe('ClaudeCodeLlmClient.chat', () => {
     assert.equal(calls, 2)
   })
 
+  test('call-level abort cancels fetch without transport retry', async (t) => {
+    let calls = 0
+    const fn = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(init.signal?.reason)
+        }, { once: true })
+      })
+    }) as unknown as typeof fetch
+    t.mock.method(globalThis, 'fetch', fn)
+
+    const client = createClaudeCodeLlmClient({
+      model: 'LongCat-2.0',
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+    })
+    const controller = new AbortController()
+    const pending = client.chat({
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [],
+      signal: controller.signal,
+    })
+    controller.abort()
+
+    await assert.rejects(pending, ClaudeCodeApiError)
+    assert.equal(calls, 1)
+  })
+
   test('401 不再做 forceRefresh 重试 - 直接抛 (cliproxy 端管 token)', async (t) => {
     const { fn, calls } = makeFetchMock([{ status: 401, body: '{"error":"unauthorized"}' }])
     t.mock.method(globalThis, 'fetch', fn)

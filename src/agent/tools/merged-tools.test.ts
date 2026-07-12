@@ -144,6 +144,7 @@ describe('merged main-agent tools', () => {
     assert.deepEqual(capabilities.get('media_fetch'), ['fetch_content'])
     assert.deepEqual(capabilities.get('website'), ['website'])
     if (capabilities.has('finance')) assert.deepEqual(capabilities.get('finance'), ['openbb_cli'])
+    if (capabilities.has('trading_research')) assert.deepEqual(capabilities.get('trading_research'), ['trading_agent'])
     if (capabilities.has('browser')) assert.deepEqual(capabilities.get('browser'), ['browser'])
   })
 
@@ -255,6 +256,34 @@ describe('merged main-agent tools', () => {
     assert.equal(parsed.status, 'completed')
     assert.equal(parsed.truncated, true)
     assert.doesNotMatch(text.text, /f{1000}/)
+  })
+
+  test('background_task keeps a bounded trading result preview and recovery ids', async () => {
+    const registry = createInMemoryTaskRegistry()
+    const task = registry.register({ toolName: 'trading_agent', description: '研究 BTC' })
+    registry.complete(task.id, {
+      summary: '研究完成',
+      data: {
+        sessionId: 'session-1',
+        attemptId: 'attempt-1',
+        runId: 'run-1',
+        result: 'R'.repeat(10_000),
+      },
+    })
+    const tool = createBackgroundTaskTool({ taskRegistry: registry })
+
+    const detail = await tool.execute({ action: 'get', taskId: task.id }, makeCtx())
+    assert.ok(Array.isArray(detail.content))
+    const text = detail.content.find((block) => block.type === 'text')
+    assert.ok(text && text.type === 'text')
+    const parsed = JSON.parse(text.text) as Record<string, unknown>
+
+    assert.equal(parsed.sessionId, 'session-1')
+    assert.equal(parsed.attemptId, 'attempt-1')
+    assert.equal(parsed.runId, 'run-1')
+    assert.equal(parsed.truncated, true)
+    assert.match(String(parsed.result), /^R+\.\.\.$/)
+    assert.ok(text.text.length <= TASK_RESULT_TEXT_CAP_CHARS)
   })
 
   test('memory action=write/search/read uses markdown-backed memory store', async () => {

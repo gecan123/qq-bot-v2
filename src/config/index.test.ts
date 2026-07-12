@@ -314,6 +314,41 @@ describe('config', () => {
     assert.deepEqual(config.openbb, { cliBin: 'openbb', cliTimeoutMs: 15_000 })
   })
 
+  test('vibe trading: 默认关闭，启用时只接受 loopback HTTP origin', () => {
+    assert.equal(parseConfig(createBaseEnv()).vibeTrading, undefined)
+
+    const config = parseConfig(createBaseEnv({
+      VIBE_TRADING_ENABLED: 'true',
+      VIBE_TRADING_BASE_URL: 'http://localhost:8899/',
+      VIBE_TRADING_API_KEY: 'local-secret',
+      VIBE_TRADING_REQUEST_TIMEOUT_MS: '12000',
+      VIBE_TRADING_TASK_TIMEOUT_MS: '900000',
+      VIBE_TRADING_POLL_INTERVAL_MS: '1500',
+      VIBE_TRADING_RESULT_MAX_CHARS: '20000',
+    }))
+    assert.deepEqual(config.vibeTrading, {
+      baseUrl: 'http://localhost:8899',
+      apiKey: 'local-secret',
+      requestTimeoutMs: 12_000,
+      taskTimeoutMs: 900_000,
+      pollIntervalMs: 1_500,
+      resultMaxChars: 20_000,
+    })
+
+    for (const baseUrl of [
+      'https://127.0.0.1:8899',
+      'http://example.com:8899',
+      'http://127.0.0.1:8899/api',
+      'http://user:pass@127.0.0.1:8899',
+    ]) {
+      assert.throws(
+        () => parseConfig(createBaseEnv({ VIBE_TRADING_ENABLED: 'true', VIBE_TRADING_BASE_URL: baseUrl })),
+        /VIBE_TRADING_BASE_URL/,
+        baseUrl,
+      )
+    }
+  })
+
   test('moomoo: 默认关闭, 启用时解析受控 Skill runner 配置', () => {
     assert.equal(parseConfig(createBaseEnv()).moomoo, undefined)
 

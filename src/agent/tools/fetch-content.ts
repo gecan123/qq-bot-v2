@@ -3,6 +3,9 @@ import type { Tool } from '../tool.js'
 import { createFetchUrlTool } from './fetch-url.js'
 import { createFetchImageTool } from './fetch-image.js'
 import { createRedditTool } from './reddit.js'
+import type { BackgroundTaskRegistry } from '../background-task-registry.js'
+import type { TaskScheduler } from '../task-scheduler.js'
+import type { ToolContext, ToolExecutionResult } from '../tool.js'
 
 const ALLOWED_SUBREDDITS = ['technology', 'ClaudeAI', 'OpenAI', 'wallstreetbets', 'memes'] as const
 const ALLOWED_SET = new Set<string>(ALLOWED_SUBREDDITS)
@@ -14,6 +17,7 @@ const argsSchema = z.discriminatedUnion('action', [
     action: z.literal('url').describe('抓取普通网页或文本 URL, 返回中文摘要.'),
     url: z.string().url().describe('要抓取的 URL (非 reddit 页面; reddit 帖子请用 action=reddit_post).'),
     hint: z.string().max(200).optional().describe('给摘要 LLM 的侧重提示.'),
+    background: z.boolean().optional().describe('true 时放入有界网络 worker, 立即返回 taskId; 默认 false 同步返回内容.'),
   }),
   z.object({
     action: z.literal('image_url').describe('从图片 URL 下载图片.'),
@@ -56,6 +60,8 @@ export interface FetchContentDeps {
   urlTool?: Tool
   imageTool?: Tool
   redditTool?: Tool
+  taskRegistry?: BackgroundTaskRegistry
+  taskScheduler?: TaskScheduler
 }
 
 export function createFetchContentTool(deps: FetchContentDeps = {}): Tool<Args> {
@@ -68,6 +74,7 @@ export function createFetchContentTool(deps: FetchContentDeps = {}): Tool<Args> 
     description: [
       '获取外部内容, 一个入口用 action 决定抓取类型.',
       'action=url: 抓普通网页或文本并返回中文摘要; reddit 帖子请用 action=reddit_post.',
+      '较慢或可与其他工作并行的网页抓取可传 background=true, 完成后用 background_task get 取结果.',
       'action=image_url: 下载图片 URL, 返回 ephemeralRef, 可用于 send_message / generate_image / collect_sticker.',
       'action=qq_avatar: 通过 QQ 号获取用户头像, 返回 ephemeralRef 和图片预览.',
       'action=reddit_list: 刷 subreddit 帖子, 返回标题/链接/图片直链/短摘要; subreddit 只能用 technology / ClaudeAI / OpenAI / wallstreetbets / memes.',
@@ -79,6 +86,22 @@ export function createFetchContentTool(deps: FetchContentDeps = {}): Tool<Args> 
       const args = argsSchema.parse(rawArgs)
       if (args.action === 'url') {
         const nextArgs = args.hint === undefined ? { url: args.url } : { url: args.url, hint: args.hint }
+        if (args.background) {
+          if (!deps.taskRegistry || !deps.taskScheduler) {
+            return {
+              content: JSON.stringify({ ok: false, code: 'background_unavailable', error: '后台抓取调度器未配置.' }),
+              outcome: { ok: false, code: 'background_unavailable' },
+            }
+          }
+          return startBackgroundFetch({
+            args,
+            nextArgs,
+            ctx,
+            urlTool,
+            taskRegistry: deps.taskRegistry,
+            taskScheduler: deps.taskScheduler,
+          })
+        }
         return urlTool.execute(nextArgs, ctx)
       }
 
@@ -101,6 +124,75 @@ export function createFetchContentTool(deps: FetchContentDeps = {}): Tool<Args> 
 
       return redditTool.execute({ action: 'get_post', url: args.url }, ctx)
     },
+  }
+}
+
+function startBackgroundFetch(input: {
+  args: Extract<Args, { action: 'url' }>
+  nextArgs: { url: string; hint?: string }
+  ctx: ToolContext
+  urlTool: Tool
+  taskRegistry: BackgroundTaskRegistry
+  taskScheduler: TaskScheduler
+}): ToolExecutionResult {
+  const description = `后台抓取网页: ${input.args.url.slice(0, 120)}`
+  const task = input.taskRegistry.register({ toolName: 'fetch_content', description })
+  const dedupeKey = `fetch-url:${input.args.url}:${input.args.hint ?? ''}`
+
+  void input.taskScheduler.schedule({ lane: 'network', dedupeKey }, () => (
+    input.urlTool.execute(input.nextArgs, input.ctx)
+  )).then((result) => {
+    const resultText = typeof result.content === 'string'
+      ? result.content
+      : JSON.stringify(result.content)
+    const failure = parseToolFailure(resultText)
+    if (failure) throw new Error(failure)
+
+    const summary = `网页抓取完成: ${input.args.url.slice(0, 120)}`
+    input.taskRegistry.complete(task.id, { summary, data: { result: resultText } })
+    input.ctx.eventQueue.enqueue({
+      type: 'background_task_completed',
+      taskId: task.id,
+      toolName: 'fetch_content',
+      description,
+      elapsedMs: Date.now() - task.startedAt.getTime(),
+      ok: true,
+      summary,
+    })
+  }).catch((error) => {
+    const message = `网页抓取失败: ${error instanceof Error ? error.message : String(error)}`
+    input.taskRegistry.fail(task.id, message)
+    input.ctx.eventQueue.enqueue({
+      type: 'background_task_completed',
+      taskId: task.id,
+      toolName: 'fetch_content',
+      description,
+      elapsedMs: Date.now() - task.startedAt.getTime(),
+      ok: false,
+      summary: message,
+    })
+  })
+
+  return {
+    content: JSON.stringify({
+      ok: true,
+      status: 'started',
+      taskId: task.id,
+      description,
+      next: `等待完成通知后调用 background_task action=get taskId=${task.id}`,
+    }),
+    outcome: { ok: true },
+  }
+}
+
+function parseToolFailure(content: string): string | null {
+  try {
+    const parsed = JSON.parse(content) as { ok?: unknown; error?: unknown }
+    return parsed.ok === false
+      ? typeof parsed.error === 'string' ? parsed.error : 'fetch_content returned ok=false'
+      : null
+  } catch {
+    return null
   }
 }
 

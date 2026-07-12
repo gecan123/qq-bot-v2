@@ -4,9 +4,26 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, test } from 'node:test'
 import type { LlmClient, LlmCallInput } from './llm-client.js'
-import { createLifeJournalRuntime } from './life-journal.js'
+import {
+  createLifeJournalRuntime,
+  type LifeJournalReviewInput,
+  type LifeJournalReviewResult,
+  type LifeJournalRuntime,
+} from './life-journal.js'
 import { appendLifeJournalEntry, writeLifeAgenda } from './life-journal-store.js'
 import type { TokenUsageEntry } from './token-stats.js'
+import { createTaskScheduler } from './task-scheduler.js'
+
+async function recordAndDrain(
+  runtime: LifeJournalRuntime,
+  input: LifeJournalReviewInput,
+): Promise<LifeJournalReviewResult> {
+  const queued = await runtime.recordRound(input)
+  assert.equal(queued.ok, true)
+  const result = await runtime.drain()
+  assert.ok(result)
+  return result
+}
 
 describe('life journal runtime', () => {
   let rootDir: string
@@ -45,7 +62,7 @@ describe('life journal runtime', () => {
       now: () => new Date('2026-07-07T15:18:00.000Z'),
     })
 
-    const result = await runtime.recordRound({
+    const result = await recordAndDrain(runtime, {
       roundIndex: 7,
       messages: [{ role: 'user', content: '这一轮确认让我自己写 journal' }],
     })
@@ -94,7 +111,7 @@ describe('life journal runtime', () => {
     }
     const runtime = createLifeJournalRuntime({ rootDir, llm, now })
 
-    await runtime.recordRound({
+    await recordAndDrain(runtime, {
       roundIndex: 2,
       messages: [{ role: 'user', content: '继续处理' }],
     })
@@ -123,7 +140,7 @@ describe('life journal runtime', () => {
     }
     const runtime = createLifeJournalRuntime({ rootDir, llm })
 
-    const result = await runtime.recordRound({
+    const result = await recordAndDrain(runtime, {
       roundIndex: 1,
       messages: [{ role: 'user', content: 'hello' }],
     })
@@ -149,7 +166,7 @@ describe('life journal runtime', () => {
     }
     const runtime = createLifeJournalRuntime({ rootDir, llm })
 
-    const result = await runtime.recordRound({
+    const result = await recordAndDrain(runtime, {
       roundIndex: 1,
       messages: [{ role: 'user', content: 'hello' }],
     })
@@ -174,7 +191,7 @@ describe('life journal runtime', () => {
     }
     const runtime = createLifeJournalRuntime({ rootDir, llm })
 
-    const result = await runtime.recordRound({
+    const result = await recordAndDrain(runtime, {
       roundIndex: 1,
       messages: [{ role: 'user', content: '常规群聊' }],
     })
@@ -209,7 +226,7 @@ describe('life journal runtime', () => {
       now: () => new Date('2026-07-07T15:18:00.000Z'),
     })
 
-    const result = await runtime.recordRound({
+    const result = await recordAndDrain(runtime, {
       roundIndex: 4,
       messages: [{ role: 'user', content: '记录这个兼容性修复' }],
     })
@@ -251,7 +268,7 @@ describe('life journal runtime', () => {
       now: () => new Date('2026-07-07T15:18:00.000Z'),
     })
 
-    const result = await runtime.recordRound({
+    const result = await recordAndDrain(runtime, {
       roundIndex: 1,
       messages: [{ role: 'user', content: 'hello' }],
     })
@@ -288,7 +305,7 @@ describe('life journal runtime', () => {
       now: () => new Date('2026-07-07T15:18:00.000Z'),
     })
 
-    const result = await runtime.recordRound({
+    const result = await recordAndDrain(runtime, {
       roundIndex: 2,
       messages: [{ role: 'user', content: '你现在能看到 Chrome 网页吗？' }],
     })
@@ -316,7 +333,7 @@ describe('life journal runtime', () => {
     }
     const runtime = createLifeJournalRuntime({ rootDir, llm })
 
-    const result = await runtime.recordRound({
+    const result = await recordAndDrain(runtime, {
       roundIndex: 3,
       messages: [{ role: 'user', content: 'hello' }],
     })
@@ -355,6 +372,7 @@ describe('life journal runtime', () => {
       roundIndex: 1,
       messages: [{ role: 'user', content: 'first' }],
     })
+    await runtime.drain()
     now = new Date('2026-07-07T15:05:00.000Z')
     const second = await runtime.recordRound({
       roundIndex: 2,
@@ -365,10 +383,11 @@ describe('life journal runtime', () => {
       roundIndex: 3,
       messages: [{ role: 'user', content: 'third' }],
     })
+    await runtime.drain()
 
-    assert.deepEqual(first, { ok: true, wroteJournal: true, updatedAgenda: false })
-    assert.deepEqual(second, { ok: true, wroteJournal: false, updatedAgenda: false })
-    assert.deepEqual(third, { ok: true, wroteJournal: true, updatedAgenda: false })
+    assert.deepEqual(first, { ok: true, queued: true, coalesced: false })
+    assert.deepEqual(second, { ok: true, queued: false, coalesced: false })
+    assert.deepEqual(third, { ok: true, queued: true, coalesced: false })
     assert.equal(calls, 2)
     const journal = await readFile(join(rootDir, 'life', 'journal', '2026-07-07.md'), 'utf8')
     assert.match(journal, /Round 1/)
@@ -376,10 +395,16 @@ describe('life journal runtime', () => {
     assert.match(journal, /Round 3/)
   })
 
-  test('recordRound returns when the review LLM exceeds its timeout', async () => {
+  test('recordRound times out as a safe skip and aborts the review request', async () => {
+    let aborted = false
     const llm: LlmClient = {
-      async chat() {
-        return await new Promise(() => {})
+      async chat(input) {
+        return await new Promise((_, reject) => {
+          input.signal?.addEventListener('abort', () => {
+            aborted = true
+            reject(input.signal?.reason)
+          }, { once: true })
+        })
       },
     }
     const runtime = createLifeJournalRuntime({
@@ -388,13 +413,106 @@ describe('life journal runtime', () => {
       reviewTimeoutMs: 10,
     })
 
-    const result = await runtime.recordRound({
+    const result = await recordAndDrain(runtime, {
       roundIndex: 1,
       messages: [{ role: 'user', content: 'hello' }],
     })
 
-    assert.equal(result.ok, false)
-    assert.match(result.error ?? '', /timed out/i)
+    assert.deepEqual(result, { ok: true, wroteJournal: false, updatedAgenda: false })
+    assert.equal(aborted, true)
+  })
+
+  test('recordRound returns immediately and coalesces queued reviews to the latest round', async () => {
+    let releaseFirst!: () => void
+    const firstCanFinish = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    let markFirstStarted!: () => void
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve
+    })
+    const reviewedRounds: number[] = []
+    let calls = 0
+    const llm: LlmClient = {
+      async chat(input) {
+        calls += 1
+        const roundText = JSON.stringify(input.messages)
+        const round = Number(roundText.match(/round-(\d+)/)?.[1] ?? 0)
+        reviewedRounds.push(round)
+        if (calls === 1) {
+          markFirstStarted()
+          await firstCanFinish
+        }
+        return {
+          content: 'SKIP',
+          toolCalls: [],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+        }
+      },
+    }
+    const runtime = createLifeJournalRuntime({
+      rootDir,
+      llm,
+      minWriteIntervalMs: 0,
+    })
+
+    const first = await runtime.recordRound({
+      roundIndex: 1,
+      messages: [{ role: 'user', content: 'round-1' }],
+    })
+    await firstStarted
+    const second = await runtime.recordRound({
+      roundIndex: 2,
+      messages: [{ role: 'user', content: 'round-2' }],
+    })
+    const third = await runtime.recordRound({
+      roundIndex: 3,
+      messages: [{ role: 'user', content: 'round-3' }],
+    })
+
+    assert.deepEqual(first, { ok: true, queued: true, coalesced: false })
+    assert.deepEqual(second, { ok: true, queued: true, coalesced: false })
+    assert.deepEqual(third, { ok: true, queued: true, coalesced: true })
+    assert.deepEqual(reviewedRounds, [1])
+
+    releaseFirst()
+    await runtime.drain()
+
+    assert.deepEqual(reviewedRounds, [1, 3])
+    assert.equal(calls, 2)
+  })
+
+  test('recordRound runs through the shared maintenance lane', async () => {
+    let releaseMaintenance!: () => void
+    const maintenanceGate = new Promise<void>((resolve) => { releaseMaintenance = resolve })
+    const taskScheduler = createTaskScheduler({ maintenance: { concurrency: 1 } })
+    const blocker = taskScheduler.schedule({ lane: 'maintenance' }, () => maintenanceGate)
+    let reviewCalls = 0
+    const llm: LlmClient = {
+      async chat() {
+        reviewCalls++
+        return {
+          content: 'SKIP',
+          toolCalls: [],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+        }
+      },
+    }
+    const runtime = createLifeJournalRuntime({ rootDir, llm, taskScheduler })
+
+    const queued = await runtime.recordRound({
+      roundIndex: 1,
+      messages: [{ role: 'user', content: 'shared lane' }],
+    })
+    assert.equal(queued.queued, true)
+    assert.equal(reviewCalls, 0)
+
+    releaseMaintenance()
+    await blocker
+    await runtime.drain()
+    assert.equal(reviewCalls, 1)
   })
 
   test('recordRound records completed review token usage', async () => {
@@ -415,7 +533,7 @@ describe('life journal runtime', () => {
       recordUsage: (entry) => usageEntries.push(entry),
     })
 
-    await runtime.recordRound({
+    await recordAndDrain(runtime, {
       roundIndex: 12,
       messages: [{ role: 'user', content: 'hello' }],
     })
@@ -446,7 +564,7 @@ describe('life journal runtime', () => {
     await writeLifeAgenda({ rootDir }, `# Agenda\n\n## Active\n- [ ] ${'state '.repeat(100)}`)
     const runtime = createLifeJournalRuntime({ rootDir, llm, maxRoundChars: 22, maxStateChars: 100 })
 
-    await runtime.recordRound({
+    await recordAndDrain(runtime, {
       roundIndex: 1,
       messages: [
         { role: 'user', content: 'current round message that is far too long' },
@@ -479,7 +597,7 @@ describe('life journal runtime', () => {
     }
     const runtime = createLifeJournalRuntime({ rootDir, llm })
 
-    await runtime.recordRound({
+    await recordAndDrain(runtime, {
       roundIndex: 1,
       messages: [{
         role: 'tool',

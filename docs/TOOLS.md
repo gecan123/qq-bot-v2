@@ -4,7 +4,7 @@
 
 ## 默认可见能力
 
-- 对话控制：`pause`。`action=rest` 用于一段活动确实告一段落后的短暂休息，默认 60 秒、通常 30–120 秒，仍可自主选择最长 30 分钟。`intention` 列出 4–8 个具体可执行方向，其中至少两个能立即用现有工具开始、等待外部消息最多一个；计时结束后先实际尝试一个方向，没有尝试前不应立刻再次休息。
+- 对话控制：`pause`。`action=rest` 用于一段活动确实告一段落后的短暂休息，默认 60 秒、通常 30–120 秒，仍可自主选择最长 30 分钟。完成一个任务只表示注意力重新自由，不表示“今天全部完成”；`intention` 列出 4–8 个醒来后具体可执行的方向，其中至少两个能立即用现有工具开始、等待外部消息最多一个，不能用已完成事项回顾或“明天继续”代替；计时结束后先实际尝试一个方向，没有尝试前不应立刻再次休息。
 - 当前计划：`todo`（当前进程内的短期多步计划，最多一个 `in_progress`）。
 - 发送：`send_message`（文本、图片、图文和受控音乐卡片）。
 - 稳定按需壳：`help`（`list` / `describe` / `activate` / `deactivate` capability 或内部工具 schema）和 `invoke`（调用已激活 capability 内部工具）。激活不会改变下一轮顶层 tools 列表。
@@ -16,18 +16,20 @@
 
 ## Deferred capability
 
-- `browser`：配置 `BOT_BROWSER_ENABLED=true` 后可激活，内部工具是单一 action-driven `browser`。
+- `browser`：配置 `BOT_BROWSER_ENABLED=true` 后可激活，内部工具是单一 action-driven `browser`；截图、下载和 annotation 返回后，artifact retention 清理由 sidecar 的单 worker 合并执行。
 - `finance`：配置 `OPENBB_CLI_ENABLED=true` 后可激活，内部工具是 `openbb_cli`。
+- `trading_research`：配置 `VIBE_TRADING_ENABLED=true` 后可激活，内部工具是 `trading_agent`；把多步金融研究、策略设计和历史回测委派给本机 Vibe-Trading Agent，而不是把它的全部 MCP 工具展开到主 Agent。
 - `website`：配置 `BOT_WEBSITE_ENABLED=true` 和独立网站仓库路径后可激活，内部工具是 `website`，用于维护 Luna 的 Astro 个人网站并发布到配置分支。
 - `external_research`：内部工具包含 `fetch_content`；配置 `TAVILY_API_KEY` 后同时包含 `web_search`。
+- `fetch_content action=url` 默认同步返回网页摘要；预计较慢或想同时处理其他事情时可传 `background=true`，它进入最多 3 并发的 `network` lane，立即返回 `taskId`，完成后通过 `background_task` 取结果。
 - `media_generation`：内部工具是 `generate_image`，创建图片生成/编辑后台任务，`count=1..4` 时固定最多并发 2 个图片请求，后续用 `background_task` 查结果。
-- `media_inspection`：内部工具是 `inspect_media`，用入站 `mediaId` 或生成图 `ephemeralRef` 主动补跑描述，并把有界真实预览作为 image block 放入当前上下文。
+- `media_inspection`：内部工具是 `inspect_media`，用入站 `mediaId` 或生成图 `ephemeralRef` 返回有界真实预览 image block；缺失的入站图片描述进入 `media-description` lane，当前结果标记 `descriptionStatus=pending` 而不等待模型。
 - `media_fetch`：内部工具是 `fetch_content` 的图片 URL / QQ 头像抓取能力。
 - `skill_management`：内部工具是 `skill_editor`，用于运行时 skill 草稿、校验和安装。
 - `workspace_management`：内部工具是 `workspace_file`，用于普通私有文本工作文件的分页读取、创建、覆盖、精确替换、删除和移动。
 - `document_reading`：内部工具是 `read_file`，只接受 `inbox` 返回的 `type=file` 的 `mediaId`；支持有界分页读取纯文本、PDF、DOCX、XLSX、PPTX、RTF 和 OpenDocument，不接受路径或 URL，也不执行文件内容。
 - 激活状态保存在 `BotAgentSnapshot.contextSnapshot.activeToolCapabilities`，用于进程重启后恢复可调用能力；它不是 LLM 可见事实，不写入 `messages`，也不改变顶层 tools 列表。
-- `invoke` 的 schema/capability resolution 是内部路由，不单独记成功 trace。已激活调用只记录一次真实目标工具结果；inactive、unknown 或壳参数失败只记录一次失败的 `invoke`，hooks 也只围绕最终执行路径运行一次。
+- `invoke` 的 schema/capability resolution 是内部路由，不单独记成功 trace。对外 schema 仍要求 `args` 是对象；若 provider 误传了可解析为 JSON 对象的字符串，runtime 会在 schema 校验前归一化，其他字符串、数组和空参数仍按目标 schema 拒绝。已激活调用只记录一次真实目标工具结果；inactive、unknown 或壳参数失败只记录一次失败的 `invoke`，hooks 也只围绕最终执行路径运行一次。
 
 ## 结果契约
 
@@ -37,6 +39,7 @@
 - 外部搜索、网页、Reddit 和表情包结果按字段与条目做上限控制，并用 `truncated` 表示不完整；禁止截断完整 JSON 字符串。
 - `workspace_bash` 的直接命令和 `openbb_cli` 返回命令信封，区分退出码、内容格式、正文、stderr 与截断状态。任意 stdout 只作为字符串装入信封，不因看起来像 JSON 就自动解释。
 - 由 `workspace_bash` 路由到 db、style、fetch 等 typed 工具时，保留被委托工具自己的结构化结果，不额外套重复信封。
+- `trading_agent action=start|continue` 返回本地 `taskId` 和 Vibe 的 `sessionId` / `attemptId`。正常完成后用 `background_task action=get` 读取有界结果；qq-bot 重启导致内存 task 丢失时，凭 `sessionId` 调 `status` / `result` 直接从 Vibe 的持久 session 恢复，不从日志重建。
 
 ## Browser
 
@@ -71,9 +74,10 @@
 - `workspace_bash` 的 workspace/repo 文件命令都只读；workspace 内置的 fetch image/avatar 等受控子命令仍可产生专用副作用。普通文件修改必须走 deferred `workspace_file`，不要开放 `printf` 重定向、`rm`、`mv` 或 `sed`。repo view 继续保持 allowlist，不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
 - `workspace_bash moomoo` 只路由到固定 `skills/moomooapi/scripts/**` 下的代码内 allowlist：行情及账户/订单/资金/持仓查询，以及普通证券模拟仓的下单/改单/撤单。三个交易写脚本必须显式传唯一的 `--trd-env SIMULATE`；`REAL`、`--confirmed`、加密货币、组合订单、任意 Python/脚本路径和实时订阅长进程都会被拒绝。它固定连接 loopback OpenD；详细工作流按需加载 `moomooapi` skill。
 - `crypto_paper` 是独立 typed tool，只调用 Moomoo `get_snapshot.py` 获取 `CC.*USD` 买一/卖一行情，不创建 Crypto 交易 context。`buy` / `sell` 需要幂等 `clientOrderId`，资金和持仓在单个 serializable PostgreSQL transaction 中更新；`reset` 清空当前持仓并递增 generation，但保留历史订单。查询不是副作用，买卖和重置进入工具审计。
+- `trading_agent` 只连接配置的 loopback HTTP origin，拒绝远端 URL、URL 路径、凭据内嵌和重定向；请求、后台任务和结果都有超时/字符上限。发送给 Vibe 的每个 prompt 都附加固定的研究边界，禁止真实下单、撤单、券商授权、资金划转、定时任务和对外消息。`start` / `continue` / `cancel` 作为副作用审计，`status` / `result` 只读。
 - `workspace_file action=list|read|write|replace|delete|move` 只维护普通文本工作文件。读取返回 revision，修改已有文件必须带最新 revision；拒绝 hidden/symlink/路径逃逸/二进制、重复 `data/agent-workspace` 前缀，以及 `journal/**`、`life/**`、`memory/**`、`skill-drafts/**`、`browser/**` 等 managed path。
 - `journal action=write|list|search|read|update|delete|compact` 把日记和梦境存到 private workspace 的按月 Markdown 文件中。记录带稳定 ID；read 返回月文件 revision，修改要求最新 revision 并原子写回。日记只通过 `journal` typed tool 读写，不提供 `workspace_bash` 别名。
-- `life_journal action=write|read_recent|read_day|read_entry|update|delete|compact|read_agenda|write_agenda` 让主 agent 主动维护 Life Journal 和 Agenda。完整 compact 前用 `read_entry` 或分页 `read_day` 获取原文；journal 和 agenda 修改都要求最新 revision。日文件使用显式 v1 格式标记和稳定 entryId；旧格式不读取，下一次写入同一天时直接以 v1 文件重建。旁路 Life Journal hook 会把当前 Agenda、最近两天 Journal 和有界本轮消息交给 reviewer，按 10 分钟节流并受超时保护；它只做保底连续性 review，不替代主 agent 主动 journaling，也不改写 `AgentContext`。review 日志用 `life_journal_review_completed` 区分 `record` / `skip`，协议连续无效则记录 `life_journal_review_invalid_skipped`。
+- `life_journal action=write|read_recent|read_day|read_entry|update|delete|compact|read_agenda|write_agenda` 让主 agent 主动维护 Life Journal 和 Agenda。完整 compact 前用 `read_entry` 或分页 `read_day` 获取原文；journal 和 agenda 修改都要求最新 revision。日文件使用显式 v1 格式标记和稳定 entryId；旧格式不读取，下一次写入同一天时直接以 v1 文件重建。旁路 Life Journal hook 只把有界本轮快照放进共享 scheduler 的单 worker `maintenance` lane，主循环不等待 review；忙时只保留最新 pending 任务，并用关闭 thinking 的专用 client 读取当前 Agenda、最近两天 Journal 后决策。review 按 10 分钟节流，超时会真正取消底层请求并以 `life_journal_review_timed_out_skipped` 安全跳过。它只做保底连续性 review，不替代主 agent 主动 journaling，也不改写 `AgentContext`。成功日志用 `life_journal_review_completed` 区分 `record` / `skip`，协议连续无效则记录 `life_journal_review_invalid_skipped`。
 - `collect_sticker` 是 always-on typed tool，不是 `workspace_bash` 子命令；`action=collect|list|search|random|remove` 必填。`remove` 只删除表情池记录，不删除原始 Media。
 - `memory` 把长期记忆存到 `data/agent-workspace/memory/` 的 v1 Markdown 文件中。记录带稳定 entryId；`read` 支持分页并返回 revision，`update_entry` / `delete_entry` / `compact` 要求最新 revision。旧格式不参与 list/search/read，下一次写入同一目标时直接以 v1 文件重建；原有 `delete` 继续用于永久删除明确文件。
 - `workspace_bash` 的 tool description 保留常用 repo/db/fetch 等路由示例；复杂细节继续通过 `help <topic>` 按需披露。被拒绝的命令会返回 `help` / `try` 字段，引导下一步。`style`、`ai_tone` 仍是受控内置入口；journal 只走 typed tool。

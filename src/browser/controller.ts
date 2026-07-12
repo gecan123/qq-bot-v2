@@ -18,6 +18,7 @@ import {
 import { buildBrowserActionLogEntry, logBrowserAction } from './action-log.js'
 import { classifyBrowserActionRisk, classifyDownload } from './risk.js'
 import { createLogger } from '../logger.js'
+import { createTaskScheduler, type TaskScheduler } from '../agent/task-scheduler.js'
 
 const log = createLogger('BROWSER_CONTROLLER')
 const ELEMENT_ATTR = 'data-luna-browser-element-id'
@@ -60,13 +61,37 @@ interface PageRecord {
   elements: Map<string, BrowserElementSummary>
 }
 
+export interface BrowserControllerDeps {
+  taskScheduler?: TaskScheduler
+  pruneArtifacts?: typeof pruneBrowserArtifacts
+}
+
+export function scheduleBrowserArtifactPrune(
+  taskScheduler: TaskScheduler,
+  artifactDir: string,
+  task: () => Promise<void>,
+): void {
+  void taskScheduler.schedule({
+    lane: 'housekeeping',
+    resourceKey: `browser-artifacts:${artifactDir}`,
+    dedupeKey: `browser-artifact-prune:${artifactDir}`,
+  }, task).catch((err) => {
+    log.warn({ err, artifactDir }, 'browser_artifact_prune_schedule_failed')
+  })
+}
+
 export class BrowserController {
   private context: BrowserContext | null = null
   private pages = new Map<string, PageRecord>()
   private activePageId: string | null = null
   private crashed = false
+  private readonly taskScheduler: TaskScheduler
+  private readonly pruneArtifactsImpl: typeof pruneBrowserArtifacts
 
-  constructor(private readonly config: BrowserControllerConfig) {}
+  constructor(private readonly config: BrowserControllerConfig, deps: BrowserControllerDeps = {}) {
+    this.taskScheduler = deps.taskScheduler ?? createTaskScheduler({ housekeeping: { concurrency: 1 } })
+    this.pruneArtifactsImpl = deps.pruneArtifacts ?? pruneBrowserArtifacts
+  }
 
   async execute(rawInput: unknown): Promise<BrowserActionJsonResult> {
     const parsed = browserActionInputSchema.safeParse(rawInput)
@@ -104,6 +129,7 @@ export class BrowserController {
 
   async close(): Promise<void> {
     await this.context?.close().catch(() => {})
+    await this.taskScheduler.drain()
     this.context = null
     this.pages.clear()
     this.activePageId = null
@@ -315,7 +341,7 @@ export class BrowserController {
     const artifactPath = resolve(this.config.artifactDir, 'screenshots', `${artifactId}.png`)
     await mkdir(dirname(artifactPath), { recursive: true })
     await writeFile(artifactPath, bytes)
-    await this.pruneArtifacts()
+    this.scheduleArtifactPrune()
     const compressed = await compressForContext(Buffer.from(bytes))
     const result: BrowserActionJsonResult = {
       ok: true,
@@ -361,7 +387,7 @@ export class BrowserController {
     const artifactPath = resolve(this.config.artifactDir, 'downloads', `${artifactId}-${safeName}`)
     await mkdir(dirname(artifactPath), { recursive: true })
     await download.saveAs(artifactPath)
-    await this.pruneArtifacts()
+    this.scheduleArtifactPrune()
     return {
       ok: true,
       action: 'download',
@@ -387,7 +413,7 @@ export class BrowserController {
     const body = [`# Browser Annotation`, '', `- URL: ${url}`, `- Title: ${await safeTitle(record.page)}`, `- Time: ${new Date().toISOString()}`, '', input.text, ''].join('\n')
     await mkdir(dirname(artifactPath), { recursive: true })
     await writeFile(artifactPath, body, 'utf8')
-    await this.pruneArtifacts()
+    this.scheduleArtifactPrune()
     return { ok: true, action: 'annotate', pageId: record.pageId, url, title: await safeTitle(record.page), artifactId, artifactPath }
   }
 
@@ -408,7 +434,7 @@ export class BrowserController {
 
   private async pruneArtifacts(): Promise<void> {
     try {
-      const result = await pruneBrowserArtifacts(this.config.artifactDir, {
+      const result = await this.pruneArtifactsImpl(this.config.artifactDir, {
         maxFiles: this.config.artifactMaxFiles ?? DEFAULT_ARTIFACT_MAX_FILES,
         maxAgeMs: this.config.artifactMaxAgeMs ?? DEFAULT_ARTIFACT_MAX_AGE_MS,
       })
@@ -418,6 +444,14 @@ export class BrowserController {
     } catch (err) {
       log.warn({ err }, 'browser_artifact_prune_failed')
     }
+  }
+
+  private scheduleArtifactPrune(): void {
+    scheduleBrowserArtifactPrune(
+      this.taskScheduler,
+      this.config.artifactDir,
+      () => this.pruneArtifacts(),
+    )
   }
 
   private ownerHelpResult(

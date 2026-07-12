@@ -14,6 +14,8 @@
 6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责事件披露、mailbox cursors、context snapshot 原子保存、有界 life journal hook、compaction，以及 pause/autonomy 循环控制。compaction 或其后的表情池注入改写 ledger 后会立即保存 snapshot。
 7. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct：把 system prompt、当前 messages 和可见 tools 发给 LLM，append assistant tool calls，顺序执行工具，并且只把 `ToolExecutionResult.content` append 为 tool result。工具的 `outcome` / `effects` 返回 Runtime Host；`src/agent/effect-interpreter.ts` 统一解释 runtime effects，不进入 ledger。
 
+Agent 进程内的非关键后台工作统一走 bounded task scheduler：`maintenance` 单 worker、`network` 最多 3 个并发、`media-description` 最多 2 个并发。同一 `resourceKey` 串行，相同 `dedupeKey` 共享任务。它们是 Node async worker，不是 OS 线程；Browser sidecar 是独立进程，使用自己的单 worker housekeeping lane。
+
 ## 自主循环
 
 - `send_message` 成功只是完成一个动作，不再强制 BotLoop 等待外部事件；下一轮由 Agent 自己决定继续做事或休息。

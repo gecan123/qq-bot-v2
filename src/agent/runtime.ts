@@ -17,6 +17,7 @@ import type { GroupCustomization } from '../config/group-prompts.js'
 import type { BotOwner } from '../config/index.js'
 import type { MessageSender } from '../messaging/message-sender.js'
 import { isGroupMessageMentioningUser } from '../database/messages.js'
+import type { TaskScheduler } from './task-scheduler.js'
 
 export interface AgentRuntimeInput {
   context: AgentContext
@@ -36,6 +37,7 @@ export interface AgentRuntimeInput {
   initialMailboxCursors?: Readonly<MailboxCursors>
   initialLastWakeAt?: Date | null
   lifeJournal?: BotLoopLifeJournal
+  taskScheduler?: TaskScheduler
 }
 
 export interface AgentRuntime {
@@ -61,6 +63,7 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       sender: input.sender,
       targetPolicy,
       taskRegistry,
+      taskScheduler: input.taskScheduler,
       groupIds: input.groupIds,
       selfNumber: input.selfNumber,
       metadata: input.metadata,

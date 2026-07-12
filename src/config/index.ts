@@ -52,6 +52,15 @@ type CryptoPaperConfig = {
   feeRateBps: number
 }
 
+export type VibeTradingConfig = {
+  baseUrl: string
+  apiKey?: string
+  requestTimeoutMs: number
+  taskTimeoutMs: number
+  pollIntervalMs: number
+  resultMaxChars: number
+}
+
 export const CLAUDE_CODE_PROVIDER_NAME = 'claude-code'
 export const OPENAI_AGENT_PROVIDER_NAME = 'openai-agent'
 export const OPENAI_AGENT_BASE_PROVIDER_NAME = 'openai'
@@ -117,6 +126,40 @@ function parseCryptoPaperConfig(env: EnvSource): CryptoPaperConfig | undefined {
     throw new Error('CRYPTO_PAPER_FEE_RATE_BPS must be an integer between 0 and 10000')
   }
   return { initialCash, feeRateBps }
+}
+
+function parseVibeTradingConfig(env: EnvSource): VibeTradingConfig | undefined {
+  if (!parseBoolean(env.VIBE_TRADING_ENABLED, false)) return undefined
+
+  const rawBaseUrl = env.VIBE_TRADING_BASE_URL?.trim() || 'http://127.0.0.1:8899'
+  let url: URL
+  try {
+    url = new URL(rawBaseUrl)
+  } catch {
+    throw new Error('VIBE_TRADING_BASE_URL must be a valid loopback HTTP URL')
+  }
+  const loopbackHosts = new Set(['127.0.0.1', 'localhost', '[::1]'])
+  if (
+    url.protocol !== 'http:'
+    || !loopbackHosts.has(url.hostname)
+    || url.username
+    || url.password
+    || url.search
+    || url.hash
+    || (url.pathname !== '/' && url.pathname !== '')
+  ) {
+    throw new Error('VIBE_TRADING_BASE_URL must be an origin-only loopback HTTP URL')
+  }
+
+  const apiKey = env.VIBE_TRADING_API_KEY?.trim()
+  return {
+    baseUrl: url.origin,
+    ...(apiKey ? { apiKey } : {}),
+    requestTimeoutMs: parsePositiveInteger(env.VIBE_TRADING_REQUEST_TIMEOUT_MS, 15_000),
+    taskTimeoutMs: parsePositiveInteger(env.VIBE_TRADING_TASK_TIMEOUT_MS, 30 * 60_000),
+    pollIntervalMs: parsePositiveInteger(env.VIBE_TRADING_POLL_INTERVAL_MS, 2_000),
+    resultMaxChars: parsePositiveInteger(env.VIBE_TRADING_RESULT_MAX_CHARS, 12_000),
+  }
 }
 
 function parsePositiveInteger(value: string | undefined, defaultValue: number): number {
@@ -464,6 +507,7 @@ export function parseConfig(env: EnvSource) {
       : undefined,
     moomoo: parseMoomooConfig(env),
     cryptoPaper: parseCryptoPaperConfig(env),
+    vibeTrading: parseVibeTradingConfig(env),
     website: parseWebsiteConfig(env),
     tavily: env.TAVILY_API_KEY
       ? { apiKey: env.TAVILY_API_KEY }

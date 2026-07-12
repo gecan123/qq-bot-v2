@@ -420,7 +420,8 @@ export function createCryptoPaperTool(deps: {
   return {
     name: 'crypto_paper',
     description: [
-      '本地 Crypto 模拟仓，只用 Moomoo CC.*USD 行情，绝不调用 Moomoo Crypto 实盘交易接口.',
+      'crypto_paper 就是 Crypto 模拟盘（paper trading）工具，不是实盘工具，也不需要再等待或寻找另一个“模拟盘工具”.',
+      '它维护本地虚拟资金、持仓和成交，只用 Moomoo CC.*USD 行情，绝不调用 Moomoo Crypto 实盘交易接口.',
       'action=buy/sell 按当前卖一/买一立即成交；必须提供稳定 clientOrderId，重试同一意图时复用它以避免重复成交.',
       'action=account/portfolio/orders 查询资金、持仓、盈亏和成交；action=reset 仅在 owner 明确要求后使用.',
       '没有用户明确交易意图时，不得根据行情自主买卖；市场研究和观点记录不是下单授权.',

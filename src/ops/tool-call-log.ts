@@ -131,6 +131,9 @@ export function isSideEffectTool(toolName: string, args?: unknown): boolean {
   if (toolName === 'crypto_paper') {
     return hasAnyAction(args, ['buy', 'sell', 'reset'])
   }
+  if (toolName === 'trading_agent') {
+    return hasAnyAction(args, ['start', 'continue', 'cancel'])
+  }
   return SIDE_EFFECT_TOOLS.has(toolName)
 }
 

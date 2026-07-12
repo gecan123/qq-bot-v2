@@ -149,6 +149,59 @@ BOT_BROWSER_ARGS=--fingerprint=12345
 
 `BOT_BROWSER_GEOIP=true` 会让 CloakBrowser 通过 `mmdb-lib` 解析代理 IP 的 timezone/locale；旋转住宅代理不稳定时，优先显式配置 `BOT_BROWSER_TIMEZONE` 和 `BOT_BROWSER_LOCALE`。Pro 版 license 走 CloakBrowser 官方环境变量 `CLOAKBROWSER_LICENSE_KEY`，不要写进 repo。
 
+## Vibe-Trading 子 Agent / Mac
+
+Vibe-Trading 独立安装在仓库外，不把 Python 依赖和运行产物写进本仓库。上游 `zigzag` 依赖在 Python 3.12 的严格 resolver 下存在打包兼容问题；全新安装优先用 Python 3.11 + pip。当前这台机器使用的是已修复并通过 `uv pip check` 的 Python 3.12 本地 checkout，补丁说明在 `~/.local/share/vibe-trading/LOCAL_PATCH.md`。
+
+```bash
+mkdir -p ~/.local/share/vibe-trading
+uv venv --seed --python 3.11 ~/.local/share/vibe-trading/.venv
+~/.local/share/vibe-trading/.venv/bin/python -m pip install 'vibe-trading-ai==0.1.11'
+~/.local/share/vibe-trading/.venv/bin/vibe-trading init
+```
+
+Vibe 自己的 provider、模型和数据源配置写在 `~/.vibe-trading/.env`。服务端至少保持：
+
+```bash
+# 只监听 127.0.0.1 时可留空；若设置，则 qq-bot 侧必须使用同一个值。
+# API_AUTH_KEY=<独立本机随机密钥>
+ENABLE_SESSION_RUNTIME=true
+VIBE_TRADING_ENABLE_SHELL_TOOLS=0
+VIBE_TRADING_ENABLE_SCHEDULER=0
+```
+
+启动和健康检查：
+
+```bash
+~/.local/share/vibe-trading/.venv/bin/vibe-trading serve --host 127.0.0.1 --port 8899
+curl -fsS http://127.0.0.1:8899/health
+```
+
+qq-bot `.env` 使用同一个 API key，并启用 deferred capability：
+
+```bash
+VIBE_TRADING_ENABLED=true
+VIBE_TRADING_BASE_URL=http://127.0.0.1:8899
+VIBE_TRADING_MODEL=gpt-5.5
+# 可选；仅在当前中继与模型已验证支持时设置：low / medium / high / xhigh
+VIBE_TRADING_REASONING_EFFORT=
+# 仅当 Vibe 服务端设置了 API_AUTH_KEY 时配置：
+# VIBE_TRADING_API_KEY=<同一个本机随机密钥>
+VIBE_TRADING_REQUEST_TIMEOUT_MS=15000
+VIBE_TRADING_TASK_TIMEOUT_MS=1800000
+VIBE_TRADING_POLL_INTERVAL_MS=2000
+VIBE_TRADING_RESULT_MAX_CHARS=12000
+```
+
+先直接运行一次 Vibe 的只研究任务确认 provider 可用，再重启 bot：
+
+```bash
+~/.local/share/vibe-trading/.venv/bin/vibe-trading provider doctor
+~/.local/share/vibe-trading/.venv/bin/vibe-trading run -p '研究 BTC-USDT 最近 30 天趋势，只做研究，不执行真实交易' --json
+```
+
+运行时先用 `help action=activate capability=trading_research`，再用 `invoke tool=trading_agent args={...}`。`start` / `continue` 异步返回 `taskId`、`sessionId`、`attemptId`；完成后走 `background_task get`，进程重启后走 `trading_agent result` 恢复。不要配置真实券商 connector，也不要把 Vibe API 监听到非 loopback 地址。
+
 ## 验证
 
 - 改代码时，先跑最小 focused test；影响面大时再跑 `pnpm typecheck` 或更广测试。

@@ -146,7 +146,7 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
               message: issue.message,
             })),
             retryable: true,
-            hint: `根据 issues 和 ${call.name} 的当前 schema 修正参数，然后立即重试同一工具；字段名和参数类型必须精确匹配，不要改用相似但不存在的工具。`,
+            hint: buildInvalidToolArgumentsHint(call.name),
           }),
           outcome: { ok: false, code: 'invalid_arguments', error },
         }
@@ -188,6 +188,16 @@ function buildUnknownToolHint(toolName: string, availableTools: string[]): strin
     return '从 availableTools 选择精确工具名；需要 deferred 能力时先用 help describe/activate，再通过 invoke 调用。'
   }
   return '当前执行器没有可用工具；不要继续猜测相似工具名。'
+}
+
+function buildInvalidToolArgumentsHint(toolName: string): string {
+  if (toolName === 'invoke') {
+    return 'invoke.args 必须是参数对象，不要把它放到顶层，也不要传空参数；例如 {"tool":"workspace_file","args":{"action":"read","file":"notes/example.md"}}。'
+  }
+  if (toolName === 'workspace_file') {
+    return '先用 invoke 调用 workspace_file read：{"tool":"workspace_file","args":{"action":"read","file":"notes/example.md"}}；从结果复制 revision，再调用 replace：{"tool":"workspace_file","args":{"action":"replace","file":"notes/example.md","expectedRevision":"<read 返回的 revision>","oldText":"<原文中唯一匹配的文本>","newText":"<新文本>"}}。args 必须是对象。'
+  }
+  return `根据 issues 和 ${toolName} 的当前 schema 修正参数，然后立即重试同一工具；字段名和参数类型必须精确匹配，不要改用相似但不存在的工具。`
 }
 
 export function createDeferredToolExecutor(options: DeferredToolExecutorOptions): ToolExecutor {
@@ -447,7 +457,7 @@ async function executeInvokeToolCall(options: {
     : 0
   const normalizedArgs = stripNullsFromOptionalFields(
     options.invoke.schema,
-    options.call.args,
+    normalizeInvokeToolArgs(options.call.args),
   ) as Record<string, unknown>
   const normalizedCall = { ...options.call, args: normalizedArgs }
   const shellResult = await createToolExecutor([options.invoke]).execute(normalizedCall, options.ctx)
@@ -529,6 +539,17 @@ async function executeInvokeToolCall(options: {
     { id: options.call.id, name: entry.tool.name, args: targetArgs },
     options.ctx,
   )
+}
+
+function normalizeInvokeToolArgs(args: Record<string, unknown>): Record<string, unknown> {
+  if (typeof args.args !== 'string') return args
+  try {
+    const parsed = JSON.parse(args.args) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return args
+    return { ...args, args: parsed as Record<string, unknown> }
+  } catch {
+    return args
+  }
 }
 
 function isSuccessfulToolResult(result: ToolExecutionResult): boolean {

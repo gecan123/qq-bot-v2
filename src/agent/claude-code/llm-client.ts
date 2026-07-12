@@ -97,6 +97,7 @@ export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput)
         body: bodyJson,
         requestBody: body,
         accessToken: apiKey,
+        signal: req.signal,
       })
 
       if (!response.ok) {
@@ -162,6 +163,7 @@ interface CallOnceInput {
   /** 完整 request body 对象, 仅在 transport-level 失败时附进 ClaudeCodeApiError 用。 */
   requestBody: unknown
   accessToken: string
+  signal?: AbortSignal
 }
 
 interface CallOnceOutput {
@@ -173,6 +175,7 @@ async function callWithTransportRetry(input: CallOnceInput): Promise<CallOnceOut
     try {
       return await callOnce(input)
     } catch (err) {
+      if (input.signal?.aborted) throw err
       const retryable =
         err instanceof ClaudeCodeApiError && err.status === null && err.responseText === null
       if (!retryable || attempt >= TRANSPORT_MAX_RETRIES) throw err
@@ -198,11 +201,15 @@ async function callOnce(input: CallOnceInput): Promise<CallOnceOutput> {
     timeoutMs: HTTP_TIMEOUT_MS,
   })
   try {
+    const httpTimeoutSignal = AbortSignal.timeout(HTTP_TIMEOUT_MS)
+    const signal = input.signal
+      ? AbortSignal.any([input.signal, httpTimeoutSignal])
+      : httpTimeoutSignal
     const raw = await fetch(input.url, {
       method: 'POST',
       headers,
       body: input.body,
-      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+      signal,
     })
     const text = await raw.text()
     return { response: { status: raw.status, ok: raw.ok, text } }

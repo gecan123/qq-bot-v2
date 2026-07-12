@@ -28,7 +28,10 @@ export interface CreateOpenAIAgentLlmClientInput {
 interface OpenAIChatCompletionClient {
   chat: {
     completions: {
-      create(body: ChatCompletionCreateParamsNonStreaming): Promise<ChatCompletion>
+      create(
+        body: ChatCompletionCreateParamsNonStreaming,
+        options?: { signal?: AbortSignal },
+      ): Promise<ChatCompletion>
     }
   }
 }
@@ -38,12 +41,15 @@ export function createOpenAIAgentLlmClient(input: CreateOpenAIAgentLlmClientInpu
 
   return {
     async chat(req: LlmCallInput): Promise<LlmCallOutput> {
-      const response = await client.chat.completions.create(buildOpenAIAgentRequest({
-        model: input.model,
-        systemPrompt: req.systemPrompt,
-        messages: req.messages,
-        tools: req.tools,
-      }))
+      const response = await client.chat.completions.create(
+        buildOpenAIAgentRequest({
+          model: input.model,
+          systemPrompt: req.systemPrompt,
+          messages: req.messages,
+          tools: req.tools,
+        }),
+        req.signal ? { signal: req.signal } : undefined,
+      )
       return toLlmCallOutput(response, input.model, req.tools)
     },
   }

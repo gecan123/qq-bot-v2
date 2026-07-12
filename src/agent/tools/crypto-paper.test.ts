@@ -72,6 +72,15 @@ function fakeStore(overrides: Partial<CryptoPaperStore> = {}): CryptoPaperStore 
 }
 
 describe('crypto_paper tool', () => {
+  test('explicitly identifies paper trading as the simulation tool', () => {
+    const tool = createCryptoPaperTool({
+      store: fakeStore(),
+      quoteProvider: async () => { throw new Error('not called') },
+    })
+    assert.match(tool.description, /就是 Crypto 模拟盘（paper trading）工具/)
+    assert.match(tool.description, /不需要再等待或寻找另一个“模拟盘工具”/)
+  })
+
   test('returns a clearly local account and never claims live trading', async () => {
     const tool = createCryptoPaperTool({
       store: fakeStore(),

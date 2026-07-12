@@ -28,6 +28,7 @@ import {
   PersonaSpoofSelfTestMismatchError,
   runPersonaSpoofSelfTest,
 } from './agent/persona-spoof-self-test.js'
+import { createAgentTaskScheduler } from './agent/task-scheduler.js'
 
 const log = createLogger('APP')
 
@@ -81,8 +82,13 @@ async function main() {
 
   // 3. Agent 自己的 LLM 客户端 (走 default provider/model, 后续可以单独换)
   const llm = createLlmClient()
+  const taskScheduler = createAgentTaskScheduler()
+  const lifeJournalLlm = createLlmClient({
+    claudeThinking: { mode: 'disabled' },
+  })
   const lifeJournal = createLifeJournalRuntime({
-    llm,
+    llm: lifeJournalLlm,
+    taskScheduler,
   })
 
   // 3.5 启动期 persona-spoof 自检 (claude-code 路径专用): 若 cliproxy mode=auto
@@ -240,6 +246,7 @@ async function main() {
     initialMailboxCursors: persisted?.mailboxCursors ?? {},
     initialLastWakeAt: persisted?.lastWakeAt ?? null,
     lifeJournal,
+    taskScheduler,
   })
 
   // 10.5 把 system prompt 写到文件, 方便调试查看
@@ -262,8 +269,9 @@ async function main() {
       await agentLoopPromise
     },
     drainIngress: () => napcatLifecycle.drain(),
-    stopJobs: () => {
+    stopJobs: async () => {
       jobQueue.stop()
+      await taskScheduler.drain()
       removePidFile()
     },
     saveFinal: () => runtime.agent.flush(),

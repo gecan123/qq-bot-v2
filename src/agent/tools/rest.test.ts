@@ -83,6 +83,7 @@ describe('rest tool', () => {
     assert.match(tool.description, /不要只列等待外部消息/)
     assert.match(tool.description, /至少两个能立即用现有工具开始/)
     assert.match(tool.description, /没有实际尝试前不要立刻再次休息/)
+    assert.match(tool.description, /不是“今天全部完成”.*不要回顾已完成清单.*醒来后真能开始的新方向/)
   })
 
   test('already queued mentioned group message interrupts rest without consuming the event', async () => {

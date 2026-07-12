@@ -174,6 +174,7 @@ export function createWorkspaceFileTool(deps: WorkspaceFileToolDeps = {}): Tool<
     description: [
       '受控维护 Luna 的普通私有文本工作文件.',
       '支持 list/read/write/replace/delete/move; read 返回 revision, 修改已有文件必须携带最新 revision.',
+      '修改推荐顺序: 先 read 目标文件, 复制返回的 revision, 再 replace; invoke.args 必须是对象, 不要传 JSON 字符串或空对象.',
       '适合 notes、drafts、creative 等自建目录; journal/life/memory/skill-drafts/browser 等 managed path 必须走专用工具.',
       'cwd 已经是 data/agent-workspace, 路径不要再带 data/agent-workspace 前缀.',
     ].join(' '),

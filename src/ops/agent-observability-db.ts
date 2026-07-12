@@ -4,6 +4,7 @@ import { createLogger } from '../logger.js'
 import type { AgentMetricsFilters, AgentMetricsSummary } from './agent-metrics.js'
 import { summarizeAgentMetrics } from './agent-metrics.js'
 import type { AgentTokenOperation } from '../agent/token-stats.js'
+import { formatBeijingIso } from '../utils/beijing-time.js'
 
 const log = createLogger('AGENT_OBSERVABILITY_DB')
 
@@ -141,14 +142,14 @@ export async function queryPersistedAgentMetrics(
 
   return summarizeAgentMetrics({
     toolCallsNdjson: toolRows.map((row) => JSON.stringify({
-      ts: row.ts.toISOString(),
+      ts: formatBeijingIso(row.ts),
       toolName: row.toolName,
       ok: row.ok,
       sideEffect: row.sideEffect,
       durationMs: row.durationMs,
     })).join('\n'),
     tokenUsageNdjson: tokenRows.map((row) => JSON.stringify({
-      ts: row.ts.toISOString(),
+      ts: formatBeijingIso(row.ts),
       operation: row.operation,
       model: row.model,
       inputTokens: row.inputTokens,

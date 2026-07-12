@@ -17,7 +17,7 @@ describe('group mute inspector', () => {
 
     assert.deepEqual(await inspector.inspect(456), {
       muted: true,
-      mutedUntil: new Date(1_700_000_000 * 1000).toISOString(),
+      mutedUntil: '2023-11-15T06:13:20.000+08:00',
     })
   })
 

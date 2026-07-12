@@ -6,6 +6,7 @@ import { config } from '../../config/index.js'
 import { logFetch } from '../../ops/fetch-log.js'
 import { createLogger } from '../../logger.js'
 import { createLlmClient } from '../llm-client.js'
+import { formatBeijingIso } from '../../utils/beijing-time.js'
 
 const log = createLogger('TOOL_FETCH_URL')
 
@@ -230,7 +231,7 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
       const fetchDurationMs = Date.now() - startedAt
 
       const baseLog = {
-        ts: now().toISOString(),
+        ts: formatBeijingIso(now()),
         source: 'url',
         url: args.url,
         status: outcome.status,

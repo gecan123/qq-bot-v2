@@ -4,6 +4,7 @@ import type { Message } from '../generated/prisma/client.js'
 import type { ParsedSegment } from '../types/message-segments.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
 import { createLogger } from '../logger.js'
+import { formatBeijingIso } from '../utils/beijing-time.js'
 
 const log = createLogger('DB')
 
@@ -154,7 +155,7 @@ function sanitizeJsonValue(value: unknown): Prisma.InputJsonValue | null | undef
   }
 
   if (value instanceof Date) {
-    return value.toISOString()
+    return formatBeijingIso(value)
   }
 
   if (typeof value === 'object') {

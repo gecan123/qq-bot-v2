@@ -1,6 +1,7 @@
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { pino } from 'pino'
+import { formatBeijingIso } from './utils/beijing-time.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, '..')
@@ -11,9 +12,7 @@ const fileLogEnabled = process.env.LOG_FILE_ENABLED !== 'false'
 type TransportTarget = { target: string; options: Record<string, unknown>; level: string }
 type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'fatal'
 
-// sv-SE locale produces "YYYY-MM-DD HH:MM:SS" — clean and sortable
-const beijingTimestamp = () =>
-  `,"time":"${new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' })}"`
+const beijingTimestamp = () => `,"time":"${formatBeijingIso(new Date())}"`
 
 const targets: TransportTarget[] = [
   {

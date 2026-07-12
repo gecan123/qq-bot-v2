@@ -8,6 +8,7 @@ import { computeMediaHash } from '../../media/media-hash.js'
 import { compressForContext } from '../../media/compress-for-context.js'
 import type { ImageProduceResult } from '../../media/image-handle-schema.js'
 import { createLogger } from '../../logger.js'
+import { formatBeijingIso } from '../../utils/beijing-time.js'
 
 const log = createLogger('TOOL_DOWNLOAD_IMAGE')
 
@@ -79,7 +80,7 @@ export function createDownloadImageTool(
       const startedAt = Date.now()
 
       const baseLog = {
-        ts: now().toISOString(),
+        ts: formatBeijingIso(now()),
         source: 'download_image',
         url: args.url,
         toolCallId: `round-${ctx.roundIndex}`,

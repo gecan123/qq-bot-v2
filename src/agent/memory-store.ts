@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join, normalize, resolve } from 'node:path'
+import { compareTimestampsDesc, formatBeijingCompact, formatBeijingIso } from '../utils/beijing-time.js'
 
 export type MemoryScope = 'self' | 'person' | 'group' | 'topic'
 
@@ -137,7 +138,8 @@ export async function writeMemoryEntry(
   input: WriteMemoryInput,
 ): Promise<MemoryWriteResult> {
   const now = options.now?.() ?? new Date()
-  const entryId = options.id?.() ?? `mem_${now.toISOString().replace(/[-:.TZ]/g, '')}_${randomUUID().slice(0, 8)}`
+  const nowIso = formatBeijingIso(now)
+  const entryId = options.id?.() ?? `mem_${formatBeijingCompact(now)}_${randomUUID().slice(0, 8)}`
   const relativeFile = fileForInput(input)
   const absoluteFile = safeMemoryFile(options.rootDir, relativeFile)
   await mkdir(dirname(absoluteFile), { recursive: true })
@@ -147,12 +149,12 @@ export async function writeMemoryEntry(
   const base = replaceUpdatedAt(
     existing && parseMarkdownMemory(existing)
       ? existing
-      : renderNewFile(input.scope, title, now.toISOString()),
-    now.toISOString(),
+      : renderNewFile(input.scope, title, nowIso),
+    nowIso,
   )
   const raw = `${base.trimEnd()}\n${renderMemoryEntry({
     id: entryId,
-    createdAt: now.toISOString(),
+    createdAt: nowIso,
     content: input.content.trim(),
     sourceMessageIds: input.sourceMessageIds ?? [],
   })}`
@@ -190,7 +192,7 @@ export async function searchMemoryEntries(
     })
   }
 
-  matches.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '') || a.file.localeCompare(b.file))
+  matches.sort((a, b) => compareTimestampsDesc(a.updatedAt, b.updatedAt) || a.file.localeCompare(b.file))
   return { ok: true, matches: matches.slice(0, limit), skippedCorrupt }
 }
 
@@ -269,7 +271,7 @@ export async function compactMemoryEntries(
     throw new MemoryStoreError('invalid_selection', 'compact requires at least two distinct memory entry ids')
   }
   const now = options.now?.() ?? new Date()
-  const entryId = options.id?.() ?? `mem_${now.toISOString().replace(/[-:.TZ]/g, '')}_${randomUUID().slice(0, 8)}`
+  const entryId = options.id?.() ?? `mem_${formatBeijingCompact(now)}_${randomUUID().slice(0, 8)}`
   const result = await mutateMemoryFile(options, input.file, input.expectedRevision, (raw, entries) => {
     const selected = entries.filter((entry) => input.entryIds.includes(entry.id))
     if (selected.length !== input.entryIds.length) {
@@ -279,7 +281,7 @@ export async function compactMemoryEntries(
     const selectedStarts = new Set(selected.map((entry) => entry.start))
     const compacted = renderMemoryEntry({
       id: entryId,
-      createdAt: now.toISOString(),
+      createdAt: formatBeijingIso(now),
       content: input.content.trim(),
       sourceMessageIds: [...new Set(selected.flatMap((entry) => entry.sourceMessageIds))],
     })
@@ -324,7 +326,7 @@ export async function listMemoryFiles(
     })
   }
 
-  matches.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '') || a.file.localeCompare(b.file))
+  matches.sort((a, b) => compareTimestampsDesc(a.updatedAt, b.updatedAt) || a.file.localeCompare(b.file))
   const limit = Math.min(Math.max(1, input.limit ?? DEFAULT_LIST_LIMIT), MAX_LIST_LIMIT)
   return {
     ok: true,
@@ -538,7 +540,7 @@ async function mutateMemoryFile(
     throw new MemoryStoreError('revision_conflict', 'memory file changed; read it again and retry with the latest revision')
   }
   const now = options.now?.() ?? new Date()
-  const next = `${replaceUpdatedAt(mutate(raw, parseMemoryEntries(raw)), now.toISOString()).trimEnd()}\n`
+  const next = `${replaceUpdatedAt(mutate(raw, parseMemoryEntries(raw)), formatBeijingIso(now)).trimEnd()}\n`
   await atomicWrite(path, next)
   return { ok: true, file, entryId, revision: revisionOf(next) }
 }

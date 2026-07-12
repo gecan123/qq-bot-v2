@@ -54,7 +54,7 @@ export function createBotSnapshotRepo(): BotSnapshotRepo {
       const fingerprint = JSON.stringify({
         snapshot: input.snapshot,
         mailboxCursors: input.mailboxCursors,
-        lastWakeAt: input.lastWakeAt?.toISOString() ?? null,
+        lastWakeAtMs: input.lastWakeAt?.getTime() ?? null,
       })
       if (fingerprint === lastFingerprint) {
         return

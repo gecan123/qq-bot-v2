@@ -1,5 +1,6 @@
 import { napcat } from '../bot/napcat.js'
 import { config } from '../config/index.js'
+import { formatBeijingIso } from '../utils/beijing-time.js'
 
 export interface GroupMuteInspection {
   muted: boolean
@@ -29,7 +30,7 @@ export function createGroupMuteInspector(deps: GroupMuteInspectorDeps): GroupMut
 
       const mutedUntilDate = new Date(selfEntry.shutUpTime * 1000)
       const mutedUntil = Number.isFinite(mutedUntilDate.getTime())
-        ? mutedUntilDate.toISOString()
+        ? formatBeijingIso(mutedUntilDate)
         : undefined
       return {
         muted: true,

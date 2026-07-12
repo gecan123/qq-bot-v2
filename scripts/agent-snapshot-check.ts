@@ -2,6 +2,7 @@ import 'dotenv/config'
 import { prisma } from '../src/database/client.js'
 import { validateBotSnapshotIntegrity } from '../src/agent/snapshot-integrity.js'
 import type { PersistedAgentSnapshot } from '../src/agent/agent-context.types.js'
+import { formatBeijingIso } from '../src/utils/beijing-time.js'
 
 try {
   const row = await prisma.botAgentSnapshot.findUnique({
@@ -24,7 +25,7 @@ try {
 
   console.log(JSON.stringify({
     status: 'checked',
-    snapshotUpdatedAt: row.updatedAt.toISOString(),
+    snapshotUpdatedAt: formatBeijingIso(row.updatedAt),
     ...result,
   }, null, 2))
 

@@ -3,6 +3,7 @@ import type { BotEvent } from './event.js'
 import type { Message } from '../generated/prisma/client.js'
 import { ensureMessageReadyForAgent as defaultEnsureReady } from '../media/ensure-message-ready.js'
 import { createLogger } from '../logger.js'
+import { formatBeijingIso } from '../utils/beijing-time.js'
 import {
   MAILBOX_BACKLOG_RECENT_LIMIT,
   MAILBOX_BACKLOG_THRESHOLD,
@@ -288,7 +289,7 @@ function logReplayResult(
       enqueued: result.enqueued,
       skippedDuplicates: result.skippedDuplicates,
       cursorSources,
-      legacySince: legacyLastWakeAt?.toISOString() ?? null,
+      legacySince: legacyLastWakeAt ? formatBeijingIso(legacyLastWakeAt) : null,
     },
     '回放关机期间消息',
   )

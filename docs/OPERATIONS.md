@@ -49,6 +49,7 @@ pnpm toollogf
 - `pnpm dev` 使用 watch 模式，文件变化会重启；`pnpm dev:once` 单次启动，不监听文件变化。
 - `pnpm tick` 会读取 `.bot.pid`，向进程发送 `SIGUSR1`，并注入一个仅供人工调试的 curiosity tick。正常自主循环由 Agent 的 `pause` 计时和 BotLoop 连续运行驱动，不依赖这个命令。
 - logs 写在 `logs/` 下，是运维证据，不是 replay 输入。
+- 仓库对外展示的机器可读时间统一为北京时间 `YYYY-MM-DDTHH:mm:ss.SSS+08:00`；PostgreSQL `timestamptz` 仍保存绝对时刻。
 - 启动时当前 system prompt 会写入 `logs/system-prompt.txt`，便于检查。
 - 启动恢复会先连接 NapCat，并等待首次群历史 backfill 的所有来源尝试完成，再执行 missed-message replay；单群补拉失败记录 source-level error，其余来源和 replay 继续。
 - `SIGINT` / `SIGTERM` 会触发幂等 graceful shutdown：停止 ingress 和 Agent、等待当前 round、drain backfill、停止 jobs、保存最终 snapshot，最后断开数据库。单阶段超时或失败会记录 `shutdown_phase_failed`，并继续后续清理。

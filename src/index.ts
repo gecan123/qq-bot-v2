@@ -3,6 +3,7 @@ import { prisma } from './database/client.js'
 import { connectNapcat, registerNapcatHandlers, type IngestedMessage } from './bot/core.js'
 import { napcat } from './bot/napcat.js'
 import { createLogger } from './logger.js'
+import { formatBeijingDateTime, formatBeijingIso } from './utils/beijing-time.js'
 import { jobQueue } from './queue/index.js'
 import { setLlmProvider } from './llm/provider.js'
 import { CLAUDE_CODE_PROVIDER_NAME, config } from './config/index.js'
@@ -134,7 +135,7 @@ async function main() {
       {
         messages: persisted.snapshot.messages.length,
         mailboxSources: Object.keys(persisted.mailboxCursors).length,
-        lastWakeAt: persisted.lastWakeAt?.toISOString() ?? null,
+        lastWakeAt: persisted.lastWakeAt ? formatBeijingIso(persisted.lastWakeAt) : null,
       },
       '从持久化 snapshot 恢复 AgentContext',
     )
@@ -252,7 +253,7 @@ async function main() {
   // 10.5 把 system prompt 写到文件, 方便调试查看
   {
     const now = new Date()
-    const beijingTime = now.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
+    const beijingTime = formatBeijingDateTime(now)
     const header = `=== System Prompt (${beijingTime} 北京时间) ===\n\n`
     mkdirSync('logs', { recursive: true })
     writeFileSync('logs/system-prompt.txt', header + runtime.systemPrompt + '\n', 'utf-8')

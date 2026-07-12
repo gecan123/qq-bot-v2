@@ -45,13 +45,13 @@ describe('workspace journal store', () => {
     assert.match(raw, /^# Diary 2026-06/)
     assert.match(raw, /<!-- journal-entry/)
     assert.match(raw, /id: entry-1/)
-    assert.match(raw, /createdAt: 2026-06-23T01:02:03.000Z/)
+    assert.match(raw, /createdAt: 2026-06-23T09:02:03.000\+08:00/)
     assert.match(raw, /今天整理了一点自己的想法/)
     assert.deepEqual(entry, {
       id: 'entry-1',
       kind: 'diary',
       content: '今天整理了一点自己的想法',
-      createdAt: '2026-06-23T01:02:03.000Z',
+      createdAt: '2026-06-23T09:02:03.000+08:00',
     })
   })
 
@@ -65,7 +65,7 @@ describe('workspace journal store', () => {
       id: 'stable-id',
       kind: 'dream',
       content: '梦见在海底走路',
-      createdAt: '2026-06-23T01:02:03.000Z',
+      createdAt: '2026-06-23T09:02:03.000+08:00',
     })
   })
 
@@ -115,7 +115,7 @@ describe('workspace journal store', () => {
       id: 'a',
       kind: 'diary',
       content: 'Alpha beta',
-      createdAt: '2026-06-22T01:00:00.000Z',
+      createdAt: '2026-06-22T09:00:00.000+08:00',
     })
   })
 

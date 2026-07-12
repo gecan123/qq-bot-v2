@@ -18,6 +18,7 @@ import {
 import { buildBrowserActionLogEntry, logBrowserAction } from './action-log.js'
 import { classifyBrowserActionRisk, classifyDownload } from './risk.js'
 import { createLogger } from '../logger.js'
+import { formatBeijingIso } from '../utils/beijing-time.js'
 import { createTaskScheduler, type TaskScheduler } from '../agent/task-scheduler.js'
 
 const log = createLogger('BROWSER_CONTROLLER')
@@ -410,7 +411,7 @@ export class BrowserController {
     const domain = safeFileName(new URL(url).hostname || 'unknown')
     const artifactId = input.artifactId ?? `note_${timestampId()}`
     const artifactPath = resolve(this.config.artifactDir, 'annotations', domain, `${artifactId}.md`)
-    const body = [`# Browser Annotation`, '', `- URL: ${url}`, `- Title: ${await safeTitle(record.page)}`, `- Time: ${new Date().toISOString()}`, '', input.text, ''].join('\n')
+    const body = [`# Browser Annotation`, '', `- URL: ${url}`, `- Title: ${await safeTitle(record.page)}`, `- Time: ${formatBeijingIso(new Date())}`, '', input.text, ''].join('\n')
     await mkdir(dirname(artifactPath), { recursive: true })
     await writeFile(artifactPath, body, 'utf8')
     this.scheduleArtifactPrune()
@@ -550,7 +551,7 @@ export class BrowserController {
         active: record.active,
         loadState: record.loadState,
         closed,
-        lastUsedAt: record.lastUsedAt.toISOString(),
+        lastUsedAt: formatBeijingIso(record.lastUsedAt),
       })
     }
     return summaries
@@ -652,7 +653,7 @@ async function safeTitle(page: Page): Promise<string> {
 }
 
 function timestampId(): string {
-  return new Date().toISOString().replace(/[:.]/g, '-')
+  return formatBeijingIso(new Date()).replace(/[:.]/g, '-')
 }
 
 function safeFileName(value: string): string {

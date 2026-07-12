@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { appendFile, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { formatBeijingCompact, formatBeijingIso } from '../utils/beijing-time.js'
 
 export interface LifeJournalStoreOptions {
   rootDir: string
@@ -103,7 +104,7 @@ function revisionOf(content: string): string {
 
 function createEntryId(options: LifeJournalStoreOptions, date: Date): string {
   if (options.id) return options.id()
-  return `lj_${date.toISOString().replace(/[-:.TZ]/g, '')}_${randomUUID().slice(0, 8)}`
+  return `lj_${formatBeijingCompact(date)}_${randomUUID().slice(0, 8)}`
 }
 
 function renderEntry(entry: LifeJournalEntry): string {
@@ -267,7 +268,7 @@ export async function appendLifeJournalEntry(
     heading,
     markdown: options.markdown,
     source: options.roundIndex == null ? 'manual' : 'round',
-    createdAt: now.toISOString(),
+    createdAt: formatBeijingIso(now),
     ...(options.roundIndex == null ? {} : { roundIndex: options.roundIndex }),
   }), 'utf8')
   return { path, heading, entryId }
@@ -336,7 +337,7 @@ export async function compactLifeJournalEntries(
     heading: `## ${time} Compact`,
     markdown: options.markdown,
     source: 'compact',
-    createdAt: now.toISOString(),
+    createdAt: formatBeijingIso(now),
   }
   const firstStart = Math.min(...selected.map((entry) => entry.start))
   const selectedByStart = new Map(selected.map((entry) => [entry.start, entry]))

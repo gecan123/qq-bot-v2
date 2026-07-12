@@ -2,6 +2,7 @@ import { appendFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
+import { formatBeijingIso } from '../utils/beijing-time.js'
 
 const log = createLogger('TOKEN_STATS')
 
@@ -31,7 +32,7 @@ export function recordTokenUsage(entry: TokenUsageEntry): void {
       : null
 
   const event = {
-    ts: new Date().toISOString(),
+    ts: formatBeijingIso(new Date()),
     operation: entry.operation,
     ...(entry.roundIndex != null ? { roundIndex: entry.roundIndex } : {}),
     inputTokens: entry.inputTokens,

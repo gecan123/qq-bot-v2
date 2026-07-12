@@ -10,7 +10,7 @@ describe('browser action log', () => {
       action: { action: 'type', text: '123456', elementId: 'password' },
       result: { ok: false, action: 'type', code: 'requires_owner_help', risk: 'high' },
     })
-    assert.equal(entry.ts, '2026-06-01T00:00:00.000Z')
+    assert.equal(entry.ts, '2026-06-01T08:00:00.000+08:00')
     assert.deepEqual(entry.argsSummary, { action: 'type', text: '[REDACTED]', elementId: 'password' })
   })
 

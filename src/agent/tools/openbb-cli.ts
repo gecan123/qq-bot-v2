@@ -5,6 +5,7 @@ import type { Tool } from '../tool.js'
 import { config } from '../../config/index.js'
 import { logFetch } from '../../ops/fetch-log.js'
 import { createLogger } from '../../logger.js'
+import { formatBeijingIso } from '../../utils/beijing-time.js'
 
 const log = createLogger('TOOL_OPENBB_CLI')
 
@@ -271,7 +272,7 @@ export function createOpenbbCliTool(deps: OpenbbCliDeps = {}): Tool<Args> {
       const status = result.exitCode ?? -1
       const bytes = Buffer.byteLength(output, 'utf8')
       const baseLog = {
-        ts: now().toISOString(),
+        ts: formatBeijingIso(now()),
         source: 'openbb_cli',
         url: args.command,
         status,

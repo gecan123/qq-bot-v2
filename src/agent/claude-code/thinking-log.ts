@@ -1,6 +1,7 @@
 import { appendFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { createLogger } from '../../logger.js'
+import { formatBeijingIso } from '../../utils/beijing-time.js'
 import type { ClaudeAssistantNativeBlock } from '../agent-context.types.js'
 
 const log = createLogger('CLAUDE_THINKING_LOG')
@@ -70,7 +71,7 @@ function rawEntry(
   toolCallIds: string[],
 ): Record<string, unknown> {
   return {
-    ts: new Date().toISOString(),
+    ts: formatBeijingIso(new Date()),
     model,
     blockIndex,
     type: block.type,
@@ -89,7 +90,7 @@ function summaryEntry(
   toolCallIds: string[],
 ): Record<string, unknown> {
   return {
-    ts: new Date().toISOString(),
+    ts: formatBeijingIso(new Date()),
     model,
     blockIndex,
     type: block.type,

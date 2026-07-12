@@ -1,4 +1,5 @@
 import type { BotEvent } from './event.js'
+import { formatBeijingIso } from '../utils/beijing-time.js'
 
 export type MailboxCursors = Record<string, number>
 export const MAILBOX_BACKLOG_THRESHOLD = 100
@@ -81,8 +82,8 @@ export function renderMailboxNotification(
   const afterRowId = Math.max(0, first.messageRowId - 1)
   const throughRowId = last.messageRowId
   const timeRange = {
-    from: first.sentAt.toISOString(),
-    to: last.sentAt.toISOString(),
+    from: formatBeijingIso(first.sentAt),
+    to: formatBeijingIso(last.sentAt),
   }
   const source = first.type === 'napcat_private_message'
     ? {
@@ -131,8 +132,8 @@ export function renderMailboxBacklogNotification(event: MailboxBacklogEvent): st
     throughRowId: event.throughRowId,
     senderCount: event.senderCount,
     timeRange: {
-      from: event.timeRange.from.toISOString(),
-      to: event.timeRange.to.toISOString(),
+      from: formatBeijingIso(event.timeRange.from),
+      to: formatBeijingIso(event.timeRange.to),
     },
     readArgs: readArgsForSource(event.source, Math.max(0, event.firstRowId - 1)),
     latestReadArgs: {

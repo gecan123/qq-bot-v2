@@ -1,5 +1,6 @@
 import { prisma } from './client.js'
 import { createLogger } from '../logger.js'
+import { formatBeijingIso } from '../utils/beijing-time.js'
 
 const log = createLogger('RETENTION')
 
@@ -25,7 +26,7 @@ export async function purgeOldData(): Promise<void> {
   ])
 
   log.info(
-    { cutoff: cutoff.toISOString(), deletedMessages: messageCount, deletedMedia: mediaCount },
+    { cutoff: formatBeijingIso(cutoff), deletedMessages: messageCount, deletedMedia: mediaCount },
     '过期数据清理完成',
   )
 }

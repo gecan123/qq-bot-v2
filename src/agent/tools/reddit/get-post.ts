@@ -3,6 +3,7 @@ import type { Tool } from '../../tool.js'
 import { config } from '../../../config/index.js'
 import { logFetch } from '../../../ops/fetch-log.js'
 import { createLogger } from '../../../logger.js'
+import { formatBeijingIso } from '../../../utils/beijing-time.js'
 import {
   DEFAULT_USER_AGENT,
   type RedditFetchDeps,
@@ -156,7 +157,7 @@ export function createGetRedditPostTool(deps: RedditFetchDeps = {}): Tool<Args> 
       const durationMs = Date.now() - startedAt
 
       const baseLog = {
-        ts: now().toISOString(),
+        ts: formatBeijingIso(now()),
         source: 'reddit_post',
         url: rssUrl,
         status: outcome.status,

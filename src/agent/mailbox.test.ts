@@ -128,8 +128,8 @@ describe('mailbox disclosure planning', () => {
       throughRowId: 12,
       senderCount: 2,
       timeRange: {
-        from: '2026-07-03T01:02:03.000Z',
-        to: '2026-07-03T01:03:04.000Z',
+        from: '2026-07-03T09:02:03.000+08:00',
+        to: '2026-07-03T09:03:04.000+08:00',
       },
       readArgs: { action: 'read', source: 'group', groupId: 111, afterRowId: 9 },
     })

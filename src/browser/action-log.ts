@@ -1,6 +1,7 @@
 import { appendFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { createLogger } from '../logger.js'
+import { formatBeijingIso } from '../utils/beijing-time.js'
 import type { BrowserActionInput, BrowserActionJsonResult } from './protocol.js'
 import { redactBrowserValue } from './risk.js'
 
@@ -64,7 +65,7 @@ export function buildBrowserActionLogEntry(input: {
     argsSummary.text = '[REDACTED]'
   }
   return {
-    ts: (input.now?.() ?? new Date()).toISOString(),
+    ts: formatBeijingIso(input.now?.() ?? new Date()),
     action: input.action.action,
     ...(input.action.pageId ? { pageId: input.action.pageId } : {}),
     ...(input.result.url ? { url: input.result.url } : {}),

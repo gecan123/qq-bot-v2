@@ -16,6 +16,7 @@
 - compaction 改写以及随后可能发生的 sticker-pool 注入完成后必须立即保存 snapshot，不能依赖下一轮顺带持久化。
 - system prompt 字节和 tool description 会影响 cache identity。修改时要有意、集中处理。
 - replay 必须确定性。同样输入下，snapshot message 字节应当跨运行稳定。
+- LLM、工具结果、运行日志、运维输出和 bot 自管 Markdown 中的时间统一使用北京时间。机器可读字段采用 `YYYY-MM-DDTHH:mm:ss.SSS+08:00`；数据库仍使用 `timestamptz` 保存绝对时刻，不把展示时区写进数据库语义。
 - 大块外部内容必须通过有边界的 tool result、摘要或受控文件路径进入。raw pages、feeds、长文件和可变日志不能直接注入主 context。
 - `ToolExecutionResult.content` 是唯一进入 `AgentContext` 的工具结果。`outcome` 和 `effects` 只服务当前运行时的日志、分支和 EffectInterpreter，不得 append、持久化或用于 replay 重建。
 - 可供下一轮机器判断的 tool result 使用稳定 JSON；截断必须发生在字段或数组条目层，并用显式标记披露，不能直接切断序列化后的 JSON。

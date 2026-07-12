@@ -5,6 +5,7 @@ import type { AssistantToolCall, ToolResultContent } from './agent-context.types
 import { isSideEffectTool, logToolCall, summarizeToolArgs } from '../ops/tool-call-log.js'
 import { stripNullsFromOptionalFields, zodToToolJsonSchema } from './tool-schema.js'
 import { createLogger } from '../logger.js'
+import { formatBeijingIso } from '../utils/beijing-time.js'
 
 const log = createLogger('TOOL_EXECUTOR')
 
@@ -612,7 +613,7 @@ async function traceToolCall(
   const finishedAt = trace.clockMs?.() ?? Date.now()
   const classified = classifyToolResult(result, forcedError)
   const entry = {
-    ts: (trace.now?.() ?? new Date()).toISOString(),
+    ts: formatBeijingIso(trace.now?.() ?? new Date()),
     toolCallId: call.id,
     toolName: call.name,
     roundIndex,

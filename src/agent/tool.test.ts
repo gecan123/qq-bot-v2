@@ -56,7 +56,7 @@ describe('createToolExecutor', () => {
 
     assert.equal(writes.length, 1)
     const entry = JSON.parse(writes[0]!.trim())
-    assert.equal(entry.ts, '2026-05-25T12:00:00.000Z')
+    assert.equal(entry.ts, '2026-05-25T20:00:00.000+08:00')
     assert.equal(entry.toolCallId, 'call_1')
     assert.equal(entry.toolName, 'send_message')
     assert.equal(entry.roundIndex, 7)

@@ -4,6 +4,7 @@ import { prisma } from '../../database/client.js'
 import { config } from '../../config/index.js'
 import type { Tool } from '../tool.js'
 import { runMoomooSkillCommand } from './moomoo-skill.js'
+import { formatBeijingIso } from '../../utils/beijing-time.js'
 
 const ACCOUNT_ID = 1
 const MAX_ORDERS = 100
@@ -139,7 +140,7 @@ function accountState(row: {
     realizedPnl: row.realizedPnl.toString(),
     feeRateBps: row.feeRateBps,
     generation: row.generation,
-    updatedAt: row.updatedAt.toISOString(),
+    updatedAt: formatBeijingIso(row.updatedAt),
   }
 }
 
@@ -175,9 +176,9 @@ function orderState(row: {
     cashAfter: row.cashAfter.toString(),
     positionQuantityAfter: row.positionQuantityAfter.toString(),
     status: row.status,
-    quoteTime: row.quoteTime?.toISOString() ?? null,
+    quoteTime: row.quoteTime ? formatBeijingIso(row.quoteTime) : null,
     note: row.note,
-    createdAt: row.createdAt.toISOString(),
+    createdAt: formatBeijingIso(row.createdAt),
   }
 }
 
@@ -463,7 +464,7 @@ export function createCryptoPaperTool(deps: {
               marketValue: marketValue.toString(),
               estimatedExitFee: estimatedExitFee.toString(),
               unrealizedPnl: unrealizedPnl.toString(),
-              quotedAt: quote.quotedAt.toISOString(),
+              quotedAt: formatBeijingIso(quote.quotedAt),
             }
           }))
           const liquidationValue = priced.reduce(

@@ -1,4 +1,5 @@
 import { prisma } from './client.js'
+import { formatBeijingIso } from '../utils/beijing-time.js'
 
 export type SqlParamValue = string | number | boolean | null
 
@@ -83,7 +84,7 @@ export function compileNamedSql(sql: string, params: Record<string, SqlParamValu
 
 function serializeCell(value: unknown): unknown {
   if (typeof value === 'bigint') return value.toString()
-  if (value instanceof Date) return value.toISOString()
+  if (value instanceof Date) return formatBeijingIso(value)
   if (Buffer.isBuffer(value)) return value.toString('base64')
   if (Array.isArray(value)) return value.map(serializeCell)
   if (value && typeof value === 'object') {

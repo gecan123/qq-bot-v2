@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { prisma } from '../../database/client.js'
 import { createLogger } from '../../logger.js'
+import { formatBeijingIso } from '../../utils/beijing-time.js'
 import type { Tool } from '../tool.js'
 
 const log = createLogger('INBOX')
@@ -165,7 +166,7 @@ function renderBoundedRead(
       rowId: row.id,
       mailbox: mailboxKeyForRow(row),
       messageId: String(row.messageId),
-      sentAt: (row.sentAt ?? row.createdAt).toISOString(),
+      sentAt: formatBeijingIso(row.sentAt ?? row.createdAt),
       senderId: String(row.senderId),
       senderName: row.senderGroupNickname ?? row.senderNickname ?? String(row.senderId),
       replyable: row.messageId > 0n,

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { appendFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { compareTimestampsDesc, formatBeijingCompact, formatBeijingIso, formatBeijingMonth } from '../utils/beijing-time.js'
 
 export type JournalKind = 'diary' | 'dream'
 
@@ -72,11 +73,11 @@ interface JournalFileSnapshot {
 }
 
 function generateId(now: Date): string {
-  return `${now.toISOString().replace(/[-:.TZ]/g, '')}-${randomUUID().slice(0, 8)}`
+  return `${formatBeijingCompact(now)}-${randomUUID().slice(0, 8)}`
 }
 
 function monthKey(date: Date): string {
-  return date.toISOString().slice(0, 7)
+  return formatBeijingMonth(date)
 }
 
 function journalFilePath(rootDir: string, kind: JournalKind, date: Date): string {
@@ -112,7 +113,7 @@ export async function appendJournalRecord(
     id: options.id?.() ?? generateId(now),
     kind: input.kind,
     content: input.content,
-    createdAt: now.toISOString(),
+    createdAt: formatBeijingIso(now),
   }
 
   const path = journalFilePath(options.rootDir, input.kind, now)
@@ -210,7 +211,7 @@ export async function compactJournalRecords(
     id: options.id?.() ?? generateId(now),
     kind: selected[0]!.entry.kind,
     content: options.content,
-    createdAt: now.toISOString(),
+    createdAt: formatBeijingIso(now),
   }
   const firstStart = Math.min(...selected.map((segment) => segment.start))
   const selectedStarts = new Set(selected.map((segment) => segment.start))
@@ -262,7 +263,7 @@ async function readEntries(rootDir: string): Promise<JournalEntriesResult> {
   }
 
   entries.sort((a, b) => {
-    const byTime = b.createdAt.localeCompare(a.createdAt)
+    const byTime = compareTimestampsDesc(a.createdAt, b.createdAt)
     if (byTime !== 0) return byTime
     return b.index - a.index
   })

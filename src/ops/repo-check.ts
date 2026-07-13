@@ -76,6 +76,7 @@ const WORKSPACE_BASH_SUBCOMMAND_MARKERS = [
   ['parseStyleCommand', 'style'],
   ['parseOpenbbCommand', 'openbb'],
   ['parseFetchCommand', 'fetch'],
+  ['parseMetricsCommand', 'metrics'],
 ] as const
 
 const SYSTEM_PROMPT_EXEMPT_WORKSPACE_BASH_SUBCOMMANDS = new Set(['openbb', 'fetch'])
@@ -134,6 +135,11 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   const agentMetrics = (scripts as Record<string, unknown>)['agent:metrics']
   if (agentMetrics !== 'tsx scripts/agent-metrics.ts') {
     errors.push('package.json must define scripts["agent:metrics"] as "tsx scripts/agent-metrics.ts"')
+  }
+
+  const agentDailyMetrics = (scripts as Record<string, unknown>)['agent:daily-metrics']
+  if (agentDailyMetrics !== 'tsx scripts/agent-daily-metrics.ts') {
+    errors.push('package.json must define scripts["agent:daily-metrics"] as "tsx scripts/agent-daily-metrics.ts"')
   }
 
   const agentMemoryCheck = (scripts as Record<string, unknown>)['agent:memory-check']

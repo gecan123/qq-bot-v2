@@ -33,6 +33,7 @@ pnpm lint
 pnpm repo-check
 pnpm agent:doctor
 pnpm agent:metrics
+pnpm agent:daily-metrics
 pnpm agent:memory-check
 pnpm agent:snapshot-check
 pnpm db:generate
@@ -290,6 +291,7 @@ VIBE_TRADING_RESULT_MAX_CHARS=12000
 - `pnpm agent:metrics <token-log> <tool-log> [app-log]` 可以汇总指定日志文件；省略 `app-log` 时自动读取当前 `logs/app*.log` 滚动文件。
 - token/cache 使用继续 best-effort 写入 Postgres `agent_token_usage`；工具调用只有 `BOT_TOOL_AUDIT_DB_ENABLED=true` 时写入 `agent_tool_calls`。写 DB 失败只记 warning，不影响 bot 执行。
 - `pnpm agent:metrics --db` 从 Postgres 汇总持久化事件；可加 `--from <iso> --to <iso> --tool <name> --operation <name> --model <name> --ok true|false --side-effect true|false` 做筛选。
+- `pnpm agent:daily-metrics` 按北京时间自然日统计真实 bot 的全部模型 tool call 与 token/cache，默认查今天并排除 `model=mock` 测试数据。`--date YYYY-MM-DD` 指定截止自然日，`--days N` 逐日返回包含截止日在内的最近 N 天（最多 31 天）；例如 `pnpm agent:daily-metrics -- --date 2026-07-13` 和 `pnpm agent:daily-metrics -- --days 7`。bot 内可通过 `workspace_bash` 的 `metrics today|yesterday|YYYY-MM-DD` 或 `metrics days <1-7>` 取得有界结构化数据。新日志会把 `invoke` 记成其实际请求的内部工具；旧日志无法展开时保留 `invoke` 并报告 `unresolvedInvokeCalls`。
 - `pnpm agent:snapshot-check` 只读检查当前 `bot_agent_snapshot`：验证 snapshot JSON 可序列化、assistant tool call 与 tool result 相邻匹配、JSON-like tool result 可解析、`activeToolCapabilities` 未混入 messages、mailbox cursor 与 continuity 元数据合法；输出 JSON，有错误时非零退出。runtime 启动还会执行同等完整性校验；current 损坏时只尝试最新 3 份 checkpoint，全部无效则 fail closed，不从消息或日志重建 prompt history。
 
 ## Git

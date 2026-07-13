@@ -6,7 +6,7 @@ import { InMemoryEventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { LlmClient, LlmCallInput, LlmCallOutput } from './llm-client.js'
 import type { Tool, ToolExecutionResult, ToolExecutor } from './tool.js'
-import { LlmOutputTruncatedError, runReactRound } from './react-kernel.js'
+import { LlmOutputTruncatedError, resolveEffectiveToolName, runReactRound } from './react-kernel.js'
 
 function makeTool(name: string, schema = z.object({})): Tool {
   return {
@@ -20,6 +20,12 @@ function makeTool(name: string, schema = z.object({})): Tool {
 }
 
 describe('runReactRound', () => {
+  test('resolves invoke to its requested deferred tool for observability', () => {
+    assert.equal(resolveEffectiveToolName({ id: '1', name: 'invoke', args: { tool: 'browser', args: {} } }), 'browser')
+    assert.equal(resolveEffectiveToolName({ id: '2', name: 'invoke', args: {} }), 'invoke')
+    assert.equal(resolveEffectiveToolName({ id: '3', name: 'inbox', args: {} }), 'inbox')
+  })
+
   test('calls LLM with durable messages and visible tools, then appends assistant tool calls and tool results', async () => {
     const context = createAgentContext()
     context.appendUserMessage('hello')

@@ -26,6 +26,7 @@ const validFiles = {
       'repo-check': 'tsx scripts/repo-check.ts',
       'agent:doctor': 'tsx scripts/agent-doctor.ts',
       'agent:metrics': 'tsx scripts/agent-metrics.ts',
+      'agent:daily-metrics': 'tsx scripts/agent-daily-metrics.ts',
       'agent:memory-check': 'tsx scripts/agent-memory-check.ts',
       lint: 'pnpm typecheck && pnpm repo-check',
     },
@@ -57,13 +58,14 @@ const validFiles = {
     'function parseStyleCommand',
     'function parseOpenbbCommand',
     'function parseFetchCommand',
-    "topic?: 'workspace' | 'repo' | 'db' | 'style' | 'openbb' | 'fetch'",
+    'function parseMetricsCommand',
+    "topic?: 'workspace' | 'repo' | 'db' | 'style' | 'openbb' | 'fetch' | 'metrics'",
     "if (tokens[0] === 'help')",
   ].join('\n'),
   'prompts/bot-system.md': [
     '- help: 需要浏览器、金融数据、外部研究、图片生成/抓取时, 先 action=list/describe 查看 capability 和内部工具 schema, 再 action=activate 激活对应 capability.',
     '- invoke: 调用已激活 capability 内部工具时使用, 例如 tool=browser / web_search / fetch_content / generate_image / openbb_cli.',
-    '- workspace_bash: 不确定语法先用 `help`; 数据库用 `db schema` / `db query <json>`; 风格用 `style global [constraints|base|anti_patterns|special_cases]` / `style group <groupId>`; 只读查看自己仓库代码、做自审时用 cwd=repo.',
+    '- workspace_bash: 不确定语法先用 `help`; 数据库用 `db schema` / `db query <json>`; 每日统计用 `metrics today`; 风格用 `style global [constraints|base|anti_patterns|special_cases]` / `style group <groupId>`; 只读查看自己仓库代码、做自审时用 cwd=repo.',
     '- memory: 涉及具体人/群、关系、偏好、旧话题时先 action=search 翻私人笔记; 需要记下长期有用事实时 action=write.',
     '异步工具返回 taskId 后统一用 background_task action=list/get 查状态和结果',
   ].join('\n'),
@@ -77,7 +79,7 @@ const validFiles = {
   'docs/TOOLS.md': [
     '# Agent Tools',
     '`help` `invoke` `pause` `send_message` `generate_image` `background_task` `memory` `collect_sticker` `workspace_bash` `workspace_file` `browser` `web_search`',
-    '`help` `db` `style` `openbb` `fetch`',
+    '`help` `db` `style` `openbb` `fetch` `metrics`',
   ].join('\n'),
   'docs/OPERATIONS.md': '# Operations\n',
   'docs/TECH_DEBT.md': '# Technical Debt\n',
@@ -121,7 +123,7 @@ describe('runRepoChecks', () => {
       'docs/TOOLS.md': [
         '# Agent Tools',
         '`help` `invoke` `pause` `send_message` `generate_image` `background_task` `memory` `workspace_bash` `workspace_file` `browser` `web_search`',
-        '`help` `db` `style` `openbb` `fetch` `collect_sticker`',
+        '`help` `db` `style` `openbb` `fetch` `metrics` `collect_sticker`',
         '`collect_sticker` belongs under `workspace_bash` for sticker collection.',
       ].join('\n'),
     })
@@ -135,7 +137,7 @@ describe('runRepoChecks', () => {
       'docs/TOOLS.md': [
         '# Agent Tools',
         '`help` `invoke` `pause` `send_message` `generate_image` `background_task` `memory` `collect_sticker` `workspace_bash` `workspace_file` `browser` `web_search`',
-        '`help` `db` `style` `openbb` `fetch`',
+        '`help` `db` `style` `openbb` `fetch` `metrics`',
         '`collect_sticker` is not a `workspace_bash` subcommand.',
       ].join('\n'),
     })
@@ -156,6 +158,7 @@ describe('runRepoChecks', () => {
 
     assert.match(result.errors.join('\n'), /package\.json must define scripts\["agent:doctor"\]/)
     assert.match(result.errors.join('\n'), /package\.json must define scripts\["agent:metrics"\]/)
+    assert.match(result.errors.join('\n'), /package\.json must define scripts\["agent:daily-metrics"\]/)
     assert.match(result.errors.join('\n'), /package\.json must define scripts\["agent:memory-check"\]/)
   })
 

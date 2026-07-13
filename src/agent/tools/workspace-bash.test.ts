@@ -195,6 +195,35 @@ describe('workspace_bash command parser', () => {
     })
   })
 
+  test('accepts natural-day metrics queries in workspace mode', () => {
+    assert.deepEqual(parseWorkspaceBashCommand('metrics'), {
+      ok: true,
+      kind: 'metrics',
+      cwd: 'workspace',
+    })
+    assert.deepEqual(parseWorkspaceBashCommand('metrics yesterday'), {
+      ok: true,
+      kind: 'metrics',
+      cwd: 'workspace',
+      endOffsetDays: -1,
+    })
+    assert.deepEqual(parseWorkspaceBashCommand('metrics 2026-07-13'), {
+      ok: true,
+      kind: 'metrics',
+      cwd: 'workspace',
+      date: '2026-07-13',
+    })
+    assert.deepEqual(parseWorkspaceBashCommand('metrics days 7'), {
+      ok: true,
+      kind: 'metrics',
+      cwd: 'workspace',
+      days: 7,
+    })
+    assert.equal(parseWorkspaceBashCommand('metrics days 32').ok, false)
+    assert.equal(parseWorkspaceBashCommand('metrics days 8').ok, false)
+    assert.equal(parseWorkspaceBashCommand('metrics today', 'repo').ok, false)
+  })
+
   test('accepts read-only repo code inspection commands', () => {
     assert.deepEqual(parseWorkspaceBashCommand('rg "buildBotTools" src/agent/tools/index.ts', 'repo'), {
       ok: true,
@@ -483,6 +512,7 @@ describe('workspace_bash tool', () => {
     }
     assert.equal(overview.ok, true)
     assert.equal(overview.topics.includes('journal'), false)
+    assert.equal(overview.topics.includes('metrics'), true)
     assert.ok(overview.examples.includes('fetch reddit list technology hot 5'))
     assert.equal(runnerCalled, false)
   })
@@ -494,7 +524,35 @@ describe('workspace_bash tool', () => {
     assert.match(tool.description, /fetch reddit list technology hot 5/)
     assert.match(tool.description, /cwd=repo/)
     assert.match(tool.description, /db schema/)
+    assert.match(tool.description, /metrics today\|yesterday\|YYYY-MM-DD/)
     assert.doesNotMatch(tool.description, /journal write\|list\|search\|read/)
+  })
+
+  test('runs metrics through the internal loader without shelling out', async () => {
+    let runnerCalled = false
+    let received: unknown
+    const tool = createWorkspaceBashTool({
+      loadDailyMetrics: async (options) => {
+        received = options
+        return { timezone: 'Asia/Shanghai', reports: [{ date: '2026-07-13' }] }
+      },
+      runner: async () => {
+        runnerCalled = true
+        return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
+      },
+    })
+
+    const result = await tool.execute({ command: 'metrics 2026-07-13' }, makeCtx())
+
+    assert.deepEqual(received, { date: '2026-07-13' })
+    assert.deepEqual(JSON.parse(result.content as string), {
+      ok: true,
+      timezone: 'Asia/Shanghai',
+      reports: [{ date: '2026-07-13' }],
+      truncated: false,
+    })
+    assert.deepEqual(result.outcome, { ok: true })
+    assert.equal(runnerCalled, false)
   })
 
   test('runs db schema/query through the internal db tool without shelling out', async () => {

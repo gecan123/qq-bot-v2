@@ -116,6 +116,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
       roundIndex,
       toolCallCount: completion.toolCalls.length,
       toolNames: completion.toolCalls.map((c) => c.name),
+      effectiveToolNames: completion.toolCalls.map(resolveEffectiveToolName),
       contentLen: completion.content.length,
       inputTokens: completion.usage.inputTokens,
       cachedTokens: completion.usage.cachedTokens,
@@ -206,6 +207,17 @@ function recordCompletion(roundIndex: number, completion: LlmCallOutput): void {
     outputTokens: completion.usage.outputTokens,
     model: completion.model,
   })
+}
+
+/**
+ * invoke 是 deferred capability 的稳定壳；运维统计更关心它实际请求的内部工具。
+ * 参数不完整时保留 invoke，日报会把它标成 unresolved 而不是猜测。
+ */
+export function resolveEffectiveToolName(call: LlmCallOutput['toolCalls'][number]): string {
+  if (call.name !== 'invoke') return call.name
+  if (!call.args || typeof call.args !== 'object' || Array.isArray(call.args)) return call.name
+  const target = (call.args as Record<string, unknown>).tool
+  return typeof target === 'string' && target.trim().length > 0 ? target : call.name
 }
 
 function sumTokensUsed(completions: readonly LlmCallOutput[]): number {

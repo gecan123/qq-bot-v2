@@ -61,7 +61,7 @@ const argsSchema = z.object({
     .trim()
     .min(1)
     .max(2000)
-    .describe('受限 Bash 命令. workspace 和 repo 的普通文件命令只读; 内置 db/style/fetch/openbb/moomoo/ai_tone 子命令走专用 wrapper.'),
+    .describe('受限 Bash 命令. workspace 和 repo 的普通文件命令只读; 内置 db/style/fetch/openbb/moomoo/ai_tone/metrics 子命令走专用 wrapper.'),
 })
 
 type Args = {
@@ -132,11 +132,20 @@ export interface ParsedAiToneCommand {
   threshold?: number
 }
 
+export interface ParsedMetricsCommand {
+  ok: true
+  kind: 'metrics'
+  cwd: 'workspace'
+  date?: string
+  days?: number
+  endOffsetDays?: number
+}
+
 export interface ParsedHelpCommand {
   ok: true
   kind: 'help'
   cwd: 'workspace'
-  topic?: 'workspace' | 'repo' | 'db' | 'style' | 'openbb' | 'moomoo' | 'fetch' | 'ai_tone'
+  topic?: 'workspace' | 'repo' | 'db' | 'style' | 'openbb' | 'moomoo' | 'fetch' | 'ai_tone' | 'metrics'
 }
 
 export type ParsedWorkspaceBashCommand =
@@ -147,6 +156,7 @@ export type ParsedWorkspaceBashCommand =
   | ParsedMoomooCommand
   | ParsedFetchCommand
   | ParsedAiToneCommand
+  | ParsedMetricsCommand
   | ParsedHelpCommand
   | { ok: false; error: string }
 
@@ -184,6 +194,7 @@ export interface WorkspaceBashDeps {
   moomooTool?: Tool | null
   fetchTool?: Tool | null
   aiTonePredictor?: AiTonePredictor
+  loadDailyMetrics?: (options: { date?: string; days?: number; endOffsetDays?: number }) => Promise<unknown>
 }
 
 function shellTokens(command: string): string[] | null {
@@ -322,10 +333,39 @@ function parseHelpCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedHe
     || topic === 'moomoo'
     || topic === 'fetch'
     || topic === 'ai_tone'
+    || topic === 'metrics'
   ) {
     return { ok: true, kind: 'help', cwd: 'workspace', topic }
   }
-  return { ok: false, error: 'help topic must be workspace, repo, db, style, openbb, moomoo, fetch, or ai_tone' }
+  return { ok: false, error: 'help topic must be workspace, repo, db, style, openbb, moomoo, fetch, ai_tone, or metrics' }
+}
+
+function parseMetricsCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedMetricsCommand | { ok: false; error: string } {
+  if (cwd !== 'workspace') return { ok: false, error: 'metrics is only available in workspace mode' }
+  if (tokens.length === 1 || (tokens.length === 2 && tokens[1] === 'today')) {
+    return { ok: true, kind: 'metrics', cwd: 'workspace' }
+  }
+  if (tokens.length === 2 && tokens[1] === 'yesterday') {
+    return { ok: true, kind: 'metrics', cwd: 'workspace', endOffsetDays: -1 }
+  }
+  if (tokens.length === 2 && isCalendarDate(tokens[1])) {
+    return { ok: true, kind: 'metrics', cwd: 'workspace', date: tokens[1] }
+  }
+  if (tokens.length === 3 && tokens[1] === 'days' && /^\d+$/.test(tokens[2] ?? '')) {
+    const days = Number(tokens[2])
+    if (days >= 1 && days <= 7) return { ok: true, kind: 'metrics', cwd: 'workspace', days }
+  }
+  return {
+    ok: false,
+    error: 'metrics command must be `metrics`, `metrics today`, `metrics yesterday`, `metrics YYYY-MM-DD`, or `metrics days <1-7>`',
+  }
+}
+
+function isCalendarDate(value: string | undefined): value is string {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const parsed = Date.parse(`${value}T00:00:00+08:00`)
+  return Number.isFinite(parsed)
+    && new Date(parsed + 8 * 60 * 60 * 1000).toISOString().slice(0, 10) === value
 }
 
 function parseDbToolCommand(
@@ -609,6 +649,10 @@ export function parseWorkspaceBashCommand(
     return parseAiToneCommand(tokens, cwd)
   }
 
+  if (tokens[0] === 'metrics') {
+    return parseMetricsCommand(tokens, cwd)
+  }
+
   const executable = tokens[0]!
   const allowed = cwd === 'repo' ? REPO_READ_COMMANDS : WORKSPACE_COMMANDS
   if (!allowed.has(executable)) {
@@ -738,6 +782,16 @@ function renderHelpCommand(parsed: ParsedHelpCommand): WorkspaceBashRunResult {
         'ai_tone \'{"text":"要判断的中文文本","threshold":0.7}\'',
       ],
     },
+    metrics: {
+      purpose: '按北京时间自然日查询真实 bot 的工具调用和 token/cache 使用；默认排除 model=mock 测试数据.',
+      commands: [
+        'metrics',
+        'metrics today',
+        'metrics yesterday',
+        'metrics YYYY-MM-DD',
+        'metrics days <1-7>',
+      ],
+    },
   } as const
   const payload = parsed.topic
     ? { ok: true, topic: parsed.topic, ...topics[parsed.topic] }
@@ -749,6 +803,7 @@ function renderHelpCommand(parsed: ParsedHelpCommand): WorkspaceBashRunResult {
         'fetch url https://example.com "要点"',
         'fetch reddit list technology hot 5',
         'db schema',
+        'metrics today',
       ],
     }
 
@@ -857,6 +912,59 @@ function renderAiToneResult(result: AiTonePrediction): string {
   return JSON.stringify({ ok: true, ...result })
 }
 
+function renderMetricsResult(result: unknown, maxChars: number): string {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return JSON.stringify({ ok: true, reports: [], truncated: false })
+  }
+  const raw = result as Record<string, unknown>
+  const reports = Array.isArray(raw.reports)
+    ? raw.reports.map((value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+      const report = value as Record<string, unknown>
+      const tokenUsage = report.tokenUsage && typeof report.tokenUsage === 'object' && !Array.isArray(report.tokenUsage)
+        ? (report.tokenUsage as Record<string, unknown>).total
+        : undefined
+      return {
+        date: report.date,
+        tokenUsage,
+        toolCalls: report.toolCalls,
+      }
+    })
+    : []
+  const payload = {
+    ok: true,
+    timezone: raw.timezone,
+    generatedAt: raw.generatedAt,
+    excludedModels: raw.excludedModels,
+    reports,
+    truncated: false,
+  }
+  const content = JSON.stringify(payload)
+  if (content.length <= maxChars) return content
+
+  return JSON.stringify({
+    ...payload,
+    reports: reports.map((value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+      const report = value as Record<string, unknown>
+      const toolCalls = report.toolCalls && typeof report.toolCalls === 'object' && !Array.isArray(report.toolCalls)
+        ? report.toolCalls as Record<string, unknown>
+        : {}
+      return {
+        date: report.date,
+        tokenUsage: report.tokenUsage,
+        toolCalls: {
+          rounds: toolCalls.rounds,
+          total: toolCalls.total,
+          unresolvedInvokeCalls: toolCalls.unresolvedInvokeCalls,
+        },
+      }
+    }),
+    truncated: true,
+    hint: '多日结果过长，已省略 byTool；用 metrics YYYY-MM-DD 查询单日工具明细.',
+  })
+}
+
 function commandErrorGuidance(error: string): { help: string; try: string } {
   if (error.startsWith('fetch ')) {
     return { help: 'help fetch', try: 'fetch reddit list technology hot 5' }
@@ -875,6 +983,9 @@ function commandErrorGuidance(error: string): { help: string; try: string } {
   }
   if (error.startsWith('ai_tone ')) {
     return { help: 'help ai_tone', try: 'help ai_tone' }
+  }
+  if (error.startsWith('metrics ')) {
+    return { help: 'help metrics', try: 'metrics today' }
   }
   if (error.startsWith('repo ')) {
     return { help: 'help repo', try: 'rg --files src' }
@@ -897,6 +1008,10 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
   const moomooTool = deps.moomooTool === undefined ? maybeCreateMoomooSkillTool() : deps.moomooTool
   const fetchTool = deps.fetchTool === undefined ? createFetchContentTool() : deps.fetchTool
   const aiTonePredictor = deps.aiTonePredictor ?? predictAiTone
+  const loadDailyMetrics = deps.loadDailyMetrics ?? (async (options) => {
+    const { loadDailyAgentMetrics } = await import('../../ops/agent-daily-metrics.js')
+    return await loadDailyAgentMetrics(options)
+  })
 
   return {
     name: 'workspace_bash',
@@ -904,7 +1019,7 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
       '受限 Bash. 默认 cwd=workspace, 用来只读查看私有工作文件; 也可 cwd=repo 只读查看自己的仓库代码.',
       'workspace 允许少量只读文件命令: pwd/ls/rg/cat/head/tail/wc; 普通文件写入、替换、删除和移动使用 deferred workspace_file.',
       'repo 只允许读命令: pwd/ls/rg/cat/head/tail/wc; rg 支持普通搜索和 --files, 不能写, 也不能读 .env/logs/node_modules/.git/data/prompts/groups.yaml.',
-      '常用路由不用先 help: 看 repo 传 cwd=repo 后用 `rg --files src` / `rg <pattern> src` / `cat <path>`; 查历史先 `db schema` 再用 `db query {"sql":"SELECT 1","params":{}}`; 抓网页用 `fetch url <url> [hint]`; 看 reddit 用 `fetch reddit list technology hot 5`.',
+      '常用路由不用先 help: 看 repo 传 cwd=repo 后用 `rg --files src` / `rg <pattern> src` / `cat <path>`; 查历史先 `db schema` 再用 `db query {"sql":"SELECT 1","params":{}}`; 查每日工具/token 用 `metrics today|yesterday|YYYY-MM-DD`; 抓网页用 `fetch url <url> [hint]`; 看 reddit 用 `fetch reddit list technology hot 5`.',
       '不确定语法时先用 `help` 或 `help <topic>`; Moomoo 行情、账户查询和证券模拟交易用 `moomoo <allowed command>`, 交易必须显式 SIMULATE; 聊天约束/风格用 `style global constraints|base|anti_patterns|special_cases` 或 `style group`; AI 腔调检测用 `ai_tone <json>`.',
       '数据库仍只读; ai_tone 只走内置模型; 不允许 psql/curl/node/cat .env/路径逃逸/任意 shell 组合.',
     ].join(' '),
@@ -972,6 +1087,23 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
 
       if (parsed.kind === 'ai_tone') {
         return { content: renderAiToneResult(await aiTonePredictor(parsed.text, parsed.threshold)) }
+      }
+
+      if (parsed.kind === 'metrics') {
+        try {
+          const result = await loadDailyMetrics({
+            ...(parsed.date ? { date: parsed.date } : {}),
+            ...(parsed.days ? { days: parsed.days } : {}),
+            ...(parsed.endOffsetDays != null ? { endOffsetDays: parsed.endOffsetDays } : {}),
+          })
+          return { content: renderMetricsResult(result, maxOutputChars), outcome: { ok: true } }
+        } catch (err) {
+          const error = err instanceof Error ? err.message : String(err)
+          return {
+            content: JSON.stringify({ ok: false, code: 'metrics_failed', error }),
+            outcome: { ok: false, code: 'metrics_failed', error },
+          }
+        }
       }
 
       const result = await runWorkspaceBashCommand(parsed, {

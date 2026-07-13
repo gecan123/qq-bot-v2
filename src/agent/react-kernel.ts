@@ -173,6 +173,13 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
           effect,
         })
       }
+      log.info({
+        roundIndex,
+        requestedToolName: batchCall.name,
+        toolName: resolveEffectiveToolName(batchCall),
+        ok: result.outcome?.ok ?? true,
+        code: result.outcome?.code,
+      }, 'round_tool_done')
       input.context.appendToolResult({ toolCallId: batchCall.id, content: result.content })
     }
     cursor += batch.length

@@ -1041,15 +1041,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
               durationSeconds: 300,
               reason: '完成一段活动后短暂放空',
               intention: {
-                preferredIndex: 0,
-                immediateDirections: [
-                  '继续自己的研究并验证下一条证据',
-                  '回看 journal 的未完线索',
-                  '读一篇具体论文',
-                  '只读检查一个代码模块',
-                  '整理一条市场假设',
-                  '挑一篇群友文章读第一节',
-                ],
+                primaryDirection: '继续自己的研究并验证下一条证据',
+                alternativeDirection: '挑一篇群友文章读第一节',
               },
             },
           }],
@@ -1182,7 +1175,10 @@ describe('BotLoopAgent.runOnceForTest', () => {
           content: JSON.stringify({
             ok: true,
             status: 'elapsed',
-            resumePlan: { preferredDirection: '读一篇具体论文' },
+            resumePlan: {
+              primaryDirection: '读一篇具体论文',
+              alternativeDirection: '复核一条已有研究假设',
+            },
           }),
           effects: [{ type: 'pause', status: 'elapsed' }],
         }),
@@ -1210,7 +1206,16 @@ describe('BotLoopAgent.runOnceForTest', () => {
       assert.match(last.content, /"event":"rest_resume"/)
       assert.doesNotMatch(last.content, /读一篇具体论文/)
     }
-    assert.equal(messages.at(-2)?.role, 'tool', 'reminder must follow the complete tool result')
+    const pauseResultIndex = messages.findIndex((message) => (
+      message.role === 'tool' && message.toolCallId === 'pause-1'
+    ))
+    assert.ok(pauseResultIndex > 0, 'pause tool result must survive compaction')
+    const pauseCall = messages[pauseResultIndex - 1]
+    assert.equal(pauseCall?.role, 'assistant', 'pause assistant call/result must remain atomic')
+    if (pauseCall?.role === 'assistant') {
+      assert.equal(pauseCall.toolCalls.at(-1)?.id, 'pause-1')
+    }
+    assert.ok(pauseResultIndex < messages.length - 1, 'reminder must follow the complete tool result')
     assert.match(
       messages[0]?.role === 'user' ? messages[0].content : '',
       /^\[历史摘要\]/,

@@ -52,6 +52,7 @@ pnpm toollogf
 - 从仓库根目录启动，确保 `.bot.pid`、logs、prompts 和相对路径稳定。
 - `pnpm dev` 使用 watch 模式，文件变化会重启；`pnpm dev:once` 单次启动，不监听文件变化。
 - `pnpm tick` 会读取 `.bot.pid`，向进程发送 `SIGUSR1`，并注入一个仅供人工调试的 curiosity tick。正常自主循环由 Agent 的 `pause` 计时和 BotLoop 连续运行驱动，不依赖这个命令。
+- `pnpm agent:daily-metrics -- --date YYYY-MM-DD` 或 Agent 的 `workspace_bash metrics today` 会同时报告 rest 请求、替代方向转向、确认休息、时长与理由分类，以及休息后下一轮是实际做事还是再次休息。
 
 ## Owner Goal
 
@@ -287,11 +288,11 @@ VIBE_TRADING_RESULT_MAX_CHARS=12000
 
 - `pnpm agent:doctor` 做本地、无网络健康检查：必需文件、必需环境变量、agent 指令镜像、schema anchor、startup anchor 和 tool registry anchor。输出 JSON，有错误时非零退出。
 - `pnpm agent:memory-check` 只读扫描 `data/agent-workspace` 下的 Memory、Notebook、Life Journal 和 Agenda Markdown，输出文件/entry 数量、Memory lifecycle、损坏格式、跨 store 重复 ID、self/unknown supersedes 与 Agenda revision；不会创建目录、默认文件或执行修复。结构问题退出 1；可用 `pnpm agent:memory-check -- --root <path>` 指定其他 workspace。
-- `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson`、`logs/tool-calls.ndjson` 和当前保留的 `logs/app*.log` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率，以及按群 `inboxReads`、`messagesRead`、`sendAttempts`、`sendBlocked`、成功 ambient/reply 和 `readToSendRate`。当前 token operations 包括 `agent.chat`、`compaction`、`life_journal.review` 和 `memory.maintenance`。
+- `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson`、`logs/tool-calls.ndjson` 和当前保留的 `logs/app*.log` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率，以及按群 `inboxReads`、`messagesRead`、`sendAttempts`、`sendBlocked`、成功 ambient/reply 和 `readToSendRate`。当前 token operations 包括 `agent.chat`、`compaction`、`life_journal.review`、`life_journal.idle_pick` 和 `memory.maintenance`。
 - `pnpm agent:metrics <token-log> <tool-log> [app-log]` 可以汇总指定日志文件；省略 `app-log` 时自动读取当前 `logs/app*.log` 滚动文件。
 - token/cache 使用继续 best-effort 写入 Postgres `agent_token_usage`；工具调用只有 `BOT_TOOL_AUDIT_DB_ENABLED=true` 时写入 `agent_tool_calls`。写 DB 失败只记 warning，不影响 bot 执行。
 - `pnpm agent:metrics --db` 从 Postgres 汇总持久化事件；可加 `--from <iso> --to <iso> --tool <name> --operation <name> --model <name> --ok true|false --side-effect true|false` 做筛选。
-- `pnpm agent:daily-metrics` 按北京时间自然日统计真实 bot 的全部模型 tool call 与 token/cache，默认查今天并排除 `model=mock` 测试数据。`--date YYYY-MM-DD` 指定截止自然日，`--days N` 逐日返回包含截止日在内的最近 N 天（最多 31 天）；例如 `pnpm agent:daily-metrics -- --date 2026-07-13` 和 `pnpm agent:daily-metrics -- --days 7`。bot 内可通过 `workspace_bash` 的 `metrics today|yesterday|YYYY-MM-DD` 或 `metrics days <1-7>` 取得有界结构化数据。新日志会把 `invoke` 记成其实际请求的内部工具；旧日志无法展开时保留 `invoke` 并报告 `unresolvedInvokeCalls`。
+- `pnpm agent:daily-metrics` 按北京时间自然日统计真实 bot 的全部模型 tool call、token/cache 与 rest 行为，默认查今天并排除 `model=mock` 测试数据。rest 指标包括请求、真正开始、被未完兴趣转向、非法提前确认、时长、理由分类和醒后行动；醒后行动只在非 `pause` / `rest` / `help` 工具实际成功后计数，旧日志缺少 `round_tool_done` 证据时记为 `unknown`。`--date YYYY-MM-DD` 指定截止自然日，`--days N` 逐日返回包含截止日在内的最近 N 天（最多 31 天）；例如 `pnpm agent:daily-metrics -- --date 2026-07-13` 和 `pnpm agent:daily-metrics -- --days 7`。bot 内可通过 `workspace_bash` 的 `metrics today|yesterday|YYYY-MM-DD` 或 `metrics days <1-7>` 取得有界结构化数据。新日志会把 `invoke` 记成其实际请求的内部工具；旧日志无法展开时保留 `invoke` 并报告 `unresolvedInvokeCalls`。
 - `pnpm agent:snapshot-check` 只读检查当前 `bot_agent_snapshot`：验证 snapshot JSON 可序列化、assistant tool call 与 tool result 相邻匹配、JSON-like tool result 可解析、`activeToolCapabilities` 未混入 messages、mailbox cursor 与 continuity 元数据合法；输出 JSON，有错误时非零退出。runtime 启动还会执行同等完整性校验；current 损坏时只尝试最新 3 份 checkpoint，全部无效则 fail closed，不从消息或日志重建 prompt history。
 
 ## Git

@@ -18,8 +18,8 @@ function assistantTool(name: string, id: string): AgentMessage {
   }
 }
 
-function toolResult(id: string): AgentMessage {
-  return { role: 'tool', toolCallId: id, content: '{"ok":true}' }
+function toolResult(id: string, content = '{"ok":true}'): AgentMessage {
+  return { role: 'tool', toolCallId: id, content }
 }
 
 describe('rest resume reminder', () => {
@@ -30,7 +30,8 @@ describe('rest resume reminder', () => {
     assert.match(rendered, /"event":"rest_resume"/)
     assert.match(rendered, /"emittedAt":"2026-07-13T16:00:00\.000\+08:00"/)
     assert.match(rendered, /本轮最近的 pause 工具结果里的 resumePlan/)
-    assert.match(rendered, /你会有一点不自在/)
+    assert.match(rendered, /你不想把自己的生活交给等待/)
+    assert.match(rendered, /primaryDirection.*alternativeDirection/)
     assert.match(rendered, /\n<\/system-reminder>$/)
     assert.doesNotMatch(rendered, /preferredDirection\s*:/)
   })
@@ -39,7 +40,7 @@ describe('rest resume reminder', () => {
     assert.equal(shouldAppendRestResumeReminder([], BASE_TIME), true)
   })
 
-  test('suppresses repeated reminders until a non-pause tool is attempted', () => {
+  test('suppresses repeated reminders until a non-pause tool succeeds', () => {
     const messages: AgentMessage[] = [
       { role: 'user', content: renderRestResumeReminder(BASE_TIME) },
       assistantTool('pause', 'pause-2'),
@@ -52,11 +53,26 @@ describe('rest resume reminder', () => {
     )
   })
 
-  test('keeps the ten-minute cap after a non-pause tool action', () => {
+  test('does not treat help or an explicit tool failure as post-rest followthrough', () => {
     const messages: AgentMessage[] = [
       { role: 'user', content: renderRestResumeReminder(BASE_TIME) },
       assistantTool('help', 'help-1'),
       toolResult('help-1'),
+      assistantTool('notebook', 'notebook-1'),
+      toolResult('notebook-1', '{"ok":false,"error":"revision conflict"}'),
+    ]
+
+    assert.equal(
+      shouldAppendRestResumeReminder(messages, new Date('2026-07-14T08:00:00.000Z')),
+      false,
+    )
+  })
+
+  test('keeps the ten-minute cap after a non-pause tool action', () => {
+    const messages: AgentMessage[] = [
+      { role: 'user', content: renderRestResumeReminder(BASE_TIME) },
+      assistantTool('notebook', 'notebook-1'),
+      toolResult('notebook-1'),
       assistantTool('pause', 'pause-2'),
       toolResult('pause-2'),
     ]
@@ -74,8 +90,8 @@ describe('rest resume reminder', () => {
   test('carries reminder state through compaction without re-emitting the instruction', () => {
     const beforeCompaction: AgentMessage[] = [
       { role: 'user', content: renderRestResumeReminder(BASE_TIME) },
-      assistantTool('help', 'help-1'),
-      toolResult('help-1'),
+      assistantTool('notebook', 'notebook-1'),
+      toolResult('notebook-1'),
     ]
     const suffix = renderRestResumeReminderCompactionSuffix(beforeCompaction)
     const compactedSummary = `[历史摘要]\n保留关键历史。${suffix}`

@@ -77,7 +77,13 @@ export interface BotLoopAgentDeps {
 
 export interface BotLoopLifeJournal {
   recordRound(input: { roundIndex: number; messages: AgentMessage[] }): Promise<unknown>
-  pickIdleIntention?(): Promise<{ ok: boolean; intention: string | null }>
+  pickIdleIntention?(): Promise<{
+    ok: boolean
+    intention: string | null
+    whyNow?: string | null
+    firstStep?: string | null
+    promoteToGoal?: boolean
+  }>
 }
 
 export interface BotLoopAutonomyOptions {

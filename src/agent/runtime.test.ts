@@ -57,6 +57,18 @@ describe('createAgentRuntime', () => {
       optionalTools: disabledOptionalTools(),
       mcpManager,
       goalStore: createInMemoryGoalStore(),
+      lifeJournal: {
+        async recordRound() {},
+        async pickIdleIntention() {
+          return {
+            ok: true,
+            intention: '继续拆解 Agenda 里的 QuadRF 供应链线索',
+            whyNow: '它仍在 Active',
+            firstStep: '读取现有 notebook 的第一段',
+            promoteToGoal: false,
+          }
+        },
+      },
     })
 
     assert.match(runtime.systemPrompt, /测试群/)
@@ -104,6 +116,27 @@ describe('createAgentRuntime', () => {
     assert.equal(mcpConnectors.active, false)
     assert.deepEqual(mcpConnectors.tools, ['mcp'])
     assert.equal(mcpConnections, 0)
+
+    const pauseResult = await runtime.tools.execute({
+      id: 'pause-1',
+      name: 'pause',
+      args: {
+        action: 'rest',
+        durationSeconds: 30,
+        reason: '刚完成一段活动，想短暂停一下',
+        intention: {
+          primaryDirection: '读一篇具体论文的摘要',
+          alternativeDirection: '复核一条已有研究假设',
+        },
+      },
+    }, {
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      roundIndex: 1,
+    })
+    const pausePayload = JSON.parse(pauseResult.content as string)
+    assert.equal(pausePayload.status, 'alternative_available')
+    assert.equal(pausePayload.paused, false)
+    assert.equal(pausePayload.alternative.direction, '继续拆解 Agenda 里的 QuadRF 供应链线索')
     await runtime.stopBackgroundServices()
   })
 })

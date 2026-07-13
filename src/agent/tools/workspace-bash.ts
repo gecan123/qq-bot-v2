@@ -783,7 +783,7 @@ function renderHelpCommand(parsed: ParsedHelpCommand): WorkspaceBashRunResult {
       ],
     },
     metrics: {
-      purpose: '按北京时间自然日查询真实 bot 的工具调用和 token/cache 使用；默认排除 model=mock 测试数据.',
+      purpose: '按北京时间自然日查询真实 bot 的工具调用、token/cache 和 rest 行为；默认排除 model=mock 测试数据.',
       commands: [
         'metrics',
         'metrics today',
@@ -928,6 +928,7 @@ function renderMetricsResult(result: unknown, maxChars: number): string {
         date: report.date,
         tokenUsage,
         toolCalls: report.toolCalls,
+        rest: report.rest,
       }
     })
     : []
@@ -953,6 +954,7 @@ function renderMetricsResult(result: unknown, maxChars: number): string {
       return {
         date: report.date,
         tokenUsage: report.tokenUsage,
+        rest: report.rest,
         toolCalls: {
           rounds: toolCalls.rounds,
           total: toolCalls.total,

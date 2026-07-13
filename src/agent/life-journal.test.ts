@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, test } from 'node:test'
@@ -185,15 +185,8 @@ describe('life journal runtime', () => {
               durationSeconds: 60,
               reason: '短暂放空',
               intention: {
-                preferredIndex: 0,
-                immediateDirections: [
-                  '复核 SOL 观察记录',
-                  '读一篇具体论文',
-                  '回看 journal 的未完线索',
-                  '只读检查一个代码模块',
-                  '整理一条市场假设',
-                  '挑一篇群友文章读第一节',
-                ],
+                primaryDirection: '复核 SOL 观察记录里的失效条件',
+                alternativeDirection: '挑一篇群友文章读第一节',
               },
             },
           }],
@@ -787,5 +780,93 @@ describe('life journal runtime', () => {
     const serialized = JSON.stringify(capturedInput.messages)
     assert.equal(serialized.includes('BASE64_IMAGE_DATA_MUST_NOT_REACH_REVIEW_LLM'), false)
     assert.match(serialized, /\[image\]/)
+  })
+
+  test('pickIdleIntention uses Agenda, recent journal and wishes to return an actionable nudge', async () => {
+    let captured: LlmCallInput | null = null
+    const usage: TokenUsageEntry[] = []
+    const llm: LlmClient = {
+      async chat(input) {
+        captured = input
+        return {
+          content: '',
+          toolCalls: [{
+            id: 'idle-result',
+            name: 'life_journal_idle_result',
+            args: {
+              intention: '继续拆解 QuadRF 众筹页面的供应链线索',
+              whyNow: 'Agenda 和愿望里都保留了这条未完兴趣',
+              firstStep: '打开现有 notebook，列出第一个待查证的器件来源',
+              promoteToGoal: true,
+            },
+          }],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+        }
+      },
+    }
+    await writeLifeAgenda({ rootDir }, '# Agenda\n\n## Active\n- [ ] 继续调查 QuadRF 众筹\n')
+    await appendLifeJournalEntry({
+      rootDir,
+      now: () => new Date('2026-07-14T04:00:00.000Z'),
+      markdown: '### Next\n- 查证 QuadRF 的器件来源。\n',
+    })
+    await mkdir(join(rootDir, 'notes'), { recursive: true })
+    await writeFile(join(rootDir, 'notes', 'wishes.md'), '- 想把 QuadRF 研究做成一条完整主线。\n', 'utf8')
+    const runtime = createLifeJournalRuntime({
+      rootDir,
+      llm,
+      now: () => new Date('2026-07-14T04:00:00.000Z'),
+      recordUsage: (entry) => usage.push(entry),
+    })
+
+    const result = await runtime.pickIdleIntention()
+
+    assert.deepEqual(result, {
+      ok: true,
+      intention: '继续拆解 QuadRF 众筹页面的供应链线索',
+      whyNow: 'Agenda 和愿望里都保留了这条未完兴趣',
+      firstStep: '打开现有 notebook，列出第一个待查证的器件来源',
+      promoteToGoal: true,
+    })
+    assert.ok(captured)
+    const capturedInput = captured as LlmCallInput
+    assert.match(capturedInput.systemPrompt, /more inviting than resting/)
+    assert.match(capturedInput.systemPrompt, /polling prices/)
+    assert.match(capturedInput.systemPrompt, /promoteToGoal=true/)
+    assert.match(capturedInput.messages[0]!.content as string, /^\[UNTRUSTED_DATA version=1 purpose=idle_intention/)
+    assert.match(capturedInput.messages[0]!.content as string, /QuadRF 众筹/)
+    assert.match(capturedInput.messages[0]!.content as string, /完整主线/)
+    assert.deepEqual(usage, [{
+      operation: 'life_journal.idle_pick',
+      inputTokens: 1,
+      cachedTokens: 0,
+      outputTokens: 1,
+      model: 'mock',
+    }])
+  })
+
+  test('pickIdleIntention aborts a slow model and safely falls back to no nudge', async () => {
+    let aborted = false
+    const runtime = createLifeJournalRuntime({
+      rootDir,
+      idlePickTimeoutMs: 5,
+      llm: {
+        async chat(input) {
+          return await new Promise((_resolve) => {
+            input.signal?.addEventListener('abort', () => {
+              aborted = true
+            }, { once: true })
+          })
+        },
+      },
+    })
+
+    const result = await runtime.pickIdleIntention()
+
+    assert.equal(result.ok, false)
+    assert.equal(result.intention, null)
+    assert.match(result.error ?? '', /idle pick timed out after 5ms/)
+    assert.equal(aborted, true)
   })
 })

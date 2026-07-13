@@ -3,7 +3,7 @@ import type { MessageSender } from '../../messaging/message-sender.js'
 import type { BackgroundTaskRegistry } from '../background-task-registry.js'
 import type { GroupCustomization } from '../../config/group-prompts.js'
 import type { TargetMetadataMaps } from '../resolve-target-meta.js'
-import { pauseTool } from './pause.js'
+import { createPauseTool } from './pause.js'
 import { createSendMessageTool } from './send-message.js'
 import { maybeCreateWebSearchTool } from './web-search.js'
 import { createGenerateImageTool } from './generate-image.js'
@@ -63,6 +63,16 @@ export interface BotToolDeps {
   memoryMaintenance?: MemoryMaintenanceRuntime
   workspaceDir?: string
   workspaceStateCoordinator?: WorkspaceStateCoordinator
+  restGuide?: {
+    pickIdleIntention?(): Promise<{
+      ok: boolean
+      intention: string | null
+      whyNow?: string | null
+      firstStep?: string | null
+      promoteToGoal?: boolean
+    }>
+  }
+  canConfirmRestAlternative?: () => boolean
 }
 
 export interface BotOptionalTools {
@@ -100,6 +110,28 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     groupCustomizations: deps.groupCustomizations,
   })
   const aiTone = createAiToneTool()
+  const pickIdleIntention = deps.restGuide?.pickIdleIntention?.bind(deps.restGuide)
+  const pause = createPauseTool({
+    rest: pickIdleIntention || deps.canConfirmRestAlternative
+      ? {
+          ...(pickIdleIntention
+            ? {
+                pickAlternative: async () => {
+                  const picked = await pickIdleIntention()
+                  if (!picked.ok || !picked.intention) return null
+                  return {
+                    direction: picked.intention,
+                    whyNow: picked.whyNow ?? null,
+                    firstStep: picked.firstStep ?? picked.intention,
+                    promoteToGoal: picked.promoteToGoal ?? false,
+                  }
+                },
+              }
+            : {}),
+          canConfirmAlternative: deps.canConfirmRestAlternative,
+        }
+      : undefined,
+  })
   const workspaceBash = createWorkspaceBashTool({
     groupIdWhitelist: deps.groupIds,
     groupIds: deps.groupIds,
@@ -113,7 +145,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     safeTools: [workspaceBash, inbox, qqDirectory, chatStyle, aiTone, skillTool, backgroundTask],
   }) : null
   const tools: Tool[] = [
-    pauseTool,
+    pause,
     createSendMessageTool({
       sender: deps.sender,
       targetPolicy: deps.targetPolicy,

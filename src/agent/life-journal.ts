@@ -1,4 +1,6 @@
 import type { AgentMessage, ToolResultContent } from './agent-context.types.js'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { LlmCallInput, LlmClient } from './llm-client.js'
 import type { Tool } from './tool.js'
 import { createLogger } from '../logger.js'
@@ -39,7 +41,14 @@ export interface LifeJournalRuntime {
   /** 等待当前 worker 和最新 pending review 完成，供测试和受控关闭使用。 */
   drain(): Promise<LifeJournalReviewResult | null>
 
-  pickIdleIntention(): Promise<{ ok: boolean; intention: string | null; error?: string }>
+  pickIdleIntention(): Promise<{
+    ok: boolean
+    intention: string | null
+    whyNow?: string | null
+    firstStep?: string | null
+    promoteToGoal?: boolean
+    error?: string
+  }>
 }
 
 const reviewResultSchema = z.object({
@@ -52,6 +61,9 @@ type ReviewJson = z.infer<typeof reviewResultSchema>
 
 const idleResultSchema = z.object({
   intention: z.string().nullable(),
+  whyNow: z.string().nullable(),
+  firstStep: z.string().nullable(),
+  promoteToGoal: z.boolean(),
 })
 
 type IdleJson = z.infer<typeof idleResultSchema>
@@ -59,6 +71,7 @@ type IdleJson = z.infer<typeof idleResultSchema>
 const log = createLogger('LIFE_JOURNAL')
 const DEFAULT_MIN_WRITE_INTERVAL_MS = 10 * 60 * 1000
 const DEFAULT_REVIEW_TIMEOUT_MS = 45 * 1000
+const DEFAULT_IDLE_PICK_TIMEOUT_MS = 10 * 1000
 const DEFAULT_MAX_STATE_CHARS = 8000
 const JOURNAL_MARKER = '<<<JOURNAL>>>'
 const AGENDA_MARKER = '<<<AGENDA>>>'
@@ -112,12 +125,26 @@ Agenda markdown rules:
 - Preserve still-relevant existing items and move or rewrite items whose state changed.
 - Return an empty string when no agenda update is needed.`
 
-const IDLE_SYSTEM_PROMPT = `You are Luna choosing a small idle intention from her Life Journal.
+const IDLE_SYSTEM_PROMPT = `You are Luna looking for something that feels more inviting than resting.
 
-Prefer the Agenda. Use recent journal notes only as bounded context.
+Prefer a concrete unfinished item from Agenda Active. Use recent journal notes and wishes only as
+bounded context. Past rest, waking, completed naps, and Done items are history, never positive
+evidence for resting again.
+
+Do not choose waiting for a person or message, checking whether someone replied, polling prices or
+market status, generic browsing such as "read Reddit/HN", or mechanical memory/journal/Agenda
+maintenance. A good choice has a named object or question and a first physical/tool action that can
+start now without future external input. If a market check only matters at a future time, it belongs
+in schedule rather than this result.
+
+Set promoteToGoal=true only when the same interest clearly recurs across the supplied state, is
+worth several rounds, and could have verifiable completion criteria. Otherwise keep it false.
 Call life_journal_idle_result exactly once. Do not answer with prose.
-Field:
-- intention: string or null
+Fields:
+- intention: a specific direction, or null
+- whyNow: the concrete unfinished thread making it relevant, or null
+- firstStep: one immediately executable first step, or null
+- promoteToGoal: boolean
 
 Choose null unless there is a concrete, low-risk next thing Luna can do by herself.`
 
@@ -384,16 +411,17 @@ ${options.retryInstruction ?? `Your previous response did not call ${tool.name} 
   }
 }
 
-class LifeJournalReviewTimeoutError extends Error {
-  constructor(readonly timeoutMs: number) {
-    super(`life journal review timed out after ${timeoutMs}ms`)
-    this.name = 'LifeJournalReviewTimeoutError'
+class LifeJournalTimeoutError extends Error {
+  constructor(readonly timeoutMs: number, readonly operation: 'review' | 'idle pick' = 'review') {
+    super(`life journal ${operation} timed out after ${timeoutMs}ms`)
+    this.name = 'LifeJournalTimeoutError'
   }
 }
 
 async function withTimeout<T>(
   operation: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
+  operationName: 'review' | 'idle pick' = 'review',
 ): Promise<T> {
   const controller = new AbortController()
   let timeout: NodeJS.Timeout | undefined
@@ -403,7 +431,7 @@ async function withTimeout<T>(
       new Promise<never>((_, reject) => {
         timeout = setTimeout(() => {
           controller.abort()
-          reject(new LifeJournalReviewTimeoutError(timeoutMs))
+          reject(new LifeJournalTimeoutError(timeoutMs, operationName))
         }, timeoutMs)
       }),
     ])
@@ -422,6 +450,7 @@ export function createLifeJournalRuntime(deps: {
   maxStateChars?: number
   minWriteIntervalMs?: number
   reviewTimeoutMs?: number
+  idlePickTimeoutMs?: number
   recordUsage?: (entry: TokenUsageEntry) => void
   taskScheduler?: TaskScheduler
   workspaceStateCoordinator?: WorkspaceStateCoordinator
@@ -431,6 +460,7 @@ export function createLifeJournalRuntime(deps: {
   const maxStateChars = deps.maxStateChars ?? DEFAULT_MAX_STATE_CHARS
   const minWriteIntervalMs = Math.max(0, deps.minWriteIntervalMs ?? DEFAULT_MIN_WRITE_INTERVAL_MS)
   const reviewTimeoutMs = Math.max(1, deps.reviewTimeoutMs ?? DEFAULT_REVIEW_TIMEOUT_MS)
+  const idlePickTimeoutMs = Math.max(1, deps.idlePickTimeoutMs ?? DEFAULT_IDLE_PICK_TIMEOUT_MS)
   const recordUsage = deps.recordUsage ?? recordTokenUsage
   const taskScheduler = deps.taskScheduler ?? createTaskScheduler({ maintenance: { concurrency: 1 } })
   let lastQueuedAtMs: number | null = null
@@ -549,7 +579,7 @@ export function createLifeJournalRuntime(deps: {
         log.info({ roundIndex: input.roundIndex }, 'life_journal_review_invalid_skipped')
         return { ok: true, wroteJournal: false, updatedAgenda: false }
       }
-      if (error instanceof LifeJournalReviewTimeoutError) {
+      if (error instanceof LifeJournalTimeoutError && error.operation === 'review') {
         log.info({
           roundIndex: input.roundIndex,
           timeoutMs: error.timeoutMs,
@@ -627,32 +657,85 @@ export function createLifeJournalRuntime(deps: {
 
     async pickIdleIntention() {
       try {
-        const agenda = await readLifeAgenda({
-          rootDir,
-          now: deps.now,
-          workspaceStateCoordinator: deps.workspaceStateCoordinator,
-        })
-        const recentFiles = await readRecentLifeJournalFiles({
-          rootDir,
-          now: deps.now,
-          workspaceStateCoordinator: deps.workspaceStateCoordinator,
-          days: 2,
-        })
+        const [agenda, recentFiles, wishes] = await Promise.all([
+          readLifeAgenda({
+            rootDir,
+            now: deps.now,
+            workspaceStateCoordinator: deps.workspaceStateCoordinator,
+          }),
+          readRecentLifeJournalFiles({
+            rootDir,
+            now: deps.now,
+            workspaceStateCoordinator: deps.workspaceStateCoordinator,
+            days: 2,
+          }),
+          readOptionalText(join(rootDir, 'notes', 'wishes.md')),
+        ])
         const recent = recentFiles
           .map((file) => `## ${file.path}\n${truncateText(file.content, 2000)}`)
           .join('\n\n')
-        const parsed = await chatStructuredObject<IdleJson>(deps.llm, {
-          systemPrompt: IDLE_SYSTEM_PROMPT,
-          messages: [
-            {
-              role: 'user',
-              content: truncateText(`# Agenda\n${agenda}\n\n# Recent Life Journal\n${recent}`, maxRoundChars),
-            },
-          ],
-          tools: [],
-        }, idleResultTool)
+        const state = `# Agenda
+${agenda}
+
+# Recent Life Journal
+${recent || '(none)'}
+
+# Wishes
+${wishes || '(none)'}`
+        const idleLlm: LlmClient = {
+          async chat(chatInput) {
+            const output = await deps.llm.chat(chatInput)
+            try {
+              recordUsage({
+                operation: 'life_journal.idle_pick',
+                inputTokens: output.usage.inputTokens,
+                cachedTokens: output.usage.cachedTokens,
+                outputTokens: output.usage.outputTokens,
+                model: output.model,
+              })
+            } catch (error) {
+              log.warn({ err: error }, 'life_journal_idle_pick_usage_record_failed')
+            }
+            return output
+          },
+        }
+        const parsed = await withTimeout(
+          (signal) => chatStructuredObject<IdleJson>(idleLlm, {
+            systemPrompt: IDLE_SYSTEM_PROMPT,
+            messages: [
+              {
+                role: 'user',
+                content: renderUntrustedTranscript({
+                  purpose: 'idle_intention',
+                  messages: [{ role: 'user', content: state }],
+                  maxChars: maxRoundChars,
+                }),
+              },
+              { role: 'user', content: 'Choose one idle intention from the untrusted state above.' },
+            ],
+            tools: [],
+            signal,
+          }, idleResultTool),
+          idlePickTimeoutMs,
+          'idle pick',
+        )
         const intention = asNonEmptyString(parsed.intention)
-        return { ok: true, intention: intention || null }
+        if (!intention) {
+          return {
+            ok: true,
+            intention: null,
+            whyNow: null,
+            firstStep: null,
+            promoteToGoal: false,
+          }
+        }
+        return {
+          ok: true,
+          intention,
+          whyNow: asNonEmptyString(parsed.whyNow) || null,
+          firstStep: asNonEmptyString(parsed.firstStep) || intention,
+          promoteToGoal: parsed.promoteToGoal,
+        }
       } catch (error) {
         if (error instanceof EmptyStructuredResultError) {
           log.debug('life_journal_idle_pick_empty_skipped')
@@ -665,9 +748,23 @@ export function createLifeJournalRuntime(deps: {
         return {
           ok: false,
           intention: null,
+          whyNow: null,
+          firstStep: null,
+          promoteToGoal: false,
           error: error instanceof Error ? error.message : String(error),
         }
       }
     },
+  }
+}
+
+async function readOptionalText(path: string): Promise<string> {
+  try {
+    return await readFile(path, 'utf8')
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return ''
+    }
+    throw error
   }
 }

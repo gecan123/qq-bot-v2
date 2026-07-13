@@ -4,14 +4,14 @@
 
 ## 默认可见能力
 
-- 对话控制：`pause`。`action=rest` 用于一段活动确实告一段落后的短暂休息，默认 60 秒、通常 30–120 秒，最长 30 分钟只用于明确需要较长离开的情况。`reason` 只说明暂停原因；结构化 `intention.immediateDirections` 必须恰好列出 6 个现在无需等待任何人、也不依赖未来外部输入就能开始的具体方向，每个写清对象和第一步动作，`intention.preferredIndex` 从 0–5 中选一个醒来后默认先执行。外部消息只是随时可能到来的中断条件，不占行动方向，也不与推进自己的事冲突；等人、看群回复或轮询新消息不能写入 `immediateDirections`，消息到来时 runtime 会另行唤醒。完成一个任务只表示注意力重新自由；时间晚、owner 不在线、群聊无关或刚完成一件事，单独都不是休息的充分理由。计时结束后结果会回显 `resumePlan`，下一轮应先实际尝试其中一个即时方向，没有尝试前不应立刻再次休息。
+- 对话控制：`pause`。`action=rest` 是确实想暂时停一下时的短休息安全阀，默认 60 秒、范围 30–300 秒。首次请求必须使用 `confirmed=false`；如果 Life Journal idle picker 从 Agenda、近期 Journal 或 `notes/wishes.md` 找到具体未完方向，工具返回 `alternative_available` 且不暂停。只有它仍是 ledger 中最近的已完成工具结果时，`confirmed=true` 才有效；提前确认或中间已做过别的动作都会返回 `confirmation_required`，重新检查后才能休息。结构化 `intention` 只写一个 `primaryDirection` 和一个不同的 `alternativeDirection`，都要包含对象与第一步。等消息、机械检查行情、泛泛浏览站点或整理 memory/journal 不是行动方向；未来某时再看用 `schedule`。真正休息结束后结果回显 `resumePlan`，下一轮先完成一个具体动作再决定是否再次休息。
 - 持久唤醒：`schedule action=create|list|cancel`。适用于 30 秒到 7 天后的明确时间点；状态和 recovery descriptor 原子写入 bot workspace，重启后按原 deadline 重新挂定时器。普通短休息仍用 `pause`。
 - 当前计划：`todo`（当前进程内的短期多步计划，最多一个 `in_progress`）。
 - 持久目标：`goal action=get|create_self|complete|report_blocker|abandon_self`。没有未完成 Goal 时，Agent 可以为自己的兴趣直接创建 `origin=self` 的持久目标，必须给出真实 `motivation` 和可核验 `completionCriteria`；默认预算 1,000,000 tokens，单个上限 10,000,000，60 秒冷却和滚动 24 小时最多 64 个只是失控保险丝。Agent 可以放弃 self Goal，但不能放弃 owner Goal。配置的 owner 仍可用私聊 `/goal` 创建、暂停、恢复或取消，owner Goal 会直接抢占 self Goal。active Goal 是处理完高优先通知后的默认主线，但前台仍是单一串行 BotLoop；等待后台或外部输入时可以做其他事情。`complete` 必须提交逐项真实证据；同一 blocker 每个连续 Goal round 用相同 `blockerKey` 报告，第三轮才转 `blocked`。Goal token budget 按未缓存 input 加 output 计量；只有明确的 provider 硬额度/账单上限才转 `usage_limited`，普通临时 429 仍走已有有界重试和 round backoff。
 - 发送：`send_message`（文本、图片、图文和受控音乐卡片）。
 - QQ 目录：`qq_directory`（分页列出/搜索 NapCat 当前全部好友；群目录只披露当前已加入且位于 `BOT_TARGET_GROUP_IDS` 的群）。
 - 稳定按需壳：`help`（`list` / `describe` / `activate` / `deactivate` capability 或内部工具 schema）和 `invoke`（调用已激活 capability 内部工具）。激活不会改变下一轮顶层 tools 列表。
-- 知识和历史：`memory`（稳定长期记忆）、`notebook`（按稳定 topic 维护研究/阅读/市场/项目过程）、`life_journal`（经历、感受、梦和 Agenda）、`skill`、`inbox`（list/read 多来源消息正文）、`workspace_bash` 内置的 `help` / `db` / `style` / `metrics` 子命令。`metrics` 按北京时间自然日返回真实 bot 的工具调用和 token/cache，并默认排除 `model=mock` 测试数据。
+- 知识和历史：`memory`（稳定长期记忆）、`notebook`（按稳定 topic 维护研究/阅读/市场/项目过程）、`life_journal`（经历、感受、梦和 Agenda）、`skill`、`inbox`（list/read 多来源消息正文）、`workspace_bash` 内置的 `help` / `db` / `style` / `metrics` 子命令。`metrics` 按北京时间自然日返回真实 bot 的工具调用、token/cache 和 rest 行为，并默认排除 `model=mock` 测试数据。
 - 表情包：`collect_sticker`（收藏、移除、列表、搜索和随机候选）。
 - 外部内容：`workspace_bash` 内置的 `fetch` 子命令（url/image/avatar/reddit list/reddit post）、配置后可用的 `web_search`、`workspace_bash` 内置的 `openbb` 子命令；配置官方 Moomoo Skill 后可查询行情、账户并操作普通证券模拟仓；配置 `CRYPTO_PAPER_ENABLED=true` 后，typed `crypto_paper` 使用 Moomoo Crypto 行情维护本地模拟资金、持仓和成交。
 - 风格和文本判断：`chat_style` 按需读取聊天约束/风格/群定制；`ai_tone` 用本地 AIRadar 模型判断中文文本更像 AI 腔调还是人味。
@@ -39,7 +39,7 @@
 
 ## 结果契约
 
-- 工具对 LLM 返回的事实只放在 `content`。运行时可以附带 `outcome` 和 `effects`，但二者不进入 `AgentContext`；例如 `pause` 返回 `effects: [{ type: 'pause' }]`，由 EffectInterpreter 驱动循环休息，不反解析结果文本。
+- 工具对 LLM 返回的事实只放在 `content`。运行时可以附带 `outcome` 和 `effects`，但二者不进入 `AgentContext`；例如真正开始的 `pause` 返回 `effects: [{ type: 'pause' }]`，由 EffectInterpreter 驱动循环休息，不反解析结果文本。`alternative_available` 没有 pause effect，因此 Agent 会在同一活动里继续选择动作。
 - 需要后续程序判断的结果使用稳定 JSON，并包含明确的成功状态和错误 code。面向人的摘要或错误说明放在具名字段中，不与 JSON 前后拼接自然语言。
 - schema 校验失败返回具体 `issues`、当前工具名和立即重试同一工具的提示；未知顶层工具返回当前 `availableTools` 和恢复提示，已移除的 `send_image` / `workspace_command` 分别定向引导到 `send_message.imageRef` / `workspace_bash`，不做静默兼容。
 - 外部搜索、网页、Reddit 和表情包结果按字段与条目做上限控制，并用 `truncated` 表示不完整；禁止截断完整 JSON 字符串。

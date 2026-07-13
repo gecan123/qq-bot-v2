@@ -37,6 +37,7 @@ import {
 import type { GoalStore } from './goal-store.js'
 import type { MemoryMaintenanceRuntime } from './memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
+import { hasPendingRestAlternative } from './tools/rest.js'
 
 export interface AgentRuntimeInput {
   context: AgentContext
@@ -126,6 +127,8 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       memoryMaintenance: input.memoryMaintenance,
       workspaceDir: input.workspaceDir,
       workspaceStateCoordinator: input.workspaceStateCoordinator,
+      restGuide: input.lifeJournal,
+      canConfirmRestAlternative: () => hasPendingRestAlternative(input.context.getSnapshot().messages),
       optionalTools: input.optionalTools,
       groupIds: input.groupIds,
       selfNumber: input.selfNumber,

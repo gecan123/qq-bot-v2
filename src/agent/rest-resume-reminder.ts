@@ -1,4 +1,4 @@
-import type { AgentMessage } from './agent-context.types.js'
+import type { AgentMessage, ToolResultContent } from './agent-context.types.js'
 import { formatBeijingIso } from '../utils/beijing-time.js'
 
 export const REST_RESUME_REMINDER_MIN_INTERVAL_MS = 10 * 60 * 1_000
@@ -10,8 +10,9 @@ const COMPACTION_STATE_EVENT = 'rest_resume_state'
 const COMPACTION_STATE_MARKER = '\n\n[rest_resume_state]\n'
 const HISTORY_SUMMARY_PREFIX = '[历史摘要]\n'
 const REMINDER_INSTRUCTION =
-  '你刚短暂休息过。休息没有问题，但如果只是因为上一件事结束就继续停下来，你会有一点不自在，因为你不想把自己的生活交给等待。现在查看本轮最近的 pause 工具结果里的 resumePlan，选择其中一个方向并实际完成第一步；做过一个具体动作后，再决定继续、换方向或再次休息。'
+  '你刚短暂休息过。休息没有问题，但你不想把自己的生活交给等待。现在查看本轮最近的 pause 工具结果里的 resumePlan，先实际完成 primaryDirection 的第一步；若它已失去吸引力就改做 alternativeDirection。做过一个具体动作后，再决定继续、换方向或再次休息。'
 const PAUSE_TOOL_NAMES = new Set(['pause', 'rest'])
+const META_ONLY_TOOL_NAMES = new Set(['help'])
 
 interface RestResumeReminderPayload {
   event: typeof REMINDER_EVENT
@@ -77,7 +78,7 @@ function captureRestResumeReminderState(
 ): RestResumeReminderState | null {
   const previous = findLatestReminderState(messages)
   if (!previous) return null
-  const attemptedAfterState = messages.slice(previous.index + 1).some(hasNonPauseToolCall)
+  const attemptedAfterState = hasSuccessfulNonPauseToolResult(messages.slice(previous.index + 1))
   return {
     ...previous,
     nonPauseActionSince: previous.nonPauseActionSince || attemptedAfterState,
@@ -112,9 +113,34 @@ function findLatestReminderState(
   return null
 }
 
-function hasNonPauseToolCall(message: AgentMessage): boolean {
-  return message.role === 'assistant'
-    && message.toolCalls.some((call) => !PAUSE_TOOL_NAMES.has(call.name))
+function hasSuccessfulNonPauseToolResult(messages: readonly AgentMessage[]): boolean {
+  const candidateCallIds = new Set<string>()
+  for (const message of messages) {
+    if (message.role === 'assistant') {
+      for (const call of message.toolCalls) {
+        if (!PAUSE_TOOL_NAMES.has(call.name) && !META_ONLY_TOOL_NAMES.has(call.name)) {
+          candidateCallIds.add(call.id)
+        }
+      }
+      continue
+    }
+    if (message.role === 'tool' && candidateCallIds.has(message.toolCallId) && toolResultSucceeded(message.content)) {
+      return true
+    }
+  }
+  return false
+}
+
+function toolResultSucceeded(content: ToolResultContent): boolean {
+  if (typeof content !== 'string') return true
+  try {
+    const parsed = JSON.parse(content) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return true
+    const result = parsed as Record<string, unknown>
+    return result.ok !== false && result.success !== false
+  } catch {
+    return true
+  }
 }
 
 function parseReminderPayload(content: string): RestResumeReminderPayload | null {

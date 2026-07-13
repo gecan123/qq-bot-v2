@@ -66,10 +66,32 @@ describe('agent daily metrics', () => {
           effectiveToolNames: ['browser'],
         }),
         JSON.stringify({
+          time: '2026-07-13T09:00:00.000+08:00',
+          msg: 'rest_enter',
+          durationSeconds: 300,
+          confirmed: true,
+          reason: 'SOL 观察告一段落，等 zzz 回复',
+        }),
+        JSON.stringify({
+          time: '2026-07-13T09:05:00.000+08:00',
+          msg: 'rest_elapsed',
+        }),
+        JSON.stringify({
+          time: '2026-07-13T10:00:00.000+08:00',
+          msg: 'rest_redirected',
+          reason: '想短暂放空',
+        }),
+        JSON.stringify({
           time: '2026-07-13 12:00:00',
           msg: 'round_llm_done',
           model: 'LongCat-2.0',
           toolNames: ['send_message'],
+        }),
+        JSON.stringify({
+          time: '2026-07-13 12:00:01',
+          msg: 'round_tool_done',
+          toolName: 'send_message',
+          ok: true,
         }),
         JSON.stringify({
           time: '2026-07-13T12:00:00.000+08:00',
@@ -108,10 +130,65 @@ describe('agent daily metrics', () => {
       },
       unresolvedInvokeCalls: 1,
     })
+    assert.deepEqual(report.rest, {
+      requests: 2,
+      started: 1,
+      redirected: 1,
+      confirmationRejected: 0,
+      confirmed: 1,
+      elapsed: 1,
+      interrupted: 0,
+      requestedSeconds: {
+        total: 300,
+        average: 300,
+        max: 300,
+      },
+      reasons: {
+        waitingForPersonOrMessage: 1,
+        completion: 1,
+        timeOfDay: 0,
+        marketPolling: 1,
+        other: 1,
+      },
+      postRest: {
+        observed: 1,
+        acted: 1,
+        restedAgain: 0,
+        unknown: 0,
+      },
+    })
   })
 
   test('rejects invalid calendar dates and oversized ranges', () => {
     assert.throws(() => resolveDailyMetricDates({ date: '2026-02-30' }), /invalid date/)
     assert.throws(() => resolveDailyMetricDates({ days: 32 }), /between 1 and 31/)
+  })
+
+  test('keeps old post-rest behavior unknown without tool completion evidence', () => {
+    const result = summarizeDailyAgentMetrics({
+      tokenUsageNdjson: '',
+      appLogNdjson: [
+        JSON.stringify({ time: '2026-07-13T09:00:00.000+08:00', msg: 'rest_elapsed' }),
+        JSON.stringify({
+          time: '2026-07-13T09:01:00.000+08:00',
+          msg: 'round_llm_done',
+          model: 'LongCat-2.0',
+          toolNames: ['send_message'],
+        }),
+        JSON.stringify({
+          time: '2026-07-13T09:02:00.000+08:00',
+          msg: 'rest_enter',
+          durationSeconds: 60,
+          reason: '旧日志没有工具完成事件',
+        }),
+      ].join('\n'),
+    }, { date: '2026-07-13' })
+
+    assert.deepEqual(result.reports[0]!.rest.postRest, {
+      observed: 1,
+      acted: 0,
+      restedAgain: 0,
+      unknown: 1,
+    })
   })
 })

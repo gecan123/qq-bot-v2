@@ -123,26 +123,27 @@ test('zodToOpenAIStrictToolJsonSchema keeps pause schema strict and rest-only', 
   assert.equal(json.type, 'object')
   assert.equal('oneOf' in json, false)
   assert.equal('anyOf' in json, false)
-  assert.deepEqual(json.required, ['action', 'durationSeconds', 'reason', 'intention'])
+  assert.deepEqual(json.required, ['action', 'durationSeconds', 'confirmed', 'reason', 'intention'])
 
   const props = json.properties as Record<string, Record<string, unknown>>
   assert.equal(props.action.const, 'rest')
   assert.equal(props.intention.type, 'object')
-  assert.deepEqual(props.intention.required, ['preferredIndex', 'immediateDirections'])
+  assert.deepEqual(props.intention.required, ['primaryDirection', 'alternativeDirection'])
   const intentionProps = props.intention.properties as Record<string, Record<string, unknown>>
-  assert.equal(intentionProps.preferredIndex.type, 'integer')
-  assert.equal(intentionProps.preferredIndex.minimum, 0)
-  assert.equal(intentionProps.preferredIndex.maximum, 5)
-  assert.equal(intentionProps.immediateDirections.type, 'array')
-  assert.equal(intentionProps.immediateDirections.minItems, 6)
-  assert.equal(intentionProps.immediateDirections.maxItems, 6)
+  assert.equal(intentionProps.primaryDirection.type, 'string')
+  assert.equal(intentionProps.alternativeDirection.type, 'string')
   assert.equal('waitingDirection' in intentionProps, false)
   assert.deepEqual(props.durationSeconds, {
     default: 60,
-    description: '自己安排的休息秒数, 默认 60, 通常 30..120 已足够; 仅明确需要较长离开时才延长, 范围 30..1800.',
+    description: '自己安排的短休息秒数, 默认 60, 范围 30..300.',
     type: 'integer',
     minimum: 30,
-    maximum: 1800,
+    maximum: 300,
+  })
+  assert.deepEqual(props.confirmed, {
+    default: false,
+    description: '第一次请求必须为 false. 仅当前一次 pause 已返回 alternative_available、此后没有别的工具结果且你仍真想休息时, 再次调用并设为 true.',
+    type: 'boolean',
   })
 })
 

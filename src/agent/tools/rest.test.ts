@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { createRestTool, restTool } from './rest.js'
+import { createRestTool, hasPendingRestAlternative, restTool } from './rest.js'
 import { InMemoryEventQueue } from '../event-queue.js'
 import type { BotEvent } from '../event.js'
 import type { ToolContext } from '../tool.js'
@@ -68,6 +68,33 @@ function privateEvent(): BotEvent {
 }
 
 describe('rest tool', () => {
+  test('durably recognizes only the latest completed alternative result', () => {
+    const alternativeResult = JSON.stringify({
+      ok: true,
+      status: 'alternative_available',
+      paused: false,
+    })
+    const messages = [
+      {
+        role: 'assistant' as const,
+        content: '',
+        toolCalls: [{ id: 'pause-1', name: 'pause', args: {} }],
+      },
+      { role: 'tool' as const, toolCallId: 'pause-1', content: alternativeResult },
+      {
+        role: 'assistant' as const,
+        content: '',
+        toolCalls: [{ id: 'pause-2', name: 'pause', args: { confirmed: true } }],
+      },
+    ]
+
+    assert.equal(hasPendingRestAlternative(messages), true)
+    assert.equal(hasPendingRestAlternative([
+      ...messages,
+      { role: 'tool' as const, toolCallId: 'other-1', content: '{"ok":true}' },
+    ]), false)
+  })
+
   test('schema requires an intention and defaults to 60 seconds', () => {
     assert.equal(restTool.schema.safeParse({}).success, false)
     const parsed = restTool.schema.safeParse({
@@ -79,15 +106,91 @@ describe('rest tool', () => {
     assert.equal(data.durationSeconds, 60)
   })
 
-  test('description frames intention as flexible options', () => {
+  test('description frames intention as two concrete directions', () => {
     const tool = createRestTool()
-    assert.match(tool.description, /immediateDirections 必须恰好列 6 个/)
-    assert.match(tool.description, /选择一个、合并几个或改道/)
-    assert.match(tool.description, /外部消息不是行动方向/)
-    assert.match(tool.description, /不与做自己的事冲突/)
-    assert.match(tool.description, /现在无需等待任何人就能开始/)
-    assert.match(tool.description, /没有实际尝试前不要立刻再次休息/)
-    assert.match(tool.description, /不是“今天全部完成”.*不要回顾已完成清单.*醒来后真能开始的新方向/)
+    assert.match(tool.description, /primaryDirection.*alternativeDirection/)
+    assert.match(tool.description, /不要为了填菜单制造六个占位方向/)
+    assert.match(tool.description, /机械检查行情/)
+    assert.match(tool.description, /未来某个时点再看时用 schedule/)
+    assert.match(tool.description, /不是“今天全部完成”/)
+  })
+
+  test('first request returns a journal alternative without pausing', async () => {
+    let picked = 0
+    const tool = createRestTool({
+      pickAlternative: async () => {
+        picked++
+        return {
+          direction: '继续拆解 QuadRF 众筹页面的供应链线索',
+          whyNow: 'Agenda 里仍是 Active',
+          firstStep: '打开现有 notebook 并列出第一条待查证问题',
+          promoteToGoal: true,
+        }
+      },
+    })
+    const { ctx, queue } = makeCtx()
+
+    const result = await tool.execute({
+      durationSeconds: 30,
+      confirmed: false,
+      reason: '刚完成一件事，想停一下',
+      intention: TEST_INTENTION,
+    }, ctx)
+
+    assert.equal(picked, 1)
+    assert.deepEqual(result.outcome, { ok: true, code: 'alternative_available' })
+    assert.equal(result.effects, undefined)
+    assert.deepEqual(JSON.parse(result.content as string), {
+      ok: true,
+      status: 'alternative_available',
+      paused: false,
+      alternative: {
+        direction: '继续拆解 QuadRF 众筹页面的供应链线索',
+        whyNow: 'Agenda 里仍是 Active',
+        firstStep: '打开现有 notebook 并列出第一条待查证问题',
+        promoteToGoal: true,
+      },
+      instruction: '没有进入休息。这个方向值得跨多轮推进: 若它确实有吸引力, 先用 goal action=create_self 建立持久主线并完成 firstStep; 若看过后仍真想休息, 再次调用 pause 并设 confirmed=true.',
+    })
+
+    queue.enqueue(privateEvent())
+    const confirmed = await tool.execute({
+      durationSeconds: 30,
+      confirmed: true,
+      reason: '看过建议后仍然确实想短暂放空',
+      intention: TEST_INTENTION,
+    }, { ...ctx, roundIndex: ctx.roundIndex + 1 })
+    assert.equal(picked, 1)
+    assert.equal(JSON.parse(confirmed.content as string).status, 'interrupted')
+    assert.deepEqual(confirmed.effects, [{ type: 'pause', status: 'interrupted' }])
+  })
+
+  test('confirmed cannot bypass the first alternative check', async () => {
+    let picked = 0
+    const tool = createRestTool({
+      pickAlternative: async () => {
+        picked++
+        return null
+      },
+    })
+    const { ctx } = makeCtx()
+
+    const result = await tool.execute({
+      durationSeconds: 30,
+      confirmed: true,
+      reason: '想直接跳过检查',
+      intention: TEST_INTENTION,
+    }, ctx)
+
+    assert.equal(picked, 0)
+    assert.deepEqual(result.outcome, { ok: true, code: 'confirmation_required' })
+    assert.equal(result.effects, undefined)
+    assert.deepEqual(JSON.parse(result.content as string), {
+      ok: true,
+      status: 'confirmation_required',
+      paused: false,
+      instruction: '没有进入休息。confirmed 不能用于跳过第一次检查; 请先以 confirmed=false 调用并查看是否返回 alternative_available.',
+    })
   })
 
   test('already queued mentioned group message interrupts rest without consuming the event', async () => {
@@ -96,6 +199,7 @@ describe('rest tool', () => {
 
     const result = await restTool.execute({
       durationSeconds: 30,
+      confirmed: false,
       reason: '短暂放空',
       intention: TEST_INTENTION,
     }, ctx)
@@ -106,7 +210,7 @@ describe('rest tool', () => {
     assert.equal(payload.durationSeconds, 30)
     assert.equal(typeof payload.elapsedMs, 'number')
     assert.equal(payload.restReason, '短暂放空')
-    assert.deepEqual(payload.resumePlan.immediateDirections, TEST_INTENTION.immediateDirections)
+    assert.equal(payload.resumePlan.primaryDirection, TEST_INTENTION.primaryDirection)
     assert.deepEqual(result.outcome, { ok: true, code: 'interrupted' })
     assert.deepEqual(result.effects, [{ type: 'pause', status: 'interrupted' }])
     assert.equal(queue.size(), 1)
@@ -118,6 +222,7 @@ describe('rest tool', () => {
 
     const result = await restTool.execute({
       durationSeconds: 30,
+      confirmed: false,
       reason: '短暂放空',
       intention: TEST_INTENTION,
     }, ctx)
@@ -135,6 +240,7 @@ describe('rest tool', () => {
 
     const restPromise = tool.execute({
       durationSeconds: 30,
+      confirmed: false,
       reason: '短暂放空',
       intention: TEST_INTENTION,
     }, ctx)
@@ -152,7 +258,7 @@ describe('rest tool', () => {
     assert.equal(payload.ok, true)
     assert.equal(payload.status, 'elapsed')
     assert.equal(payload.durationSeconds, 30)
-    assert.equal(payload.resumePlan.preferredDirection, TEST_INTENTION.immediateDirections[TEST_INTENTION.preferredIndex])
+    assert.equal(payload.resumePlan.primaryDirection, TEST_INTENTION.primaryDirection)
     assert.equal(typeof payload.elapsedMs, 'number')
     assert.deepEqual(finalResult.outcome, { ok: true, code: 'elapsed' })
     assert.deepEqual(finalResult.effects, [{ type: 'pause', status: 'elapsed' }])
@@ -160,15 +266,8 @@ describe('rest tool', () => {
 })
 
 const TEST_INTENTION = {
-  preferredIndex: 0,
-  immediateDirections: [
-    '复核 SOL 观察记录',
-    '读一篇具体论文',
-    '回看 journal 的未完线索',
-    '只读检查一个代码模块',
-    '整理一条市场假设',
-    '挑一篇群友文章读第一节',
-  ],
+  primaryDirection: '复核一条 SOL 观察假设的失效条件',
+  alternativeDirection: '挑一篇群友文章读第一节',
 }
 
 function tickMicrotasks(): Promise<void> {

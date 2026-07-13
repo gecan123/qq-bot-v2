@@ -25,15 +25,8 @@ function privateEvent(): BotEvent {
 }
 
 const intention = {
-  preferredIndex: 0,
-  immediateDirections: [
-    '查一篇具体论文的最新进展',
-    '用现有行情工具复核 SOL 观察记录',
-    '回看 journal 里的未完阅读线索',
-    '只读检查一个最近改动的模块',
-    '整理一条近期市场判断及失效条件',
-    '挑一篇群友新文章读完第一节',
-  ],
+  primaryDirection: '查一篇具体论文的最新进展并读摘要',
+  alternativeDirection: '挑一篇群友新文章读完第一节',
 }
 
 describe('pause tool', () => {
@@ -44,17 +37,18 @@ describe('pause tool', () => {
     const rest = pauseTool.schema.safeParse({ action: 'rest', reason: '现在确实想短暂放空', intention })
     assert.equal(rest.success, true)
     assert.equal((rest.data as { durationSeconds: number }).durationSeconds, 60)
+    assert.equal((rest.data as { confirmed: boolean }).confirmed, false)
     assert.equal(pauseTool.schema.safeParse({
       action: 'rest',
       reason: '短暂放空',
-      intention: { ...intention, preferredIndex: 6 },
+      intention: { ...intention, alternativeDirection: intention.primaryDirection },
     }).success, false)
     assert.equal(pauseTool.schema.safeParse({
       action: 'rest',
       reason: '短暂放空',
       intention: {
         ...intention,
-        immediateDirections: ['重复方向', '重复方向', '第三个方向', '第四个方向', '第五个方向', '第六个方向'],
+        primaryDirection: '等 zzz 私聊',
       },
     }).success, false)
     assert.equal(pauseTool.schema.safeParse({
@@ -62,7 +56,7 @@ describe('pause tool', () => {
       reason: '短暂放空',
       intention: {
         ...intention,
-        immediateDirections: ['等 zzz 私聊', ...intention.immediateDirections.slice(1)],
+        primaryDirection: '检查SOL价格',
       },
     }).success, false)
     assert.equal(pauseTool.schema.safeParse({
@@ -70,8 +64,13 @@ describe('pause tool', () => {
       reason: '短暂放空',
       intention: {
         ...intention,
-        immediateDirections: ['看竞技场群回复', ...intention.immediateDirections.slice(1)],
+        primaryDirection: '整理memory',
       },
+    }).success, false)
+    assert.equal(pauseTool.schema.safeParse({
+      action: 'rest',
+      reason: '短暂放空',
+      intention: { ...intention, primaryDirection: '浏览HN' },
     }).success, false)
     assert.equal(pauseTool.schema.safeParse({
       action: 'rest',
@@ -83,7 +82,7 @@ describe('pause tool', () => {
       action: 'rest',
       reason: '短暂放空',
       intention,
-      durationSeconds: 1_801,
+      durationSeconds: 301,
     }).success, false)
   })
 
@@ -94,19 +93,18 @@ describe('pause tool', () => {
 
   test('description prioritizes finding something to do after rest', () => {
     const tool = createPauseTool()
-    assert.match(tool.description, /醒来后先执行 preferredIndex/)
-    assert.match(tool.description, /没有实际尝试前不要立刻再次休息/)
+    assert.match(tool.description, /alternative_available/)
+    assert.match(tool.description, /confirmed=true/)
+    assert.match(tool.description, /没有实际尝试醒后方向前不要立刻再次休息/)
   })
 
-  test('description frames intention as flexible options', () => {
+  test('description frames intention as two concrete directions', () => {
     const tool = createPauseTool()
-    assert.match(tool.description, /immediateDirections 必须恰好列 6 个/)
-    assert.match(tool.description, /改选其他方向、合并几个或改道/)
-    assert.match(tool.description, /外部消息不是行动方向/)
-    assert.match(tool.description, /不与做自己的事冲突/)
-    assert.match(tool.description, /现在无需等待任何人就能开始/)
-    assert.match(tool.description, /继续看.*占位句/)
-    assert.match(tool.description, /不是“今天全部完成”.*不要回顾已完成清单.*醒来后真能开始的新方向/)
+    assert.match(tool.description, /primaryDirection.*alternativeDirection/)
+    assert.match(tool.description, /不要制造六项菜单/)
+    assert.match(tool.description, /机械盯行情/)
+    assert.match(tool.description, /未来时点再看行情用 schedule/)
+    assert.match(tool.description, /不是“今天全部完成”/)
   })
 
   test('action=rest delegates to rest behavior', async () => {
@@ -116,6 +114,7 @@ describe('pause tool', () => {
     const result = await pauseTool.execute({
       action: 'rest',
       durationSeconds: 30,
+      confirmed: false,
       reason: '刚完成一段集中阅读，想短暂放空',
       intention,
     }, ctx)
@@ -127,9 +126,8 @@ describe('pause tool', () => {
       elapsedMs: number
       restReason: string
       resumePlan: {
-        preferredIndex: number
-        preferredDirection: string
-        immediateDirections: string[]
+        primaryDirection: string
+        alternativeDirection: string
         instruction: string
       }
     }
@@ -140,10 +138,9 @@ describe('pause tool', () => {
       elapsedMs: 0,
       restReason: '刚完成一段集中阅读，想短暂放空',
       resumePlan: {
-        preferredIndex: intention.preferredIndex,
-        preferredDirection: intention.immediateDirections[intention.preferredIndex],
-        immediateDirections: intention.immediateDirections,
-        instruction: `现在先实际执行 immediateDirections[${intention.preferredIndex}]: ${intention.immediateDirections[intention.preferredIndex]}; 外部消息可能随时到来并切换注意力, 与此同时照常推进自己的事. 可以按新情况改选其他 immediateDirections, 但没有实际尝试前不要再次休息.`,
+        primaryDirection: intention.primaryDirection,
+        alternativeDirection: intention.alternativeDirection,
+        instruction: `现在先实际执行 primaryDirection 的第一步: ${intention.primaryDirection}; 若现场情况变化或它已失去吸引力, 改做 alternativeDirection: ${intention.alternativeDirection}. 没有实际尝试前不要再次休息.`,
       },
     })
     assert.equal(Number.isInteger(content.elapsedMs), true)

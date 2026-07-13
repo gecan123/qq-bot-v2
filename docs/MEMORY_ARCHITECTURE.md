@@ -104,7 +104,7 @@ flowchart LR
 
 - 单文件 `life/agenda.md` 表示“现在仍有效的状态”，不是 append-only 历史。
 - 主 Agent 显式修改时必须先 read，再带最新 revision 覆盖完整 Agenda。
-- 异步 Life review 会读取 Agenda，也可能更新它。idle intention picker 会有界读取 Agenda、最近两天 Journal 和 `notes/wishes.md`，只返回一个可立即开始的替代方向；该方向只有通过 `pause` tool result 进入 `AgentContext`，不会作为隐藏 request-time 注入。
+- 异步 Life review 会读取 Agenda，也可能更新它。idle intention picker 首先有界读取最近 durable context，再以 Agenda、最近两天 Journal 和 `notes/wishes.md` 为后备，只返回一个带具体锚点、念头和第一步的替代方向；它只有通过 `pause` 的结构化 `idleThought` tool result 进入 `AgentContext`，不会作为隐藏 request-time 注入，replay 也不会重算。
 
 ## 读取与披露
 

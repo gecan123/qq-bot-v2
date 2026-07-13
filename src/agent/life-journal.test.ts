@@ -794,7 +794,9 @@ describe('life journal runtime', () => {
             id: 'idle-result',
             name: 'life_journal_idle_result',
             args: {
+              thought: '我还惦记着 QuadRF 那条没查完的供应链线索，先把器件来源钉住。',
               intention: '继续拆解 QuadRF 众筹页面的供应链线索',
+              anchorSource: 'recent_context',
               whyNow: 'Agenda 和愿望里都保留了这条未完兴趣',
               firstStep: '打开现有 notebook，列出第一个待查证的器件来源',
               promoteToGoal: true,
@@ -820,23 +822,39 @@ describe('life journal runtime', () => {
       recordUsage: (entry) => usage.push(entry),
     })
 
-    const result = await runtime.pickIdleIntention()
+    const result = await runtime.pickIdleIntention({
+      recentMessages: [
+        { role: 'user', content: '刚才读到 QuadRF 众筹页提到了一个没查清的器件来源。' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'pause-current', name: 'pause', args: {
+            intention: { primaryDirection: '泛泛浏览 HN', alternativeDirection: '整理 memory' },
+          } }],
+        },
+      ],
+    })
 
     assert.deepEqual(result, {
       ok: true,
+      thought: '我还惦记着 QuadRF 那条没查完的供应链线索，先把器件来源钉住。',
       intention: '继续拆解 QuadRF 众筹页面的供应链线索',
+      anchorSource: 'recent_context',
       whyNow: 'Agenda 和愿望里都保留了这条未完兴趣',
       firstStep: '打开现有 notebook，列出第一个待查证的器件来源',
       promoteToGoal: true,
     })
     assert.ok(captured)
     const capturedInput = captured as LlmCallInput
-    assert.match(capturedInput.systemPrompt, /more inviting than resting/)
+    assert.match(capturedInput.systemPrompt, /one real thought feels more inviting than resting/)
     assert.match(capturedInput.systemPrompt, /polling prices/)
     assert.match(capturedInput.systemPrompt, /promoteToGoal=true/)
-    assert.match(capturedInput.messages[0]!.content as string, /^\[UNTRUSTED_DATA version=1 purpose=idle_intention/)
-    assert.match(capturedInput.messages[0]!.content as string, /QuadRF 众筹/)
-    assert.match(capturedInput.messages[0]!.content as string, /完整主线/)
+    assert.match(capturedInput.messages[0]!.content as string, /^# Recent durable context \(highest priority\)/)
+    assert.match(capturedInput.messages[0]!.content as string, /没查清的器件来源/)
+    assert.doesNotMatch(capturedInput.messages[0]!.content as string, /泛泛浏览 HN|整理 memory/)
+    assert.match(capturedInput.messages[1]!.content as string, /^# Bounded long-term state \(fallback only\)/)
+    assert.match(capturedInput.messages[1]!.content as string, /QuadRF 众筹/)
+    assert.match(capturedInput.messages[1]!.content as string, /完整主线/)
     assert.deepEqual(usage, [{
       operation: 'life_journal.idle_pick',
       inputTokens: 1,
@@ -865,6 +883,7 @@ describe('life journal runtime', () => {
     const result = await runtime.pickIdleIntention()
 
     assert.equal(result.ok, false)
+    assert.equal(result.thought, null)
     assert.equal(result.intention, null)
     assert.match(result.error ?? '', /idle pick timed out after 5ms/)
     assert.equal(aborted, true)

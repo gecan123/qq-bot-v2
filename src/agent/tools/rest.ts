@@ -53,7 +53,9 @@ export interface RestToolDeps {
 }
 
 export interface RestAlternative {
+  thought: string
   direction: string
+  anchorSource: 'recent_context' | 'agenda' | 'journal' | 'wishes' | null
   whyNow: string | null
   firstStep: string | null
   promoteToGoal: boolean
@@ -124,7 +126,8 @@ export function createRestTool(deps: RestToolDeps = {}): Tool<RestArgs> {
     description: [
       '确实想暂时停一下时安排短休息, 默认 1 分钟, 最长 5 分钟; 它是安全阀, 不是“暂时没事做”的默认动作。',
       'reason 只说明为什么此刻确实想暂停; 时间晚、owner 不在线、群聊与自己无关或刚完成一件事, 单独都不是充分理由。',
-      '第一次调用 confirmed 必须为 false; runtime 若从 Agenda、近期 Life Journal 或愿望中找到更有吸引力的未完方向, 会返回 alternative_available 而不暂停。看过建议后若仍真想休息, 才再次调用并设 confirmed=true。',
+      '第一次调用 confirmed 必须为 false; runtime 会先从最近真实上下文寻找锚点, 再以 Agenda、近期 Life Journal 或愿望作后备。若长出一个真实念头, 会返回 alternative_available 而不暂停。',
+      'alternative_available 里的 idleThought 是你自己的念头, 不是任务或命令: 可以顺着 firstStep 做一点; 看过后仍真想休息, 才再次调用并设 confirmed=true。',
       'intention 只保留一个 primaryDirection 和一个不同的 alternativeDirection, 都要写明具体对象和第一步动作。不要为了填菜单制造六个占位方向。',
       '等人、等消息、轮询群聊、机械检查行情、泛泛浏览 HN/Reddit、整理 memory/journal 都不是休息后的真实方向。价格或行情需要未来某个时点再看时用 schedule, 不要靠反复休息轮询。',
       '一个任务做完只是注意力重新自由, 不是“今天全部完成”; 不要回顾已完成清单或把事情推到明天。',
@@ -165,6 +168,7 @@ export function createRestTool(deps: RestToolDeps = {}): Tool<RestArgs> {
           log.info({
             reason: args.reason,
             direction: alternative.direction,
+            anchorSource: alternative.anchorSource,
             promoteToGoal: alternative.promoteToGoal,
           }, 'rest_redirected')
           return {
@@ -172,10 +176,13 @@ export function createRestTool(deps: RestToolDeps = {}): Tool<RestArgs> {
               ok: true,
               status: 'alternative_available',
               paused: false,
-              alternative,
+              idleThought: {
+                event: 'idle_thought',
+                ...alternative,
+              },
               instruction: alternative.promoteToGoal
-                ? '没有进入休息。这个方向值得跨多轮推进: 若它确实有吸引力, 先用 goal action=create_self 建立持久主线并完成 firstStep; 若看过后仍真想休息, 再次调用 pause 并设 confirmed=true.'
-                : '没有进入休息。若这个方向有一点吸引力, 先完成 firstStep; 若看过后仍真想休息, 再次调用 pause 并设 confirmed=true.',
+                ? '没有进入休息。idleThought 是你自己的念头而不是任务；若它确实有吸引力且值得跨多轮推进, 用 goal action=create_self 建立持久主线并完成 firstStep。若让它过去后仍真想休息, 再次调用 pause 并设 confirmed=true.'
+                : '没有进入休息。idleThought 是你自己的念头而不是任务；有吸引力就先完成 firstStep，也可以让它过去。若看过后仍真想休息, 再次调用 pause 并设 confirmed=true.',
             }),
             outcome: { ok: true, code: 'alternative_available' },
           }

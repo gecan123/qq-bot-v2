@@ -128,6 +128,7 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       workspaceDir: input.workspaceDir,
       workspaceStateCoordinator: input.workspaceStateCoordinator,
       restGuide: input.lifeJournal,
+      getRestGuideContext: () => input.context.getSnapshot().messages,
       canConfirmRestAlternative: () => hasPendingRestAlternative(input.context.getSnapshot().messages),
       optionalTools: input.optionalTools,
       groupIds: input.groupIds,

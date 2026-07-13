@@ -2,8 +2,10 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import type { AgentMessage } from './agent-context.types.js'
 import {
+  renderInterruptedRestAttentionReminder,
   renderRestResumeReminder,
   renderRestResumeReminderCompactionSuffix,
+  shouldAppendInterruptedRestAttentionReminder,
   shouldAppendRestResumeReminder,
   stripRestResumeReminderCompactionSuffix,
 } from './rest-resume-reminder.js'
@@ -34,6 +36,48 @@ describe('rest resume reminder', () => {
     assert.match(rendered, /primaryDirection.*alternativeDirection/)
     assert.match(rendered, /\n<\/system-reminder>$/)
     assert.doesNotMatch(rendered, /preferredDirection\s*:/)
+  })
+
+  test('renders one fixed attention-transition reminder without copying the suspended direction', () => {
+    const rendered = renderInterruptedRestAttentionReminder()
+
+    assert.match(rendered, /"event":"rest_interrupted_attention"/)
+    assert.match(rendered, /临时切换.*不会自动取消自己的方向/)
+    assert.match(rendered, /最近 pause 工具结果里的 resumePlan/)
+    assert.doesNotMatch(rendered, /读一篇具体论文/)
+  })
+
+  test('detects interrupted rest followed only by newly disclosed attention', () => {
+    const messages: AgentMessage[] = [
+      assistantTool('pause', 'pause-1'),
+      toolResult('pause-1', JSON.stringify({
+        ok: true,
+        status: 'interrupted',
+        resumePlan: {
+          primaryDirection: '读一篇具体论文',
+          alternativeDirection: '复核一条研究假设',
+        },
+      })),
+      { role: 'user', content: '{"event":"inbox_update","priority":"high"}' },
+    ]
+
+    assert.equal(shouldAppendInterruptedRestAttentionReminder(messages), true)
+    assert.equal(shouldAppendInterruptedRestAttentionReminder([
+      ...messages,
+      { role: 'user', content: renderInterruptedRestAttentionReminder() },
+    ]), false)
+  })
+
+  test('does not restore interrupted focus after the agent has already acted', () => {
+    const messages: AgentMessage[] = [
+      assistantTool('pause', 'pause-1'),
+      toolResult('pause-1', '{"ok":true,"status":"interrupted","resumePlan":{}}'),
+      { role: 'user', content: '{"event":"inbox_update","priority":"high"}' },
+      assistantTool('inbox', 'inbox-1'),
+      toolResult('inbox-1'),
+    ]
+
+    assert.equal(shouldAppendInterruptedRestAttentionReminder(messages), false)
   })
 
   test('allows the first reminder when the durable ledger has no prior marker', () => {

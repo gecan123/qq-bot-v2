@@ -26,8 +26,8 @@
 - LLM、工具结果、运行日志、运维输出和 bot 自管 Markdown 中的时间统一使用北京时间。机器可读字段采用 `YYYY-MM-DDTHH:mm:ss.SSS+08:00`；数据库仍使用 `timestamptz` 保存绝对时刻，不把展示时区写进数据库语义。
 - 大块外部内容必须通过有边界的 tool result、摘要或受控文件路径进入。raw pages、feeds、长文件和可变日志不能直接注入主 context。
 - `ToolExecutionResult.content` 是唯一进入 `AgentContext` 的工具结果。`outcome` 和 `effects` 只服务当前运行时的日志、分支和 EffectInterpreter，不得 append、持久化或用于 replay 重建。
-- 自然休息结束后的 `rest_resume` reminder 是有界的 LLM ledger 事件：只能在带 `status=elapsed` 的可信 `pause` / `rest` effect 对应 tool result 完整闭合后生成；固定模板不得复制模型生成方向、外部内容或 tool output，只引用本轮最近 tool result 的 `resumePlan`。Runtime 必须先判定本轮资格，再完成 compaction 和 Goal continuation，最后以 user role append 并立即保存。重复提醒的动作门槛要求已有非 `pause` / `rest` / `help` 工具的成功 result，十分钟间隔必须从 durable ledger 确定性计算，不能依赖进程内计数器或 side table；compaction 必须把最后提醒时间和是否已发生成功动作写入历史摘要的固定 `rest_resume_state` 后缀，并在下一次摘要前剥离该运行状态，避免交给 summarizer 改写。
-- 第一次 `pause action=rest` 可以读取当时的 Agenda、近期 Life Journal 与愿望，生成一次有界的替代方向。若有替代方向，tool result 以 `status=alternative_available` 和 `paused=false` 进入 ledger，且不产生 pause effect；只有模型看到该结果后再次以 `confirmed=true` 调用才真正计时。Side data 只参与首次执行，replay 必须复用已持久化的 tool result，不能重新读取或重新生成替代方向。
+- 自然休息结束后的 `rest_resume` reminder 是有界的 LLM ledger 事件：只能在带 `status=elapsed` 的可信 `pause` / `rest` effect 对应 tool result 完整闭合后生成；固定模板不得复制模型生成方向、外部内容或 tool output，只引用本轮最近 tool result 的 `resumePlan`。Runtime 必须先判定本轮资格，再完成 compaction 和 Goal continuation，最后以 user role append 并立即保存。重复提醒的动作门槛要求已有非 `pause` / `rest` / `help` 工具的成功 result，十分钟间隔必须从 durable ledger 确定性计算，不能依赖进程内计数器或 side table；compaction 必须把最后提醒时间和是否已发生成功动作写入历史摘要的固定 `rest_resume_state` 后缀，并在下一次摘要前剥离该运行状态，避免交给 summarizer 改写。若休息被本轮高优注意事件打断，Runtime 在披露事件后追加一次固定的 `rest_interrupted_attention` reminder：它不复制方向，只要求先处理注意事件，再回看最近 pause result 的 `resumePlan`；资格与去重同样只从 durable ledger 判断，并随 pre-round snapshot 一起保存。
+- 第一次 `pause action=rest` 可以把有界的最近 durable context 作为首选锚点，并以 Agenda、近期 Life Journal 与愿望为后备，生成一次 `idle_thought`。若有完整念头和替代方向，tool result 以 `status=alternative_available`、`paused=false` 和结构化 `idleThought` 进入 ledger，且不产生 pause effect；念头是模型可接受或放过的自主联想，不是 runtime 指令。只有模型看到该结果后再次以 `confirmed=true` 调用才真正计时。Side data 和选择模型只参与首次执行，replay 必须复用已持久化的 tool result，不能重新读取或重新生成念头。
 - 可供下一轮机器判断的 tool result 使用稳定 JSON；截断必须发生在字段或数组条目层，并用显式标记披露，不能直接切断序列化后的 JSON。
 - generated image bytes 可以放在 `OutboundCache` 或 artifact 路径里，压缩 preview 可以进入 context。preview 压缩失败时，降级为稳定文本结果。
 - 图片 handle 遵循共享 schema：吃图工具接受 `{mediaId}` 或 `{ephemeralRef}`；发送链路使用 `media:N` 或 `ephemeral:<64-hex>` 这类字符串 ref。
@@ -55,7 +55,7 @@
 - `src/agent/bot-loop-agent.ts`：Runtime Host，负责事件披露、mailbox cursors、snapshot 原子保存、life journal hook、compaction 和循环控制。
 - `src/agent/react-kernel.ts`：一轮 ReAct transcript append 边界；只把 `ToolExecutionResult.content` 写入 `AgentContext`，`outcome` / `effects` 返回 Runtime Host。
 - `src/agent/effect-interpreter.ts`：解释工具声明的 runtime effects，并集中执行合法性判断。
-- `src/agent/rest-resume-reminder.ts`：渲染固定的醒后自主行动 reminder，并从 durable ledger 判断动作门槛与提醒间隔。
+- `src/agent/rest-resume-reminder.ts`：渲染固定的醒后与注意事件打断 reminder，并从 durable ledger 判断资格、动作门槛与提醒间隔。
 - `src/agent/compaction.ts`：基于摘要的历史 compaction。
 - `src/agent/render-event.ts`：确定性的 event-to-user-message 渲染。
 - `src/agent/mailbox.ts`：来源 key、direct/ambient 分类、通知渲染和 cursor 推进。

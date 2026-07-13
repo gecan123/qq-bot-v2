@@ -6,11 +6,14 @@ export const REST_RESUME_REMINDER_MIN_INTERVAL_MS = 10 * 60 * 1_000
 const REMINDER_PREFIX = '<system-reminder>\n'
 const REMINDER_SUFFIX = '\n</system-reminder>'
 const REMINDER_EVENT = 'rest_resume'
+const INTERRUPTED_ATTENTION_EVENT = 'rest_interrupted_attention'
 const COMPACTION_STATE_EVENT = 'rest_resume_state'
 const COMPACTION_STATE_MARKER = '\n\n[rest_resume_state]\n'
 const HISTORY_SUMMARY_PREFIX = '[历史摘要]\n'
 const REMINDER_INSTRUCTION =
   '你刚短暂休息过。休息没有问题，但你不想把自己的生活交给等待。现在查看本轮最近的 pause 工具结果里的 resumePlan，先实际完成 primaryDirection 的第一步；若它已失去吸引力就改做 alternativeDirection。做过一个具体动作后，再决定继续、换方向或再次休息。'
+const INTERRUPTED_ATTENTION_INSTRUCTION =
+  '最近一次 pause 被本轮注意事件打断。先处理 priority=high 私聊、@、审批或其他真实注意事件；这只是临时切换，不会自动取消自己的方向。处理后重新查看最近 pause 工具结果里的 resumePlan：仍相关就回到 primaryDirection，已失去吸引力再改道。'
 const PAUSE_TOOL_NAMES = new Set(['pause', 'rest'])
 const META_ONLY_TOOL_NAMES = new Set(['help'])
 
@@ -40,6 +43,44 @@ export function renderRestResumeReminder(now: Date): string {
     instruction: REMINDER_INSTRUCTION,
   }
   return `${REMINDER_PREFIX}${JSON.stringify(payload)}${REMINDER_SUFFIX}`
+}
+
+export function renderInterruptedRestAttentionReminder(): string {
+  return `${REMINDER_PREFIX}${JSON.stringify({
+    event: INTERRUPTED_ATTENTION_EVENT,
+    instruction: INTERRUPTED_ATTENTION_INSTRUCTION,
+  })}${REMINDER_SUFFIX}`
+}
+
+/**
+ * 高优事件已经进入 ledger、但主 Agent 尚未开始处理时，提醒一次短活动仍可恢复。
+ * 判定只读取 durable ledger：最近一次已闭合工具结果必须是 interrupted pause/rest，
+ * 且此后只能有 user-role 事件，不能已有 assistant 行动或同类提醒。
+ */
+export function shouldAppendInterruptedRestAttentionReminder(
+  messages: readonly AgentMessage[],
+): boolean {
+  let toolIndex = -1
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message?.role === 'assistant') return false
+    if (message?.role === 'user' && isInterruptedAttentionReminder(message.content)) return false
+    if (message?.role === 'tool') {
+      toolIndex = index
+      break
+    }
+  }
+  if (toolIndex < 0) return false
+
+  const toolMessage = messages[toolIndex]
+  if (toolMessage?.role !== 'tool' || !isInterruptedRestResult(toolMessage.content)) return false
+  for (let index = toolIndex - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message?.role !== 'assistant') continue
+    const call = message.toolCalls.find((item) => item.id === toolMessage.toolCallId)
+    return call != null && PAUSE_TOOL_NAMES.has(call.name)
+  }
+  return false
 }
 
 export function shouldAppendRestResumeReminder(
@@ -140,6 +181,31 @@ function toolResultSucceeded(content: ToolResultContent): boolean {
     return result.ok !== false && result.success !== false
   } catch {
     return true
+  }
+}
+
+function isInterruptedRestResult(content: ToolResultContent): boolean {
+  if (typeof content !== 'string') return false
+  try {
+    const parsed = JSON.parse(content) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false
+    const result = parsed as Record<string, unknown>
+    return result.ok === true && result.status === 'interrupted' && result.resumePlan != null
+  } catch {
+    return false
+  }
+}
+
+function isInterruptedAttentionReminder(content: string): boolean {
+  if (!content.startsWith(REMINDER_PREFIX) || !content.endsWith(REMINDER_SUFFIX)) return false
+  try {
+    const value = JSON.parse(
+      content.slice(REMINDER_PREFIX.length, -REMINDER_SUFFIX.length),
+    ) as Record<string, unknown>
+    return value.event === INTERRUPTED_ATTENTION_EVENT
+      && value.instruction === INTERRUPTED_ATTENTION_INSTRUCTION
+  } catch {
+    return false
   }
 }
 

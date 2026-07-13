@@ -62,7 +62,9 @@ describe('createAgentRuntime', () => {
         async pickIdleIntention() {
           return {
             ok: true,
+            thought: '我还想把 QuadRF 那条线索往前推一步。',
             intention: '继续拆解 Agenda 里的 QuadRF 供应链线索',
+            anchorSource: 'agenda',
             whyNow: '它仍在 Active',
             firstStep: '读取现有 notebook 的第一段',
             promoteToGoal: false,
@@ -136,7 +138,8 @@ describe('createAgentRuntime', () => {
     const pausePayload = JSON.parse(pauseResult.content as string)
     assert.equal(pausePayload.status, 'alternative_available')
     assert.equal(pausePayload.paused, false)
-    assert.equal(pausePayload.alternative.direction, '继续拆解 Agenda 里的 QuadRF 供应链线索')
+    assert.equal(pausePayload.idleThought.event, 'idle_thought')
+    assert.equal(pausePayload.idleThought.direction, '继续拆解 Agenda 里的 QuadRF 供应链线索')
     await runtime.stopBackgroundServices()
   })
 })

@@ -221,8 +221,8 @@ test('maybeCompactConversation: carries rest reminder dedup state in the durable
   const ctx = createAgentContext({
     initialMessages: [
       user(renderRestResumeReminder(remindedAt)),
-      asst('', [{ id: 'help-1', name: 'help' }]),
-      tool('help-1'),
+      asst('', [{ id: 'notebook-1', name: 'notebook' }]),
+      tool('notebook-1'),
       asst('', [{ id: 'pause-2', name: 'pause' }]),
       tool('pause-2'),
     ],

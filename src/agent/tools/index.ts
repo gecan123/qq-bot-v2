@@ -43,6 +43,7 @@ import { createGoalTool } from './goal.js'
 import type { GoalStore } from '../goal-store.js'
 import type { MemoryMaintenanceRuntime } from '../memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
+import type { AgentMessage } from '../agent-context.types.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -64,14 +65,17 @@ export interface BotToolDeps {
   workspaceDir?: string
   workspaceStateCoordinator?: WorkspaceStateCoordinator
   restGuide?: {
-    pickIdleIntention?(): Promise<{
+    pickIdleIntention?(input?: { recentMessages?: readonly AgentMessage[] }): Promise<{
       ok: boolean
+      thought: string | null
       intention: string | null
+      anchorSource?: 'recent_context' | 'agenda' | 'journal' | 'wishes' | null
       whyNow?: string | null
       firstStep?: string | null
       promoteToGoal?: boolean
     }>
   }
+  getRestGuideContext?: () => readonly AgentMessage[]
   canConfirmRestAlternative?: () => boolean
 }
 
@@ -117,10 +121,14 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
           ...(pickIdleIntention
             ? {
                 pickAlternative: async () => {
-                  const picked = await pickIdleIntention()
-                  if (!picked.ok || !picked.intention) return null
+                  const picked = await pickIdleIntention({
+                    recentMessages: deps.getRestGuideContext?.() ?? [],
+                  })
+                  if (!picked.ok || !picked.thought || !picked.intention) return null
                   return {
+                    thought: picked.thought,
                     direction: picked.intention,
+                    anchorSource: picked.anchorSource ?? null,
                     whyNow: picked.whyNow ?? null,
                     firstStep: picked.firstStep ?? picked.intention,
                     promoteToGoal: picked.promoteToGoal ?? false,

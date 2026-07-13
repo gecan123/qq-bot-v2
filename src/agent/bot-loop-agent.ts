@@ -14,7 +14,9 @@ import { injectStickerPoolAfterCompaction } from './sticker-pool.js'
 import { LlmOutputTruncatedError, runReactRound } from './react-kernel.js'
 import { interpretToolEffects } from './effect-interpreter.js'
 import {
+  renderInterruptedRestAttentionReminder,
   renderRestResumeReminder,
+  shouldAppendInterruptedRestAttentionReminder,
   shouldAppendRestResumeReminder,
 } from './rest-resume-reminder.js'
 import { createLogger } from '../logger.js'
@@ -77,9 +79,11 @@ export interface BotLoopAgentDeps {
 
 export interface BotLoopLifeJournal {
   recordRound(input: { roundIndex: number; messages: AgentMessage[] }): Promise<unknown>
-  pickIdleIntention?(): Promise<{
+  pickIdleIntention?(input?: { recentMessages?: readonly AgentMessage[] }): Promise<{
     ok: boolean
+    thought: string | null
     intention: string | null
+    anchorSource?: 'recent_context' | 'agenda' | 'journal' | 'wishes' | null
     whyNow?: string | null
     firstStep?: string | null
     promoteToGoal?: boolean
@@ -367,9 +371,15 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       })
     }
     const { consumed, disclosed, hadAttention } = await drainEvents()
+    const appendedInterruptedFocusReminder = hadAttention
+      && disclosed > 0
+      && shouldAppendInterruptedRestAttentionReminder(deps.context.getSnapshot().messages)
+    if (appendedInterruptedFocusReminder) {
+      deps.context.appendUserMessage(renderInterruptedRestAttentionReminder())
+    }
     log.debug({ roundIndex: roundIndex + 1, eventsConsumed: consumed, eventsDisclosed: disclosed }, 'round_start')
 
-    if (consumed > 0 && disclosed === 0 && !goalMessagesAppended) {
+    if (consumed > 0 && disclosed === 0 && !goalMessagesAppended && !appendedInterruptedFocusReminder) {
       return { ranRound: false }
     }
 

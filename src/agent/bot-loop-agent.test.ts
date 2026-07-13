@@ -1261,6 +1261,68 @@ describe('BotLoopAgent.runOnceForTest', () => {
     )
   })
 
+  test('persists one focus reminder when an attention event interrupts rest', async () => {
+    const ctx = createAgentContext()
+    ctx.appendAssistantTurn({
+      content: '',
+      toolCalls: [{ id: 'pause-1', name: 'pause', args: { action: 'rest' } }],
+    })
+    ctx.appendToolResult({
+      toolCallId: 'pause-1',
+      content: JSON.stringify({
+        ok: true,
+        status: 'interrupted',
+        resumePlan: {
+          primaryDirection: '继续读 QuadRF 的实现说明，先找出采样率换算公式',
+          alternativeDirection: '整理刚才发现的一条射频工具线索',
+        },
+      }),
+    })
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({
+      type: 'napcat_private_message',
+      messageRowId: 88,
+      peerId: 9001,
+      messageId: 20_088,
+      senderId: 9001,
+      senderNickname: 'Alice',
+      mentionedSelf: true,
+      sentAt: new Date('2026-07-13T09:00:00.000Z'),
+      renderedText: '在吗',
+    })
+    const { repo, saved } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    const reminders = ctx.getSnapshot().messages.filter(
+      (message) => message.role === 'user' && message.content.includes('"event":"rest_interrupted_attention"'),
+    )
+    assert.equal(reminders.length, 1)
+    assert.doesNotMatch(reminders[0]?.role === 'user' ? reminders[0].content : '', /QuadRF|采样率|射频工具/)
+    assert.equal(
+      saved[0]?.messages.some(
+        (message) => message.role === 'user' && message.content.includes('"event":"rest_interrupted_attention"'),
+      ),
+      true,
+      'the pre-round snapshot must durably include the reminder',
+    )
+  })
+
   test('delegates tool execution failures to the React kernel durable error result path', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()

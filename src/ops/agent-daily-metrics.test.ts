@@ -80,6 +80,7 @@ describe('agent daily metrics', () => {
           time: '2026-07-13T10:00:00.000+08:00',
           msg: 'rest_redirected',
           reason: '想短暂放空',
+          anchorSource: 'recent_context',
         }),
         JSON.stringify({
           time: '2026-07-13 12:00:00',
@@ -150,12 +151,65 @@ describe('agent daily metrics', () => {
         marketPolling: 1,
         other: 1,
       },
+      redirectSources: {
+        recentContext: 1,
+        agenda: 0,
+        journal: 0,
+        wishes: 0,
+        unknown: 0,
+      },
+      postRedirect: {
+        observed: 1,
+        acted: 1,
+        restedInstead: 0,
+        unknown: 0,
+      },
       postRest: {
         observed: 1,
         acted: 1,
         restedAgain: 0,
         unknown: 0,
       },
+    })
+  })
+
+  test('tracks idle anchor provenance and whether a redirect ends in another rest', () => {
+    const result = summarizeDailyAgentMetrics({
+      tokenUsageNdjson: '',
+      appLogNdjson: [
+        JSON.stringify({
+          time: '2026-07-13T09:00:00.000+08:00',
+          msg: 'rest_redirected',
+          anchorSource: 'agenda',
+          reason: 'Agenda 里还有一篇文章想读',
+        }),
+        JSON.stringify({
+          time: '2026-07-13T09:01:00.000+08:00',
+          msg: 'rest_enter',
+          durationSeconds: 60,
+          reason: '看过念头后还是想短休息',
+        }),
+        JSON.stringify({
+          time: '2026-07-13T10:00:00.000+08:00',
+          msg: 'rest_redirected',
+          anchorSource: 'wishes',
+          reason: '愿望里还有一张图想画',
+        }),
+      ].join('\n'),
+    }, { date: '2026-07-13' })
+
+    assert.deepEqual(result.reports[0]!.rest.redirectSources, {
+      recentContext: 0,
+      agenda: 1,
+      journal: 0,
+      wishes: 1,
+      unknown: 0,
+    })
+    assert.deepEqual(result.reports[0]!.rest.postRedirect, {
+      observed: 2,
+      acted: 0,
+      restedInstead: 1,
+      unknown: 1,
     })
   })
 

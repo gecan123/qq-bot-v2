@@ -121,7 +121,9 @@ describe('rest tool', () => {
       pickAlternative: async () => {
         picked++
         return {
+          thought: '我还惦记着 QuadRF 那条没查完的供应链线索，先把第一个器件来源钉住。',
           direction: '继续拆解 QuadRF 众筹页面的供应链线索',
+          anchorSource: 'agenda',
           whyNow: 'Agenda 里仍是 Active',
           firstStep: '打开现有 notebook 并列出第一条待查证问题',
           promoteToGoal: true,
@@ -144,13 +146,16 @@ describe('rest tool', () => {
       ok: true,
       status: 'alternative_available',
       paused: false,
-      alternative: {
+      idleThought: {
+        event: 'idle_thought',
+        thought: '我还惦记着 QuadRF 那条没查完的供应链线索，先把第一个器件来源钉住。',
         direction: '继续拆解 QuadRF 众筹页面的供应链线索',
+        anchorSource: 'agenda',
         whyNow: 'Agenda 里仍是 Active',
         firstStep: '打开现有 notebook 并列出第一条待查证问题',
         promoteToGoal: true,
       },
-      instruction: '没有进入休息。这个方向值得跨多轮推进: 若它确实有吸引力, 先用 goal action=create_self 建立持久主线并完成 firstStep; 若看过后仍真想休息, 再次调用 pause 并设 confirmed=true.',
+      instruction: '没有进入休息。idleThought 是你自己的念头而不是任务；若它确实有吸引力且值得跨多轮推进, 用 goal action=create_self 建立持久主线并完成 firstStep。若让它过去后仍真想休息, 再次调用 pause 并设 confirmed=true.',
     })
 
     queue.enqueue(privateEvent())

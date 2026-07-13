@@ -40,7 +40,7 @@ export function createPauseTool(deps: PauseToolDeps = {}): Tool<Args> {
       '对话节奏控制工具.',
       'action=rest: 确实想暂时停一下时短休息; 默认 1 分钟, 最长 5 分钟. 它是安全阀, 不是空闲默认动作.',
       'reason 只说明为什么此刻确实想暂停; 时间晚、owner 不在线、群聊与自己无关或刚完成一件事, 单独都不是充分理由.',
-      '第一次调用 confirmed=false; 若返回 alternative_available, 说明没有暂停. 看过建议后仍真想休息, 才再次调用并设 confirmed=true.',
+      '第一次调用 confirmed=false; runtime 先从最近真实上下文寻找锚点, 再以 Agenda / Life Journal / wishes 作后备. 若返回 alternative_available, 其中 idleThought 是自己的念头而不是任务, 且尚未暂停; 可以顺着做一点或让它过去, 仍真想休息才再次调用并设 confirmed=true.',
       'intention 只写一个具体 primaryDirection 和一个不同的 alternativeDirection, 都必须写明对象和第一步; 不要制造六项菜单.',
       '等消息、轮询群聊、机械盯行情、泛泛浏览站点或整理 memory/journal 都不是行动方向; 未来时点再看行情用 schedule.',
       '一个任务做完只是注意力重新自由, 不是“今天全部完成”; 没有实际尝试醒后方向前不要立刻再次休息.',

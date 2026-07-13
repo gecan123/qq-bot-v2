@@ -71,6 +71,19 @@ export interface DailyAgentMetricsReport {
       marketPolling: number
       other: number
     }
+    redirectSources: {
+      recentContext: number
+      agenda: number
+      journal: number
+      wishes: number
+      unknown: number
+    }
+    postRedirect: {
+      observed: number
+      acted: number
+      restedInstead: number
+      unknown: number
+    }
     postRest: {
       observed: number
       acted: number
@@ -129,6 +142,11 @@ interface MutableRestMetrics {
   requestedSecondsTotal: number
   requestedSecondsMax: number | null
   reasons: DailyAgentMetricsReport['rest']['reasons']
+  redirectSources: DailyAgentMetricsReport['rest']['redirectSources']
+  postRedirectActed: number
+  postRedirectRestedInstead: number
+  postRedirectUnknown: number
+  awaitingPostRedirectAction: boolean
   postRestActed: number
   postRestRestedAgain: number
   postRestRestedAgainUnverified: number
@@ -156,6 +174,7 @@ interface AppLogLine {
   ok?: unknown
   durationSeconds?: unknown
   reason?: unknown
+  anchorSource?: unknown
   confirmed?: unknown
 }
 
@@ -284,6 +303,10 @@ function createAccumulator(dates: readonly string[], excludedModels: readonly st
       if (!day) return
 
       if (parsed.msg === 'rest_enter') {
+        if (day.rest.awaitingPostRedirectAction) {
+          day.rest.postRedirectRestedInstead++
+          day.rest.awaitingPostRedirectAction = false
+        }
         if (day.rest.awaitingPostRestAction) {
           if (day.rest.toolCompletionEvidenceAvailable) {
             day.rest.postRestRestedAgain++
@@ -301,7 +324,10 @@ function createAccumulator(dates: readonly string[], excludedModels: readonly st
         return
       }
       if (parsed.msg === 'rest_redirected') {
+        if (day.rest.awaitingPostRedirectAction) day.rest.postRedirectUnknown++
         day.rest.redirected++
+        addRedirectSource(day.rest, parsed.anchorSource)
+        day.rest.awaitingPostRedirectAction = true
         addRestReason(day.rest, parsed.reason)
         return
       }
@@ -325,6 +351,17 @@ function createAccumulator(dates: readonly string[], excludedModels: readonly st
           day.rest.toolCompletionEvidenceAvailable = true
           day.rest.postRestRestedAgain += day.rest.postRestRestedAgainUnverified
           day.rest.postRestRestedAgainUnverified = 0
+        }
+        if (
+          day.rest.awaitingPostRedirectAction
+          && parsed.ok !== false
+          && typeof parsed.toolName === 'string'
+          && parsed.toolName !== 'pause'
+          && parsed.toolName !== 'rest'
+          && parsed.toolName !== 'help'
+        ) {
+          day.rest.postRedirectActed++
+          day.rest.awaitingPostRedirectAction = false
         }
         if (
           day.rest.awaitingPostRestAction
@@ -414,12 +451,42 @@ function createRestMetrics(): MutableRestMetrics {
       marketPolling: 0,
       other: 0,
     },
+    redirectSources: {
+      recentContext: 0,
+      agenda: 0,
+      journal: 0,
+      wishes: 0,
+      unknown: 0,
+    },
+    postRedirectActed: 0,
+    postRedirectRestedInstead: 0,
+    postRedirectUnknown: 0,
+    awaitingPostRedirectAction: false,
     postRestActed: 0,
     postRestRestedAgain: 0,
     postRestRestedAgainUnverified: 0,
     postRestUnknown: 0,
     awaitingPostRestAction: false,
     toolCompletionEvidenceAvailable: false,
+  }
+}
+
+function addRedirectSource(rest: MutableRestMetrics, rawSource: unknown): void {
+  switch (rawSource) {
+    case 'recent_context':
+      rest.redirectSources.recentContext++
+      break
+    case 'agenda':
+      rest.redirectSources.agenda++
+      break
+    case 'journal':
+      rest.redirectSources.journal++
+      break
+    case 'wishes':
+      rest.redirectSources.wishes++
+      break
+    default:
+      rest.redirectSources.unknown++
   }
 }
 
@@ -446,6 +513,10 @@ function addRestReason(rest: MutableRestMetrics, rawReason: unknown): void {
 }
 
 function finalizeRestMetrics(rest: MutableRestMetrics): DailyAgentMetricsReport['rest'] {
+  const postRedirectUnknown = rest.postRedirectUnknown + (rest.awaitingPostRedirectAction ? 1 : 0)
+  const postRedirectObserved = rest.postRedirectActed
+    + rest.postRedirectRestedInstead
+    + postRedirectUnknown
   const unknown = rest.postRestUnknown
     + rest.postRestRestedAgainUnverified
     + (rest.awaitingPostRestAction ? 1 : 0)
@@ -464,6 +535,13 @@ function finalizeRestMetrics(rest: MutableRestMetrics): DailyAgentMetricsReport[
       max: rest.requestedSecondsMax,
     },
     reasons: { ...rest.reasons },
+    redirectSources: { ...rest.redirectSources },
+    postRedirect: {
+      observed: postRedirectObserved,
+      acted: rest.postRedirectActed,
+      restedInstead: rest.postRedirectRestedInstead,
+      unknown: postRedirectUnknown,
+    },
     postRest: {
       observed,
       acted: rest.postRestActed,

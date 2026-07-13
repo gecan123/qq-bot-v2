@@ -86,6 +86,7 @@ describe('skill tool', () => {
     const names = listed.skills.map((skill) => skill.name)
 
     assert.deepEqual(names, [
+      'autonomous_life',
       'background_task_workflow',
       'browser_workflow',
       'context_hygiene',

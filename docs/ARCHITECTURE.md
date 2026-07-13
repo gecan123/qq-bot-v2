@@ -12,11 +12,11 @@
 4. `src/agent/mailbox.ts` 把所有 QQ 消息按来源聚合为不含正文的确定性通知，并计算批次级 `priority=high|normal`；非 QQ 运行时事件仍走稳定 direct 渲染。
 5. `src/agent/runtime.ts` 把已恢复的 context、tools、system prompt 和 `BotLoopAgent` 装配成运行时。
 6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责事件披露、mailbox cursors、Goal revision、context snapshot 原子保存、有界 life journal hook、compaction，以及 pause/autonomy 循环控制。active Goal 是处理完高优先注意事件后的默认主线；compaction 后会重新注入 Goal continuation 并立即保存 snapshot。
-7. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct：把 system prompt、当前 messages 和可见 tools 发给 LLM，append assistant tool calls，顺序执行工具，并且只把 `ToolExecutionResult.content` append 为 tool result。工具的 `outcome` / `effects` 返回 Runtime Host；`src/agent/effect-interpreter.ts` 统一解释 runtime effects，不进入 ledger。
+7. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct：把 system prompt、从 durable `messages` 确定性构造的 working-context projection 和可见 tools 发给 LLM，append assistant tool calls；仅连续且显式只读的 tool calls 可以并行，副作用和未知调用都是 barrier，tool results 严格按原 tool-call 顺序 append。只有 `ToolExecutionResult.content` 进入 ledger；工具的 `outcome` / `effects` 返回 Runtime Host，由 `src/agent/effect-interpreter.ts` 统一解释。
 
-Agent 进程内的非关键后台工作统一走 bounded task scheduler：`maintenance` 单 worker、`network` 最多 3 个并发、`media-description` 最多 2 个并发。同一 `resourceKey` 串行，相同 `dedupeKey` 共享任务。它们是 Node async worker，不是 OS 线程；Browser sidecar 是独立进程，使用自己的单 worker housekeeping lane。
+Agent runtime 的非关键后台工作统一走共享 bounded task scheduler：`maintenance=1`、`network=3`、`media-description=2`、`delegate=2`。同一 `resourceKey` 串行，相同 `dedupeKey` 共享任务。它们是 Node async worker，不是 OS 线程；ingress 媒体描述另走独立 `jobQueue`，Browser sidecar 也是独立进程并使用自己的单 worker housekeeping scheduler。
 
-Goal 不创建第二个主 Agent。主前台仍只有一个串行 `BotLoopAgent` / `AgentContext`；私聊、`@bot` 和审批等高优先事件可以在轮次边界临时打断，处理后回到 Goal。只有现有 `background_task`、`delegate` 和 bounded scheduler lane 可以并发，结果仍作为事件回到单一主 ledger。没有未完成 Goal 时，Agent 可以直接创建 `origin=self` 的持久目标；owner 私聊创建的 Goal 可以抢占它，旧 goalId 的迟到调用会被拒绝。
+Goal 不创建第二个主 Agent。主前台仍只有一个串行 `BotLoopAgent` / `AgentContext`；私聊、`@bot` 和审批等高优先事件可以在轮次边界临时打断，处理后回到 Goal。只有现有 `background_task`、`delegate` 和 bounded scheduler lane 可以并发：用户可见的后台任务和 delegate 通过完成事件回到单一主 ledger，Memory maintenance、Life review 和 housekeeping 只更新 side-data 或日志，不进入 ledger。没有未完成 Goal 时，Agent 可以直接创建 `origin=self` 的持久目标；owner 私聊创建的 Goal 可以抢占它，旧 goalId 的迟到调用会被拒绝。
 
 ## 自主循环
 
@@ -29,7 +29,8 @@ Goal 不创建第二个主 Agent。主前台仍只有一个串行 `BotLoopAgent`
 ## 持久边界
 
 - `messages` 是入站事实账本，不是 LLM ledger。
-- `bot_agent_snapshot.context_snapshot` 是持久化的 LLM 可见上下文；`mailbox_cursors` 和 `goal_revision` 是与它原子保存的披露进度。
+- `bot_agent_snapshot.context_snapshot` 持久化 `AgentContext` 形态：`messages` 是 LLM 可见 ledger，`activeToolCapabilities` 是不进入 `messages` 的 deferred-tool 运行控制状态。
+- `mailbox_cursors`、`mailbox_continuity`、`goal_revision` 和 legacy recovery boundary `last_wake_at` 是 row-level 运行控制状态，与 `context_snapshot` 原子保存。
 - 长期 side-data 分为 `memory`、Notebook、Life Journal 和 Agenda，全部按需披露且不参与 replay；完整分层、写入路由和维护流程见 `docs/MEMORY_ARCHITECTURE.md`。
 - `bot_agent_goal` 是单一持久 Goal 状态，不是第二份 LLM 历史。`origin=owner|self`、动机、完成标准、预算、token/time/round 使用量、blocker 和完成证据在这里持久化；状态变化通过 revision 事件进入 ledger。blocker 连续性使用 Goal 自己的持久 round，而不是进程重启会归零的 BotLoop round。self Goal 默认 1,000,000 tokens、单个上限 10,000,000；60 秒冷却和每滚动 24 小时 64 个仅作为失控保险丝。
 - `logs/*.ndjson` 是运维日志，不能成为 replay 输入。

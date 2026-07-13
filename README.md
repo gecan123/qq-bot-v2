@@ -8,9 +8,9 @@
 
 项目的核心产品契约是稳定、可 replay、低成本扩展的 LLM 历史。
 
-- `bot_agent_snapshot` 是持久化的 LLM ledger。它的 `context_snapshot` 字段就是运行时 `AgentContext` 形态。
+- `bot_agent_snapshot.context_snapshot` 持久化运行时 `AgentContext` 形态：`messages` 是 LLM 可见 ledger，`activeToolCapabilities` 是不进入 `messages` 的运行控制状态。
 - `messages` 是入站事实账本。它服务于搜索、媒体解析、审计和 replay recovery，但不能替代 `AgentContext`。
-- `bot_agent_snapshot.mailbox_cursors` 与 context snapshot 同行持久化，记录各来源已经披露到哪个 message row。
+- `mailbox_cursors`、`mailbox_continuity`、`goal_revision` 和 legacy recovery boundary `last_wake_at` 是与 `context_snapshot` 原子保存的 row-level 运行控制状态。
 - 新的 LLM 可见事实只能通过 append 或受控 compaction 进入；compaction 会把完整待压缩 prefix 交给摘要器，并在改写和表情池注入后立即保存 snapshot。
 - late media description 和 side table 更新不得改写已经 append 的历史。
 - 对外 QQ 发言必须走 `send_message`，且 target 必须明确。

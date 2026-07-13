@@ -2,9 +2,11 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join, normalize, resolve } from 'node:path'
 import { compareTimestampsDesc, formatBeijingCompact, formatBeijingIso } from '../utils/beijing-time.js'
+import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
 
 export type MemoryScope = 'self' | 'person' | 'group' | 'topic'
 export type MemoryTier = 'recent' | 'stable'
+export type MemoryStatus = 'active' | 'disputed' | 'superseded'
 
 export interface MemoryStoreOptions {
   rootDir: string
@@ -12,6 +14,7 @@ export interface MemoryStoreOptions {
   id?: () => string
   maxReadChars?: number
   maxSnippetChars?: number
+  workspaceStateCoordinator?: WorkspaceStateCoordinator
 }
 
 export interface WriteMemoryInput {
@@ -70,14 +73,20 @@ export interface MemoryWriteResult {
 export interface MemoryEntry {
   id: string
   createdAt: string
+  updatedAt: string
   content: string
   sourceMessageIds: number[]
   tier: MemoryTier
+  status: MemoryStatus
+  aliases: string[]
+  validUntil?: string
+  supersedes: string[]
 }
 
 export type MemoryMaintenanceOperation =
   | { action: 'promote'; entryId: string; content: string }
   | { action: 'merge'; entryIds: string[]; content: string }
+  | { action: 'mark_disputed'; entryIds: string[]; reason: string }
   | { action: 'discard'; entryId: string; reason: string }
 
 export interface MemoryMaintenanceSnapshot {
@@ -120,8 +129,12 @@ export interface MemoryRecallResult {
     content: string
     sourceMessageIds: number[]
     tier: MemoryTier
+    status: MemoryStatus
+    aliases: string[]
+    validUntil?: string
     score: number
     matchedTerms: string[]
+    scoreReasons: string[]
   }>
   skippedCorrupt: number
 }
@@ -202,75 +215,95 @@ const DEFAULT_LIST_LIMIT = 50
 const MAX_LIST_LIMIT = 100
 const MAX_READ_ENTRIES = 50
 const MAX_REVIEW_ENTRIES = 500
+const MIN_RECALL_SCORE = 20
 const ENTRY_START = '<!-- memory-entry'
 const ENTRY_END = '<!-- /memory-entry -->'
+
+function withCoordinatedWrite<T>(
+  options: MemoryStoreOptions,
+  resourceKey: string,
+  task: () => Promise<T>,
+): Promise<T> {
+  return options.workspaceStateCoordinator
+    ? options.workspaceStateCoordinator.withWrite(resourceKey, task)
+    : task()
+}
 
 export async function writeMemoryEntry(
   options: MemoryStoreOptions,
   input: WriteMemoryInput,
 ): Promise<MemoryWriteResult> {
-  const now = options.now?.() ?? new Date()
-  const nowIso = formatBeijingIso(now)
   const relativeFile = fileForInput(input)
-  const absoluteFile = safeMemoryFile(options.rootDir, relativeFile)
-  await mkdir(dirname(absoluteFile), { recursive: true })
+  const write = async (): Promise<MemoryWriteResult> => {
+    const now = options.now?.() ?? new Date()
+    const nowIso = formatBeijingIso(now)
+    const absoluteFile = safeMemoryFile(options.rootDir, relativeFile)
+    await mkdir(dirname(absoluteFile), { recursive: true })
 
-  const title = titleForInput(input)
-  const existing = await readOptional(absoluteFile)
-  const base = existing && parseMarkdownMemory(existing)
-    ? existing
-    : renderNewFile(input.scope, title, nowIso)
-  const entries = parseMemoryEntries(base)
-  const normalizedContent = normalizeSearchText(input.content)
-  const duplicate = entries.find((entry) => normalizeSearchText(entry.content) === normalizedContent)
-  if (duplicate) {
-    const sourceMessageIds = [...new Set([
-      ...duplicate.sourceMessageIds,
-      ...(input.sourceMessageIds ?? []),
-    ])]
-    const duplicateEntries = entries.map((entry) => entry.id === duplicate.id
-      ? { ...entry, sourceMessageIds }
-      : entry)
-    const deduplicatedRaw = sourceMessageIds.length === duplicate.sourceMessageIds.length
-      ? base
-      : renderManagedMemory(base, duplicateEntries, nowIso)
-    if (deduplicatedRaw !== base) await atomicWrite(absoluteFile, deduplicatedRaw)
+    const title = titleForInput(input)
+    const existing = await readOptional(absoluteFile)
+    if (existing && parseMarkdownMemory(existing)) parseMemoryEntries(existing)
+    const base = existing && parseMarkdownMemory(existing)
+      ? existing
+      : renderNewFile(input.scope, title, nowIso)
+    const entries = parseMemoryEntries(base)
+    const normalizedContent = normalizeSearchText(input.content)
+    const duplicate = entries.find((entry) => normalizeSearchText(entry.content) === normalizedContent)
+    if (duplicate) {
+      const sourceMessageIds = [...new Set([
+        ...duplicate.sourceMessageIds,
+        ...(input.sourceMessageIds ?? []),
+      ])]
+      const duplicateEntries = entries.map((entry) => entry.id === duplicate.id
+        ? { ...entry, updatedAt: nowIso, sourceMessageIds }
+        : entry)
+      const deduplicatedRaw = sourceMessageIds.length === duplicate.sourceMessageIds.length
+        ? base
+        : renderManagedMemory(base, duplicateEntries, nowIso)
+      if (deduplicatedRaw !== base) await atomicWrite(absoluteFile, deduplicatedRaw)
+      return {
+        ok: true,
+        file: relativeFile,
+        scope: input.scope,
+        title,
+        entryId: duplicate.id,
+        tier: duplicate.tier,
+        created: false,
+        deduplicated: true,
+        revision: revisionOf(deduplicatedRaw),
+      }
+    }
+
+    const entryId = options.id?.() ?? `mem_${formatBeijingCompact(now)}_${randomUUID().slice(0, 8)}`
+    entries.push({
+      id: entryId,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      content: input.content.trim(),
+      sourceMessageIds: input.sourceMessageIds ?? [],
+      tier: 'recent',
+      status: 'active',
+      aliases: [],
+      supersedes: [],
+      start: 0,
+      end: 0,
+    })
+    const raw = renderManagedMemory(base, entries, nowIso)
+    await atomicWrite(absoluteFile, raw)
     return {
       ok: true,
       file: relativeFile,
       scope: input.scope,
       title,
-      entryId: duplicate.id,
-      tier: duplicate.tier,
-      created: false,
-      deduplicated: true,
-      revision: revisionOf(deduplicatedRaw),
+      entryId,
+      tier: 'recent',
+      created: true,
+      deduplicated: false,
+      revision: revisionOf(raw),
     }
   }
 
-  const entryId = options.id?.() ?? `mem_${formatBeijingCompact(now)}_${randomUUID().slice(0, 8)}`
-  entries.push({
-    id: entryId,
-    createdAt: nowIso,
-    content: input.content.trim(),
-    sourceMessageIds: input.sourceMessageIds ?? [],
-    tier: 'recent',
-    start: 0,
-    end: 0,
-  })
-  const raw = renderManagedMemory(base, entries, nowIso)
-  await atomicWrite(absoluteFile, raw)
-  return {
-    ok: true,
-    file: relativeFile,
-    scope: input.scope,
-    title,
-    entryId,
-    tier: 'recent',
-    created: true,
-    deduplicated: false,
-    revision: revisionOf(raw),
-  }
+  return withCoordinatedWrite(options, `memory:${relativeFile}`, write)
 }
 
 export async function searchMemoryEntries(
@@ -286,13 +319,13 @@ export async function searchMemoryEntries(
 
   for (const file of files) {
     const raw = await readFile(join(root, file), 'utf8')
-    const parsed = parseMarkdownMemory(raw)
+    const parsed = parseMemoryDocument(raw)
     if (!parsed) {
       skippedCorrupt += 1
       continue
     }
     if (input.scope && parsed.scope !== input.scope) continue
-    const haystack = `${file}\n${parsed.title}\n${searchableMemoryText(raw)}`.toLocaleLowerCase()
+    const haystack = `${file}\n${parsed.title}\n${searchableMemoryText(parsed.entries)}`.toLocaleLowerCase()
     if (needle && !haystack.includes(needle)) continue
     matches.push({
       file,
@@ -312,8 +345,9 @@ export async function recallMemoryEntries(
   input: RecallMemoryInput,
 ): Promise<MemoryRecallResult> {
   const query = normalizeSearchText(input.query)
-  const queryTerms = lexicalTerms(input.query)
+  const queryTerms = recallQueryTerms(input.query)
   const limit = Math.min(Math.max(1, input.limit ?? DEFAULT_SEARCH_LIMIT), MAX_SEARCH_LIMIT)
+  const nowMs = (options.now?.() ?? new Date()).getTime()
   const root = memoryRoot(options.rootDir)
   const files = await listMarkdownFiles(root)
   const matches: MemoryRecallResult['matches'] = []
@@ -321,37 +355,98 @@ export async function recallMemoryEntries(
 
   for (const file of files) {
     const raw = await readFile(join(root, file), 'utf8')
-    const parsed = parseMarkdownMemory(raw)
+    const parsed = parseMemoryDocument(raw)
     if (!parsed) {
       skippedCorrupt++
       continue
     }
     if (input.scope && parsed.scope !== input.scope) continue
-    const titleText = normalizeSearchText(`${file} ${parsed.title}`)
-    for (const entry of parseMemoryEntries(raw)) {
+    const titleText = normalizeSearchText(parsed.title)
+    const topicText = parsed.scope === 'topic'
+      ? normalizeSearchText(`${parsed.title} ${file.replace(/^topics\//, '').replace(/\.md$/, '')}`)
+      : titleText
+    const identity = identityFromMemoryFile(parsed.scope, file)
+    for (const entry of parsed.entries) {
+      if (entry.status === 'superseded') continue
+      if (entry.validUntil && Date.parse(entry.validUntil) < nowMs) continue
       const contentText = normalizeSearchText(entry.content)
-      const matchedTerms = queryTerms.filter((term) => contentText.includes(term) || titleText.includes(term))
+      const aliasTexts = entry.aliases.map(normalizeSearchText)
+      const matchedTerms = queryTerms
+        .filter(({ value }) => (
+          contentText.includes(value)
+          || topicText.includes(value)
+          || aliasTexts.some((alias) => alias.includes(value))
+          || identity === value
+        ))
+        .map(({ value }) => value)
       const exactContent = query.length > 0 && contentText.includes(query)
-      const exactTitle = query.length > 0 && titleText.includes(query)
-      if (!exactContent && !exactTitle && matchedTerms.length === 0) continue
-      const score = (exactContent ? 100 : 0)
-        + (exactTitle ? 30 : 0)
-        + (entry.tier === 'stable' ? 10 : 0)
-        + matchedTerms.reduce((sum, term) => (
-          sum + (contentText.includes(term) ? 5 : 0) + (titleText.includes(term) ? 2 : 0)
-        ), 0)
+      const exactTitle = query.length > 0 && topicText.includes(query)
+      const exactIdentity = query.length > 0 && identity === query
+      const exactAlias = query.length > 0 && aliasTexts.some((alias) => alias === query)
+      let score = 0
+      const scoreReasons: string[] = []
+      if (exactIdentity) {
+        score += 200
+        scoreReasons.push('id_exact')
+      }
+      if (exactAlias) {
+        score += 180
+        scoreReasons.push('alias_exact')
+      }
+      if (exactContent) {
+        score += 100
+        scoreReasons.push('content_phrase')
+      }
+      if (exactTitle) {
+        score += 60
+        scoreReasons.push(parsed.scope === 'topic' ? 'topic_phrase' : 'title_phrase')
+      }
+
+      let contentTermScore = 0
+      let titleTermScore = 0
+      let aliasTermScore = 0
+      for (const term of queryTerms) {
+        if (contentText.includes(term.value)) contentTermScore += term.weight
+        if (topicText.includes(term.value)) titleTermScore += Math.max(2, Math.floor(term.weight / 2))
+        if (aliasTexts.some((alias) => alias.includes(term.value))) aliasTermScore += term.weight
+      }
+      if (contentTermScore > 0) {
+        score += contentTermScore
+        scoreReasons.push('content_terms')
+      }
+      if (titleTermScore > 0) {
+        score += titleTermScore
+        scoreReasons.push(parsed.scope === 'topic' ? 'topic_terms' : 'title_terms')
+      }
+      if (aliasTermScore > 0) {
+        score += aliasTermScore
+        scoreReasons.push('alias_terms')
+      }
+      if (entry.tier === 'stable' && score > 0) {
+        score += 5
+        scoreReasons.push('tier_stable_bonus')
+      }
+      if (entry.status === 'disputed') {
+        score -= 40
+        scoreReasons.push('status_disputed_penalty')
+      }
+      if (score < MIN_RECALL_SCORE) continue
       matches.push({
         file,
         scope: parsed.scope,
         title: parsed.title,
-        updatedAt: parsed.updatedAt,
+        updatedAt: entry.updatedAt,
         entryId: entry.id,
         createdAt: entry.createdAt,
         content: entry.content,
         sourceMessageIds: entry.sourceMessageIds,
         tier: entry.tier,
+        status: entry.status,
+        aliases: entry.aliases,
+        ...(entry.validUntil ? { validUntil: entry.validUntil } : {}),
         score,
-        matchedTerms: matchedTerms.slice(0, 12),
+        matchedTerms: matchedTerms.slice(0, 20),
+        scoreReasons,
       })
     }
   }
@@ -388,13 +483,14 @@ export async function proposeMemoryReview(
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
       throw error
     }
-    const parsed = parseMarkdownMemory(raw)
+    const parsed = parseMemoryDocument(raw)
     if (!parsed) {
       skippedCorrupt++
       continue
     }
     if (input.scope && parsed.scope !== input.scope) continue
-    for (const entry of parseMemoryEntries(raw)) {
+    for (const entry of parsed.entries) {
+      if (entry.status === 'superseded') continue
       if (entries.length >= MAX_REVIEW_ENTRIES) break
       entries.push({
         file,
@@ -472,7 +568,8 @@ export async function readMemoryFile(
     }
     throw err
   }
-  if (!parseMarkdownMemory(raw)) {
+  const parsed = parseMemoryDocument(raw)
+  if (!parsed) {
     return { ok: false, error: 'memory file format is not supported' }
   }
 
@@ -480,7 +577,7 @@ export async function readMemoryFile(
   const max = Math.min(input.maxChars ?? options.maxReadChars ?? DEFAULT_MAX_READ_CHARS, 12_000)
   const content = raw.slice(offset, offset + max)
   const nextOffset = offset + content.length
-  const parsedEntries = parseMemoryEntries(raw)
+  const parsedEntries = parsed.entries
   const entries = parsedEntries.slice(0, MAX_READ_ENTRIES)
   return {
     ok: true,
@@ -500,11 +597,11 @@ export async function updateMemoryEntry(
   options: MemoryStoreOptions,
   input: { file: string; entryId: string; expectedRevision: string; content: string },
 ): Promise<{ ok: true; file: string; entryId: string; revision: string }> {
-  return mutateMemoryFile(options, input.file, input.expectedRevision, (entries) => {
+  return mutateMemoryFile(options, input.file, input.expectedRevision, (entries, updatedAt) => {
     const target = entries.find((entry) => entry.id === input.entryId)
     if (!target) throw new MemoryStoreError('not_found', `memory entry not found: ${input.entryId}`)
     return entries.map((entry) => entry.id === input.entryId
-      ? { ...entry, content: input.content.trim() }
+      ? { ...entry, updatedAt, content: input.content.trim() }
       : entry)
   }, input.entryId)
 }
@@ -516,6 +613,13 @@ export async function deleteMemoryEntry(
   return mutateMemoryFile(options, input.file, input.expectedRevision, (entries) => {
     const target = entries.find((entry) => entry.id === input.entryId)
     if (!target) throw new MemoryStoreError('not_found', `memory entry not found: ${input.entryId}`)
+    const referencing = entries.find((entry) => entry.supersedes.includes(input.entryId))
+    if (referencing) {
+      throw new MemoryStoreError(
+        'invalid_selection',
+        `memory entry ${input.entryId} is referenced by ${referencing.id}; remove or update the replacement first`,
+      )
+    }
     return entries.filter((entry) => entry.id !== input.entryId)
   }, input.entryId)
 }
@@ -524,13 +628,56 @@ export async function promoteMemoryEntry(
   options: MemoryStoreOptions,
   input: { file: string; entryId: string; expectedRevision: string; content?: string },
 ): Promise<{ ok: true; file: string; entryId: string; revision: string }> {
-  return mutateMemoryFile(options, input.file, input.expectedRevision, (entries) => {
+  return mutateMemoryFile(options, input.file, input.expectedRevision, (entries, updatedAt) => {
     const target = entries.find((entry) => entry.id === input.entryId)
     if (!target) throw new MemoryStoreError('not_found', `memory entry not found: ${input.entryId}`)
     return entries.map((entry) => entry.id === input.entryId
-      ? { ...entry, tier: 'stable' as const, content: input.content?.trim() || entry.content }
+      ? { ...entry, updatedAt, tier: 'stable' as const, content: input.content?.trim() || entry.content }
       : entry)
   }, input.entryId)
+}
+
+export async function markMemoryEntryDisputed(
+  options: MemoryStoreOptions,
+  input: { file: string; entryId: string; expectedRevision: string },
+): Promise<{ ok: true; file: string; entryId: string; revision: string }> {
+  return mutateMemoryFile(options, input.file, input.expectedRevision, (entries, updatedAt) => {
+    const target = entries.find((entry) => entry.id === input.entryId)
+    if (!target) throw new MemoryStoreError('not_found', `memory entry not found: ${input.entryId}`)
+    return entries.map((entry) => entry.id === input.entryId
+      ? { ...entry, updatedAt, status: 'disputed' as const }
+      : entry)
+  }, input.entryId)
+}
+
+export async function supersedeMemoryEntry(
+  options: MemoryStoreOptions,
+  input: {
+    file: string
+    entryId: string
+    replacementEntryId: string
+    expectedRevision: string
+  },
+): Promise<{ ok: true; file: string; entryId: string; replacementEntryId: string; revision: string }> {
+  if (input.entryId === input.replacementEntryId) {
+    throw new MemoryStoreError('invalid_selection', 'a memory entry cannot supersede itself')
+  }
+  const result = await mutateMemoryFile(options, input.file, input.expectedRevision, (entries, updatedAt) => {
+    const target = entries.find((entry) => entry.id === input.entryId)
+    const replacement = entries.find((entry) => entry.id === input.replacementEntryId)
+    if (!target) throw new MemoryStoreError('not_found', `memory entry not found: ${input.entryId}`)
+    if (!replacement) {
+      throw new MemoryStoreError('not_found', `replacement memory entry not found: ${input.replacementEntryId}`)
+    }
+    return entries.map((entry) => {
+      if (entry.id === input.entryId) return { ...entry, updatedAt, status: 'superseded' as const }
+      if (entry.id === input.replacementEntryId) {
+        return { ...entry, updatedAt, supersedes: [...new Set([...entry.supersedes, input.entryId])] }
+      }
+      return entry
+    })
+  }, input.entryId)
+  return { ...result, replacementEntryId: input.replacementEntryId }
 }
 
 export async function compactMemoryEntries(
@@ -541,7 +688,11 @@ export async function compactMemoryEntries(
     throw new MemoryStoreError('invalid_selection', 'compact requires at least two distinct memory entry ids')
   }
   const now = options.now?.() ?? new Date()
+  const nowIso = formatBeijingIso(now)
   const entryId = options.id?.() ?? `mem_${formatBeijingCompact(now)}_${randomUUID().slice(0, 8)}`
+  if (input.entryIds.includes(entryId)) {
+    throw new MemoryStoreError('invalid_selection', 'compacted memory entry cannot supersede itself')
+  }
   const result = await mutateMemoryFile(options, input.file, input.expectedRevision, (entries) => {
     const selected = entries.filter((entry) => input.entryIds.includes(entry.id))
     if (selected.length !== input.entryIds.length) {
@@ -551,14 +702,22 @@ export async function compactMemoryEntries(
     const firstSelectedIndex = entries.findIndex((entry) => selectedIds.has(entry.id))
     const compacted: MemoryEntry = {
       id: entryId,
-      createdAt: formatBeijingIso(now),
+      createdAt: nowIso,
+      updatedAt: nowIso,
       content: input.content.trim(),
       sourceMessageIds: [...new Set(selected.flatMap((entry) => entry.sourceMessageIds))],
       tier: 'stable',
+      status: 'active',
+      aliases: [],
+      supersedes: input.entryIds,
     }
     return entries.flatMap((entry, index) => {
-      if (index === firstSelectedIndex) return [compacted]
-      if (selectedIds.has(entry.id)) return []
+      if (index === firstSelectedIndex) {
+        return [compacted, { ...entry, updatedAt: nowIso, status: 'superseded' as const }]
+      }
+      if (selectedIds.has(entry.id)) {
+        return [{ ...entry, updatedAt: nowIso, status: 'superseded' as const }]
+      }
       return [entry]
     })
   }, entryId)
@@ -579,9 +738,9 @@ export async function inspectMemoryFileForMaintenance(
     }
     throw error
   }
-  const parsed = parseMarkdownMemory(raw)
+  const parsed = parseMemoryDocument(raw)
   if (!parsed) throw new MemoryStoreError('invalid_format', `memory file uses an unsupported format: ${file}`)
-  const allEntries = parseMemoryEntries(raw).map(stripMemorySegment)
+  const allEntries = parsed.entries.map(stripMemorySegment)
   const entries = allEntries.slice(0, MAX_REVIEW_ENTRIES)
   return {
     ok: true,
@@ -592,15 +751,28 @@ export async function inspectMemoryFileForMaintenance(
     sizeBytes: Buffer.byteLength(raw, 'utf8'),
     entries,
     entriesTruncated: allEntries.length > entries.length,
-    recentCount: allEntries.filter((entry) => entry.tier === 'recent').length,
-    stableCount: allEntries.filter((entry) => entry.tier === 'stable').length,
+    recentCount: allEntries.filter((entry) => entry.tier === 'recent' && entry.status === 'active').length,
+    stableCount: allEntries.filter((entry) => entry.tier === 'stable' && entry.status !== 'superseded').length,
     recentChars: allEntries
-      .filter((entry) => entry.tier === 'recent')
+      .filter((entry) => entry.tier === 'recent' && entry.status === 'active')
       .reduce((sum, entry) => sum + entry.content.length, 0),
   }
 }
 
-export async function applyMemoryMaintenance(
+export function applyMemoryMaintenance(
+  options: MemoryStoreOptions,
+  input: {
+    file: string
+    expectedRevision: string
+    operations: MemoryMaintenanceOperation[]
+  },
+) {
+  return withCoordinatedWrite(options, `memory:${input.file}`, () => (
+    applyMemoryMaintenanceUnlocked(options, input)
+  ))
+}
+
+async function applyMemoryMaintenanceUnlocked(
   options: MemoryStoreOptions,
   input: {
     file: string
@@ -613,6 +785,7 @@ export async function applyMemoryMaintenance(
   revision: string
   promoted: number
   merged: number
+  disputed: number
   discarded: number
 }> {
   if (input.operations.length === 0) {
@@ -627,10 +800,13 @@ export async function applyMemoryMaintenance(
   const byId = new Map(entries.map((entry) => [entry.id, entry]))
   const consumed = new Set<string>()
   const replacements = new Map<string, MemoryEntry | null>()
+  const insertionsBefore = new Map<string, MemoryEntry[]>()
   let promoted = 0
   let merged = 0
+  let disputed = 0
   let discarded = 0
   const now = options.now?.() ?? new Date()
+  const nowIso = formatBeijingIso(now)
 
   function claim(entryId: string): MemoryEntry {
     const entry = byId.get(entryId)
@@ -645,20 +821,52 @@ export async function applyMemoryMaintenance(
   for (const operation of input.operations) {
     if (operation.action === 'promote') {
       const entry = claim(operation.entryId)
-      if (entry.tier !== 'recent') {
+      if (entry.tier === 'stable') {
         throw new MemoryStoreError('invalid_selection', `automatic maintenance cannot re-promote stable entry: ${entry.id}`)
       }
-      replacements.set(entry.id, { ...entry, tier: 'stable', content: operation.content.trim() })
+      if (entry.status !== 'active') {
+        throw new MemoryStoreError('invalid_selection', `automatic maintenance can only promote recent active entries: ${entry.id}`)
+      }
+      if (new Set(entry.sourceMessageIds).size < 2) {
+        throw new MemoryStoreError(
+          'invalid_selection',
+          `automatic maintenance promotion requires at least two distinct source messages: ${entry.id}`,
+        )
+      }
+      replacements.set(entry.id, {
+        ...entry,
+        updatedAt: nowIso,
+        tier: 'stable',
+        content: operation.content.trim(),
+      })
       promoted++
       continue
     }
     if (operation.action === 'discard') {
       const entry = claim(operation.entryId)
-      if (entry.tier !== 'recent') {
+      if (entry.tier === 'stable') {
         throw new MemoryStoreError('invalid_selection', `automatic maintenance cannot discard stable entry: ${entry.id}`)
+      }
+      if (entry.status !== 'active') {
+        throw new MemoryStoreError('invalid_selection', `automatic maintenance can only discard recent active entries: ${entry.id}`)
       }
       replacements.set(entry.id, null)
       discarded++
+      continue
+    }
+
+    if (operation.action === 'mark_disputed') {
+      if (new Set(operation.entryIds).size !== operation.entryIds.length || operation.entryIds.length < 2) {
+        throw new MemoryStoreError('invalid_selection', 'mark_disputed requires at least two distinct memory entry ids')
+      }
+      const selected = operation.entryIds.map(claim)
+      if (selected.some((entry) => entry.status === 'superseded')) {
+        throw new MemoryStoreError('invalid_selection', 'automatic maintenance cannot dispute superseded entries')
+      }
+      for (const entry of selected) {
+        replacements.set(entry.id, { ...entry, updatedAt: nowIso, status: 'disputed' })
+      }
+      disputed += selected.length
       continue
     }
 
@@ -666,30 +874,51 @@ export async function applyMemoryMaintenance(
       throw new MemoryStoreError('invalid_selection', 'merge requires at least two distinct memory entry ids')
     }
     const selected = operation.entryIds.map(claim)
+    if (selected.some((entry) => entry.status !== 'active')) {
+      throw new MemoryStoreError('invalid_selection', 'automatic maintenance can only merge active entries')
+    }
     if (selected.every((entry) => entry.tier === 'stable')) {
       throw new MemoryStoreError('invalid_selection', 'automatic maintenance merge requires at least one recent entry')
     }
+    if (hasObviousContradiction(selected)) {
+      for (const entry of selected) {
+        replacements.set(entry.id, { ...entry, updatedAt: nowIso, status: 'disputed' })
+      }
+      disputed += selected.length
+      continue
+    }
     const first = selected[0]!
-    replacements.set(first.id, {
-      id: options.id?.() ?? `mem_${formatBeijingCompact(now)}_${randomUUID().slice(0, 8)}`,
-      createdAt: formatBeijingIso(now),
+    const replacementId = options.id?.() ?? `mem_${formatBeijingCompact(now)}_${randomUUID().slice(0, 8)}`
+    if (operation.entryIds.includes(replacementId)) {
+      throw new MemoryStoreError('invalid_selection', 'merged memory entry cannot supersede itself')
+    }
+    insertionsBefore.set(first.id, [{
+      id: replacementId,
+      createdAt: nowIso,
+      updatedAt: nowIso,
       content: operation.content.trim(),
       sourceMessageIds: [...new Set(selected.flatMap((entry) => entry.sourceMessageIds))],
       tier: 'stable',
-    })
-    for (const entry of selected.slice(1)) replacements.set(entry.id, null)
+      status: 'active',
+      aliases: [...new Set(selected.flatMap((entry) => entry.aliases))],
+      supersedes: selected.map((entry) => entry.id),
+    }])
+    for (const entry of selected) {
+      replacements.set(entry.id, { ...entry, updatedAt: nowIso, status: 'superseded' })
+    }
     merged++
   }
 
   const nextEntries = entries.flatMap((entry) => {
-    if (!replacements.has(entry.id)) return [entry]
+    const inserted = insertionsBefore.get(entry.id) ?? []
+    if (!replacements.has(entry.id)) return [...inserted, entry]
     const replacement = replacements.get(entry.id)
-    return replacement ? [replacement] : []
+    return replacement ? [...inserted, replacement] : inserted
   })
   if (nextEntries.length === 0) {
     throw new MemoryStoreError('invalid_selection', 'automatic maintenance cannot empty a memory file')
   }
-  const next = renderManagedMemory(raw, nextEntries, formatBeijingIso(now))
+  const next = renderManagedMemory(raw, nextEntries, nowIso)
   await atomicWrite(path, next)
   return {
     ok: true,
@@ -697,6 +926,7 @@ export async function applyMemoryMaintenance(
     revision: revisionOf(next),
     promoted,
     merged,
+    disputed,
     discarded,
   }
 }
@@ -713,7 +943,7 @@ export async function listMemoryFiles(
   for (const file of files) {
     const absoluteFile = join(root, file)
     const raw = await readFile(absoluteFile, 'utf8')
-    const parsed = parseMarkdownMemory(raw)
+    const parsed = parseMemoryDocument(raw)
     if (!parsed) {
       skippedCorrupt += 1
       continue
@@ -757,16 +987,18 @@ export async function deleteMemoryFiles(
       continue
     }
 
-    try {
-      await unlink(absoluteFile)
-      deleted.push(file)
-    } catch (err) {
-      if (err && typeof err === 'object' && 'code' in err && err.code === 'ENOENT') {
-        missing.push(file)
-      } else {
-        failed.push({ file, error: err instanceof Error ? err.message : String(err) })
+    await withCoordinatedWrite(options, `memory:${file}`, async () => {
+      try {
+        await unlink(absoluteFile)
+        deleted.push(file)
+      } catch (err) {
+        if (err && typeof err === 'object' && 'code' in err && err.code === 'ENOENT') {
+          missing.push(file)
+        } else {
+          failed.push({ file, error: err instanceof Error ? err.message : String(err) })
+        }
       }
-    }
+    })
   }
 
   return { ok: failed.length === 0, deleted, missing, failed }
@@ -876,7 +1108,12 @@ function renderMemoryEntry(entry: MemoryEntry): string {
     ENTRY_START,
     `id: ${entry.id}`,
     `createdAt: ${entry.createdAt}`,
+    `updatedAt: ${entry.updatedAt}`,
     `tier: ${entry.tier}`,
+    `status: ${entry.status}`,
+    `aliases: ${JSON.stringify(entry.aliases)}`,
+    ...(entry.validUntil ? [`validUntil: ${entry.validUntil}`] : []),
+    `supersedes: ${JSON.stringify(entry.supersedes)}`,
     ...(entry.sourceMessageIds.length > 0 ? [`sourceMessageIds: ${entry.sourceMessageIds.join(',')}`] : []),
     '-->',
     `- ${entry.content}`,
@@ -892,33 +1129,82 @@ function parseMemoryEntries(raw: string): MemorySegment[] {
     const start = raw.indexOf(ENTRY_START, offset)
     if (start < 0) break
     const metaEnd = raw.indexOf('-->', start + ENTRY_START.length)
-    if (metaEnd < 0) break
+    if (metaEnd < 0) throw invalidMemoryEntry('memory entry metadata is not closed')
     const close = raw.indexOf(ENTRY_END, metaEnd + 3)
-    if (close < 0) break
+    if (close < 0) throw invalidMemoryEntry('memory entry body is not closed')
     const end = close + ENTRY_END.length + (raw.slice(close + ENTRY_END.length).startsWith('\n') ? 1 : 0)
     const fields = new Map<string, string>()
     for (const line of raw.slice(start + ENTRY_START.length, metaEnd).split('\n')) {
-      const match = /^([A-Za-z]+):\s*(.+)$/.exec(line.trim())
+      const match = /^([A-Za-z][A-Za-z0-9]*):\s*(.+)$/.exec(line.trim())
       if (match) fields.set(match[1]!, match[2]!)
     }
     const id = fields.get('id')
     const createdAt = fields.get('createdAt')
-    const tier = fields.get('tier') === 'stable' ? 'stable' : 'recent'
+    const updatedAt = fields.get('updatedAt') ?? createdAt
+    const tierValue = fields.get('tier')
+    const tier = tierValue === 'stable' || tierValue === 'recent' ? tierValue : null
+    const statusValue = fields.get('status') ?? 'active'
+    const status = isMemoryStatus(statusValue) ? statusValue : null
+    const aliases = parseStringArrayField(fields.get('aliases'), 'aliases')
+    const validUntil = fields.get('validUntil')
+    const supersedes = parseStringArrayField(fields.get('supersedes'), 'supersedes')
     const body = raw.slice(metaEnd + 3, close).replace(/^\n/, '').trim()
-    if (id && createdAt && body.startsWith('- ')) {
-      entries.push({
-        id,
-        createdAt,
-        content: body.slice(2).trim(),
-        sourceMessageIds: parseSourceIds(fields.get('sourceMessageIds')),
-        tier,
-        start,
-        end,
-      })
+    if (!id || !createdAt || !updatedAt || !tier || !status || !body.startsWith('- ')) {
+      throw invalidMemoryEntry('memory entry is missing required fields')
     }
+    if (!isIsoTimestamp(createdAt) || !isIsoTimestamp(updatedAt)) {
+      throw invalidMemoryEntry('memory entry timestamps must be ISO timestamps')
+    }
+    if (validUntil && !isIsoTimestamp(validUntil)) {
+      throw invalidMemoryEntry('memory entry validUntil must be an ISO timestamp')
+    }
+    if (supersedes.includes(id)) {
+      throw invalidMemoryEntry('memory entry cannot supersede itself')
+    }
+    entries.push({
+      id,
+      createdAt,
+      updatedAt,
+      content: body.slice(2).trim(),
+      sourceMessageIds: parseSourceIds(fields.get('sourceMessageIds')),
+      tier,
+      status,
+      aliases,
+      ...(validUntil ? { validUntil } : {}),
+      supersedes,
+      start,
+      end,
+    })
     offset = Math.max(end, close + ENTRY_END.length)
   }
   return entries
+}
+
+function invalidMemoryEntry(message: string): MemoryStoreError {
+  return new MemoryStoreError('invalid_format', message)
+}
+
+function isMemoryStatus(value: string): value is MemoryStatus {
+  return value === 'active' || value === 'disputed' || value === 'superseded'
+}
+
+function isIsoTimestamp(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)
+    && !Number.isNaN(Date.parse(value))
+}
+
+function parseStringArrayField(raw: string | undefined, field: string): string[] {
+  if (raw == null) return []
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw invalidMemoryEntry(`memory entry ${field} must be a JSON string array`)
+  }
+  if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== 'string' || value.length === 0)) {
+    throw invalidMemoryEntry(`memory entry ${field} must be a JSON string array`)
+  }
+  return parsed
 }
 
 function parseSourceIds(raw: string | undefined): number[] {
@@ -926,26 +1212,32 @@ function parseSourceIds(raw: string | undefined): number[] {
   return raw.split(',').map((value) => Number(value.trim())).filter((value) => Number.isInteger(value))
 }
 
-function searchableMemoryText(raw: string): string {
-  return parseMemoryEntries(raw).map((entry) => entry.content).join('\n')
+function searchableMemoryText(entries: readonly MemoryEntry[]): string {
+  return entries
+    .filter((entry) => entry.status !== 'superseded')
+    .map((entry) => entry.content)
+    .join('\n')
 }
 
 async function mutateMemoryFile(
   options: MemoryStoreOptions,
   file: string,
   expectedRevision: string,
-  mutate: (entries: MemorySegment[]) => MemoryEntry[],
+  mutate: (entries: MemorySegment[], updatedAt: string) => MemoryEntry[],
   entryId: string,
 ): Promise<{ ok: true; file: string; entryId: string; revision: string }> {
-  const path = safeMemoryFile(options.rootDir, file)
-  const raw = await readRequiredMemory(path, file)
-  if (revisionOf(raw) !== expectedRevision) {
-    throw new MemoryStoreError('revision_conflict', 'memory file changed; read it again and retry with the latest revision')
-  }
-  const now = options.now?.() ?? new Date()
-  const next = renderManagedMemory(raw, mutate(parseMemoryEntries(raw)), formatBeijingIso(now))
-  await atomicWrite(path, next)
-  return { ok: true, file, entryId, revision: revisionOf(next) }
+  return withCoordinatedWrite(options, `memory:${file}`, async () => {
+    const path = safeMemoryFile(options.rootDir, file)
+    const raw = await readRequiredMemory(path, file)
+    if (revisionOf(raw) !== expectedRevision) {
+      throw new MemoryStoreError('revision_conflict', 'memory file changed; read it again and retry with the latest revision')
+    }
+    const now = options.now?.() ?? new Date()
+    const updatedAt = formatBeijingIso(now)
+    const next = renderManagedMemory(raw, mutate(parseMemoryEntries(raw), updatedAt), updatedAt)
+    await atomicWrite(path, next)
+    return { ok: true, file, entryId, revision: revisionOf(next) }
+  })
 }
 
 async function readRequiredMemory(path: string, file: string): Promise<string> {
@@ -958,7 +1250,7 @@ async function readRequiredMemory(path: string, file: string): Promise<string> {
     }
     throw error
   }
-  if (!parseMarkdownMemory(raw)) {
+  if (!parseMemoryDocument(raw)) {
     throw new MemoryStoreError('invalid_format', `memory file uses an unsupported format: ${file}`)
   }
   return raw
@@ -987,6 +1279,22 @@ function renderManagedMemory(raw: string, entries: readonly MemoryEntry[], updat
   lines.push('## 最近线索', '')
   if (recent) lines.push(recent.trimEnd(), '')
   return `${lines.join('\n').trimEnd()}\n`
+}
+
+function parseMemoryDocument(raw: string): {
+  scope: MemoryScope
+  title: string
+  updatedAt: string | null
+  entries: MemorySegment[]
+} | null {
+  const metadata = parseMarkdownMemory(raw)
+  if (!metadata) return null
+  try {
+    return { ...metadata, entries: parseMemoryEntries(raw) }
+  } catch (error) {
+    if (error instanceof MemoryStoreError && error.code === 'invalid_format') return null
+    throw error
+  }
 }
 
 function parseMarkdownMemory(raw: string): { scope: MemoryScope; title: string; updatedAt: string | null } | null {
@@ -1047,6 +1355,38 @@ function normalizeSearchText(value: string): string {
   return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
 }
 
+function recallQueryTerms(value: string): Array<{ value: string; weight: number }> {
+  const terms = new Map<string, number>()
+  const add = (term: string, weight: number) => {
+    const normalized = normalizeSearchText(term)
+    if (!normalized) return
+    terms.set(normalized, Math.max(terms.get(normalized) ?? 0, weight))
+  }
+  for (const match of value.toLocaleLowerCase().matchAll(/[a-z0-9][a-z0-9_-]*|[\u3400-\u9fff]+/g)) {
+    const chunk = match[0]
+    if (!/^[\u3400-\u9fff]+$/.test(chunk)) {
+      add(chunk, 12)
+      continue
+    }
+    if (chunk.length <= 20) add(chunk, 12)
+    for (const size of [2, 3]) {
+      for (let index = 0; index <= chunk.length - size; index++) {
+        add(chunk.slice(index, index + size), size === 3 ? 5 : 3)
+      }
+    }
+  }
+  return [...terms].map(([term, weight]) => ({ value: term, weight }))
+}
+
+function identityFromMemoryFile(scope: MemoryScope, file: string): string {
+  const pattern = scope === 'person'
+    ? /^people\/([^/]+)\.md$/
+    : scope === 'group'
+      ? /^groups\/([^/]+)\.md$/
+      : null
+  return normalizeSearchText(pattern?.exec(file)?.[1] ?? '')
+}
+
 function lexicalTerms(value: string): string[] {
   const normalized = value.toLocaleLowerCase()
   const terms = new Set<string>()
@@ -1073,4 +1413,17 @@ function jaccard(left: ReadonlySet<string>, right: ReadonlySet<string>): number 
 
 function hasNegation(value: string): boolean {
   return /(?:不再|不喜欢|不是|不要|取消|停止|改为|改成|\bnot\b|\bno longer\b)/iu.test(value)
+}
+
+function hasObviousContradiction(entries: readonly MemoryEntry[]): boolean {
+  for (let leftIndex = 0; leftIndex < entries.length; leftIndex++) {
+    for (let rightIndex = leftIndex + 1; rightIndex < entries.length; rightIndex++) {
+      const left = entries[leftIndex]!
+      const right = entries[rightIndex]!
+      if (hasNegation(left.content) === hasNegation(right.content)) continue
+      const similarity = jaccard(new Set(lexicalTerms(left.content)), new Set(lexicalTerms(right.content)))
+      if (similarity >= 0.4) return true
+    }
+  }
+  return false
 }

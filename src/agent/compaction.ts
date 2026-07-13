@@ -4,10 +4,21 @@ import { createLlmClient } from './llm-client.js'
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
 import { recordTokenUsage } from './token-stats.js'
+import { validateBotSnapshotIntegrity } from './snapshot-integrity.js'
+import { SNAPSHOT_SCHEMA_VERSION } from './agent-context.types.js'
+import { renderUntrustedTranscript } from './untrusted-transcript.js'
 
 const DEFAULT_COMPACTION_TRIGGER_TOKENS = 16_000
-const DEFAULT_COMPACTION_KEEP_RATIO = 0.1
+const DEFAULT_COMPACTION_TAIL_CHARS = 12_000
+const MAX_SUMMARY_CHARS = 800
 const SUMMARY_HEAD_PREFIX = '[历史摘要]\n'
+const SUMMARY_HEADINGS = [
+  '## 讨论过的话题',
+  '## 群友信息',
+  '## 我的承诺和状态',
+  '## 工具调用结果',
+  '## 情绪和氛围',
+] as const
 
 const log = createLogger('COMPACTION')
 
@@ -50,6 +61,8 @@ export type SummarizeFn = (input: SummarizeInput) => Promise<string>
 export interface MaybeCompactOptions {
   summarize?: SummarizeFn
   triggerTokens?: number
+  tailMaxChars?: number
+  /** 兼容测试/调用方；显式传入时转换为确定性的 serialized-char budget。 */
   keepRatio?: number
 }
 
@@ -142,20 +155,77 @@ function isActiveToolCycleAtTail(messages: AgentMessage[], index: number): boole
   return pendingToolCallIds.size === 0 && cursor === messages.length
 }
 
+function serializedMessageChars(message: AgentMessage): number {
+  return JSON.stringify(message).length
+}
+
+function selectTailCutIndex(messages: AgentMessage[], options: MaybeCompactOptions): number {
+  const totalChars = messages.reduce((sum, message) => sum + serializedMessageChars(message), 0)
+  const explicitRatio = options.keepRatio
+  const budget = Math.max(1, Math.floor(
+    options.tailMaxChars
+      ?? (explicitRatio == null
+        ? DEFAULT_COMPACTION_TAIL_CHARS
+        : totalChars * Math.min(1, Math.max(0, explicitRatio))),
+  ))
+  let keepChars = 0
+  let cutIndex = messages.length
+  while (cutIndex > 0) {
+    const nextChars = serializedMessageChars(messages[cutIndex - 1]!)
+    if (keepChars > 0 && keepChars + nextChars > budget) break
+    keepChars += nextChars
+    cutIndex--
+    if (keepChars >= budget) break
+  }
+
+  const keepCount = messages.length - cutIndex
+  cutIndex = findSafeCutIndex(messages, keepCount)
+  const lastCompleteToolCycle = findLastCompleteToolCycleStart(messages)
+  if (lastCompleteToolCycle != null && cutIndex > lastCompleteToolCycle) {
+    cutIndex = lastCompleteToolCycle
+  }
+  return cutIndex
+}
+
+function findLastCompleteToolCycleStart(messages: AgentMessage[]): number | null {
+  let latest: number | null = null
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index]
+    if (!message || message.role !== 'assistant' || message.toolCalls.length === 0) continue
+    const complete = message.toolCalls.every((call, offset) => {
+      const result = messages[index + offset + 1]
+      return result?.role === 'tool' && result.toolCallId === call.id
+    })
+    if (complete) latest = index
+  }
+  return latest
+}
+
+function validateSummary(summary: string): { ok: true; summary: string } | { ok: false; reason: string } {
+  const trimmed = summary.trim()
+  if (!trimmed) return { ok: false, reason: 'empty' }
+  if (trimmed.length > MAX_SUMMARY_CHARS) return { ok: false, reason: 'too_long' }
+
+  const lines = trimmed.split('\n').map((line) => line.trimEnd())
+  let previousIndex = -1
+  for (const heading of SUMMARY_HEADINGS) {
+    const index = lines.findIndex((line, lineIndex) => lineIndex > previousIndex && line === heading)
+    if (index < 0) return { ok: false, reason: `missing_heading:${heading}` }
+    previousIndex = index
+  }
+  const content = lines.filter((line) => !SUMMARY_HEADINGS.includes(line as typeof SUMMARY_HEADINGS[number]))
+    .join('\n')
+    .trim()
+  if (!content) return { ok: false, reason: 'empty_sections' }
+  return { ok: true, summary: trimmed }
+}
+
 async function defaultSummarize(input: SummarizeInput): Promise<string> {
   const llm = createLlmClient()
 
-  const messages: AgentMessage[] = []
-  const previous = input.previousSummary?.trim()
-  if (previous) {
-    messages.push({ role: 'user', content: `[上次摘要]\n${previous}` })
-  }
-  messages.push(...stripImagesForSummary(input.history))
-  messages.push({ role: 'user', content: SUMMARIZER_TRIGGER_INSTRUCTION })
-
   const result = await llm.chat({
     systemPrompt: SUMMARIZER_SYSTEM_PROMPT,
-    messages,
+    messages: buildCompactionSummarizerMessages(input),
     tools: [],
   })
 
@@ -172,6 +242,25 @@ async function defaultSummarize(input: SummarizeInput): Promise<string> {
     return ''
   }
   return result.content.trim()
+}
+
+export function buildCompactionSummarizerMessages(input: SummarizeInput): AgentMessage[] {
+  const dataMessages: AgentMessage[] = []
+  const previous = input.previousSummary?.trim()
+  if (previous) dataMessages.push({ role: 'user', content: `[上次摘要]\n${previous}` })
+  dataMessages.push(...stripImagesForSummary(input.history))
+  const serializedChars = dataMessages.reduce((sum, message) => sum + JSON.stringify(message).length, 0)
+  return [
+    {
+      role: 'user',
+      content: renderUntrustedTranscript({
+        purpose: 'compaction',
+        messages: dataMessages,
+        maxChars: serializedChars + 2_000,
+      }),
+    },
+    { role: 'user', content: SUMMARIZER_TRIGGER_INSTRUCTION },
+  ]
 }
 
 export async function maybeCompactConversation(
@@ -200,7 +289,9 @@ async function compactConversation(
 
   const summarize = options.summarize ?? defaultSummarize
   const triggerTokens = options.triggerTokens ?? config.compactionTriggerTokens ?? DEFAULT_COMPACTION_TRIGGER_TOKENS
-  const keepRatio = options.keepRatio ?? DEFAULT_COMPACTION_KEEP_RATIO
+  const selectionOptions = options.keepRatio == null && options.tailMaxChars == null
+    ? { ...options, tailMaxChars: DEFAULT_COMPACTION_TAIL_CHARS }
+    : options
 
   if (!force && lastInputTokens! <= triggerTokens) return false
 
@@ -211,11 +302,10 @@ async function compactConversation(
     force ? 'compaction_recovery_triggered' : 'compaction_triggered',
   )
 
-  const keepCount = Math.max(1, Math.ceil(snapshot.messages.length * keepRatio))
-  const cutIndex = findSafeCutIndex(snapshot.messages, keepCount)
+  const cutIndex = selectTailCutIndex(snapshot.messages, selectionOptions)
   if (cutIndex <= 0) {
     log.warn(
-      { inputTokens: lastInputTokens, messageCount: snapshot.messages.length, keepCount },
+      { inputTokens: lastInputTokens, messageCount: snapshot.messages.length },
       'compaction_no_safe_cut',
     )
     return false
@@ -229,26 +319,51 @@ async function compactConversation(
     return false
   }
 
-  let newSummary: string
+  let rawSummary: string
   try {
-    newSummary = await summarize({
+    rawSummary = await summarize({
       previousSummary,
       history: stripImagesForSummary(historyToSummarize),
     })
   } catch (err) {
-    log.error({ err, inputTokens: lastInputTokens, cutIndex }, 'summarizer_failed_emergency_truncation')
-    newSummary = previousSummary ?? '(历史消息因超长被应急截断)'
+    log.error({ err, inputTokens: lastInputTokens, cutIndex, force }, 'summarizer_failed_context_preserved')
+    return false
   }
-  if (!newSummary.trim()) {
-    log.warn({ inputTokens: lastInputTokens, cutIndex, tailLen: tail.length }, 'compaction_skipped_empty_summary')
+  const validatedSummary = validateSummary(rawSummary)
+  if (!validatedSummary.ok) {
+    log.warn({
+      inputTokens: lastInputTokens,
+      cutIndex,
+      tailLen: tail.length,
+      reason: validatedSummary.reason,
+    }, 'compaction_candidate_summary_rejected')
     return false
   }
 
   const summaryMessage: AgentMessage = {
     role: 'user',
-    content: `${SUMMARY_HEAD_PREFIX}${newSummary.trim()}`,
+    content: `${SUMMARY_HEAD_PREFIX}${validatedSummary.summary}`,
   }
-  context.replaceMessages([summaryMessage, ...tail])
+  const candidateMessages = [summaryMessage, ...tail]
+  const integrity = validateBotSnapshotIntegrity({
+    snapshot: {
+      schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+      messages: candidateMessages,
+      activeToolCapabilities: snapshot.activeToolCapabilities,
+    },
+    mailboxCursors: {},
+    goalRevision: 0,
+  })
+  if (!integrity.ok) {
+    log.error({
+      inputTokens: lastInputTokens,
+      cutIndex,
+      errors: integrity.errors,
+    }, 'compaction_candidate_integrity_rejected')
+    return false
+  }
+
+  context.replaceMessages(candidateMessages)
 
   log.info(
     {

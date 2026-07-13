@@ -19,8 +19,15 @@ describe('life_journal tool', () => {
 
       const written = JSON.parse((await tool.execute({
         action: 'write',
+        kind: 'dream',
         markdown: '### Saw\n- 我主动决定记下这个线索。\n',
-      }, undefined as never)).content as string) as { ok: boolean; path: string; heading: string; entryId: string }
+      }, undefined as never)).content as string) as {
+        ok: boolean
+        path: string
+        heading: string
+        entryId: string
+        kind: string
+      }
       const recent = JSON.parse((await tool.execute({
         action: 'read_recent',
         days: 1,
@@ -52,6 +59,7 @@ describe('life_journal tool', () => {
       assert.equal(written.ok, true)
       assert.equal(written.heading, '## 23:18 Manual')
       assert.equal(written.entryId, 'manual-entry')
+      assert.equal(written.kind, 'dream')
       assert.match(await readFile(join(rootDir, 'life', 'journal', '2026-07-07.md'), 'utf8'), /我主动决定/)
       assert.equal(recent.files.length, 1)
       assert.equal(recent.files[0]?.content.includes('我主动决定'), true)

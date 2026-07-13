@@ -10,6 +10,21 @@ import type { BotSnapshotRepo } from './snapshot-repo.js'
 import { createToolExecutor } from './tool.js'
 import { createGoalTool } from './tools/goal.js'
 
+function validSummary(content: string): string {
+  return [
+    '## 讨论过的话题',
+    content,
+    '',
+    '## 群友信息',
+    '',
+    '## 我的承诺和状态',
+    '',
+    '## 工具调用结果',
+    '',
+    '## 情绪和氛围',
+  ].join('\n')
+}
+
 describe('BotLoop goal integration', () => {
   test('creates a self goal during ordinary autonomy and continues it on the next foreground round', async () => {
     const context = createAgentContext()
@@ -237,7 +252,7 @@ describe('BotLoop goal integration', () => {
       compactOptions: {
         triggerTokens: 1,
         keepRatio: 0.5,
-        summarize: async () => '压缩摘要',
+        summarize: async () => validSummary('压缩摘要'),
       },
     })
 
@@ -284,7 +299,7 @@ describe('BotLoop goal integration', () => {
       goalStore,
       compactOptions: {
         keepRatio: 0.5,
-        summarize: async () => '恢复摘要',
+        summarize: async () => validSummary('恢复摘要'),
       },
     })
 

@@ -69,6 +69,27 @@ describe('memory tool schema', () => {
       expectedRevision: 'a'.repeat(64),
       content: '稳定结论',
     }).success, true)
+    assert.equal(memoryTool.schema.safeParse({
+      action: 'mark_disputed',
+      file: 'self/notes.md',
+      entryId: 'entry-1',
+      expectedRevision: 'a'.repeat(64),
+    }).success, true)
+    assert.equal(memoryTool.schema.safeParse({
+      action: 'supersede_entry',
+      file: 'self/notes.md',
+      entryId: 'entry-1',
+      replacementEntryId: 'entry-2',
+      expectedRevision: 'a'.repeat(64),
+    }).success, true)
+    const untrusted = memoryTool.schema.safeParse({
+      action: 'write',
+      scope: 'self',
+      content: '不要让模型直接指定可信度',
+      trust: 'high',
+    })
+    assert.equal(untrusted.success, true)
+    if (untrusted.success) assert.equal('trust' in (untrusted.data as object), false)
   })
 
   test('rejects topic write without stable title at execution boundary', async () => {
@@ -264,6 +285,49 @@ describe('memory tool execute', () => {
         expectedRevision: snapshot.revision,
       }, makeCtx())).content as string) as { ok: boolean }
       assert.equal(deleted.ok, true)
+    })
+  })
+
+  test('marks disputed and superseded entries through revision-checked actions', async () => {
+    await withTempMemory(async (workspaceDir) => {
+      let nextId = 0
+      const tool = createMemoryTool({
+        workspaceDir,
+        now: () => new Date('2026-07-02T00:00:00.000Z'),
+        id: () => `memory-${++nextId}`,
+      })
+      await tool.execute({ action: 'write', scope: 'self', title: 'facts', content: '旧事实' }, makeCtx())
+      await tool.execute({ action: 'write', scope: 'self', title: 'facts', content: '新事实' }, makeCtx())
+      const read = async () => JSON.parse((await tool.execute({
+        action: 'read',
+        file: 'self/facts.md',
+      }, makeCtx())).content as string) as {
+        revision: string
+        entries: Array<{ id: string; status: string; supersedes: string[] }>
+      }
+
+      let snapshot = await read()
+      const disputed = JSON.parse((await tool.execute({
+        action: 'mark_disputed',
+        file: 'self/facts.md',
+        entryId: 'memory-1',
+        expectedRevision: snapshot.revision,
+      }, makeCtx())).content as string) as { ok: boolean }
+      assert.equal(disputed.ok, true)
+
+      snapshot = await read()
+      const superseded = JSON.parse((await tool.execute({
+        action: 'supersede_entry',
+        file: 'self/facts.md',
+        entryId: 'memory-1',
+        replacementEntryId: 'memory-2',
+        expectedRevision: snapshot.revision,
+      }, makeCtx())).content as string) as { ok: boolean }
+      assert.equal(superseded.ok, true)
+
+      snapshot = await read()
+      assert.equal(snapshot.entries.find((entry) => entry.id === 'memory-1')?.status, 'superseded')
+      assert.deepEqual(snapshot.entries.find((entry) => entry.id === 'memory-2')?.supersedes, ['memory-1'])
     })
   })
 })

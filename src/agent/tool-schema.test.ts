@@ -5,7 +5,7 @@ import { zodToOpenAIStrictToolJsonSchema, zodToToolJsonSchema } from './tool-sch
 import { createInMemoryTaskRegistry } from './background-task-registry.js'
 import { collectStickerTool } from './tools/collect-sticker.js'
 import { createGenerateImageTool } from './tools/generate-image.js'
-import { journalTool } from './tools/journal.js'
+import { notebookTool } from './tools/notebook.js'
 import { memoryTool } from './tools/memory.js'
 import { pauseTool } from './tools/pause.js'
 import { createSendMessageTool } from './tools/send-message.js'
@@ -29,16 +29,17 @@ test('zodToToolJsonSchema flattens collect_sticker union to Anthropic object sch
   assert.match(String(image.description), /action=collect 时必填/)
 })
 
-test('zodToToolJsonSchema preserves conditional requirements for every journal action', () => {
-  const json = zodToToolJsonSchema(journalTool.schema)
+test('zodToToolJsonSchema preserves conditional requirements for every notebook action', () => {
+  const json = zodToToolJsonSchema(notebookTool.schema)
 
   assert.deepEqual(json.required, ['action'])
   const props = json.properties as Record<string, Record<string, unknown>>
-  assert.match(String(props.action.description), /action=write 时必须提供 kind, content/)
+  assert.match(String(props.action.description), /action=write 时必须提供 kind, topic, content/)
   assert.match(String(props.action.description), /action=search 时必须提供 query/)
   assert.match(String(props.action.description), /action=update 时必须提供 id, expectedRevision, content/)
   assert.match(String(props.action.description), /action=compact 时必须提供 ids, expectedRevision, content/)
   assert.match(String(props.kind.description), /action=write 时必填/)
+  assert.match(String(props.topic.description), /action=write 时必填/)
   assert.match(String(props.expectedRevision.description), /action=update 或 action=delete 或 action=compact 时必填/)
 })
 
@@ -53,6 +54,8 @@ test('tool schemas disclose custom validation constraints that JSON Schema canno
   const memoryProps = memoryJson.properties as Record<string, Record<string, unknown>>
   assert.match(String(memoryProps.file.description), /memory 内的 \.md 相对路径/)
   assert.match(String(memoryProps.file.description), /不允许绝对路径、反斜杠或 \.\./)
+  assert.match(String(memoryProps.replacementEntryId.description), /action=supersede_entry 时必填/)
+  assert.equal('trust' in memoryProps, false)
 })
 
 test('send_message exposes music as one provider-compatible object schema', () => {

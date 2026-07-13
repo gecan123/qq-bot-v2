@@ -12,7 +12,7 @@
 | s06 Subagent | 已满足核心 | `delegate` 提供一次性 clean-context 子任务、固定只读工具 allowlist、轮数/超时预算、后台 lane 和结构化回传，内部 transcript 不进主 ledger；`trading_agent` 继续承接专用金融研究。没有持久多 Agent 私聊或 teammate 身份，这属于 s15/s16。 |
 | s07 Skill Loading | 已满足且有扩展 | 有有界的 `skill list/load`，目录面向 runtime Agent；deferred `skill_editor` 支持草稿、触发/排除边界校验、安全扫描和拒绝覆盖安装。仍没有多 skill root 或自动相关选择。 |
 | s08 Context Compact | 已满足核心 | 有 token 触发摘要 compaction、完整 prefix summarization、safe cut 和改写后即时 snapshot，避免切开 tool call/result；LLM 请求另有从 ledger 重建的 working-context 投影，旧图片只在视图中降级。仍缺 text/tool-result micro-compact、manual compact、完整 transcript 归档。 |
-| s09 Memory | 已满足核心 | `memory` 已有 Markdown v1、分页 read、revision、entry 更新/删除/compact；`recall` 做有界 entry 级相关召回并保留 provenance，`review` 只读提出重复/近重复/可能冲突，确认后再 mutation。journal、Life Journal、Agenda 补充生活连续性。没有无条件自动提取或自动破坏性整理，这是有意边界。 |
+| s09 Memory | 已满足核心 | `memory` 已有 Markdown v1、分页 read、revision、entry 更新/删除/compact；`recall` 做有界 entry 级相关召回并保留 provenance，`review` 只读提出重复/近重复/可能冲突，确认后再 mutation。Notebook 保存主题过程，Life Journal 保存经历/感受/梦，Agenda 保存当前承诺和下一步。没有无条件自动提取或自动破坏性整理，这是有意边界。 |
 | s10 System Prompt | 部分满足，适合本项目 | prompt 分 section 组装，但启动后冻结；这不完全等同教程的运行时动态拼接，但更利于当前 prompt cache 稳定性。 |
 | s11 Error Recovery | 核心已满足 | 有工具错误隔离、provider-neutral stop reason、transport/429/5xx/529/SSE overload 有界退避、`retry-after`、prompt-too-long 强制 compaction、`max_tokens` 预算升级与有界 continuation、显式同 provider fallback、round backoff、replay barrier 和幂等 shutdown。仍可补 OpenAI 错误的更细分类与恢复指标汇总。 |
 | s12 Task System | 部分满足 | 单一持久 Goal 支持 `origin=owner|self`、状态流转、revision、token/time/round 使用量、完成证据和三轮 blocker 门槛，并能跨 replay/compaction/restart 续跑；Agent 可自主建/弃 self Goal，owner Goal 可抢占。仍没有多任务图、依赖、认领或 blockedBy DAG。进程内 `todo` 继续只管当前执行计划。 |

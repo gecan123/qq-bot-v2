@@ -33,6 +33,7 @@ import {
 } from './agent/persona-spoof-self-test.js'
 import { createAgentTaskScheduler } from './agent/task-scheduler.js'
 import { createBotGoalStore } from './agent/goal-store.js'
+import { createWorkspaceStateCoordinator } from './agent/workspace-state-coordinator.js'
 import {
   createStartupGoalControlGate,
   replayOwnerGoalCommands,
@@ -92,16 +93,19 @@ async function main() {
   // 3. Agent 自己的 LLM 客户端 (走 default provider/model, 后续可以单独换)
   const llm = createLlmClient()
   const taskScheduler = createAgentTaskScheduler()
+  const workspaceStateCoordinator = createWorkspaceStateCoordinator()
   const lifeJournalLlm = createLlmClient({
     claudeThinking: { mode: 'disabled' },
   })
   const lifeJournal = createLifeJournalRuntime({
     llm: lifeJournalLlm,
     taskScheduler,
+    workspaceStateCoordinator,
   })
   const memoryMaintenance = createMemoryMaintenanceRuntime({
     llm: lifeJournalLlm,
     taskScheduler,
+    workspaceStateCoordinator,
   })
 
   // 3.5 启动期 persona-spoof 自检 (claude-code 路径专用): 若 cliproxy mode=auto
@@ -144,16 +148,19 @@ async function main() {
   const context = createAgentContext()
   if (persisted) {
     context.restorePersistedSnapshot(persisted.snapshot)
-    log.info(
-      {
-        messages: persisted.snapshot.messages.length,
-        mailboxSources: Object.keys(persisted.mailboxCursors).length,
-        mailboxContinuitySources: Object.keys(persisted.mailboxContinuity.mailboxes).length,
-        goalRevision: persisted.goalRevision,
-        lastWakeAt: persisted.lastWakeAt ? formatBeijingIso(persisted.lastWakeAt) : null,
-      },
-      '从持久化 snapshot 恢复 AgentContext',
-    )
+    const restoredSnapshotLog = {
+      recoveredFromCheckpoint: persisted.recoveredFromCheckpoint,
+      messages: persisted.snapshot.messages.length,
+      mailboxSources: Object.keys(persisted.mailboxCursors).length,
+      mailboxContinuitySources: Object.keys(persisted.mailboxContinuity.mailboxes).length,
+      goalRevision: persisted.goalRevision,
+      lastWakeAt: persisted.lastWakeAt ? formatBeijingIso(persisted.lastWakeAt) : null,
+    }
+    if (persisted.recoveredFromCheckpoint) {
+      log.warn(restoredSnapshotLog, '当前 AgentContext snapshot 损坏，已从上一代 checkpoint 恢复')
+    } else {
+      log.info(restoredSnapshotLog, '从持久化 snapshot 恢复 AgentContext')
+    }
   } else {
     log.info('AgentContext 从空启动 (无 snapshot)')
   }
@@ -337,6 +344,7 @@ async function main() {
     lifeJournal,
     taskScheduler,
     memoryMaintenance,
+    workspaceStateCoordinator,
     taskRegistry: persistentTasks.registry,
     approvalStatePath: config.approvalStatePath,
     approvalMode: config.approvalMode,

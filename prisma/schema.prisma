@@ -70,6 +70,22 @@ model BotAgentSnapshot {
   @@map("bot_agent_snapshot")
 }
 
+/// AgentContext 当前快照的最近历史版本，只用于完整性恢复和审计。
+/// 正常 replay 永远读取 BotAgentSnapshot；checkpoint 不参与 prompt history 拼装。
+model BotAgentSnapshotCheckpoint {
+  id                BigInt    @id @default(autoincrement())
+  schemaVersion     Int       @map("schema_version")
+  contextSnapshot   Json      @map("context_snapshot")
+  mailboxCursors    Json      @map("mailbox_cursors")
+  mailboxContinuity Json      @map("mailbox_continuity")
+  goalRevision      Int       @map("goal_revision")
+  lastWakeAt        DateTime? @map("last_wake_at") @db.Timestamptz(3)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([createdAt(sort: Desc)])
+  @@map("bot_agent_snapshot_checkpoints")
+}
+
 /// 主 Agent 的单一持久目标控制状态。id 永远为 1；goalId 用来隔离目标替换后的迟到调用。
 /// 该表只控制 runtime 调度，LLM 可见事实仍必须 append 到 BotAgentSnapshot.contextSnapshot。
 model BotAgentGoal {
@@ -99,20 +115,6 @@ model BotAgentGoal {
   updatedAt               DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@map("bot_agent_goal")
-}
-
-/// 旧版数据库记忆表。当前 memory 工具使用 data/agent-workspace/memory/ Markdown，
-/// 运行时代码已不再读写本 model；删除前需先确定历史数据处置和 migration 策略。
-model MemoryEntry {
-  id               Int      @id @default(autoincrement())
-  targetKind       String   @map("target_kind") @db.VarChar(16)
-  targetId         String   @map("target_id") @db.VarChar(64)
-  content          String   @db.Text
-  sourceMessageIds Json?    @map("source_message_ids")
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-
-  @@index([targetKind, targetId, createdAt(sort: Desc)])
-  @@map("memory_entries")
 }
 
 /// Luna 的表情包收藏池。collect_sticker 工具写入, compaction 后注入摘要进 context。

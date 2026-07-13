@@ -76,7 +76,7 @@ describe('createAgentRuntime', () => {
       'collect_sticker',
       'chat_style',
       'ai_tone',
-      'journal',
+      'notebook',
       'life_journal',
       'workspace_bash',
       'help',

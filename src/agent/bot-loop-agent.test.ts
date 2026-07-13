@@ -29,6 +29,21 @@ function makeMockLlm(outputs: LlmCallOutput[]): LlmClient {
   }
 }
 
+function validSummary(content = '保留关键历史。'): string {
+  return [
+    '## 讨论过的话题',
+    content,
+    '',
+    '## 群友信息',
+    '',
+    '## 我的承诺和状态',
+    '',
+    '## 工具调用结果',
+    '',
+    '## 情绪和氛围',
+  ].join('\n')
+}
+
 function makeMockTools(impl: Record<string, () => Promise<ToolExecutionResult>> = {}): ToolExecutor {
   const noop = async () => ({ content: 'ok' })
   return {
@@ -319,7 +334,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         keepRatio: 0.1,
         summarize: async () => {
           summarized = true
-          return 'summary'
+          return validSummary()
         },
       },
       lifeJournal: {
@@ -381,7 +396,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       compactOptions: {
         triggerTokens: 100_000,
         keepRatio: 0.2,
-        summarize: async ({ history }) => `recovered ${history.length}`,
+        summarize: async ({ history }) => validSummary(`recovered ${history.length}`),
       },
     })
 
@@ -391,7 +406,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(saved.length, 3, 'pre-round, recovery-compacted, post-round snapshots')
     const messages = ctx.getSnapshot().messages
     assert.equal(messages[0]?.role, 'user')
-    if (messages[0]?.role === 'user') assert.match(messages[0].content, /^\[历史摘要\]\nrecovered /)
+    if (messages[0]?.role === 'user') assert.match(messages[0].content, /^\[历史摘要\][\s\S]*recovered /)
     assert.equal(messages.some((message) => message.role === 'assistant'), false)
     assert.deepEqual(saved.at(-1), ctx.exportPersistedSnapshot())
   })
@@ -422,7 +437,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         keepRatio: 0.2,
         summarize: async () => {
           summarizeCalls += 1
-          return 'summary'
+          return validSummary()
         },
       },
     })
@@ -430,6 +445,53 @@ describe('BotLoopAgent.runOnceForTest', () => {
     await assert.rejects(() => agent.runOnceForTest(), /still too long/)
     assert.equal(chatCalls, 2)
     assert.equal(summarizeCalls, 1)
+  })
+
+  test('context overflow preserves the provider error and context when recovery summarization fails', async () => {
+    const ctx = createAgentContext()
+    for (let i = 0; i < 5; i += 1) ctx.appendUserMessage(`old-${i}`)
+    let beforeRecovery = ctx.getSnapshot()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    let chatCalls = 0
+    let summarizeCalls = 0
+    const { repo } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat() {
+          chatCalls++
+          if (chatCalls === 1) {
+            beforeRecovery = ctx.getSnapshot()
+            throw Object.assign(new Error('prompt too long'), { kind: 'context_overflow' })
+          }
+          return {
+            content: '',
+            toolCalls: [],
+            usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 0 },
+            model: 'mock',
+          }
+        },
+      },
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      compactOptions: {
+        keepRatio: 0.2,
+        summarize: async () => {
+          summarizeCalls++
+          throw new Error('summarizer unavailable')
+        },
+      },
+    })
+
+    await assert.rejects(() => agent.runOnceForTest(), /prompt too long/)
+    assert.equal(chatCalls, 1)
+    assert.equal(summarizeCalls, 1)
+    assert.deepEqual(ctx.getSnapshot(), beforeRecovery)
   })
 
   test('checkpoints text-only truncated output and continues without replaying partial tool calls', async () => {

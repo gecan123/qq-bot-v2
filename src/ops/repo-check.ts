@@ -14,6 +14,7 @@ export interface RepoCheckFiles {
   'docs/README.md': string
   'docs/ARCHITECTURE.md': string
   'docs/AGENT_CONTEXT.md': string
+  'docs/MEMORY_ARCHITECTURE.md': string
   'docs/TOOLS.md': string
   'docs/OPERATIONS.md': string
   'docs/TECH_DEBT.md': string
@@ -40,6 +41,7 @@ const README_REMOVED_SURFACES = [
 const REQUIRED_DOCS = [
   'docs/ARCHITECTURE.md',
   'docs/AGENT_CONTEXT.md',
+  'docs/MEMORY_ARCHITECTURE.md',
   'docs/TOOLS.md',
   'docs/OPERATIONS.md',
   'docs/TECH_DEBT.md',
@@ -92,6 +94,7 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   checkToolBoundaryDocs(files, errors)
   checkPromptSplit(files, errors)
   checkEnvExample(files, errors)
+  checkMemoryArchitecture(files, errors)
 
   for (const surface of README_REMOVED_SURFACES) {
     if (files['README.md'].includes(surface)) {
@@ -133,12 +136,30 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
     errors.push('package.json must define scripts["agent:metrics"] as "tsx scripts/agent-metrics.ts"')
   }
 
+  const agentMemoryCheck = (scripts as Record<string, unknown>)['agent:memory-check']
+  if (agentMemoryCheck !== 'tsx scripts/agent-memory-check.ts') {
+    errors.push('package.json must define scripts["agent:memory-check"] as "tsx scripts/agent-memory-check.ts"')
+  }
+
   const lint = (scripts as Record<string, unknown>).lint
   if (typeof lint !== 'string' || !lint.includes('repo-check')) {
     errors.push('package.json scripts.lint must run repo-check')
   }
 
   return { errors }
+}
+
+function checkMemoryArchitecture(files: RepoCheckFiles, errors: string[]): void {
+  const memoryDoc = files['docs/MEMORY_ARCHITECTURE.md']
+  if (!/Markdown.{0,40}(?:事实来源|source of truth)/is.test(memoryDoc)) {
+    errors.push('docs/MEMORY_ARCHITECTURE.md must document Markdown as the source of truth')
+  }
+  if (!/checkpoint/i.test(memoryDoc)) {
+    errors.push('docs/MEMORY_ARCHITECTURE.md must document checkpoint recovery')
+  }
+  if (!/(?:UNTRUSTED_DATA|不可信数据)/i.test(memoryDoc)) {
+    errors.push('docs/MEMORY_ARCHITECTURE.md must document auxiliary LLM input as untrusted data')
+  }
 }
 
 function checkEnvExample(files: RepoCheckFiles, errors: string[]): void {

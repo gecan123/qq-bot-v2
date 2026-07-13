@@ -259,7 +259,13 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         }
         if (recoveredContextOverflow || !isLlmContextOverflowError(err)) throw err
         recoveredContextOverflow = true
-        const compacted = await compactConversationForRecovery(deps.context, deps.compactOptions)
+        let compacted = false
+        try {
+          compacted = await compactConversationForRecovery(deps.context, deps.compactOptions)
+        } catch (compactionError) {
+          log.error({ err: compactionError, roundIndex }, 'context_overflow_compaction_failed')
+          throw err
+        }
         if (!compacted) throw err
         recordMailboxCompaction(mailboxContinuity)
         const syncedAfterRecoveryCompaction = await syncGoalState()

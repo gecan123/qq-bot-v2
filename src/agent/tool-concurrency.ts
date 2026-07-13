@@ -20,7 +20,7 @@ export function isParallelSafeToolCall(call: AssistantToolCall): boolean {
   if (ALWAYS_READ_ONLY_TOOLS.has(call.name)) return true
   if (call.name === 'workspace_bash') return !isSideEffectTool(call.name, call.args)
   if (call.name === 'memory') return hasAction(call.args, ['search', 'recall', 'review', 'read', 'list'])
-  if (call.name === 'journal') return hasAction(call.args, ['list', 'search', 'read'])
+  if (call.name === 'notebook') return hasAction(call.args, ['list', 'search', 'read'])
   if (call.name === 'life_journal') {
     return hasAction(call.args, ['read_recent', 'read_day', 'read_entry', 'read_agenda'])
   }

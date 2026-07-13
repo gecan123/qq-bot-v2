@@ -1,21 +1,25 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { appendFile, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { formatBeijingCompact, formatBeijingIso } from '../utils/beijing-time.js'
+import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
 
 export interface LifeJournalStoreOptions {
   rootDir: string
   now?: () => Date
   id?: () => string
+  workspaceStateCoordinator?: WorkspaceStateCoordinator
 }
 
 export type LifeJournalEntrySource = 'manual' | 'round' | 'compact'
+export type LifeJournalEntryKind = 'reflection' | 'dream'
 
 export interface LifeJournalEntry {
   id: string
   date: string
   heading: string
   markdown: string
+  kind: LifeJournalEntryKind
   source: LifeJournalEntrySource
   createdAt: string
   roundIndex?: number
@@ -59,7 +63,18 @@ const AGENDA_TEMPLATE = `# Agenda
 const ENTRY_START = '<!-- life-journal-entry'
 const ENTRY_META_END = '-->'
 const ENTRY_END = '<!-- /life-journal-entry -->'
-const FORMAT_MARKER = '<!-- life-journal-format: 1 -->'
+const FORMAT_MARKER = '<!-- life-journal-format: 2 -->'
+const AGENDA_RESOURCE_KEY = 'life-agenda:agenda.md'
+
+function withCoordinatedWrite<T>(
+  options: LifeJournalStoreOptions,
+  resourceKey: string,
+  task: () => Promise<T>,
+): Promise<T> {
+  return options.workspaceStateCoordinator
+    ? options.workspaceStateCoordinator.withWrite(resourceKey, task)
+    : task()
+}
 
 function currentDate(options: LifeJournalStoreOptions): Date {
   return options.now?.() ?? new Date()
@@ -112,6 +127,7 @@ function renderEntry(entry: LifeJournalEntry): string {
     ENTRY_START,
     `id: ${entry.id}`,
     `date: ${entry.date}`,
+    `kind: ${entry.kind}`,
     `source: ${entry.source}`,
     `createdAt: ${entry.createdAt}`,
     ...(entry.roundIndex == null ? [] : [`roundIndex: ${entry.roundIndex}`]),
@@ -150,6 +166,7 @@ function parseEntries(content: string, expectedDate: string): ParsedEntry[] {
     const heading = headingEnd < 0 ? body : body.slice(0, headingEnd)
     const markdown = headingEnd < 0 ? '' : body.slice(headingEnd).replace(/^\n+/, '')
     const source = fields.get('source')
+    const kind = fields.get('kind')
     const roundIndex = fields.get('roundIndex')
     const id = fields.get('id')
     const date = fields.get('date')
@@ -167,6 +184,7 @@ function parseEntries(content: string, expectedDate: string): ParsedEntry[] {
       id
       && date === expectedDate
       && createdAt
+      && (kind === 'reflection' || kind === 'dream')
       && headingMatchesSource
       && (source === 'manual' || source === 'round' || source === 'compact')
     ) {
@@ -175,6 +193,7 @@ function parseEntries(content: string, expectedDate: string): ParsedEntry[] {
         date,
         heading,
         markdown,
+        kind,
         source,
         createdAt,
         ...(parsedRoundIndex == null ? {} : { roundIndex: parsedRoundIndex }),
@@ -243,71 +262,87 @@ function normalizedFile(content: string): string {
 }
 
 export async function appendLifeJournalEntry(
-  options: LifeJournalStoreOptions & { roundIndex?: number; markdown: string },
+  options: LifeJournalStoreOptions & {
+    roundIndex?: number
+    kind?: LifeJournalEntryKind
+    markdown: string
+  },
 ): Promise<{ path: string; heading: string; entryId: string }> {
   const now = currentDate(options)
   const { date, time } = shanghaiParts(now)
-  const path = journalPath(options.rootDir, date)
-  const heading = options.roundIndex == null ? `## ${time} Manual` : `## ${time} Round ${options.roundIndex}`
-  const entryId = createEntryId(options, now)
+  const write = async (): Promise<{ path: string; heading: string; entryId: string }> => {
+    const path = journalPath(options.rootDir, date)
+    const heading = options.roundIndex == null ? `## ${time} Manual` : `## ${time} Round ${options.roundIndex}`
+    const entryId = createEntryId(options, now)
 
-  await mkdir(journalDir(options.rootDir), { recursive: true })
-  let resetFile = false
-  try {
-    const existing = await readFile(path, 'utf8')
-    resetFile = !existing.startsWith(`# Life Journal ${date}\n\n${FORMAT_MARKER}\n`)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    resetFile = true
+    await mkdir(journalDir(options.rootDir), { recursive: true })
+    let resetFile = false
+    try {
+      const existing = await readFile(path, 'utf8')
+      resetFile = !existing.startsWith(`# Life Journal ${date}\n\n${FORMAT_MARKER}\n`)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      resetFile = true
+    }
+    if (resetFile) await writeFile(path, `# Life Journal ${date}\n\n${FORMAT_MARKER}\n\n`, 'utf8')
+
+    const current = await readFile(path, 'utf8')
+    const entry = renderEntry({
+      id: entryId,
+      date,
+      heading,
+      markdown: options.markdown,
+      kind: options.kind ?? 'reflection',
+      source: options.roundIndex == null ? 'manual' : 'round',
+      createdAt: formatBeijingIso(now),
+      ...(options.roundIndex == null ? {} : { roundIndex: options.roundIndex }),
+    })
+    await atomicWrite(path, `${current.trimEnd()}\n\n${entry}`)
+    return { path, heading, entryId }
   }
-  if (resetFile) await writeFile(path, `# Life Journal ${date}\n\n${FORMAT_MARKER}\n\n`, 'utf8')
 
-  await appendFile(path, renderEntry({
-    id: entryId,
-    date,
-    heading,
-    markdown: options.markdown,
-    source: options.roundIndex == null ? 'manual' : 'round',
-    createdAt: formatBeijingIso(now),
-    ...(options.roundIndex == null ? {} : { roundIndex: options.roundIndex }),
-  }), 'utf8')
-  return { path, heading, entryId }
+  return withCoordinatedWrite(options, `life-journal:${date}.md`, write)
 }
 
 export async function updateLifeJournalEntry(
   options: LifeJournalStoreOptions & { date: string; entryId: string; expectedRevision: string; markdown: string },
 ): Promise<{ path: string; entry: LifeJournalEntry; revision: string }> {
-  const file = await readJournalFile(options.rootDir, options.date)
-  assertRevision(file.content, options.expectedRevision)
-  const entries = parseEntries(file.content, options.date)
-  const target = entries.find((entry) => entry.id === options.entryId)
-  if (!target) throw new LifeJournalStoreError('not_found', `life journal entry not found: ${options.entryId}`)
+  return withCoordinatedWrite(options, `life-journal:${options.date}.md`, async () => {
+    const file = await readJournalFile(options.rootDir, options.date)
+    assertRevision(file.content, options.expectedRevision)
+    const entries = parseEntries(file.content, options.date)
+    const target = entries.find((entry) => entry.id === options.entryId)
+    if (!target) throw new LifeJournalStoreError('not_found', `life journal entry not found: ${options.entryId}`)
 
-  const updated: LifeJournalEntry = {
-    id: target.id,
-    date: target.date,
-    heading: target.heading,
-    markdown: options.markdown,
-    source: target.source,
-    createdAt: target.createdAt,
-    ...(target.roundIndex == null ? {} : { roundIndex: target.roundIndex }),
-  }
-  const content = normalizedFile(`${file.content.slice(0, target.start)}${renderEntry(updated)}${file.content.slice(target.end)}`)
-  await atomicWrite(file.path, content)
-  return { path: file.path, entry: updated, revision: revisionOf(content) }
+    const updated: LifeJournalEntry = {
+      id: target.id,
+      date: target.date,
+      heading: target.heading,
+      markdown: options.markdown,
+      kind: target.kind,
+      source: target.source,
+      createdAt: target.createdAt,
+      ...(target.roundIndex == null ? {} : { roundIndex: target.roundIndex }),
+    }
+    const content = normalizedFile(`${file.content.slice(0, target.start)}${renderEntry(updated)}${file.content.slice(target.end)}`)
+    await atomicWrite(file.path, content)
+    return { path: file.path, entry: updated, revision: revisionOf(content) }
+  })
 }
 
 export async function deleteLifeJournalEntry(
   options: LifeJournalStoreOptions & { date: string; entryId: string; expectedRevision: string },
 ): Promise<{ path: string; deletedEntryId: string; revision: string }> {
-  const file = await readJournalFile(options.rootDir, options.date)
-  assertRevision(file.content, options.expectedRevision)
-  const target = parseEntries(file.content, options.date).find((entry) => entry.id === options.entryId)
-  if (!target) throw new LifeJournalStoreError('not_found', `life journal entry not found: ${options.entryId}`)
+  return withCoordinatedWrite(options, `life-journal:${options.date}.md`, async () => {
+    const file = await readJournalFile(options.rootDir, options.date)
+    assertRevision(file.content, options.expectedRevision)
+    const target = parseEntries(file.content, options.date).find((entry) => entry.id === options.entryId)
+    if (!target) throw new LifeJournalStoreError('not_found', `life journal entry not found: ${options.entryId}`)
 
-  const content = normalizedFile(`${file.content.slice(0, target.start)}${file.content.slice(target.end)}`)
-  await atomicWrite(file.path, content)
-  return { path: file.path, deletedEntryId: target.id, revision: revisionOf(content) }
+    const content = normalizedFile(`${file.content.slice(0, target.start)}${file.content.slice(target.end)}`)
+    await atomicWrite(file.path, content)
+    return { path: file.path, deletedEntryId: target.id, revision: revisionOf(content) }
+  })
 }
 
 export async function compactLifeJournalEntries(
@@ -318,49 +353,56 @@ export async function compactLifeJournalEntries(
     markdown: string
   },
 ): Promise<{ path: string; entry: LifeJournalEntry; compactedEntryIds: string[]; revision: string }> {
-  const file = await readJournalFile(options.rootDir, options.date)
-  assertRevision(file.content, options.expectedRevision)
-  const entries = parseEntries(file.content, options.date)
-  const selected = entries.filter((entry) => options.entryIds.includes(entry.id))
-  if (selected.length !== options.entryIds.length) {
-    throw new LifeJournalStoreError('not_found', 'one or more life journal entries were not found')
-  }
-  if (new Set(options.entryIds).size !== options.entryIds.length || selected.length < 2) {
-    throw new LifeJournalStoreError('invalid_selection', 'compact requires at least two distinct entry ids')
-  }
+  return withCoordinatedWrite(options, `life-journal:${options.date}.md`, async () => {
+    const file = await readJournalFile(options.rootDir, options.date)
+    assertRevision(file.content, options.expectedRevision)
+    const entries = parseEntries(file.content, options.date)
+    const selected = entries.filter((entry) => options.entryIds.includes(entry.id))
+    if (selected.length !== options.entryIds.length) {
+      throw new LifeJournalStoreError('not_found', 'one or more life journal entries were not found')
+    }
+    if (new Set(options.entryIds).size !== options.entryIds.length || selected.length < 2) {
+      throw new LifeJournalStoreError('invalid_selection', 'compact requires at least two distinct entry ids')
+    }
 
-  const now = currentDate(options)
-  const { time } = shanghaiParts(now)
-  const compacted: LifeJournalEntry = {
-    id: createEntryId(options, now),
-    date: options.date,
-    heading: `## ${time} Compact`,
-    markdown: options.markdown,
-    source: 'compact',
-    createdAt: formatBeijingIso(now),
-  }
-  const firstStart = Math.min(...selected.map((entry) => entry.start))
-  const selectedByStart = new Map(selected.map((entry) => [entry.start, entry]))
-  let cursor = 0
-  let content = ''
-  for (const entry of entries) {
-    if (!selectedByStart.has(entry.start)) continue
-    content += file.content.slice(cursor, entry.start)
-    if (entry.start === firstStart) content += renderEntry(compacted)
-    cursor = entry.end
-  }
-  content += file.content.slice(cursor)
-  content = normalizedFile(content)
-  await atomicWrite(file.path, content)
-  return {
-    path: file.path,
-    entry: compacted,
-    compactedEntryIds: options.entryIds,
-    revision: revisionOf(content),
-  }
+    const now = currentDate(options)
+    const { time } = shanghaiParts(now)
+    const compacted: LifeJournalEntry = {
+      id: createEntryId(options, now),
+      date: options.date,
+      heading: `## ${time} Compact`,
+      markdown: options.markdown,
+      kind: selected.every((entry) => entry.kind === 'dream') ? 'dream' : 'reflection',
+      source: 'compact',
+      createdAt: formatBeijingIso(now),
+    }
+    const firstStart = Math.min(...selected.map((entry) => entry.start))
+    const selectedByStart = new Map(selected.map((entry) => [entry.start, entry]))
+    let cursor = 0
+    let content = ''
+    for (const entry of entries) {
+      if (!selectedByStart.has(entry.start)) continue
+      content += file.content.slice(cursor, entry.start)
+      if (entry.start === firstStart) content += renderEntry(compacted)
+      cursor = entry.end
+    }
+    content += file.content.slice(cursor)
+    content = normalizedFile(content)
+    await atomicWrite(file.path, content)
+    return {
+      path: file.path,
+      entry: compacted,
+      compactedEntryIds: options.entryIds,
+      revision: revisionOf(content),
+    }
+  })
 }
 
 export async function ensureLifeAgenda(options: LifeJournalStoreOptions): Promise<string> {
+  return withCoordinatedWrite(options, AGENDA_RESOURCE_KEY, () => ensureLifeAgendaUnlocked(options))
+}
+
+async function ensureLifeAgendaUnlocked(options: LifeJournalStoreOptions): Promise<string> {
   const path = agendaPath(options.rootDir)
   await mkdir(lifeDir(options.rootDir), { recursive: true })
   try {
@@ -385,18 +427,25 @@ export async function readLifeAgendaSnapshot(
 }
 
 export async function writeLifeAgenda(options: LifeJournalStoreOptions, markdown: string): Promise<void> {
+  await withCoordinatedWrite(options, AGENDA_RESOURCE_KEY, () => writeLifeAgendaUnlocked(options, markdown))
+}
+
+async function writeLifeAgendaUnlocked(options: LifeJournalStoreOptions, markdown: string): Promise<void> {
   await mkdir(lifeDir(options.rootDir), { recursive: true })
-  await writeFile(agendaPath(options.rootDir), markdown, 'utf8')
+  await atomicWrite(agendaPath(options.rootDir), markdown)
 }
 
 export async function writeLifeAgendaIfRevision(
   options: LifeJournalStoreOptions & { expectedRevision: string },
   markdown: string,
 ): Promise<{ revision: string }> {
-  const current = await readLifeAgenda(options)
-  assertRevision(current, options.expectedRevision)
-  await writeLifeAgenda(options, markdown)
-  return { revision: revisionOf(markdown) }
+  return withCoordinatedWrite(options, AGENDA_RESOURCE_KEY, async () => {
+    await ensureLifeAgendaUnlocked(options)
+    const current = await readFile(agendaPath(options.rootDir), 'utf8')
+    assertRevision(current, options.expectedRevision)
+    await writeLifeAgendaUnlocked(options, markdown)
+    return { revision: revisionOf(markdown) }
+  })
 }
 
 export async function readRecentLifeJournalFiles(

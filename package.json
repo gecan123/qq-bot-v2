@@ -12,6 +12,7 @@
     "repo-check": "tsx scripts/repo-check.ts",
     "agent:doctor": "tsx scripts/agent-doctor.ts",
     "agent:metrics": "tsx scripts/agent-metrics.ts",
+    "agent:memory-check": "tsx scripts/agent-memory-check.ts",
     "agent:snapshot-check": "tsx scripts/agent-snapshot-check.ts",
     "agent:reset-memory": "tsx scripts/reset-agent-memory.ts",
     "start": "node dist/index.js",

@@ -5,12 +5,16 @@ import { createLogger } from '../logger.js'
 import { z } from 'zod'
 import { recordTokenUsage, type TokenUsageEntry } from './token-stats.js'
 import { createTaskScheduler, type TaskScheduler } from './task-scheduler.js'
+import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
+import { renderUntrustedTranscript } from './untrusted-transcript.js'
 import {
   appendLifeJournalEntry,
   ensureLifeAgenda,
+  LifeJournalStoreError,
   readLifeAgenda,
+  readLifeAgendaSnapshot,
   readRecentLifeJournalFiles,
-  writeLifeAgenda,
+  writeLifeAgendaIfRevision,
 } from './life-journal-store.js'
 
 export interface LifeJournalReviewInput {
@@ -181,7 +185,7 @@ function truncateToolContent(content: ToolResultContent, maxChars: number): Tool
   let remaining = maxChars
   return content.map((block) => {
     if (block.type !== 'text') {
-      const label = `[non-text tool result omitted: image ${block.source.media_type}]`
+      const label = '[image]'
       const text = truncateText(label, remaining)
       remaining = Math.max(0, remaining - label.length)
       return { type: 'text', text }
@@ -212,6 +216,8 @@ function boundRoundMessages(messages: AgentMessage[], maxRoundChars: number): Ag
     return { ...message, content }
   })
 }
+
+const LIFE_REVIEW_TRIGGER_INSTRUCTION = 'Perform the Life Journal review using only the untrusted data above. Return only the required structured result.'
 
 function isPauseOnlyRound(messages: AgentMessage[]): boolean {
   let sawPause = false
@@ -418,6 +424,7 @@ export function createLifeJournalRuntime(deps: {
   reviewTimeoutMs?: number
   recordUsage?: (entry: TokenUsageEntry) => void
   taskScheduler?: TaskScheduler
+  workspaceStateCoordinator?: WorkspaceStateCoordinator
 }): LifeJournalRuntime {
   const rootDir = deps.rootDir ?? 'data/agent-workspace'
   const maxRoundChars = deps.maxRoundChars ?? 6000
@@ -434,10 +441,23 @@ export function createLifeJournalRuntime(deps: {
 
   async function reviewRound(input: LifeJournalReviewInput): Promise<LifeJournalReviewResult> {
     try {
-      await ensureLifeAgenda({ rootDir, now: deps.now })
-      const [agenda, recentFiles] = await Promise.all([
-        readLifeAgenda({ rootDir, now: deps.now }),
-        readRecentLifeJournalFiles({ rootDir, now: deps.now, days: 2 }),
+      await ensureLifeAgenda({
+        rootDir,
+        now: deps.now,
+        workspaceStateCoordinator: deps.workspaceStateCoordinator,
+      })
+      const [agendaSnapshot, recentFiles] = await Promise.all([
+        readLifeAgendaSnapshot({
+          rootDir,
+          now: deps.now,
+          workspaceStateCoordinator: deps.workspaceStateCoordinator,
+        }),
+        readRecentLifeJournalFiles({
+          rootDir,
+          now: deps.now,
+          workspaceStateCoordinator: deps.workspaceStateCoordinator,
+          days: 2,
+        }),
       ])
       const reviewLlm: LlmClient = {
         async chat(chatInput) {
@@ -465,9 +485,19 @@ export function createLifeJournalRuntime(deps: {
         messages: [
           {
             role: 'user',
-            content: renderReviewState({ agenda, recentFiles, maxStateChars }),
+            content: renderUntrustedTranscript({
+              purpose: 'life_review',
+              messages: [
+                {
+                  role: 'user',
+                  content: renderReviewState({ agenda: agendaSnapshot.markdown, recentFiles, maxStateChars }),
+                },
+                ...boundRoundMessages(input.messages, maxRoundChars),
+              ],
+              maxChars: maxStateChars + maxRoundChars + 1_000,
+            }),
           },
-          ...boundRoundMessages(input.messages, maxRoundChars),
+          { role: 'user', content: LIFE_REVIEW_TRIGGER_INSTRUCTION },
         ],
         tools: [],
       }, reviewResultTool, {
@@ -485,14 +515,25 @@ export function createLifeJournalRuntime(deps: {
         await appendLifeJournalEntry({
           rootDir,
           now: deps.now,
+          workspaceStateCoordinator: deps.workspaceStateCoordinator,
           roundIndex: input.roundIndex,
           markdown: journalMarkdown,
         })
         wroteJournal = true
       }
       if (agendaMarkdown) {
-        await writeLifeAgenda({ rootDir, now: deps.now }, agendaMarkdown)
-        updatedAgenda = true
+        try {
+          await writeLifeAgendaIfRevision({
+            rootDir,
+            now: deps.now,
+            expectedRevision: agendaSnapshot.revision,
+            workspaceStateCoordinator: deps.workspaceStateCoordinator,
+          }, agendaMarkdown)
+          updatedAgenda = true
+        } catch (error) {
+          if (!(error instanceof LifeJournalStoreError) || error.code !== 'revision_conflict') throw error
+          log.info({ roundIndex: input.roundIndex }, 'life_agenda_revision_conflict')
+        }
       }
 
       log.info({
@@ -586,8 +627,17 @@ export function createLifeJournalRuntime(deps: {
 
     async pickIdleIntention() {
       try {
-        const agenda = await readLifeAgenda({ rootDir, now: deps.now })
-        const recentFiles = await readRecentLifeJournalFiles({ rootDir, now: deps.now, days: 2 })
+        const agenda = await readLifeAgenda({
+          rootDir,
+          now: deps.now,
+          workspaceStateCoordinator: deps.workspaceStateCoordinator,
+        })
+        const recentFiles = await readRecentLifeJournalFiles({
+          rootDir,
+          now: deps.now,
+          workspaceStateCoordinator: deps.workspaceStateCoordinator,
+          days: 2,
+        })
         const recent = recentFiles
           .map((file) => `## ${file.path}\n${truncateText(file.content, 2000)}`)
           .join('\n\n')

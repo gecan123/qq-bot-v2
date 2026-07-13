@@ -362,17 +362,17 @@ describe('createToolExecutor', () => {
     assert.equal(JSON.parse(writes[4]!).sideEffect, true)
   })
 
-  test('classifies journal mutations as side effects', async () => {
+  test('classifies notebook mutations as side effects', async () => {
     const writes: string[] = []
-    const journal: Tool<{ action: 'write' | 'list' | 'search' | 'read' | 'update' | 'delete' | 'compact' }> = {
-      name: 'journal',
-      description: 'journal',
+    const notebook: Tool<{ action: 'write' | 'list' | 'search' | 'read' | 'update' | 'delete' | 'compact' }> = {
+      name: 'notebook',
+      description: 'notebook',
       schema: z.object({ action: z.enum(['write', 'list', 'search', 'read', 'update', 'delete', 'compact']) }),
       async execute() {
         return { content: JSON.stringify({ ok: true }) }
       },
     }
-    const exec = createToolExecutor([journal], {
+    const exec = createToolExecutor([notebook], {
       trace: {
         now: () => new Date('2026-05-25T12:00:00.000Z'),
         clockMs: () => 100,
@@ -382,13 +382,13 @@ describe('createToolExecutor', () => {
       },
     })
 
-    await exec.execute({ id: 'write', name: 'journal', args: { action: 'write' } }, makeCtx())
-    await exec.execute({ id: 'list', name: 'journal', args: { action: 'list' } }, makeCtx())
-    await exec.execute({ id: 'search', name: 'journal', args: { action: 'search' } }, makeCtx())
-    await exec.execute({ id: 'read', name: 'journal', args: { action: 'read' } }, makeCtx())
-    await exec.execute({ id: 'update', name: 'journal', args: { action: 'update' } }, makeCtx())
-    await exec.execute({ id: 'delete', name: 'journal', args: { action: 'delete' } }, makeCtx())
-    await exec.execute({ id: 'compact', name: 'journal', args: { action: 'compact' } }, makeCtx())
+    await exec.execute({ id: 'write', name: 'notebook', args: { action: 'write' } }, makeCtx())
+    await exec.execute({ id: 'list', name: 'notebook', args: { action: 'list' } }, makeCtx())
+    await exec.execute({ id: 'search', name: 'notebook', args: { action: 'search' } }, makeCtx())
+    await exec.execute({ id: 'read', name: 'notebook', args: { action: 'read' } }, makeCtx())
+    await exec.execute({ id: 'update', name: 'notebook', args: { action: 'update' } }, makeCtx())
+    await exec.execute({ id: 'delete', name: 'notebook', args: { action: 'delete' } }, makeCtx())
+    await exec.execute({ id: 'compact', name: 'notebook', args: { action: 'compact' } }, makeCtx())
 
     assert.equal(JSON.parse(writes[0]!).sideEffect, true)
     assert.equal(JSON.parse(writes[1]!).sideEffect, false)

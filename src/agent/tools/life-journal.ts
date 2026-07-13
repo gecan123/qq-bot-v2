@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { Tool } from '../tool.js'
+import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
 import {
   appendLifeJournalEntry,
   compactLifeJournalEntries,
@@ -23,6 +24,7 @@ const revisionSchema = z.string().regex(/^[a-f0-9]{64}$/).describe('read_recent 
 const argsSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('write').describe('主动写入一条 Life Journal 笔记.'),
+    kind: z.enum(['reflection', 'dream']).optional().describe('内容类型: reflection=经历/感受, dream=梦境; 默认 reflection.'),
     markdown: z.string().trim().min(1).max(3000).describe('Markdown 内容, 上限 3000 字符.'),
   }),
   z.object({
@@ -77,6 +79,7 @@ export interface LifeJournalToolDeps {
   rootDir?: string
   now?: () => Date
   id?: () => string
+  workspaceStateCoordinator?: WorkspaceStateCoordinator
 }
 
 function truncateText(text: string, maxChars: number): string {
@@ -86,13 +89,19 @@ function truncateText(text: string, maxChars: number): string {
 
 export function createLifeJournalTool(deps: LifeJournalToolDeps = {}): Tool<Args> {
   const rootDir = deps.rootDir ?? DEFAULT_ROOT_DIR
+  const storeOptions = {
+    rootDir,
+    now: deps.now,
+    id: deps.id,
+    workspaceStateCoordinator: deps.workspaceStateCoordinator,
+  }
 
   return {
     name: 'life_journal',
     description: [
       '主动维护 Luna 的 Life Journal 和 Life Agenda.',
-      '用于自己决定记录经历、感受、未完兴趣、承诺和下一步; 不是普通聊天备份.',
-      'action=write 写一条主观笔记; action=read_recent 回看最近笔记并取得 entryId/revision.',
+      '用于自己决定记录经历、感受、梦、未完兴趣、承诺和下一步; 不是普通聊天备份.',
+      'action=write 写一条 reflection|dream 主观笔记; action=read_recent 回看最近笔记并取得 entryId/revision.',
       '需要完整原文时用 action=read_entry 或分页 action=read_day, 不要只依据 preview 做 compact.',
       'action=update/delete 修正或删除单条记录; action=compact 合并同一天的多条记录; 修改前必须使用最新 revision.',
       'action=read_agenda/write_agenda 读取或更新 agenda.',
@@ -102,9 +111,8 @@ export function createLifeJournalTool(deps: LifeJournalToolDeps = {}): Tool<Args
     async execute(args) {
       if (args.action === 'write') {
         const entry = await appendLifeJournalEntry({
-          rootDir,
-          now: deps.now,
-          id: deps.id,
+          ...storeOptions,
+          kind: args.kind ?? 'reflection',
           markdown: args.markdown,
         })
         return {
@@ -114,6 +122,7 @@ export function createLifeJournalTool(deps: LifeJournalToolDeps = {}): Tool<Args
             path: entry.path,
             heading: entry.heading,
             entryId: entry.entryId,
+            kind: args.kind ?? 'reflection',
           }),
           outcome: { ok: true },
         }
@@ -123,7 +132,7 @@ export function createLifeJournalTool(deps: LifeJournalToolDeps = {}): Tool<Args
         const maxChars = args.maxChars ?? DEFAULT_READ_CHARS
         let remaining = maxChars
         let remainingEntries = DEFAULT_READ_ENTRIES
-        const files = await readRecentLifeJournalFiles({ rootDir, now: deps.now, days: args.days ?? 2 })
+        const files = await readRecentLifeJournalFiles({ ...storeOptions, days: args.days ?? 2 })
         return {
           content: JSON.stringify({
             ok: true,
@@ -134,6 +143,7 @@ export function createLifeJournalTool(deps: LifeJournalToolDeps = {}): Tool<Args
               const entries = file.entries.slice(0, remainingEntries).map((entry) => ({
                 entryId: entry.id,
                 heading: entry.heading,
+                kind: entry.kind,
                 source: entry.source,
                 preview: truncateText(entry.markdown, 120),
               }))
@@ -152,7 +162,7 @@ export function createLifeJournalTool(deps: LifeJournalToolDeps = {}): Tool<Args
       }
 
       if (args.action === 'read_agenda') {
-        const agenda = await readLifeAgendaSnapshot({ rootDir, now: deps.now })
+        const agenda = await readLifeAgendaSnapshot(storeOptions)
         return {
           content: JSON.stringify({
             ok: true,
@@ -165,7 +175,7 @@ export function createLifeJournalTool(deps: LifeJournalToolDeps = {}): Tool<Args
 
       if (args.action === 'read_day') {
         try {
-          const file = await readLifeJournalDay({ rootDir, date: args.date })
+          const file = await readLifeJournalDay({ ...storeOptions, date: args.date })
           const offset = Math.min(args.offset ?? 0, file.content.length)
           const maxChars = args.maxChars ?? DEFAULT_READ_CHARS
           const content = file.content.slice(offset, offset + maxChars)
@@ -197,7 +207,7 @@ export function createLifeJournalTool(deps: LifeJournalToolDeps = {}): Tool<Args
 
       if (args.action === 'read_entry') {
         try {
-          const result = await readLifeJournalEntry({ rootDir, date: args.date, entryId: args.entryId })
+          const result = await readLifeJournalEntry({ ...storeOptions, date: args.date, entryId: args.entryId })
           return {
             content: JSON.stringify({
               ok: true,
@@ -221,7 +231,7 @@ export function createLifeJournalTool(deps: LifeJournalToolDeps = {}): Tool<Args
       try {
         if (args.action === 'update') {
           const result = await updateLifeJournalEntry({
-            rootDir,
+            ...storeOptions,
             date: args.date,
             entryId: args.entryId,
             expectedRevision: args.expectedRevision,
@@ -241,7 +251,7 @@ export function createLifeJournalTool(deps: LifeJournalToolDeps = {}): Tool<Args
 
         if (args.action === 'delete') {
           const result = await deleteLifeJournalEntry({
-            rootDir,
+            ...storeOptions,
             date: args.date,
             entryId: args.entryId,
             expectedRevision: args.expectedRevision,
@@ -254,9 +264,7 @@ export function createLifeJournalTool(deps: LifeJournalToolDeps = {}): Tool<Args
 
         if (args.action === 'compact') {
           const result = await compactLifeJournalEntries({
-            rootDir,
-            now: deps.now,
-            id: deps.id,
+            ...storeOptions,
             date: args.date,
             entryIds: args.entryIds,
             expectedRevision: args.expectedRevision,
@@ -286,8 +294,7 @@ export function createLifeJournalTool(deps: LifeJournalToolDeps = {}): Tool<Args
 
       try {
         const agenda = await writeLifeAgendaIfRevision({
-          rootDir,
-          now: deps.now,
+          ...storeOptions,
           expectedRevision: args.expectedRevision,
         }, args.markdown)
         return {

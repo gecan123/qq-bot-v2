@@ -84,6 +84,7 @@ describe('workspace_file tool', () => {
       const tool = createWorkspaceFileTool({ rootDir })
       for (const file of [
         'journal/diary/a.md',
+        'notebook/research/a.md',
         'life/agenda.md',
         'memory/self/a.md',
         'skill-drafts/a.md',

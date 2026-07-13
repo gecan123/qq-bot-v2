@@ -19,6 +19,7 @@ const files: RepoCheckFiles = {
   'docs/README.md': readFileSync('docs/README.md', 'utf8'),
   'docs/ARCHITECTURE.md': readFileSync('docs/ARCHITECTURE.md', 'utf8'),
   'docs/AGENT_CONTEXT.md': readFileSync('docs/AGENT_CONTEXT.md', 'utf8'),
+  'docs/MEMORY_ARCHITECTURE.md': readFileSync('docs/MEMORY_ARCHITECTURE.md', 'utf8'),
   'docs/TOOLS.md': readFileSync('docs/TOOLS.md', 'utf8'),
   'docs/OPERATIONS.md': readFileSync('docs/OPERATIONS.md', 'utf8'),
   'docs/TECH_DEBT.md': readFileSync('docs/TECH_DEBT.md', 'utf8'),

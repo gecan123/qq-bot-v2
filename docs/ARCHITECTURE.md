@@ -30,6 +30,7 @@ Goal 不创建第二个主 Agent。主前台仍只有一个串行 `BotLoopAgent`
 
 - `messages` 是入站事实账本，不是 LLM ledger。
 - `bot_agent_snapshot.context_snapshot` 是持久化的 LLM 可见上下文；`mailbox_cursors` 和 `goal_revision` 是与它原子保存的披露进度。
+- 长期 side-data 分为 `memory`、Notebook、Life Journal 和 Agenda，全部按需披露且不参与 replay；完整分层、写入路由和维护流程见 `docs/MEMORY_ARCHITECTURE.md`。
 - `bot_agent_goal` 是单一持久 Goal 状态，不是第二份 LLM 历史。`origin=owner|self`、动机、完成标准、预算、token/time/round 使用量、blocker 和完成证据在这里持久化；状态变化通过 revision 事件进入 ledger。blocker 连续性使用 Goal 自己的持久 round，而不是进程重启会归零的 BotLoop round。self Goal 默认 1,000,000 tokens、单个上限 10,000,000；60 秒冷却和每滚动 24 小时 64 个仅作为失控保险丝。
 - `logs/*.ndjson` 是运维日志，不能成为 replay 输入。
 - `data/agent-workspace/` 是 bot 生产的 workspace 数据，不是项目源码。

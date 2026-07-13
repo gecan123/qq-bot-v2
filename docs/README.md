@@ -6,6 +6,7 @@
 
 - `docs/ARCHITECTURE.md`：运行形态、模块边界和启动流程。
 - `docs/AGENT_CONTEXT.md`：永续上下文不变量和 replay 规则。
+- `docs/MEMORY_ARCHITECTURE.md`：事实账本、LLM ledger、长期记忆、Notebook、Life Journal 和 Agenda 的边界与流程。
 - `docs/TOOLS.md`：bot 工具注册、安全边界和外部能力。
 - `docs/HARNESS_COMPARISON.md`：按 `learn-claude-code` 章节对照当前 Agent harness 能力。
 - `docs/OPERATIONS.md`：本地命令、日志、验证和排查。

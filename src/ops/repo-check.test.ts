@@ -26,6 +26,7 @@ const validFiles = {
       'repo-check': 'tsx scripts/repo-check.ts',
       'agent:doctor': 'tsx scripts/agent-doctor.ts',
       'agent:metrics': 'tsx scripts/agent-metrics.ts',
+      'agent:memory-check': 'tsx scripts/agent-memory-check.ts',
       lint: 'pnpm typecheck && pnpm repo-check',
     },
   }),
@@ -69,9 +70,10 @@ const validFiles = {
   'prompts/bot-chat-constraints.md': '<!-- section:chat_constraints -->\n聊天约束\n单条消息 ≤ 500 字.\n<!-- /section:chat_constraints -->\n',
   'prompts/bot-style.md': '<!-- section:style_index -->\nLuna 按需风格指南\nconstraints\n<!-- /section:style_index -->\n',
   'prisma/schema.prisma': 'model BotAgentSnapshot {\n  @@map("bot_agent_snapshot")\n}\n',
-  'docs/README.md': 'docs/ARCHITECTURE.md\ndocs/AGENT_CONTEXT.md\ndocs/TOOLS.md\ndocs/OPERATIONS.md\ndocs/TECH_DEBT.md\n',
+  'docs/README.md': 'docs/ARCHITECTURE.md\ndocs/AGENT_CONTEXT.md\ndocs/MEMORY_ARCHITECTURE.md\ndocs/TOOLS.md\ndocs/OPERATIONS.md\ndocs/TECH_DEBT.md\n',
   'docs/ARCHITECTURE.md': '# Architecture\n',
   'docs/AGENT_CONTEXT.md': '# Persistent Agent Context\n',
+  'docs/MEMORY_ARCHITECTURE.md': 'Markdown is the source of truth. No SQLite or embedding. checkpoint recovery. UNTRUSTED_DATA.\n',
   'docs/TOOLS.md': [
     '# Agent Tools',
     '`help` `invoke` `pause` `send_message` `generate_image` `background_task` `memory` `collect_sticker` `workspace_bash` `workspace_file` `browser` `web_search`',
@@ -154,6 +156,18 @@ describe('runRepoChecks', () => {
 
     assert.match(result.errors.join('\n'), /package\.json must define scripts\["agent:doctor"\]/)
     assert.match(result.errors.join('\n'), /package\.json must define scripts\["agent:metrics"\]/)
+    assert.match(result.errors.join('\n'), /package\.json must define scripts\["agent:memory-check"\]/)
+  })
+
+  test('rejects missing memory architecture recovery and untrusted-data contracts', () => {
+    const result = runRepoChecks({
+      ...validFiles,
+      'docs/MEMORY_ARCHITECTURE.md': '# Memory\nSQLite index\n',
+    })
+
+    assert.match(result.errors.join('\n'), /docs\/MEMORY_ARCHITECTURE\.md must document Markdown as the source of truth/)
+    assert.match(result.errors.join('\n'), /docs\/MEMORY_ARCHITECTURE\.md must document checkpoint recovery/)
+    assert.match(result.errors.join('\n'), /docs\/MEMORY_ARCHITECTURE\.md must document auxiliary LLM input as untrusted data/)
   })
 
   test('rejects stale README environment variable names', () => {

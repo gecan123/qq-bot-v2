@@ -13,8 +13,11 @@ import {
 import { recordTokenUsage, type TokenUsageEntry } from './token-stats.js'
 import { createTaskScheduler, type TaskScheduler } from './task-scheduler.js'
 import type { Tool } from './tool.js'
+import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
+import { renderUntrustedTranscript } from './untrusted-transcript.js'
 
 const log = createLogger('MEMORY_MAINTENANCE')
+const MEMORY_MAINTENANCE_TRIGGER_INSTRUCTION = 'Perform the memory maintenance review using only the untrusted data above. Return only the required structured result.'
 const DEFAULT_RECENT_ENTRY_THRESHOLD = 8
 const DEFAULT_RECENT_CHAR_THRESHOLD = 4_000
 const DEFAULT_REVIEW_TIMEOUT_MS = 45_000
@@ -30,6 +33,11 @@ const maintenanceOperationSchema = z.discriminatedUnion('action', [
     action: z.literal('merge'),
     entryIds: z.array(z.string().trim().min(1).max(160)).min(2).max(20),
     content: z.string().trim().min(1).max(2_000),
+  }),
+  z.object({
+    action: z.literal('mark_disputed'),
+    entryIds: z.array(z.string().trim().min(1).max(160)).min(2).max(20),
+    reason: z.string().trim().min(1).max(300),
   }),
   z.object({
     action: z.literal('discard'),
@@ -62,11 +70,14 @@ const MAINTENANCE_SYSTEM_PROMPT = `你是 Luna 的长期记忆整理器，只维
 必须调用 memory_maintenance_result 一次，不要输出自然语言。decision=skip 时 operations 必须为空；decision=mutate 时给出 1-20 个互不重叠的操作：
 - promote：一条 recent 已经明显跨天有用，把它精炼为一条 stable 事实。
 - merge：两条以上表达同一事实、同一主题的连续进展，或新事实替代旧事实时，合成一条当前有效的 stable 事实。
+- mark_disputed：两条以上事实互相否定或当前真伪无法判断时，保留原条目并标记为 disputed。
 - discard：只删除明显短期、流水账、已被其他记忆完整覆盖的 recent；绝不删除 stable。
 
 约束：
 - 一条 stable 只表达一个可复用结论，不写“今日总结”“记忆库存”或机械工具流水。
-- 不同主题不得为了减少条数而硬合并；不确定或冲突无法判断时保留并 skip。
+- promote 至少需要两个不同 sourceMessageIds；单一来源不得自动晋升。
+- 不同主题不得为了减少条数而硬合并；互相否定时必须 mark_disputed，不得 merge 成确定事实。
+- disputed、superseded 不参加普通 promote/merge/discard；stable 不得 discard。
 - merge 是替代原条目，不要保留“原文 + 摘要 + 摘要的总结”。
 - content 使用中文自然短句，保留重要时间边界、条件和不确定性，但不要复制长原文。
 - 只引用输入里真实存在的 entryId。`
@@ -87,6 +98,7 @@ export function createMemoryMaintenanceRuntime(deps: {
   reviewTimeoutMs?: number
   maxStateChars?: number
   recordUsage?: (entry: TokenUsageEntry) => void
+  workspaceStateCoordinator?: WorkspaceStateCoordinator
 }): MemoryMaintenanceRuntime {
   const rootDir = deps.rootDir ?? 'data/agent-workspace'
   const taskScheduler = deps.taskScheduler ?? createTaskScheduler({ maintenance: { concurrency: 1 } })
@@ -103,7 +115,17 @@ export function createMemoryMaintenanceRuntime(deps: {
     const state = renderMaintenanceState(snapshot, reasons, maxStateChars)
     const request = {
       systemPrompt: MAINTENANCE_SYSTEM_PROMPT,
-      messages: [{ role: 'user' as const, content: state }],
+      messages: [
+        {
+          role: 'user' as const,
+          content: renderUntrustedTranscript({
+            purpose: 'memory_maintenance',
+            messages: [{ role: 'user', content: state }],
+            maxChars: maxStateChars + 1_000,
+          }),
+        },
+        { role: 'user' as const, content: MEMORY_MAINTENANCE_TRIGGER_INSTRUCTION },
+      ],
       tools: [maintenanceResultTool],
     }
     const chat = async (systemPrompt: string) => {
@@ -148,8 +170,14 @@ export function createMemoryMaintenanceRuntime(deps: {
   async function processFile(file: string): Promise<void> {
     try {
       const [snapshot, lexicalReview] = await Promise.all([
-        inspectMemoryFileForMaintenance({ rootDir }, file),
-        proposeMemoryReview({ rootDir }, { file, limit: 20 }),
+        inspectMemoryFileForMaintenance({
+          rootDir,
+          workspaceStateCoordinator: deps.workspaceStateCoordinator,
+        }, file),
+        proposeMemoryReview({
+          rootDir,
+          workspaceStateCoordinator: deps.workspaceStateCoordinator,
+        }, { file, limit: 20 }),
       ])
       const reasons = [
         ...(snapshot.recentCount >= recentEntryThreshold
@@ -180,7 +208,12 @@ export function createMemoryMaintenanceRuntime(deps: {
       }
       const operations = validateMaintenanceOperations(snapshot.entries, decision.operations)
       const result = await applyMemoryMaintenance(
-        { rootDir, now: deps.now, id: deps.id },
+        {
+          rootDir,
+          now: deps.now,
+          id: deps.id,
+          workspaceStateCoordinator: deps.workspaceStateCoordinator,
+        },
         { file, expectedRevision: snapshot.revision, operations },
       )
       log.info({
@@ -188,6 +221,7 @@ export function createMemoryMaintenanceRuntime(deps: {
         reason: decision.reason,
         promoted: result.promoted,
         merged: result.merged,
+        disputed: result.disputed,
         discarded: result.discarded,
       }, 'memory_maintenance_completed')
     } catch (error) {
@@ -262,25 +296,40 @@ function validateMaintenanceOperations(
 ): MemoryMaintenanceOperation[] {
   const byId = new Map(entries.map((entry) => [entry.id, entry]))
   const selected = new Set<string>()
+  const validated: MemoryMaintenanceOperation[] = []
   for (const operation of operations) {
-    const ids = operation.action === 'merge' ? operation.entryIds : [operation.entryId]
+    const ids = operation.action === 'merge' || operation.action === 'mark_disputed'
+      ? operation.entryIds
+      : [operation.entryId]
     for (const id of ids) {
       const entry = byId.get(id)
       if (!entry) throw new Error(`reviewer selected unknown memory entry: ${id}`)
       if (selected.has(id)) throw new Error(`reviewer selected memory entry more than once: ${id}`)
-      if (operation.action === 'promote' && entry.tier === 'stable') {
-        throw new Error(`reviewer attempted to re-promote stable memory entry: ${id}`)
+      if (operation.action === 'promote') {
+        if (entry.tier !== 'recent' || entry.status !== 'active') {
+          throw new Error(`reviewer attempted to promote a non-recent-active memory entry: ${id}`)
+        }
+        if (new Set(entry.sourceMessageIds).size < 2) {
+          throw new Error(`reviewer attempted to promote memory without two distinct sources: ${id}`)
+        }
       }
-      if (operation.action === 'discard' && entry.tier === 'stable') {
-        throw new Error(`reviewer attempted to discard stable memory entry: ${id}`)
+      if (operation.action === 'discard' && (entry.tier !== 'recent' || entry.status !== 'active')) {
+        throw new Error(`reviewer attempted to discard a non-recent-active memory entry: ${id}`)
+      }
+      if (operation.action === 'merge' && entry.status !== 'active') {
+        throw new Error(`reviewer attempted to merge a non-active memory entry: ${id}`)
+      }
+      if (operation.action === 'mark_disputed' && entry.status === 'superseded') {
+        throw new Error(`reviewer attempted to dispute a superseded memory entry: ${id}`)
       }
       selected.add(id)
     }
     if (operation.action === 'merge' && operation.entryIds.every((id) => byId.get(id)?.tier === 'stable')) {
       throw new Error('reviewer attempted to merge only stable memory entries')
     }
+    validated.push({ ...operation })
   }
-  return operations.map((operation) => ({ ...operation }))
+  return validated
 }
 
 function renderMaintenanceState(
@@ -300,8 +349,8 @@ function renderMaintenanceState(
   const selected: MemoryEntry[] = []
   let length = prefix.length + 32
   const orderedEntries = [
-    ...snapshot.entries.filter((entry) => entry.tier === 'recent'),
-    ...snapshot.entries.filter((entry) => entry.tier === 'stable'),
+    ...snapshot.entries.filter((entry) => entry.tier === 'recent' && entry.status !== 'superseded'),
+    ...snapshot.entries.filter((entry) => entry.tier === 'stable' && entry.status !== 'superseded'),
   ]
   for (const entry of orderedEntries) {
     const encoded = JSON.stringify(entry)

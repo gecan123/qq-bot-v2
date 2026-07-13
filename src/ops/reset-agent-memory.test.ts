@@ -9,7 +9,7 @@ describe('resetAgentMemory', () => {
   test('clears persistent context and managed memory directories while preserving ordinary workspace files', async () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), 'agent-memory-reset-'))
     try {
-      for (const directory of ['memory', 'journal', 'life']) {
+      for (const directory of ['memory', 'journal', 'life', 'notebook']) {
         await mkdir(join(workspaceDir, directory), { recursive: true })
         await writeFile(join(workspaceDir, directory, 'old.md'), 'old memory', 'utf8')
       }
@@ -21,17 +21,15 @@ describe('resetAgentMemory', () => {
         db: {
           botAgentSnapshot: { deleteMany: async () => ({ count: 1 }) },
           botAgentGoal: { deleteMany: async () => ({ count: 1 }) },
-          memoryEntry: { deleteMany: async () => ({ count: 7 }) },
         },
       })
 
       assert.deepEqual(result, {
         deletedSnapshots: 1,
         deletedGoals: 1,
-        deletedLegacyMemoryRows: 7,
-        removedDirectories: ['memory', 'journal', 'life'],
+        removedDirectories: ['memory', 'journal', 'life', 'notebook'],
       })
-      for (const directory of ['memory', 'journal', 'life']) {
+      for (const directory of ['memory', 'journal', 'life', 'notebook']) {
         await assert.rejects(access(join(workspaceDir, directory)))
       }
       assert.equal(await readFile(join(workspaceDir, 'notes', 'keep.md'), 'utf8'), 'keep')
@@ -48,12 +46,10 @@ describe('resetAgentMemory', () => {
         db: {
           botAgentSnapshot: { deleteMany: async () => ({ count: 0 }) },
           botAgentGoal: { deleteMany: async () => ({ count: 0 }) },
-          memoryEntry: { deleteMany: async () => ({ count: 0 }) },
         },
       })
       assert.equal(result.deletedSnapshots, 0)
       assert.equal(result.deletedGoals, 0)
-      assert.equal(result.deletedLegacyMemoryRows, 0)
     } finally {
       await rm(workspaceDir, { recursive: true, force: true })
     }

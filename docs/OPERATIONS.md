@@ -21,7 +21,7 @@
 pnpm agent:reset-memory
 ```
 
-该命令删除 `bot_agent_snapshot`、`bot_agent_goal`、旧 `memory_entries` 数据，以及 `data/agent-workspace/{memory,journal,life}`。无 snapshot 的冷启动不会回放既有消息。消息/媒体账本、表情池、浏览器 profile/artifact 和普通 workspace 文件会保留。命令可重复执行；检测到 `.bot.pid` 对应进程仍存活时会拒绝运行，避免 bot 退出时重新保存旧 snapshot。
+该命令删除 `bot_agent_snapshot`、`bot_agent_goal`，以及 `data/agent-workspace/{memory,journal,life,notebook}`。其中 `journal` 只是遗留目录清理项；当前运行时使用 `notebook`、`life` 和 `memory`。无 snapshot 的冷启动不会回放既有消息。消息/媒体账本、表情池、浏览器 profile/artifact 和普通 workspace 文件会保留。命令可重复执行；检测到 `.bot.pid` 对应进程仍存活时会拒绝运行，避免 bot 退出时重新保存旧 snapshot。
 
 ```bash
 pnpm dev
@@ -33,6 +33,7 @@ pnpm lint
 pnpm repo-check
 pnpm agent:doctor
 pnpm agent:metrics
+pnpm agent:memory-check
 pnpm agent:snapshot-check
 pnpm db:generate
 pnpm db:migrate
@@ -71,7 +72,7 @@ self Goal 默认 1,000,000 tokens，允许自行指定到 10,000,000；滚动 24
 
 ## Owner 审批
 
-开发默认是 `BOT_APPROVAL_MODE=thin`：只审批网站 `publish` 和未列入 MCP `readOnlyTools` 的调用。本地 memory/journal/Life Journal/workspace 删除、网站本地删除和 skill 安装直接执行，不再打断迭代。`strict` 恢复这些本地审批，`off` 关闭统一审批 hook；三种模式都不会改变工具自身的 revision、路径、target、schema、allowlist 和 timeout 边界。
+开发默认是 `BOT_APPROVAL_MODE=thin`：只审批网站 `publish` 和未列入 MCP `readOnlyTools` 的调用。本地 memory/notebook/Life Journal/workspace 删除、网站本地删除和 skill 安装直接执行，不再打断迭代。`strict` 恢复这些本地审批，`off` 关闭统一审批 hook；三种模式都不会改变工具自身的 revision、路径、target、schema、allowlist 和 timeout 边界。
 
 需要审批的调用第一次会返回 `approval_required`。标准流程是：
 
@@ -284,11 +285,12 @@ VIBE_TRADING_RESULT_MAX_CHARS=12000
 ## Agent 反馈
 
 - `pnpm agent:doctor` 做本地、无网络健康检查：必需文件、必需环境变量、agent 指令镜像、schema anchor、startup anchor 和 tool registry anchor。输出 JSON，有错误时非零退出。
+- `pnpm agent:memory-check` 只读扫描 `data/agent-workspace` 下的 Memory、Notebook、Life Journal 和 Agenda Markdown，输出文件/entry 数量、Memory lifecycle、损坏格式、跨 store 重复 ID、self/unknown supersedes 与 Agenda revision；不会创建目录、默认文件或执行修复。结构问题退出 1；可用 `pnpm agent:memory-check -- --root <path>` 指定其他 workspace。
 - `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson`、`logs/tool-calls.ndjson` 和当前保留的 `logs/app*.log` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率，以及按群 `inboxReads`、`messagesRead`、`sendAttempts`、`sendBlocked`、成功 ambient/reply 和 `readToSendRate`。当前 token operations 包括 `agent.chat`、`compaction`、`life_journal.review` 和 `memory.maintenance`。
 - `pnpm agent:metrics <token-log> <tool-log> [app-log]` 可以汇总指定日志文件；省略 `app-log` 时自动读取当前 `logs/app*.log` 滚动文件。
 - token/cache 使用继续 best-effort 写入 Postgres `agent_token_usage`；工具调用只有 `BOT_TOOL_AUDIT_DB_ENABLED=true` 时写入 `agent_tool_calls`。写 DB 失败只记 warning，不影响 bot 执行。
 - `pnpm agent:metrics --db` 从 Postgres 汇总持久化事件；可加 `--from <iso> --to <iso> --tool <name> --operation <name> --model <name> --ok true|false --side-effect true|false` 做筛选。
-- `pnpm agent:snapshot-check` 只读检查 `bot_agent_snapshot`：验证 snapshot JSON 可序列化、assistant tool call 与 tool result 相邻匹配、JSON-like tool result 可解析、`activeToolCapabilities` 未混入 messages、mailbox cursor 与 continuity 元数据合法；输出 JSON，有错误时非零退出。
+- `pnpm agent:snapshot-check` 只读检查当前 `bot_agent_snapshot`：验证 snapshot JSON 可序列化、assistant tool call 与 tool result 相邻匹配、JSON-like tool result 可解析、`activeToolCapabilities` 未混入 messages、mailbox cursor 与 continuity 元数据合法；输出 JSON，有错误时非零退出。runtime 启动还会执行同等完整性校验；current 损坏时只尝试最新 3 份 checkpoint，全部无效则 fail closed，不从消息或日志重建 prompt history。
 
 ## Git
 

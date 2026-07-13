@@ -5,8 +5,10 @@ import {
   deleteMemoryEntry,
   deleteMemoryFiles,
   listMemoryFiles,
+  markMemoryEntryDisputed,
   readMemoryFile,
   searchMemoryEntries,
+  supersedeMemoryEntry,
   recallMemoryEntries,
   proposeMemoryReview,
   promoteMemoryEntry,
@@ -17,6 +19,7 @@ import {
 } from '../memory-store.js'
 import { createLogger } from '../../logger.js'
 import type { MemoryMaintenanceRuntime } from '../memory-maintenance.js'
+import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
 
 const log = createLogger('TOOL_MEMORY')
 
@@ -95,6 +98,20 @@ const argsSchema = z.discriminatedUnion('action', [
     content: z.string().trim().min(1).max(1000).optional(),
   }),
   z.object({
+    action: z.literal('mark_disputed').describe('把一条需要核实或存在冲突的记忆标为 disputed.'),
+    file: memoryFileSchema,
+    entryId: z.string().trim().min(1).max(160),
+    expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
+  }),
+  z.object({
+    action: z.literal('supersede_entry').describe('用同一文件内的新条目明确替代旧条目，并保留可追溯关系.'),
+    file: memoryFileSchema,
+    entryId: z.string().trim().min(1).max(160).describe('被替代的旧 entryId.'),
+    replacementEntryId: z.string().trim().min(1).max(160)
+      .describe('action=supersede_entry 时必填: 用来替代旧事实的新 entryId，必须来自同一文件.'),
+    expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
+  }),
+  z.object({
     action: z.literal('compact').describe('把同一记忆文件中的至少两条记录合并成一条稳定摘要.'),
     file: memoryFileSchema,
     entryIds: z.array(z.string().trim().min(1).max(160)).min(2).max(50),
@@ -110,10 +127,17 @@ export interface MemoryToolDeps {
   now?: () => Date
   id?: () => string
   maintenance?: MemoryMaintenanceRuntime
+  workspaceStateCoordinator?: WorkspaceStateCoordinator
 }
 
 export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
   const workspaceDir = deps.workspaceDir ?? DEFAULT_WORKSPACE_DIR
+  const storeOptions = {
+    rootDir: workspaceDir,
+    now: deps.now,
+    id: deps.id,
+    workspaceStateCoordinator: deps.workspaceStateCoordinator,
+  }
 
   return {
     name: 'memory',
@@ -126,7 +150,8 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
       'action=read: 读取 search/write 返回的某个记忆文件; 只在需要深读时使用.',
       'action=list: 按 scope 列出有界文件元数据, 用于发现重复或过时记忆.',
       'action=delete: 永久删除明确指定的记忆文件; 先确认有价值内容已写入保留版本.',
-      'action=update_entry/delete_entry/promote_entry/compact: 修改文件内记录; 先 read 取得 entryId 和最新 revision. compact 会生成 stable 记忆.',
+      'action=update_entry/delete_entry/promote_entry/mark_disputed/supersede_entry/compact: 修改文件内记录; 先 read 取得 entryId 和最新 revision. compact 会生成 stable 记忆.',
+      '可信度不接受 trust=high 这类模型自报字段; 对冲突事实用 mark_disputed，对已有替代事实用 supersede_entry 保留演化链.',
       'person/group 写入需要 id; topic 写入必须提供稳定 title，禁止落入无主题 topic.md; self 可用 title 分主题.',
       '写入要用自己的话, 不要照搬原话; 查询结果用于自然说话, 不要像报数据库.',
     ].join(' '),
@@ -135,7 +160,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
       try {
         if (args.action === 'write') {
           const result = await writeMemoryEntry(
-            { rootDir: workspaceDir, now: deps.now, id: deps.id },
+            storeOptions,
             {
               scope: args.scope as MemoryScope,
               id: args.id == null ? undefined : String(args.id),
@@ -159,7 +184,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
 
         if (args.action === 'search') {
           const result = await searchMemoryEntries(
-            { rootDir: workspaceDir },
+            storeOptions,
             { scope: args.scope, keyword: args.keyword, limit: args.limit },
           )
           log.info({
@@ -174,7 +199,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
 
         if (args.action === 'recall') {
           const result = await recallMemoryEntries(
-            { rootDir: workspaceDir },
+            storeOptions,
             { query: args.query, scope: args.scope, limit: args.limit },
           )
           log.info({
@@ -188,7 +213,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
 
         if (args.action === 'review') {
           const result = await proposeMemoryReview(
-            { rootDir: workspaceDir },
+            storeOptions,
             { scope: args.scope, file: args.file, limit: args.limit },
           )
           log.info({
@@ -202,7 +227,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
 
         if (args.action === 'list') {
           const result = await listMemoryFiles(
-            { rootDir: workspaceDir },
+            storeOptions,
             { scope: args.scope, limit: args.limit },
           )
           log.info({
@@ -218,7 +243,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
 
         if (args.action === 'delete') {
           const result = await deleteMemoryFiles(
-            { rootDir: workspaceDir },
+            storeOptions,
             { files: args.files },
           )
           log.info({
@@ -237,7 +262,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
 
         if (args.action === 'update_entry') {
           const result = await updateMemoryEntry(
-            { rootDir: workspaceDir, now: deps.now },
+            storeOptions,
             {
               file: args.file,
               entryId: args.entryId,
@@ -251,7 +276,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
 
         if (args.action === 'delete_entry') {
           const result = await deleteMemoryEntry(
-            { rootDir: workspaceDir, now: deps.now },
+            storeOptions,
             { file: args.file, entryId: args.entryId, expectedRevision: args.expectedRevision },
           )
           log.info({ file: args.file, entryId: args.entryId }, 'memory_entry_deleted')
@@ -260,7 +285,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
 
         if (args.action === 'promote_entry') {
           const result = await promoteMemoryEntry(
-            { rootDir: workspaceDir, now: deps.now },
+            storeOptions,
             {
               file: args.file,
               entryId: args.entryId,
@@ -272,9 +297,36 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
           return { content: JSON.stringify(result), outcome: { ok: true } }
         }
 
+        if (args.action === 'mark_disputed') {
+          const result = await markMemoryEntryDisputed(
+            storeOptions,
+            { file: args.file, entryId: args.entryId, expectedRevision: args.expectedRevision },
+          )
+          log.info({ file: args.file, entryId: args.entryId }, 'memory_entry_marked_disputed')
+          return { content: JSON.stringify(result), outcome: { ok: true } }
+        }
+
+        if (args.action === 'supersede_entry') {
+          const result = await supersedeMemoryEntry(
+            storeOptions,
+            {
+              file: args.file,
+              entryId: args.entryId,
+              replacementEntryId: args.replacementEntryId,
+              expectedRevision: args.expectedRevision,
+            },
+          )
+          log.info({
+            file: args.file,
+            entryId: args.entryId,
+            replacementEntryId: args.replacementEntryId,
+          }, 'memory_entry_superseded')
+          return { content: JSON.stringify(result), outcome: { ok: true } }
+        }
+
         if (args.action === 'compact') {
           const result = await compactMemoryEntries(
-            { rootDir: workspaceDir, now: deps.now, id: deps.id },
+            storeOptions,
             {
               file: args.file,
               entryIds: args.entryIds,
@@ -291,7 +343,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
         }
 
         const result = await readMemoryFile(
-          { rootDir: workspaceDir },
+          storeOptions,
           { file: args.file, offset: args.offset, maxChars: args.maxChars },
         )
         return { content: JSON.stringify(result) }

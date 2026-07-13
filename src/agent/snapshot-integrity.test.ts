@@ -148,4 +148,21 @@ describe('validateBotSnapshotIntegrity', () => {
     assert.match(result.errors.join('\n'), /mailboxContinuity\.lastInputTokens/)
     assert.match(result.errors.join('\n'), /mailboxContinuity\.mailboxes\.bad has invalid key/)
   })
+
+  test('reports malformed message fields instead of throwing inside the validator', () => {
+    const malformed = {
+      schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+      activeToolCapabilities: [],
+      messages: [{ role: 'user', content: 42 }],
+    } as unknown as PersistedAgentSnapshot
+
+    const result = validateBotSnapshotIntegrity({
+      snapshot: malformed,
+      mailboxCursors: {},
+      goalRevision: 0,
+    })
+
+    assert.equal(result.ok, false)
+    assert.match(result.errors.join('\n'), /messages\[0\]\.content must be a string/)
+  })
 })

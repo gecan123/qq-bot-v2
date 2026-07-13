@@ -18,6 +18,40 @@ import {
   writeLifeAgenda,
   writeLifeAgendaIfRevision,
 } from './life-journal-store.js'
+import { createWorkspaceStateCoordinator, type WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
+
+function createGatedCoordinator(): {
+  coordinator: WorkspaceStateCoordinator
+  entered: Promise<void>
+  release: () => void
+  resourceKeys: string[]
+} {
+  const base = createWorkspaceStateCoordinator()
+  let enter!: () => void
+  let release!: () => void
+  const entered = new Promise<void>((resolve) => { enter = resolve })
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const resourceKeys: string[] = []
+  let gateFirst = true
+  return {
+    entered,
+    release,
+    resourceKeys,
+    coordinator: {
+      withWrite(resourceKey, task) {
+        resourceKeys.push(resourceKey)
+        return base.withWrite(resourceKey, async () => {
+          if (gateFirst) {
+            gateFirst = false
+            enter()
+            await gate
+          }
+          return task()
+        })
+      },
+    },
+  }
+}
 
 describe('life journal markdown store', () => {
   let rootDir: string
@@ -50,14 +84,45 @@ describe('life journal markdown store', () => {
     const day = await readLifeJournalDay({ rootDir, date: '2026-07-07' })
     const entry = await readLifeJournalEntry({ rootDir, date: '2026-07-07', entryId: result.entryId })
     assert.equal(day.entries[0]?.id, result.entryId)
+    assert.equal(day.entries[0]?.kind, 'reflection')
     assert.match(entry.entry.markdown, /用户确认方向/)
+  })
+
+  test('stores dream as entry kind independently from manual source', async () => {
+    await appendLifeJournalEntry({
+      rootDir,
+      now: () => new Date('2026-07-07T02:30:00.000Z'),
+      id: () => 'dream-1',
+      kind: 'dream',
+      markdown: '梦见在月球上调试数据库。',
+    })
+
+    const day = await readLifeJournalDay({ rootDir, date: '2026-07-07' })
+    assert.equal(day.entries[0]?.kind, 'dream')
+    assert.equal(day.entries[0]?.source, 'manual')
   })
 
   test('rejects old day files and replaces them on the next write', async () => {
     await mkdir(join(rootDir, 'life', 'journal'), { recursive: true })
     await writeFile(
       join(rootDir, 'life', 'journal', '2026-07-07.md'),
-      '# Life Journal 2026-07-07\n\n## 10:00 Round 1\n\nold fact\n\n## 10:10 Manual\n\nkeep me\n',
+      [
+        '# Life Journal 2026-07-07',
+        '',
+        '<!-- life-journal-format: 1 -->',
+        '',
+        '<!-- life-journal-entry',
+        'id: old-entry',
+        'date: 2026-07-07',
+        'source: manual',
+        'createdAt: 2026-07-07T10:00:00.000+08:00',
+        '-->',
+        '## 10:00 Manual',
+        '',
+        'old fact',
+        '<!-- /life-journal-entry -->',
+        '',
+      ].join('\n'),
       'utf8',
     )
 
@@ -75,11 +140,10 @@ describe('life journal markdown store', () => {
     })
 
     const raw = await readFile(join(rootDir, 'life', 'journal', '2026-07-07.md'), 'utf8')
-    assert.match(raw, /life-journal-format: 1/)
+    assert.match(raw, /life-journal-format: 2/)
     assert.match(raw, /<!-- life-journal-entry/)
     assert.match(raw, /new format only/)
     assert.doesNotMatch(raw, /old fact/)
-    assert.doesNotMatch(raw, /keep me/)
   })
 
   test('deletes one entry and rejects a stale revision', async () => {
@@ -117,6 +181,41 @@ describe('life journal markdown store', () => {
       (error: unknown) => error instanceof LifeJournalStoreError && error.code === 'revision_conflict',
     )
     assert.notEqual(deleted.revision, before?.revision)
+  })
+
+  test('serializes append and revision mutation for the same journal day', async () => {
+    await appendLifeJournalEntry({
+      rootDir,
+      now: () => new Date('2026-07-07T15:18:00.000Z'),
+      id: () => 'entry-initial',
+      markdown: 'initial note',
+    })
+    const initial = await readLifeJournalDay({ rootDir, date: '2026-07-07' })
+    const gated = createGatedCoordinator()
+    const append = appendLifeJournalEntry({
+      rootDir,
+      now: () => new Date('2026-07-07T15:19:00.000Z'),
+      id: () => 'entry-appended',
+      markdown: 'appended note',
+      workspaceStateCoordinator: gated.coordinator,
+    })
+    await gated.entered
+    const update = updateLifeJournalEntry({
+      rootDir,
+      date: '2026-07-07',
+      entryId: 'entry-initial',
+      expectedRevision: initial.revision,
+      markdown: 'stale update',
+      workspaceStateCoordinator: gated.coordinator,
+    }).then(() => null, (error: unknown) => error)
+
+    const requestedKeys = [...gated.resourceKeys]
+    gated.release()
+    await append
+    const updateError = await update
+
+    assert.deepEqual(requestedKeys, ['life-journal:2026-07-07.md', 'life-journal:2026-07-07.md'])
+    assert.equal(updateError instanceof LifeJournalStoreError && updateError.code === 'revision_conflict', true)
   })
 
   test('compacts selected entries while preserving unselected entries', async () => {

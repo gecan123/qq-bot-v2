@@ -36,6 +36,7 @@ import {
 } from './mcp-manager.js'
 import type { GoalStore } from './goal-store.js'
 import type { MemoryMaintenanceRuntime } from './memory-maintenance.js'
+import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
 
 export interface AgentRuntimeInput {
   context: AgentContext
@@ -63,6 +64,8 @@ export interface AgentRuntimeInput {
   lifeJournal?: BotLoopLifeJournal
   taskScheduler?: TaskScheduler
   memoryMaintenance?: MemoryMaintenanceRuntime
+  workspaceDir?: string
+  workspaceStateCoordinator?: WorkspaceStateCoordinator
   taskRegistry?: BackgroundTaskRegistry
   wakeScheduler?: DurableWakeScheduler
   approvalManager?: ApprovalManager
@@ -121,6 +124,8 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       mcpManager,
       goalStore: input.goalStore,
       memoryMaintenance: input.memoryMaintenance,
+      workspaceDir: input.workspaceDir,
+      workspaceStateCoordinator: input.workspaceStateCoordinator,
       optionalTools: input.optionalTools,
       groupIds: input.groupIds,
       selfNumber: input.selfNumber,

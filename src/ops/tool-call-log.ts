@@ -107,7 +107,7 @@ export function isSideEffectTool(toolName: string, args?: unknown): boolean {
   if (toolName === 'fetch_content') {
     return hasAnyAction(args, ['image_url', 'qq_avatar'])
   }
-  if (toolName === 'journal') {
+  if (toolName === 'notebook') {
     return hasAnyAction(args, ['write', 'update', 'delete', 'compact'])
   }
   if (toolName === 'life_journal') {

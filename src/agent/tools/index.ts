@@ -20,8 +20,8 @@ import { createFetchContentTool } from './fetch-content.js'
 import { createInboxTool } from './inbox.js'
 import { createChatStyleTool } from './chat-style.js'
 import { createAiToneTool } from './ai-tone.js'
-import { journalTool } from './journal.js'
-import { lifeJournalTool } from './life-journal.js'
+import { createNotebookTool } from './notebook.js'
+import { createLifeJournalTool } from './life-journal.js'
 import { skillEditorTool } from './skill-editor.js'
 import { workspaceFileTool } from './workspace-file.js'
 import { createReadFileTool } from './read-file.js'
@@ -42,6 +42,7 @@ import { createMcpTool } from './mcp.js'
 import { createGoalTool } from './goal.js'
 import type { GoalStore } from '../goal-store.js'
 import type { MemoryMaintenanceRuntime } from '../memory-maintenance.js'
+import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -60,6 +61,8 @@ export interface BotToolDeps {
   mcpManager?: McpManager
   goalStore?: GoalStore
   memoryMaintenance?: MemoryMaintenanceRuntime
+  workspaceDir?: string
+  workspaceStateCoordinator?: WorkspaceStateCoordinator
 }
 
 export interface BotOptionalTools {
@@ -123,13 +126,23 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     ...(deps.goalStore ? [createGoalTool(deps.goalStore)] : []),
     todoTool,
     skillTool,
-    createMemoryTool({ maintenance: deps.memoryMaintenance }),
+    createMemoryTool({
+      workspaceDir: deps.workspaceDir,
+      maintenance: deps.memoryMaintenance,
+      workspaceStateCoordinator: deps.workspaceStateCoordinator,
+    }),
     inbox,
     collectStickerTool,
     chatStyle,
     aiTone,
-    journalTool,
-    lifeJournalTool,
+    createNotebookTool({
+      rootDir: deps.workspaceDir,
+      workspaceStateCoordinator: deps.workspaceStateCoordinator,
+    }),
+    createLifeJournalTool({
+      rootDir: deps.workspaceDir,
+      workspaceStateCoordinator: deps.workspaceStateCoordinator,
+    }),
     ...(cryptoPaper ? [cryptoPaper] : []),
     workspaceBash,
   ]

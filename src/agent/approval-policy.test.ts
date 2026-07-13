@@ -96,6 +96,7 @@ describe('owner approval policy', () => {
     assert.equal(classifyApprovalRequirement('skill_editor', { action: 'install' }), null)
     assert.ok(classifyApprovalRequirement('skill_editor', { action: 'install' }, 'strict'))
     assert.ok(classifyApprovalRequirement('memory', { action: 'delete' }, 'strict'))
+    assert.ok(classifyApprovalRequirement('notebook', { action: 'delete' }, 'strict'))
     assert.equal(classifyApprovalRequirement('website', { action: 'publish' }, 'off'), null)
     assert.equal(classifyApprovalRequirement('memory', { action: 'write' }), null)
     assert.equal(classifyApprovalRequirement('send_message', { text: 'hello' }), null)

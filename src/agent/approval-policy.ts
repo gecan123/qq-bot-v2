@@ -22,8 +22,8 @@ export function classifyApprovalRequirement(
   if (toolName === 'memory' && (action === 'delete' || action === 'delete_entry')) {
     return { reason: '永久删除长期记忆' }
   }
-  if (toolName === 'journal' && action === 'delete') {
-    return { reason: '永久删除日记记录' }
+  if (toolName === 'notebook' && action === 'delete') {
+    return { reason: '永久删除 Notebook 记录' }
   }
   if (toolName === 'life_journal' && action === 'delete') {
     return { reason: '永久删除 Life Journal 记录' }

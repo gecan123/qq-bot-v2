@@ -73,6 +73,7 @@ export interface BotToolDeps {
       whyNow?: string | null
       firstStep?: string | null
       promoteToGoal?: boolean
+      error?: string
     }>
   }
   getRestGuideContext?: () => readonly AgentMessage[]
@@ -124,14 +125,32 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
                   const picked = await pickIdleIntention({
                     recentMessages: deps.getRestGuideContext?.() ?? [],
                   })
-                  if (!picked.ok || !picked.thought || !picked.intention) return null
+                  if (!picked.ok) {
+                    return {
+                      status: 'unavailable' as const,
+                      error: picked.error ?? 'idle intention picker failed',
+                    }
+                  }
+                  const { thought, intention, anchorSource, whyNow, firstStep } = picked
+                  if (!thought && !intention && !anchorSource && !whyNow && !firstStep) {
+                    return { status: 'none' as const }
+                  }
+                  if (!thought || !intention || !anchorSource || !whyNow || !firstStep) {
+                    return {
+                      status: 'unavailable' as const,
+                      error: 'idle intention picker returned an incomplete alternative',
+                    }
+                  }
                   return {
-                    thought: picked.thought,
-                    direction: picked.intention,
-                    anchorSource: picked.anchorSource ?? null,
-                    whyNow: picked.whyNow ?? null,
-                    firstStep: picked.firstStep ?? picked.intention,
-                    promoteToGoal: picked.promoteToGoal ?? false,
+                    status: 'available' as const,
+                    alternative: {
+                      thought,
+                      direction: intention,
+                      anchorSource,
+                      whyNow,
+                      firstStep,
+                      promoteToGoal: picked.promoteToGoal ?? false,
+                    },
                   }
                 },
               }

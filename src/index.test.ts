@@ -11,7 +11,7 @@ describe('main runtime wiring', () => {
     assert.match(source, /const lifeJournalLlm = createLlmClient\(\{\s*claudeThinking: \{ mode: 'disabled' \},\s*\}\)/)
     assert.match(source, /const taskScheduler = createAgentTaskScheduler\(\)/)
     assert.match(source, /const workspaceStateCoordinator = createWorkspaceStateCoordinator\(\)/)
-    assert.match(source, /const lifeJournal = createLifeJournalRuntime\(\{\s*llm: lifeJournalLlm,\s*taskScheduler,\s*workspaceStateCoordinator,\s*\}\)/)
+    assert.match(source, /const lifeJournal = createLifeJournalRuntime\(\{\s*llm: lifeJournalLlm,\s*idlePickTimeoutMs: config\.lifeJournal\.idlePickTimeoutMs,\s*taskScheduler,\s*workspaceStateCoordinator,\s*\}\)/)
     assert.match(source, /const memoryMaintenance = createMemoryMaintenanceRuntime\(\{\s*llm: lifeJournalLlm,\s*taskScheduler,\s*workspaceStateCoordinator,\s*\}\)/)
     assert.match(source, /createAgentRuntime\(\{[\s\S]*\blifeJournal,\s*taskScheduler,\s*memoryMaintenance,\s*workspaceStateCoordinator,\s*[\s\S]*\}\)/)
   })

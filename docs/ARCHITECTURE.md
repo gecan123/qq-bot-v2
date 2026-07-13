@@ -21,7 +21,7 @@ Goal 不创建第二个主 Agent。主前台仍只有一个串行 `BotLoopAgent`
 ## 自主循环
 
 - `send_message` 成功只是完成一个动作，不再强制 BotLoop 等待外部事件；下一轮由 Agent 自己决定继续做事或休息。
-- `pause action=rest` 是短休息安全阀，时长 30–300 秒。首次请求使用 `confirmed=false`；Life Journal idle picker 优先从最近 durable context 找到具体锚点，再以 Agenda、近期 Journal 或愿望为后备。完整候选作为结构化 `idleThought` 随 `alternative_available` tool result 写入 ledger，不产生 pause effect，也不在 replay 时重算；它是可接受或放过的自主联想，不是任务。模型看过后仍想休息，才以 `confirmed=true` 再次调用。醒后计划只保留一个 `primaryDirection` 和一个不同的 `alternativeDirection`；等待消息、机械盯行情和泛化维护不是方向，未来时点检查应使用 `schedule`。真正计时结束后自动继续；私聊、`@bot`、后台任务完成和停止信号可提前打断，Runtime 会在注意事件后用不复制具体方向的固定 reminder 提醒处理完再回看最近 `resumePlan`。
+- `pause action=rest` 是短休息安全阀，时长 30–300 秒。首次请求使用 `confirmed=false`；Life Journal idle picker 优先从最近 durable context 找到具体锚点，再以 Agenda、近期 Journal 或愿望为后备。完整候选作为结构化 `idleThought` 随 `alternative_available` tool result 写入 ledger，不产生 pause effect，也不在 replay 时重算；它是可接受或放过的自主联想，不是任务。只有 picker 成功返回无念头时首次请求才直接休息；超时、provider 错误或不完整结果返回 `alternative_check_unavailable`，不产生 pause effect。模型看过候选后仍想休息，才以 `confirmed=true` 再次调用。醒后计划只保留一个 `primaryDirection` 和一个不同的 `alternativeDirection`；等待消息、机械盯行情和泛化维护不是方向，未来时点检查应使用 `schedule`。真正计时结束后自动继续；私聊、`@bot`、后台任务完成和停止信号可提前打断，Runtime 会在注意事件后用不复制具体方向的固定 reminder 提醒处理完再回看最近 `resumePlan`。
 - runtime 对未主动休息的连续轮次和每日 token 使用设置保护性冷却。保护状态不进入 `AgentContext`，不参与 replay。
 - `curiosity_tick` 只保留为人工调试入口，不是生产自主循环的驱动器。
 - mailbox 和后台任务等运行时事件使用稳定 JSON 披露；外部内容、表情包和命令结果也使用有界结构化载荷。自然语言只存在于明确字段中，不能承担循环控制或成功状态判断。

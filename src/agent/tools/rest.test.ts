@@ -113,6 +113,7 @@ describe('rest tool', () => {
     assert.match(tool.description, /机械检查行情/)
     assert.match(tool.description, /未来某个时点再看时用 schedule/)
     assert.match(tool.description, /不是“今天全部完成”/)
+    assert.match(tool.description, /alternative_check_unavailable/)
   })
 
   test('first request returns a journal alternative without pausing', async () => {
@@ -121,12 +122,15 @@ describe('rest tool', () => {
       pickAlternative: async () => {
         picked++
         return {
-          thought: '我还惦记着 QuadRF 那条没查完的供应链线索，先把第一个器件来源钉住。',
-          direction: '继续拆解 QuadRF 众筹页面的供应链线索',
-          anchorSource: 'agenda',
-          whyNow: 'Agenda 里仍是 Active',
-          firstStep: '打开现有 notebook 并列出第一条待查证问题',
-          promoteToGoal: true,
+          status: 'available' as const,
+          alternative: {
+            thought: '我还惦记着 QuadRF 那条没查完的供应链线索，先把第一个器件来源钉住。',
+            direction: '继续拆解 QuadRF 众筹页面的供应链线索',
+            anchorSource: 'agenda' as const,
+            whyNow: 'Agenda 里仍是 Active',
+            firstStep: '打开现有 notebook 并列出第一条待查证问题',
+            promoteToGoal: true,
+          },
         }
       },
     })
@@ -175,7 +179,7 @@ describe('rest tool', () => {
     const tool = createRestTool({
       pickAlternative: async () => {
         picked++
-        return null
+        return { status: 'none' as const }
       },
     })
     const { ctx } = makeCtx()
@@ -196,6 +200,60 @@ describe('rest tool', () => {
       paused: false,
       instruction: '没有进入休息。confirmed 不能用于跳过第一次检查; 请先以 confirmed=false 调用并查看是否返回 alternative_available.',
     })
+  })
+
+  test('unavailable alternative check does not enter rest', async () => {
+    const tool = createRestTool({
+      pickAlternative: async () => ({
+        status: 'unavailable',
+        error: 'life journal idle pick timed out after 30000ms',
+      }),
+    })
+    const { ctx } = makeCtx()
+
+    const result = await tool.execute({
+      durationSeconds: 30,
+      confirmed: false,
+      reason: '刚完成一件事，想停一下',
+      intention: TEST_INTENTION,
+    }, ctx)
+
+    assert.deepEqual(result.outcome, {
+      ok: false,
+      code: 'alternative_check_unavailable',
+      error: 'life journal idle pick timed out after 30000ms',
+    })
+    assert.equal(result.effects, undefined)
+    assert.deepEqual(JSON.parse(result.content as string), {
+      ok: false,
+      status: 'alternative_check_unavailable',
+      paused: false,
+      error: 'life journal idle pick timed out after 30000ms',
+      instruction: '没有进入休息。空闲念头检查暂时不可用；不要用 confirmed=true 跳过检查，请稍后以 confirmed=false 重试或继续当前活动.',
+    })
+  })
+
+  test('thrown alternative check error does not enter rest', async () => {
+    const tool = createRestTool({
+      pickAlternative: async () => {
+        throw new Error('provider unavailable')
+      },
+    })
+    const { ctx } = makeCtx()
+
+    const result = await tool.execute({
+      durationSeconds: 30,
+      confirmed: false,
+      reason: '刚完成一件事，想停一下',
+      intention: TEST_INTENTION,
+    }, ctx)
+
+    assert.deepEqual(result.outcome, {
+      ok: false,
+      code: 'alternative_check_unavailable',
+      error: 'provider unavailable',
+    })
+    assert.equal(result.effects, undefined)
   })
 
   test('already queued mentioned group message interrupts rest without consuming the event', async () => {

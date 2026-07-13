@@ -98,7 +98,7 @@ function restResult(
       },
     }),
     outcome: { ok: true, code: status },
-    effects: [{ type: 'pause' }],
+    effects: [{ type: 'pause', status }],
   }
 }
 

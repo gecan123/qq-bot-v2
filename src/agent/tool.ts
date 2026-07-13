@@ -46,7 +46,11 @@ export interface ToolExecutionOutcome {
   error?: string
 }
 
-export type ToolEffect = { type: 'pause' }
+export type ToolEffect = {
+  type: 'pause'
+  /** elapsed 只在休息自然到时后产生；旧调用方未携带 status 时不得推断为自然醒。 */
+  status?: 'elapsed' | 'interrupted'
+}
 
 export interface ToolHookContext extends ToolContext {
   tool: Tool

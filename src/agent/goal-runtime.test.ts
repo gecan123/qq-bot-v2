@@ -265,6 +265,65 @@ describe('BotLoop goal integration', () => {
     assert.match(lastMessage?.role === 'user' ? lastMessage.content : '', /post_compaction/)
   })
 
+  test('keeps the rest resume reminder after post-compaction goal continuation', async () => {
+    const context = createAgentContext()
+    const goalStore = createInMemoryGoalStore()
+    await goalStore.applyControl({
+      messageRowId: 1,
+      command: { action: 'set', objective: '醒来后继续推进', tokenBudget: null },
+    })
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: {
+        async chat() {
+          return {
+            content: '',
+            toolCalls: [{ id: 'pause-1', name: 'pause', args: {} }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock', stopReason: 'tool_use' as const,
+          }
+        },
+      },
+      tools: {
+        list: () => [],
+        async execute() {
+          return {
+            content: JSON.stringify({ ok: true, status: 'elapsed', resumePlan: {} }),
+            effects: [{ type: 'pause', status: 'elapsed' }],
+          }
+        },
+      },
+      snapshotRepo: makeSnapshotRepo([]),
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      goalStore,
+      compactOptions: {
+        triggerTokens: 1,
+        keepRatio: 0.5,
+        summarize: async () => validSummary('休息前摘要'),
+      },
+      autonomy: {
+        now: () => new Date('2026-07-13T08:00:00.000Z'),
+      },
+    })
+
+    await agent.runOnceForTest()
+
+    const messages = context.getSnapshot().messages
+    const continuation = messages.at(-2)
+    const reminder = messages.at(-1)
+    assert.match(
+      continuation?.role === 'user' ? continuation.content : '',
+      /"reason":"post_compaction"/,
+    )
+    assert.match(
+      reminder?.role === 'user' ? reminder.content : '',
+      /^<system-reminder>\n\{"event":"rest_resume"/,
+    )
+  })
+
   test('re-injects the active goal before retrying a context-overflow round', async () => {
     const context = createAgentContext()
     const goalStore = createInMemoryGoalStore()

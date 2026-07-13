@@ -13,6 +13,10 @@ import {
 import { injectStickerPoolAfterCompaction } from './sticker-pool.js'
 import { LlmOutputTruncatedError, runReactRound } from './react-kernel.js'
 import { interpretToolEffects } from './effect-interpreter.js'
+import {
+  renderRestResumeReminder,
+  shouldAppendRestResumeReminder,
+} from './rest-resume-reminder.js'
 import { createLogger } from '../logger.js'
 import {
   planMailboxDisclosures,
@@ -213,6 +217,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     inputTokens: number | null
     tokensUsed: number
     didPause: boolean
+    didCompleteRest: boolean
   }> {
     roundIndex++
     let recoveredContextOverflow = false
@@ -276,13 +281,14 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         log.warn({ roundIndex }, 'context_overflow_compacted_retrying_round')
       }
     }
-    const { didPause } = interpretToolEffects(result.effects)
+    const { didPause, didCompleteRest } = interpretToolEffects(result.effects)
 
     recordMailboxRound(mailboxContinuity, result.inputTokens)
     return {
       inputTokens: result.inputTokens,
       tokensUsed: recoveryTokensUsed + result.tokensUsed,
       didPause,
+      didCompleteRest,
     }
   }
 
@@ -384,7 +390,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       }
       throw error
     }
-    const { inputTokens, tokensUsed, didPause } = roundResult
+    const { inputTokens, tokensUsed, didPause, didCompleteRest } = roundResult
     if (goalAtRoundStart?.status === 'active' && deps.goalStore) {
       await deps.goalStore.accountRound({
         goalId: goalAtRoundStart.goalId,
@@ -400,12 +406,22 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     } catch (err) {
       log.warn({ err, roundIndex }, 'life_journal_record_failed_skipped')
     }
+    const restReminderNow = didCompleteRest ? autonomy.now() : null
+    const shouldAppendRestReminder = restReminderNow != null
+      && shouldAppendRestResumeReminder(deps.context.getSnapshot().messages, restReminderNow)
     const compacted = await maybeCompact(inputTokens)
     if (compacted) {
       const syncedAfterCompaction = await syncGoalState()
       if (syncedAfterCompaction.goal?.status === 'active') {
         appendGoalContinuation(syncedAfterCompaction.goal, 'post_compaction')
       }
+    }
+    let appendedRestResumeReminder = false
+    if (shouldAppendRestReminder) {
+      deps.context.appendUserMessage(renderRestResumeReminder(restReminderNow))
+      appendedRestResumeReminder = true
+    }
+    if (compacted || appendedRestResumeReminder) {
       await saveSnapshot()
     }
     return { ranRound: true, tokensUsed, didPause, hadAttention }

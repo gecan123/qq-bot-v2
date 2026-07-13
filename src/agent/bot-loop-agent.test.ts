@@ -1161,6 +1161,101 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(cooldownWaits, 0)
   })
 
+  test('appends and immediately persists one reminder after a naturally completed rest', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('older history')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    const { repo, saved } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [{ id: 'pause-1', name: 'pause', args: {} }],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 2 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools({
+        pause: async () => ({
+          content: JSON.stringify({
+            ok: true,
+            status: 'elapsed',
+            resumePlan: { preferredDirection: '读一篇具体论文' },
+          }),
+          effects: [{ type: 'pause', status: 'elapsed' }],
+        }),
+      }),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      compactOptions: {
+        triggerTokens: 1,
+        keepRatio: 0.1,
+        summarize: async () => validSummary('rest 前的历史'),
+      },
+      autonomy: {
+        now: () => new Date('2026-07-13T08:00:00.000Z'),
+      },
+    })
+
+    await agent.runOnceForTest()
+
+    const messages = ctx.getSnapshot().messages
+    const last = messages.at(-1)
+    assert.equal(last?.role, 'user')
+    if (last?.role === 'user') {
+      assert.match(last.content, /^<system-reminder>\n/)
+      assert.match(last.content, /"event":"rest_resume"/)
+      assert.doesNotMatch(last.content, /读一篇具体论文/)
+    }
+    assert.equal(messages.at(-2)?.role, 'tool', 'reminder must follow the complete tool result')
+    assert.match(
+      messages[0]?.role === 'user' ? messages[0].content : '',
+      /^\[历史摘要\]/,
+      'reminder must be appended after ordinary compaction',
+    )
+    assert.equal(saved.length, 3, 'pre-round, post-round, and reminder snapshots must be durable')
+    assert.deepEqual(saved.at(-1)?.messages, messages)
+  })
+
+  test('does not append a reminder when rest is interrupted', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    const { repo } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [{ id: 'pause-1', name: 'pause', args: {} }],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 2 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools({
+        pause: async () => ({
+          content: JSON.stringify({ ok: true, status: 'interrupted' }),
+          effects: [{ type: 'pause', status: 'interrupted' }],
+        }),
+      }),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(
+      ctx.getSnapshot().messages.some(
+        (message) => message.role === 'user' && message.content.startsWith('<system-reminder>'),
+      ),
+      false,
+    )
+  })
+
   test('delegates tool execution failures to the React kernel durable error result path', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()

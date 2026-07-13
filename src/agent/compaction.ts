@@ -7,6 +7,10 @@ import { recordTokenUsage } from './token-stats.js'
 import { validateBotSnapshotIntegrity } from './snapshot-integrity.js'
 import { SNAPSHOT_SCHEMA_VERSION } from './agent-context.types.js'
 import { renderUntrustedTranscript } from './untrusted-transcript.js'
+import {
+  renderRestResumeReminderCompactionSuffix,
+  stripRestResumeReminderCompactionSuffix,
+} from './rest-resume-reminder.js'
 
 const DEFAULT_COMPACTION_TRIGGER_TOKENS = 16_000
 const DEFAULT_COMPACTION_TAIL_CHARS = 12_000
@@ -95,8 +99,9 @@ function splitExistingSummary(messages: AgentMessage[]): {
   if (head?.role !== 'user' || !head.content.startsWith(SUMMARY_HEAD_PREFIX)) {
     return { previousSummary: null, rest: messages }
   }
+  const summaryWithoutRuntimeState = stripRestResumeReminderCompactionSuffix(head.content)
   return {
-    previousSummary: head.content.slice(SUMMARY_HEAD_PREFIX.length).trim(),
+    previousSummary: summaryWithoutRuntimeState.slice(SUMMARY_HEAD_PREFIX.length).trim(),
     rest: messages.slice(1),
   }
 }
@@ -340,9 +345,12 @@ async function compactConversation(
     return false
   }
 
+  const summaryWithoutRuntimeState = stripRestResumeReminderCompactionSuffix(
+    `${SUMMARY_HEAD_PREFIX}${validatedSummary.summary}`,
+  )
   const summaryMessage: AgentMessage = {
     role: 'user',
-    content: `${SUMMARY_HEAD_PREFIX}${validatedSummary.summary}`,
+    content: `${summaryWithoutRuntimeState}${renderRestResumeReminderCompactionSuffix(toCompress)}`,
   }
   const candidateMessages = [summaryMessage, ...tail]
   const integrity = validateBotSnapshotIntegrity({

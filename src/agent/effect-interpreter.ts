@@ -7,10 +7,12 @@ const PAUSE_EFFECT_TOOLS = new Set(['pause', 'rest'])
 
 export interface EffectInterpretation {
   didPause: boolean
+  didCompleteRest: boolean
 }
 
 export function interpretToolEffects(effects: ReactToolEffect[]): EffectInterpretation {
   let didPause = false
+  let didCompleteRest = false
 
   for (const item of effects) {
     switch (item.effect.type) {
@@ -23,10 +25,11 @@ export function interpretToolEffects(effects: ReactToolEffect[]): EffectInterpre
           break
         }
         didPause = true
+        if (item.effect.status === 'elapsed') didCompleteRest = true
         break
       }
     }
   }
 
-  return { didPause }
+  return { didPause, didCompleteRest }
 }

@@ -108,7 +108,7 @@ describe('rest tool', () => {
     assert.equal(payload.restReason, '短暂放空')
     assert.deepEqual(payload.resumePlan.immediateDirections, TEST_INTENTION.immediateDirections)
     assert.deepEqual(result.outcome, { ok: true, code: 'interrupted' })
-    assert.deepEqual(result.effects, [{ type: 'pause' }])
+    assert.deepEqual(result.effects, [{ type: 'pause', status: 'interrupted' }])
     assert.equal(queue.size(), 1)
   })
 
@@ -123,7 +123,7 @@ describe('rest tool', () => {
     }, ctx)
 
     assert.equal(JSON.parse(result.content as string).status, 'interrupted')
-    assert.deepEqual(result.effects, [{ type: 'pause' }])
+    assert.deepEqual(result.effects, [{ type: 'pause', status: 'interrupted' }])
     assert.equal(queue.size(), 1)
   })
 
@@ -155,7 +155,7 @@ describe('rest tool', () => {
     assert.equal(payload.resumePlan.preferredDirection, TEST_INTENTION.immediateDirections[TEST_INTENTION.preferredIndex])
     assert.equal(typeof payload.elapsedMs, 'number')
     assert.deepEqual(finalResult.outcome, { ok: true, code: 'elapsed' })
-    assert.deepEqual(finalResult.effects, [{ type: 'pause' }])
+    assert.deepEqual(finalResult.effects, [{ type: 'pause', status: 'elapsed' }])
   })
 })
 

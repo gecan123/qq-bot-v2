@@ -51,6 +51,8 @@ describe('trading_agent', () => {
       fetchImpl: fetchImpl as typeof fetch,
       sleep: async () => {},
     })
+    assert.match(tool.description, /具体金融问题.*跨来源取证.*历史回测/)
+    assert.match(tool.description, /简单价格数据优先用 openbb_cli/)
 
     const started = JSON.parse((await tool.execute({
       action: 'start',

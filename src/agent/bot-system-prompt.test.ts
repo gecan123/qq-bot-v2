@@ -77,6 +77,8 @@ describe('buildBotSystemPrompt', () => {
     assert.match(disclosure, /- skill:.*不负责计划状态/)
     assert.match(disclosure, /- notebook \/ life_journal \/ memory:.*跨天过程.*当前生活状态.*稳定事实/)
     assert.match(disclosure, /- inbox:.*inbox_update.*不为清未读机械扫群/)
+    assert.match(disclosure, /- trading_research:.*具体金融问题.*trading_agent.*简单价格.*finance\/OpenBB/)
+    assert.match(disclosure, /- skill_management:.*多步规则反复出现.*skill_editor.*draft -> validate -> install.*一次性任务/)
     assert.match(disclosure, /- 其他工具:.*chat_style.*collect_sticker.*crypto_paper.*background_task/)
     assert.doesNotMatch(helpLine, /网站维护|表情包池/)
     assert.equal(lines.filter((line) => line.startsWith('- toolbox:')).length, 0)

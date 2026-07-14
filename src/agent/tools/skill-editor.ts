@@ -180,7 +180,7 @@ export function createSkillEditorTool(deps: SkillEditorToolDeps = {}): Tool<Args
   return {
     name: 'skill_editor',
     description: [
-      '创建和安装运行时 skill 的受控工具.',
+      '当同一种多步规则反复出现、现有 skill 未覆盖，并且已经能写清何时使用和何时不用时，创建和安装运行时 skill.',
       'action=draft 写入草稿到私有工作区, 不会立即影响 skill 列表.',
       'action=validate 校验草稿; action=install 将已验证草稿安装为 docs/agent-skills/<name>.md, 默认拒绝覆盖.',
       'action=delete_draft 删除不再需要的草稿; 不会删除已安装 skill.',

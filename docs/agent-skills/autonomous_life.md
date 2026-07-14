@@ -31,7 +31,7 @@ description: 空闲时生活收缩成重复 pause、盯行情、整理 memory，
 - 外部公开文本先用 `external_research`；需要登录、交互或视觉判断再用 `browser`。
 - 跨天研究或阅读进度放 `notebook`；经历、感受和未完兴趣分别放 Life Journal / Agenda；稳定事实才进 `memory`。
 - 现成图片可查看、改图或收藏；收到文件且真的想读再激活文档读取；不为了使用冷门工具制造输入。
-- 市场数据用 finance / OpenBB 等只读研究能力；模拟仓和真实外部副作用继续遵守对应工具契约。
-- 不确定专项流程才加载对应 skill；参数和隐藏能力通过 `help` 查看，再 `activate` / `invoke`。
+- 市场数据用 finance / OpenBB 等只读研究能力；已有具体问题并需要跨来源取证、策略规则、反证或历史回测时，再激活 `trading_research` 交给 `trading_agent`。模拟仓和真实外部副作用继续遵守对应工具契约。
+- 不确定专项流程才加载对应 skill；同类多步规则已经反复出现、现有 skill 未覆盖且能写清使用与排除边界时，才激活 `skill_management` 用 `skill_editor` 沉淀。参数和隐藏能力通过 `help` 查看，再 `activate` / `invoke`。
 
 做完一个小动作后，看看它有没有留下下一条真实线索。有就继续或改道；没有未处理义务和真实牵引力时，直接结束当前活动轮。不要为了“主动”表演忙碌，也不要用发消息、写 Journal 或休息制造收尾动作。

@@ -45,6 +45,15 @@ const mockWebsiteTool: Tool<{ action: 'status' }> = {
   },
 }
 
+const mockTradingAgentTool: Tool<{ action: 'start' }> = {
+  name: 'trading_agent',
+  description: 'trading agent',
+  schema: zod.object({ action: zod.literal('start') }),
+  async execute() {
+    return { content: JSON.stringify({ ok: true }) }
+  },
+}
+
 const disabledOptionalTools = {
   browser: null,
   openbb: null,
@@ -276,11 +285,19 @@ describe('merged main-agent tools', () => {
         async loadFriends() { return [] },
         async loadGroups() { return [] },
       },
-      optionalTools: { ...disabledOptionalTools, website: mockWebsiteTool },
+      optionalTools: {
+        ...disabledOptionalTools,
+        tradingAgent: mockTradingAgentTool,
+        website: mockWebsiteTool,
+      },
     })
     const capabilities = new Map(manifest.capabilities.map((capability) => [
       capability.name,
       capability.tools.map((tool) => tool.name),
+    ]))
+    const capabilityDescriptions = new Map(manifest.capabilities.map((capability) => [
+      capability.name,
+      capability.description,
     ]))
     const alwaysOnNames = manifest.alwaysOnTools.map((tool) => tool.name)
     const allToolNames = [
@@ -301,6 +318,7 @@ describe('merged main-agent tools', () => {
     assert.deepEqual(capabilities.get('workspace_management'), ['workspace_file'])
     assert.deepEqual(capabilities.get('document_reading'), ['read_file'])
     assert.deepEqual(capabilities.get('skill_management'), ['skill_editor'])
+    assert.match(capabilityDescriptions.get('skill_management') ?? '', /多步规则反复出现.*现有 skill 未覆盖.*一次性任务/)
     assert.deepEqual(capabilities.get('media_inspection'), ['inspect_media'])
     assert.ok(capabilities.get('external_research')?.includes('fetch_content'))
     if (capabilities.get('external_research')?.includes('web_search')) {
@@ -311,7 +329,8 @@ describe('merged main-agent tools', () => {
     assert.deepEqual(capabilities.get('media_fetch'), ['fetch_content'])
     assert.deepEqual(capabilities.get('website'), ['website'])
     if (capabilities.has('finance')) assert.deepEqual(capabilities.get('finance'), ['openbb_cli'])
-    if (capabilities.has('trading_research')) assert.deepEqual(capabilities.get('trading_research'), ['trading_agent'])
+    assert.deepEqual(capabilities.get('trading_research'), ['trading_agent'])
+    assert.match(capabilityDescriptions.get('trading_research') ?? '', /具体金融问题.*跨来源证据.*简单报价.*finance/)
     if (capabilities.has('browser')) assert.deepEqual(capabilities.get('browser'), ['browser'])
   })
 

@@ -12,6 +12,8 @@ describe('skill_editor tool', () => {
     const skillsDir = join(root, 'skills')
     try {
       const tool = createSkillEditorTool({ draftsDir, skillsDir })
+      assert.match(tool.description, /多步规则反复出现.*现有 skill 未覆盖.*何时使用和何时不用/)
+      assert.match(tool.description, /不要把.*一次性总结.*skill/)
       const content = [
         '# Research Hygiene',
         '',

@@ -242,7 +242,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   if (tradingAgent) {
     capabilities.push({
       name: 'trading_research',
-      description: '委派多步金融研究、策略设计和历史回测给本机 Vibe-Trading 子 Agent; 只允许研究与模拟分析.',
+      description: '有具体金融问题且需要跨来源证据、可复现策略规则或历史回测时，委派给本机 Vibe-Trading 子 Agent；简单报价或单项数据改用 finance，不为机械盯行情启动，只允许研究与模拟分析.',
       tools: [tradingAgent],
     })
   }
@@ -279,7 +279,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     },
     {
       name: 'skill_management',
-      description: '运行时 skill 草稿的创建、删除、校验和安装.',
+      description: '同类多步规则反复出现、现有 skill 未覆盖且能写清使用与排除边界时，创建、校验并安装运行时 skill；一次性任务、临时笔记和当前执行状态不要做成 skill.',
       tools: [skillEditorTool],
     },
     {

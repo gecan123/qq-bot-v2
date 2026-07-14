@@ -87,7 +87,7 @@ export function createTradingAgentTool(
   return {
     name: 'trading_agent',
     description: [
-      '委派完整的金融研究、策略构思和回测任务给本机独立运行的 Vibe-Trading 子 Agent.',
+      '已有具体金融问题，需要跨来源取证、形成可复现策略规则、寻找反证或做历史回测时，委派给本机独立运行的 Vibe-Trading 子 Agent.',
       '它不是行情查询快捷方式: 简单价格数据优先用 openbb_cli; 需要多步研究、生成策略、回测或延续同一研究 session 时再用本工具.',
       'action=start/continue 会异步执行并返回 taskId、sessionId、attemptId; 完成通知到达后可用 background_task get 取结果.',
       'qq-bot 重启导致内存 task 丢失时, 仍可凭 sessionId 调 status/result 从 Vibe-Trading 持久 session 恢复.',

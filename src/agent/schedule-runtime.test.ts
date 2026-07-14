@@ -259,6 +259,27 @@ describe('ScheduleRuntime lifecycle and CRUD', () => {
     assert.deepEqual(await runtime.list(), [])
   })
 
+  test('does not start when a store returns duplicate schedule ids or names', async () => {
+    const invalidSnapshots = [
+      [atJob(), atJob({ name: 'another-name' })],
+      [atJob(), atJob({ id: 'schedule-2' })],
+    ]
+
+    for (const snapshot of invalidSnapshots) {
+      const store: ScheduleStore = {
+        async load() {
+          return structuredClone(snapshot) as ScheduleJob[]
+        },
+        async replace() {},
+      }
+      const { runtime, clock } = harness({ store })
+
+      await expectRuntimeCode(runtime.start(), 'persistence_failed')
+      await expectRuntimeCode(runtime.list(), 'not_started')
+      assert.equal(clock.timerCount(), 0)
+    }
+  })
+
   test('persists a new schedule before publishing it or arming its timer', async () => {
     let releaseReplace: (() => void) | undefined
     let persisted: ScheduleJob[] = []
@@ -421,6 +442,22 @@ describe('ScheduleRuntime lifecycle and CRUD', () => {
     )
     await expectRuntimeCode(
       runtime.create({ name: 'valid', intention: '', schedule: { kind: 'at', afterSeconds: 600 } }),
+      'invalid_input',
+    )
+    await expectRuntimeCode(
+      runtime.create({
+        name: 'x'.repeat(101),
+        intention: 'valid',
+        schedule: { kind: 'at', afterSeconds: 600 },
+      }),
+      'invalid_input',
+    )
+    await expectRuntimeCode(
+      runtime.create({
+        name: 'valid',
+        intention: 'x'.repeat(1_001),
+        schedule: { kind: 'at', afterSeconds: 600 },
+      }),
       'invalid_input',
     )
     await expectRuntimeCode(

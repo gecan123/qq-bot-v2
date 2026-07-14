@@ -3,7 +3,7 @@ import {
   ScheduleRuntimeError,
   type ScheduleRuntime,
 } from '../schedule-runtime.js'
-import type { ScheduleSpec } from '../schedule-model.js'
+import { SCHEDULE_LIMITS, type ScheduleSpec } from '../schedule-model.js'
 import type { ScheduleJob } from '../schedule-store.js'
 import type { Tool, ToolExecutionResult } from '../tool.js'
 import { formatBeijingIso } from '../../utils/beijing-time.js'
@@ -46,9 +46,9 @@ const scheduleSchema = z.union([
 const argsSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('create'),
-    name: z.string().trim().min(1).max(100)
+    name: z.string().trim().min(1).max(SCHEDULE_LIMITS.maxNameLength)
       .describe('活跃调度的唯一名称；同名同定义会返回 existing。'),
-    intention: z.string().trim().min(1).max(1_000)
+    intention: z.string().trim().min(1).max(SCHEDULE_LIMITS.maxIntentionLength)
       .describe('到期后要结合最新 Goal、消息和环境重新判断的注意事项，不是未来命令。'),
     schedule: scheduleSchema,
     maxRuns: z.number().int().positive().optional()
@@ -57,7 +57,7 @@ const argsSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }).strict(),
   z.object({
     action: z.literal('cancel'),
-    id: z.string().trim().min(1).max(200),
+    id: z.string().trim().min(1).max(SCHEDULE_LIMITS.maxIdLength),
   }).strict(),
 ])
 

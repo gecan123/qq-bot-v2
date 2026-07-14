@@ -78,9 +78,9 @@ describe('persistent schedule store', () => {
           everySeconds: 600,
           anchorAt: '2026-07-14T01:10:00.000+00:00',
         },
-        nextRunAt: '2026-07-14T01:10:00.000Z',
-        lastRunAt: '2026-07-14T01:05:00.000Z',
-        runCount: 2,
+        nextRunAt: '2026-07-14T01:20:00.000Z',
+        lastRunAt: '2026-07-14T01:10:00.000Z',
+        runCount: 1,
         maxRuns: 5,
       }),
       job({
@@ -146,6 +146,25 @@ describe('persistent schedule store', () => {
     for (const state of invalidStates) {
       writeRaw(path, state)
       await assert.rejects(createPersistentScheduleStore(path).load())
+    }
+  })
+
+  test('rejects blank or oversized stored identifiers and text fields', async () => {
+    const path = tempStatePath()
+    const invalidJobs = [
+      job({ id: ' ' }),
+      job({ id: 'x'.repeat(201) }),
+      job({ name: ' ' }),
+      job({ name: 'x'.repeat(101) }),
+      job({ intention: '\t' }),
+      job({ intention: 'x'.repeat(1_001) }),
+    ]
+    const store = createPersistentScheduleStore(path)
+
+    for (const invalidJob of invalidJobs) {
+      writeRaw(path, { version: 1, schedules: [invalidJob] })
+      await assert.rejects(store.load())
+      await assert.rejects(store.replace([invalidJob]))
     }
   })
 
@@ -247,6 +266,77 @@ describe('persistent schedule store', () => {
     })
 
     await assert.rejects(createPersistentScheduleStore(path).load())
+  })
+
+  test('requires active at jobs to remain in their unfired state', async () => {
+    const path = tempStatePath()
+    const invalidJobs = [
+      job({ runCount: 1 }),
+      job({ lastRunAt: '2026-07-14T01:10:00.000Z' }),
+    ]
+
+    for (const invalidJob of invalidJobs) {
+      writeRaw(path, { version: 1, schedules: [invalidJob] })
+      await assert.rejects(createPersistentScheduleStore(path).load())
+    }
+  })
+
+  test('requires recurring runCount and lastRunAt to describe the same firing state', async () => {
+    const path = tempStatePath()
+    const recurringSchedule: ScheduleJob['schedule'] = {
+      kind: 'every',
+      everySeconds: 600,
+      anchorAt: '2026-07-14T01:00:00.000Z',
+    }
+    const invalidJobs = [
+      job({
+        schedule: recurringSchedule,
+        lastRunAt: '2026-07-14T01:10:00.000Z',
+        nextRunAt: '2026-07-14T01:20:00.000Z',
+        runCount: 0,
+      }),
+      job({
+        schedule: recurringSchedule,
+        nextRunAt: '2026-07-14T01:10:00.000Z',
+        runCount: 1,
+      }),
+    ]
+
+    for (const invalidJob of invalidJobs) {
+      writeRaw(path, { version: 1, schedules: [invalidJob] })
+      await assert.rejects(createPersistentScheduleStore(path).load())
+    }
+  })
+
+  test('requires recurring lastRunAt to be a real every or cron occurrence', async () => {
+    const path = tempStatePath()
+    const invalidJobs = [
+      job({
+        schedule: {
+          kind: 'every',
+          everySeconds: 600,
+          anchorAt: '2026-07-14T01:00:00.000Z',
+        },
+        lastRunAt: '2026-07-14T01:15:00.000Z',
+        nextRunAt: '2026-07-14T01:30:00.000Z',
+        runCount: 1,
+      }),
+      job({
+        schedule: {
+          kind: 'cron',
+          expression: '*/10 * * * *',
+          timezone: 'UTC',
+        },
+        lastRunAt: '2026-07-14T01:15:00.000Z',
+        nextRunAt: '2026-07-14T01:30:00.000Z',
+        runCount: 1,
+      }),
+    ]
+
+    for (const invalidJob of invalidJobs) {
+      writeRaw(path, { version: 1, schedules: [invalidJob] })
+      await assert.rejects(createPersistentScheduleStore(path).load())
+    }
   })
 
   test('rejects recurring nextRunAt that is not a real schedule occurrence', async () => {
@@ -362,9 +452,18 @@ describe('persistent schedule store', () => {
 
   test('requires an active job runCount to remain below maxRuns', async () => {
     const path = tempStatePath()
+    const recurringState = {
+      schedule: {
+        kind: 'every' as const,
+        everySeconds: 600,
+        anchorAt: '2026-07-14T01:00:00.000Z',
+      },
+      lastRunAt: '2026-07-14T01:10:00.000Z',
+      nextRunAt: '2026-07-14T01:20:00.000Z',
+    }
     const invalidJobs = [
-      job({ runCount: 2, maxRuns: 2 }),
-      job({ runCount: 3, maxRuns: 2 }),
+      job({ ...recurringState, runCount: 2, maxRuns: 2 }),
+      job({ ...recurringState, runCount: 3, maxRuns: 2 }),
     ]
 
     for (const invalidJob of invalidJobs) {
@@ -382,6 +481,19 @@ describe('persistent schedule store', () => {
     writeRaw(path, { version: 1, schedules })
 
     await assert.rejects(createPersistentScheduleStore(path).load())
+  })
+
+  test('rejects duplicate schedule ids and names in persisted state', async () => {
+    const path = tempStatePath()
+    const invalidSchedules = [
+      [job(), job({ name: 'another-name' })],
+      [job(), job({ id: 'schedule-2' })],
+    ]
+
+    for (const schedules of invalidSchedules) {
+      writeRaw(path, { version: 1, schedules })
+      await assert.rejects(createPersistentScheduleStore(path).load())
+    }
   })
 
   test('preserves the previous file when a replacement cannot be written', async () => {
@@ -445,5 +557,31 @@ describe('in-memory schedule store', () => {
 
     assert.equal((await store.load())[0]!.name, 'review-progress')
     await assert.rejects(store.replace([job({ runCount: -1 })]))
+  })
+
+  test('rejects duplicate ids and names in initial and replacement state', async () => {
+    const duplicateId = [job(), job({ name: 'another-name' })]
+    const duplicateName = [job(), job({ id: 'schedule-2' })]
+
+    assert.throws(() => createInMemoryScheduleStore(duplicateId))
+    assert.throws(() => createInMemoryScheduleStore(duplicateName))
+
+    const store = createInMemoryScheduleStore()
+    await assert.rejects(store.replace(duplicateId))
+    await assert.rejects(store.replace(duplicateName))
+  })
+
+  test('applies persisted text limits to initial and replacement state', async () => {
+    const invalidJobs = [
+      job({ id: 'x'.repeat(201) }),
+      job({ name: 'x'.repeat(101) }),
+      job({ intention: 'x'.repeat(1_001) }),
+    ]
+    const store = createInMemoryScheduleStore()
+
+    for (const invalidJob of invalidJobs) {
+      assert.throws(() => createInMemoryScheduleStore([invalidJob]))
+      await assert.rejects(store.replace([invalidJob]))
+    }
   })
 })

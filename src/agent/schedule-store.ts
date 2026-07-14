@@ -28,9 +28,14 @@ export interface ScheduleStore {
   replace(schedules: readonly ScheduleJob[]): Promise<void>
 }
 
-const nonBlankStringSchema = z.string().min(1).refine((value) => value.trim().length > 0, {
-  message: 'String must contain non-whitespace characters',
-})
+function nonBlankStringSchema(maxLength?: number) {
+  const schema = maxLength === undefined
+    ? z.string().min(1)
+    : z.string().min(1).max(maxLength)
+  return schema.refine((value) => value.trim().length > 0, {
+    message: 'String must contain non-whitespace characters',
+  })
+}
 const isoTimestampSchema = z.iso.datetime({ offset: true })
 
 const scheduleSpecSchema = z.discriminatedUnion('kind', [
@@ -45,17 +50,17 @@ const scheduleSpecSchema = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('cron'),
-      expression: nonBlankStringSchema,
-      timezone: nonBlankStringSchema,
+      expression: nonBlankStringSchema(),
+      timezone: nonBlankStringSchema(),
     })
     .strict(),
 ])
 
 const scheduleJobSchema = z
   .object({
-    id: nonBlankStringSchema,
-    name: nonBlankStringSchema,
-    intention: nonBlankStringSchema,
+    id: nonBlankStringSchema(SCHEDULE_LIMITS.maxIdLength),
+    name: nonBlankStringSchema(SCHEDULE_LIMITS.maxNameLength),
+    intention: nonBlankStringSchema(SCHEDULE_LIMITS.maxIntentionLength),
     schedule: scheduleSpecSchema,
     createdAt: isoTimestampSchema,
     expiresAt: isoTimestampSchema,
@@ -95,6 +100,38 @@ const scheduleJobSchema = z
       }
     }
 
+    if (job.schedule.kind === 'at') {
+      if (job.runCount !== 0) {
+        context.addIssue({
+          code: 'custom',
+          path: ['runCount'],
+          message: 'An active one-shot schedule must not have fired',
+        })
+      }
+      if (job.lastRunAt !== undefined) {
+        context.addIssue({
+          code: 'custom',
+          path: ['lastRunAt'],
+          message: 'An active one-shot schedule must not have lastRunAt',
+        })
+      }
+    } else {
+      if (job.runCount === 0 && job.lastRunAt !== undefined) {
+        context.addIssue({
+          code: 'custom',
+          path: ['lastRunAt'],
+          message: 'An unfired recurring schedule must not have lastRunAt',
+        })
+      }
+      if (job.runCount > 0 && job.lastRunAt === undefined) {
+        context.addIssue({
+          code: 'custom',
+          path: ['lastRunAt'],
+          message: 'A fired recurring schedule must have lastRunAt',
+        })
+      }
+    }
+
     if (job.maxRuns !== undefined && job.runCount >= job.maxRuns) {
       context.addIssue({
         code: 'custom',
@@ -105,6 +142,20 @@ const scheduleJobSchema = z
 
     try {
       const normalizedSchedule = normalizeScheduleSpec(job.schedule, new Date(job.createdAt))
+      if (normalizedSchedule.kind !== 'at' && job.lastRunAt !== undefined) {
+        const lastRunAt = Date.parse(job.lastRunAt)
+        const derivedLastRunAt = computeNextRunAt(
+          normalizedSchedule,
+          new Date(lastRunAt - 1),
+        )
+        if (derivedLastRunAt?.getTime() !== lastRunAt) {
+          context.addIssue({
+            code: 'custom',
+            path: ['lastRunAt'],
+            message: 'lastRunAt must be a trigger derived from the schedule',
+          })
+        }
+      }
       const expectedNextRunAt = normalizedSchedule.kind === 'at'
         ? new Date(normalizedSchedule.at)
         : computeNextRunAt(
@@ -130,7 +181,32 @@ const scheduleJobSchema = z
     }
   })
 
-const schedulesSchema = z.array(scheduleJobSchema).max(SCHEDULE_LIMITS.maxActiveSchedules)
+const schedulesSchema = z
+  .array(scheduleJobSchema)
+  .max(SCHEDULE_LIMITS.maxActiveSchedules)
+  .superRefine((schedules, context) => {
+    const ids = new Set<string>()
+    const names = new Set<string>()
+    schedules.forEach((schedule, index) => {
+      if (ids.has(schedule.id)) {
+        context.addIssue({
+          code: 'custom',
+          path: [index, 'id'],
+          message: 'Schedule ids must be unique',
+        })
+      }
+      ids.add(schedule.id)
+
+      if (names.has(schedule.name)) {
+        context.addIssue({
+          code: 'custom',
+          path: [index, 'name'],
+          message: 'Schedule names must be unique',
+        })
+      }
+      names.add(schedule.name)
+    })
+  })
 const storedSchedulesSchema = z
   .object({
     version: z.literal(1),
@@ -197,6 +273,10 @@ export function createPersistentScheduleStore(path: string): ScheduleStore {
 }
 
 function parseSchedules(schedules: readonly ScheduleJob[]): ScheduleJob[] {
+  return validateScheduleJobs(schedules)
+}
+
+export function validateScheduleJobs(schedules: readonly ScheduleJob[]): ScheduleJob[] {
   return cloneSchedules(schedulesSchema.parse(schedules))
 }
 

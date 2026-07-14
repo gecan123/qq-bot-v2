@@ -6,6 +6,9 @@ export const SCHEDULE_LIMITS = {
   maxLifetimeMs: 3 * 24 * 60 * 60 * 1_000,
   minRecurringIntervalMs: 5 * 60 * 1_000,
   maxActiveSchedules: 20,
+  maxIdLength: 200,
+  maxNameLength: 100,
+  maxIntentionLength: 1_000,
 } as const
 
 export const DEFAULT_SCHEDULE_TIMEZONE = 'Asia/Shanghai'

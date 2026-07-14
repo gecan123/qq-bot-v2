@@ -8,7 +8,11 @@ import {
   SCHEDULE_LIMITS,
   type ScheduleSpec,
 } from './schedule-model.js'
-import type { ScheduleJob, ScheduleStore } from './schedule-store.js'
+import {
+  validateScheduleJobs,
+  type ScheduleJob,
+  type ScheduleStore,
+} from './schedule-store.js'
 
 export interface CreateScheduleInput {
   name: string
@@ -376,8 +380,16 @@ export function createScheduleRuntime(
     create(input) {
       return enqueueMutation(async () => {
         requireStarted()
-        const name = normalizeRequiredText(input.name, 'name')
-        const intention = normalizeRequiredText(input.intention, 'intention')
+        const name = normalizeRequiredText(
+          input.name,
+          'name',
+          SCHEDULE_LIMITS.maxNameLength,
+        )
+        const intention = normalizeRequiredText(
+          input.intention,
+          'intention',
+          SCHEDULE_LIMITS.maxIntentionLength,
+        )
         if (
           input.maxRuns !== undefined &&
           (!Number.isInteger(input.maxRuns) || input.maxRuns <= 0)
@@ -510,11 +522,18 @@ export function createScheduleRuntime(
   return runtime
 }
 
-function normalizeRequiredText(value: string, field: string): string {
+function normalizeRequiredText(value: string, field: string, maxLength: number): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new ScheduleRuntimeError('invalid_input', `${field} must not be blank`)
   }
-  return value.trim()
+  const normalized = value.trim()
+  if (normalized.length > maxLength) {
+    throw new ScheduleRuntimeError(
+      'invalid_input',
+      `${field} must be at most ${maxLength} characters`,
+    )
+  }
+  return normalized
 }
 
 function normalizeRuntimeSchedule(input: unknown, now: Date): ScheduleSpec {
@@ -543,7 +562,7 @@ function computeRuntimeNextRunAt(schedule: ScheduleSpec, after: Date): Date | nu
 
 async function loadSchedules(store: ScheduleStore, operation: string): Promise<ScheduleJob[]> {
   try {
-    return await store.load()
+    return validateScheduleJobs(await store.load())
   } catch (error) {
     throw schedulePersistenceError(operation, error)
   }

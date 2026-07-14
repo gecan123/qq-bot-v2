@@ -168,6 +168,7 @@ function validateCronSchedule(schedule: Extract<ScheduleSpec, { kind: 'cron' }>,
     while (true) {
       const next = cron.nextRun(previous)
       if (!next) return
+      if (next.getTime() > horizon) return
       const intervalMs = next.getTime() - previous.getTime()
       if (intervalMs <= 0) {
         throw new ScheduleModelError('invalid_schedule', 'Cron schedule did not advance')
@@ -178,7 +179,6 @@ function validateCronSchedule(schedule: Extract<ScheduleSpec, { kind: 'cron' }>,
           'Cron schedules must be at least five minutes apart',
         )
       }
-      if (next.getTime() > horizon) return
       previous = next
     }
   })

@@ -175,6 +175,20 @@ describe('normalizeScheduleSpec', () => {
       'recurrence_too_frequent',
     )
   })
+
+  test('ignores a close cron trigger that falls outside the three-day window', () => {
+    assert.deepEqual(
+      normalizeScheduleSpec(
+        { kind: 'cron', expression: '0,1 0 0 17 7 *', timezone: 'UTC' },
+        NOW,
+      ),
+      {
+        kind: 'cron',
+        expression: '0,1 0 0 17 7 *',
+        timezone: 'UTC',
+      },
+    )
+  })
 })
 
 describe('computeNextRunAt', () => {

@@ -1,18 +1,18 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, test } from 'node:test'
 import { createAgentContext } from './agent-context.js'
-import { InMemoryEventQueue } from './event-queue.js'
+import { InMemoryEventQueue, type EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { LlmClient } from './llm-client.js'
 import type { BotSnapshotRepo } from './snapshot-repo.js'
-import { createAgentRuntime } from './runtime.js'
+import { createAgentRuntime, createScheduleRuntimeLogHandler } from './runtime.js'
 import type { MessageSender } from '../messaging/message-sender.js'
 import { McpManager } from './mcp-manager.js'
 import { createInMemoryGoalStore } from './goal-store.js'
-import type { ScheduleRuntime } from './schedule-runtime.js'
+import type { ScheduleRuntime, ScheduleRuntimeLogEntry } from './schedule-runtime.js'
 
 const tempDirs: string[] = []
 
@@ -164,28 +164,42 @@ describe('createAgentRuntime', () => {
   })
 
   test('uses an in-memory schedule store by default and keeps schedule unavailable until startup', async () => {
-    const runtime = createAgentRuntime(makeRuntimeInput())
+    const dir = await mkdtemp(join(tmpdir(), 'agent-runtime-memory-schedule-'))
+    tempDirs.push(dir)
+    const originalCwd = process.cwd()
+    await symlink(join(originalCwd, 'prompts'), join(dir, 'prompts'), 'dir')
+    process.chdir(dir)
+    let runtime: ReturnType<typeof createAgentRuntime> | null = null
 
-    const beforeStart = await executeSchedule(runtime, {
-      action: 'create',
-      name: 'follow-up',
-      intention: '结合最新上下文重新检查进展',
-      schedule: { kind: 'at', afterSeconds: 30 },
-    })
-    assert.deepEqual(beforeStart.outcome, { ok: false, code: 'not_started' })
+    try {
+      runtime = createAgentRuntime(makeRuntimeInput())
+      const beforeStart = await executeSchedule(runtime, {
+        action: 'create',
+        name: 'follow-up',
+        intention: '结合最新上下文重新检查进展',
+        schedule: { kind: 'at', afterSeconds: 30 },
+      })
+      assert.deepEqual(beforeStart.outcome, { ok: false, code: 'not_started' })
 
-    await runtime.startBackgroundServices()
-    const created = await executeSchedule(runtime, {
-      action: 'create',
-      name: 'follow-up',
-      intention: '结合最新上下文重新检查进展',
-      schedule: { kind: 'at', afterSeconds: 30 },
-    })
-    assert.deepEqual(created.outcome, { ok: true, code: 'created' })
+      await runtime.startBackgroundServices()
+      const created = await executeSchedule(runtime, {
+        action: 'create',
+        name: 'follow-up',
+        intention: '结合最新上下文重新检查进展',
+        schedule: { kind: 'at', afterSeconds: 30 },
+      })
+      assert.deepEqual(created.outcome, { ok: true, code: 'created' })
 
-    const listed = await executeSchedule(runtime, { action: 'list' })
-    assert.equal(JSON.parse(listed.content as string).schedules.length, 1)
-    await runtime.stopBackgroundServices()
+      const listed = await executeSchedule(runtime, { action: 'list' })
+      assert.equal(JSON.parse(listed.content as string).schedules.length, 1)
+      await assert.rejects(
+        access(join(dir, 'data/agent-workspace/runtime/schedules.json')),
+        (error: unknown) => isNodeError(error) && error.code === 'ENOENT',
+      )
+    } finally {
+      await runtime?.stopBackgroundServices()
+      process.chdir(originalCwd)
+    }
   })
 
   test('propagates persistent schedule startup failures and allows a later retry', async () => {
@@ -201,13 +215,26 @@ describe('createAgentRuntime', () => {
     await assert.rejects(
       runtime.startBackgroundServices(),
       (error: unknown) => error instanceof Error
-        && error.name === 'ScheduleRuntimeError'
-        && error.message.includes('Failed to load schedules during startup'),
+        && error.message.includes(scheduleStatePath)
+        && error.cause instanceof Error
+        && error.cause.name === 'ScheduleRuntimeError',
     )
 
     await writeFile(scheduleStatePath, '{"version":1,"schedules":[]}', 'utf8')
     await runtime.startBackgroundServices()
     await runtime.stopBackgroundServices()
+  })
+
+  test('rejects restarting background services after they have stopped', async () => {
+    const runtime = createAgentRuntime({
+      ...makeRuntimeInput(),
+      scheduleRuntime: makeScheduleRuntime(),
+    })
+
+    await runtime.startBackgroundServices()
+    await runtime.stopBackgroundServices()
+
+    await assert.rejects(runtime.startBackgroundServices(), /stopped/i)
   })
 
   test('stops the schedule runtime before MCP and remains idempotent', async () => {
@@ -232,6 +259,95 @@ describe('createAgentRuntime', () => {
     ])
 
     assert.deepEqual(order, ['schedule', 'mcp'])
+  })
+
+  test('closes MCP after schedule stop fails and retains both failures', async () => {
+    const order: string[] = []
+    const scheduleFailure = new Error('schedule stop failed')
+    const mcpFailure = new Error('mcp close failed')
+    const scheduleRuntime = makeScheduleRuntime({
+      async stop() {
+        order.push('schedule')
+        throw scheduleFailure
+      },
+    })
+    const mcpManager = {
+      hasServers() { return false },
+      approvalRequirementForArgs() { return null },
+      async closeAll() {
+        order.push('mcp')
+        throw mcpFailure
+      },
+    } as unknown as McpManager
+    const runtime = createAgentRuntime({
+      ...makeRuntimeInput(),
+      scheduleRuntime,
+      mcpManager,
+    })
+
+    await assert.rejects(runtime.stopBackgroundServices(), (error: unknown) => {
+      return error instanceof AggregateError
+        && error.errors[0] === scheduleFailure
+        && error.errors[1] === mcpFailure
+    })
+    assert.deepEqual(order, ['schedule', 'mcp'])
+  })
+
+  test('passes schedule runtime failures to the configured operations logger', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agent-runtime-schedule-logger-'))
+    tempDirs.push(dir)
+    const scheduleStatePath = join(dir, 'schedules.json')
+    const now = Date.now()
+    const createdAt = new Date(now - 60_000)
+    const scheduledFor = new Date(now - 1_000)
+    await writeFile(scheduleStatePath, JSON.stringify({
+      version: 1,
+      schedules: [{
+        id: 'log-schedule',
+        name: 'logger wiring',
+        intention: 'must not be logged',
+        schedule: { kind: 'at', at: scheduledFor.toISOString() },
+        createdAt: createdAt.toISOString(),
+        expiresAt: new Date(createdAt.getTime() + 3 * 24 * 60 * 60_000).toISOString(),
+        nextRunAt: scheduledFor.toISOString(),
+        runCount: 0,
+      }],
+    }), 'utf8')
+    const entries: ScheduleRuntimeLogEntry[] = []
+    const runtime = createAgentRuntime({
+      ...makeRuntimeInput(),
+      eventQueue: throwingScheduledWakeQueue(),
+      scheduleStatePath,
+      scheduleLogger: (entry) => entries.push(entry),
+    })
+
+    await runtime.startBackgroundServices()
+
+    assert.equal(entries.length, 1)
+    assert.equal(entries[0]?.event, 'schedule_event_enqueue_failed')
+    assert.equal(entries[0]?.scheduleId, 'log-schedule')
+    assert.equal('intention' in (entries[0] as unknown as Record<string, unknown>), false)
+    await runtime.stopBackgroundServices()
+  })
+
+  test('formats schedule runtime failures for the SCHEDULE error logger without intention text', () => {
+    const calls: unknown[][] = []
+    const failure = new Error('timer failed')
+    const handler = createScheduleRuntimeLogHandler({
+      error(...args: unknown[]) { calls.push(args) },
+    })
+
+    handler({
+      event: 'schedule_timer_failed',
+      scheduleId: 'schedule-1',
+      error: failure,
+    })
+
+    assert.deepEqual(calls, [[{
+      event: 'schedule_timer_failed',
+      scheduleId: 'schedule-1',
+      err: failure,
+    }, 'schedule_runtime_failed']])
   })
 })
 
@@ -277,6 +393,26 @@ function makeScheduleRuntime(overrides: Partial<ScheduleRuntime> = {}): Schedule
     async stop() {},
     ...overrides,
   }
+}
+
+function throwingScheduledWakeQueue(): EventQueue<BotEvent> {
+  const queue = new InMemoryEventQueue<BotEvent>()
+  return {
+    ...queue,
+    enqueue(event) {
+      if (event.type === 'scheduled_wake') throw new Error('queue unavailable')
+      return queue.enqueue(event)
+    },
+    dequeue: () => queue.dequeue(),
+    size: () => queue.size(),
+    clear: () => queue.clear(),
+    waitForEvent: (options) => queue.waitForEvent(options),
+    waitForEventWhere: (predicate, options) => queue.waitForEventWhere(predicate, options),
+  }
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error
 }
 
 function makeMockLlm(): LlmClient {

@@ -56,7 +56,7 @@ export interface BotToolDeps {
   qqDirectory: QqDirectoryDeps
   optionalTools?: BotOptionalTools
   taskScheduler?: TaskScheduler
-  scheduleRuntime?: ScheduleRuntime
+  scheduleRuntime: ScheduleRuntime
   llm?: LlmClient
   approvalManager?: ApprovalManager
   mcpManager?: McpManager
@@ -179,7 +179,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     }),
     qqDirectory,
     backgroundTask,
-    ...(deps.scheduleRuntime ? [createScheduleTool(deps.scheduleRuntime)] : []),
+    createScheduleTool(deps.scheduleRuntime),
     ...(delegate ? [delegate] : []),
     ...(deps.approvalManager ? [createApprovalTool(deps.approvalManager)] : []),
     ...(deps.goalStore ? [createGoalTool(deps.goalStore)] : []),

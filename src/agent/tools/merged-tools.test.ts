@@ -54,18 +54,27 @@ const disabledOptionalTools = {
   cryptoPaper: null,
 } as const
 
+const mockScheduleRuntime: ScheduleRuntime = {
+  async start() {},
+  async create() { throw new Error('not used') },
+  async list() { return [] },
+  async cancel(id) { return { status: 'already_absent', id } },
+  async stop() {},
+}
+
 const TINY_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
   'base64',
 )
 
 describe('merged main-agent tools', () => {
-  test('registers schedule only when a schedule runtime is supplied', () => {
-    const base = {
+  test('always registers schedule in the main Agent manifest', () => {
+    const manifest = buildBotToolManifest({
       sender: mockSender,
       targetPolicy,
       selfNumber: 999,
       taskRegistry: createInMemoryTaskRegistry(),
+      scheduleRuntime: mockScheduleRuntime,
       groupIds: [],
       metadata: { groupNames: new Map() },
       groupCustomizations: [],
@@ -75,23 +84,9 @@ describe('merged main-agent tools', () => {
         async loadGroups() { return [] },
       },
       optionalTools: disabledOptionalTools,
-    }
-    const scheduleRuntime: ScheduleRuntime = {
-      async start() {},
-      async create() { throw new Error('not used') },
-      async list() { return [] },
-      async cancel(id) { return { status: 'already_absent', id } },
-      async stop() {},
-    }
+    })
 
-    assert.equal(
-      buildBotToolManifest(base).alwaysOnTools.some((tool) => tool.name === 'schedule'),
-      false,
-    )
-    assert.equal(
-      buildBotToolManifest({ ...base, scheduleRuntime }).alwaysOnTools.some((tool) => tool.name === 'schedule'),
-      true,
-    )
+    assert.equal(manifest.alwaysOnTools.some((tool) => tool.name === 'schedule'), true)
   })
 
   test('buildBotTools exposes default entries and defers heavy typed tools', () => {
@@ -100,6 +95,7 @@ describe('merged main-agent tools', () => {
       targetPolicy,
       selfNumber: 999,
       taskRegistry: createInMemoryTaskRegistry(),
+      scheduleRuntime: mockScheduleRuntime,
       groupIds: [],
       metadata: { groupNames: new Map() },
       groupCustomizations: [],
@@ -161,6 +157,7 @@ describe('merged main-agent tools', () => {
       targetPolicy,
       selfNumber: 999,
       taskRegistry: createInMemoryTaskRegistry(),
+      scheduleRuntime: mockScheduleRuntime,
       groupIds: [],
       metadata: { groupNames: new Map() },
       groupCustomizations: [],
@@ -221,6 +218,7 @@ describe('merged main-agent tools', () => {
         targetPolicy,
         selfNumber: 999,
         taskRegistry: createInMemoryTaskRegistry(),
+        scheduleRuntime: mockScheduleRuntime,
         groupIds: [],
         metadata: { groupNames: new Map() },
         groupCustomizations: [],
@@ -269,6 +267,7 @@ describe('merged main-agent tools', () => {
       targetPolicy,
       selfNumber: 999,
       taskRegistry: createInMemoryTaskRegistry(),
+      scheduleRuntime: mockScheduleRuntime,
       groupIds: [],
       metadata: { groupNames: new Map() },
       groupCustomizations: [],

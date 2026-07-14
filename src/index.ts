@@ -27,6 +27,7 @@ import { createAgentRuntime } from './agent/runtime.js'
 import { createPersistentTaskRegistry } from './agent/background-task-registry.js'
 import { enqueueColdStartBootstrap } from './agent/cold-start-bootstrap.js'
 import { createShutdownCoordinator, type ShutdownCoordinator } from './ops/shutdown.js'
+import { createAgentStartupLifecycle } from './ops/agent-startup-lifecycle.js'
 import {
   PersonaSpoofSelfTestMismatchError,
   runPersonaSpoofSelfTest,
@@ -366,13 +367,15 @@ async function main() {
 
   // 11. 进入主循环
   log.info('BotLoopAgent 进入主循环')
-  let agentLoopPromise: Promise<void> | null = null
+  const agentLifecycle = createAgentStartupLifecycle({
+    startBackgroundServices: () => runtime.startBackgroundServices(),
+    startAgent: () => runtime.agent.start(),
+    stopAgent: () => runtime.agent.stop(),
+  })
   shutdownCoordinator = createShutdownCoordinator({
     disconnectIngress: () => napcat.disconnect(),
-    stopAgent: () => runtime.agent.stop(),
-    awaitAgent: async () => {
-      await agentLoopPromise
-    },
+    stopAgent: agentLifecycle.stopAgent,
+    awaitAgent: agentLifecycle.awaitAgent,
     drainIngress: () => napcatLifecycle.drain(),
     stopJobs: async () => {
       jobQueue.stop()
@@ -387,9 +390,7 @@ async function main() {
       log.error(error, 'shutdown_phase_failed')
     },
   })
-  await runtime.startBackgroundServices()
-  agentLoopPromise = runtime.agent.start()
-  await agentLoopPromise
+  await agentLifecycle.start()
 }
 
 function removePidFile(): void {

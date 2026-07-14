@@ -27,7 +27,9 @@ import type { TaskScheduler } from './task-scheduler.js'
 import type { QqDirectoryFriend, QqDirectoryGroup } from './tools/qq-directory.js'
 import {
   createScheduleRuntime,
+  ScheduleRuntimeError,
   type ScheduleRuntime,
+  type ScheduleRuntimeLogEntry,
 } from './schedule-runtime.js'
 import {
   createInMemoryScheduleStore,
@@ -42,6 +44,25 @@ import type { GoalStore } from './goal-store.js'
 import type { MemoryMaintenanceRuntime } from './memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
 import { hasPendingRestAlternative } from './tools/rest.js'
+import { createLogger } from '../logger.js'
+
+const scheduleLog = createLogger('SCHEDULE')
+
+interface ScheduleOperationsLogger {
+  error(...args: unknown[]): void
+}
+
+export function createScheduleRuntimeLogHandler(
+  logger: ScheduleOperationsLogger = scheduleLog,
+): (entry: ScheduleRuntimeLogEntry) => void {
+  return (entry) => {
+    logger.error({
+      event: entry.event,
+      scheduleId: entry.scheduleId,
+      err: entry.error,
+    }, 'schedule_runtime_failed')
+  }
+}
 
 export interface AgentRuntimeInput {
   context: AgentContext
@@ -74,6 +95,7 @@ export interface AgentRuntimeInput {
   taskRegistry?: BackgroundTaskRegistry
   scheduleRuntime?: ScheduleRuntime
   scheduleStatePath?: string
+  scheduleLogger?: (entry: ScheduleRuntimeLogEntry) => void
   approvalManager?: ApprovalManager
   approvalStatePath?: string
   approvalMode?: ApprovalMode
@@ -99,6 +121,7 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       ? createPersistentScheduleStore(input.scheduleStatePath)
       : createInMemoryScheduleStore(),
     eventQueue: input.eventQueue,
+    logger: input.scheduleLogger ?? createScheduleRuntimeLogHandler(),
   })
   const approvalManager = input.approvalManager ?? createApprovalManager({
     path: input.approvalStatePath ?? 'data/agent-workspace/runtime/approvals.json',
@@ -196,24 +219,50 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
 
   let backgroundStartPromise: Promise<void> | null = null
   let backgroundStopPromise: Promise<void> | null = null
+  let backgroundStopRequested = false
 
   return {
     tools,
     systemPrompt,
     agent,
     startBackgroundServices() {
+      if (backgroundStopRequested) {
+        return Promise.reject(
+          new ScheduleRuntimeError('stopped', 'Background services have stopped'),
+        )
+      }
       if (backgroundStartPromise) return backgroundStartPromise
       const startAttempt = scheduleRuntime.start()
       backgroundStartPromise = startAttempt.catch((error: unknown) => {
         backgroundStartPromise = null
+        if (input.scheduleStatePath) {
+          throw new Error(
+            `Failed to start schedule runtime from ${JSON.stringify(input.scheduleStatePath)}`,
+            { cause: error },
+          )
+        }
         throw error
       })
       return backgroundStartPromise
     },
     stopBackgroundServices() {
+      backgroundStopRequested = true
       backgroundStopPromise ??= (async () => {
-        await scheduleRuntime.stop()
-        await mcpManager?.closeAll()
+        const errors: unknown[] = []
+        try {
+          await scheduleRuntime.stop()
+        } catch (error) {
+          errors.push(error)
+        }
+        try {
+          await mcpManager?.closeAll()
+        } catch (error) {
+          errors.push(error)
+        }
+        if (errors.length === 1) throw errors[0]
+        if (errors.length > 1) {
+          throw new AggregateError(errors, 'Failed to stop Agent background services')
+        }
       })()
       return backgroundStopPromise
     },

@@ -5,6 +5,7 @@ import type { MessageSender } from '../../messaging/message-sender.js'
 import { createDbTool } from './db.js'
 import { buildBotTools } from './index.js'
 import type { SendTargetPolicy } from '../send-target-policy.js'
+import type { ScheduleRuntime } from '../schedule-runtime.js'
 
 const mockSender: MessageSender = {
   async sendSegments() {
@@ -16,6 +17,14 @@ const targetPolicy: SendTargetPolicy = {
   async authorize() {
     return { allowed: true }
   },
+}
+
+const scheduleRuntime: ScheduleRuntime = {
+  async start() {},
+  async create() { throw new Error('not used') },
+  async list() { return [] },
+  async cancel(id) { return { status: 'already_absent', id } },
+  async stop() {},
 }
 
 describe('db tool', () => {
@@ -67,6 +76,7 @@ describe('db tool', () => {
       targetPolicy,
       selfNumber: 999,
       taskRegistry: createInMemoryTaskRegistry(),
+      scheduleRuntime,
       groupIds: [],
       metadata: { groupNames: new Map() },
       groupCustomizations: [],

@@ -17,14 +17,15 @@ describe('main runtime wiring', () => {
     assert.match(source, /scheduleStatePath:\s*config\.scheduleStatePath/)
   })
 
-  test('starts background services before entering the Agent loop', async () => {
+  test('routes startup and shutdown through the startup lifecycle gate', async () => {
     const source = await readFile(new URL('./index.ts', import.meta.url), 'utf8')
 
-    const backgroundStart = source.indexOf('await runtime.startBackgroundServices()')
-    const agentStart = source.indexOf('agentLoopPromise = runtime.agent.start()')
-    assert.notEqual(backgroundStart, -1)
-    assert.notEqual(agentStart, -1)
-    assert.ok(backgroundStart < agentStart)
+    assert.match(source, /import \{ createAgentStartupLifecycle \} from '\.\/ops\/agent-startup-lifecycle\.js'/)
+    assert.match(source, /const agentLifecycle = createAgentStartupLifecycle\(\{\s*startBackgroundServices: \(\) => runtime\.startBackgroundServices\(\),\s*startAgent: \(\) => runtime\.agent\.start\(\),\s*stopAgent: \(\) => runtime\.agent\.stop\(\),\s*\}\)/)
+    assert.match(source, /stopAgent:\s*agentLifecycle\.stopAgent/)
+    assert.match(source, /awaitAgent:\s*agentLifecycle\.awaitAgent/)
+    assert.match(source, /await agentLifecycle\.start\(\)/)
+    assert.doesNotMatch(source, /agentLoopPromise/)
   })
 
   test('wires ordered graceful shutdown around the running agent', async () => {
@@ -32,7 +33,8 @@ describe('main runtime wiring', () => {
 
     assert.match(source, /createShutdownCoordinator/)
     assert.match(source, /disconnectIngress:\s*\(\) => napcat\.disconnect\(\)/)
-    assert.match(source, /stopAgent:\s*\(\) => runtime\.agent\.stop\(\)/)
+    assert.match(source, /stopAgent:\s*agentLifecycle\.stopAgent/)
+    assert.match(source, /awaitAgent:\s*agentLifecycle\.awaitAgent/)
     assert.match(source, /drainIngress:\s*\(\) => napcatLifecycle\.drain\(\)/)
     assert.match(source, /stopJobs:\s*async \(\) => \{[\s\S]*await taskScheduler\.drain\(\)/)
     assert.match(source, /saveFinal:\s*\(\) => runtime\.agent\.flush\(\)/)

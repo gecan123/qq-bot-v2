@@ -1,65 +1,200 @@
 import { z } from 'zod'
-import type { DurableWakeScheduler } from '../durable-wake-scheduler.js'
-import type { Tool } from '../tool.js'
+import {
+  ScheduleRuntimeError,
+  type ScheduleRuntime,
+} from '../schedule-runtime.js'
+import type { ScheduleSpec } from '../schedule-model.js'
+import type { ScheduleJob } from '../schedule-store.js'
+import type { Tool, ToolExecutionResult } from '../tool.js'
 import { formatBeijingIso } from '../../utils/beijing-time.js'
+
+const atAbsoluteSchema = z.object({
+  kind: z.literal('at'),
+  at: z.string().trim().min(1).max(100)
+    .describe('带时区的未来时间字符串；与 afterSeconds 二选一。'),
+}).strict()
+
+const atRelativeSchema = z.object({
+  kind: z.literal('at'),
+  afterSeconds: z.number().int().min(30).max(3 * 24 * 60 * 60)
+    .describe('从现在起多久后唤醒，范围 30..259200 秒；与 at 二选一。'),
+}).strict()
+
+const everySchema = z.object({
+  kind: z.literal('every'),
+  everySeconds: z.number().int().min(5 * 60)
+    .describe('固定周期秒数，至少 300 秒。'),
+  anchorAt: z.string().trim().min(1).max(100).optional()
+    .describe('可选的带时区锚点；省略时以创建时间为锚点。'),
+}).strict()
+
+const cronSchema = z.object({
+  kind: z.literal('cron'),
+  expression: z.string().trim().min(1).max(200)
+    .describe('cron 表达式。相邻触发必须至少间隔 5 分钟。'),
+  timezone: z.string().trim().min(1).max(100).optional()
+    .describe('可选 IANA 时区；默认 Asia/Shanghai。'),
+}).strict()
+
+const scheduleSchema = z.union([
+  atAbsoluteSchema,
+  atRelativeSchema,
+  everySchema,
+  cronSchema,
+])
 
 const argsSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('create'),
-    delaySeconds: z.number().int().min(30).max(7 * 24 * 60 * 60)
-      .describe('从现在起多久后唤醒，30 秒到 7 天。'),
-    reason: z.string().trim().min(1).max(300)
-      .describe('届时醒来要处理的具体事情。'),
-  }),
-  z.object({ action: z.literal('list') }),
-  z.object({ action: z.literal('cancel'), scheduleId: z.string().min(1) }),
+    name: z.string().trim().min(1).max(100)
+      .describe('活跃调度的唯一名称；同名同定义会返回 existing。'),
+    intention: z.string().trim().min(1).max(1_000)
+      .describe('到期后要结合最新 Goal、消息和环境重新判断的注意事项，不是未来命令。'),
+    schedule: scheduleSchema,
+    maxRuns: z.number().int().positive().optional()
+      .describe('可选最大触发次数；at 通常为 1。'),
+  }).strict(),
+  z.object({ action: z.literal('list') }).strict(),
+  z.object({
+    action: z.literal('cancel'),
+    id: z.string().trim().min(1).max(200),
+  }).strict(),
 ])
 
 type Args = z.infer<typeof argsSchema>
 
-export function createScheduleTool(scheduler: DurableWakeScheduler): Tool<Args> {
+export function createScheduleTool(runtime: ScheduleRuntime): Tool<Args> {
   return {
     name: 'schedule',
     description: [
-      '管理可跨重启恢复的定时唤醒。',
-      'create 在 30 秒到 7 天后注入 scheduled_wake 事件；list 查看未触发项；cancel 取消。',
-      '短暂休息仍用 pause；需要明确的未来时间点再用本工具。',
+      '管理最长 3 天、可跨重启恢复的短期注意力唤醒，支持 at、every 和 cron；最多 20 个活跃调度。',
+      '到期只注入 scheduled_wake，让你结合最新 Goal、消息和环境重新判断；不会保存或直接执行未来工具调用。',
+      'cron 默认时区为 Asia/Shanghai，周期至少 5 分钟。',
+      '短休息使用 pause；只有需要未来重新获得注意力时才创建 schedule。',
     ].join(' '),
     schema: argsSchema,
     async execute(args) {
-      if (args.action === 'create') {
-        const wake = scheduler.schedule(args)
+      try {
+        if (args.action === 'create') {
+          const result = await runtime.create({
+            name: args.name,
+            intention: args.intention,
+            schedule: args.schedule,
+            ...(args.maxRuns === undefined ? {} : { maxRuns: args.maxRuns }),
+          })
+          return {
+            content: JSON.stringify({
+              ok: true,
+              status: result.status,
+              schedule: publicSchedule(result.schedule),
+            }),
+            outcome: { ok: true, code: result.status },
+          }
+        }
+
+        if (args.action === 'list') {
+          const schedules = await runtime.list()
+          return {
+            content: JSON.stringify({
+              ok: true,
+              schedules: schedules.map(publicSchedule),
+            }),
+            outcome: { ok: true, code: 'listed' },
+          }
+        }
+
+        const result = await runtime.cancel(args.id)
         return {
           content: JSON.stringify({
             ok: true,
-            scheduleId: wake.id,
-            dueAt: formatBeijingIso(wake.dueAt),
-            reason: wake.reason,
+            status: result.status,
+            id: result.id,
           }),
-          outcome: { ok: true, code: 'scheduled' },
+          outcome: { ok: true, code: result.status },
         }
-      }
-      if (args.action === 'list') {
-        return {
-          content: JSON.stringify({
-            ok: true,
-            schedules: scheduler.list().map((wake) => ({
-              scheduleId: wake.id,
-              dueAt: formatBeijingIso(wake.dueAt),
-              reason: wake.reason,
-            })),
-          }),
-        }
-      }
-      const cancelled = scheduler.cancel(args.scheduleId)
-      return {
-        content: JSON.stringify({
-          ok: cancelled,
-          scheduleId: args.scheduleId,
-          status: cancelled ? 'cancelled' : 'not_found_or_not_running',
-        }),
-        outcome: { ok: cancelled, code: cancelled ? 'cancelled' : 'not_found' },
+      } catch (error) {
+        if (!(error instanceof ScheduleRuntimeError)) throw error
+        return runtimeErrorResult(error)
       }
     },
+  }
+}
+
+function publicSchedule(job: ScheduleJob) {
+  return {
+    id: job.id,
+    name: job.name,
+    intention: job.intention,
+    schedule: publicScheduleSpec(job.schedule),
+    createdAt: beijingTimestamp(job.createdAt),
+    expiresAt: beijingTimestamp(job.expiresAt),
+    nextRunAt: beijingTimestamp(job.nextRunAt),
+    ...(job.lastRunAt === undefined ? {} : { lastRunAt: beijingTimestamp(job.lastRunAt) }),
+    runCount: job.runCount,
+    ...(job.maxRuns === undefined ? {} : { maxRuns: job.maxRuns }),
+  }
+}
+
+function publicScheduleSpec(schedule: ScheduleSpec): ScheduleSpec {
+  if (schedule.kind === 'at') {
+    return { kind: 'at', at: beijingTimestamp(schedule.at) }
+  }
+  if (schedule.kind === 'every') {
+    return {
+      kind: 'every',
+      everySeconds: schedule.everySeconds,
+      anchorAt: beijingTimestamp(schedule.anchorAt),
+    }
+  }
+  return {
+    kind: 'cron',
+    expression: schedule.expression,
+    timezone: schedule.timezone,
+  }
+}
+
+function beijingTimestamp(timestamp: string): string {
+  return formatBeijingIso(new Date(timestamp))
+}
+
+function runtimeErrorResult(error: ScheduleRuntimeError): ToolExecutionResult {
+  const message = runtimeErrorMessage(error.code)
+  return {
+    content: JSON.stringify({
+      ok: false,
+      status: error.code,
+      error: message,
+      ...(error.code === 'name_conflict' && error.scheduleId
+        ? { scheduleId: error.scheduleId }
+        : {}),
+    }),
+    outcome: { ok: false, code: error.code },
+  }
+}
+
+function runtimeErrorMessage(code: ScheduleRuntimeError['code']): string {
+  switch (code) {
+    case 'name_conflict':
+      return '同名活跃调度已存在；请先用 schedule cancel 取消返回的 scheduleId，再创建新定义。'
+    case 'active_limit_reached':
+      return '活跃调度已达到 20 个上限；请先 list 并 cancel 不再需要的调度。'
+    case 'invalid_input':
+      return '调度参数无效；请根据当前 schema 修正后重试。'
+    case 'invalid_schedule':
+      return '调度时间或表达式无效；请修正 schedule 后重试。'
+    case 'recurrence_too_frequent':
+      return '周期触发间隔必须至少 5 分钟；请降低触发频率。'
+    case 'outside_schedule_window':
+      return '调度在最长 3 天有效期内没有可触发时间；请调整时间。'
+    case 'persistence_failed':
+      return '调度状态暂时无法持久化，操作未确认成功；请稍后重试。'
+    case 'timer_failed':
+      return '调度定时器暂时不可用，操作未确认成功；请稍后重试。'
+    case 'not_started':
+      return '调度运行时尚未启动；请稍后重试。'
+    case 'already_started':
+      return '调度运行时正在启动；请稍后重试。'
+    case 'stopped':
+      return '调度运行时已停止；当前不能管理调度。'
   }
 }

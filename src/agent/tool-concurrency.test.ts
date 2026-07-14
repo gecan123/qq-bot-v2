@@ -17,6 +17,8 @@ describe('tool concurrency policy', () => {
     assert.equal(isParallelSafeToolCall(call('notebook', { action: 'write' })), false)
     assert.equal(isParallelSafeToolCall(call('schedule', { action: 'list' })), true)
     assert.equal(isParallelSafeToolCall(call('schedule', { action: 'create' })), false)
+    assert.equal(isParallelSafeToolCall(call('schedule', { action: 'cancel' })), false)
+    assert.equal(isParallelSafeToolCall(call('schedule')), false)
     assert.equal(isParallelSafeToolCall(call('goal', { action: 'get' })), true)
     assert.equal(isParallelSafeToolCall(call('goal', { action: 'complete' })), false)
     assert.equal(isParallelSafeToolCall(call('goal', { action: 'report_blocker' })), false)

@@ -11,7 +11,7 @@
 3. `src/bot/**` 接收 NapCat 事件，并通过 `src/database/messages.ts` 写入入站事实；ready 后的消息被投递为 `BotEvent`。
 4. `src/agent/mailbox.ts` 把所有 QQ 消息按来源聚合为不含正文的确定性通知，并计算批次级 `priority=high|normal`；非 QQ 运行时事件仍走稳定 direct 渲染。
 5. `src/agent/runtime.ts` 把已恢复的 context、tools、system prompt 和 `BotLoopAgent` 装配成运行时。
-6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责事件披露、mailbox cursors、Goal revision、context snapshot 原子保存、有界 life journal hook、compaction，以及 pause/autonomy 循环控制。轮次边界按 `priority=high` QQ 通知、`scheduled_wake`、active Goal continuation、普通环境事件的顺序披露；compaction 后会重新注入 Goal continuation 并立即保存 snapshot。
+6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责事件披露、mailbox cursors、Goal revision、context snapshot 原子保存、有界 life journal hook、compaction，以及 pause/autonomy 循环控制。轮次边界按 `priority=high` QQ 通知、`scheduled_wake`、active Goal continuation、普通环境事件的顺序披露；provider-confirmed `send_message` 命中有 pending 通知的同 target mailbox 时，Runtime 在 tool result 闭合后 append `mailbox_handled` 并先保存 snapshot，再做 Goal bookkeeping；compaction 后会重新注入 Goal continuation 并立即保存 snapshot。
 7. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct：把 system prompt、从 durable `messages` 确定性构造的 working-context projection 和可见 tools 发给 LLM，append assistant tool calls；仅连续且显式只读的 tool calls 可以并行，副作用和未知调用都是 barrier，tool results 严格按原 tool-call 顺序 append。只有 `ToolExecutionResult.content` 进入 ledger；工具的 `outcome` / `effects` 返回 Runtime Host，由 `src/agent/effect-interpreter.ts` 统一解释。
 
 Agent runtime 的非关键后台工作统一走共享 bounded task scheduler：`maintenance=1`、`network=3`、`media-description=2`、`delegate=2`。同一 `resourceKey` 串行，相同 `dedupeKey` 共享任务。它们是 Node async worker，不是 OS 线程；ingress 媒体描述另走独立 `jobQueue`，Browser sidecar 也是独立进程并使用自己的单 worker housekeeping scheduler。
@@ -23,6 +23,7 @@ Goal 不创建第二个主 Agent。主前台仍只有一个串行 `BotLoopAgent`
 ## 自主循环
 
 - `send_message` 成功只是完成一个动作，不再强制 BotLoop 等待外部事件；下一轮由 Agent 自己决定继续做事或休息。
+- 成功外发到有 pending 通知的 mailbox 后，durable ledger 会追加 `{"event":"mailbox_handled","mailbox":"qq_private:222222","throughRowId":203}`。自主轮次不得再把不大于该 cursor 的行当成新请求回应；它仍可基于新动机主动延续话题，后续更大 cursor 的新消息也不会被关闭。
 - `pause action=rest` 是短休息安全阀，时长 30–600 秒。首次请求使用 `confirmed=false`；Life Journal idle picker 优先从最近 durable context 找到具体锚点，再以 Agenda、近期 Journal 或愿望为后备。完整候选作为结构化 `idleThought` 随 `alternative_available` tool result 写入 ledger，不产生 pause effect，也不在 replay 时重算；它是可接受或放过的自主联想，不是任务。只有 picker 成功返回无念头时首次请求才直接休息；超时、provider 错误或不完整结果返回 `alternative_check_unavailable`，不产生 pause effect。模型看过候选后仍想休息，才以 `confirmed=true` 再次调用。醒后计划只保留一个 `primaryDirection` 和一个不同的 `alternativeDirection`；等待消息、机械盯行情和泛化维护不是方向，未来时点检查应使用 `schedule`。真正计时结束后自动继续；私聊、`@bot`、后台任务完成和停止信号可提前打断，Runtime 会在注意事件后用不复制具体方向的固定 reminder 提醒处理完再回看最近 `resumePlan`。
 - runtime 只对未主动休息的连续轮次设置短暂冷却，不设置每日 token 预算或跨日限流。冷却状态不进入 `AgentContext`，不参与 replay。
 - `curiosity_tick` 只保留为人工调试入口，不是生产自主循环的驱动器。
@@ -32,10 +33,13 @@ Goal 不创建第二个主 Agent。主前台仍只有一个串行 `BotLoopAgent`
 
 - `messages` 是入站事实账本，不是 LLM ledger。
 - `bot_agent_snapshot.context_snapshot` 持久化 `AgentContext` 形态：`messages` 是 LLM 可见 ledger，`activeToolCapabilities` 是不进入 `messages` 的 deferred-tool 运行控制状态。
+- `message_sent` effect 只供当前 Runtime Host 解释，不进入 ledger。只有来自 `send_message` 的 provider-confirmed `sent` 且同 target 存在 pending mailbox 时，Runtime 才 append `mailbox_handled`；marker 不从 `messages` 表、side table 或运维日志重建。
+- compaction 从被压缩的 durable `inbox_update` / `mailbox_handled` 归并 cursor，并在摘要后受控重写单个 `mailbox_attention_state`。旧 state 不交给 summarizer，summarizer 输出中的同名文本也不能改变机器状态；这份 state 只为 replay 确定性服务，不代表新的外部命令。候选 `[summary, controlled state, tail]` 通过完整性检查后一次替换，并随 compaction snapshot 保存。
 - `mailbox_cursors`、`mailbox_continuity`、`goal_revision` 和 legacy recovery boundary `last_wake_at` 是 row-level 运行控制状态，与 `context_snapshot` 原子保存。
 - 长期 side-data 分为 `memory`、Notebook、Life Journal 和 Agenda，全部按需披露且不参与 replay；完整分层、写入路由和维护流程见 `docs/MEMORY_ARCHITECTURE.md`。
 - `bot_agent_goal` 是单一持久 Goal 状态，不是第二份 LLM 历史。`origin=owner|self`、动机、完成标准、预算、token/time/round 使用量、blocker 和完成证据在这里持久化；状态变化通过 revision 事件进入 ledger。blocker 连续性使用 Goal 自己的持久 round，而不是进程重启会归零的 BotLoop round。self Goal 默认 1,000,000 tokens、单个上限 10,000,000；60 秒冷却和每滚动 24 小时 64 个仅作为失控保险丝。
 - `logs/*.ndjson` 是运维日志，不能成为 replay 输入。
+- mailbox handled marker 是 durable replay 与防重复回应边界，不是外部发送的 exactly-once 协议：QQ provider 已确认发送后、snapshot 保存前若保存失败或进程崩溃，外部发送和本地 ledger 无法原子提交。
 - `data/agent-workspace/` 是 bot 生产的 workspace 数据，不是项目源码。
 - 当前范围主要是 bot/backend。不要假设一定存在 admin WebUI。
 - 如果以后重新出现 `apps/admin-web/**`，且任务明确涉及它，先读它自己的局部指令，并把修改限制在对应范围。
@@ -50,6 +54,7 @@ Goal 不创建第二个主 Agent。主前台仍只有一个串行 `BotLoopAgent`
 ## 主要模块
 
 - `src/agent/bot-loop-agent.ts`：Runtime Host，负责披露、持久化、compaction、life journal hook 和 pause/autonomy 控制。
+- `src/agent/mailbox-handled.ts`：归并 durable mailbox 注意 cursor，渲染 `mailbox_handled` 和受控 compaction state。
 - `src/agent/runtime.ts`：Agent runtime 装配边界，负责创建 target policy、task registry、deferred tool executor、system prompt 和 `BotLoopAgent`。
 - `src/agent/react-kernel.ts`：单轮 ReAct transcript append 边界，负责 LLM call、assistant tool calls 和 tool result content。
 - `src/agent/**`：永续上下文、LLM client routing、工具、replay、compaction 和 token stats。

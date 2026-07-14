@@ -26,6 +26,8 @@
 - LLM、工具结果、运行日志、运维输出和 bot 自管 Markdown 中的时间统一使用北京时间。机器可读字段采用 `YYYY-MM-DDTHH:mm:ss.SSS+08:00`；数据库仍使用 `timestamptz` 保存绝对时刻，不把展示时区写进数据库语义。
 - 大块外部内容必须通过有边界的 tool result、摘要或受控文件路径进入。raw pages、feeds、长文件和可变日志不能直接注入主 context。
 - `ToolExecutionResult.content` 是唯一进入 `AgentContext` 的工具结果。`outcome` 和 `effects` 只服务当前运行时的日志、分支和 EffectInterpreter，不得 append、持久化或用于 replay 重建。
+- `message_sent` effect 同样不进入 ledger。只有 `send_message` 的 provider-confirmed `sent` 才能产生该 effect；Runtime Host 校验其来源和目标，并且只在目标 mailbox 的 durable ledger 中存在 `disclosed > handled` 时 append 稳定的 `mailbox_handled`。失败、拒绝、伪造 effect、无 pending mailbox 或发往其他 target 都不能关闭当前批次。
+- `mailbox_handled` 必须在本轮 assistant tool call / tool result 已完整闭合后追加，并和它们一起先保存 snapshot，再进入 Goal round accounting 和 Goal revision bookkeeping。这样 Goal 持久化失败不会丢掉已经记录的处理边界；但 provider 外发和 snapshot save 之间没有分布式事务，save 失败或进程在其间崩溃时不承诺外部 exactly-once。
 - 自然休息结束后的 `rest_resume` reminder 是有界的 LLM ledger 事件：只能在带 `status=elapsed` 的可信 `pause` / `rest` effect 对应 tool result 完整闭合后生成；固定模板不得复制模型生成方向、外部内容或 tool output，只引用本轮最近 tool result 的 `resumePlan`。Runtime 必须先判定本轮资格，再完成 compaction 和 Goal continuation，最后以 user role append 并立即保存。重复提醒的动作门槛要求已有非 `pause` / `rest` / `help` 工具的成功 result，十分钟间隔必须从 durable ledger 确定性计算，不能依赖进程内计数器或 side table；compaction 必须把最后提醒时间和是否已发生成功动作写入历史摘要的固定 `rest_resume_state` 后缀，并在下一次摘要前剥离该运行状态，避免交给 summarizer 改写。若休息被本轮高优注意事件打断，Runtime 在披露事件后追加一次固定的 `rest_interrupted_attention` reminder：它不复制方向，只要求先处理注意事件，再回看最近 pause result 的 `resumePlan`；资格与去重同样只从 durable ledger 判断，并随 pre-round snapshot 一起保存。
 - 第一次 `pause action=rest` 可以把有界的最近 durable context 作为首选锚点，并以 Agenda、近期 Life Journal 与愿望为后备，生成一次 `idle_thought`。若有完整念头和替代方向，tool result 以 `status=alternative_available`、`paused=false` 和结构化 `idleThought` 进入 ledger，且不产生 pause effect；念头是模型可接受或放过的自主联想，不是 runtime 指令。只有模型看到该结果后再次以 `confirmed=true` 调用才真正计时。Picker 成功返回无念头时可以直接休息；超时、provider 错误或不完整结果必须返回 `alternative_check_unavailable` 且不产生 pause effect，不能把运行失败当成“没有念头”放行。Side data 和选择模型只参与首次执行，replay 必须复用已持久化的 tool result，不能重新读取或重新生成念头。
 - 可供下一轮机器判断的 tool result 使用稳定 JSON；截断必须发生在字段或数组条目层，并用显式标记披露，不能直接切断序列化后的 JSON。
@@ -41,6 +43,8 @@
 - 启动 replay 必须等待首次 NapCat backfill 的所有允许来源尝试完成，并显式接收本次运行允许的 group IDs。单来源失败可以记录后继续；live/backfill/replay 的重叠只通过 message row ID 去重，不能靠时序猜测。
 - 无持久 snapshot 且启动事件队列为空时，runtime 必须注入一次字节稳定的 `bootstrap` 事件来建立首个 `AgentContext` 和 snapshot；启动期间已有实时事件时不得额外注入。单纯存在一条空 snapshot 记录不能替代该启动事实。
 - mailbox 是 `messages` 按 scene 划分的逻辑视图，不复制消息正文。Agent 用有界 `inbox` tool result 按需读取。
+- mailbox 注意状态只从 durable ledger 中的 `inbox_update`、`mailbox_handled` 和已受控生成的 `mailbox_attention_state` 确定性归并。`mailbox_handled` 表示同 mailbox 到该 rowId 已由成功外发处理：后续自主轮次不能再把 `<= handledThroughRowId` 的行当成新请求回应，但它不禁止基于新动机主动延续，也不关闭 cursor 之后的新消息。
+- compaction 压缩 prefix 时先由 runtime 捕获该 prefix 的 mailbox 注意状态，再把旧 `mailbox_attention_state` 从 summarizer history 中剥离，最后在摘要之后写入一个 key 排序、cursor 取最大值的稳定 `mailbox_attention_state`。summarizer 不能伪造或改写这份状态；`[summary, controlled state, tail]` 通过完整性校验后一次替换内存 ledger，并由 Runtime Host 立即保存 snapshot。该事件只保存 replay 确定性所需的机器状态，不是新的外部消息、命令或 side-table 输入。
 - 普通 mailbox 通知会按持久化新鲜度元数据条件性增加 `readArgs.contextBefore`：距同来源上一条消息至少 2 小时时轻量补 1 条；跨过 compaction、累计相隔至少 30 个 LLM round、或 input context 增长至少 128000 tokens 时补 8 条。补偿只读同一 mailbox 且在 `inbox` 结果中单列为 `previousMessages`，不扫描或猜测消息文本。
 - 跨源知识共享是预期行为。跨源发言仍然依赖显式 `send_message` target，以及 ingress/tool 安全规则。
 - curiosity tick、background task 完成等运行时事件如果进入 LLM，必须走稳定的结构化事件渲染或 tool-result 路径。事件载荷只包含受控字段，不拼接面向人的临时提示语。
@@ -58,6 +62,7 @@
 - `src/agent/effect-interpreter.ts`：解释工具声明的 runtime effects，并集中执行合法性判断。
 - `src/agent/rest-resume-reminder.ts`：渲染固定的醒后与注意事件打断 reminder，并从 durable ledger 判断资格、动作门槛与提醒间隔。
 - `src/agent/compaction.ts`：基于摘要的历史 compaction。
+- `src/agent/mailbox-handled.ts`：从 durable ledger 归并 mailbox 披露/处理 cursor，并渲染稳定 marker 与 compaction state。
 - `src/agent/render-event.ts`：确定性的 event-to-user-message 渲染。
 - `src/agent/mailbox.ts`：来源 key、direct/ambient 分类、通知渲染和 cursor 推进。
 - `src/agent/replay-missed.ts`：启动恢复关机期间漏掉的入站事实。

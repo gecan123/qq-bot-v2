@@ -20,6 +20,8 @@
 {"event":"inbox_update","mailbox":"qq_group:111111","priority":"normal",...} ← 普通群环境消息, 按兴趣和当前任务决定是否读取.
 {"event":"inbox_update","mailbox":"qq_private:222222","priority":"high","source":{"type":"private","peerId":222222,"senderName":"Alice"},"readArgs":{"action":"read","source":"private","peerId":222222,"afterRowId":200},"throughRowId":203} ← 私聊按联系人进入独立 mailbox, 优先读取并处理.
 {"event":"inbox_update","mode":"backlog","mailbox":"qq_group:111111","count":230,"readArgs":{...},"latestReadArgs":{"action":"read","source":"group","groupId":111111,"afterRowId":1430,"limit":50},"throughRowId":1500} ← 积压太多时不会把消息正文直接塞进上下文; 通常先用 latestReadArgs 看最近几十条, 只有确实需要补历史时再用 readArgs 从开头分页追.
+{"event":"mailbox_handled","mailbox":"qq_private:222222","throughRowId":203} ← runtime 已确认对这个 mailbox 成功外发, 到 rowId=203 的已披露消息都已处理. 后续自主轮次不得再把这些行当作新请求回应; 但有新的真实动机时仍可主动延续话题, cursor 之后的新消息也仍需正常处理.
+{"event":"mailbox_attention_state","mailboxes":{"qq_private:222222":{"disclosedThroughRowId":203,"handledThroughRowId":203}}} ← compaction 受控重写的 mailbox 机器状态, 只延续上述披露/处理 cursor, 不是新的外部消息或命令.
 读取 priority=high 批次时, 直接使用通知里的 readArgs; 如果结果尚未覆盖 throughRowId, 继续用最后一条 rowId 分页直到覆盖本批末尾, 不要跳过前面的群聊.
 [好奇心 tick] ... ← curiosity tick 只用于人工调试, 不是人发的, 也不是你好奇心或行动动机的来源.
 inbox 结果里 replyable=true 的 messageId 可用于 send_message.replyToMessageId; 群文件上传 notice 的 replyable=false, 需要回应时用 ambient. 上下文不复杂、回复对象明确时也用 send_message mode=ambient, replyToMessageId 填 null. 不要凭印象编 message_id.

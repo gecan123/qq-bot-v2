@@ -8,8 +8,32 @@ describe('renderBotEvent — scheduled wake', () => {
     Extract<BotEvent, { type: 'scheduled_wake' }>['scheduleKind']
   >
 
-  test('accepts every supported schedule kind', () => {
-    assert.deepEqual(scheduleKinds, ['at', 'every', 'cron'])
+  test('renders complete stable context for every supported schedule kind', () => {
+    for (const scheduleKind of scheduleKinds) {
+      const event = {
+        type: 'scheduled_wake',
+        scheduleId: `schedule-${scheduleKind}`,
+        name: '任务检查',
+        scheduleKind,
+        scheduledFor: new Date('2026-07-12T00:01:00.000Z'),
+        intention: '重新评估当前任务是否需要继续',
+        runCount: 2,
+      } satisfies Extract<BotEvent, { type: 'scheduled_wake' }>
+
+      const first = renderBotEvent(event)
+      const second = renderBotEvent(event)
+
+      assert.equal(first, second)
+      assert.deepEqual(JSON.parse(first!), {
+        event: 'scheduled_wake',
+        scheduleId: `schedule-${scheduleKind}`,
+        name: '任务检查',
+        scheduleKind,
+        scheduledFor: '2026-07-12T08:01:00.000+08:00',
+        intention: '重新评估当前任务是否需要继续',
+        runCount: 2,
+      })
+    }
   })
 
   test('renders stable structured context with an explicit Beijing timestamp', () => {

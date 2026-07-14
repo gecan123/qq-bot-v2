@@ -10,6 +10,10 @@ export const SCHEDULE_LIMITS = {
 
 export const DEFAULT_SCHEDULE_TIMEZONE = 'Asia/Shanghai'
 
+const MAX_DATE_TIMESTAMP_MS = 8.64e15
+const ISO_TIMESTAMP_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/i
+
 export type ScheduleSpec =
   | { kind: 'at'; at: string }
   | { kind: 'every'; everySeconds: number; anchorAt: string }
@@ -78,16 +82,16 @@ export function normalizeScheduleSpec(input: unknown, now: Date): ScheduleSpec {
   }
 
   if (parsed.data.kind === 'at') {
-    const at =
-      'at' in parsed.data
-        ? parseDate(parsed.data.at, 'at')
-        : new Date(now.getTime() + parsed.data.afterSeconds * 1_000)
+    const at = 'at' in parsed.data
+      ? parseDate(parsed.data.at, 'at')
+      : resolveRelativeAt(parsed.data.afterSeconds, now)
     assertWithinAtWindow(at, now)
     return { kind: 'at', at: at.toISOString() }
   }
 
   if (parsed.data.kind === 'every') {
-    if (parsed.data.everySeconds * 1_000 < SCHEDULE_LIMITS.minRecurringIntervalMs) {
+    const intervalMs = recurringIntervalMs(parsed.data.everySeconds)
+    if (intervalMs < SCHEDULE_LIMITS.minRecurringIntervalMs) {
       throw new ScheduleModelError(
         'recurrence_too_frequent',
         'Recurring schedules must be at least five minutes apart',
@@ -124,17 +128,25 @@ export function computeNextRunAt(schedule: ScheduleSpec, after: Date): Date | nu
     const anchorAt = parseDate(schedule.anchorAt, 'anchorAt')
     if (anchorAt.getTime() > after.getTime()) return anchorAt
 
-    const intervalMs = schedule.everySeconds * 1_000
+    const intervalMs = recurringIntervalMs(schedule.everySeconds)
     const elapsedMs = after.getTime() - anchorAt.getTime()
-    return new Date(anchorAt.getTime() + (Math.floor(elapsedMs / intervalMs) + 1) * intervalMs)
+    const nextTimestampMs =
+      anchorAt.getTime() + (Math.floor(elapsedMs / intervalMs) + 1) * intervalMs
+    return dateFromTimestamp(nextTimestampMs, 'next run')
   }
 
-  return withCron(schedule, (cron) => cron.nextRun(after))
+  const next = withCron(schedule, (cron) => cron.nextRun(after))
+  if (next) assertValidDate(next, 'next run')
+  return next
 }
 
 function assertWithinAtWindow(at: Date, now: Date): void {
   const delayMs = at.getTime() - now.getTime()
-  if (delayMs < SCHEDULE_LIMITS.minAtDelayMs || delayMs > SCHEDULE_LIMITS.maxLifetimeMs) {
+  if (
+    !Number.isFinite(delayMs) ||
+    delayMs < SCHEDULE_LIMITS.minAtDelayMs ||
+    delayMs > SCHEDULE_LIMITS.maxLifetimeMs
+  ) {
     throw new ScheduleModelError(
       'outside_schedule_window',
       'One-shot schedules must run between 30 seconds and three days from now',
@@ -201,17 +213,86 @@ function withCron<T>(
 }
 
 function parseDate(value: string, field: string): Date {
-  if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) {
+  const match = ISO_TIMESTAMP_PATTERN.exec(value)
+  if (!match) {
     throw new ScheduleModelError(
       'invalid_schedule',
-      `${field} must include an explicit timezone offset`,
+      `${field} must be an ISO timestamp with an explicit timezone offset`,
     )
   }
+
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText] = match
+  const year = Number(yearText)
+  const month = Number(monthText)
+  const day = Number(dayText)
+  const hour = Number(hourText)
+  const minute = Number(minuteText)
+  const second = Number(secondText)
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > daysInMonth(year, month) ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59
+  ) {
+    throw new ScheduleModelError('invalid_schedule', `${field} is not a real calendar time`)
+  }
+
   const date = new Date(value)
   if (!Number.isFinite(date.getTime())) {
     throw new ScheduleModelError('invalid_schedule', `${field} must be a valid timestamp`)
   }
   return date
+}
+
+function resolveRelativeAt(afterSeconds: number, now: Date): Date {
+  const delayMs = afterSeconds * 1_000
+  if (
+    !Number.isFinite(delayMs) ||
+    delayMs < SCHEDULE_LIMITS.minAtDelayMs ||
+    delayMs > SCHEDULE_LIMITS.maxLifetimeMs
+  ) {
+    throw new ScheduleModelError(
+      'outside_schedule_window',
+      'One-shot schedules must run between 30 seconds and three days from now',
+    )
+  }
+  return dateFromTimestamp(now.getTime() + delayMs, 'at')
+}
+
+function recurringIntervalMs(everySeconds: number): number {
+  const intervalMs = everySeconds * 1_000
+  if (
+    !Number.isFinite(intervalMs) ||
+    intervalMs <= 0 ||
+    intervalMs > MAX_DATE_TIMESTAMP_MS
+  ) {
+    throw new ScheduleModelError(
+      'invalid_schedule',
+      'Recurring interval exceeds the representable Date range',
+    )
+  }
+  return intervalMs
+}
+
+function dateFromTimestamp(timestampMs: number, field: string): Date {
+  if (!Number.isFinite(timestampMs) || Math.abs(timestampMs) > MAX_DATE_TIMESTAMP_MS) {
+    throw new ScheduleModelError('invalid_schedule', `${field} exceeds the representable Date range`)
+  }
+  const date = new Date(timestampMs)
+  assertValidDate(date, field)
+  return date
+}
+
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) return isLeapYear(year) ? 29 : 28
+  return [4, 6, 9, 11].includes(month) ? 30 : 31
+}
+
+function isLeapYear(year: number): boolean {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
 }
 
 function assertValidDate(date: Date, field: string): void {

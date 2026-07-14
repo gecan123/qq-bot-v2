@@ -88,6 +88,28 @@ describe('normalizeScheduleSpec', () => {
     )
   })
 
+  test('rejects timestamps whose ISO calendar date does not exist', () => {
+    assertScheduleError(
+      () => normalizeScheduleSpec({ kind: 'at', at: '2026-02-30T00:01:00Z' }, NOW),
+      'invalid_schedule',
+    )
+    assertScheduleError(
+      () =>
+        normalizeScheduleSpec(
+          { kind: 'every', everySeconds: 300, anchorAt: '2026-02-30T00:01:00Z' },
+          NOW,
+        ),
+      'invalid_schedule',
+    )
+  })
+
+  test('rejects relative delays that exceed the representable Date range with a stable code', () => {
+    assertScheduleError(
+      () => normalizeScheduleSpec({ kind: 'at', afterSeconds: Number.MAX_VALUE }, NOW),
+      'outside_schedule_window',
+    )
+  })
+
   test('normalizes every with a creation-time anchor by default', () => {
     assert.deepEqual(normalizeScheduleSpec({ kind: 'every', everySeconds: 300 }, NOW), {
       kind: 'every',
@@ -114,6 +136,13 @@ describe('normalizeScheduleSpec', () => {
     assertScheduleError(
       () => normalizeScheduleSpec({ kind: 'every', everySeconds: 299 }, NOW),
       'recurrence_too_frequent',
+    )
+  })
+
+  test('rejects recurring intervals that cannot produce a representable Date', () => {
+    assertScheduleError(
+      () => normalizeScheduleSpec({ kind: 'every', everySeconds: Number.MAX_VALUE }, NOW),
+      'invalid_schedule',
     )
   })
 
@@ -171,6 +200,33 @@ describe('computeNextRunAt', () => {
     assert.equal(
       computeNextRunAt(schedule, new Date('2026-07-13T23:59:00.000Z'))?.toISOString(),
       schedule.anchorAt,
+    )
+  })
+
+  test('never returns an invalid Date when every calculation overflows', () => {
+    assertScheduleError(
+      () =>
+        computeNextRunAt(
+          {
+            kind: 'every',
+            everySeconds: Number.MAX_VALUE,
+            anchorAt: NOW.toISOString(),
+          },
+          NOW,
+        ),
+      'invalid_schedule',
+    )
+    assertScheduleError(
+      () =>
+        computeNextRunAt(
+          {
+            kind: 'every',
+            everySeconds: 300,
+            anchorAt: NOW.toISOString(),
+          },
+          new Date(8.64e15),
+        ),
+      'invalid_schedule',
     )
   })
 

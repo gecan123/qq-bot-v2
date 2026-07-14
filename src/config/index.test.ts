@@ -345,6 +345,21 @@ describe('config', () => {
     )
   })
 
+  test('schedule state path defaults to bot workspace and accepts only non-blank overrides', () => {
+    assert.equal(
+      parseConfig(createBaseEnv()).scheduleStatePath,
+      'data/agent-workspace/runtime/schedules.json',
+    )
+    assert.equal(
+      parseConfig(createBaseEnv({ BOT_SCHEDULE_STATE_PATH: '  tmp/schedules.json  ' })).scheduleStatePath,
+      'tmp/schedules.json',
+    )
+    assert.equal(
+      parseConfig(createBaseEnv({ BOT_SCHEDULE_STATE_PATH: '   ' })).scheduleStatePath,
+      'data/agent-workspace/runtime/schedules.json',
+    )
+  })
+
   test('approval state path defaults to bot workspace and accepts override', () => {
     assert.equal(
       parseConfig(createBaseEnv()).approvalStatePath,

@@ -430,6 +430,10 @@ export function parseConfig(env: EnvSource) {
     && env.BOT_BACKGROUND_TASK_STATE_PATH.trim().length > 0
     ? env.BOT_BACKGROUND_TASK_STATE_PATH.trim()
     : 'data/agent-workspace/runtime/background-tasks.json'
+  const scheduleStatePath = env.BOT_SCHEDULE_STATE_PATH
+    && env.BOT_SCHEDULE_STATE_PATH.trim().length > 0
+    ? env.BOT_SCHEDULE_STATE_PATH.trim()
+    : 'data/agent-workspace/runtime/schedules.json'
   const approvalStatePath = env.BOT_APPROVAL_STATE_PATH && env.BOT_APPROVAL_STATE_PATH.trim().length > 0
     ? env.BOT_APPROVAL_STATE_PATH.trim()
     : 'data/agent-workspace/runtime/approvals.json'
@@ -506,6 +510,7 @@ export function parseConfig(env: EnvSource) {
     toolAuditMode,
     toolAuditDbEnabled,
     backgroundTaskStatePath,
+    scheduleStatePath,
     approvalStatePath,
     approvalMode,
     mcpConfigPath,

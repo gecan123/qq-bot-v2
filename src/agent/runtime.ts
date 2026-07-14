@@ -26,9 +26,13 @@ import { findApprovalEvidenceMessage } from '../database/messages.js'
 import type { TaskScheduler } from './task-scheduler.js'
 import type { QqDirectoryFriend, QqDirectoryGroup } from './tools/qq-directory.js'
 import {
-  createDurableWakeScheduler,
-  type DurableWakeScheduler,
-} from './durable-wake-scheduler.js'
+  createScheduleRuntime,
+  type ScheduleRuntime,
+} from './schedule-runtime.js'
+import {
+  createInMemoryScheduleStore,
+  createPersistentScheduleStore,
+} from './schedule-store.js'
 import { createApprovalManager, type ApprovalManager } from './approval-manager.js'
 import {
   createMcpManagerFromConfigFile,
@@ -68,7 +72,8 @@ export interface AgentRuntimeInput {
   workspaceDir?: string
   workspaceStateCoordinator?: WorkspaceStateCoordinator
   taskRegistry?: BackgroundTaskRegistry
-  wakeScheduler?: DurableWakeScheduler
+  scheduleRuntime?: ScheduleRuntime
+  scheduleStatePath?: string
   approvalManager?: ApprovalManager
   approvalStatePath?: string
   approvalMode?: ApprovalMode
@@ -83,13 +88,16 @@ export interface AgentRuntime {
   tools: ToolExecutor
   systemPrompt: string
   agent: BotLoopAgent
+  startBackgroundServices(): Promise<void>
   stopBackgroundServices(): Promise<void>
 }
 
 export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
   const taskRegistry = input.taskRegistry ?? createInMemoryTaskRegistry()
-  const wakeScheduler = input.wakeScheduler ?? createDurableWakeScheduler({
-    registry: taskRegistry,
+  const scheduleRuntime = input.scheduleRuntime ?? createScheduleRuntime({
+    store: input.scheduleStatePath
+      ? createPersistentScheduleStore(input.scheduleStatePath)
+      : createInMemoryScheduleStore(),
     eventQueue: input.eventQueue,
   })
   const approvalManager = input.approvalManager ?? createApprovalManager({
@@ -119,7 +127,7 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       targetPolicy,
       taskRegistry,
       taskScheduler: input.taskScheduler,
-      wakeScheduler,
+      scheduleRuntime,
       llm: input.llm,
       approvalManager,
       mcpManager,
@@ -186,13 +194,28 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     lifeJournal: input.lifeJournal,
   })
 
+  let backgroundStartPromise: Promise<void> | null = null
+  let backgroundStopPromise: Promise<void> | null = null
+
   return {
     tools,
     systemPrompt,
     agent,
-    async stopBackgroundServices() {
-      wakeScheduler.stop()
-      await mcpManager?.closeAll()
+    startBackgroundServices() {
+      if (backgroundStartPromise) return backgroundStartPromise
+      const startAttempt = scheduleRuntime.start()
+      backgroundStartPromise = startAttempt.catch((error: unknown) => {
+        backgroundStartPromise = null
+        throw error
+      })
+      return backgroundStartPromise
+    },
+    stopBackgroundServices() {
+      backgroundStopPromise ??= (async () => {
+        await scheduleRuntime.stop()
+        await mcpManager?.closeAll()
+      })()
+      return backgroundStopPromise
     },
   }
 }

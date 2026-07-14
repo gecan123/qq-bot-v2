@@ -347,6 +347,7 @@ async function main() {
     memoryMaintenance,
     workspaceStateCoordinator,
     taskRegistry: persistentTasks.registry,
+    scheduleStatePath: config.scheduleStatePath,
     approvalStatePath: config.approvalStatePath,
     approvalMode: config.approvalMode,
     mcpConfigPath: config.mcpConfigPath,
@@ -386,6 +387,7 @@ async function main() {
       log.error(error, 'shutdown_phase_failed')
     },
   })
+  await runtime.startBackgroundServices()
   agentLoopPromise = runtime.agent.start()
   await agentLoopPromise
 }

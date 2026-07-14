@@ -32,7 +32,7 @@ import type { SendTargetPolicy } from '../send-target-policy.js'
 import { createAgentTaskScheduler, type TaskScheduler } from '../task-scheduler.js'
 import { createQqDirectoryTool, type QqDirectoryDeps } from './qq-directory.js'
 import { createScheduleTool } from './schedule.js'
-import type { DurableWakeScheduler } from '../durable-wake-scheduler.js'
+import type { ScheduleRuntime } from '../schedule-runtime.js'
 import type { LlmClient } from '../llm-client.js'
 import { createDelegateTool } from './delegate.js'
 import type { ApprovalManager } from '../approval-manager.js'
@@ -56,7 +56,7 @@ export interface BotToolDeps {
   qqDirectory: QqDirectoryDeps
   optionalTools?: BotOptionalTools
   taskScheduler?: TaskScheduler
-  wakeScheduler?: DurableWakeScheduler
+  scheduleRuntime?: ScheduleRuntime
   llm?: LlmClient
   approvalManager?: ApprovalManager
   mcpManager?: McpManager
@@ -179,7 +179,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     }),
     qqDirectory,
     backgroundTask,
-    ...(deps.wakeScheduler ? [createScheduleTool(deps.wakeScheduler)] : []),
+    ...(deps.scheduleRuntime ? [createScheduleTool(deps.scheduleRuntime)] : []),
     ...(delegate ? [delegate] : []),
     ...(deps.approvalManager ? [createApprovalTool(deps.approvalManager)] : []),
     ...(deps.goalStore ? [createGoalTool(deps.goalStore)] : []),

@@ -83,14 +83,14 @@ describe('background task registry', () => {
     const first = createPersistentTaskRegistry({
       path,
       now: () => new Date('2026-07-12T00:00:00.000Z'),
-      idFactory: () => 'scheduled',
+      idFactory: () => 'durable-running',
     }).registry
     first.register({
-      toolName: 'schedule',
-      description: 'wake later',
+      toolName: 'future_durable_task',
+      description: 'resume durable work',
       recovery: {
-        kind: 'scheduled_wake.v1',
-        payload: { dueAt: '2026-07-12T00:10:00.000Z', reason: 'review task' },
+        kind: 'future_job.v1',
+        payload: { jobId: 'future-1' },
       },
     })
 
@@ -101,7 +101,7 @@ describe('background task registry', () => {
 
     assert.equal(restarted.interruptedAtStartup.length, 0)
     assert.equal(restarted.recoverableAtStartup.length, 1)
-    assert.equal(restarted.registry.get('scheduled')?.status, 'running')
+    assert.equal(restarted.registry.get('durable-running')?.status, 'running')
   })
 
   test('terminal transitions are idempotent and cannot overwrite the first result', () => {

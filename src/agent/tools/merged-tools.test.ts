@@ -18,6 +18,7 @@ import { createFetchImageTool, runCurlImage } from './fetch-image.js'
 import { OutboundCache, setOutboundCacheForTest } from '../../media/outbound-cache.js'
 import type { SendTargetPolicy } from '../send-target-policy.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
+import type { ScheduleRuntime } from '../schedule-runtime.js'
 
 function makeCtx(): ToolContext {
   return { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 1 }
@@ -59,6 +60,40 @@ const TINY_PNG = Buffer.from(
 )
 
 describe('merged main-agent tools', () => {
+  test('registers schedule only when a schedule runtime is supplied', () => {
+    const base = {
+      sender: mockSender,
+      targetPolicy,
+      selfNumber: 999,
+      taskRegistry: createInMemoryTaskRegistry(),
+      groupIds: [],
+      metadata: { groupNames: new Map() },
+      groupCustomizations: [],
+      qqDirectory: {
+        groupIds: [],
+        async loadFriends() { return [] },
+        async loadGroups() { return [] },
+      },
+      optionalTools: disabledOptionalTools,
+    }
+    const scheduleRuntime: ScheduleRuntime = {
+      async start() {},
+      async create() { throw new Error('not used') },
+      async list() { return [] },
+      async cancel(id) { return { status: 'already_absent', id } },
+      async stop() {},
+    }
+
+    assert.equal(
+      buildBotToolManifest(base).alwaysOnTools.some((tool) => tool.name === 'schedule'),
+      false,
+    )
+    assert.equal(
+      buildBotToolManifest({ ...base, scheduleRuntime }).alwaysOnTools.some((tool) => tool.name === 'schedule'),
+      true,
+    )
+  })
+
   test('buildBotTools exposes default entries and defers heavy typed tools', () => {
     const names = buildBotTools({
       sender: mockSender,

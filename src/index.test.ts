@@ -14,6 +14,17 @@ describe('main runtime wiring', () => {
     assert.match(source, /const lifeJournal = createLifeJournalRuntime\(\{\s*llm: lifeJournalLlm,\s*idlePickTimeoutMs: config\.lifeJournal\.idlePickTimeoutMs,\s*taskScheduler,\s*workspaceStateCoordinator,\s*\}\)/)
     assert.match(source, /const memoryMaintenance = createMemoryMaintenanceRuntime\(\{\s*llm: lifeJournalLlm,\s*taskScheduler,\s*workspaceStateCoordinator,\s*\}\)/)
     assert.match(source, /createAgentRuntime\(\{[\s\S]*\blifeJournal,\s*taskScheduler,\s*memoryMaintenance,\s*workspaceStateCoordinator,\s*[\s\S]*\}\)/)
+    assert.match(source, /scheduleStatePath:\s*config\.scheduleStatePath/)
+  })
+
+  test('starts background services before entering the Agent loop', async () => {
+    const source = await readFile(new URL('./index.ts', import.meta.url), 'utf8')
+
+    const backgroundStart = source.indexOf('await runtime.startBackgroundServices()')
+    const agentStart = source.indexOf('agentLoopPromise = runtime.agent.start()')
+    assert.notEqual(backgroundStart, -1)
+    assert.notEqual(agentStart, -1)
+    assert.ok(backgroundStart < agentStart)
   })
 
   test('wires ordered graceful shutdown around the running agent', async () => {

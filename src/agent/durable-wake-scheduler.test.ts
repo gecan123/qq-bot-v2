@@ -58,8 +58,11 @@ describe('durable wake scheduler', () => {
     assert.deepEqual(events.dequeue(), {
       type: 'scheduled_wake',
       scheduleId: 'wake-1',
-      dueAt: new Date('2026-07-12T00:01:00.000Z'),
-      reason: '检查后台研究',
+      name: '检查后台研究',
+      scheduleKind: 'at',
+      scheduledFor: new Date('2026-07-12T00:01:00.000Z'),
+      intention: '检查后台研究',
+      runCount: 1,
     })
   })
 

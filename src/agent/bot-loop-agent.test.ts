@@ -10,6 +10,7 @@ import type { BotSnapshotRepo } from './snapshot-repo.js'
 import type { PersistedAgentSnapshot } from './agent-context.types.js'
 import type { MailboxCursors } from './mailbox.js'
 import { renderBotEvent } from './render-event.js'
+import { createInMemoryGoalStore } from './goal-store.js'
 import {
   createEmptyMailboxContinuityState,
   MAILBOX_LIGHT_COMPENSATION_AFTER_MS,
@@ -42,6 +43,18 @@ function validSummary(content = '保留关键历史。'): string {
     '',
     '## 情绪和氛围',
   ].join('\n')
+}
+
+function makeScheduledWake(): Extract<BotEvent, { type: 'scheduled_wake' }> {
+  return {
+    type: 'scheduled_wake',
+    scheduleId: 'schedule-1',
+    name: '回看线索',
+    scheduleKind: 'at',
+    scheduledFor: new Date('2026-07-13T09:00:00.000Z'),
+    intention: '重新判断这条线索是否值得继续',
+    runCount: 1,
+  }
 }
 
 function makeMockTools(impl: Record<string, () => Promise<ToolExecutionResult>> = {}): ToolExecutor {
@@ -1320,6 +1333,128 @@ describe('BotLoopAgent.runOnceForTest', () => {
       true,
       'the pre-round snapshot must durably include the reminder',
     )
+  })
+
+  test('treats scheduled wake as attention when it interrupts rest', async () => {
+    const ctx = createAgentContext()
+    ctx.appendAssistantTurn({
+      content: '',
+      toolCalls: [{ id: 'pause-1', name: 'pause', args: { action: 'rest' } }],
+    })
+    ctx.appendToolResult({
+      toolCallId: 'pause-1',
+      content: JSON.stringify({
+        ok: true,
+        status: 'interrupted',
+        resumePlan: {
+          primaryDirection: '继续读原来的资料',
+          alternativeDirection: '整理上一次的线索',
+        },
+      }),
+    })
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue(makeScheduledWake())
+    const { repo } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
+    assert.equal(userMessages.some((message) => message.content.includes('"event":"scheduled_wake"')), true)
+    assert.equal(
+      userMessages.some((message) => message.content.includes('"event":"rest_interrupted_attention"')),
+      true,
+    )
+  })
+
+  test('discloses high-priority QQ notification before an earlier scheduled wake', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue(makeScheduledWake())
+    eventQueue.enqueue({
+      type: 'napcat_private_message',
+      messageRowId: 88,
+      peerId: 9001,
+      messageId: 20_088,
+      senderId: 9001,
+      senderNickname: 'Alice',
+      mentionedSelf: true,
+      sentAt: new Date('2026-07-13T09:00:01.000Z'),
+      renderedText: '在吗',
+    })
+    const { repo } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
+    assert.equal(JSON.parse(userMessages[0]!.content).priority, 'high')
+    assert.equal(JSON.parse(userMessages[1]!.content).event, 'scheduled_wake')
+  })
+
+  test('discloses scheduled wake before the active goal continuation', async () => {
+    const goalStore = createInMemoryGoalStore()
+    const created = await goalStore.createSelf({
+      objective: '完成当前研究',
+      motivation: '把已有主线做完',
+      completionCriteria: ['得到可验证的结论'],
+    })
+    assert.ok(created.goal)
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue(makeScheduledWake())
+    const { repo } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      goalStore,
+      initialGoalRevision: created.goal.revision,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
+    assert.equal(JSON.parse(userMessages[0]!.content).event, 'scheduled_wake')
+    assert.equal(JSON.parse(userMessages[1]!.content).event, 'goal_continuation')
   })
 
   test('delegates tool execution failures to the React kernel durable error result path', async () => {

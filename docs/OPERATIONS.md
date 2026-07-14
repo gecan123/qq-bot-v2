@@ -54,6 +54,18 @@ pnpm toollogf
 - `pnpm tick` 会读取 `.bot.pid`，向进程发送 `SIGUSR1`，并注入一个仅供人工调试的 curiosity tick。正常自主循环由 Agent 的 `pause` 计时和 BotLoop 连续运行驱动，不依赖这个命令。
 - `pnpm agent:daily-metrics -- --date YYYY-MM-DD` 或 Agent 的 `workspace_bash metrics today` 会同时报告 rest 请求、idle anchor 来源、替代方向转向、确认休息、时长与理由分类，以及转向或休息后下一步是实际做事、再次休息还是证据不足。
 
+## 短期调度
+
+`ScheduleRuntime` 默认把版本化状态原子写入 `data/agent-workspace/runtime/schedules.json`，可以改为其他受控路径：
+
+```bash
+BOT_SCHEDULE_STATE_PATH=data/agent-workspace/runtime/schedules.json
+```
+
+启动 Agent 主循环前，runtime 会完整读取和校验 store，清理已过期 job，合并停机期间遗漏的周期触发，持久化恢复结果后再重新挂 timer。未知 version、损坏 JSON 或非法 job 会让启动显式失败；顶层错误会包含 `BOT_SCHEDULE_STATE_PATH` 对应的实际路径，而不是把损坏 store 当成空列表继续运行。Timer 挂载、重试或 event enqueue 异常由 `SCHEDULE` logger 以 `schedule_runtime_failed` 记录 `scheduleId` 和原始错误。
+
+Graceful shutdown 在 jobs 阶段调用 `stopBackgroundServices()`：它会等待正在串行的 schedule mutation 并清除全部 timer handle，但不删除尚未完成的持久 job；下次启动继续按 store 恢复。不要在 bot 运行时手工编辑该文件。
+
 ## Owner Goal
 
 配置的 owner 与 bot 的 QQ 私聊是最高优先级 Goal 控制面。Agent 也可以通过 `goal action=create_self` 创建自己的持久 Goal，但不能改写或放弃 owner Goal；新的 owner Goal 会直接抢占当前 self Goal。owner 命令必须从消息开头精确使用 `/goal`：
@@ -125,7 +137,8 @@ invoke tool=mcp args={"action":"call","tool":"mcp__example__search","arguments":
 
 ## 数据保留
 
-- 后台任务状态默认原子写入 `data/agent-workspace/runtime/background-tasks.json`，可用 `BOT_BACKGROUND_TASK_STATE_PATH` 改路径。重启时普通 running 会变成 `interrupted` 并通知 Agent；`schedule` 任务带稳定 recovery descriptor，会按原 deadline 重新挂载。
+- 后台任务状态默认原子写入 `data/agent-workspace/runtime/background-tasks.json`，可用 `BOT_BACKGROUND_TASK_STATE_PATH` 改路径。重启时普通 running 会变成 `interrupted` 并通知 Agent。
+- 短期调度独立保存在 `data/agent-workspace/runtime/schedules.json`，可用 `BOT_SCHEDULE_STATE_PATH` 改路径；它不再是 background task recovery descriptor。
 - 图片任务的 metadata/预览可随 registry 保留，但 `ephemeralRef` 属于进程内 OutboundCache；重启后结果会明确标记失效，需重新生成，不能假装原图仍可发送。
 - MCP schema 快照默认位于 `data/agent-workspace/runtime/mcp-schemas/*.json`；每次成功 discovery 原子覆盖当前版本。这里不保存远端调用结果或认证密钥。
 

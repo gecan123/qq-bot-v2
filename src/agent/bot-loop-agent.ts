@@ -24,6 +24,7 @@ import {
   planMailboxDisclosures,
   renderMailboxBacklogNotification,
   renderMailboxNotification,
+  type MailboxDisclosure,
   type MailboxCursors,
 } from './mailbox.js'
 import type { AgentGoal, GoalStore } from './goal-store.js'
@@ -154,7 +155,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
 
     const plan = planMailboxDisclosures(events, mailboxCursors)
     mailboxCursors = plan.cursors
-    for (const disclosure of plan.disclosures) {
+    const highPriorityDisclosures = plan.disclosures.filter(isHighPriorityMailboxDisclosure)
+    const otherDisclosures = plan.disclosures.filter((disclosure) => !isHighPriorityMailboxDisclosure(disclosure))
+    for (const disclosure of [...highPriorityDisclosures, ...otherDisclosures]) {
       if (disclosure.kind === 'backlog') {
         deps.context.appendUserMessage(renderMailboxBacklogNotification(disclosure.event))
         recordMailboxDisclosure(
@@ -344,10 +347,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     const syncedBeforeEvents = await syncGoalState()
     const goalAtRoundStart = syncedBeforeEvents.goal
     let goalMessagesAppended = syncedBeforeEvents.appended
-    if (goalAtRoundStart?.status === 'active') {
-      appendGoalContinuation(goalAtRoundStart, 'automatic_continuation')
-      goalMessagesAppended = true
-    }
     const debounceMs = deps.eventDebounceMs ?? DEFAULT_EVENT_DEBOUNCE_MS
     if (deps.eventQueue.size() > 0 && debounceMs > 0 && !stopRequested) {
       await new Promise<void>((resolve) => {
@@ -363,6 +362,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       })
     }
     const { consumed, disclosed, hadAttention } = await drainEvents()
+    if (goalAtRoundStart?.status === 'active') {
+      appendGoalContinuation(goalAtRoundStart, 'automatic_continuation')
+      goalMessagesAppended = true
+    }
     const appendedInterruptedFocusReminder = hadAttention
       && disclosed > 0
       && shouldAppendInterruptedRestAttentionReminder(deps.context.getSnapshot().messages)
@@ -498,6 +501,14 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       await step()
     },
   }
+}
+
+function isHighPriorityMailboxDisclosure(disclosure: MailboxDisclosure): boolean {
+  if (disclosure.kind === 'backlog') return disclosure.event.priority === 'high'
+  if (disclosure.kind !== 'mailbox') return false
+  return disclosure.events.some((event) => (
+    event.type === 'napcat_private_message' || event.mentionedSelf
+  ))
 }
 
 function sleep(ms: number): Promise<void> {

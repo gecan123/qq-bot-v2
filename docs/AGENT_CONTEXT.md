@@ -44,6 +44,7 @@
 - 普通 mailbox 通知会按持久化新鲜度元数据条件性增加 `readArgs.contextBefore`：距同来源上一条消息至少 2 小时时轻量补 1 条；跨过 compaction、累计相隔至少 30 个 LLM round、或 input context 增长至少 128000 tokens 时补 8 条。补偿只读同一 mailbox 且在 `inbox` 结果中单列为 `previousMessages`，不扫描或猜测消息文本。
 - 跨源知识共享是预期行为。跨源发言仍然依赖显式 `send_message` target，以及 ingress/tool 安全规则。
 - curiosity tick、background task 完成等运行时事件如果进入 LLM，必须走稳定的结构化事件渲染或 tool-result 路径。事件载荷只包含受控字段，不拼接面向人的临时提示语。
+- 短期调度到期以稳定 `scheduled_wake` 事件进入 ledger：`scheduleId`、`name`、`scheduleKind`、`scheduledFor`、`intention`、`runCount`。它只是注意信号，不是未来命令；Agent 必须结合最新 Goal、消息和环境重新判断 intention。`schedules.json` 是可变 side store，只用于恢复调度运行状态和 timer，不得从它重建、回填或改写已有 `AgentContext` 历史。
 - 表情包池在 compaction 后以有界 JSON user message 注入，图片引用统一使用 `media:N`。该消息一旦 append 就属于 snapshot ledger；replay 不得重新查询表情池生成它。
 
 ## 代码地图

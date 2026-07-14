@@ -17,7 +17,7 @@
 | s11 Error Recovery | 核心已满足 | 有工具错误隔离、provider-neutral stop reason、transport/429/5xx/529/SSE overload 有界退避、`retry-after`、prompt-too-long 强制 compaction、`max_tokens` 预算升级与有界 continuation、显式同 provider fallback、round backoff、replay barrier 和幂等 shutdown。仍可补 OpenAI 错误的更细分类与恢复指标汇总。 |
 | s12 Task System | 部分满足 | 单一持久 Goal 支持 `origin=owner|self`、状态流转、revision、token/time/round 使用量、完成证据和三轮 blocker 门槛，并能跨 replay/compaction/restart 续跑；Agent 可自主建/弃 self Goal，owner Goal 可抢占。仍没有多任务图、依赖、认领或 blockedBy DAG。进程内 `todo` 继续只管当前执行计划。 |
 | s13 Background Tasks | 已满足核心 | 图片生成、交易研究等异步任务会注册 task，完成后进 event queue，并用 `background_task get` 取有界结果；registry 已原子持久化、终态幂等，重启时不可恢复闭包明确标成 `interrupted`。共享执行 scheduler 仍是进程内 lane；后续只有显式 job kind/payload 才允许自动重跑。 |
-| s14 Cron Scheduler | 已满足核心 | `pause` 负责短休息；`schedule create/list/cancel` 提供 30 秒到 7 天的 durable wake，deadline/reason 可跨重启重新挂载并产生稳定事件。尚未做 cron 表达式和周期任务，当前产品也无明确需要。 |
+| s14 Cron Scheduler | 已满足核心 | `pause` 负责短休息；`schedule create/list/cancel` 支持 30 秒至 3 天内的一次性 `at`、固定间隔 `every` 和带 IANA 时区的 `cron`。独立 store 可跨重启恢复 timer，漏触发会合并且到期只产生稳定 `scheduled_wake` 注意事件；不包含长期 cron 平台、命令执行或 run history。 |
 | s15 Agent Teams | 未满足 | 没有持久 teammate、inbox、多个 LLM loop。 |
 | s16 Team Protocols | 未满足 | 没有多 Agent request/response FSM、plan approval 或 teammate shutdown handshake；当前只有单进程 runtime 的 graceful shutdown coordinator。 |
 | s17 Autonomous Agents | 产品目标上已较强满足 | 主 Agent 在发送后继续行动，自主决定 `pause`，可被注意事件唤醒，并有连续轮次短暂冷却、Life Journal/Agenda 连续性；不设置每日 token 预算或跨日限流。active Goal 会在每轮和 compaction 后重注入为默认主线，高优先事件可临时打断后返回；仍没有面向多 Agent 的任务板认领。 |
@@ -29,7 +29,7 @@
 
 1. LLM 恢复状态机：完成。覆盖 transient retry、`retry-after`、context overflow 强制 compact、`max_tokens` 预算升级/有界 continuation、同 provider fallback，并保证截断 tool call 不执行。
 2. 分层上下文：完成第一阶段。durable ledger 不变，working projection 只降级较旧图片字节并输出 hygiene 指标。
-3. 持久后台任务与调度：完成核心。后台状态原子持久化；不可恢复任务重启后明确 `interrupted`；`schedule create/list/cancel` 可跨重启恢复 deadline。
+3. 持久后台任务与调度：完成核心。后台状态原子持久化；不可恢复任务重启后明确 `interrupted`；独立 `schedule create/list/cancel` 支持 `at|every|cron`、3 天生命周期、重启恢复和合并漏触发。
 4. 受限委派：完成核心。clean context、只读 allowlist、轮数/时间预算、后台 lane、结构化 `delegate_return`，内部 transcript 不污染主 ledger。
 5. 记忆召回与整理：完成第一阶段。entry 级 lexical recall 可解释且带 provenance，review 只提出重复、近重复和可能冲突，不自动破坏性修改。
 6. 可调 owner approval：完成核心。默认 thin 只保护公开发布和未知 MCP 写调用；真实私聊证据、精确参数 hash、TTL、持久状态和一次性消费保持不变，必要时可切 strict/off。

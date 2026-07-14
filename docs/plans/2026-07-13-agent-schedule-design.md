@@ -10,7 +10,7 @@
 
 当前能力有三个相邻但不同的边界：
 
-- `pause` 负责眼下 30–120 秒左右的自然休息。
+- `pause` 负责眼下 30–600 秒的自然休息。
 - `todo` 负责当前进程内已经决定执行的多步清单。
 - `goal` 负责跨轮、跨重启的长期主线和完成标准。
 
@@ -46,7 +46,7 @@ type ScheduleArgs =
       maxRuns?: number
     }
   | { action: 'list' }
-  | { action: 'cancel'; scheduleId: string }
+  | { action: 'cancel'; id: string }
 ```
 
 - `name` 是稳定、简短、面向 Agent 的任务名，同一 active store 内唯一。
@@ -58,7 +58,9 @@ type ScheduleArgs =
 
 第一版修改任务时使用 cancel 后重建。`list` 返回所有 active jobs 的紧凑摘要；`cancel` 对不存在的 ID 幂等返回 `already_absent`。
 
-同名创建提供轻量幂等性：定义完全一致时返回已有任务；同名但定义不同则返回冲突和已有 `scheduleId`，要求先 cancel。这可以避免工具重试产生重复计划，而不再增加 idempotency key。
+同名创建提供轻量幂等性：定义完全一致时返回已有任务；同名但定义不同则返回冲突和已有 `id`，并附带 `{ action: 'cancel', id }`，要求先 cancel。这可以避免工具重试产生重复计划，而不再增加 idempotency key。
+
+`create` 和 `list` 的公开 schedule 摘要统一使用 `id`，只暴露 `id`、`name`、`intention`、`schedule`、`nextRunAt`、`expiresAt`、`runCount` 和可选 `maxRuns`；`cancel` 结果也返回 `id`。事件载荷的 `scheduleId` 仍是稳定事件字段，不与工具公开参数名混用。
 
 ## 硬边界
 
@@ -78,7 +80,7 @@ Schedule definition 不再伪装成 `BackgroundTask`。它保存到独立的 `da
 ```ts
 interface ScheduleStoreFile {
   version: 1
-  jobs: ScheduleJob[]
+  schedules: ScheduleJob[]
 }
 
 interface ScheduleJob {
@@ -98,7 +100,7 @@ interface ScheduleJob {
 }
 ```
 
-时间字段使用带 `+08:00` 的北京时间 ISO 字符串。文件使用临时文件加 rename 原子替换；写入失败时恢复修改前的内存快照。Store 只保留 active jobs：
+持久时间字段使用带明确 offset 的 ISO 字符串，当前归一化为 UTC `Z`；工具公开结果和 `scheduled_wake` 渲染为北京时间 `+08:00`。文件使用临时文件加 rename 原子替换；写入失败时不发布新的内存快照。Store 只保留 active jobs：
 
 - `at` 触发后删除。
 - 周期任务达到 `maxRuns` 后删除。
@@ -127,14 +129,15 @@ BotEvent scheduled_wake
 2. 检查三天边界、最短间隔、数量和同名任务。
 3. 原子写入 store。
 4. 挂载 timer。
-5. 返回 `scheduleId`、`nextRunAt` 和 `expiresAt`。
+5. 返回包含 `id`、`nextRunAt` 和 `expiresAt` 的公开 schedule 摘要。
 
 触发流程：
 
 1. 固定本次 `scheduledFor` 和递增后的 `runCount`。
-2. 向现有 event queue 注入稳定 `scheduled_wake`。
-3. `at` 删除；`every` / `cron` 从原 schedule 计算下一次时间。
-4. 达到 `maxRuns` 或三天边界时删除，否则持久化并挂下一次 timer。
+2. `at` 准备删除；`every` / `cron` 从原 schedule 计算下一次时间；达到 `maxRuns` 或三天边界时也准备删除。
+3. 先原子持久化新的 active job 集合；失败时不发布本次注意事件，短暂退避后重试。
+4. 更新内存快照，必要时挂下一次 timer。
+5. 最后向现有 event queue 注入稳定 `scheduled_wake`。
 
 事件形态：
 

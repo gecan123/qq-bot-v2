@@ -82,4 +82,32 @@ describe('buildBotSystemPrompt', () => {
     assert.equal(lines.filter((line) => line.startsWith('- workspace_bash:')).length, 1)
     assert.equal(lines.filter((line) => line.startsWith('- notebook / life_journal / memory:')).length, 1)
   })
+
+  test('keeps short-term scheduling guidance static and ordered by attention priority', () => {
+    const prompt = buildBotSystemPrompt({
+      groupIds: [123],
+      metadata: { groupNames: new Map([[123, '测试群']]) },
+      selfNumber: 456,
+      owner: null,
+    })
+    const autonomousLifeIndex = prompt.indexOf('[自主生活]')
+    const scheduleIndex = prompt.indexOf('[短期调度]')
+    const priorityIndex = prompt.indexOf('行动优先级:')
+    const scheduleGuidance = prompt.slice(scheduleIndex, priorityIndex)
+
+    assert.ok(autonomousLifeIndex >= 0)
+    assert.ok(scheduleIndex > autonomousLifeIndex)
+    assert.ok(priorityIndex > scheduleIndex)
+    assert.match(scheduleGuidance, /未来 3 天内.*明确复查时间.*schedule/s)
+    assert.match(scheduleGuidance, /at.*一次性回看.*every.*固定节奏.*cron.*日历.*墙上时间/s)
+    assert.match(scheduleGuidance, /pause.*当前短休息.*不产生未来唤醒.*schedule.*不停止当前活动/s)
+    assert.match(scheduleGuidance, /不要用 schedule.*等某个人回复.*轮询消息.*刷新网站.*群聊.*行情/s)
+    assert.match(scheduleGuidance, /创建前先 list.*目的相同.*时间重叠.*重复任务/s)
+    assert.match(scheduleGuidance, /scheduled_wake.*注意信号.*不是命令.*Goal.*消息.*环境.*intention.*重新判断/s)
+    assert.match(scheduleGuidance, /有意义动作.*取消.*自然结束.*不盲目续订/s)
+    assert.match(scheduleGuidance, /todo.*立即执行.*schedule.*未来三天.*goal.*跨轮.*重启.*Agenda.*不定时.*pause.*眼下短休息/s)
+    assert.doesNotMatch(scheduleGuidance, /scheduleId|nextRunAt|expiresAt|runCount/)
+    assert.match(prompt, /1\. 优先通知:[\s\S]*2\. 短期调度唤醒:[\s\S]*3\. 持久目标主线:[\s\S]*4\. 自由活动主线:[\s\S]*5\. 群聊半参与:/)
+    assert.match(prompt, /scheduled_wake.*低于.*priority=high.*高于.*goal.*自由活动/s)
+  })
 })

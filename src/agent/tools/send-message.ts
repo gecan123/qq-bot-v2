@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { Tool } from '../tool.js'
+import type { Tool, ToolExecutionResult } from '../tool.js'
 import type { MessageSender } from '../../messaging/message-sender.js'
 import type { SendMode, SendTarget, SendTargetPolicy } from '../send-target-policy.js'
 import type { ImageHandle } from '../../media/image-handle-schema.js'
@@ -126,6 +126,8 @@ interface SendReceipt {
   image?: ImageResultPayload
 }
 
+type SendToolResult = ToolExecutionResult & { content: string }
+
 export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
   return {
     name: 'send_message',
@@ -200,7 +202,7 @@ async function sendResolved(
   deps: SendMessageDeps,
   args: Args & { text?: string; image?: ImageHandle },
   imageBytes?: Buffer,
-): Promise<{ content: string }> {
+): Promise<SendToolResult> {
   const segments = buildOutboundSegments({
     replyToMessageId: args.mode === 'reply' ? args.replyToMessageId ?? undefined : undefined,
     mentionUserId: args.target.type === 'group' ? args.target.mentionUserId : undefined,
@@ -234,6 +236,7 @@ async function sendResolved(
       result.attempts,
       result.providerMessageId ?? null,
     )),
+    effects: [{ type: 'message_sent', target: toNapcatTarget(args.target) }],
   }
 }
 
@@ -258,7 +261,7 @@ async function diagnoseSendFailure(
 async function sendWithImage(
   deps: SendMessageDeps,
   args: Args & { text?: string; image: ImageHandle },
-): Promise<{ content: string }> {
+): Promise<SendToolResult> {
   const handle = args.image
   let resolved: Awaited<ReturnType<typeof resolveImageHandle>>
   try {
@@ -287,7 +290,8 @@ async function sendWithImage(
   }
 
   try {
-    const sent = JSON.parse((await sendResolved(deps, args, resolved.bytes)).content) as SendReceipt
+    const sendResult = await sendResolved(deps, args, resolved.bytes)
+    const sent = JSON.parse(sendResult.content) as SendReceipt
     if (sent.status !== 'sent') return { content: JSON.stringify(sent) }
 
     const image: ImageResultPayload = {
@@ -321,7 +325,7 @@ async function sendWithImage(
         data: { useCount: { increment: 1 }, lastUsedAt: new Date() },
       }).catch(() => {})
     }
-    return { content: JSON.stringify(sent) }
+    return { content: JSON.stringify(sent), effects: sendResult.effects }
   } finally {
     releaseHandle(handle)
   }

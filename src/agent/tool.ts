@@ -46,11 +46,20 @@ export interface ToolExecutionOutcome {
   error?: string
 }
 
-export type ToolEffect = {
-  type: 'pause'
-  /** elapsed 只在休息自然到时后产生；旧调用方未携带 status 时不得推断为自然醒。 */
-  status?: 'elapsed' | 'interrupted'
-}
+export type MessageSentTarget =
+  | { type: 'group'; groupId: number }
+  | { type: 'private'; userId: number }
+
+export type ToolEffect =
+  | {
+      type: 'pause'
+      /** elapsed 只在休息自然到时后产生；旧调用方未携带 status 时不得推断为自然醒。 */
+      status?: 'elapsed' | 'interrupted'
+    }
+  | {
+      type: 'message_sent'
+      target: MessageSentTarget
+    }
 
 export interface ToolHookContext extends ToolContext {
   tool: Tool

@@ -153,6 +153,7 @@ describe('send_message tool — unified contract', () => {
       providerMessageId: null,
       error: 'not allowed',
     })
+    assert.equal(out.effects, undefined)
     assert.equal(calls.length, 0)
   })
 
@@ -176,6 +177,10 @@ describe('send_message tool — unified contract', () => {
       attempts: 1,
       providerMessageId: 8888,
     })
+    assert.deepEqual(out.effects, [{
+      type: 'message_sent',
+      target: { type: 'group', groupId: 111 },
+    }])
   })
 })
 
@@ -239,6 +244,7 @@ describe('send_message tool — group target', () => {
     assert.equal(result.providerMessageId, null)
     assert.equal(result.reason, 'send_failed')
     assert.match((result.error as string) ?? '', /failed/i)
+    assert.equal(out.effects, undefined)
   })
 
   test('confirms self mute after a failed group send', async () => {
@@ -338,6 +344,10 @@ describe('send_message tool — private target', () => {
     assert.equal(result.status, 'sent')
     assert.equal(calls[0]!.fn, 'sendSegments')
     assert.deepEqual(segmentsCalls[0]!.segments.map((segment) => segment.type), ['text'])
+    assert.deepEqual(out.effects, [{
+      type: 'message_sent',
+      target: { type: 'private', userId: 10001 },
+    }])
   })
 
   test('does not inspect group mute state after a failed private send', async () => {
@@ -352,6 +362,7 @@ describe('send_message tool — private target', () => {
 
     assert.deepEqual(calls, [])
     assert.equal(parseToolResult(out.content).reason, 'send_failed')
+    assert.equal(out.effects, undefined)
   })
 })
 
@@ -509,6 +520,10 @@ describe('send_message tool — schema rejection', () => {
     const result = parseToolResult(out.content)
     assert.equal(result.ok, true)
     assert.equal(result.status, 'sent')
+    assert.deepEqual(out.effects, [{
+      type: 'message_sent',
+      target: { type: 'private', userId: 10001 },
+    }])
     assert.equal(calls[0]!.fn, 'sendSegments')
     const args = calls[0]!.args as { segments: NapcatSegment[] }
     assert.equal(args.segments[0]?.data.text, '在的')
@@ -611,6 +626,10 @@ describe('send_message tool — image via ephemeralRef', () => {
     const result = parseToolResult(out.content)
     assert.equal(result.ok, true)
     assert.equal(result.status, 'sent')
+    assert.deepEqual(out.effects, [{
+      type: 'message_sent',
+      target: { type: 'group', groupId: 111 },
+    }])
 
     const img = result.image as Record<string, unknown>
     assert.equal(img.mediaId, 42)
@@ -689,6 +708,7 @@ describe('send_message tool — image via ephemeralRef', () => {
 
     const result = parseToolResult(out.content)
     assert.equal(result.ok, false)
+    assert.equal(out.effects, undefined)
     assert.equal(upsertCalled, false, 'should not attempt lazy persist on send failure')
     assert.ok(cache.get(HASH), 'ephemeralRef should not be evicted after send failure')
   })
@@ -721,6 +741,7 @@ describe('send_message tool — image via ephemeralRef', () => {
     const result = parseToolResult(out.content)
     assert.equal(result.ok, false)
     assert.match(result.error as string, /resolve failed/)
+    assert.equal(out.effects, undefined)
   })
 
   test('text + image together → segments include both', async () => {
@@ -788,6 +809,7 @@ describe('send_message tool — image via ephemeralRef', () => {
     const result = parseToolResult(out.content)
     assert.equal(result.ok, false)
     assert.equal(result.status, 'rejected')
+    assert.equal(out.effects, undefined)
     assert.equal(calls.length, 0)
     assert.equal(upsertCalled, false)
   })
@@ -911,5 +933,6 @@ describe('send_message tool — image via mediaId', () => {
     const img = result.image as Record<string, unknown>
     assert.equal(img.mediaId, 1)
     assert.match(img.resolveError as string, /Media not found: mediaId=1/)
+    assert.equal(out.effects, undefined)
   })
 })

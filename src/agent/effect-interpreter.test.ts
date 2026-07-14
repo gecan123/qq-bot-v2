@@ -11,6 +11,7 @@ describe('interpretToolEffects', () => {
     }]), {
       didPause: true,
       didCompleteRest: true,
+      sentTargets: [],
     })
   })
 
@@ -22,6 +23,7 @@ describe('interpretToolEffects', () => {
     }]), {
       didPause: true,
       didCompleteRest: false,
+      sentTargets: [],
     })
     assert.deepEqual(interpretToolEffects([{
       toolCallId: 'pause-2',
@@ -30,6 +32,7 @@ describe('interpretToolEffects', () => {
     }]), {
       didPause: true,
       didCompleteRest: false,
+      sentTargets: [],
     })
   })
 
@@ -41,6 +44,76 @@ describe('interpretToolEffects', () => {
     }]), {
       didPause: false,
       didCompleteRest: false,
+      sentTargets: [],
+    })
+  })
+
+  test('accepts valid private and group targets only from send_message', () => {
+    assert.deepEqual(interpretToolEffects([{
+      toolCallId: 'send-1',
+      toolName: 'send_message',
+      effect: { type: 'message_sent', target: { type: 'private', userId: 123 } },
+    }, {
+      toolCallId: 'send-2',
+      toolName: 'send_message',
+      effect: { type: 'message_sent', target: { type: 'group', groupId: 456 } },
+    }]), {
+      didPause: false,
+      didCompleteRest: false,
+      sentTargets: [
+        { type: 'private', userId: 123 },
+        { type: 'group', groupId: 456 },
+      ],
+    })
+  })
+
+  test('deduplicates repeated targets while preserving first-seen order', () => {
+    assert.deepEqual(interpretToolEffects([{
+      toolCallId: 'send-1',
+      toolName: 'send_message',
+      effect: { type: 'message_sent', target: { type: 'group', groupId: 456 } },
+    }, {
+      toolCallId: 'send-2',
+      toolName: 'send_message',
+      effect: { type: 'message_sent', target: { type: 'private', userId: 123 } },
+    }, {
+      toolCallId: 'send-3',
+      toolName: 'send_message',
+      effect: { type: 'message_sent', target: { type: 'group', groupId: 456 } },
+    }]), {
+      didPause: false,
+      didCompleteRest: false,
+      sentTargets: [
+        { type: 'group', groupId: 456 },
+        { type: 'private', userId: 123 },
+      ],
+    })
+  })
+
+  test('rejects message_sent effects forged by unrelated tools', () => {
+    assert.deepEqual(interpretToolEffects([{
+      toolCallId: 'lookup-1',
+      toolName: 'lookup',
+      effect: { type: 'message_sent', target: { type: 'private', userId: 123 } },
+    }]), {
+      didPause: false,
+      didCompleteRest: false,
+      sentTargets: [],
+    })
+  })
+
+  test('rejects malformed targets and non-positive or unsafe ids', () => {
+    const effects = [
+      { toolCallId: 'send-1', toolName: 'send_message', effect: { type: 'message_sent', target: null } },
+      { toolCallId: 'send-2', toolName: 'send_message', effect: { type: 'message_sent', target: { type: 'private', userId: 0 } } },
+      { toolCallId: 'send-3', toolName: 'send_message', effect: { type: 'message_sent', target: { type: 'group', groupId: Number.MAX_SAFE_INTEGER + 1 } } },
+      { toolCallId: 'send-4', toolName: 'send_message', effect: { type: 'message_sent', target: { type: 'channel', channelId: 456 } } },
+    ]
+
+    assert.deepEqual(interpretToolEffects(effects as never), {
+      didPause: false,
+      didCompleteRest: false,
+      sentTargets: [],
     })
   })
 })

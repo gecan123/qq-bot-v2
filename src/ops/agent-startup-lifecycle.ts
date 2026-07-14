@@ -1,22 +1,22 @@
 export interface AgentStartupLifecycle {
   start(): Promise<void>
-  stopAgent(): void
+  stopAgent(): Promise<void>
   awaitAgent(): Promise<void>
 }
 
 export interface AgentStartupLifecycleDeps {
   startBackgroundServices(): Promise<void>
   startAgent(): void | Promise<void>
-  stopAgent(): void
+  stopAgent(): void | Promise<void>
 }
 
 export function createAgentStartupLifecycle(
   deps: AgentStartupLifecycleDeps,
 ): AgentStartupLifecycle {
   let stopRequested = false
-  let stopIssued = false
   let startPromise: Promise<void> | null = null
   let agentPromise: Promise<void> | null = null
+  let stopPromise: Promise<void> | null = null
 
   return {
     start() {
@@ -31,9 +31,13 @@ export function createAgentStartupLifecycle(
 
     stopAgent() {
       stopRequested = true
-      if (stopIssued) return
-      stopIssued = true
-      deps.stopAgent()
+      if (stopPromise) return stopPromise
+      try {
+        stopPromise = Promise.resolve(deps.stopAgent())
+      } catch (error) {
+        stopPromise = Promise.reject(error)
+      }
+      return stopPromise
     },
 
     awaitAgent() {

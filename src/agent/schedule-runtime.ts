@@ -4,6 +4,7 @@ import type { BotEvent } from './event.js'
 import {
   computeNextRunAt,
   normalizeScheduleSpec,
+  ScheduleModelError,
   SCHEDULE_LIMITS,
   type ScheduleSpec,
 } from './schedule-model.js'
@@ -29,17 +30,31 @@ export type ScheduleRuntimeErrorCode =
   | 'already_started'
   | 'stopped'
   | 'invalid_input'
+  | 'invalid_schedule'
+  | 'recurrence_too_frequent'
   | 'name_conflict'
   | 'active_limit_reached'
   | 'outside_schedule_window'
+  | 'persistence_failed'
+  | 'timer_failed'
+
+export interface ScheduleRuntimeErrorOptions extends ErrorOptions {
+  scheduleId?: string
+}
 
 export class ScheduleRuntimeError extends Error {
   readonly code: ScheduleRuntimeErrorCode
+  readonly scheduleId?: string
 
-  constructor(code: ScheduleRuntimeErrorCode, message: string, options?: ErrorOptions) {
+  constructor(
+    code: ScheduleRuntimeErrorCode,
+    message: string,
+    options?: ScheduleRuntimeErrorOptions,
+  ) {
     super(message, options)
     this.name = 'ScheduleRuntimeError'
     this.code = code
+    this.scheduleId = options?.scheduleId
   }
 }
 
@@ -105,11 +120,23 @@ export function createScheduleRuntime(
     return result
   }
 
+  const log = (entry: ScheduleRuntimeLogEntry): void => {
+    try {
+      logger?.(entry)
+    } catch {
+      // Logging must not affect durable schedule state or create unhandled rejections.
+    }
+  }
+
   const clearJobTimer = (id: string): void => {
     const timer = timers.get(id)
     if (!timer) return
     timers.delete(id)
-    clearTimer(timer.handle)
+    try {
+      clearTimer(timer.handle)
+    } catch (error) {
+      log({ event: 'schedule_timer_failed', scheduleId: id, error })
+    }
   }
 
   const armJob = (job: ScheduleJob): void => {
@@ -121,14 +148,6 @@ export function createScheduleRuntime(
       queueTimerMutation(job.id, expectedNextRunAt)
     }, Math.min(delayMs, MAX_TIMER_DELAY_MS))
     timers.set(job.id, { handle, expectedNextRunAt })
-  }
-
-  const log = (entry: ScheduleRuntimeLogEntry): void => {
-    try {
-      logger?.(entry)
-    } catch {
-      // Logging must not affect durable schedule state or create unhandled rejections.
-    }
   }
 
   const publish = (event: Extract<BotEvent, { type: 'scheduled_wake' }>): void => {
@@ -145,6 +164,13 @@ export function createScheduleRuntime(
 
   const replacePublishedJobs = (nextJobs: readonly ScheduleJob[]): void => {
     jobs = new Map(nextJobs.map((job) => [job.id, cloneJob(job)]))
+  }
+
+  const failClosed = (): void => {
+    stopRequested = true
+    state = 'stopped'
+    for (const id of [...timers.keys()]) clearJobTimer(id)
+    jobs = new Map()
   }
 
   const armRetrySegment = (
@@ -169,6 +195,14 @@ export function createScheduleRuntime(
     armRetrySegment(job, expectedNextRunAt, now().getTime() + retryDelayMs)
   }
 
+  const attemptScheduleRetry = (job: ScheduleJob, expectedNextRunAt: string): void => {
+    try {
+      scheduleRetry(job, expectedNextRunAt)
+    } catch (error) {
+      log({ event: 'schedule_timer_failed', scheduleId: job.id, error })
+    }
+  }
+
   const processRetryTimer = async (
     id: string,
     expectedNextRunAt: string,
@@ -191,31 +225,47 @@ export function createScheduleRuntime(
 
     const currentTime = now()
     if (currentTime.getTime() < Date.parse(expectedNextRunAt)) {
-      armJob(job)
+      try {
+        armJob(job)
+      } catch (error) {
+        log({ event: 'schedule_timer_failed', scheduleId: id, error })
+        attemptScheduleRetry(job, expectedNextRunAt)
+      }
       return
     }
 
+    let advancement: JobAdvancement
+    let nextJobs: ScheduleJob[]
     try {
-      const advancement = advanceDueJob(job, currentTime, {
+      advancement = advanceDueJob(job, currentTime, {
         allowLateLiveExpiry: true,
       })
-      const nextJobs = advancement.job
+      nextJobs = advancement.job
         ? [...jobs.values()].map((currentJob) =>
             currentJob.id === id ? advancement.job! : currentJob,
           )
         : [...jobs.values()].filter((currentJob) => currentJob.id !== id)
       await dependencies.store.replace(nextJobs)
-      replacePublishedJobs(nextJobs)
-      clearJobTimer(id)
-      if (advancement.job) armJob(advancement.job)
-      if (advancement.event) publish(advancement.event)
     } catch (error) {
       log({ event: 'schedule_timer_failed', scheduleId: id, error })
       const currentJob = jobs.get(id)
       if (currentJob?.nextRunAt === expectedNextRunAt) {
-        scheduleRetry(currentJob, expectedNextRunAt)
+        attemptScheduleRetry(currentJob, expectedNextRunAt)
+      }
+      return
+    }
+
+    replacePublishedJobs(nextJobs)
+    clearJobTimer(id)
+    if (advancement.job) {
+      try {
+        armJob(advancement.job)
+      } catch (error) {
+        log({ event: 'schedule_timer_failed', scheduleId: id, error })
+        attemptScheduleRetry(advancement.job, advancement.job.nextRunAt)
       }
     }
+    if (advancement.event) publish(advancement.event)
   }
 
   function queueTimerMutation(id: string, expectedNextRunAt: string): void {
@@ -263,26 +313,59 @@ export function createScheduleRuntime(
 
       return enqueueMutation(async () => {
         try {
-          const loaded = await dependencies.store.load()
+          const loaded = await loadSchedules(
+            dependencies.store,
+            'Failed to load schedules during startup',
+          )
           if (stopRequested) {
             throw new ScheduleRuntimeError('stopped', 'Schedule runtime has stopped')
           }
           const recovery = recoverLoadedJobs(loaded, now())
           if (recovery.changed) {
-            await dependencies.store.replace(recovery.jobs)
+            await persistSchedules(
+              dependencies.store,
+              recovery.jobs,
+              'Failed to persist schedule recovery during startup',
+            )
             if (stopRequested) {
-              await dependencies.store.replace(loaded)
+              await persistSchedules(
+                dependencies.store,
+                loaded,
+                'Failed to restore schedules after startup was stopped',
+              )
               throw new ScheduleRuntimeError('stopped', 'Schedule runtime has stopped')
             }
           }
           replacePublishedJobs(recovery.jobs)
           state = 'started'
-          for (const job of jobs.values()) armJob(job)
+          try {
+            for (const job of jobs.values()) armJob(job)
+          } catch (timerError) {
+            for (const id of [...timers.keys()]) clearJobTimer(id)
+            if (recovery.changed) {
+              try {
+                await persistSchedules(
+                  dependencies.store,
+                  loaded,
+                  'Failed to restore schedules after startup timer failure',
+                )
+              } catch (rollbackError) {
+                failClosed()
+                throw scheduleTimerError(
+                  'Failed to arm schedules during startup and restore the loaded snapshot',
+                  new AggregateError([timerError, rollbackError]),
+                )
+              }
+            }
+            throw scheduleTimerError('Failed to arm schedules during startup', timerError)
+          }
           for (const event of recovery.events) publish(event)
         } catch (error) {
-          for (const id of timers.keys()) clearJobTimer(id)
-          jobs = new Map()
-          state = 'new'
+          for (const id of [...timers.keys()]) clearJobTimer(id)
+          if (state !== 'stopped') {
+            jobs = new Map()
+            state = 'new'
+          }
           throw error
         }
       })
@@ -305,7 +388,7 @@ export function createScheduleRuntime(
 
         const existing = [...jobs.values()].find((job) => job.name === name)
         const normalizationTime = existing ? new Date(existing.createdAt) : now()
-        const schedule = normalizeScheduleSpec(input.schedule, normalizationTime)
+        const schedule = normalizeRuntimeSchedule(input.schedule, normalizationTime)
         if (existing) {
           if (
             existing.intention === intention &&
@@ -317,6 +400,7 @@ export function createScheduleRuntime(
           throw new ScheduleRuntimeError(
             'name_conflict',
             `An active schedule named ${JSON.stringify(name)} already exists`,
+            { scheduleId: existing.id },
           )
         }
 
@@ -348,10 +432,34 @@ export function createScheduleRuntime(
           runCount: 0,
           ...(input.maxRuns === undefined ? {} : { maxRuns: input.maxRuns }),
         }
-        const nextJobs = [...jobs.values(), scheduleJob]
-        await dependencies.store.replace(nextJobs)
+        const previousJobs = cloneJobs([...jobs.values()])
+        const nextJobs = [...previousJobs, scheduleJob]
+        await persistSchedules(
+          dependencies.store,
+          nextJobs,
+          'Failed to create schedule in persistent store',
+        )
         replacePublishedJobs(nextJobs)
-        armJob(scheduleJob)
+        try {
+          armJob(scheduleJob)
+        } catch (timerError) {
+          try {
+            await persistSchedules(
+              dependencies.store,
+              previousJobs,
+              'Failed to restore schedules after create timer failure',
+            )
+            replacePublishedJobs(previousJobs)
+            clearJobTimer(scheduleJob.id)
+          } catch (rollbackError) {
+            failClosed()
+            throw scheduleTimerError(
+              'Failed to arm the created schedule and restore the previous snapshot',
+              new AggregateError([timerError, rollbackError]),
+            )
+          }
+          throw scheduleTimerError('Failed to arm the created schedule', timerError)
+        }
         return { status: 'created', schedule: cloneJob(scheduleJob) }
       })
     },
@@ -370,7 +478,11 @@ export function createScheduleRuntime(
         if (!existing) return { status: 'already_absent', id }
 
         const nextJobs = [...jobs.values()].filter((job) => job.id !== id)
-        await dependencies.store.replace(nextJobs)
+        await persistSchedules(
+          dependencies.store,
+          nextJobs,
+          'Failed to cancel schedule in persistent store',
+        )
         replacePublishedJobs(nextJobs)
         clearJobTimer(id)
         return { status: 'cancelled', id }
@@ -401,6 +513,53 @@ function normalizeRequiredText(value: string, field: string): string {
     throw new ScheduleRuntimeError('invalid_input', `${field} must not be blank`)
   }
   return value.trim()
+}
+
+function normalizeRuntimeSchedule(input: unknown, now: Date): ScheduleSpec {
+  try {
+    return normalizeScheduleSpec(input, now)
+  } catch (error) {
+    if (!(error instanceof ScheduleModelError)) throw error
+    throw new ScheduleRuntimeError(error.code, `Schedule validation failed: ${error.message}`, {
+      cause: error,
+    })
+  }
+}
+
+async function loadSchedules(store: ScheduleStore, operation: string): Promise<ScheduleJob[]> {
+  try {
+    return await store.load()
+  } catch (error) {
+    throw schedulePersistenceError(operation, error)
+  }
+}
+
+async function persistSchedules(
+  store: ScheduleStore,
+  schedules: readonly ScheduleJob[],
+  operation: string,
+): Promise<void> {
+  try {
+    await store.replace(schedules)
+  } catch (error) {
+    throw schedulePersistenceError(operation, error)
+  }
+}
+
+function schedulePersistenceError(message: string, cause: unknown): ScheduleRuntimeError {
+  return new ScheduleRuntimeError(
+    'persistence_failed',
+    `${message}: ${errorMessage(cause)}`,
+    { cause },
+  )
+}
+
+function scheduleTimerError(message: string, cause: unknown): ScheduleRuntimeError {
+  return new ScheduleRuntimeError('timer_failed', `${message}: ${errorMessage(cause)}`, { cause })
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function schedulesEqual(left: ScheduleSpec, right: ScheduleSpec): boolean {

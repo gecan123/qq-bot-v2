@@ -160,6 +160,8 @@ function harness(options: {
   createId?: () => string
   logger?: (entry: { event: string; scheduleId: string; error: unknown }) => void
   retryDelayMs?: number
+  setTimer?: (callback: TimerCallback, delayMs: number) => unknown
+  clearTimer?: (handle: unknown) => void
 } = {}): {
   clock: FakeClock
   store: ScheduleStore
@@ -177,8 +179,8 @@ function harness(options: {
       store,
       eventQueue,
       now: clock.now,
-      setTimer: clock.setTimer,
-      clearTimer: clock.clearTimer,
+      setTimer: options.setTimer ?? clock.setTimer,
+      clearTimer: options.clearTimer ?? clock.clearTimer,
       createId: options.createId ?? (() => 'generated-id'),
       logger: options.logger,
       retryDelayMs: options.retryDelayMs,
@@ -202,6 +204,10 @@ async function expectRuntimeCode(
     assert.equal((error as ScheduleRuntimeError).code, code)
     return true
   })
+}
+
+function errorMessageForTest(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 describe('ScheduleRuntime lifecycle and CRUD', () => {
@@ -230,17 +236,24 @@ describe('ScheduleRuntime lifecycle and CRUD', () => {
 
   test('does not enter the started state when loading fails', async () => {
     let attempts = 0
+    const loadError = new Error('corrupt schedule file')
     const store: ScheduleStore = {
       async load() {
         attempts += 1
-        if (attempts === 1) throw new Error('corrupt schedule file')
+        if (attempts === 1) throw loadError
         return []
       },
       async replace() {},
     }
     const { runtime } = harness({ store })
 
-    await assert.rejects(runtime.start(), /corrupt schedule file/)
+    await assert.rejects(runtime.start(), (error: unknown) => {
+      assert.equal(error instanceof ScheduleRuntimeError, true)
+      assert.equal((error as ScheduleRuntimeError).code, 'persistence_failed')
+      assert.equal((error as ScheduleRuntimeError).cause, loadError)
+      assert.match((error as Error).message, /load schedules during startup.*corrupt schedule file/i)
+      return true
+    })
     await expectRuntimeCode(runtime.list(), 'not_started')
     await runtime.start()
     assert.deepEqual(await runtime.list(), [])
@@ -285,7 +298,8 @@ describe('ScheduleRuntime lifecycle and CRUD', () => {
     const store = new RecordingStore()
     const { runtime, clock } = harness({ store })
     await runtime.start()
-    store.failNextReplace = new Error('disk full')
+    const persistenceError = new Error('disk full')
+    store.failNextReplace = persistenceError
 
     await assert.rejects(
       runtime.create({
@@ -293,12 +307,84 @@ describe('ScheduleRuntime lifecycle and CRUD', () => {
         intention: 'Re-evaluate the active goal',
         schedule: { kind: 'at', afterSeconds: 600 },
       }),
-      /disk full/,
+      (error: unknown) => {
+        assert.equal(error instanceof ScheduleRuntimeError, true)
+        assert.equal((error as ScheduleRuntimeError).code, 'persistence_failed')
+        assert.equal((error as ScheduleRuntimeError).cause, persistenceError)
+        assert.match((error as Error).message, /create schedule.*disk full/i)
+        return true
+      },
     )
 
     assert.deepEqual(await runtime.list(), [])
     assert.deepEqual(await store.load(), [])
     assert.equal(clock.timerCount(), 0)
+  })
+
+  test('rolls back a committed create when arming its timer fails', async () => {
+    const store = new RecordingStore()
+    const { runtime, clock } = harness({
+      store,
+      setTimer() {
+        throw new Error('timer unavailable')
+      },
+    })
+    await runtime.start()
+
+    await assert.rejects(
+      runtime.create({
+        name: 'checkpoint',
+        intention: 'Re-evaluate the active goal',
+        schedule: { kind: 'at', afterSeconds: 600 },
+      }),
+      (error: unknown) => {
+        assert.equal(error instanceof ScheduleRuntimeError, true)
+        assert.equal((error as ScheduleRuntimeError).code, 'timer_failed')
+        assert.match(errorMessageForTest((error as ScheduleRuntimeError).cause), /timer unavailable/)
+        return true
+      },
+    )
+
+    assert.deepEqual(await store.load(), [])
+    assert.deepEqual(await runtime.list(), [])
+    assert.equal(clock.timerCount(), 0)
+  })
+
+  test('fails closed when create timer rollback cannot restore persistence', async () => {
+    let persisted: ScheduleJob[] = []
+    let replaceCount = 0
+    const store: ScheduleStore = {
+      async load() {
+        return structuredClone(persisted) as ScheduleJob[]
+      },
+      async replace(schedules) {
+        replaceCount += 1
+        if (replaceCount === 2) throw new Error('rollback disk failure')
+        persisted = structuredClone(schedules) as ScheduleJob[]
+      },
+    }
+    const { runtime } = harness({
+      store,
+      setTimer() {
+        throw new Error('timer unavailable')
+      },
+    })
+    await runtime.start()
+
+    await assert.rejects(
+      runtime.create({
+        name: 'checkpoint',
+        intention: 'Re-evaluate the active goal',
+        schedule: { kind: 'at', afterSeconds: 600 },
+      }),
+      (error: unknown) => {
+        assert.equal(error instanceof ScheduleRuntimeError, true)
+        assert.equal((error as ScheduleRuntimeError).code, 'timer_failed')
+        assert.equal((error as ScheduleRuntimeError).cause instanceof AggregateError, true)
+        return true
+      },
+    )
+    await expectRuntimeCode(runtime.list(), 'stopped')
   })
 
   test('serializes concurrent mutations so replacements cannot lose schedules', async () => {
@@ -351,6 +437,34 @@ describe('ScheduleRuntime lifecycle and CRUD', () => {
     assert.equal(clock.timerCount(), 0)
   })
 
+  test('wraps schedule model failures with stable runtime codes and causes', async () => {
+    const { runtime } = harness()
+    await runtime.start()
+
+    for (const [schedule, expectedCode] of [
+      [{ kind: 'cron', expression: 'not a cron' }, 'invalid_schedule'],
+      [{ kind: 'every', everySeconds: 60 }, 'recurrence_too_frequent'],
+    ] as const) {
+      await assert.rejects(
+        runtime.create({
+          name: `invalid-${expectedCode}`,
+          intention: 'Must not be persisted',
+          schedule,
+        }),
+        (error: unknown) => {
+          assert.equal(error instanceof ScheduleRuntimeError, true)
+          assert.equal((error as ScheduleRuntimeError).code, expectedCode)
+          assert.equal((error as ScheduleRuntimeError).cause instanceof Error, true)
+          assert.equal(
+            (error as ScheduleRuntimeError & { cause: { code?: string } }).cause.code,
+            expectedCode,
+          )
+          return true
+        },
+      )
+    }
+  })
+
   test('treats a later retry of the same relative at definition as idempotent', async () => {
     const { runtime, clock } = harness()
     await runtime.start()
@@ -380,13 +494,18 @@ describe('ScheduleRuntime lifecycle and CRUD', () => {
       schedule: { kind: 'at', afterSeconds: 600 },
     })
 
-    await expectRuntimeCode(
+    await assert.rejects(
       runtime.create({
         name: 'checkpoint',
         intention: 'Review goal B',
         schedule: { kind: 'at', afterSeconds: 600 },
       }),
-      'name_conflict',
+      (error: unknown) => {
+        assert.equal(error instanceof ScheduleRuntimeError, true)
+        assert.equal((error as ScheduleRuntimeError).code, 'name_conflict')
+        assert.equal((error as ScheduleRuntimeError).scheduleId, 'generated-id')
+        return true
+      },
     )
   })
 
@@ -438,9 +557,16 @@ describe('ScheduleRuntime lifecycle and CRUD', () => {
     const store = new RecordingStore([atJob()])
     const { runtime, clock } = harness({ store })
     await runtime.start()
-    store.failNextReplace = new Error('disk full')
+    const persistenceError = new Error('disk full')
+    store.failNextReplace = persistenceError
 
-    await assert.rejects(runtime.cancel('schedule-1'), /disk full/)
+    await assert.rejects(runtime.cancel('schedule-1'), (error: unknown) => {
+      assert.equal(error instanceof ScheduleRuntimeError, true)
+      assert.equal((error as ScheduleRuntimeError).code, 'persistence_failed')
+      assert.equal((error as ScheduleRuntimeError).cause, persistenceError)
+      assert.match((error as Error).message, /cancel schedule.*disk full/i)
+      return true
+    })
     assert.equal(clock.timerCount(), 1)
     assert.deepEqual((await runtime.list()).map((schedule) => schedule.id), ['schedule-1'])
 
@@ -537,10 +663,17 @@ describe('ScheduleRuntime firing and restart recovery', () => {
   test('leaves start retryable and publishes nothing when recovery persistence fails', async () => {
     const clock = new FakeClock('2026-07-14T01:20:00.000Z')
     const store = new RecordingStore([atJob()])
-    store.failNextReplace = new Error('disk unavailable')
+    const persistenceError = new Error('disk unavailable')
+    store.failNextReplace = persistenceError
     const { runtime, eventQueue } = harness({ clock, store })
 
-    await assert.rejects(runtime.start(), /disk unavailable/)
+    await assert.rejects(runtime.start(), (error: unknown) => {
+      assert.equal(error instanceof ScheduleRuntimeError, true)
+      assert.equal((error as ScheduleRuntimeError).code, 'persistence_failed')
+      assert.equal((error as ScheduleRuntimeError).cause, persistenceError)
+      assert.match((error as Error).message, /schedule recovery.*disk unavailable/i)
+      return true
+    })
     assert.equal(eventQueue.size(), 0)
     assert.equal(clock.timerCount(), 0)
     await expectRuntimeCode(runtime.list(), 'not_started')
@@ -623,6 +756,48 @@ describe('ScheduleRuntime firing and restart recovery', () => {
     assert.equal(clock.timerCount(), 0)
     assert.equal(eventQueue.size(), 0)
     await expectRuntimeCode(runtime.list(), 'stopped')
+  })
+
+  test('restores the loaded snapshot when startup recovery cannot arm every future job', async () => {
+    const clock = new FakeClock('2026-07-14T01:20:00.000Z')
+    const original = [
+      atJob(),
+      atJob({
+        id: 'future-1',
+        name: 'future-review',
+        schedule: { kind: 'at', at: '2026-07-14T01:30:00.000Z' },
+        nextRunAt: '2026-07-14T01:30:00.000Z',
+      }),
+      atJob({
+        id: 'future-2',
+        name: 'later-future-review',
+        schedule: { kind: 'at', at: '2026-07-14T01:40:00.000Z' },
+        nextRunAt: '2026-07-14T01:40:00.000Z',
+      }),
+    ]
+    const store = new RecordingStore(original)
+    let timerAvailable = false
+    let startupArmCount = 0
+    const { runtime, eventQueue } = harness({
+      clock,
+      store,
+      setTimer(callback, delayMs) {
+        startupArmCount += 1
+        if (!timerAvailable && startupArmCount === 2) throw new Error('timer unavailable')
+        return clock.setTimer(callback, delayMs)
+      },
+    })
+
+    await expectRuntimeCode(runtime.start(), 'timer_failed')
+    assert.deepEqual(await store.load(), original)
+    assert.equal(clock.timerCount(), 0)
+    assert.equal(eventQueue.size(), 0)
+
+    timerAvailable = true
+    await runtime.start()
+    assert.equal(eventQueue.size(), 1)
+    assert.deepEqual((await runtime.list()).map((job) => job.id), ['future-1', 'future-2'])
+    assert.equal(clock.timerCount(), 2)
   })
 
   test('coalesces missed every occurrences without drifting their anchor', async () => {
@@ -819,6 +994,43 @@ describe('ScheduleRuntime firing and restart recovery', () => {
     assert.equal(clock.timerCount(), 0)
   })
 
+  test('publishes a committed recurring wake and restores its timer when re-arm fails', async () => {
+    const clock = new FakeClock()
+    const store = new RecordingStore([everyJob()])
+    const logs: Array<{ event: string; scheduleId: string; error: unknown }> = []
+    let setTimerCount = 0
+    const { runtime, eventQueue } = harness({
+      clock,
+      store,
+      retryDelayMs: 1_000,
+      logger: (entry) => logs.push(entry),
+      setTimer(callback, delayMs) {
+        setTimerCount += 1
+        if (setTimerCount === 2) throw new Error('re-arm failed')
+        return clock.setTimer(callback, delayMs)
+      },
+    })
+    await runtime.start()
+    clock.setNow('2026-07-14T01:10:00.000Z')
+
+    clock.fire()
+    await flushTimerMutation(runtime)
+    assert.equal(eventQueue.size(), 1)
+    assert.equal(eventQueue.dequeue()?.type, 'scheduled_wake')
+    assert.equal(logs.filter((entry) => entry.event === 'schedule_timer_failed').length, 1)
+    assert.equal(clock.nextDelayMs(), 1_000)
+    assert.deepEqual((await runtime.list()).map((job) => job.nextRunAt), [
+      '2026-07-14T01:20:00.000Z',
+    ])
+
+    clock.advanceBy(1_000)
+    clock.fire()
+    await flushTimerMutation(runtime)
+    assert.equal(eventQueue.size(), 0)
+    assert.equal(clock.nextDelayMs(), 9 * 60_000 + 59_000)
+    assert.equal(setTimerCount, 4)
+  })
+
   test('fires a live at timer only after durable removal', async () => {
     const clock = new FakeClock()
     const store = new RecordingStore([atJob()])
@@ -853,6 +1065,37 @@ describe('ScheduleRuntime firing and restart recovery', () => {
     await flushTimerMutation(runtime)
     assert.equal(eventQueue.size(), 0)
     assert.equal(clock.timerCount(), 0)
+  })
+
+  test('treats clearTimer and logger failures as best-effort after durable cancellation', async () => {
+    const clock = new FakeClock()
+    const store = new RecordingStore([atJob()])
+    let logCalls = 0
+    const { runtime, eventQueue } = harness({
+      clock,
+      store,
+      logger() {
+        logCalls += 1
+        throw new Error('logger failed')
+      },
+      clearTimer() {
+        throw new Error('clear failed')
+      },
+    })
+    await runtime.start()
+    const staleCallback = clock.capture()
+
+    assert.deepEqual(await runtime.cancel('schedule-1'), {
+      status: 'cancelled',
+      id: 'schedule-1',
+    })
+    staleCallback()
+    await flushTimerMutation(runtime)
+
+    assert.deepEqual(await store.load(), [])
+    assert.deepEqual(await runtime.list(), [])
+    assert.equal(eventQueue.size(), 0)
+    assert.equal(logCalls, 1)
   })
 
   test('retries the same tick after persistence failure without publishing early', async () => {

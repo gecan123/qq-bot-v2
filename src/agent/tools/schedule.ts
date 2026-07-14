@@ -70,6 +70,7 @@ export function createScheduleTool(runtime: ScheduleRuntime): Tool<Args> {
       '管理最长 3 天、可跨重启恢复的短期注意力唤醒，支持 at、every 和 cron；最多 20 个活跃调度。',
       '到期只注入 scheduled_wake，让你结合最新 Goal、消息和环境重新判断；不会保存或直接执行未来工具调用。',
       'cron 默认时区为 Asia/Shanghai，周期至少 5 分钟。',
+      '取消时先用 list 取得调度 id，再用 cancel。',
       '短休息使用 pause；只有需要未来重新获得注意力时才创建 schedule。',
     ].join(' '),
     schema: argsSchema,
@@ -126,10 +127,8 @@ function publicSchedule(job: ScheduleJob) {
     name: job.name,
     intention: job.intention,
     schedule: publicScheduleSpec(job.schedule),
-    createdAt: beijingTimestamp(job.createdAt),
-    expiresAt: beijingTimestamp(job.expiresAt),
     nextRunAt: beijingTimestamp(job.nextRunAt),
-    ...(job.lastRunAt === undefined ? {} : { lastRunAt: beijingTimestamp(job.lastRunAt) }),
+    expiresAt: beijingTimestamp(job.expiresAt),
     runCount: job.runCount,
     ...(job.maxRuns === undefined ? {} : { maxRuns: job.maxRuns }),
   }
@@ -165,7 +164,10 @@ function runtimeErrorResult(error: ScheduleRuntimeError): ToolExecutionResult {
       status: error.code,
       error: message,
       ...(error.code === 'name_conflict' && error.scheduleId
-        ? { scheduleId: error.scheduleId }
+        ? {
+            id: error.scheduleId,
+            cancel: { action: 'cancel', id: error.scheduleId },
+          }
         : {}),
     }),
     outcome: { ok: false, code: error.code },
@@ -175,7 +177,7 @@ function runtimeErrorResult(error: ScheduleRuntimeError): ToolExecutionResult {
 function runtimeErrorMessage(code: ScheduleRuntimeError['code']): string {
   switch (code) {
     case 'name_conflict':
-      return '同名活跃调度已存在；请先用 schedule cancel 取消返回的 scheduleId，再创建新定义。'
+      return '同名活跃调度已存在；请先用返回的 id 调用 schedule cancel，再创建新定义。'
     case 'active_limit_reached':
       return '活跃调度已达到 20 个上限；请先 list 并 cancel 不再需要的调度。'
     case 'invalid_input':

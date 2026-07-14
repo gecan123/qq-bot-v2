@@ -176,10 +176,8 @@ describe('schedule tool', () => {
             everySeconds: 600,
             anchorAt: '2026-07-13T08:00:00.000+08:00',
           },
-          createdAt: '2026-07-13T08:00:00.000+08:00',
-          expiresAt: '2026-07-16T08:00:00.000+08:00',
           nextRunAt: '2026-07-13T09:00:00.000+08:00',
-          lastRunAt: '2026-07-13T08:30:00.000+08:00',
+          expiresAt: '2026-07-16T08:00:00.000+08:00',
           runCount: 1,
           maxRuns: 4,
         },
@@ -211,9 +209,8 @@ describe('schedule tool', () => {
       'name',
       'intention',
       'schedule',
-      'createdAt',
-      'expiresAt',
       'nextRunAt',
+      'expiresAt',
       'runCount',
     ])
   })
@@ -286,6 +283,9 @@ describe('schedule tool', () => {
       { code: 'recurrence_too_frequent' },
       { code: 'outside_schedule_window' },
       { code: 'persistence_failed' },
+      { code: 'timer_failed' },
+      { code: 'not_started' },
+      { code: 'already_started' },
       { code: 'stopped' },
     ] as const
 
@@ -311,8 +311,11 @@ describe('schedule tool', () => {
       assert.equal(String(content.error).includes('internal detail'), false, item.code)
       assert.deepEqual(result.outcome, { ok: false, code: item.code })
       if (item.code === 'name_conflict') {
-        assert.equal(content.scheduleId, 'existing-1')
+        assert.equal(content.id, 'existing-1')
+        assert.equal('scheduleId' in content, false)
+        assert.deepEqual(content.cancel, { action: 'cancel', id: 'existing-1' })
         assert.match(String(content.error), /cancel/)
+        assert.equal(tool.schema.safeParse(content.cancel).success, true)
       }
     }
   })
@@ -335,5 +338,6 @@ describe('schedule tool', () => {
     assert.match(description, /至少 5 分钟/)
     assert.match(description, /20/)
     assert.match(description, /pause/)
+    assert.match(description, /先.*list.*id.*cancel/i)
   })
 })

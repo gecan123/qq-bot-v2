@@ -8,7 +8,9 @@ import { createGenerateImageTool } from './tools/generate-image.js'
 import { notebookTool } from './tools/notebook.js'
 import { memoryTool } from './tools/memory.js'
 import { pauseTool } from './tools/pause.js'
+import { createScheduleTool } from './tools/schedule.js'
 import { createSendMessageTool } from './tools/send-message.js'
+import type { ScheduleRuntime } from './schedule-runtime.js'
 
 test('zodToToolJsonSchema flattens collect_sticker union to Anthropic object schema', () => {
   const json = zodToToolJsonSchema(collectStickerTool.schema)
@@ -158,4 +160,28 @@ test('zodToOpenAIStrictToolJsonSchema removes unsupported string formats', () =>
     { type: 'string' },
     { type: 'null' },
   ])
+})
+
+test('schedule schema converts for both providers with actions and both at variants', () => {
+  const runtime: ScheduleRuntime = {
+    async start() {},
+    async create() { throw new Error('not used') },
+    async list() { return [] },
+    async cancel(id) { return { status: 'already_absent', id } },
+    async stop() {},
+  }
+  const schema = createScheduleTool(runtime).schema
+
+  for (const json of [
+    zodToToolJsonSchema(schema),
+    zodToOpenAIStrictToolJsonSchema(schema),
+  ]) {
+    assert.equal(json.type, 'object')
+    const props = json.properties as Record<string, Record<string, unknown>>
+    assert.deepEqual(props.action.enum, ['create', 'list', 'cancel'])
+    const serializedSchedule = JSON.stringify(props.schedule)
+    assert.match(serializedSchedule, /\"at\"/)
+    assert.match(serializedSchedule, /afterSeconds/)
+    assert.equal(serializedSchedule.match(/\"const\":\"at\"/g)?.length, 2)
+  }
 })

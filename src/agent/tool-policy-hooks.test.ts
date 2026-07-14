@@ -7,6 +7,7 @@ import { createToolExecutor, type Tool } from './tool.js'
 import {
   createGenerateImageTaskLogHook,
   createSendMessageAiToneHook,
+  createSendMessageSafetyGuard,
   type AiTonePrecheckLogEntry,
   type GenerateImageTaskLogEntry,
 } from './tool-policy-hooks.js'
@@ -24,6 +25,8 @@ const sendMessageSchema = z.object({
     z.object({ type: z.literal('private'), userId: z.number().int() }),
   ]),
   text: z.string().nullable().optional(),
+  mode: z.enum(['ambient', 'reply']).optional(),
+  replyToMessageId: z.number().int().nullable().optional(),
 })
 
 function createFakeSendTool(calls: unknown[]): Tool<z.infer<typeof sendMessageSchema>> {
@@ -33,10 +36,63 @@ function createFakeSendTool(calls: unknown[]): Tool<z.infer<typeof sendMessageSc
     schema: sendMessageSchema,
     async execute(args) {
       calls.push(args)
-      return { content: JSON.stringify({ ok: true, sent: true }) }
+      return {
+        content: JSON.stringify({ ok: true, sent: true }),
+        effects: [{ type: 'message_sent', target: args.target }],
+      }
     },
   }
 }
+
+describe('createSendMessageSafetyGuard', () => {
+  test('guards successful ambient sends while exempting replies and rejected attempts', async () => {
+    const calls: unknown[] = []
+    let nowMs = Date.parse('2026-07-14T12:00:00.000Z')
+    const guard = createSendMessageSafetyGuard({ nowMs: () => nowMs })
+    const exec = createToolExecutor([createFakeSendTool(calls)], {
+      hooks: {
+        beforeTool: [guard.beforeTool],
+        afterTool: [guard.afterTool],
+      },
+    })
+    const target = { type: 'private' as const, userId: 123 }
+
+    const first = await exec.execute({
+      id: 'first', name: 'send_message', args: { target, text: '第一句', mode: 'ambient' },
+    }, makeCtx())
+    const cooldown = await exec.execute({
+      id: 'cooldown', name: 'send_message', args: { target, text: '第二句', mode: 'ambient' },
+    }, makeCtx())
+    nowMs += 30 * 60_000
+    const afterCooldown = await exec.execute({
+      id: 'after-cooldown', name: 'send_message', args: { target, text: '第二句', mode: 'ambient' },
+    }, makeCtx())
+    nowMs += 30 * 60_000
+    const duplicate = await exec.execute({
+      id: 'duplicate', name: 'send_message', args: { target, text: '第一句', mode: 'ambient' },
+    }, makeCtx())
+    const reply = await exec.execute({
+      id: 'reply', name: 'send_message', args: {
+        target,
+        text: '第一句',
+        mode: 'reply',
+        replyToMessageId: 456,
+      },
+    }, makeCtx())
+    nowMs += 12 * 60 * 60_000
+    const afterDuplicateWindow = await exec.execute({
+      id: 'after-window', name: 'send_message', args: { target, text: '第一句', mode: 'ambient' },
+    }, makeCtx())
+
+    assert.equal(JSON.parse(first.content as string).ok, true)
+    assert.equal(JSON.parse(cooldown.content as string).code, 'private_ambient_cooldown')
+    assert.equal(JSON.parse(afterCooldown.content as string).ok, true)
+    assert.equal(JSON.parse(duplicate.content as string).code, 'ambient_duplicate')
+    assert.equal(JSON.parse(reply.content as string).ok, true)
+    assert.equal(JSON.parse(afterDuplicateWindow.content as string).ok, true)
+    assert.equal(calls.length, 4)
+  })
+})
 
 describe('createSendMessageAiToneHook', () => {
   test('blocks the first two AI-tone group sends and then allows the third consecutive over-threshold send', async () => {

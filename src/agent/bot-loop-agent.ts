@@ -99,6 +99,8 @@ export interface BotLoopLifeJournal {
 export interface BotLoopAutonomyOptions {
   maxConsecutiveRounds?: number
   cooldownMs?: number
+  idleWaitMs?: number
+  actionRetryWaitMs?: number
   now?: () => Date
   waitForAttentionOrTimeout?: (
     queue: EventQueue<BotEvent>,
@@ -110,7 +112,9 @@ const DEFAULT_ERROR_BACKOFF_MS = 5_000
 const DEFAULT_EVENT_DEBOUNCE_MS = 3_000
 const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 86_400_000
 const DEFAULT_MAX_CONSECUTIVE_ROUNDS = 20
-const DEFAULT_AUTONOMY_COOLDOWN_MS = 60_000
+const DEFAULT_AUTONOMY_COOLDOWN_MS = 15 * 60_000
+const DEFAULT_IDLE_WAIT_MS = 15 * 60_000
+const DEFAULT_ACTION_RETRY_WAIT_MS = 60_000
 const MAX_OUTPUT_CONTINUATIONS_PER_ROUND = 2
 const OUTPUT_CONTINUATION_PROMPT =
   '[runtime recovery] 上一段 assistant 输出达到长度上限。请从中断处继续，不要重复已完成内容，并用一个完整的工具调用结束本轮。'
@@ -137,6 +141,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   const autonomy = {
     maxConsecutiveRounds: Math.max(1, deps.autonomy?.maxConsecutiveRounds ?? DEFAULT_MAX_CONSECUTIVE_ROUNDS),
     cooldownMs: Math.max(1, deps.autonomy?.cooldownMs ?? DEFAULT_AUTONOMY_COOLDOWN_MS),
+    idleWaitMs: Math.max(1, deps.autonomy?.idleWaitMs ?? DEFAULT_IDLE_WAIT_MS),
+    actionRetryWaitMs: Math.max(1, deps.autonomy?.actionRetryWaitMs ?? DEFAULT_ACTION_RETRY_WAIT_MS),
     now: deps.autonomy?.now ?? (() => new Date()),
     waitForAttentionOrTimeout: deps.autonomy?.waitForAttentionOrTimeout ?? waitForAttentionOrTimeout,
   }
@@ -148,6 +154,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let goalRevision = Math.max(0, deps.initialGoalRevision ?? 0)
   let roundIndex = 0
   let consecutiveRounds = 0
+  let noToolActionRetryPending = false
 
   function drainEvents(): {
     consumed: number
@@ -251,6 +258,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   async function runRound(goalRoundIndex?: number): Promise<{
     inputTokens: number | null
     tokensUsed: number
+    toolCallCount: number
     didPause: boolean
     didCompleteRest: boolean
     sentTargets: MessageSentTarget[]
@@ -323,6 +331,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     return {
       inputTokens: result.inputTokens,
       tokensUsed: recoveryTokensUsed + result.tokensUsed,
+      toolCallCount: result.toolCallCount,
       didPause,
       didCompleteRest,
       sentTargets,
@@ -391,6 +400,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   async function step(): Promise<{
     ranRound: boolean
     didPause?: boolean
+    toolCallCount?: number
+    actionRequired?: boolean
   }> {
     const beforeStepCount = deps.context.getSnapshot().messages.length
     const syncedBeforeEvents = await syncGoalState()
@@ -452,7 +463,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       }
       throw error
     }
-    const { inputTokens, tokensUsed, didPause, didCompleteRest, sentTargets } = roundResult
+    const { inputTokens, tokensUsed, toolCallCount, didPause, didCompleteRest, sentTargets } = roundResult
     const appendedHandledMailboxMarker = appendHandledMailboxMarkers(sentTargets)
     if (appendedHandledMailboxMarker) {
       await saveSnapshot()
@@ -490,11 +501,21 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     if (compacted || appendedRestResumeReminder) {
       await saveSnapshot()
     }
-    return { ranRound: true, didPause }
+    return {
+      ranRound: true,
+      didPause,
+      toolCallCount,
+      actionRequired: goalAtRoundStart?.status === 'active' || (drained.hadAttention && disclosed > 0),
+    }
   }
 
   async function runOnce(): Promise<void> {
-    const { ranRound, didPause = false } = await step()
+    const {
+      ranRound,
+      didPause = false,
+      toolCallCount = 0,
+      actionRequired = false,
+    } = await step()
     if (!ranRound && !stopRequested) {
       await waitForExternalEvent()
       return
@@ -503,6 +524,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
 
     if (didPause) {
       consecutiveRounds = 0
+      noToolActionRetryPending = false
       return
     }
 
@@ -511,8 +533,33 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       log.info({ consecutiveRounds, cooldownMs: autonomy.cooldownMs }, 'autonomy_round_cooldown_enter')
       await autonomy.waitForAttentionOrTimeout(deps.eventQueue, autonomy.cooldownMs)
       consecutiveRounds = 0
+      noToolActionRetryPending = false
       return
     }
+
+    if (toolCallCount > 0) {
+      noToolActionRetryPending = false
+      return
+    }
+
+    if (actionRequired || noToolActionRetryPending) {
+      if (!noToolActionRetryPending) {
+        noToolActionRetryPending = true
+        log.info({ consecutiveRounds }, 'no_tool_action_retry_immediate')
+        return
+      }
+      log.info(
+        { consecutiveRounds, waitMs: autonomy.actionRetryWaitMs },
+        'no_tool_action_retry_wait',
+      )
+      await autonomy.waitForAttentionOrTimeout(deps.eventQueue, autonomy.actionRetryWaitMs)
+      noToolActionRetryPending = false
+      return
+    }
+
+    log.info({ consecutiveRounds, waitMs: autonomy.idleWaitMs }, 'no_tool_quiescent_wait')
+    await autonomy.waitForAttentionOrTimeout(deps.eventQueue, autonomy.idleWaitMs)
+    consecutiveRounds = 0
   }
 
   async function waitForExternalEvent(): Promise<void> {

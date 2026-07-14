@@ -6,6 +6,48 @@ import { describe, test } from 'node:test'
 import { createLifeJournalTool } from './life-journal.js'
 
 describe('life_journal tool', () => {
+  test('rate-limits successful reflection writes but leaves dream writes available', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'qq-bot-life-journal-cooldown-'))
+    let nowMs = Date.parse('2026-07-07T15:18:00.000Z')
+    let nextId = 0
+    try {
+      const tool = createLifeJournalTool({
+        rootDir,
+        now: () => new Date(nowMs),
+        id: () => `cooldown-${++nextId}`,
+      })
+
+      const first = JSON.parse((await tool.execute({
+        action: 'write',
+        markdown: '第一条反思',
+      }, undefined as never)).content as string) as { ok: boolean }
+      const blocked = JSON.parse((await tool.execute({
+        action: 'write',
+        markdown: '重复收尾',
+      }, undefined as never)).content as string) as { ok: boolean; code: string; retryAfterMs: number }
+      const dream = JSON.parse((await tool.execute({
+        action: 'write',
+        kind: 'dream',
+        markdown: '一个梦',
+      }, undefined as never)).content as string) as { ok: boolean }
+      nowMs += 15 * 60_000
+      const afterCooldown = JSON.parse((await tool.execute({
+        action: 'write',
+        markdown: '十五分钟后的新反思',
+      }, undefined as never)).content as string) as { ok: boolean }
+
+      assert.equal(first.ok, true)
+      assert.deepEqual(
+        { ok: blocked.ok, code: blocked.code, retryAfterMs: blocked.retryAfterMs },
+        { ok: false, code: 'reflection_write_cooldown', retryAfterMs: 15 * 60_000 },
+      )
+      assert.equal(dream.ok, true)
+      assert.equal(afterCooldown.ok, true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   test('lets the main agent actively write journal notes and manage agenda', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'qq-bot-life-journal-tool-'))
     try {
@@ -82,6 +124,7 @@ describe('life_journal tool', () => {
         rootDir,
         now: () => new Date('2026-07-07T15:18:00.000Z'),
         id: () => `entry-${++nextId}`,
+        reflectionWriteMinIntervalMs: 0,
       })
       for (const markdown of ['wrong', 'duplicate', 'keep']) {
         await tool.execute({ action: 'write', markdown }, undefined as never)

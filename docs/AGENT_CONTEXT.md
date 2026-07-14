@@ -18,6 +18,7 @@
 - compaction 改写以及随后可能发生的 sticker-pool 注入完成后必须立即保存 snapshot，不能依赖下一轮顺带持久化。
 - active Goal 在正常 compaction 和 context-overflow recovery compaction 后都必须重新 append `goal_continuation`，再保存或重试；摘要不是 Goal 当前状态的唯一载体。
 - provider 在任何 tool call append 前明确拒绝超长 prompt 时，Runtime Host 可以强制执行一次 recovery compaction，立即保存 snapshot 后重试同一 round；每轮最多一次，普通 provider retry 不得修改 ledger 或重放工具。
+- 普通 compaction 失败后可以在进程内短暂退避，避免对持续增长的同一上下文逐轮重复请求；退避不进入 ledger，context overflow recovery 仍可绕过它。候选摘要可以进行至多一次确定性有界修复，修复后仍必须通过结构和 snapshot integrity 校验。
 - provider 以 `max_tokens` 正常结束时，第一次恢复只提高输出预算并重发同一份 snapshot，不修改 ledger。若仍截断，只能持久化不含 tool call 的 assistant 普通文本和固定 continuation 消息；截断 tool call 永远不能 append 或执行，continuation 次数必须有上限。
 - LLM 请求使用从 durable ledger 确定性重建的 working-context projection。投影不得删 message、改 role、拆 assistant tool call/result 原子组；当前只把较旧 tool result 的图片字节替换为稳定 marker，并保留最近三个图片结果。原始图片仍在 snapshot 中，compaction/replay 的事实源不变。
 - 同一 assistant message 的连续显式只读 tool call 可以并行执行，但完成时序不能进入 ledger：对应 tool result 必须严格按 assistant tool-call 原顺序 append。副作用或未知调用是 barrier，不能与前后调用跨越并行。

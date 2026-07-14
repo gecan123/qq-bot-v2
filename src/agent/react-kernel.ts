@@ -30,6 +30,7 @@ export interface ReactToolEffect {
 export interface ReactRoundResult {
   inputTokens: number | null
   tokensUsed: number
+  toolCallCount: number
   effects: ReactToolEffect[]
 }
 
@@ -188,6 +189,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
   return {
     inputTokens: completion.usage.inputTokens,
     tokensUsed: sumTokensUsed(completions),
+    toolCallCount: completion.toolCalls.length,
     effects,
   }
 }

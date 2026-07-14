@@ -19,7 +19,8 @@ import {
 
 const DEFAULT_COMPACTION_TRIGGER_TOKENS = 16_000
 const DEFAULT_COMPACTION_TAIL_CHARS = 12_000
-const MAX_SUMMARY_CHARS = 800
+const DEFAULT_COMPACTION_FAILURE_BACKOFF_MS = 10 * 60_000
+const MAX_SUMMARY_CHARS = 4_000
 const SUMMARY_HEAD_PREFIX = '[历史摘要]\n'
 const SUMMARY_HEADINGS = [
   '## 讨论过的话题',
@@ -30,6 +31,11 @@ const SUMMARY_HEADINGS = [
 ] as const
 
 const log = createLogger('COMPACTION')
+const failureBackoffByContext = new WeakMap<AgentContext, {
+  nextRetryAtMs: number
+  failedMessageCount: number
+  reason: string
+}>()
 
 const SUMMARIZER_SYSTEM_PROMPT = `
 你是一个对话摘要助手。把以下历史对话压缩成结构化摘要。
@@ -54,7 +60,7 @@ const SUMMARIZER_SYSTEM_PROMPT = `
 规则：
 - 如果给了 [上次摘要]，合并新旧信息，不要简单 append
 - 忽略客套、口水、未展开的玩笑
-- 每段控制在 200 字以内，总摘要不超过 800 字
+- 每段控制在 700 字以内，总摘要不超过 4000 字
 - 不要回应或继续对话，直接输出摘要
 `.trim()
 
@@ -71,6 +77,8 @@ export interface MaybeCompactOptions {
   summarize?: SummarizeFn
   triggerTokens?: number
   tailMaxChars?: number
+  failureBackoffMs?: number
+  nowMs?: () => number
   /** 兼容测试/调用方；显式传入时转换为确定性的 serialized-char budget。 */
   keepRatio?: number
 }
@@ -230,6 +238,35 @@ function validateSummary(summary: string): { ok: true; summary: string } | { ok:
   return { ok: true, summary: trimmed }
 }
 
+function repairOversizedSummary(summary: string): string | null {
+  const lines = summary.trim().split('\n').map((line) => line.trimEnd())
+  const headingIndexes: number[] = []
+  let previousIndex = -1
+  for (const heading of SUMMARY_HEADINGS) {
+    const index = lines.findIndex((line, lineIndex) => lineIndex > previousIndex && line === heading)
+    if (index < 0) return null
+    headingIndexes.push(index)
+    previousIndex = index
+  }
+
+  const sections = SUMMARY_HEADINGS.map((heading, index) => {
+    const start = headingIndexes[index]! + 1
+    const end = headingIndexes[index + 1] ?? lines.length
+    return { heading, body: lines.slice(start, end).join('\n').trim() }
+  })
+  if (!sections.some((section) => section.body.length > 0)) return null
+
+  const fixedChars = SUMMARY_HEADINGS.join('\n\n').length + (SUMMARY_HEADINGS.length - 1) * 2
+  const perSectionChars = Math.max(1, Math.floor((MAX_SUMMARY_CHARS - fixedChars) / sections.length))
+  return sections.map(({ heading, body }) => {
+    if (!body) return heading
+    const repairedBody = body.length <= perSectionChars
+      ? body
+      : `${body.slice(0, Math.max(0, perSectionChars - 1)).trimEnd()}…`
+    return `${heading}\n${repairedBody}`
+  }).join('\n\n')
+}
+
 async function defaultSummarize(input: SummarizeInput): Promise<string> {
   const llm = createLlmClient()
 
@@ -306,6 +343,37 @@ async function compactConversation(
   if (!force && lastInputTokens! <= triggerTokens) return false
 
   const snapshot = context.getSnapshot()
+  const nowMs = options.nowMs ?? Date.now
+  const failureBackoffMs = Math.max(
+    1,
+    options.failureBackoffMs ?? DEFAULT_COMPACTION_FAILURE_BACKOFF_MS,
+  )
+  const existingBackoff = failureBackoffByContext.get(context)
+  if (!force && existingBackoff) {
+    if (snapshot.messages.length < existingBackoff.failedMessageCount) {
+      failureBackoffByContext.delete(context)
+    } else {
+      const retryAfterMs = existingBackoff.nextRetryAtMs - nowMs()
+      if (retryAfterMs > 0) {
+        log.debug({
+          inputTokens: lastInputTokens,
+          messageCount: snapshot.messages.length,
+          retryAfterMs,
+          reason: existingBackoff.reason,
+        }, 'compaction_failure_backoff_skipped')
+        return false
+      }
+    }
+  }
+
+  const recordFailure = (reason: string) => {
+    if (force) return
+    failureBackoffByContext.set(context, {
+      nextRetryAtMs: nowMs() + failureBackoffMs,
+      failedMessageCount: snapshot.messages.length,
+      reason,
+    })
+  }
 
   log.info(
     { inputTokens: lastInputTokens, messageCount: snapshot.messages.length, triggerTokens, force },
@@ -318,6 +386,7 @@ async function compactConversation(
       { inputTokens: lastInputTokens, messageCount: snapshot.messages.length },
       'compaction_no_safe_cut',
     )
+    recordFailure('no_safe_cut')
     return false
   }
 
@@ -341,9 +410,19 @@ async function compactConversation(
     })
   } catch (err) {
     log.error({ err, inputTokens: lastInputTokens, cutIndex, force }, 'summarizer_failed_context_preserved')
+    recordFailure('summarizer_failed')
     return false
   }
-  const validatedSummary = validateSummary(rawSummary)
+  let validatedSummary = validateSummary(rawSummary)
+  if (!validatedSummary.ok && validatedSummary.reason === 'too_long') {
+    const repairedSummary = repairOversizedSummary(rawSummary)
+    if (repairedSummary) {
+      validatedSummary = validateSummary(repairedSummary)
+      if (validatedSummary.ok) {
+        log.info({ inputTokens: lastInputTokens, cutIndex }, 'compaction_summary_repaired_once')
+      }
+    }
+  }
   if (!validatedSummary.ok) {
     log.warn({
       inputTokens: lastInputTokens,
@@ -351,6 +430,7 @@ async function compactConversation(
       tailLen: tail.length,
       reason: validatedSummary.reason,
     }, 'compaction_candidate_summary_rejected')
+    recordFailure(validatedSummary.reason)
     return false
   }
 
@@ -380,10 +460,12 @@ async function compactConversation(
       cutIndex,
       errors: integrity.errors,
     }, 'compaction_candidate_integrity_rejected')
+    recordFailure('integrity_rejected')
     return false
   }
 
   context.replaceMessages(candidateMessages)
+  failureBackoffByContext.delete(context)
 
   log.info(
     {

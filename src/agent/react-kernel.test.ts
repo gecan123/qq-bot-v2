@@ -271,6 +271,7 @@ describe('runReactRound', () => {
 
     assert.equal(result.inputTokens, 4)
     assert.equal(result.tokensUsed, 10)
+    assert.equal(result.toolCallCount, 0)
     assert.deepEqual(result.effects, [])
     assert.deepEqual(context.getSnapshot().messages, [{ role: 'user', content: 'hello' }])
   })

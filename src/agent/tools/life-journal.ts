@@ -17,6 +17,7 @@ import {
 const DEFAULT_ROOT_DIR = 'data/agent-workspace'
 const DEFAULT_READ_CHARS = 6000
 const DEFAULT_READ_ENTRIES = 50
+const DEFAULT_REFLECTION_WRITE_MIN_INTERVAL_MS = 15 * 60_000
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('read_recent 返回的日期, 格式 YYYY-MM-DD.')
 const entryIdSchema = z.string().trim().min(1).max(160).describe('read_recent 返回的 entryId.')
 const revisionSchema = z.string().regex(/^[a-f0-9]{64}$/).describe('read_recent 返回的 revision; 防止覆盖更新后的文件.')
@@ -79,6 +80,7 @@ export interface LifeJournalToolDeps {
   rootDir?: string
   now?: () => Date
   id?: () => string
+  reflectionWriteMinIntervalMs?: number
   workspaceStateCoordinator?: WorkspaceStateCoordinator
 }
 
@@ -89,6 +91,11 @@ function truncateText(text: string, maxChars: number): string {
 
 export function createLifeJournalTool(deps: LifeJournalToolDeps = {}): Tool<Args> {
   const rootDir = deps.rootDir ?? DEFAULT_ROOT_DIR
+  const reflectionWriteMinIntervalMs = Math.max(
+    0,
+    deps.reflectionWriteMinIntervalMs ?? DEFAULT_REFLECTION_WRITE_MIN_INTERVAL_MS,
+  )
+  let lastReflectionWriteAtMs: number | null = null
   const storeOptions = {
     rootDir,
     now: deps.now,
@@ -105,16 +112,37 @@ export function createLifeJournalTool(deps: LifeJournalToolDeps = {}): Tool<Args
       '需要完整原文时用 action=read_entry 或分页 action=read_day, 不要只依据 preview 做 compact.',
       'action=update/delete 修正或删除单条记录; action=compact 合并同一天的多条记录; 修改前必须使用最新 revision.',
       'action=read_agenda/write_agenda 读取或更新 agenda.',
-      '读取结果有界; 写入应短而有选择性.',
+      '读取结果有界; 写入应短而有选择性. reflection 成功写入后至少间隔 15 分钟，dream 不受此限制.',
     ].join(' '),
     schema: argsSchema,
     async execute(args) {
       if (args.action === 'write') {
+        const kind = args.kind ?? 'reflection'
+        const nowMs = (deps.now?.() ?? new Date()).getTime()
+        if (
+          kind === 'reflection'
+          && reflectionWriteMinIntervalMs > 0
+          && lastReflectionWriteAtMs != null
+          && nowMs - lastReflectionWriteAtMs < reflectionWriteMinIntervalMs
+        ) {
+          const retryAfterMs = reflectionWriteMinIntervalMs - (nowMs - lastReflectionWriteAtMs)
+          return {
+            content: JSON.stringify({
+              ok: false,
+              action: 'write',
+              code: 'reflection_write_cooldown',
+              retryAfterMs,
+              instruction: '这一活动段已经写过 reflection。继续行动或自然结束当前活动，不要用另一条“最后记录”重复收尾。',
+            }),
+            outcome: { ok: false, code: 'reflection_write_cooldown' },
+          }
+        }
         const entry = await appendLifeJournalEntry({
           ...storeOptions,
-          kind: args.kind ?? 'reflection',
+          kind,
           markdown: args.markdown,
         })
+        if (kind === 'reflection') lastReflectionWriteAtMs = nowMs
         return {
           content: JSON.stringify({
             ok: true,
@@ -122,7 +150,7 @@ export function createLifeJournalTool(deps: LifeJournalToolDeps = {}): Tool<Args
             path: entry.path,
             heading: entry.heading,
             entryId: entry.entryId,
-            kind: args.kind ?? 'reflection',
+            kind,
           }),
           outcome: { ok: true },
         }

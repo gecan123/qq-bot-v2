@@ -97,11 +97,11 @@ describe('pause tool', () => {
     assert.doesNotMatch(tool.description, /action=wait|空闲提示|长时间无事件/)
   })
 
-  test('description prioritizes finding something to do after rest', () => {
+  test('description asks for reassessment after rest without forcing activity', () => {
     const tool = createPauseTool()
     assert.match(tool.description, /alternative_available/)
     assert.match(tool.description, /confirmed=true/)
-    assert.match(tool.description, /没有实际尝试醒后方向前不要立刻再次休息/)
+    assert.match(tool.description, /没有未处理义务或牵引力就结束当前活动轮/)
   })
 
   test('description frames intention as two concrete directions', () => {
@@ -110,7 +110,7 @@ describe('pause tool', () => {
     assert.match(tool.description, /不要制造六项菜单/)
     assert.match(tool.description, /机械盯行情/)
     assert.match(tool.description, /未来时点再看行情用 schedule/)
-    assert.match(tool.description, /不是“今天全部完成”/)
+    assert.match(tool.description, /不要用发消息、写 Journal 或再次休息表演收尾/)
   })
 
   test('action=rest delegates to rest behavior', async () => {
@@ -146,7 +146,7 @@ describe('pause tool', () => {
       resumePlan: {
         primaryDirection: intention.primaryDirection,
         alternativeDirection: intention.alternativeDirection,
-        instruction: `现在先实际执行 primaryDirection 的第一步: ${intention.primaryDirection}; 若现场情况变化或它已失去吸引力, 改做 alternativeDirection: ${intention.alternativeDirection}. 没有实际尝试前不要再次休息.`,
+        instruction: `醒来后重新评估: primaryDirection 仍有吸引力就执行第一步: ${intention.primaryDirection}; 若它已失效, 再看 alternativeDirection: ${intention.alternativeDirection}. 两者都失效且没有未处理义务时可以自然结束当前活动轮, 不要用写 Journal、发消息或再次休息表演收尾.`,
       },
     })
     assert.equal(Number.isInteger(content.elapsedMs), true)

@@ -44,7 +44,7 @@ export function createPauseTool(deps: PauseToolDeps = {}): Tool<Args> {
       '若首次检查返回 alternative_check_unavailable, 说明超时、provider 失败或结果不完整, 当前不会暂停; 稍后以 confirmed=false 重试或继续活动, 不要用 confirmed=true 跳过.',
       'intention 只写一个具体 primaryDirection 和一个不同的 alternativeDirection, 都必须写明对象和第一步; 不要制造六项菜单.',
       '等消息、轮询群聊、机械盯行情、泛泛浏览站点或整理 memory/journal 都不是行动方向; 未来时点再看行情用 schedule.',
-      '一个任务做完只是注意力重新自由, 不是“今天全部完成”; 没有实际尝试醒后方向前不要立刻再次休息.',
+      '一个任务做完后重新评估: 有真实后续就继续, 没有未处理义务或牵引力就结束当前活动轮; 不要用发消息、写 Journal 或再次休息表演收尾.',
       '休息期间普通群消息不会打断, 被 @、私聊、后台任务完成或停止信号会立刻唤醒.',
     ].join(' '),
     schema: argsSchema,

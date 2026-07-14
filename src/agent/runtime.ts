@@ -7,7 +7,11 @@ import {
 import { renderBotEvent } from './render-event.js'
 import { createSendTargetPolicy } from './send-target-policy.js'
 import { createDeferredToolExecutor, type ToolExecutor } from './tool.js'
-import { createGenerateImageTaskLogHook, createSendMessageAiToneHook } from './tool-policy-hooks.js'
+import {
+  createGenerateImageTaskLogHook,
+  createSendMessageAiToneHook,
+  createSendMessageSafetyGuard,
+} from './tool-policy-hooks.js'
 import { createOwnerApprovalHook, type ApprovalMode } from './approval-policy.js'
 import { buildBotToolManifest, type BotOptionalTools } from './tools/index.js'
 import type { AgentContext } from './agent-context.js'
@@ -144,6 +148,7 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       input.selfNumber,
     ),
   })
+  const sendMessageSafetyGuard = createSendMessageSafetyGuard()
   const tools = createDeferredToolExecutor({
     ...buildBotToolManifest({
       sender: input.sender,
@@ -187,9 +192,10 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
         createOwnerApprovalHook(approvalManager, (toolName, args) => (
           toolName === 'mcp' ? mcpManager?.approvalRequirementForArgs(args) ?? null : null
         ), input.approvalMode ?? 'thin'),
+        sendMessageSafetyGuard.beforeTool,
         createSendMessageAiToneHook(),
       ],
-      afterTool: [createGenerateImageTaskLogHook()],
+      afterTool: [sendMessageSafetyGuard.afterTool, createGenerateImageTaskLogHook()],
     },
   })
 

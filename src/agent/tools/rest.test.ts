@@ -112,7 +112,7 @@ describe('rest tool', () => {
     assert.match(tool.description, /不要为了填菜单制造六个占位方向/)
     assert.match(tool.description, /机械检查行情/)
     assert.match(tool.description, /未来某个时点再看时用 schedule/)
-    assert.match(tool.description, /不是“今天全部完成”/)
+    assert.match(tool.description, /没有未处理义务或牵引力就结束当前活动轮/)
     assert.match(tool.description, /alternative_check_unavailable/)
   })
 

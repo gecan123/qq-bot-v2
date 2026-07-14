@@ -2085,7 +2085,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     }
   })
 
-  test('高 token 使用不触发跨日限流，只在连续轮次达到上限后短暂冷却', async () => {
+  test('高 token 使用不触发跨日限流，连续轮次达到上限后冷却 15 分钟', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'curiosity_tick' })
@@ -2098,7 +2098,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         if (llmCallCount === 3) await agent.stop()
         return {
           content: '',
-          toolCalls: [],
+          toolCalls: [{ id: `lookup-${llmCallCount}`, name: 'lookup', args: {} }],
           usage: { inputTokens: 500_000, cachedTokens: 0, outputTokens: 500_000 },
           model: 'mock',
         }
@@ -2111,16 +2111,17 @@ describe('BotLoopAgent.runOnceForTest', () => {
       context: ctx,
       eventQueue,
       llm,
-      tools: makeMockTools(),
+      tools: makeMockTools({
+        lookup: async () => ({ content: '{"ok":true}' }),
+      }),
       snapshotRepo: repo,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
         maxConsecutiveRounds: 2,
-        cooldownMs: 60_000,
         async waitForAttentionOrTimeout(_queue, timeoutMs) {
           cooldownWaits++
-          assert.equal(timeoutMs, 60_000)
+          assert.equal(timeoutMs, 15 * 60_000)
           await agent.stop()
           return 'elapsed'
         },
@@ -2131,6 +2132,97 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     assert.equal(llmCallCount, 2)
     assert.equal(cooldownWaits, 1)
+  })
+
+  test('free no-tool round enters a 15-minute attention-interruptible wait', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('已有上下文')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    let llmCallCount = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const llm: LlmClient = {
+      async chat() {
+        llmCallCount++
+        return {
+          content: '',
+          toolCalls: [],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+        }
+      },
+    }
+    const { repo } = makeMockSnapshotRepo()
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        async waitForAttentionOrTimeout(_queue, timeoutMs) {
+          assert.equal(timeoutMs, 15 * 60_000)
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+    assert.equal(llmCallCount, 1)
+  })
+
+  test('attention with no tool retries immediately once, then waits 60 seconds', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({
+      type: 'napcat_message',
+      messageRowId: 1,
+      groupId: 999,
+      messageId: 12345,
+      senderId: 100,
+      senderNickname: '张三',
+      mentionedSelf: true,
+      sentAt: new Date('2026-01-01T00:00:00Z'),
+      renderedText: '在吗',
+    })
+    let llmCallCount = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const llm: LlmClient = {
+      async chat() {
+        llmCallCount++
+        return {
+          content: '',
+          toolCalls: [],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+        }
+      },
+    }
+    const { repo } = makeMockSnapshotRepo()
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        async waitForAttentionOrTimeout(_queue, timeoutMs) {
+          assert.equal(timeoutMs, 60_000)
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+    assert.equal(llmCallCount, 2)
   })
 
   test('参数校验失败的 pause 不会重置连续轮次保护', async () => {

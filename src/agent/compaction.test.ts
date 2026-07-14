@@ -426,21 +426,63 @@ test('maybeCompactConversation: summarizer failure leaves context byte-for-byte 
   assert.deepEqual(ctx.getSnapshot(), before)
 })
 
-test('maybeCompactConversation: malformed or oversized summary leaves context unchanged', async () => {
-  for (const summary of ['missing required headings', validSummary('x'.repeat(900))]) {
-    const ctx = createAgentContext()
-    for (let i = 0; i < 20; i++) ctx.appendUserMessage(`msg-${i}-padding-for-tokens`)
-    const before = ctx.getSnapshot()
+test('maybeCompactConversation: malformed summary leaves context unchanged', async () => {
+  const ctx = createAgentContext()
+  for (let i = 0; i < 20; i++) ctx.appendUserMessage(`msg-${i}-padding-for-tokens`)
+  const before = ctx.getSnapshot()
 
-    const compacted = await maybeCompactConversation(ctx, 50_000, {
-      triggerTokens: 10,
-      tailMaxChars: 100,
-      summarize: async () => summary,
-    })
+  const compacted = await maybeCompactConversation(ctx, 50_000, {
+    triggerTokens: 10,
+    tailMaxChars: 100,
+    summarize: async () => 'missing required headings',
+  })
 
-    assert.equal(compacted, false)
-    assert.deepEqual(ctx.getSnapshot(), before)
+  assert.equal(compacted, false)
+  assert.deepEqual(ctx.getSnapshot(), before)
+})
+
+test('maybeCompactConversation: repairs one oversized structured summary deterministically', async () => {
+  const ctx = createAgentContext()
+  for (let i = 0; i < 20; i++) ctx.appendUserMessage(`msg-${i}-padding-for-tokens`)
+
+  const compacted = await maybeCompactConversation(ctx, 50_000, {
+    triggerTokens: 10,
+    tailMaxChars: 100,
+    summarize: async () => validSummary('x'.repeat(5_000)),
+  })
+
+  assert.equal(compacted, true)
+  const head = ctx.getSnapshot().messages[0]
+  assert.equal(head?.role, 'user')
+  if (head?.role === 'user') {
+    assert.ok(head.content.length <= '[历史摘要]\n'.length + 4_000)
+    assert.match(head.content, /## 情绪和氛围/)
   }
+})
+
+test('maybeCompactConversation: backs off repeated ordinary failures for ten minutes', async () => {
+  const ctx = createAgentContext()
+  for (let i = 0; i < 20; i++) ctx.appendUserMessage(`msg-${i}-padding-for-tokens`)
+  let nowMs = 1_000
+  let summarizeCalls = 0
+  const options = {
+    triggerTokens: 10,
+    tailMaxChars: 100,
+    nowMs: () => nowMs,
+    summarize: async () => {
+      summarizeCalls++
+      return 'missing required headings'
+    },
+  }
+
+  assert.equal(await maybeCompactConversation(ctx, 50_000, options), false)
+  ctx.appendUserMessage('context continued growing')
+  assert.equal(await maybeCompactConversation(ctx, 50_000, options), false)
+  assert.equal(summarizeCalls, 1)
+
+  nowMs += 10 * 60_000
+  assert.equal(await maybeCompactConversation(ctx, 50_000, options), false)
+  assert.equal(summarizeCalls, 2)
 })
 
 test('maybeCompactConversation: invalid candidate tool pairing leaves context unchanged', async () => {

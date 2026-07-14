@@ -1,11 +1,15 @@
+import { createHash } from 'node:crypto'
 import type { AfterToolHook, BeforeToolHook } from './tool.js'
 import { createLogger } from '../logger.js'
 import { predictAiTone, type AiTonePrediction, type AiTonePredictor } from './tools/ai-tone.js'
+import { normalizeSendText } from './tools/send-message.js'
 
 const log = createLogger('TOOL_POLICY_HOOKS')
 
 const DEFAULT_AI_TONE_THRESHOLD = 0.75
 const DEFAULT_MAX_CONSECUTIVE_BLOCKS = 2
+const DEFAULT_PRIVATE_AMBIENT_COOLDOWN_MS = 30 * 60_000
+const DEFAULT_AMBIENT_DUPLICATE_WINDOW_MS = 12 * 60 * 60_000
 
 export type AiTonePrecheckDecision = 'allowed' | 'blocked' | 'allowed_after_limit'
 
@@ -42,6 +46,8 @@ interface SendMessageAiToneHookOptions {
 interface SendMessageHookArgs {
   target?: { type?: unknown; groupId?: unknown; userId?: unknown }
   text?: unknown
+  mode?: unknown
+  replyToMessageId?: unknown
 }
 
 type SendMessageAiToneTarget =
@@ -62,6 +68,82 @@ interface GenerateImageStartedResult {
 
 interface GenerateImageTaskLogHookOptions {
   logger?: (entry: GenerateImageTaskLogEntry) => void
+}
+
+export interface SendMessageSafetyGuardOptions {
+  nowMs?: () => number
+  privateAmbientCooldownMs?: number
+  ambientDuplicateWindowMs?: number
+}
+
+export interface SendMessageSafetyGuard {
+  beforeTool: BeforeToolHook
+  afterTool: AfterToolHook
+}
+
+/** 只按成功外发计时的进程内防抖；reply 不受限。 */
+export function createSendMessageSafetyGuard(
+  options: SendMessageSafetyGuardOptions = {},
+): SendMessageSafetyGuard {
+  const nowMs = options.nowMs ?? Date.now
+  const privateAmbientCooldownMs = Math.max(
+    1,
+    options.privateAmbientCooldownMs ?? DEFAULT_PRIVATE_AMBIENT_COOLDOWN_MS,
+  )
+  const ambientDuplicateWindowMs = Math.max(
+    1,
+    options.ambientDuplicateWindowMs ?? DEFAULT_AMBIENT_DUPLICATE_WINDOW_MS,
+  )
+  const lastPrivateAmbientAt = new Map<number, number>()
+  const lastAmbientTextAt = new Map<string, number>()
+
+  const beforeTool: BeforeToolHook = ({ call }) => {
+    if (call.name !== 'send_message') return
+    const args = call.args as SendMessageHookArgs
+    if (args.mode !== 'ambient') return
+
+    const now = nowMs()
+    if (typeof args.text === 'string') {
+      const normalized = normalizeSendText(args.text).trim()
+      if (normalized.length > 0) {
+        const lastAt = lastAmbientTextAt.get(hashText(normalized))
+        if (lastAt != null && now - lastAt < ambientDuplicateWindowMs) {
+          return rejectSendMessage(
+            'ambient_duplicate',
+            ambientDuplicateWindowMs - (now - lastAt),
+            '这段完全相同的主动发言在 12 小时内已经成功发送过。不要换目标重复群发；有新的真实内容再发。',
+          )
+        }
+      }
+    }
+
+    const target = parseSendMessageAiToneTarget(args.target)
+    if (target?.type !== 'private') return
+    const lastAt = lastPrivateAmbientAt.get(target.userId)
+    if (lastAt != null && now - lastAt < privateAmbientCooldownMs) {
+      return rejectSendMessage(
+        'private_ambient_cooldown',
+        privateAmbientCooldownMs - (now - lastAt),
+        '刚刚已经主动联系过这个人。先让对方有回应空间；reply 模式不受这个主动发言冷却影响。',
+      )
+    }
+  }
+
+  const afterTool: AfterToolHook = ({ call, result }) => {
+    if (call.name !== 'send_message') return
+    const args = call.args as SendMessageHookArgs
+    if (args.mode !== 'ambient') return
+    if (!result.effects?.some((effect) => effect.type === 'message_sent')) return
+
+    const now = nowMs()
+    const target = parseSendMessageAiToneTarget(args.target)
+    if (target?.type === 'private') lastPrivateAmbientAt.set(target.userId, now)
+    if (typeof args.text !== 'string') return
+    const normalized = normalizeSendText(args.text).trim()
+    if (normalized.length > 0) lastAmbientTextAt.set(hashText(normalized), now)
+  }
+
+  return { beforeTool, afterTool }
 }
 
 export function createGenerateImageTaskLogHook(options: GenerateImageTaskLogHookOptions = {}): AfterToolHook {
@@ -217,4 +299,21 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
 
 function preview(value: string, maxChars: number): string {
   return value.length <= maxChars ? value : `${value.slice(0, maxChars)}...`
+}
+
+function hashText(value: string): string {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+function rejectSendMessage(code: string, retryAfterMs: number, instruction: string) {
+  return {
+    content: JSON.stringify({
+      ok: false,
+      status: 'rejected',
+      code,
+      retryAfterMs: Math.max(1, Math.ceil(retryAfterMs)),
+      instruction,
+    }),
+    outcome: { ok: false, code },
+  }
 }

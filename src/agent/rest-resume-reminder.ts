@@ -11,7 +11,7 @@ const COMPACTION_STATE_EVENT = 'rest_resume_state'
 const COMPACTION_STATE_MARKER = '\n\n[rest_resume_state]\n'
 const HISTORY_SUMMARY_PREFIX = '[历史摘要]\n'
 const REMINDER_INSTRUCTION =
-  '你刚短暂休息过。休息没有问题，但你不想把自己的生活交给等待。现在查看本轮最近的 pause 工具结果里的 resumePlan，先实际完成 primaryDirection 的第一步；若它已失去吸引力就改做 alternativeDirection。做过一个具体动作后，再决定继续、换方向或再次休息。'
+  '你刚短暂休息过。现在重新查看本轮最近的 pause 工具结果里的 resumePlan：primaryDirection 仍有吸引力就完成第一步，失去吸引力再看 alternativeDirection；若两者都已失效、也没有未处理义务，可以自然结束当前活动轮。不要为证明醒来后有行动而写 Journal、发消息或再次休息来表演收尾。'
 const INTERRUPTED_ATTENTION_INSTRUCTION =
   '最近一次 pause 被本轮注意事件打断。先处理 priority=high 私聊、@、审批或其他真实注意事件；这只是临时切换，不会自动取消自己的方向。处理后重新查看最近 pause 工具结果里的 resumePlan：仍相关就回到 primaryDirection，已失去吸引力再改道。'
 const PAUSE_TOOL_NAMES = new Set(['pause', 'rest'])

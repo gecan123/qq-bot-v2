@@ -329,9 +329,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     }
   }
 
-  function appendHandledMailboxMarkers(sentTargets: readonly MessageSentTarget[]): void {
+  function appendHandledMailboxMarkers(sentTargets: readonly MessageSentTarget[]): boolean {
     const messages = deps.context.getSnapshot().messages
     const seenMailboxes = new Set<string>()
+    let appended = false
     for (const target of sentTargets) {
       const mailbox = target.type === 'group'
         ? `qq_group:${target.groupId}`
@@ -342,7 +343,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       const throughRowId = findPendingMailboxThroughRowId(messages, mailbox)
       if (throughRowId == null) continue
       deps.context.appendUserMessage(renderMailboxHandledEvent(mailbox, throughRowId))
+      appended = true
     }
+    return appended
   }
 
   async function saveSnapshot(): Promise<void> {
@@ -450,6 +453,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       throw error
     }
     const { inputTokens, tokensUsed, didPause, didCompleteRest, sentTargets } = roundResult
+    const appendedHandledMailboxMarker = appendHandledMailboxMarkers(sentTargets)
+    if (appendedHandledMailboxMarker) {
+      await saveSnapshot()
+    }
     if (goalAtRoundStart?.status === 'active' && deps.goalStore) {
       await deps.goalStore.accountRound({
         goalId: goalAtRoundStart.goalId,
@@ -458,7 +465,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       })
       await syncGoalState()
     }
-    appendHandledMailboxMarkers(sentTargets)
     await saveSnapshot()
     try {
       const roundMessages = deps.context.getSnapshot().messages.slice(beforeStepCount)

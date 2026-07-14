@@ -154,6 +154,63 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.deepEqual(saved.at(-1)?.messages.at(-1), { role: 'user', content: marker })
   })
 
+  test('persists the handled marker before active goal accounting can fail', async () => {
+    const baseGoalStore = createInMemoryGoalStore()
+    const created = await baseGoalStore.createSelf({
+      objective: '完成当前回复',
+      motivation: '处理 owner 的新消息',
+      completionCriteria: ['成功回复并保存处理状态'],
+    })
+    assert.ok(created.goal)
+    const goalStore = {
+      ...baseGoalStore,
+      async accountRound(): Promise<never> {
+        throw new Error('goal accounting failed')
+      },
+    }
+    const ctx = createAgentContext()
+    ctx.appendUserMessage(
+      '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
+    )
+    const { repo, saved } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [{ id: 'send-1', name: 'send_message', args: { text: '收到' } }],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools({
+        send_message: async () => ({
+          content: '{"ok":true,"status":"sent"}',
+          effects: [{ type: 'message_sent', target: { type: 'private', userId: 9001 } }],
+        }),
+      }),
+      snapshotRepo: repo,
+      goalStore,
+      initialGoalRevision: created.goal.revision,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await assert.rejects(() => agent.runOnceForTest(), /goal accounting failed/)
+
+    const savedMessages = saved.at(-1)?.messages ?? []
+    assert.equal(
+      savedMessages.some(
+        (message) => message.role === 'tool' && message.toolCallId === 'send-1',
+      ),
+      true,
+    )
+    assert.deepEqual(savedMessages.at(-1), {
+      role: 'user',
+      content: '{"event":"mailbox_handled","mailbox":"qq_private:9001","throughRowId":88}',
+    })
+  })
+
   test('closes a durable inbox cursor when the confirmed send happens in a later step', async () => {
     const ctx = createAgentContext()
     ctx.appendUserMessage(

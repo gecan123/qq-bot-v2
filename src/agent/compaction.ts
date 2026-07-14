@@ -11,6 +11,11 @@ import {
   renderRestResumeReminderCompactionSuffix,
   stripRestResumeReminderCompactionSuffix,
 } from './rest-resume-reminder.js'
+import {
+  captureMailboxAttentionState,
+  isMailboxAttentionStateMessage,
+  renderMailboxAttentionStateEvent,
+} from './mailbox-handled.js'
 
 const DEFAULT_COMPACTION_TRIGGER_TOKENS = 16_000
 const DEFAULT_COMPACTION_TAIL_CHARS = 12_000
@@ -318,7 +323,11 @@ async function compactConversation(
 
   const toCompress = snapshot.messages.slice(0, cutIndex)
   const tail = stripInactiveNativeBlocks(snapshot.messages.slice(cutIndex))
-  const { previousSummary, rest: historyToSummarize } = splitExistingSummary(toCompress)
+  const mailboxAttentionState = captureMailboxAttentionState(toCompress)
+  const { previousSummary, rest: historyAfterSummary } = splitExistingSummary(toCompress)
+  const historyToSummarize = historyAfterSummary.filter(
+    (message) => !isMailboxAttentionStateMessage(message),
+  )
 
   if (historyToSummarize.length === 0 && !previousSummary) {
     return false
@@ -352,7 +361,10 @@ async function compactConversation(
     role: 'user',
     content: `${summaryWithoutRuntimeState}${renderRestResumeReminderCompactionSuffix(toCompress)}`,
   }
-  const candidateMessages = [summaryMessage, ...tail]
+  const mailboxAttentionStateMessage: AgentMessage[] = Object.keys(mailboxAttentionState).length > 0
+    ? [{ role: 'user', content: renderMailboxAttentionStateEvent(mailboxAttentionState) }]
+    : []
+  const candidateMessages = [summaryMessage, ...mailboxAttentionStateMessage, ...tail]
   const integrity = validateBotSnapshotIntegrity({
     snapshot: {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
@@ -376,7 +388,7 @@ async function compactConversation(
   log.info(
     {
       previousMessages: snapshot.messages.length,
-      newMessages: 1 + tail.length,
+      newMessages: candidateMessages.length,
       compressedCount: toCompress.length,
       keptCount: tail.length,
       inputTokensBefore: lastInputTokens,

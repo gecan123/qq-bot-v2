@@ -41,6 +41,7 @@
     "@tavily/core": "^0.7.2",
     "cheerio": "^1.2.0",
     "cloakbrowser": "^0.4.3",
+    "croner": "^10.0.1",
     "dotenv": "^17.3.1",
     "fast-xml-parser": "^5.7.2",
     "google-auth-library": "^9.0.0",

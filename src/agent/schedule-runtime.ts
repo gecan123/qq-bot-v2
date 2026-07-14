@@ -167,7 +167,9 @@ export function createScheduleRuntime(
     }
 
     try {
-      const advancement = advanceDueJob(job, currentTime)
+      const advancement = advanceDueJob(job, currentTime, {
+        allowLateExpiryBoundary: true,
+      })
       const nextJobs = advancement.job
         ? [...jobs.values()].map((currentJob) =>
             currentJob.id === id ? advancement.job! : currentJob,
@@ -409,8 +411,15 @@ function recoverLoadedJobs(loaded: readonly ScheduleJob[], now: Date): StartupRe
   return { jobs, events, changed }
 }
 
-function advanceDueJob(job: ScheduleJob, now: Date): JobAdvancement {
-  if (now.getTime() > Date.parse(job.expiresAt)) {
+function advanceDueJob(
+  job: ScheduleJob,
+  now: Date,
+  options: { allowLateExpiryBoundary?: boolean } = {},
+): JobAdvancement {
+  const expiresAtMs = Date.parse(job.expiresAt)
+  const isArmedExpiryBoundary =
+    options.allowLateExpiryBoundary === true && Date.parse(job.nextRunAt) === expiresAtMs
+  if (now.getTime() > expiresAtMs && !isArmedExpiryBoundary) {
     return { job: null, event: null }
   }
 
@@ -426,7 +435,7 @@ function advanceDueJob(job: ScheduleJob, now: Date): JobAdvancement {
     }
   }
 
-  const expiryMs = Date.parse(job.expiresAt)
+  const expiryMs = expiresAtMs
   const latestAllowedMs = Math.min(now.getTime(), expiryMs)
   let latestOccurrence = expected
   let nextOccurrence = computeNextRunAt(job.schedule, latestOccurrence)

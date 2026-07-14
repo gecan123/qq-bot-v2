@@ -613,6 +613,63 @@ describe('ScheduleRuntime firing and restart recovery', () => {
     assert.equal(clock.timerCount(), 0)
   })
 
+  test('allows an armed at boundary tick to fire when its callback is a few milliseconds late', async () => {
+    const boundaryJob = atJob({
+      schedule: { kind: 'at', at: '2026-07-17T01:00:00.000Z' },
+      nextRunAt: '2026-07-17T01:00:00.000Z',
+    })
+    const clock = new FakeClock()
+    const store = new RecordingStore([boundaryJob])
+    const { runtime, eventQueue } = harness({ clock, store })
+    await runtime.start()
+    clock.setNow('2026-07-17T01:00:00.005Z')
+
+    clock.fire()
+    await flushTimerMutation(runtime)
+
+    assert.deepEqual(await store.load(), [])
+    assert.deepEqual(await runtime.list(), [])
+    assert.deepEqual(eventQueue.dequeue(), {
+      type: 'scheduled_wake',
+      scheduleId: 'schedule-1',
+      name: 'review-progress',
+      scheduleKind: 'at',
+      scheduledFor: new Date('2026-07-17T01:00:00.000Z'),
+      intention: 'Review the latest goal and decide the next useful action',
+      runCount: 1,
+    })
+    assert.equal(eventQueue.size(), 0)
+  })
+
+  test('retries an armed at boundary tick after persistence recovers past expiry', async () => {
+    const boundaryJob = atJob({
+      schedule: { kind: 'at', at: '2026-07-17T01:00:00.000Z' },
+      nextRunAt: '2026-07-17T01:00:00.000Z',
+    })
+    const clock = new FakeClock()
+    const store = new RecordingStore([boundaryJob])
+    const { runtime, eventQueue } = harness({ clock, store, retryDelayMs: 1_000 })
+    await runtime.start()
+    store.failNextReplace = new Error('temporary write failure')
+    clock.setNow(boundaryJob.expiresAt)
+
+    clock.fire()
+    await flushTimerMutation(runtime)
+    assert.equal(eventQueue.size(), 0)
+    assert.deepEqual(await runtime.list(), [boundaryJob])
+    assert.equal(clock.nextDelayMs(), 1_000)
+
+    clock.setNow('2026-07-17T01:00:01.000Z')
+    clock.fire()
+    await flushTimerMutation(runtime)
+
+    assert.deepEqual(await store.load(), [])
+    assert.deepEqual(await runtime.list(), [])
+    assert.equal(eventQueue.size(), 1)
+    assert.equal(eventQueue.dequeue()?.type, 'scheduled_wake')
+    assert.equal(eventQueue.size(), 0)
+  })
+
   test('removes a recurring job after the current wake reaches maxRuns', async () => {
     const clock = new FakeClock()
     const store = new RecordingStore([everyJob({ maxRuns: 1 })])

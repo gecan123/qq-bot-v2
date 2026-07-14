@@ -144,9 +144,13 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let roundIndex = 0
   let consecutiveRounds = 0
 
-  async function drainEvents(): Promise<{ consumed: number; disclosed: number; hadAttention: boolean }> {
+  function drainEvents(): {
+    consumed: number
+    hadAttention: boolean
+    beforeGoal: MailboxDisclosure[]
+    afterGoal: MailboxDisclosure[]
+  } {
     const events: BotEvent[] = []
-    let disclosed = 0
     while (true) {
       const event = deps.eventQueue.dequeue()
       if (!event) break
@@ -155,9 +159,32 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
 
     const plan = planMailboxDisclosures(events, mailboxCursors)
     mailboxCursors = plan.cursors
-    const highPriorityDisclosures = plan.disclosures.filter(isHighPriorityMailboxDisclosure)
-    const otherDisclosures = plan.disclosures.filter((disclosure) => !isHighPriorityMailboxDisclosure(disclosure))
-    for (const disclosure of [...highPriorityDisclosures, ...otherDisclosures]) {
+    const highPriorityDisclosures: MailboxDisclosure[] = []
+    const scheduledWakeDisclosures: MailboxDisclosure[] = []
+    const ordinaryDisclosures: MailboxDisclosure[] = []
+    for (const disclosure of plan.disclosures) {
+      if (isHighPriorityMailboxDisclosure(disclosure)) {
+        highPriorityDisclosures.push(disclosure)
+      } else if (
+        disclosure.kind === 'direct' &&
+        disclosure.event.type === 'scheduled_wake'
+      ) {
+        scheduledWakeDisclosures.push(disclosure)
+      } else {
+        ordinaryDisclosures.push(disclosure)
+      }
+    }
+    return {
+      consumed: events.length,
+      hadAttention: events.some(isAttentionEvent),
+      beforeGoal: [...highPriorityDisclosures, ...scheduledWakeDisclosures],
+      afterGoal: ordinaryDisclosures,
+    }
+  }
+
+  async function discloseEvents(disclosures: readonly MailboxDisclosure[]): Promise<number> {
+    let disclosed = 0
+    for (const disclosure of disclosures) {
       if (disclosure.kind === 'backlog') {
         deps.context.appendUserMessage(renderMailboxBacklogNotification(disclosure.event))
         recordMailboxDisclosure(
@@ -213,11 +240,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         lastWakeAt = new Date()
       }
     }
-    return {
-      consumed: events.length,
-      disclosed,
-      hadAttention: events.some(isAttentionEvent),
-    }
+    return disclosed
   }
 
   async function runRound(goalRoundIndex?: number): Promise<{
@@ -361,20 +384,22 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         }
       })
     }
-    const { consumed, disclosed, hadAttention } = await drainEvents()
+    const drained = drainEvents()
+    let disclosed = await discloseEvents(drained.beforeGoal)
     if (goalAtRoundStart?.status === 'active') {
       appendGoalContinuation(goalAtRoundStart, 'automatic_continuation')
       goalMessagesAppended = true
     }
-    const appendedInterruptedFocusReminder = hadAttention
+    disclosed += await discloseEvents(drained.afterGoal)
+    const appendedInterruptedFocusReminder = drained.hadAttention
       && disclosed > 0
       && shouldAppendInterruptedRestAttentionReminder(deps.context.getSnapshot().messages)
     if (appendedInterruptedFocusReminder) {
       deps.context.appendUserMessage(renderInterruptedRestAttentionReminder())
     }
-    log.debug({ roundIndex: roundIndex + 1, eventsConsumed: consumed, eventsDisclosed: disclosed }, 'round_start')
+    log.debug({ roundIndex: roundIndex + 1, eventsConsumed: drained.consumed, eventsDisclosed: disclosed }, 'round_start')
 
-    if (consumed > 0 && disclosed === 0 && !goalMessagesAppended && !appendedInterruptedFocusReminder) {
+    if (drained.consumed > 0 && disclosed === 0 && !goalMessagesAppended && !appendedInterruptedFocusReminder) {
       return { ranRound: false }
     }
 

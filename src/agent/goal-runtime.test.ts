@@ -140,7 +140,7 @@ describe('BotLoop goal integration', () => {
     assert.equal(savedGoalRevisions.at(-1), finished?.revision)
   })
 
-  test('priority attention is appended after goal continuation and budget transition stops goal continuation', async () => {
+  test('priority attention is appended before goal continuation and budget transition stops goal continuation', async () => {
     const context = createAgentContext()
     const goalStore = createInMemoryGoalStore()
     await goalStore.applyControl({
@@ -184,8 +184,8 @@ describe('BotLoop goal integration', () => {
     const goal = await goalStore.get()
     assert.equal(goal?.status, 'budget_limited')
     const users = context.getSnapshot().messages.filter((message) => message.role === 'user')
-    assert.match(users[1]!.content, /goal_continuation/)
-    assert.match(users[2]!.content, /inbox_update/)
+    assert.match(users[1]!.content, /inbox_update/)
+    assert.match(users[2]!.content, /goal_continuation/)
     assert.match(users.at(-1)!.content, /budget_limited/)
   })
 

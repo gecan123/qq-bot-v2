@@ -1382,6 +1382,13 @@ describe('BotLoopAgent.runOnceForTest', () => {
   })
 
   test('discloses high-priority QQ notification before an earlier scheduled wake', async () => {
+    const goalStore = createInMemoryGoalStore()
+    const created = await goalStore.createSelf({
+      objective: '完成当前研究',
+      motivation: '把已有主线做完',
+      completionCriteria: ['得到可验证的结论'],
+    })
+    assert.ok(created.goal)
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue(makeScheduledWake())
@@ -1409,6 +1416,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       }]),
       tools: makeMockTools(),
       snapshotRepo: repo,
+      goalStore,
+      initialGoalRevision: created.goal.revision,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })
@@ -1418,6 +1427,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
     assert.equal(JSON.parse(userMessages[0]!.content).priority, 'high')
     assert.equal(JSON.parse(userMessages[1]!.content).event, 'scheduled_wake')
+    assert.equal(JSON.parse(userMessages[2]!.content).event, 'goal_continuation')
   })
 
   test('discloses scheduled wake before the active goal continuation', async () => {
@@ -1455,6 +1465,54 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
     assert.equal(JSON.parse(userMessages[0]!.content).event, 'scheduled_wake')
     assert.equal(JSON.parse(userMessages[1]!.content).event, 'goal_continuation')
+  })
+
+  test('discloses active goal continuation before an ambient mailbox notification', async () => {
+    const goalStore = createInMemoryGoalStore()
+    const created = await goalStore.createSelf({
+      objective: '完成当前研究',
+      motivation: '把已有主线做完',
+      completionCriteria: ['得到可验证的结论'],
+    })
+    assert.ok(created.goal)
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({
+      type: 'napcat_message',
+      messageRowId: 89,
+      groupId: 999,
+      groupName: '环境群',
+      messageId: 20_089,
+      senderId: 9002,
+      senderNickname: 'Bob',
+      mentionedSelf: false,
+      sentAt: new Date('2026-07-13T09:00:01.000Z'),
+      renderedText: '普通群消息',
+    })
+    const { repo } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      goalStore,
+      initialGoalRevision: created.goal.revision,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
+    assert.equal(JSON.parse(userMessages[0]!.content).event, 'goal_continuation')
+    assert.equal(JSON.parse(userMessages[1]!.content).priority, 'normal')
   })
 
   test('delegates tool execution failures to the React kernel durable error result path', async () => {

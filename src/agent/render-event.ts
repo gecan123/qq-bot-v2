@@ -40,8 +40,11 @@ export function renderBotEvent(event: BotEvent): string | null {
     return JSON.stringify({
       event: 'scheduled_wake',
       scheduleId: event.scheduleId,
-      dueAt: formatBeijingIso(event.dueAt),
-      reason: event.reason,
+      name: event.name,
+      scheduleKind: event.scheduleKind,
+      scheduledFor: formatBeijingIso(event.scheduledFor),
+      intention: event.intention,
+      runCount: event.runCount,
     })
   }
 

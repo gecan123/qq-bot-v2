@@ -1,17 +1,29 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
+import type { BotEvent } from './event.js'
 import { BOOTSTRAP_TEXT, CURIOSITY_TICK_TEXT, renderBotEvent } from './render-event.js'
 
 describe('renderBotEvent — scheduled wake', () => {
-  test('renders stable structured context', () => {
+  const scheduleKinds = ['at', 'every', 'cron'] as const satisfies ReadonlyArray<
+    Extract<BotEvent, { type: 'scheduled_wake' }>['scheduleKind']
+  >
+
+  test('accepts every supported schedule kind', () => {
+    assert.deepEqual(scheduleKinds, ['at', 'every', 'cron'])
+  })
+
+  test('renders stable structured context with an explicit Beijing timestamp', () => {
     assert.equal(
       renderBotEvent({
         type: 'scheduled_wake',
-        scheduleId: 'wake-1',
-        dueAt: new Date('2026-07-12T00:01:00.000Z'),
-        reason: '检查任务',
+        scheduleId: 'schedule-1',
+        name: '任务检查',
+        scheduleKind: 'cron',
+        scheduledFor: new Date('2026-07-12T00:01:00.000Z'),
+        intention: '重新评估当前任务是否需要继续',
+        runCount: 2,
       }),
-      '{"event":"scheduled_wake","scheduleId":"wake-1","dueAt":"2026-07-12T08:01:00.000+08:00","reason":"检查任务"}',
+      '{"event":"scheduled_wake","scheduleId":"schedule-1","name":"任务检查","scheduleKind":"cron","scheduledFor":"2026-07-12T08:01:00.000+08:00","intention":"重新评估当前任务是否需要继续","runCount":2}',
     )
   })
 })

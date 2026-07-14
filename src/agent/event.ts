@@ -47,8 +47,11 @@ export type BotEvent =
   | {
       type: 'scheduled_wake'
       scheduleId: string
-      dueAt: Date
-      reason: string
+      name: string
+      scheduleKind: 'at' | 'every' | 'cron'
+      scheduledFor: Date
+      intention: string
+      runCount: number
     }
   | {
       type: 'background_task_completed'

@@ -56,8 +56,11 @@ export function createDurableWakeScheduler(
       input.eventQueue.enqueue({
         type: 'scheduled_wake',
         scheduleId: task.id,
-        dueAt: wake.dueAt,
-        reason: wake.reason,
+        name: wake.reason,
+        scheduleKind: 'at',
+        scheduledFor: wake.dueAt,
+        intention: wake.reason,
+        runCount: 1,
       })
       input.registry.complete(task.id, {
         summary: `定时唤醒已触发: ${wake.reason}`,

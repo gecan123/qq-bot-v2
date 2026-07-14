@@ -249,7 +249,7 @@ describe('persistent schedule store', () => {
     await assert.rejects(createPersistentScheduleStore(path).load())
   })
 
-  test('requires recurring nextRunAt to be derived from the last run or creation cursor', async () => {
+  test('rejects recurring nextRunAt that is not a real schedule occurrence', async () => {
     const path = tempStatePath()
     const invalidJobs = [
       job({
@@ -267,7 +267,7 @@ describe('persistent schedule store', () => {
           anchorAt: '2026-07-14T01:00:00.000Z',
         },
         lastRunAt: '2026-07-14T01:10:00.000Z',
-        nextRunAt: '2026-07-14T01:30:00.000Z',
+        nextRunAt: '2026-07-14T01:31:00.000Z',
         runCount: 2,
       }),
       job({
@@ -284,6 +284,80 @@ describe('persistent schedule store', () => {
       writeRaw(path, { version: 1, schedules: [invalidJob] })
       await assert.rejects(createPersistentScheduleStore(path).load())
     }
+  })
+
+  test('accepts coalesced recurring jobs that skip ticks but remain on the schedule', async () => {
+    const path = tempStatePath()
+    const schedules = [
+      job({
+        id: 'coalesced-every',
+        name: 'coalesced-every',
+        schedule: {
+          kind: 'every',
+          everySeconds: 600,
+          anchorAt: '2026-07-14T01:00:00.000Z',
+        },
+        lastRunAt: '2026-07-14T01:10:00.000Z',
+        nextRunAt: '2026-07-14T01:40:00.000Z',
+        runCount: 1,
+      }),
+      job({
+        id: 'coalesced-cron',
+        name: 'coalesced-cron',
+        schedule: {
+          kind: 'cron',
+          expression: '*/10 * * * *',
+          timezone: 'UTC',
+        },
+        lastRunAt: '2026-07-14T01:10:00.000Z',
+        nextRunAt: '2026-07-14T01:40:00.000Z',
+        runCount: 1,
+      }),
+    ]
+    writeRaw(path, { version: 1, schedules })
+
+    assert.deepEqual(await createPersistentScheduleStore(path).load(), schedules)
+  })
+
+  test('requires recurring nextRunAt to be strictly later than lastRunAt', async () => {
+    const path = tempStatePath()
+    writeRaw(path, {
+      version: 1,
+      schedules: [
+        job({
+          schedule: {
+            kind: 'every',
+            everySeconds: 600,
+            anchorAt: '2026-07-14T01:00:00.000Z',
+          },
+          lastRunAt: '2026-07-14T01:10:00.000Z',
+          nextRunAt: '2026-07-14T01:10:00.000Z',
+          runCount: 1,
+        }),
+      ],
+    })
+
+    await assert.rejects(createPersistentScheduleStore(path).load())
+  })
+
+  test('requires a first recurring job to use the first trigger after creation', async () => {
+    const path = tempStatePath()
+    const valid = job({
+      schedule: {
+        kind: 'every',
+        everySeconds: 600,
+        anchorAt: '2026-07-14T01:00:00.000Z',
+      },
+      nextRunAt: '2026-07-14T01:10:00.000Z',
+    })
+    writeRaw(path, { version: 1, schedules: [valid] })
+    assert.deepEqual(await createPersistentScheduleStore(path).load(), [valid])
+
+    writeRaw(path, {
+      version: 1,
+      schedules: [job({ ...valid, nextRunAt: '2026-07-14T01:30:00.000Z' })],
+    })
+    await assert.rejects(createPersistentScheduleStore(path).load())
   })
 
   test('requires an active job runCount to remain below maxRuns', async () => {

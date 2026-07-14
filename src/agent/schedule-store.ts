@@ -86,11 +86,11 @@ const scheduleJobSchema = z
     }
     if (job.lastRunAt !== undefined) {
       const lastRunAt = Date.parse(job.lastRunAt)
-      if (lastRunAt < createdAt || lastRunAt > nextRunAt) {
+      if (lastRunAt < createdAt || lastRunAt >= nextRunAt) {
         context.addIssue({
           code: 'custom',
           path: ['lastRunAt'],
-          message: 'lastRunAt must be between createdAt and nextRunAt',
+          message: 'lastRunAt must be between createdAt and nextRunAt, excluding nextRunAt',
         })
       }
     }
@@ -109,7 +109,9 @@ const scheduleJobSchema = z
         ? new Date(normalizedSchedule.at)
         : computeNextRunAt(
             normalizedSchedule,
-            new Date(job.lastRunAt ?? job.createdAt),
+            job.lastRunAt === undefined
+              ? new Date(job.createdAt)
+              : new Date(nextRunAt - 1),
           )
       if (expectedNextRunAt?.getTime() !== nextRunAt) {
         context.addIssue({

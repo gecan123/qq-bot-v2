@@ -280,13 +280,14 @@ async function sendWithImage(
         )),
       }
     }
-    const fallback = JSON.parse((await sendResolved(deps, args)).content) as SendReceipt
+    const fallbackResult = await sendResolved(deps, args)
+    const fallback = JSON.parse(fallbackResult.content) as SendReceipt
     fallback.image = {
       mediaId: 'mediaId' in handle ? handle.mediaId : null,
       ...('ephemeralRef' in handle ? { ephemeralRef: handle.ephemeralRef } : {}),
       resolveError: message,
     }
-    return { content: JSON.stringify(fallback) }
+    return { content: JSON.stringify(fallback), effects: fallbackResult.effects }
   }
 
   try {

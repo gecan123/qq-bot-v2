@@ -933,6 +933,9 @@ describe('send_message tool — image via mediaId', () => {
     const img = result.image as Record<string, unknown>
     assert.equal(img.mediaId, 1)
     assert.match(img.resolveError as string, /Media not found: mediaId=1/)
-    assert.equal(out.effects, undefined)
+    assert.deepEqual(out.effects, [{
+      type: 'message_sent',
+      target: { type: 'private', userId: 10001 },
+    }])
   })
 })

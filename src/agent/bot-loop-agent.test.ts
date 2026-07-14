@@ -120,6 +120,204 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.deepEqual(saved, [ctx.exportPersistedSnapshot()])
   })
 
+  test('appends and persists a handled marker after a confirmed private send', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage(
+      '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
+    )
+    const { repo, saved } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [{ id: 'send-1', name: 'send_message', args: { text: '收到' } }],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools({
+        send_message: async () => ({
+          content: '{"ok":true,"status":"sent"}',
+          effects: [{ type: 'message_sent', target: { type: 'private', userId: 9001 } }],
+        }),
+      }),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    const marker = '{"event":"mailbox_handled","mailbox":"qq_private:9001","throughRowId":88}'
+    assert.deepEqual(ctx.getSnapshot().messages.at(-1), { role: 'user', content: marker })
+    assert.deepEqual(saved.at(-1)?.messages.at(-1), { role: 'user', content: marker })
+  })
+
+  test('closes a durable inbox cursor when the confirmed send happens in a later step', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage(
+      '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
+    )
+    const { repo } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([
+        {
+          content: '',
+          toolCalls: [{ id: 'inbox-1', name: 'inbox', args: { peerId: 9001 } }],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+          model: 'mock',
+        },
+        {
+          content: '',
+          toolCalls: [{ id: 'send-1', name: 'send_message', args: { text: '稍后回复' } }],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+          model: 'mock',
+        },
+      ]),
+      tools: makeMockTools({
+        inbox: async () => ({ content: '{"ok":true,"messages":[]}' }),
+        send_message: async () => ({
+          content: '{"ok":true,"status":"sent"}',
+          effects: [{ type: 'message_sent', target: { type: 'private', userId: 9001 } }],
+        }),
+      }),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+    assert.equal(
+      ctx.getSnapshot().messages.some(
+        (message) => message.role === 'user' && message.content.includes('mailbox_handled'),
+      ),
+      false,
+    )
+
+    await agent.runOnceForTest()
+
+    assert.deepEqual(ctx.getSnapshot().messages.at(-1), {
+      role: 'user',
+      content: '{"event":"mailbox_handled","mailbox":"qq_private:9001","throughRowId":88}',
+    })
+  })
+
+  test('does not append a handled marker when send_message has no confirmed effect', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage(
+      '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
+    )
+    const { repo } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [{ id: 'send-1', name: 'send_message', args: { text: '收到' } }],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools({
+        send_message: async () => ({ content: '{"ok":false,"status":"failed"}' }),
+      }),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(
+      ctx.getSnapshot().messages.some(
+        (message) => message.role === 'user' && message.content.includes('mailbox_handled'),
+      ),
+      false,
+    )
+  })
+
+  test('does not close a pending mailbox when the confirmed send targets another private chat', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage(
+      '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
+    )
+    const { repo } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [{ id: 'send-1', name: 'send_message', args: { text: '发给别人' } }],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools({
+        send_message: async () => ({
+          content: '{"ok":true,"status":"sent"}',
+          effects: [{ type: 'message_sent', target: { type: 'private', userId: 9002 } }],
+        }),
+      }),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(
+      ctx.getSnapshot().messages.some(
+        (message) => message.role === 'user' && message.content.includes('mailbox_handled'),
+      ),
+      false,
+    )
+  })
+
+  test('appends one handled marker for duplicate confirmed sends to the same target in one round', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage(
+      '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
+    )
+    const { repo } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [
+          { id: 'send-1', name: 'send_message', args: { text: '第一段' } },
+          { id: 'send-2', name: 'send_message', args: { text: '第二段' } },
+        ],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools({
+        send_message: async () => ({
+          content: '{"ok":true,"status":"sent"}',
+          effects: [{ type: 'message_sent', target: { type: 'private', userId: 9001 } }],
+        }),
+      }),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    const marker = '{"event":"mailbox_handled","mailbox":"qq_private:9001","throughRowId":88}'
+    assert.equal(
+      ctx.getSnapshot().messages.filter(
+        (message) => message.role === 'user' && message.content === marker,
+      ).length,
+      1,
+    )
+  })
+
   test('drains mentioned group events as high-priority mailbox notifications, runs LLM, executes tools', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()

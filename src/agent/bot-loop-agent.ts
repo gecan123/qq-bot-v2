@@ -1,7 +1,7 @@
 import type { AgentContext } from './agent-context.js'
 import type { AgentMessage } from './agent-context.types.js'
 import { isLlmContextOverflowError, isLlmUsageLimitError, type LlmClient } from './llm-client.js'
-import type { ToolExecutor } from './tool.js'
+import type { MessageSentTarget, ToolExecutor } from './tool.js'
 import type { EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { BotSnapshotRepo } from './snapshot-repo.js'
@@ -38,6 +38,10 @@ import {
   recordMailboxRound,
   type MailboxContinuityState,
 } from './mailbox-continuity.js'
+import {
+  findPendingMailboxThroughRowId,
+  renderMailboxHandledEvent,
+} from './mailbox-handled.js'
 
 const log = createLogger('BOT_LOOP')
 
@@ -249,6 +253,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     tokensUsed: number
     didPause: boolean
     didCompleteRest: boolean
+    sentTargets: MessageSentTarget[]
   }> {
     roundIndex++
     let recoveredContextOverflow = false
@@ -312,7 +317,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         log.warn({ roundIndex }, 'context_overflow_compacted_retrying_round')
       }
     }
-    const { didPause, didCompleteRest } = interpretToolEffects(result.effects)
+    const { didPause, didCompleteRest, sentTargets } = interpretToolEffects(result.effects)
 
     recordMailboxRound(mailboxContinuity, result.inputTokens)
     return {
@@ -320,6 +325,23 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       tokensUsed: recoveryTokensUsed + result.tokensUsed,
       didPause,
       didCompleteRest,
+      sentTargets,
+    }
+  }
+
+  function appendHandledMailboxMarkers(sentTargets: readonly MessageSentTarget[]): void {
+    const messages = deps.context.getSnapshot().messages
+    const seenMailboxes = new Set<string>()
+    for (const target of sentTargets) {
+      const mailbox = target.type === 'group'
+        ? `qq_group:${target.groupId}`
+        : `qq_private:${target.userId}`
+      if (seenMailboxes.has(mailbox)) continue
+      seenMailboxes.add(mailbox)
+
+      const throughRowId = findPendingMailboxThroughRowId(messages, mailbox)
+      if (throughRowId == null) continue
+      deps.context.appendUserMessage(renderMailboxHandledEvent(mailbox, throughRowId))
     }
   }
 
@@ -427,7 +449,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       }
       throw error
     }
-    const { inputTokens, tokensUsed, didPause, didCompleteRest } = roundResult
+    const { inputTokens, tokensUsed, didPause, didCompleteRest, sentTargets } = roundResult
     if (goalAtRoundStart?.status === 'active' && deps.goalStore) {
       await deps.goalStore.accountRound({
         goalId: goalAtRoundStart.goalId,
@@ -436,6 +458,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       })
       await syncGoalState()
     }
+    appendHandledMailboxMarkers(sentTargets)
     await saveSnapshot()
     try {
       const roundMessages = deps.context.getSnapshot().messages.slice(beforeStepCount)

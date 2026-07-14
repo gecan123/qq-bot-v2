@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterEach, describe, test } from 'node:test'
+import { SCHEDULE_LIMITS } from './schedule-model.js'
 import {
   createInMemoryScheduleStore,
   createPersistentScheduleStore,
@@ -169,6 +170,71 @@ describe('persistent schedule store', () => {
       writeRaw(path, { version: 1, schedules: [invalidJob] })
       await assert.rejects(createPersistentScheduleStore(path).load())
     }
+  })
+
+  test('rejects stored every schedules outside the recurrence model limits', async () => {
+    const path = tempStatePath()
+    const invalidSchedules: ScheduleJob['schedule'][] = [
+      {
+        kind: 'every',
+        everySeconds: SCHEDULE_LIMITS.minRecurringIntervalMs / 1_000 - 1,
+        anchorAt: '2026-07-14T01:00:00.000Z',
+      },
+      {
+        kind: 'every',
+        everySeconds: Number.MAX_VALUE,
+        anchorAt: '2026-07-14T01:00:00.000Z',
+      },
+    ]
+
+    for (const schedule of invalidSchedules) {
+      writeRaw(path, { version: 1, schedules: [job({ schedule })] })
+      await assert.rejects(createPersistentScheduleStore(path).load())
+    }
+  })
+
+  test('rejects stored cron expressions and timezones that the schedule model cannot evaluate', async () => {
+    const path = tempStatePath()
+    const invalidSchedules: ScheduleJob['schedule'][] = [
+      { kind: 'cron', expression: 'not a cron', timezone: 'Asia/Shanghai' },
+      { kind: 'cron', expression: '0 9 * * *', timezone: 'Mars/Olympus' },
+    ]
+
+    for (const schedule of invalidSchedules) {
+      writeRaw(path, { version: 1, schedules: [job({ schedule })] })
+      await assert.rejects(createPersistentScheduleStore(path).load())
+    }
+  })
+
+  test('validates stored at schedules against their original creation time', async () => {
+    const path = tempStatePath()
+    const invalidJobs = [
+      job({
+        schedule: { kind: 'at', at: '2026-07-14T01:00:29.000Z' },
+        nextRunAt: '2026-07-14T01:00:29.000Z',
+      }),
+      job({
+        schedule: { kind: 'at', at: '2026-07-17T01:00:00.001Z' },
+        expiresAt: '2026-07-18T01:00:00.000Z',
+        nextRunAt: '2026-07-17T01:00:00.001Z',
+      }),
+    ]
+
+    for (const invalidJob of invalidJobs) {
+      writeRaw(path, { version: 1, schedules: [invalidJob] })
+      await assert.rejects(createPersistentScheduleStore(path).load())
+    }
+  })
+
+  test('rejects state containing more than the active schedule limit', async () => {
+    const path = tempStatePath()
+    const schedules = Array.from(
+      { length: SCHEDULE_LIMITS.maxActiveSchedules + 1 },
+      (_, index) => job({ id: `schedule-${index}`, name: `schedule-${index}` }),
+    )
+    writeRaw(path, { version: 1, schedules })
+
+    await assert.rejects(createPersistentScheduleStore(path).load())
   })
 
   test('preserves the previous file when a replacement cannot be written', async () => {

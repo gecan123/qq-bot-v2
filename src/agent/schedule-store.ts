@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { z } from 'zod'
-import type { ScheduleSpec } from './schedule-model.js'
+import {
+  normalizeScheduleSpec,
+  ScheduleModelError,
+  SCHEDULE_LIMITS,
+  type ScheduleSpec,
+} from './schedule-model.js'
 
 export interface ScheduleJob {
   id: string
@@ -88,9 +93,20 @@ const scheduleJobSchema = z
         })
       }
     }
+
+    try {
+      normalizeScheduleSpec(job.schedule, new Date(job.createdAt))
+    } catch (error) {
+      if (!(error instanceof ScheduleModelError)) throw error
+      context.addIssue({
+        code: 'custom',
+        path: ['schedule'],
+        message: `${error.code}: ${error.message}`,
+      })
+    }
   })
 
-const schedulesSchema = z.array(scheduleJobSchema)
+const schedulesSchema = z.array(scheduleJobSchema).max(SCHEDULE_LIMITS.maxActiveSchedules)
 const storedSchedulesSchema = z
   .object({
     version: z.literal(1),

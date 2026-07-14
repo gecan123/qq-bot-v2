@@ -93,7 +93,6 @@ export interface BotLoopLifeJournal {
 export interface BotLoopAutonomyOptions {
   maxConsecutiveRounds?: number
   cooldownMs?: number
-  dailyTokenBudget?: number
   now?: () => Date
   waitForAttentionOrTimeout?: (
     queue: EventQueue<BotEvent>,
@@ -106,7 +105,6 @@ const DEFAULT_EVENT_DEBOUNCE_MS = 3_000
 const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 86_400_000
 const DEFAULT_MAX_CONSECUTIVE_ROUNDS = 20
 const DEFAULT_AUTONOMY_COOLDOWN_MS = 60_000
-const DEFAULT_DAILY_TOKEN_BUDGET = 200_000
 const MAX_OUTPUT_CONTINUATIONS_PER_ROUND = 2
 const OUTPUT_CONTINUATION_PROMPT =
   '[runtime recovery] 上一段 assistant 输出达到长度上限。请从中断处继续，不要重复已完成内容，并用一个完整的工具调用结束本轮。'
@@ -133,7 +131,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   const autonomy = {
     maxConsecutiveRounds: Math.max(1, deps.autonomy?.maxConsecutiveRounds ?? DEFAULT_MAX_CONSECUTIVE_ROUNDS),
     cooldownMs: Math.max(1, deps.autonomy?.cooldownMs ?? DEFAULT_AUTONOMY_COOLDOWN_MS),
-    dailyTokenBudget: Math.max(1, deps.autonomy?.dailyTokenBudget ?? DEFAULT_DAILY_TOKEN_BUDGET),
     now: deps.autonomy?.now ?? (() => new Date()),
     waitForAttentionOrTimeout: deps.autonomy?.waitForAttentionOrTimeout ?? waitForAttentionOrTimeout,
   }
@@ -145,9 +142,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let goalRevision = Math.max(0, deps.initialGoalRevision ?? 0)
   let roundIndex = 0
   let consecutiveRounds = 0
-  let budgetAttentionAllowance = 0
-  let budgetDay = beijingDayKey(autonomy.now())
-  let dailyTokens = 0
 
   async function drainEvents(): Promise<{ consumed: number; disclosed: number; hadAttention: boolean }> {
     const events: BotEvent[] = []
@@ -344,9 +338,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
 
   async function step(): Promise<{
     ranRound: boolean
-    tokensUsed?: number
     didPause?: boolean
-    hadAttention?: boolean
   }> {
     const beforeStepCount = deps.context.getSnapshot().messages.length
     const syncedBeforeEvents = await syncGoalState()
@@ -440,55 +432,29 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     if (compacted || appendedRestResumeReminder) {
       await saveSnapshot()
     }
-    return { ranRound: true, tokensUsed, didPause, hadAttention }
+    return { ranRound: true, didPause }
   }
 
   async function runOnce(): Promise<void> {
-    const { ranRound, tokensUsed = 0, didPause = false, hadAttention = false } = await step()
+    const { ranRound, didPause = false } = await step()
     if (!ranRound && !stopRequested) {
       await waitForExternalEvent()
       return
     }
     if (!ranRound || stopRequested) return
 
-    resetDailyBudgetIfNeeded()
-    dailyTokens += tokensUsed
-    if (hadAttention) budgetAttentionAllowance = autonomy.maxConsecutiveRounds
-    if (budgetAttentionAllowance > 0) budgetAttentionAllowance--
-
     if (didPause) {
       consecutiveRounds = 0
-      budgetAttentionAllowance = Math.max(budgetAttentionAllowance, 1)
       return
     }
 
     consecutiveRounds++
     if (consecutiveRounds >= autonomy.maxConsecutiveRounds) {
       log.info({ consecutiveRounds, cooldownMs: autonomy.cooldownMs }, 'autonomy_round_cooldown_enter')
-      const result = await autonomy.waitForAttentionOrTimeout(deps.eventQueue, autonomy.cooldownMs)
+      await autonomy.waitForAttentionOrTimeout(deps.eventQueue, autonomy.cooldownMs)
       consecutiveRounds = 0
-      if (result === 'attention') budgetAttentionAllowance = autonomy.maxConsecutiveRounds
       return
     }
-
-    if (dailyTokens >= autonomy.dailyTokenBudget && budgetAttentionAllowance <= 0) {
-      const timeoutMs = millisecondsUntilNextBeijingDay(autonomy.now())
-      log.info({ dailyTokens, budget: autonomy.dailyTokenBudget, timeoutMs }, 'autonomy_daily_budget_wait')
-      const result = await autonomy.waitForAttentionOrTimeout(deps.eventQueue, timeoutMs)
-      if (result === 'attention') {
-        budgetAttentionAllowance = autonomy.maxConsecutiveRounds
-      } else {
-        resetDailyBudgetIfNeeded()
-      }
-    }
-  }
-
-  function resetDailyBudgetIfNeeded(): void {
-    const nextDay = beijingDayKey(autonomy.now())
-    if (nextDay === budgetDay) return
-    budgetDay = nextDay
-    dailyTokens = 0
-    budgetAttentionAllowance = 0
   }
 
   async function waitForExternalEvent(): Promise<void> {
@@ -565,23 +531,4 @@ async function waitForAttentionOrTimeout(
     attentionAbort.abort()
     if (timer != null) clearTimeout(timer)
   }
-}
-
-function beijingDayKey(date: Date): string {
-  const shifted = new Date(date.getTime() + 8 * 60 * 60 * 1000)
-  return [
-    shifted.getUTCFullYear(),
-    String(shifted.getUTCMonth() + 1).padStart(2, '0'),
-    String(shifted.getUTCDate()).padStart(2, '0'),
-  ].join('-')
-}
-
-function millisecondsUntilNextBeijingDay(date: Date): number {
-  const shifted = new Date(date.getTime() + 8 * 60 * 60 * 1000)
-  const nextMidnightUtc = Date.UTC(
-    shifted.getUTCFullYear(),
-    shifted.getUTCMonth(),
-    shifted.getUTCDate() + 1,
-  )
-  return Math.max(1, nextMidnightUtc - shifted.getTime())
 }

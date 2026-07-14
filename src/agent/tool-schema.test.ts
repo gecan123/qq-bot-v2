@@ -135,10 +135,10 @@ test('zodToOpenAIStrictToolJsonSchema keeps pause schema strict and rest-only', 
   assert.equal('waitingDirection' in intentionProps, false)
   assert.deepEqual(props.durationSeconds, {
     default: 60,
-    description: '自己安排的短休息秒数, 默认 60, 范围 30..300.',
+    description: '自己安排的短休息秒数, 默认 60, 范围 30..600.',
     type: 'integer',
     minimum: 30,
-    maximum: 300,
+    maximum: 600,
   })
   assert.deepEqual(props.confirmed, {
     default: false,

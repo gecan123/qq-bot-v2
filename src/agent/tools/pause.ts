@@ -17,7 +17,7 @@ const argsSchema = z.object({
     .min(MIN_REST_DURATION_SECONDS)
     .max(MAX_REST_DURATION_SECONDS)
     .default(DEFAULT_REST_DURATION_SECONDS)
-    .describe('自己安排的短休息秒数, 默认 60, 范围 30..300.'),
+    .describe('自己安排的短休息秒数, 默认 60, 范围 30..600.'),
   confirmed: z.boolean().default(false)
     .describe('第一次请求必须为 false. 仅当前一次 pause 已返回 alternative_available、此后没有别的工具结果且你仍真想休息时, 再次调用并设为 true.'),
   reason: z.string().trim().min(1).max(300)
@@ -38,7 +38,7 @@ export function createPauseTool(deps: PauseToolDeps = {}): Tool<Args> {
     name: 'pause',
     description: [
       '对话节奏控制工具.',
-      'action=rest: 确实想暂时停一下时短休息; 默认 1 分钟, 最长 5 分钟. 它是安全阀, 不是空闲默认动作.',
+      'action=rest: 确实想暂时停一下时短休息; 默认 1 分钟, 最长 10 分钟. 它是安全阀, 不是空闲默认动作.',
       'reason 只说明为什么此刻确实想暂停; 时间晚、owner 不在线、群聊与自己无关或刚完成一件事, 单独都不是充分理由.',
       '第一次调用 confirmed=false; runtime 先从最近真实上下文寻找锚点, 再以 Agenda / Life Journal / wishes 作后备. 若返回 alternative_available, 其中 idleThought 是自己的念头而不是任务, 且尚未暂停; 可以顺着做一点或让它过去, 仍真想休息才再次调用并设 confirmed=true.',
       '若首次检查返回 alternative_check_unavailable, 说明超时、provider 失败或结果不完整, 当前不会暂停; 稍后以 confirmed=false 重试或继续活动, 不要用 confirmed=true 跳过.',

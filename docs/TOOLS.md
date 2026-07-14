@@ -4,7 +4,7 @@
 
 ## 默认可见能力
 
-- 对话控制：`pause`。`action=rest` 是确实想暂时停一下时的短休息安全阀，默认 60 秒、范围 30–300 秒。首次请求必须使用 `confirmed=false`；Life Journal idle picker 优先从最近 durable context 找具体锚点，再以 Agenda、近期 Journal 或 `notes/wishes.md` 为后备，默认硬超时 30 秒，可用 `BOT_LIFE_JOURNAL_IDLE_PICK_TIMEOUT_MS` 调整。完整候选以 `alternative_available.idleThought` 进入 ledger 且不暂停；它是可接受或放过的自主念头，不是 runtime 任务。只有 picker 成功返回无念头时首次请求才直接休息；超时、provider 错误或不完整结果返回 `alternative_check_unavailable` 且不暂停。只有 `alternative_available` 仍是 ledger 中最近的已完成工具结果时，`confirmed=true` 才有效；提前确认或中间已做过别的动作都会返回 `confirmation_required`，重新检查后才能休息。结构化 `intention` 只写一个 `primaryDirection` 和一个不同的 `alternativeDirection`，都要包含对象与第一步。等消息、机械检查行情、泛泛浏览站点或整理 memory/journal 不是行动方向；未来某时再看用 `schedule`。真正休息结束后结果回显 `resumePlan`，下一轮先完成一个具体动作再决定是否再次休息；若被高优事件打断，处理完后再回看同一 plan。
+- 对话控制：`pause`。`action=rest` 是确实想暂时停一下时的短休息安全阀，默认 60 秒、范围 30–600 秒。首次请求必须使用 `confirmed=false`；Life Journal idle picker 优先从最近 durable context 找具体锚点，再以 Agenda、近期 Journal 或 `notes/wishes.md` 为后备，默认硬超时 30 秒，可用 `BOT_LIFE_JOURNAL_IDLE_PICK_TIMEOUT_MS` 调整。完整候选以 `alternative_available.idleThought` 进入 ledger 且不暂停；它是可接受或放过的自主念头，不是 runtime 任务。只有 picker 成功返回无念头时首次请求才直接休息；超时、provider 错误或不完整结果返回 `alternative_check_unavailable` 且不暂停。只有 `alternative_available` 仍是 ledger 中最近的已完成工具结果时，`confirmed=true` 才有效；提前确认或中间已做过别的动作都会返回 `confirmation_required`，重新检查后才能休息。结构化 `intention` 只写一个 `primaryDirection` 和一个不同的 `alternativeDirection`，都要包含对象与第一步。等消息、机械检查行情、泛泛浏览站点或整理 memory/journal 不是行动方向；未来某时再看用 `schedule`。真正休息结束后结果回显 `resumePlan`，下一轮先完成一个具体动作再决定是否再次休息；若被高优事件打断，处理完后再回看同一 plan。
 - 持久唤醒：`schedule action=create|list|cancel`。适用于 30 秒到 7 天后的明确时间点；状态和 recovery descriptor 原子写入 bot workspace，重启后按原 deadline 重新挂定时器。普通短休息仍用 `pause`。
 - 当前计划：`todo`（当前进程内的短期多步计划，最多一个 `in_progress`）。
 - 持久目标：`goal action=get|create_self|complete|report_blocker|abandon_self`。没有未完成 Goal 时，Agent 可以为自己的兴趣直接创建 `origin=self` 的持久目标，必须给出真实 `motivation` 和可核验 `completionCriteria`；默认预算 1,000,000 tokens，单个上限 10,000,000，60 秒冷却和滚动 24 小时最多 64 个只是失控保险丝。Agent 可以放弃 self Goal，但不能放弃 owner Goal。配置的 owner 仍可用私聊 `/goal` 创建、暂停、恢复或取消，owner Goal 会直接抢占 self Goal。active Goal 是处理完高优先通知后的默认主线，但前台仍是单一串行 BotLoop；等待后台或外部输入时可以做其他事情。`complete` 必须提交逐项真实证据；同一 blocker 每个连续 Goal round 用相同 `blockerKey` 报告，第三轮才转 `blocked`。Goal token budget 按未缓存 input 加 output 计量；只有明确的 provider 硬额度/账单上限才转 `usage_limited`，普通临时 429 仍走已有有界重试和 round backoff。
@@ -71,7 +71,6 @@
 - `send_message.music` 只接受 qq/163/kugou/kuwo/migu 的歌曲 ID，或字段受限且 URL 必须为 HTTPS 的 custom 音乐卡片；不接受任意 JSON 卡片。
 - assistant text 是内部历史/推理，不是公开发送通道。
 - `send_message` 成功不会隐式结束 Agent 当前活动；是否继续或休息由下一轮的 `pause` 决定。
-- 自主循环的 daily token budget 按“未缓存 input tokens + output tokens”计量；完整命中的 cached prefix 不重复消耗自主预算，避免长上下文高缓存命中时被误判为当天预算耗尽。
 - `send_message` 发送前统一走目标授权：群 ambient 必须属于 `BOT_GROUP_AMBIENT_SEND_IDS`；不在该集合的监听群只允许 reply 持久化入站消息中通过 QQ 结构化 at 明确提到 bot 的消息，不能靠引用普通群消息绕过主动发言开关；私聊目标必须是 NapCat 当前好友。未授权会明确拒绝，不会模拟成功。
 - `qq_directory` 是只读目录。`list_friends` / `search_friends` 覆盖 NapCat 当前全部好友，因此这些结果都可作为 private `send_message` target；`list_groups` 只返回 NapCat 当前群列表与 `BOT_TARGET_GROUP_IDS` 的交集，不扩大群监听或发送授权。结果有条数上限和 offset 分页，不提供加删好友、加退群或群管理动作。
 - 群 `send_message` 最终失败后才按需查询机器人自身的当前禁言状态；确认命中时 tool result 返回 `reason=group_muted` 和可用的 `mutedUntil`，否则返回 `reason=send_failed`。该事实不缓存，也不会阻止后续真实发送。

@@ -20,7 +20,7 @@
 | s14 Cron Scheduler | 已满足核心 | `pause` 负责短休息；`schedule create/list/cancel` 提供 30 秒到 7 天的 durable wake，deadline/reason 可跨重启重新挂载并产生稳定事件。尚未做 cron 表达式和周期任务，当前产品也无明确需要。 |
 | s15 Agent Teams | 未满足 | 没有持久 teammate、inbox、多个 LLM loop。 |
 | s16 Team Protocols | 未满足 | 没有多 Agent request/response FSM、plan approval 或 teammate shutdown handshake；当前只有单进程 runtime 的 graceful shutdown coordinator。 |
-| s17 Autonomous Agents | 产品目标上已较强满足 | 主 Agent 在发送后继续行动，自主决定 `pause`，可被注意事件唤醒，并有连续轮次冷却、每日 token 预算、Life Journal/Agenda 连续性。active Goal 会在每轮和 compaction 后重注入为默认主线，高优先事件可临时打断后返回；仍没有面向多 Agent 的任务板认领。 |
+| s17 Autonomous Agents | 产品目标上已较强满足 | 主 Agent 在发送后继续行动，自主决定 `pause`，可被注意事件唤醒，并有连续轮次短暂冷却、Life Journal/Agenda 连续性；不设置每日 token 预算或跨日限流。active Goal 会在每轮和 compaction 后重注入为默认主线，高优先事件可临时打断后返回；仍没有面向多 Agent 的任务板认领。 |
 | s18 Worktree Isolation | 未满足 | 当前 bot 不自主改仓库源码；若以后允许 Luna 自主改代码，需要补。 |
 | s19 MCP Plugin | 已满足核心 | 配置驱动的 `mcp_connectors` 是 deferred capability；启动时不拉外部进程，首次 `tools/connect/call` 才用官方 v1 SDK 建立 stdio 连接。远端工具映射到 `mcp__server__tool`，schema 有哈希版本快照和分页结果上限，只有 operator 明确列入 `readOnlyTools` 的调用免审批，其余默认走 owner approval。暂不支持 Streamable HTTP、resources/prompts 或动态安装 plugin。 |
 | s20 Comprehensive | 单 Agent 产品骨架成熟 | 已有单循环 + 永续 context/replay + working projection + mailbox + 单一持久 Goal + deferred tools/MCP + 分层权限/审批 + recovery + compaction + durable background task/schedule + restricted delegate + explainable memory + hooks + todo/skill + 安全并行 + 自主循环。未覆盖的是持久任务图、多 Agent team/protocol 和自主改代码隔离，这些不是当前 QQ bot 产品的默认需求。 |

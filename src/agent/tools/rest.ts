@@ -8,7 +8,7 @@ const log = createLogger('TOOL_REST')
 
 export const DEFAULT_REST_DURATION_SECONDS = 60
 export const MIN_REST_DURATION_SECONDS = 30
-export const MAX_REST_DURATION_SECONDS = 300
+export const MAX_REST_DURATION_SECONDS = 600
 
 const directionSchema = z.string().trim().min(1).max(200)
 const passiveExternalMessageDirection = /^(?:(?:继续)?(?:等|等待)|(?:看|查看|检查|留意|刷新|刷).*(?:回复|回信|新消息|群消息|私聊|有没有回|回没回))/
@@ -78,7 +78,7 @@ const argsSchema = z.object({
     .min(MIN_REST_DURATION_SECONDS)
     .max(MAX_REST_DURATION_SECONDS)
     .default(DEFAULT_REST_DURATION_SECONDS)
-    .describe('自己安排的短休息秒数, 默认 60, 范围 30..300.'),
+    .describe('自己安排的短休息秒数, 默认 60, 范围 30..600.'),
   confirmed: z.boolean().default(false)
     .describe('第一次请求必须为 false. 仅当前一次 pause 已返回 alternative_available、此后没有别的工具结果且你仍真想休息时, 再次调用并设为 true.'),
   reason: z.string().trim().min(1).max(300)
@@ -144,7 +144,7 @@ export function createRestTool(deps: RestToolDeps = {}): Tool<RestArgs> {
   return {
     name: 'rest',
     description: [
-      '确实想暂时停一下时安排短休息, 默认 1 分钟, 最长 5 分钟; 它是安全阀, 不是“暂时没事做”的默认动作。',
+      '确实想暂时停一下时安排短休息, 默认 1 分钟, 最长 10 分钟; 它是安全阀, 不是“暂时没事做”的默认动作。',
       'reason 只说明为什么此刻确实想暂停; 时间晚、owner 不在线、群聊与自己无关或刚完成一件事, 单独都不是充分理由。',
       '第一次调用 confirmed 必须为 false; runtime 会先从最近真实上下文寻找锚点, 再以 Agenda、近期 Life Journal 或愿望作后备。若长出一个真实念头, 会返回 alternative_available 而不暂停。',
       '若首次检查超时、provider 失败或结果不完整, 会返回 alternative_check_unavailable 且不暂停; 只能稍后以 confirmed=false 重试或继续当前活动, 不能用 confirmed=true 跳过检查。',

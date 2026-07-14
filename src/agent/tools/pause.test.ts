@@ -82,7 +82,13 @@ describe('pause tool', () => {
       action: 'rest',
       reason: '短暂放空',
       intention,
-      durationSeconds: 301,
+      durationSeconds: 600,
+    }).success, true)
+    assert.equal(pauseTool.schema.safeParse({
+      action: 'rest',
+      reason: '短暂放空',
+      intention,
+      durationSeconds: 601,
     }).success, false)
   })
 

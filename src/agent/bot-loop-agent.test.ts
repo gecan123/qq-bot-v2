@@ -1137,7 +1137,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
       autonomy: {
         maxConsecutiveRounds: 1,
         cooldownMs: 60_000,
-        dailyTokenBudget: 10_000,
         now: () => new Date('2026-07-06T00:00:00.000Z'),
         async waitForAttentionOrTimeout() {
           cooldownWaits++
@@ -1406,7 +1405,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
       autonomy: {
         maxConsecutiveRounds: 2,
         cooldownMs: 60_000,
-        dailyTokenBudget: 1_000_000,
         async waitForAttentionOrTimeout() {
           cooldownWaits++
           await agent.stop()
@@ -1494,7 +1492,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     }
   })
 
-  test('连续轮次达到上限后自动冷却', async () => {
+  test('高 token 使用不触发跨日限流，只在连续轮次达到上限后短暂冷却', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'curiosity_tick' })
@@ -1508,7 +1506,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         return {
           content: '',
           toolCalls: [],
-          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+          usage: { inputTokens: 500_000, cachedTokens: 0, outputTokens: 500_000 },
           model: 'mock',
         }
       },
@@ -1527,7 +1525,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
       autonomy: {
         maxConsecutiveRounds: 2,
         cooldownMs: 60_000,
-        dailyTokenBudget: 1_000_000,
         async waitForAttentionOrTimeout(_queue, timeoutMs) {
           cooldownWaits++
           assert.equal(timeoutMs, 60_000)
@@ -1580,7 +1577,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
       autonomy: {
         maxConsecutiveRounds: 2,
         cooldownMs: 60_000,
-        dailyTokenBudget: 1_000_000,
         async waitForAttentionOrTimeout() {
           cooldownWaits++
           await agent.stop()
@@ -1593,136 +1589,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     assert.equal(llmCallCount, 2)
     assert.equal(cooldownWaits, 1)
-  })
-
-  test('每日预算耗尽后由注意事件唤醒并获得一个连续处理窗口', async () => {
-    const ctx = createAgentContext()
-    const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
-    let llmCallCount = 0
-    let budgetWaits = 0
-    let pauseCalled = false
-    let agent: ReturnType<typeof createBotLoopAgent>
-    const llm: LlmClient = {
-      async chat() {
-        llmCallCount++
-        if (llmCallCount === 1) {
-          return {
-            content: '',
-            toolCalls: [],
-            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
-            model: 'mock',
-          }
-        }
-        return {
-          content: '',
-          toolCalls: [{ id: 'pause-1', name: 'pause', args: {} }],
-          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
-          model: 'mock',
-        }
-      },
-    }
-    const tools = makeMockTools({
-      pause: async () => {
-        pauseCalled = true
-        await agent.stop()
-        return { content: '[休息结束]' }
-      },
-    })
-    const { repo } = makeMockSnapshotRepo()
-
-    agent = createBotLoopAgent({
-      systemPrompt: 'you are a bot',
-      context: ctx,
-      eventQueue,
-      llm,
-      tools,
-      snapshotRepo: repo,
-      renderEvent: renderBotEvent,
-      eventDebounceMs: 0,
-      autonomy: {
-        maxConsecutiveRounds: 20,
-        cooldownMs: 60_000,
-        dailyTokenBudget: 15,
-        now: () => new Date('2026-07-06T00:00:00.000Z'),
-        async waitForAttentionOrTimeout(queue) {
-          budgetWaits++
-          queue.enqueue({
-            type: 'napcat_private_message',
-            messageRowId: 99,
-            peerId: 400,
-            messageId: 500,
-            senderId: 400,
-            senderNickname: '朋友',
-            mentionedSelf: true,
-            sentAt: new Date('2026-07-06T00:00:01.000Z'),
-            renderedText: '醒醒',
-          })
-          return 'attention'
-        },
-      },
-    })
-
-    await agent.start()
-
-    assert.equal(budgetWaits, 1)
-    assert.equal(llmCallCount, 2)
-    assert.equal(pauseCalled, true)
-  })
-
-  test('每日预算在新的一天自动重置', async () => {
-    const ctx = createAgentContext()
-    const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
-    let now = new Date('2026-07-06T00:00:00.000Z')
-    let llmCallCount = 0
-    let budgetWaits = 0
-    let agent: ReturnType<typeof createBotLoopAgent>
-    const llm: LlmClient = {
-      async chat() {
-        llmCallCount++
-        return {
-          content: '',
-          toolCalls: llmCallCount === 1 ? [] : [{ id: 'pause-1', name: 'pause', args: {} }],
-          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
-          model: 'mock',
-        }
-      },
-    }
-    const tools = makeMockTools({
-      pause: async () => {
-        await agent.stop()
-        return { content: '[休息结束]' }
-      },
-    })
-    const { repo } = makeMockSnapshotRepo()
-
-    agent = createBotLoopAgent({
-      systemPrompt: 'you are a bot',
-      context: ctx,
-      eventQueue,
-      llm,
-      tools,
-      snapshotRepo: repo,
-      renderEvent: renderBotEvent,
-      eventDebounceMs: 0,
-      autonomy: {
-        maxConsecutiveRounds: 20,
-        cooldownMs: 60_000,
-        dailyTokenBudget: 15,
-        now: () => now,
-        async waitForAttentionOrTimeout() {
-          budgetWaits++
-          now = new Date('2026-07-07T00:00:00.000Z')
-          return 'elapsed'
-        },
-      },
-    })
-
-    await agent.start()
-
-    assert.equal(llmCallCount, 2)
-    assert.equal(budgetWaits, 1)
   })
 
   test('assistant 返回 no tool calls 时不把 text-only 思考写入 context', async () => {

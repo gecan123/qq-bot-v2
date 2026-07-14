@@ -200,6 +200,7 @@ export function createScheduleRuntime(
       scheduleRetry(job, expectedNextRunAt)
     } catch (error) {
       log({ event: 'schedule_timer_failed', scheduleId: job.id, error })
+      failClosed()
     }
   }
 
@@ -283,6 +284,7 @@ export function createScheduleRuntime(
       processRetryTimer(id, expectedNextRunAt, retryTargetAtMs),
     ).catch((error: unknown) => {
       log({ event: 'schedule_timer_failed', scheduleId: id, error })
+      failClosed()
     })
   }
 
@@ -413,7 +415,7 @@ export function createScheduleRuntime(
 
         const createdAt = normalizationTime
         const expiresAt = new Date(createdAt.getTime() + SCHEDULE_LIMITS.maxLifetimeMs)
-        const nextRunAt = computeNextRunAt(schedule, createdAt)
+        const nextRunAt = computeRuntimeNextRunAt(schedule, createdAt)
         if (!nextRunAt || nextRunAt.getTime() > expiresAt.getTime()) {
           throw new ScheduleRuntimeError(
             'outside_schedule_window',
@@ -523,6 +525,19 @@ function normalizeRuntimeSchedule(input: unknown, now: Date): ScheduleSpec {
     throw new ScheduleRuntimeError(error.code, `Schedule validation failed: ${error.message}`, {
       cause: error,
     })
+  }
+}
+
+function computeRuntimeNextRunAt(schedule: ScheduleSpec, after: Date): Date | null {
+  try {
+    return computeNextRunAt(schedule, after)
+  } catch (error) {
+    if (!(error instanceof ScheduleModelError)) throw error
+    throw new ScheduleRuntimeError(
+      error.code,
+      `Schedule next-run calculation failed: ${error.message}`,
+      { cause: error },
+    )
   }
 }
 

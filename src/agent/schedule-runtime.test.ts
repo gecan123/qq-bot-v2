@@ -465,6 +465,33 @@ describe('ScheduleRuntime lifecycle and CRUD', () => {
     }
   })
 
+  test('wraps schedule next-run computation failures with stable runtime codes and causes', async () => {
+    const { runtime } = harness()
+    await runtime.start()
+
+    await assert.rejects(
+      runtime.create({
+        name: 'unrepresentable-next-run',
+        intention: 'Must not be persisted',
+        schedule: {
+          kind: 'every',
+          everySeconds: 8_640_000_000_000,
+          anchorAt: '2000-01-01T00:00:00.000Z',
+        },
+      }),
+      (error: unknown) => {
+        assert.equal(error instanceof ScheduleRuntimeError, true)
+        assert.equal((error as ScheduleRuntimeError).code, 'invalid_schedule')
+        assert.equal((error as ScheduleRuntimeError).cause instanceof Error, true)
+        assert.equal(
+          (error as ScheduleRuntimeError & { cause: { code?: string } }).cause.code,
+          'invalid_schedule',
+        )
+        return true
+      },
+    )
+  })
+
   test('treats a later retry of the same relative at definition as idempotent', async () => {
     const { runtime, clock } = harness()
     await runtime.start()
@@ -1029,6 +1056,48 @@ describe('ScheduleRuntime firing and restart recovery', () => {
     assert.equal(eventQueue.size(), 0)
     assert.equal(clock.nextDelayMs(), 9 * 60_000 + 59_000)
     assert.equal(setTimerCount, 4)
+  })
+
+  test('fails closed after a committed recurring wake when all timer recovery attempts fail', async () => {
+    const clock = new FakeClock()
+    const store = new RecordingStore([everyJob()])
+    let setTimerCount = 0
+    const { runtime, eventQueue } = harness({
+      clock,
+      store,
+      retryDelayMs: 1_000,
+      setTimer(callback, delayMs) {
+        setTimerCount += 1
+        if (setTimerCount > 1) throw new Error('timer permanently unavailable')
+        return clock.setTimer(callback, delayMs)
+      },
+    })
+    await runtime.start()
+    clock.setNow('2026-07-14T01:10:00.000Z')
+
+    clock.fire()
+    await eventQueue.waitForEvent()
+
+    assert.equal(eventQueue.size(), 1)
+    assert.equal(eventQueue.dequeue()?.type, 'scheduled_wake')
+    assert.equal(clock.timerCount(), 0)
+    assert.deepEqual(await store.load(), [
+      everyJob({
+        lastRunAt: '2026-07-14T01:10:00.000Z',
+        nextRunAt: '2026-07-14T01:20:00.000Z',
+        runCount: 1,
+      }),
+    ])
+    await expectRuntimeCode(runtime.list(), 'stopped')
+    await expectRuntimeCode(
+      runtime.create({
+        name: 'must-not-create',
+        intention: 'Runtime is failed closed',
+        schedule: { kind: 'at', afterSeconds: 600 },
+      }),
+      'stopped',
+    )
+    await expectRuntimeCode(runtime.cancel('every-1'), 'stopped')
   })
 
   test('fires a live at timer only after durable removal', async () => {

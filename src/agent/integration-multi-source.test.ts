@@ -75,7 +75,7 @@ function makeMockSnapshotRepo(): { repo: BotSnapshotRepo; saved: PersistedAgentS
 }
 
 describe('MVP-2 integration: mixed group + private events through one agent loop', () => {
-  test('three events (group / private / group) render with distinct source labels and reach context as 3 user messages', async () => {
+  test('three events render as distinct mailbox notifications and a successful send appends its handled marker', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
 
@@ -159,12 +159,18 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     await agent.runOnceForTest()
 
     const messages = ctx.getSnapshot().messages
-    // 3 mailbox notifications + assistant + tool result = 5
-    assert.equal(messages.length, 5)
+    assert.deepEqual(messages.map((message) => message.role), [
+      'user',
+      'user',
+      'user',
+      'assistant',
+      'tool',
+      'user',
+    ])
 
-    const userMessages = messages.filter((m) => m.role === 'user')
-    assert.equal(userMessages.length, 3)
-    const notifications = userMessages.map((message) => JSON.parse(message.content))
+    const notificationMessages = messages.slice(0, 3)
+    assert.ok(notificationMessages.every((message) => message.role === 'user'))
+    const notifications = notificationMessages.map((message) => JSON.parse(message.content))
     assert.deepEqual(notifications.map(({ mailbox, priority }) => ({ mailbox, priority })), [
       { mailbox: 'qq_group:111', priority: 'high' },
       { mailbox: 'qq_private:10001', priority: 'high' },
@@ -173,7 +179,15 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     assert.equal(notifications[0]!.source.groupName, '阳光厨房')
     assert.equal(notifications[1]!.source.senderName, 'Alice')
     assert.equal(notifications[2]!.source.groupName, '技术群')
-    assert.doesNotMatch(userMessages.map((message) => message.content).join('\n'), /在吗|私聊问个事|今天天气好/)
+    assert.doesNotMatch(notificationMessages.map((message) => message.content).join('\n'), /在吗|私聊问个事|今天天气好/)
+
+    const handledMarker = messages[5]
+    assert.ok(handledMarker?.role === 'user')
+    assert.deepEqual(JSON.parse(handledMarker.content), {
+      event: 'mailbox_handled',
+      mailbox: 'qq_group:111',
+      throughRowId: 1,
+    })
 
     // The send_message tool should have used the unified segment sender, scoped to group 111.
     assert.equal(calls.length, 1)

@@ -1430,6 +1430,151 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(JSON.parse(userMessages[2]!.content).event, 'goal_continuation')
   })
 
+  test('keeps mailbox continuity at the newest message after priority reordering', async () => {
+    const oldAt = new Date('2026-07-13T06:00:00.000Z')
+    const highAt = new Date('2026-07-13T09:00:00.000Z')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({
+      type: 'mailbox_backlog',
+      mailboxKey: 'qq_group:999',
+      priority: 'normal',
+      source: { type: 'group', groupId: 999, groupName: '环境群' },
+      count: 100,
+      firstRowId: 1,
+      throughRowId: 100,
+      recentAfterRowId: 50,
+      senderCount: 10,
+      timeRange: { from: new Date(oldAt.getTime() - 60_000), to: oldAt },
+    })
+    eventQueue.enqueue({
+      type: 'napcat_message',
+      messageRowId: 101,
+      groupId: 999,
+      groupName: '环境群',
+      messageId: 20_101,
+      senderId: 9001,
+      senderNickname: 'Alice',
+      mentionedSelf: true,
+      sentAt: highAt,
+      renderedText: '@bot 新消息',
+    })
+    const ctx = createAgentContext()
+    const { repo, savedContinuity } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([
+        {
+          content: '',
+          toolCalls: [],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
+          model: 'mock',
+        },
+        {
+          content: '',
+          toolCalls: [],
+          usage: { inputTokens: 20, cachedTokens: 0, outputTokens: 0 },
+          model: 'mock',
+        },
+      ]),
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+    const continuityAfterReordering = structuredClone(savedContinuity.at(-1))
+
+    eventQueue.enqueue({
+      type: 'napcat_message',
+      messageRowId: 102,
+      groupId: 999,
+      groupName: '环境群',
+      messageId: 20_102,
+      senderId: 9002,
+      senderNickname: 'Bob',
+      mentionedSelf: false,
+      sentAt: new Date(highAt.getTime() + 1_000),
+      renderedText: '紧邻消息',
+    })
+    await agent.runOnceForTest()
+
+    const notifications = ctx.getSnapshot().messages
+      .filter((message) => message.role === 'user')
+      .map((message) => JSON.parse(message.content) as {
+        mode?: string
+        priority?: string
+        throughRowId?: number
+        readArgs?: { contextBefore?: number }
+      })
+    assert.equal(notifications[0]?.priority, 'high')
+    assert.equal(notifications[0]?.throughRowId, 101)
+    assert.equal(notifications[1]?.mode, 'backlog')
+    assert.equal(continuityAfterReordering?.mailboxes['qq_group:999']?.lastMessageAtMs, highAt.getTime())
+    assert.equal(notifications[2]?.throughRowId, 102)
+    assert.equal(notifications[2]?.readArgs?.contextBefore, undefined)
+  })
+
+  test('sorts high backlog and mentioned group batches before a scheduled wake', async () => {
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue(makeScheduledWake())
+    eventQueue.enqueue({
+      type: 'mailbox_backlog',
+      mailboxKey: 'qq_private:9001',
+      priority: 'high',
+      source: { type: 'private', peerId: 9001, senderName: 'Alice' },
+      count: 100,
+      firstRowId: 1,
+      throughRowId: 100,
+      recentAfterRowId: 50,
+      senderCount: 1,
+      timeRange: {
+        from: new Date('2026-07-13T08:00:00.000Z'),
+        to: new Date('2026-07-13T08:30:00.000Z'),
+      },
+    })
+    eventQueue.enqueue({
+      type: 'napcat_message',
+      messageRowId: 101,
+      groupId: 999,
+      groupName: '环境群',
+      messageId: 20_101,
+      senderId: 9002,
+      senderNickname: 'Bob',
+      mentionedSelf: true,
+      sentAt: new Date('2026-07-13T09:00:00.000Z'),
+      renderedText: '@bot 新消息',
+    })
+    const ctx = createAgentContext()
+    const { repo } = makeMockSnapshotRepo()
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock',
+      }]),
+      tools: makeMockTools(),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
+    assert.equal(JSON.parse(userMessages[0]!.content).mode, 'backlog')
+    assert.equal(JSON.parse(userMessages[0]!.content).priority, 'high')
+    assert.equal(JSON.parse(userMessages[1]!.content).priority, 'high')
+    assert.equal(JSON.parse(userMessages[1]!.content).throughRowId, 101)
+    assert.equal(JSON.parse(userMessages[2]!.content).event, 'scheduled_wake')
+  })
+
   test('discloses scheduled wake before the active goal continuation', async () => {
     const goalStore = createInMemoryGoalStore()
     const created = await goalStore.createSelf({

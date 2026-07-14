@@ -30,6 +30,12 @@ export function mailboxKeyForEvent(event: BotEvent): string | null {
   return null
 }
 
+export function isHighPriorityMailboxDisclosure(disclosure: MailboxDisclosure): boolean {
+  if (disclosure.kind === 'backlog') return disclosure.event.priority === 'high'
+  if (disclosure.kind !== 'mailbox') return false
+  return disclosure.events.some(isHighPriorityMailboxEvent)
+}
+
 export function planMailboxDisclosures(
   events: readonly BotEvent[],
   currentCursors: Readonly<MailboxCursors>,
@@ -81,9 +87,7 @@ export function renderMailboxNotification(
   const first = events[0]!
   const last = events[events.length - 1]!
   const senderCount = new Set(events.map((event) => event.senderId)).size
-  const priority = events.some((event) => (
-    event.type === 'napcat_private_message' || event.mentionedSelf
-  )) ? 'high' : 'normal'
+  const priority = events.some(isHighPriorityMailboxEvent) ? 'high' : 'normal'
   const afterRowId = Math.max(0, first.messageRowId - 1)
   const throughRowId = last.messageRowId
   const timeRange = {
@@ -157,6 +161,10 @@ function recentReadArgsForEvent(event: MailboxEvent): Record<string, unknown> {
     return { action: 'read', source: 'private', peerId: event.peerId, afterRowId, limit: MAILBOX_BACKLOG_RECENT_LIMIT }
   }
   return { action: 'read', source: 'group', groupId: event.groupId, afterRowId, limit: MAILBOX_BACKLOG_RECENT_LIMIT }
+}
+
+function isHighPriorityMailboxEvent(event: MailboxEvent): boolean {
+  return event.type === 'napcat_private_message' || event.mentionedSelf
 }
 
 function readArgsForSource(source: MailboxBacklogEvent['source'], afterRowId: number): Record<string, unknown> {

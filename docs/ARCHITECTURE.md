@@ -11,14 +11,14 @@
 3. `src/bot/**` 接收 NapCat 事件，并通过 `src/database/messages.ts` 写入入站事实；ready 后的消息被投递为 `BotEvent`。
 4. `src/agent/mailbox.ts` 把所有 QQ 消息按来源聚合为不含正文的确定性通知，并计算批次级 `priority=high|normal`；非 QQ 运行时事件仍走稳定 direct 渲染。
 5. `src/agent/runtime.ts` 把已恢复的 context、tools、system prompt 和 `BotLoopAgent` 装配成运行时。
-6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责事件披露、mailbox cursors、Goal revision、context snapshot 原子保存、有界 life journal hook、compaction，以及 pause/autonomy 循环控制。active Goal 是处理完高优先注意事件后的默认主线；compaction 后会重新注入 Goal continuation 并立即保存 snapshot。
+6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责事件披露、mailbox cursors、Goal revision、context snapshot 原子保存、有界 life journal hook、compaction，以及 pause/autonomy 循环控制。轮次边界按 `priority=high` QQ 通知、`scheduled_wake`、active Goal continuation、普通环境事件的顺序披露；compaction 后会重新注入 Goal continuation 并立即保存 snapshot。
 7. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct：把 system prompt、从 durable `messages` 确定性构造的 working-context projection 和可见 tools 发给 LLM，append assistant tool calls；仅连续且显式只读的 tool calls 可以并行，副作用和未知调用都是 barrier，tool results 严格按原 tool-call 顺序 append。只有 `ToolExecutionResult.content` 进入 ledger；工具的 `outcome` / `effects` 返回 Runtime Host，由 `src/agent/effect-interpreter.ts` 统一解释。
 
 Agent runtime 的非关键后台工作统一走共享 bounded task scheduler：`maintenance=1`、`network=3`、`media-description=2`、`delegate=2`。同一 `resourceKey` 串行，相同 `dedupeKey` 共享任务。它们是 Node async worker，不是 OS 线程；ingress 媒体描述另走独立 `jobQueue`，Browser sidecar 也是独立进程并使用自己的单 worker housekeeping scheduler。
 
 短期调度另由进程内 `ScheduleRuntime` 管理：它在同一 Node event loop 上用 `setTimeout` 挂载最多 20 个 active job，并把状态原子写入独立 `schedules.json` store。它不进入 bounded task scheduler，也不启动后台线程、worker、子进程或轮询循环；到期只向现有 event queue 注入 `scheduled_wake`，仍由单一 `BotLoopAgent` 串行处理。
 
-Goal 不创建第二个主 Agent。主前台仍只有一个串行 `BotLoopAgent` / `AgentContext`；私聊、`@bot` 和审批等高优先事件可以在轮次边界临时打断，处理后回到 Goal。只有现有 `background_task`、`delegate` 和 bounded scheduler lane 可以并发：用户可见的后台任务和 delegate 通过完成事件回到单一主 ledger，Memory maintenance、Life review 和 housekeeping 只更新 side-data 或日志，不进入 ledger。没有未完成 Goal 时，Agent 可以直接创建 `origin=self` 的持久目标；owner 私聊创建的 Goal 可以抢占它，旧 goalId 的迟到调用会被拒绝。
+Goal 不创建第二个主 Agent。主前台仍只有一个串行 `BotLoopAgent` / `AgentContext`；私聊、`@bot` 和审批等高优先事件可以在轮次边界临时打断且优先于 `scheduled_wake`，`scheduled_wake` 又优先于 active Goal，处理后回到 Goal。只有现有 `background_task`、`delegate` 和 bounded scheduler lane 可以并发：用户可见的后台任务和 delegate 通过完成事件回到单一主 ledger，Memory maintenance、Life review 和 housekeeping 只更新 side-data 或日志，不进入 ledger。没有未完成 Goal 时，Agent 可以直接创建 `origin=self` 的持久目标；owner 私聊创建的 Goal 可以抢占它，旧 goalId 的迟到调用会被拒绝。
 
 ## 自主循环
 

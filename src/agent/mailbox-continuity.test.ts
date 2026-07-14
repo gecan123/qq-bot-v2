@@ -74,6 +74,27 @@ describe('mailbox continuity compensation', () => {
     assert.equal(state.lastInputTokens, null)
   })
 
+  test('ignores an older disclosure without replacing the anchor baselines', () => {
+    const state = createEmptyMailboxContinuityState()
+    recordMailboxRound(state, 1_000)
+    recordMailboxDisclosure(state, 'qq_group:111', 10_000)
+    const newestAnchor = structuredClone(state.mailboxes['qq_group:111'])
+
+    recordMailboxRound(state, 2_000)
+    recordMailboxCompaction(state)
+    recordMailboxDisclosure(state, 'qq_group:111', 5_000)
+
+    assert.deepEqual(state.mailboxes['qq_group:111'], newestAnchor)
+
+    recordMailboxDisclosure(state, 'qq_group:111', 10_000)
+    assert.deepEqual(state.mailboxes['qq_group:111'], {
+      lastMessageAtMs: 10_000,
+      roundSeq: 2,
+      inputTokens: null,
+      compactionEpoch: 1,
+    })
+  })
+
   test('sanitizes malformed persisted state', () => {
     const state = parseMailboxContinuityState({
       schemaVersion: 99,

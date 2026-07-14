@@ -21,6 +21,7 @@ import {
 } from './rest-resume-reminder.js'
 import { createLogger } from '../logger.js'
 import {
+  isHighPriorityMailboxDisclosure,
   planMailboxDisclosures,
   renderMailboxBacklogNotification,
   renderMailboxNotification,
@@ -526,14 +527,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       await step()
     },
   }
-}
-
-function isHighPriorityMailboxDisclosure(disclosure: MailboxDisclosure): boolean {
-  if (disclosure.kind === 'backlog') return disclosure.event.priority === 'high'
-  if (disclosure.kind !== 'mailbox') return false
-  return disclosure.events.some((event) => (
-    event.type === 'napcat_private_message' || event.mentionedSelf
-  ))
 }
 
 function sleep(ms: number): Promise<void> {

@@ -126,6 +126,9 @@ export function recordMailboxDisclosure(
   mailboxKey: string,
   messageAtMs: number,
 ): void {
+  const currentAnchor = state.mailboxes[mailboxKey]
+  if (currentAnchor && messageAtMs < currentAnchor.lastMessageAtMs) return
+
   state.mailboxes[mailboxKey] = {
     lastMessageAtMs: messageAtMs,
     roundSeq: state.roundSeq,

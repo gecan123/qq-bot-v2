@@ -917,6 +917,102 @@ describe('createDeferredToolExecutor', () => {
     )
   })
 
+  test('routes duplicate deferred tool names by args and returns a structured recovery sequence', async () => {
+    const active = ['media_fetch']
+    const research: Tool<{ action: 'url'; url: string }> = {
+      name: 'fetch_content',
+      description: 'research fetch',
+      schema: z.object({ action: z.literal('url'), url: z.string().url() }).strict(),
+      async execute() {
+        return { content: 'research-ok' }
+      },
+    }
+    const media: Tool<{ action: 'image_url'; url: string }> = {
+      name: 'fetch_content',
+      description: 'media fetch',
+      schema: z.object({ action: z.literal('image_url'), url: z.string().url() }).strict(),
+      async execute() {
+        return { content: 'media-ok' }
+      },
+    }
+    const exec = createDeferredToolExecutor({
+      alwaysOnTools: [],
+      activeCapabilities: {
+        list: () => [...active],
+        activate(capability) {
+          if (!active.includes(capability)) active.push(capability)
+        },
+        deactivate() {},
+      },
+      capabilities: [
+        {
+          name: 'external_research',
+          description: 'research',
+          tools: [research],
+          acceptsToolCall: (_toolName, args) => args.action === 'url',
+        },
+        {
+          name: 'media_fetch',
+          description: 'media',
+          tools: [media],
+          acceptsToolCall: (_toolName, args) => args.action === 'image_url',
+        },
+      ],
+    })
+
+    const inactive = JSON.parse((await exec.execute({
+      id: 'url-inactive',
+      name: 'invoke',
+      args: {
+        tool: 'fetch_content',
+        args: { action: 'url', url: 'https://news.ycombinator.com' },
+      },
+    }, makeCtx())).content as string) as {
+      code: string
+      capabilities: string[]
+      next: Array<{ tool: string; args: Record<string, unknown> }>
+    }
+
+    assert.equal(inactive.code, 'capability_inactive')
+    assert.deepEqual(inactive.capabilities, ['external_research'])
+    assert.deepEqual(inactive.next, [
+      {
+        tool: 'help',
+        args: { action: 'activate', capability: 'external_research' },
+      },
+      {
+        tool: 'invoke',
+        args: {
+          tool: 'fetch_content',
+          args: { action: 'url', url: 'https://news.ycombinator.com' },
+        },
+      },
+    ])
+
+    const describedMedia = JSON.parse((await exec.execute({
+      id: 'describe-media',
+      name: 'help',
+      args: { action: 'describe', tool: 'fetch_content', capability: 'media_fetch' },
+    }, makeCtx())).content as string) as { tool: { capability: string; description: string } }
+    assert.equal(describedMedia.tool.capability, 'media_fetch')
+    assert.equal(describedMedia.tool.description, 'media fetch')
+
+    await exec.execute(
+      { id: 'activate-research', name: 'help', args: { action: 'activate', capability: 'external_research' } },
+      makeCtx(),
+    )
+    const invalid = JSON.parse((await exec.execute({
+      id: 'url-invalid',
+      name: 'invoke',
+      args: {
+        tool: 'fetch_content',
+        args: { action: 'url', url: 'https://news.ycombinator.com', maxChars: 3000 },
+      },
+    }, makeCtx())).content as string) as { code: string; issues: Array<{ message: string }> }
+    assert.equal(invalid.code, 'invalid_arguments')
+    assert.match(invalid.issues[0]?.message ?? '', /Unrecognized key/)
+  })
+
   test('returns a concrete read then replace hint for invalid workspace_file arguments', async () => {
     const workspaceFile: Tool<{ action: 'read'; file: string }> = {
       name: 'workspace_file',

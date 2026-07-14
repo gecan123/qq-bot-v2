@@ -27,11 +27,21 @@ export interface ReactToolEffect {
   effect: ToolEffect
 }
 
+export interface ReactToolOutcome {
+  toolCallId: string
+  requestedToolName: string
+  toolName: string
+  ok: boolean
+  code?: string
+}
+
 export interface ReactRoundResult {
   inputTokens: number | null
   tokensUsed: number
   toolCallCount: number
   effects: ReactToolEffect[]
+  /** 仅供当前 Runtime Host 决定纠错/等待，不进入 AgentContext。 */
+  toolOutcomes: ReactToolOutcome[]
 }
 
 const DEFAULT_ESCALATED_OUTPUT_TOKENS = 8_192
@@ -148,6 +158,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
   }
 
   const effects: ReactToolEffect[] = []
+  const toolOutcomes: ReactToolOutcome[] = []
   let cursor = 0
   while (cursor < completion.toolCalls.length) {
     const call = completion.toolCalls[cursor]!
@@ -174,6 +185,13 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
           effect,
         })
       }
+      toolOutcomes.push({
+        toolCallId: batchCall.id,
+        requestedToolName: batchCall.name,
+        toolName: resolveEffectiveToolName(batchCall),
+        ok: result.outcome?.ok ?? true,
+        ...(result.outcome?.code ? { code: result.outcome.code } : {}),
+      })
       log.info({
         roundIndex,
         requestedToolName: batchCall.name,
@@ -191,6 +209,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
     tokensUsed: sumTokensUsed(completions),
     toolCallCount: completion.toolCalls.length,
     effects,
+    toolOutcomes,
   }
 }
 

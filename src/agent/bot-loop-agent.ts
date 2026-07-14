@@ -116,6 +116,8 @@ const DEFAULT_AUTONOMY_COOLDOWN_MS = 15 * 60_000
 const DEFAULT_IDLE_WAIT_MS = 15 * 60_000
 const DEFAULT_ACTION_RETRY_WAIT_MS = 60_000
 const MAX_OUTPUT_CONTINUATIONS_PER_ROUND = 2
+const MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS = 3
+const RECOVERABLE_TOOL_ERROR_CODES = new Set(['capability_inactive', 'invalid_arguments'])
 const OUTPUT_CONTINUATION_PROMPT =
   '[runtime recovery] 上一段 assistant 输出达到长度上限。请从中断处继续，不要重复已完成内容，并用一个完整的工具调用结束本轮。'
 const defaultKeepAlive = {
@@ -155,6 +157,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let roundIndex = 0
   let consecutiveRounds = 0
   let noToolActionRetryPending = false
+  let recoverableToolCorrectionRounds = 0
 
   function drainEvents(): {
     consumed: number
@@ -262,6 +265,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     didPause: boolean
     didCompleteRest: boolean
     sentTargets: MessageSentTarget[]
+    recoverableToolFailure: boolean
+    onlyHelpToolCalls: boolean
   }> {
     roundIndex++
     let recoveredContextOverflow = false
@@ -335,6 +340,11 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       didPause,
       didCompleteRest,
       sentTargets,
+      recoverableToolFailure: result.toolOutcomes.some((outcome) => (
+        !outcome.ok && outcome.code != null && RECOVERABLE_TOOL_ERROR_CODES.has(outcome.code)
+      )),
+      onlyHelpToolCalls: result.toolOutcomes.length > 0
+        && result.toolOutcomes.every((outcome) => outcome.requestedToolName === 'help'),
     }
   }
 
@@ -402,6 +412,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     didPause?: boolean
     toolCallCount?: number
     actionRequired?: boolean
+    recoverableToolFailure?: boolean
+    onlyHelpToolCalls?: boolean
   }> {
     const beforeStepCount = deps.context.getSnapshot().messages.length
     const syncedBeforeEvents = await syncGoalState()
@@ -463,7 +475,16 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       }
       throw error
     }
-    const { inputTokens, tokensUsed, toolCallCount, didPause, didCompleteRest, sentTargets } = roundResult
+    const {
+      inputTokens,
+      tokensUsed,
+      toolCallCount,
+      didPause,
+      didCompleteRest,
+      sentTargets,
+      recoverableToolFailure,
+      onlyHelpToolCalls,
+    } = roundResult
     const appendedHandledMailboxMarker = appendHandledMailboxMarkers(sentTargets)
     if (appendedHandledMailboxMarker) {
       await saveSnapshot()
@@ -505,6 +526,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       ranRound: true,
       didPause,
       toolCallCount,
+      recoverableToolFailure,
+      onlyHelpToolCalls,
       actionRequired: goalAtRoundStart?.status === 'active' || (drained.hadAttention && disclosed > 0),
     }
   }
@@ -515,6 +538,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       didPause = false,
       toolCallCount = 0,
       actionRequired = false,
+      recoverableToolFailure = false,
+      onlyHelpToolCalls = false,
     } = await step()
     if (!ranRound && !stopRequested) {
       await waitForExternalEvent()
@@ -525,15 +550,34 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     if (didPause) {
       consecutiveRounds = 0
       noToolActionRetryPending = false
+      recoverableToolCorrectionRounds = 0
       return
     }
 
     consecutiveRounds++
     if (consecutiveRounds >= autonomy.maxConsecutiveRounds) {
+      const continuingCorrection = recoverableToolFailure
+        || (recoverableToolCorrectionRounds > 0 && onlyHelpToolCalls)
+      if (
+        continuingCorrection
+        && recoverableToolCorrectionRounds < MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS
+      ) {
+        recoverableToolCorrectionRounds++
+        noToolActionRetryPending = false
+        log.info({
+          consecutiveRounds,
+          correctionRound: recoverableToolCorrectionRounds,
+          maxCorrectionRounds: MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS,
+          recoverableToolFailure,
+          onlyHelpToolCalls,
+        }, 'recoverable_tool_error_retry_immediate')
+        return
+      }
       log.info({ consecutiveRounds, cooldownMs: autonomy.cooldownMs }, 'autonomy_round_cooldown_enter')
       await autonomy.waitForAttentionOrTimeout(deps.eventQueue, autonomy.cooldownMs)
       consecutiveRounds = 0
       noToolActionRetryPending = false
+      recoverableToolCorrectionRounds = 0
       return
     }
 
@@ -560,6 +604,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     log.info({ consecutiveRounds, waitMs: autonomy.idleWaitMs }, 'no_tool_quiescent_wait')
     await autonomy.waitForAttentionOrTimeout(deps.eventQueue, autonomy.idleWaitMs)
     consecutiveRounds = 0
+    recoverableToolCorrectionRounds = 0
   }
 
   async function waitForExternalEvent(): Promise<void> {

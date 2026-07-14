@@ -67,6 +67,12 @@ describe('runReactRound', () => {
     assert.equal(result.inputTokens, 10)
     assert.equal(result.tokensUsed, 15)
     assert.deepEqual(result.effects, [])
+    assert.deepEqual(result.toolOutcomes, [{
+      toolCallId: 'lookup-1',
+      requestedToolName: 'lookup',
+      toolName: 'lookup',
+      ok: true,
+    }])
     assert.deepEqual(context.getSnapshot().messages, [
       { role: 'user', content: 'hello' },
       { role: 'assistant', content: '', toolCalls: [toolCall] },
@@ -273,6 +279,7 @@ describe('runReactRound', () => {
     assert.equal(result.tokensUsed, 10)
     assert.equal(result.toolCallCount, 0)
     assert.deepEqual(result.effects, [])
+    assert.deepEqual(result.toolOutcomes, [])
     assert.deepEqual(context.getSnapshot().messages, [{ role: 'user', content: 'hello' }])
   })
 

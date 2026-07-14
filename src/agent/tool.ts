@@ -102,6 +102,8 @@ export interface DeferredToolCapability {
   name: string
   description: string
   tools: Tool[]
+  /** 同名工具分属多个 capability 时，按真实 args 选择允许的边界。 */
+  acceptsToolCall?: (toolName: string, args: Record<string, unknown>) => boolean
 }
 
 export interface ActiveToolCapabilityState {
@@ -362,7 +364,13 @@ function createHelpTool(options: {
             }
           }
           const activeNames = new Set(options.activeCapabilities.list())
-          const entry = entries.find((item) => activeNames.has(item.capability.name)) ?? entries[0]!
+          const requestedEntry = args.capability
+            ? entries.find((item) => item.capability.name === args.capability)
+            : undefined
+          const entry = requestedEntry
+            ?? entries.find((item) => activeNames.has(item.capability.name))
+            ?? entries[0]!
+          const active = activeNames.has(entry.capability.name)
           return {
             content: JSON.stringify({
               ok: true,
@@ -371,12 +379,15 @@ function createHelpTool(options: {
                 description: entry.tool.description,
                 capability: entry.capability.name,
                 capabilities: entries.map((item) => item.capability.name),
-                active: entries.some((item) => activeNames.has(item.capability.name)),
+                active,
                 inputSchema: zodToToolJsonSchema(entry.tool.schema),
               },
-              next: activeNames.has(entry.capability.name)
-                ? `invoke tool=${entry.tool.name} args=<object>`
-                : `help action=activate capability=${entry.capability.name}`,
+              next: active
+                ? { tool: 'invoke', args: { tool: entry.tool.name, args: {} } }
+                : {
+                    tool: 'help',
+                    args: { action: 'activate', capability: entry.capability.name },
+                  },
             }),
           }
         }
@@ -527,10 +538,16 @@ async function executeInvokeToolCall(options: {
     return result
   }
 
+  const matchingEntries = entries.filter((item) => (
+    item.capability.acceptsToolCall?.(targetToolName, targetArgs) ?? true
+  ))
+  const eligibleEntries = matchingEntries.length > 0 ? matchingEntries : entries
   const activeCapabilityNames = new Set(options.activeCapabilities.list())
-  const entry = entries.find((item) => activeCapabilityNames.has(item.capability.name))
+  const entry = eligibleEntries.find((item) => activeCapabilityNames.has(item.capability.name))
   if (!entry) {
-    const capabilities = entries.map((item) => item.capability.name)
+    const capabilities = eligibleEntries.map((item) => item.capability.name)
+    const recommendedCapability = capabilities[0] ?? ''
+    const action = typeof targetArgs.action === 'string' ? targetArgs.action : null
     const error = `tool ${targetToolName} is not active; activate one of: ${capabilities.join(', ')}`
     const result = {
       content: JSON.stringify({
@@ -538,8 +555,18 @@ async function executeInvokeToolCall(options: {
         code: 'capability_inactive',
         error,
         tool: targetToolName,
+        ...(action ? { action } : {}),
         capabilities,
-        next: `help action=activate capability=${capabilities[0] ?? ''}`,
+        next: [
+          {
+            tool: 'help',
+            args: { action: 'activate', capability: recommendedCapability },
+          },
+          {
+            tool: 'invoke',
+            args: { tool: targetToolName, args: targetArgs },
+          },
+        ],
       }),
       outcome: { ok: false, code: 'capability_inactive', error },
     }

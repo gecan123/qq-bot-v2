@@ -2134,6 +2134,65 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(cooldownWaits, 1)
   })
 
+  test('连续轮次上限为可恢复工具错误保留有界纠错链路', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    let llmCallCount = 0
+    let cooldownWaits = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const llm: LlmClient = {
+      async chat() {
+        llmCallCount++
+        const toolCalls = llmCallCount === 1
+          ? [{ id: 'inactive-1', name: 'invoke', args: { tool: 'fetch_content', args: { action: 'url' } } }]
+          : llmCallCount === 2
+            ? [{ id: 'activate-1', name: 'help', args: { action: 'activate', capability: 'external_research' } }]
+            : [{ id: 'fetch-1', name: 'invoke', args: { tool: 'fetch_content', args: { action: 'url' } } }]
+        return {
+          content: '',
+          toolCalls,
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+          model: 'mock',
+        }
+      },
+    }
+    const { repo } = makeMockSnapshotRepo()
+
+    agent = createBotLoopAgent({
+      systemPrompt: 'you are a bot',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools: makeMockTools({
+        invoke: async () => llmCallCount === 1
+          ? {
+              content: '{"ok":false,"code":"capability_inactive"}',
+              outcome: { ok: false, code: 'capability_inactive' },
+            }
+          : { content: '{"ok":true}' },
+        help: async () => ({ content: '{"ok":true}' }),
+      }),
+      snapshotRepo: repo,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        maxConsecutiveRounds: 1,
+        cooldownMs: 60_000,
+        async waitForAttentionOrTimeout() {
+          cooldownWaits++
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 3)
+    assert.equal(cooldownWaits, 1)
+  })
+
   test('free no-tool round enters a 15-minute attention-interruptible wait', async () => {
     const ctx = createAgentContext()
     ctx.appendUserMessage('已有上下文')

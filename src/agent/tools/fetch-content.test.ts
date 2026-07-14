@@ -25,6 +25,21 @@ function delegateTool(name: string, calls: unknown[], content: ToolExecutionResu
 }
 
 describe('fetch_content tool', () => {
+  test('scopes research and media actions into separate strict schemas', () => {
+    const research = createFetchContentTool({ scope: 'external_research' })
+    const media = createFetchContentTool({ scope: 'media_fetch' })
+
+    assert.equal(research.schema.safeParse({ action: 'url', url: 'https://example.com' }).success, true)
+    assert.equal(research.schema.safeParse({ action: 'image_url', url: 'https://example.com/a.png' }).success, false)
+    assert.equal(media.schema.safeParse({ action: 'image_url', url: 'https://example.com/a.png' }).success, true)
+    assert.equal(media.schema.safeParse({ action: 'url', url: 'https://example.com' }).success, false)
+    assert.equal(research.schema.safeParse({
+      action: 'url',
+      url: 'https://example.com',
+      maxChars: 3000,
+    }).success, false)
+  })
+
   test('action=url background mode returns immediately and publishes a completed task result', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => { release = resolve })

@@ -26,22 +26,23 @@
 - `finance`：配置 `OPENBB_CLI_ENABLED=true` 后可激活，内部工具是 `openbb_cli`。
 - `trading_research`：配置 `VIBE_TRADING_ENABLED=true` 后可激活，内部工具是 `trading_agent`；把多步金融研究、策略设计和历史回测委派给本机 Vibe-Trading Agent，而不是把它的全部 MCP 工具展开到主 Agent。
 - `website`：配置 `BOT_WEBSITE_ENABLED=true` 和独立网站仓库路径后可激活，内部工具是 `website`，用于维护 Luna 的 Astro 个人网站并发布到配置分支。
-- `external_research`：内部工具包含 `fetch_content`；配置 `TAVILY_API_KEY` 后同时包含 `web_search`。
+- `external_research`：内部 `fetch_content` 只暴露普通网页和 Reddit action；配置 `TAVILY_API_KEY` 后同时包含 `web_search`。
 - `fetch_content action=url` 默认同步返回网页摘要；预计较慢或想同时处理其他事情时可传 `background=true`，它进入最多 3 并发的 `network` lane，立即返回 `taskId`，完成后通过 `background_task` 取结果。
 - `media_generation`：内部工具是 `generate_image`，创建图片生成/编辑后台任务，`count=1..4` 时固定最多并发 2 个图片请求，后续用 `background_task` 查结果。
 - `media_inspection`：内部工具是 `inspect_media`，用入站 `mediaId` 或生成图 `ephemeralRef` 返回有界真实预览 image block；缺失的入站图片描述进入 `media-description` lane，当前结果标记 `descriptionStatus=pending` 而不等待模型。
-- `media_fetch`：内部工具是 `fetch_content` 的图片 URL / QQ 头像抓取能力。
+- `media_fetch`：内部 `fetch_content` 只暴露图片 URL / QQ 头像 action；激活它不会放开普通网页或 Reddit 抓取。
 - `skill_management`：内部工具是 `skill_editor`，用于运行时 skill 草稿、校验和安装。
 - `workspace_management`：内部工具是 `workspace_file`，用于普通私有文本工作文件的分页读取、创建、覆盖、精确替换、删除和移动。
 - `document_reading`：内部工具是 `read_file`，只接受 `inbox` 返回的 `type=file` 的 `mediaId`；支持有界分页读取纯文本、PDF、DOCX、XLSX、PPTX、RTF 和 OpenDocument，不接受路径或 URL，也不执行文件内容。
 - 激活状态保存在 `BotAgentSnapshot.contextSnapshot.activeToolCapabilities`，用于进程重启后恢复可调用能力；它不是 LLM 可见事实，不写入 `messages`，也不改变顶层 tools 列表。
-- `invoke` 的 schema/capability resolution 是内部路由，不单独记成功 trace。对外 schema 仍要求 `args` 是对象；若 provider 误传了可解析为 JSON 对象的字符串，runtime 会在 schema 校验前归一化，其他字符串、数组和空参数仍按目标 schema 拒绝。已激活调用只记录一次真实目标工具结果；inactive、unknown 或壳参数失败只记录一次失败的 `invoke`，hooks 也只围绕最终执行路径运行一次。
+- `invoke` 的 schema/capability resolution 是内部路由，不单独记成功 trace。对外 schema 仍要求 `args` 是对象；若 provider 误传了可解析为 JSON 对象的字符串，runtime 会在 schema 校验前归一化，其他字符串、数组和空参数仍按目标 schema 拒绝。已激活调用只记录一次真实目标工具结果；inactive 返回按 action 缩小后的 capability 和结构化激活/重试序列；unknown 或壳参数失败只记录一次失败的 `invoke`，hooks 也只围绕最终执行路径运行一次。
 
 ## 结果契约
 
 - 工具对 LLM 返回的事实只放在 `content`。运行时可以附带 `outcome` 和 `effects`，但二者不进入 `AgentContext`；例如真正开始的 `pause` 返回 `effects: [{ type: 'pause' }]`，由 EffectInterpreter 驱动循环休息，不反解析结果文本。`alternative_available` 没有 pause effect，因此 Agent 会在同一活动里继续选择动作。
 - 需要后续程序判断的结果使用稳定 JSON，并包含明确的成功状态和错误 code。面向人的摘要或错误说明放在具名字段中，不与 JSON 前后拼接自然语言。
 - schema 校验失败返回具体 `issues`、当前工具名和立即重试同一工具的提示；未知顶层工具返回当前 `availableTools` 和恢复提示，已移除的 `send_image` / `workspace_command` 分别定向引导到 `send_message.imageRef` / `workspace_bash`，不做静默兼容。
+- `capability_inactive` / `invalid_arguments` 这类可恢复失败在命中连续轮次上限时，Runtime Host 最多保留 3 个立即纠错轮；纯 `help` 步骤可继续该有界链路，成功重试或额度用完后仍进入原 cooldown。该运行时状态不进入 ledger 或 snapshot。
 - 外部搜索、网页、Reddit 和表情包结果按字段与条目做上限控制，并用 `truncated` 表示不完整；禁止截断完整 JSON 字符串。
 - `workspace_bash` 的直接命令和 `openbb_cli` 返回命令信封，区分退出码、内容格式、正文、stderr 与截断状态。任意 stdout 只作为字符串装入信封，不因看起来像 JSON 就自动解释。
 - 由 `workspace_bash` 路由到 db、style、fetch 等 typed 工具时，保留被委托工具自己的结构化结果，不额外套重复信封。

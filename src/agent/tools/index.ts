@@ -16,7 +16,7 @@ import { createWorkspaceBashTool } from './workspace-bash.js'
 import { maybeCreateBrowserTool } from './browser.js'
 import { maybeCreateOpenbbCliTool } from './openbb-cli.js'
 import { maybeCreateWebsiteTool } from './website.js'
-import { createFetchContentTool } from './fetch-content.js'
+import { createFetchContentTool, fetchContentScopeAccepts } from './fetch-content.js'
 import { createInboxTool } from './inbox.js'
 import { createChatStyleTool } from './chat-style.js'
 import { createAiToneTool } from './ai-tone.js'
@@ -96,9 +96,15 @@ export interface BotToolManifest {
 
 export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   const taskScheduler = deps.taskScheduler ?? createAgentTaskScheduler()
-  const fetchContent = createFetchContentTool({
+  const externalResearchFetchContent = createFetchContentTool({
     taskRegistry: deps.taskRegistry,
     taskScheduler,
+    scope: 'external_research',
+  })
+  const mediaFetchContent = createFetchContentTool({
+    taskRegistry: deps.taskRegistry,
+    taskScheduler,
+    scope: 'media_fetch',
   })
   const cryptoPaper = resolveOptionalTool(deps.optionalTools, 'cryptoPaper', maybeCreateCryptoPaperTool)
   const tradingAgent = resolveOptionalTool(
@@ -253,8 +259,11 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   const webSearch = resolveOptionalTool(deps.optionalTools, 'webSearch', maybeCreateWebSearchTool)
   capabilities.push({
     name: 'external_research',
-    description: '外部内容与研究: 搜索互联网、抓普通网页、Reddit、图片 URL 和 QQ 头像.',
-    tools: webSearch ? [webSearch, fetchContent] : [fetchContent],
+    description: '外部内容与研究: 搜索互联网、抓普通网页和读取 Reddit.',
+    tools: webSearch ? [webSearch, externalResearchFetchContent] : [externalResearchFetchContent],
+    acceptsToolCall: (toolName, args) => (
+      toolName !== 'fetch_content' || fetchContentScopeAccepts('external_research', args)
+    ),
   })
 
   capabilities.push(
@@ -286,7 +295,10 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     {
       name: 'media_fetch',
       description: '下载图片 URL 或 QQ 头像, 生成可发送、编辑或收藏的 image handle.',
-      tools: [fetchContent],
+      tools: [mediaFetchContent],
+      acceptsToolCall: (toolName, args) => (
+        toolName !== 'fetch_content' || fetchContentScopeAccepts('media_fetch', args)
+      ),
     },
   )
 

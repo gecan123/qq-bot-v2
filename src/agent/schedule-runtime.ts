@@ -90,6 +90,7 @@ export function createScheduleRuntime(
   const retryDelayMs = dependencies.retryDelayMs ?? 5_000
 
   let state: RuntimeState = 'new'
+  let stopRequested = false
   let jobs = new Map<string, ScheduleJob>()
   const timers = new Map<string, ArmedTimer>()
   let mutationTail: Promise<void> = Promise.resolve()
@@ -113,7 +114,7 @@ export function createScheduleRuntime(
 
   const armJob = (job: ScheduleJob): void => {
     clearJobTimer(job.id)
-    if (state !== 'started') return
+    if (state !== 'started' || stopRequested) return
     const delayMs = Math.max(0, Date.parse(job.nextRunAt) - now().getTime())
     const expectedNextRunAt = job.nextRunAt
     const handle = setTimer(() => {
@@ -146,17 +147,45 @@ export function createScheduleRuntime(
     jobs = new Map(nextJobs.map((job) => [job.id, cloneJob(job)]))
   }
 
-  const scheduleRetry = (job: ScheduleJob, expectedNextRunAt: string): void => {
+  const armRetrySegment = (
+    job: ScheduleJob,
+    expectedNextRunAt: string,
+    retryTargetAtMs: number,
+  ): void => {
     clearJobTimer(job.id)
-    if (state !== 'started' || jobs.get(job.id)?.nextRunAt !== expectedNextRunAt) return
+    if (
+      state !== 'started' ||
+      stopRequested ||
+      jobs.get(job.id)?.nextRunAt !== expectedNextRunAt
+    ) return
+    const remainingMs = Math.max(0, retryTargetAtMs - now().getTime())
     const handle = setTimer(() => {
-      queueTimerMutation(job.id, expectedNextRunAt)
-    }, retryDelayMs)
+      queueRetryTimerMutation(job.id, expectedNextRunAt, retryTargetAtMs)
+    }, Math.min(remainingMs, MAX_TIMER_DELAY_MS))
     timers.set(job.id, { handle, expectedNextRunAt })
   }
 
+  const scheduleRetry = (job: ScheduleJob, expectedNextRunAt: string): void => {
+    armRetrySegment(job, expectedNextRunAt, now().getTime() + retryDelayMs)
+  }
+
+  const processRetryTimer = async (
+    id: string,
+    expectedNextRunAt: string,
+    retryTargetAtMs: number,
+  ): Promise<void> => {
+    if (state !== 'started' || stopRequested) return
+    const job = jobs.get(id)
+    if (!job || job.nextRunAt !== expectedNextRunAt) return
+    if (now().getTime() < retryTargetAtMs) {
+      armRetrySegment(job, expectedNextRunAt, retryTargetAtMs)
+      return
+    }
+    await processTimer(id, expectedNextRunAt)
+  }
+
   const processTimer = async (id: string, expectedNextRunAt: string): Promise<void> => {
-    if (state !== 'started') return
+    if (state !== 'started' || stopRequested) return
     const job = jobs.get(id)
     if (!job || job.nextRunAt !== expectedNextRunAt) return
 
@@ -168,7 +197,7 @@ export function createScheduleRuntime(
 
     try {
       const advancement = advanceDueJob(job, currentTime, {
-        allowLateExpiryBoundary: true,
+        allowLateLiveExpiry: true,
       })
       const nextJobs = advancement.job
         ? [...jobs.values()].map((currentJob) =>
@@ -195,6 +224,18 @@ export function createScheduleRuntime(
     })
   }
 
+  function queueRetryTimerMutation(
+    id: string,
+    expectedNextRunAt: string,
+    retryTargetAtMs: number,
+  ): void {
+    void enqueueMutation(() =>
+      processRetryTimer(id, expectedNextRunAt, retryTargetAtMs),
+    ).catch((error: unknown) => {
+      log({ event: 'schedule_timer_failed', scheduleId: id, error })
+    })
+  }
+
   const requireStarted = (): void => {
     if (state === 'stopped') {
       throw new ScheduleRuntimeError('stopped', 'Schedule runtime has stopped')
@@ -210,7 +251,7 @@ export function createScheduleRuntime(
 
   const runtime: ScheduleRuntime = {
     start() {
-      if (state === 'stopped') {
+      if (state === 'stopped' || stopRequested) {
         return Promise.reject(new ScheduleRuntimeError('stopped', 'Schedule runtime has stopped'))
       }
       if (state !== 'new') {
@@ -223,9 +264,16 @@ export function createScheduleRuntime(
       return enqueueMutation(async () => {
         try {
           const loaded = await dependencies.store.load()
+          if (stopRequested) {
+            throw new ScheduleRuntimeError('stopped', 'Schedule runtime has stopped')
+          }
           const recovery = recoverLoadedJobs(loaded, now())
           if (recovery.changed) {
             await dependencies.store.replace(recovery.jobs)
+            if (stopRequested) {
+              await dependencies.store.replace(loaded)
+              throw new ScheduleRuntimeError('stopped', 'Schedule runtime has stopped')
+            }
           }
           replacePublishedJobs(recovery.jobs)
           state = 'started'
@@ -332,6 +380,7 @@ export function createScheduleRuntime(
     stop() {
       if (state === 'stopped') return Promise.resolve()
       if (stopPromise) return stopPromise
+      stopRequested = true
       if (state === 'new') {
         state = 'stopped'
         return Promise.resolve()
@@ -414,12 +463,14 @@ function recoverLoadedJobs(loaded: readonly ScheduleJob[], now: Date): StartupRe
 function advanceDueJob(
   job: ScheduleJob,
   now: Date,
-  options: { allowLateExpiryBoundary?: boolean } = {},
+  options: { allowLateLiveExpiry?: boolean } = {},
 ): JobAdvancement {
   const expiresAtMs = Date.parse(job.expiresAt)
-  const isArmedExpiryBoundary =
-    options.allowLateExpiryBoundary === true && Date.parse(job.nextRunAt) === expiresAtMs
-  if (now.getTime() > expiresAtMs && !isArmedExpiryBoundary) {
+  const nextRunAtMs = Date.parse(job.nextRunAt)
+  const canAdvancePastExpiry =
+    options.allowLateLiveExpiry === true &&
+    (job.schedule.kind === 'at' ? nextRunAtMs === expiresAtMs : nextRunAtMs <= expiresAtMs)
+  if (now.getTime() > expiresAtMs && !canAdvancePastExpiry) {
     return { job: null, event: null }
   }
 

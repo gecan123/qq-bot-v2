@@ -19,6 +19,7 @@ type TimerCallback = () => void
 class FakeClock {
   private nextHandle = 1
   private readonly callbacks = new Map<number, { callback: TimerCallback; dueAt: number }>()
+  private readonly scheduledDelays: number[] = []
   current: Date
 
   constructor(now = '2026-07-14T01:00:00.000Z') {
@@ -29,6 +30,7 @@ class FakeClock {
 
   readonly setTimer = (callback: TimerCallback, delayMs: number): number => {
     const handle = this.nextHandle++
+    this.scheduledDelays.push(delayMs)
     this.callbacks.set(handle, {
       callback,
       dueAt: this.current.getTime() + delayMs,
@@ -44,6 +46,10 @@ class FakeClock {
     this.current = new Date(value)
   }
 
+  advanceBy(delayMs: number): void {
+    this.current = new Date(this.current.getTime() + delayMs)
+  }
+
   timerCount(): number {
     return this.callbacks.size
   }
@@ -53,6 +59,10 @@ class FakeClock {
       .map((timer) => timer.dueAt)
       .sort((left, right) => left - right)[0]
     return dueAt === undefined ? null : dueAt - this.current.getTime()
+  }
+
+  maxScheduledDelayMs(): number {
+    return Math.max(...this.scheduledDelays)
   }
 
   firstHandle(): number {
@@ -540,6 +550,81 @@ describe('ScheduleRuntime firing and restart recovery', () => {
     assert.deepEqual(await runtime.list(), [])
   })
 
+  test('honors stop requested while startup load is blocked before recovery side effects', async () => {
+    const clock = new FakeClock('2026-07-14T01:20:00.000Z')
+    let releaseLoad: (() => void) | undefined
+    let markLoadStarted: (() => void) | undefined
+    const loadStarted = new Promise<void>((resolve) => {
+      markLoadStarted = resolve
+    })
+    const persisted = [atJob()]
+    const store: ScheduleStore = {
+      async load() {
+        markLoadStarted?.()
+        await new Promise<void>((resolve) => {
+          releaseLoad = resolve
+        })
+        return structuredClone(persisted) as ScheduleJob[]
+      },
+      async replace() {
+        assert.fail('stop during load must prevent recovery persistence')
+      },
+    }
+    const { runtime, eventQueue } = harness({ clock, store })
+
+    const starting = runtime.start()
+    await loadStarted
+    const stopping = runtime.stop()
+    releaseLoad?.()
+
+    await expectRuntimeCode(starting, 'stopped')
+    await stopping
+    assert.equal(clock.timerCount(), 0)
+    assert.equal(eventQueue.size(), 0)
+    await expectRuntimeCode(runtime.list(), 'stopped')
+  })
+
+  test('restores the loaded snapshot when stop arrives during recovery persistence', async () => {
+    const clock = new FakeClock('2026-07-14T01:20:00.000Z')
+    const original = [atJob()]
+    let persisted = structuredClone(original) as ScheduleJob[]
+    let replaceCount = 0
+    let releaseRecoveryReplace: (() => void) | undefined
+    let markRecoveryReplaceStarted: (() => void) | undefined
+    const recoveryReplaceStarted = new Promise<void>((resolve) => {
+      markRecoveryReplaceStarted = resolve
+    })
+    const store: ScheduleStore = {
+      async load() {
+        return structuredClone(persisted) as ScheduleJob[]
+      },
+      async replace(schedules) {
+        replaceCount += 1
+        if (replaceCount === 1) {
+          markRecoveryReplaceStarted?.()
+          await new Promise<void>((resolve) => {
+            releaseRecoveryReplace = resolve
+          })
+        }
+        persisted = structuredClone(schedules) as ScheduleJob[]
+      },
+    }
+    const { runtime, eventQueue } = harness({ clock, store })
+
+    const starting = runtime.start()
+    await recoveryReplaceStarted
+    const stopping = runtime.stop()
+    releaseRecoveryReplace?.()
+
+    await expectRuntimeCode(starting, 'stopped')
+    await stopping
+    assert.equal(replaceCount, 2)
+    assert.deepEqual(persisted, original)
+    assert.equal(clock.timerCount(), 0)
+    assert.equal(eventQueue.size(), 0)
+    await expectRuntimeCode(runtime.list(), 'stopped')
+  })
+
   test('coalesces missed every occurrences without drifting their anchor', async () => {
     const clock = new FakeClock('2026-07-14T01:36:00.000Z')
     const store = new RecordingStore([everyJob()])
@@ -670,6 +755,53 @@ describe('ScheduleRuntime firing and restart recovery', () => {
     assert.equal(eventQueue.size(), 0)
   })
 
+  test('coalesces an armed recurring tick through its final occurrence when callback passes expiry', async () => {
+    const nearExpiryJob = everyJob({
+      nextRunAt: '2026-07-17T00:50:00.000Z',
+      lastRunAt: '2026-07-17T00:40:00.000Z',
+      runCount: 1,
+    })
+    const clock = new FakeClock('2026-07-17T00:49:00.000Z')
+    const store = new RecordingStore([nearExpiryJob])
+    const { runtime, eventQueue } = harness({ clock, store })
+    await runtime.start()
+    clock.setNow('2026-07-17T01:00:00.005Z')
+
+    clock.fire()
+    await flushTimerMutation(runtime)
+
+    assert.deepEqual(await store.load(), [])
+    assert.deepEqual(await runtime.list(), [])
+    assert.deepEqual(eventQueue.dequeue(), {
+      type: 'scheduled_wake',
+      scheduleId: 'every-1',
+      name: 'periodic-review',
+      scheduleKind: 'every',
+      scheduledFor: new Date('2026-07-17T01:00:00.000Z'),
+      intention: 'Review the latest goal and decide the next useful action',
+      runCount: 2,
+    })
+    assert.equal(eventQueue.size(), 0)
+  })
+
+  test('does not wake when startup first discovers the same recurring job past expiry', async () => {
+    const nearExpiryJob = everyJob({
+      nextRunAt: '2026-07-17T00:50:00.000Z',
+      lastRunAt: '2026-07-17T00:40:00.000Z',
+      runCount: 1,
+    })
+    const clock = new FakeClock('2026-07-17T01:00:00.005Z')
+    const store = new RecordingStore([nearExpiryJob])
+    const { runtime, eventQueue } = harness({ clock, store })
+
+    await runtime.start()
+
+    assert.deepEqual(await store.load(), [])
+    assert.deepEqual(await runtime.list(), [])
+    assert.equal(clock.timerCount(), 0)
+    assert.equal(eventQueue.size(), 0)
+  })
+
   test('removes a recurring job after the current wake reaches maxRuns', async () => {
     const clock = new FakeClock()
     const store = new RecordingStore([everyJob({ maxRuns: 1 })])
@@ -749,6 +881,47 @@ describe('ScheduleRuntime firing and restart recovery', () => {
     await flushTimerMutation(runtime)
     assert.equal(eventQueue.size(), 1)
     assert.deepEqual(await runtime.list(), [])
+  })
+
+  test('segments retry delays above the Node timer limit without retrying early', async () => {
+    const maxTimerDelayMs = 2_147_483_647
+    const boundaryJob = atJob({
+      schedule: { kind: 'at', at: '2026-07-17T01:00:00.000Z' },
+      nextRunAt: '2026-07-17T01:00:00.000Z',
+    })
+    const clock = new FakeClock()
+    const store = new RecordingStore([boundaryJob])
+    const { runtime, eventQueue } = harness({
+      clock,
+      store,
+      retryDelayMs: maxTimerDelayMs + 1,
+    })
+    await runtime.start()
+    store.failNextReplace = new Error('temporary write failure')
+    clock.setNow(boundaryJob.expiresAt)
+
+    clock.fire()
+    await flushTimerMutation(runtime)
+    assert.equal(clock.nextDelayMs(), maxTimerDelayMs)
+    assert.equal(clock.maxScheduledDelayMs() <= maxTimerDelayMs, true)
+    assert.equal(store.replacements.length, 0)
+    assert.equal(eventQueue.size(), 0)
+
+    clock.advanceBy(maxTimerDelayMs)
+    clock.fire()
+    await flushTimerMutation(runtime)
+    assert.equal(clock.nextDelayMs(), 1)
+    assert.equal(clock.maxScheduledDelayMs() <= maxTimerDelayMs, true)
+    assert.equal(store.replacements.length, 0)
+    assert.equal(eventQueue.size(), 0)
+    assert.deepEqual((await runtime.list()).map((job) => job.id), ['schedule-1'])
+
+    clock.advanceBy(1)
+    clock.fire()
+    await flushTimerMutation(runtime)
+    assert.equal(eventQueue.size(), 1)
+    assert.deepEqual(await runtime.list(), [])
+    assert.deepEqual(await store.load(), [])
   })
 
   test('does not roll back or repeat a committed tick when enqueue throws', async () => {

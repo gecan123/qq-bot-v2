@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { z } from 'zod'
 import {
+  computeNextRunAt,
   normalizeScheduleSpec,
   ScheduleModelError,
   SCHEDULE_LIMITS,
@@ -69,11 +70,11 @@ const scheduleJobSchema = z
     const expiresAt = Date.parse(job.expiresAt)
     const nextRunAt = Date.parse(job.nextRunAt)
 
-    if (expiresAt <= createdAt) {
+    if (expiresAt !== createdAt + SCHEDULE_LIMITS.maxLifetimeMs) {
       context.addIssue({
         code: 'custom',
         path: ['expiresAt'],
-        message: 'expiresAt must be later than createdAt',
+        message: 'expiresAt must equal createdAt plus the maximum schedule lifetime',
       })
     }
     if (nextRunAt < createdAt || nextRunAt > expiresAt) {
@@ -94,8 +95,29 @@ const scheduleJobSchema = z
       }
     }
 
+    if (job.maxRuns !== undefined && job.runCount >= job.maxRuns) {
+      context.addIssue({
+        code: 'custom',
+        path: ['maxRuns'],
+        message: 'An active schedule must have remaining runs',
+      })
+    }
+
     try {
-      normalizeScheduleSpec(job.schedule, new Date(job.createdAt))
+      const normalizedSchedule = normalizeScheduleSpec(job.schedule, new Date(job.createdAt))
+      const expectedNextRunAt = normalizedSchedule.kind === 'at'
+        ? new Date(normalizedSchedule.at)
+        : computeNextRunAt(
+            normalizedSchedule,
+            new Date(job.lastRunAt ?? job.createdAt),
+          )
+      if (expectedNextRunAt?.getTime() !== nextRunAt) {
+        context.addIssue({
+          code: 'custom',
+          path: ['nextRunAt'],
+          message: 'nextRunAt must match the next trigger derived from the schedule',
+        })
+      }
     } catch (error) {
       if (!(error instanceof ScheduleModelError)) throw error
       context.addIssue({

@@ -88,7 +88,7 @@ describe('persistent schedule store', () => {
         name: 'cron-review',
         schedule: {
           kind: 'cron',
-          expression: '0 */6 * * *',
+          expression: '30 9 * * *',
           timezone: 'Asia/Shanghai',
         },
       }),
@@ -218,6 +218,79 @@ describe('persistent schedule store', () => {
         expiresAt: '2026-07-18T01:00:00.000Z',
         nextRunAt: '2026-07-17T01:00:00.001Z',
       }),
+    ]
+
+    for (const invalidJob of invalidJobs) {
+      writeRaw(path, { version: 1, schedules: [invalidJob] })
+      await assert.rejects(createPersistentScheduleStore(path).load())
+    }
+  })
+
+  test('requires expiresAt to equal the three-day lifetime derived from createdAt', async () => {
+    const path = tempStatePath()
+    const invalidJobs = [
+      job({ expiresAt: '2026-07-16T01:00:00.000Z' }),
+      job({ expiresAt: '2026-07-18T01:00:00.000Z' }),
+    ]
+
+    for (const invalidJob of invalidJobs) {
+      writeRaw(path, { version: 1, schedules: [invalidJob] })
+      await assert.rejects(createPersistentScheduleStore(path).load())
+    }
+  })
+
+  test('requires an at job nextRunAt to equal its scheduled timestamp', async () => {
+    const path = tempStatePath()
+    writeRaw(path, {
+      version: 1,
+      schedules: [job({ nextRunAt: '2026-07-14T01:45:00.000Z' })],
+    })
+
+    await assert.rejects(createPersistentScheduleStore(path).load())
+  })
+
+  test('requires recurring nextRunAt to be derived from the last run or creation cursor', async () => {
+    const path = tempStatePath()
+    const invalidJobs = [
+      job({
+        schedule: {
+          kind: 'every',
+          everySeconds: 600,
+          anchorAt: '2026-07-14T01:00:00.000Z',
+        },
+        nextRunAt: '2026-07-14T01:15:00.000Z',
+      }),
+      job({
+        schedule: {
+          kind: 'every',
+          everySeconds: 600,
+          anchorAt: '2026-07-14T01:00:00.000Z',
+        },
+        lastRunAt: '2026-07-14T01:10:00.000Z',
+        nextRunAt: '2026-07-14T01:30:00.000Z',
+        runCount: 2,
+      }),
+      job({
+        schedule: {
+          kind: 'cron',
+          expression: '30 9 * * *',
+          timezone: 'Asia/Shanghai',
+        },
+        nextRunAt: '2026-07-14T02:00:00.000Z',
+      }),
+    ]
+
+    for (const invalidJob of invalidJobs) {
+      writeRaw(path, { version: 1, schedules: [invalidJob] })
+      await assert.rejects(createPersistentScheduleStore(path).load())
+    }
+  })
+
+  test('requires an active job runCount to remain below maxRuns', async () => {
+    const path = tempStatePath()
+    const invalidJobs = [
+      job({ runCount: 2, maxRuns: 2 }),
+      job({ runCount: 3, maxRuns: 2 }),
     ]
 
     for (const invalidJob of invalidJobs) {

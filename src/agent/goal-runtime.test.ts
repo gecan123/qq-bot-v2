@@ -6,7 +6,7 @@ import { InMemoryEventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import { createInMemoryGoalStore } from './goal-store.js'
 import { renderBotEvent } from './render-event.js'
-import type { BotSnapshotRepo } from './snapshot-repo.js'
+import type { BotSnapshotRepo } from './bot-loop-agent.js'
 import { createToolExecutor } from './tool.js'
 import { createGoalTool } from './tools/goal.js'
 

@@ -1,10 +1,11 @@
-import type { AgentContext } from './agent-context.js'
+import { createAgentContext, type AgentContext } from './agent-context.js'
 import type { AgentMessage } from './agent-context.types.js'
 import { isLlmContextOverflowError, isLlmUsageLimitError, type LlmClient } from './llm-client.js'
 import type { MessageSentTarget, ToolExecutor } from './tool.js'
 import type { EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
-import type { BotSnapshotRepo } from './snapshot-repo.js'
+import type { AgentLedgerLoader } from './agent-ledger-loader.js'
+import type { AgentLedgerRepo, AgentRuntimePatch } from './agent-ledger-repo.js'
 import {
   compactConversationForRecovery,
   maybeCompactConversation,
@@ -42,8 +43,21 @@ import {
   findPendingMailboxThroughRowId,
   renderMailboxHandledEvent,
 } from './mailbox-handled.js'
+import type { PersistedAgentSnapshot } from './agent-context.types.js'
 
 const log = createLogger('BOT_LOOP')
+
+/** 只供旧单元测试驱动 persistence-first 行为；生产必须使用 AgentLedgerRepo。 */
+export interface BotSnapshotRepo {
+  load(): Promise<unknown | null>
+  save(input: {
+    snapshot: PersistedAgentSnapshot
+    mailboxCursors: MailboxCursors
+    mailboxContinuity?: MailboxContinuityState
+    goalRevision: number
+    lastWakeAt: Date | null
+  }): Promise<void>
+}
 
 export interface BotLoopAgentDeps {
   systemPrompt: string
@@ -51,7 +65,11 @@ export interface BotLoopAgentDeps {
   eventQueue: EventQueue<BotEvent>
   llm: LlmClient
   tools: ToolExecutor
-  snapshotRepo: BotSnapshotRepo
+  /** 生产 canonical 存储；和 ledgerLoader 必须成对提供。 */
+  ledgerRepo?: AgentLedgerRepo
+  ledgerLoader?: AgentLedgerLoader
+  /** 迁移期测试用 persistence-first 适配器。 */
+  snapshotRepo?: BotSnapshotRepo
   /** 从持久 snapshot 同行恢复的 per-source 披露游标。 */
   initialMailboxCursors?: Readonly<MailboxCursors>
   /** 与 snapshot 同行恢复的 per-source 上下文新鲜度状态。 */
@@ -60,6 +78,10 @@ export interface BotLoopAgentDeps {
   initialLastWakeAt?: Date | null
   /** 与 snapshot 同行恢复的 goal control revision；只控制 LLM 可见状态事件的去重。 */
   initialGoalRevision?: number
+  initialLedgerHeadEntryId?: bigint | null
+  /** deferred capability 的 round-local 状态，在可见 tool result 提交时同行落盘。 */
+  getActiveToolCapabilities?: () => readonly string[]
+  syncActiveToolCapabilities?: (capabilities: readonly string[]) => void
   /** 单一持久 goal 控制面；不存在时保持旧自主循环行为。 */
   goalStore?: GoalStore
   /**
@@ -140,6 +162,12 @@ export interface BotLoopAgent {
 }
 
 export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
+  if ((deps.ledgerRepo == null) !== (deps.ledgerLoader == null)) {
+    throw new Error('ledgerRepo and ledgerLoader must be provided together')
+  }
+  if (!deps.ledgerRepo && !deps.snapshotRepo) {
+    throw new Error('BotLoopAgent requires ledger persistence')
+  }
   const autonomy = {
     maxConsecutiveRounds: Math.max(1, deps.autonomy?.maxConsecutiveRounds ?? DEFAULT_MAX_CONSECUTIVE_ROUNDS),
     cooldownMs: Math.max(1, deps.autonomy?.cooldownMs ?? DEFAULT_AUTONOMY_COOLDOWN_MS),
@@ -152,18 +180,115 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let cancelDebounceSleep: (() => void) | null = null
   let lastWakeAt: Date | null = deps.initialLastWakeAt ?? null
   let mailboxCursors: MailboxCursors = { ...deps.initialMailboxCursors }
-  const mailboxContinuity = parseMailboxContinuityState(deps.initialMailboxContinuity)
+  let mailboxContinuity = parseMailboxContinuityState(deps.initialMailboxContinuity)
   let goalRevision = Math.max(0, deps.initialGoalRevision ?? 0)
+  let ledgerHeadEntryId = deps.initialLedgerHeadEntryId ?? null
   let roundIndex = 0
   let consecutiveRounds = 0
   let noToolActionRetryPending = false
   let recoverableToolCorrectionRounds = 0
+
+  function installRuntimeState(input: {
+    mailboxCursors: MailboxCursors
+    mailboxContinuity: MailboxContinuityState
+    goalRevision: number
+    activeToolCapabilities: readonly string[]
+    lastWakeAt: Date | null
+    ledgerHeadEntryId: bigint | null
+  }): void {
+    mailboxCursors = { ...input.mailboxCursors }
+    mailboxContinuity = parseMailboxContinuityState(input.mailboxContinuity)
+    goalRevision = input.goalRevision
+    lastWakeAt = input.lastWakeAt == null ? null : new Date(input.lastWakeAt)
+    ledgerHeadEntryId = input.ledgerHeadEntryId
+    deps.syncActiveToolCapabilities?.(input.activeToolCapabilities)
+  }
+
+  function installLegacySnapshot(snapshot: ReturnType<AgentContext['exportPersistedSnapshot']>): void {
+    deps.context.replaceMessages(snapshot.messages)
+    const current = new Set(deps.context.getSnapshot().activeToolCapabilities)
+    const next = new Set(snapshot.activeToolCapabilities)
+    for (const capability of current) {
+      if (!next.has(capability)) deps.context.deactivateToolCapability(capability)
+    }
+    for (const capability of next) {
+      if (!current.has(capability)) deps.context.activateToolCapability(capability)
+    }
+  }
+
+  async function reloadProjectionFromCanonical(): Promise<void> {
+    const loaded = await deps.ledgerLoader!.load()
+    deps.context.installProjection(loaded.projection.snapshot)
+    installRuntimeState(loaded.runtimeState)
+  }
+
+  async function commitChanges(input: {
+    messages?: readonly AgentMessage[]
+    runtimePatch?: AgentRuntimePatch
+  }): Promise<void> {
+    const messages = input.messages ?? []
+    if (messages.length === 0 && input.runtimePatch == null) return
+
+    try {
+      if (deps.ledgerRepo) {
+        if (messages.length > 0) {
+          await deps.ledgerRepo.appendMessages({
+            messages,
+            ...(input.runtimePatch ? { runtimePatch: input.runtimePatch } : {}),
+          })
+        } else {
+          await deps.ledgerRepo.updateRuntime({
+            expectedHeadEntryId: ledgerHeadEntryId,
+            patch: input.runtimePatch!,
+          })
+        }
+        await reloadProjectionFromCanonical()
+        return
+      }
+
+      // 旧测试仓储也遵守 persistence-first：先保存目标投影，成功后才安装到内存。
+      const current = deps.context.exportPersistedSnapshot()
+      const runtimePatch = input.runtimePatch ?? {}
+      const nextSnapshot = {
+        ...current,
+        messages: [...current.messages, ...structuredClone(messages)],
+        activeToolCapabilities: runtimePatch.activeToolCapabilities == null
+          ? current.activeToolCapabilities
+          : [...runtimePatch.activeToolCapabilities],
+      }
+      const nextRuntime = {
+        mailboxCursors: runtimePatch.mailboxCursors ?? mailboxCursors,
+        mailboxContinuity: runtimePatch.mailboxContinuity ?? mailboxContinuity,
+        goalRevision: runtimePatch.goalRevision ?? goalRevision,
+        activeToolCapabilities: runtimePatch.activeToolCapabilities
+          ?? current.activeToolCapabilities,
+        lastWakeAt: runtimePatch.lastWakeAt === undefined ? lastWakeAt : runtimePatch.lastWakeAt,
+        ledgerHeadEntryId,
+      }
+      await deps.snapshotRepo!.save({
+        snapshot: nextSnapshot,
+        mailboxCursors: nextRuntime.mailboxCursors,
+        mailboxContinuity: nextRuntime.mailboxContinuity,
+        goalRevision: nextRuntime.goalRevision,
+        lastWakeAt: nextRuntime.lastWakeAt,
+      })
+      installLegacySnapshot(nextSnapshot)
+      installRuntimeState(nextRuntime)
+    } catch (error) {
+      // deferred capability callbacks only mutate round-local host state; roll it back
+      // when its paired visible tool result cannot be committed.
+      deps.syncActiveToolCapabilities?.(deps.context.getSnapshot().activeToolCapabilities)
+      throw error
+    }
+  }
 
   function drainEvents(): {
     consumed: number
     hadAttention: boolean
     beforeGoal: MailboxDisclosure[]
     afterGoal: MailboxDisclosure[]
+    cursors: MailboxCursors
+    events: BotEvent[]
   } {
     const events: BotEvent[] = []
     while (true) {
@@ -173,7 +298,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     }
 
     const plan = planMailboxDisclosures(events, mailboxCursors)
-    mailboxCursors = plan.cursors
     const highPriorityDisclosures: MailboxDisclosure[] = []
     const scheduledWakeDisclosures: MailboxDisclosure[] = []
     const ordinaryDisclosures: MailboxDisclosure[] = []
@@ -194,39 +318,47 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       hadAttention: events.some(isAttentionEvent),
       beforeGoal: [...highPriorityDisclosures, ...scheduledWakeDisclosures],
       afterGoal: ordinaryDisclosures,
+      cursors: plan.cursors,
+      events,
     }
   }
 
-  async function discloseEvents(disclosures: readonly MailboxDisclosure[]): Promise<number> {
+  async function discloseEvents(
+    disclosures: readonly MailboxDisclosure[],
+    messages: AgentMessage[],
+    continuity: MailboxContinuityState,
+    wakeState: { lastWakeAt: Date | null },
+  ): Promise<number> {
     let disclosed = 0
     for (const disclosure of disclosures) {
       if (disclosure.kind === 'backlog') {
-        deps.context.appendUserMessage(renderMailboxBacklogNotification(disclosure.event))
+        messages.push({ role: 'user', content: renderMailboxBacklogNotification(disclosure.event) })
         recordMailboxDisclosure(
-          mailboxContinuity,
+          continuity,
           disclosure.event.mailboxKey,
           disclosure.event.timeRange.to.getTime(),
         )
         disclosed++
-        lastWakeAt = new Date()
+        wakeState.lastWakeAt = new Date()
         continue
       }
 
       if (disclosure.kind === 'mailbox') {
         const latestMessageAtMs = disclosure.events.at(-1)!.sentAt.getTime()
         const compensation = decideMailboxCompensation(
-          mailboxContinuity,
+          continuity,
           disclosure.mailboxKey,
           latestMessageAtMs,
         )
-        deps.context.appendUserMessage(
-          renderMailboxNotification(disclosure.mailboxKey, disclosure.events, {
+        messages.push({
+          role: 'user',
+          content: renderMailboxNotification(disclosure.mailboxKey, disclosure.events, {
             ...(compensation.contextBefore > 0
               ? { contextBefore: compensation.contextBefore }
               : {}),
           }),
-        )
-        recordMailboxDisclosure(mailboxContinuity, disclosure.mailboxKey, latestMessageAtMs)
+        })
+        recordMailboxDisclosure(continuity, disclosure.mailboxKey, latestMessageAtMs)
         if (compensation.mode !== 'none') {
           log.info({
             mailboxKey: disclosure.mailboxKey,
@@ -239,20 +371,20 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
           }, 'mailbox_context_compensation_planned')
         }
         disclosed++
-        lastWakeAt = new Date()
+        wakeState.lastWakeAt = new Date()
         continue
       }
 
       if (disclosure.event.type === 'wake') continue
       const rendered = await deps.renderEvent(disclosure.event)
       if (rendered == null || rendered.length === 0) continue
-      deps.context.appendUserMessage(rendered)
+      messages.push({ role: 'user', content: rendered })
       disclosed++
       if (
         disclosure.event.type === 'napcat_message' ||
         disclosure.event.type === 'napcat_private_message'
       ) {
-        lastWakeAt = new Date()
+        wakeState.lastWakeAt = new Date()
       }
     }
     return disclosed
@@ -272,6 +404,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     let recoveredContextOverflow = false
     let outputContinuations = 0
     let recoveryTokensUsed = 0
+    const stagedMessages: AgentMessage[] = []
     let result: Awaited<ReturnType<typeof runReactRound>>
     while (true) {
       try {
@@ -285,6 +418,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
             roundIndex,
             ...(goalRoundIndex != null ? { goalRoundIndex } : {}),
           },
+          stagedMessages,
         })
         break
       } catch (err) {
@@ -297,14 +431,14 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
             && partial.content.trim().length > 0
           if (!canContinue) throw err
 
-          deps.context.appendAssistantTurn({
+          stagedMessages.push({
+            role: 'assistant',
             content: partial.content,
             toolCalls: [],
             ...(partial.nativeBlocks ? { nativeBlocks: partial.nativeBlocks } : {}),
           })
-          deps.context.appendUserMessage(OUTPUT_CONTINUATION_PROMPT)
+          stagedMessages.push({ role: 'user', content: OUTPUT_CONTINUATION_PROMPT })
           outputContinuations++
-          await saveSnapshot()
           log.warn(
             { roundIndex, outputContinuations },
             'output_truncation_checkpointed_continuing_round',
@@ -313,26 +447,50 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         }
         if (recoveredContextOverflow || !isLlmContextOverflowError(err)) throw err
         recoveredContextOverflow = true
+        if (deps.ledgerRepo) throw err
+        const recoveryContext = createAgentContext()
+        recoveryContext.replaceMessages(deps.context.getSnapshot().messages)
         let compacted = false
         try {
-          compacted = await compactConversationForRecovery(deps.context, deps.compactOptions)
+          compacted = await compactConversationForRecovery(recoveryContext, deps.compactOptions)
         } catch (compactionError) {
           log.error({ err: compactionError, roundIndex }, 'context_overflow_compaction_failed')
           throw err
         }
         if (!compacted) throw err
-        recordMailboxCompaction(mailboxContinuity)
+        const nextContinuity = parseMailboxContinuityState(mailboxContinuity)
+        recordMailboxCompaction(nextContinuity)
+        const nextSnapshot = recoveryContext.exportPersistedSnapshot()
+        await deps.snapshotRepo!.save({
+          snapshot: nextSnapshot,
+          mailboxCursors,
+          mailboxContinuity: nextContinuity,
+          goalRevision,
+          lastWakeAt,
+        })
+        installLegacySnapshot(nextSnapshot)
+        mailboxContinuity = nextContinuity
         const syncedAfterRecoveryCompaction = await syncGoalState()
         if (syncedAfterRecoveryCompaction.goal?.status === 'active') {
-          appendGoalContinuation(syncedAfterRecoveryCompaction.goal, 'post_compaction')
+          await appendGoalContinuation(syncedAfterRecoveryCompaction.goal, 'post_compaction')
         }
-        await saveSnapshot()
         log.warn({ roundIndex }, 'context_overflow_compacted_retrying_round')
       }
     }
     const { didPause, didCompleteRest, sentTargets } = interpretToolEffects(result.effects)
 
-    recordMailboxRound(mailboxContinuity, result.inputTokens)
+    stagedMessages.push(...result.messagesToAppend)
+    const nextContinuity = parseMailboxContinuityState(mailboxContinuity)
+    recordMailboxRound(nextContinuity, result.inputTokens)
+    await commitChanges({
+      messages: stagedMessages,
+      runtimePatch: {
+        mailboxContinuity: nextContinuity,
+        ...(deps.getActiveToolCapabilities
+          ? { activeToolCapabilities: [...deps.getActiveToolCapabilities()] }
+          : {}),
+      },
+    })
     return {
       inputTokens: result.inputTokens,
       tokensUsed: recoveryTokensUsed + result.tokensUsed,
@@ -348,10 +506,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     }
   }
 
-  function appendHandledMailboxMarkers(sentTargets: readonly MessageSentTarget[]): boolean {
+  function collectHandledMailboxMarkers(sentTargets: readonly MessageSentTarget[]): AgentMessage[] {
     const messages = deps.context.getSnapshot().messages
     const seenMailboxes = new Set<string>()
-    let appended = false
+    const markers: AgentMessage[] = []
     for (const target of sentTargets) {
       const mailbox = target.type === 'group'
         ? `qq_group:${target.groupId}`
@@ -361,48 +519,60 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
 
       const throughRowId = findPendingMailboxThroughRowId(messages, mailbox)
       if (throughRowId == null) continue
-      deps.context.appendUserMessage(renderMailboxHandledEvent(mailbox, throughRowId))
-      appended = true
+      markers.push({ role: 'user', content: renderMailboxHandledEvent(mailbox, throughRowId) })
     }
-    return appended
-  }
-
-  async function saveSnapshot(): Promise<void> {
-    await deps.snapshotRepo.save({
-      snapshot: deps.context.exportPersistedSnapshot(),
-      mailboxCursors,
-      mailboxContinuity,
-      goalRevision,
-      lastWakeAt,
-    })
+    return markers
   }
 
   async function syncGoalState(): Promise<{ goal: AgentGoal | null; appended: boolean }> {
     const goal = await deps.goalStore?.get() ?? null
     if (!goal || goal.revision <= goalRevision) return { goal, appended: false }
-    deps.context.appendUserMessage(renderGoalStateEvent(goal))
-    goalRevision = goal.revision
+    await commitChanges({
+      messages: [{ role: 'user', content: renderGoalStateEvent(goal) }],
+      runtimePatch: { goalRevision: goal.revision },
+    })
     return { goal, appended: true }
   }
 
-  function appendGoalContinuation(goal: AgentGoal, reason: 'automatic_continuation' | 'post_compaction'): void {
-    deps.context.appendUserMessage(renderGoalContinuation(goal, reason))
+  async function appendGoalContinuation(
+    goal: AgentGoal,
+    reason: 'automatic_continuation' | 'post_compaction',
+  ): Promise<void> {
+    await commitChanges({
+      messages: [{ role: 'user', content: renderGoalContinuation(goal, reason) }],
+    })
   }
 
   async function maybeCompact(inputTokens: number | null): Promise<boolean> {
+    // 新 ledger 的 compaction entry 在 Task 7/8 接入；这里仅保留旧测试仓储的
+    // persistence-first 路径，绝不先改正式 AgentContext。
+    if (deps.ledgerRepo) return false
+    const workingContext = createAgentContext()
+    workingContext.replaceMessages(deps.context.getSnapshot().messages)
     let compacted = false
     try {
-      compacted = await maybeCompactConversation(deps.context, inputTokens, deps.compactOptions)
+      compacted = await maybeCompactConversation(workingContext, inputTokens, deps.compactOptions)
     } catch (err) {
       log.error({ err }, 'compaction_failed_skipped')
     }
     if (compacted) {
-      recordMailboxCompaction(mailboxContinuity)
+      const nextContinuity = parseMailboxContinuityState(mailboxContinuity)
+      recordMailboxCompaction(nextContinuity)
       try {
-        await injectStickerPoolAfterCompaction(deps.context)
+        await injectStickerPoolAfterCompaction(workingContext)
       } catch (err) {
         log.warn({ err }, 'sticker_pool_injection_failed')
       }
+      const nextSnapshot = workingContext.exportPersistedSnapshot()
+      await deps.snapshotRepo!.save({
+        snapshot: nextSnapshot,
+        mailboxCursors,
+        mailboxContinuity: nextContinuity,
+        goalRevision,
+        lastWakeAt,
+      })
+      installLegacySnapshot(nextSnapshot)
+      mailboxContinuity = nextContinuity
     }
     return compacted
   }
@@ -416,9 +586,17 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     onlyHelpToolCalls?: boolean
   }> {
     const beforeStepCount = deps.context.getSnapshot().messages.length
-    const syncedBeforeEvents = await syncGoalState()
-    const goalAtRoundStart = syncedBeforeEvents.goal
-    let goalMessagesAppended = syncedBeforeEvents.appended
+    const goalAtRoundStart = await deps.goalStore?.get() ?? null
+    const stagedMessages: AgentMessage[] = []
+    const stagedContinuity = parseMailboxContinuityState(mailboxContinuity)
+    const stagedWake = { lastWakeAt }
+    let nextGoalRevision = goalRevision
+    let goalMessagesAppended = false
+    if (goalAtRoundStart && goalAtRoundStart.revision > goalRevision) {
+      stagedMessages.push({ role: 'user', content: renderGoalStateEvent(goalAtRoundStart) })
+      nextGoalRevision = goalAtRoundStart.revision
+      goalMessagesAppended = true
+    }
     const debounceMs = deps.eventDebounceMs ?? DEFAULT_EVENT_DEBOUNCE_MS
     if (deps.eventQueue.size() > 0 && debounceMs > 0 && !stopRequested) {
       await new Promise<void>((resolve) => {
@@ -434,19 +612,51 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       })
     }
     const drained = drainEvents()
-    let disclosed = await discloseEvents(drained.beforeGoal)
+    let disclosed = await discloseEvents(
+      drained.beforeGoal,
+      stagedMessages,
+      stagedContinuity,
+      stagedWake,
+    )
     if (goalAtRoundStart?.status === 'active') {
-      appendGoalContinuation(goalAtRoundStart, 'automatic_continuation')
+      stagedMessages.push({
+        role: 'user',
+        content: renderGoalContinuation(goalAtRoundStart, 'automatic_continuation'),
+      })
       goalMessagesAppended = true
     }
-    disclosed += await discloseEvents(drained.afterGoal)
+    disclosed += await discloseEvents(
+      drained.afterGoal,
+      stagedMessages,
+      stagedContinuity,
+      stagedWake,
+    )
+    const visibleMessages = [...deps.context.getSnapshot().messages, ...stagedMessages]
     const appendedInterruptedFocusReminder = drained.hadAttention
       && disclosed > 0
-      && shouldAppendInterruptedRestAttentionReminder(deps.context.getSnapshot().messages)
+      && shouldAppendInterruptedRestAttentionReminder(visibleMessages)
     if (appendedInterruptedFocusReminder) {
-      deps.context.appendUserMessage(renderInterruptedRestAttentionReminder())
+      stagedMessages.push({ role: 'user', content: renderInterruptedRestAttentionReminder() })
     }
     log.debug({ roundIndex: roundIndex + 1, eventsConsumed: drained.consumed, eventsDisclosed: disclosed }, 'round_start')
+
+    const cursorsChanged = JSON.stringify(drained.cursors) !== JSON.stringify(mailboxCursors)
+    if (stagedMessages.length > 0 || cursorsChanged || nextGoalRevision !== goalRevision) {
+      try {
+        await commitChanges({
+          messages: stagedMessages,
+          runtimePatch: {
+            mailboxCursors: drained.cursors,
+            mailboxContinuity: stagedContinuity,
+            goalRevision: nextGoalRevision,
+            lastWakeAt: stagedWake.lastWakeAt,
+          },
+        })
+      } catch (error) {
+        for (const event of drained.events) deps.eventQueue.enqueue(event)
+        throw error
+      }
+    }
 
     if (drained.consumed > 0 && disclosed === 0 && !goalMessagesAppended && !appendedInterruptedFocusReminder) {
       return { ranRound: false }
@@ -455,8 +665,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     if (deps.context.getSnapshot().messages.length === 0) {
       return { ranRound: false }
     }
-
-    await saveSnapshot()
 
     const roundStartedAt = Date.now()
     let roundResult: Awaited<ReturnType<typeof runRound>>
@@ -471,7 +679,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
           reason: error instanceof Error ? error.message : 'provider usage limit',
         })
         await syncGoalState()
-        await saveSnapshot()
       }
       throw error
     }
@@ -485,10 +692,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       recoverableToolFailure,
       onlyHelpToolCalls,
     } = roundResult
-    const appendedHandledMailboxMarker = appendHandledMailboxMarkers(sentTargets)
-    if (appendedHandledMailboxMarker) {
-      await saveSnapshot()
-    }
+    const handledMailboxMarkers = collectHandledMailboxMarkers(sentTargets)
+    await commitChanges({ messages: handledMailboxMarkers })
     if (goalAtRoundStart?.status === 'active' && deps.goalStore) {
       await deps.goalStore.accountRound({
         goalId: goalAtRoundStart.goalId,
@@ -497,7 +702,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       })
       await syncGoalState()
     }
-    await saveSnapshot()
     try {
       const roundMessages = deps.context.getSnapshot().messages.slice(beforeStepCount)
       await deps.lifeJournal?.recordRound({ roundIndex, messages: roundMessages })
@@ -511,16 +715,13 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     if (compacted) {
       const syncedAfterCompaction = await syncGoalState()
       if (syncedAfterCompaction.goal?.status === 'active') {
-        appendGoalContinuation(syncedAfterCompaction.goal, 'post_compaction')
+        await appendGoalContinuation(syncedAfterCompaction.goal, 'post_compaction')
       }
     }
-    let appendedRestResumeReminder = false
     if (shouldAppendRestReminder) {
-      deps.context.appendUserMessage(renderRestResumeReminder(restReminderNow))
-      appendedRestResumeReminder = true
-    }
-    if (compacted || appendedRestResumeReminder) {
-      await saveSnapshot()
+      await commitChanges({
+        messages: [{ role: 'user', content: renderRestResumeReminder(restReminderNow) }],
+      })
     }
     return {
       ranRound: true,
@@ -642,7 +843,15 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     },
     async flush() {
       await syncGoalState()
-      await saveSnapshot()
+      if (!deps.ledgerRepo && deps.snapshotRepo) {
+        await deps.snapshotRepo.save({
+          snapshot: deps.context.exportPersistedSnapshot(),
+          mailboxCursors,
+          mailboxContinuity,
+          goalRevision,
+          lastWakeAt,
+        })
+      }
     },
     async runOnceForTest() {
       await step()

@@ -41,9 +41,9 @@ describe('main runtime wiring', () => {
     assert.doesNotMatch(source, /async function shutdown\(\)[\s\S]*process\.exit\(0\)/)
   })
 
-  test('bootstraps an empty AgentContext when no persisted snapshot exists', async () => {
+  test('bootstraps an empty AgentContext when the canonical ledger has no entries', async () => {
     const source = await readFile(new URL('./index.ts', import.meta.url), 'utf8')
 
-    assert.match(source, /enqueueColdStartBootstrap\(eventQueue, persisted != null\)/)
+    assert.match(source, /enqueueColdStartBootstrap\(eventQueue, hasPersistedLedger\)/)
   })
 })

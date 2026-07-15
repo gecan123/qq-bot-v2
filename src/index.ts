@@ -15,7 +15,8 @@ import { purgeOldData } from './database/retention.js'
 import { createAgentContext } from './agent/agent-context.js'
 import { InMemoryEventQueue } from './agent/event-queue.js'
 import type { BotEvent } from './agent/event.js'
-import { createBotSnapshotRepo } from './agent/snapshot-repo.js'
+import { createAgentLedgerRepo } from './agent/agent-ledger-repo.js'
+import { createAgentLedgerLoader } from './agent/agent-ledger-loader.js'
 import { createLlmClient } from './agent/llm-client.js'
 import { createMemoryMaintenanceRuntime } from './agent/memory-maintenance.js'
 import { setTokenUsageDbPersistenceEnabled } from './agent/token-stats.js'
@@ -144,27 +145,27 @@ async function main() {
   }
 
   // 4. 永续上下文 + 持久化 + 启动恢复
-  const snapshotRepo = createBotSnapshotRepo()
+  const ledgerRepo = createAgentLedgerRepo()
+  const ledgerLoader = createAgentLedgerLoader({ repo: ledgerRepo })
   const goalStore = createBotGoalStore()
-  const persisted = await snapshotRepo.load()
+  const loadedLedger = await ledgerLoader.load()
   const context = createAgentContext()
-  if (persisted) {
-    context.restorePersistedSnapshot(persisted.snapshot)
-    const restoredSnapshotLog = {
-      recoveredFromCheckpoint: persisted.recoveredFromCheckpoint,
-      messages: persisted.snapshot.messages.length,
-      mailboxSources: Object.keys(persisted.mailboxCursors).length,
-      mailboxContinuitySources: Object.keys(persisted.mailboxContinuity.mailboxes).length,
-      goalRevision: persisted.goalRevision,
-      lastWakeAt: persisted.lastWakeAt ? formatBeijingIso(persisted.lastWakeAt) : null,
-    }
-    if (persisted.recoveredFromCheckpoint) {
-      log.warn(restoredSnapshotLog, '当前 AgentContext snapshot 损坏，已从上一代 checkpoint 恢复')
-    } else {
-      log.info(restoredSnapshotLog, '从持久化 snapshot 恢复 AgentContext')
-    }
+  context.installProjection(loadedLedger.projection.snapshot)
+  const hasPersistedLedger = loadedLedger.projection.permanentEntryCount > 0
+  if (hasPersistedLedger) {
+    log.info({
+      checkpointStatus: loadedLedger.checkpointStatus,
+      messages: loadedLedger.projection.snapshot.messages.length,
+      permanentEntries: loadedLedger.projection.permanentEntryCount,
+      mailboxSources: Object.keys(loadedLedger.runtimeState.mailboxCursors).length,
+      mailboxContinuitySources: Object.keys(loadedLedger.runtimeState.mailboxContinuity.mailboxes).length,
+      goalRevision: loadedLedger.runtimeState.goalRevision,
+      lastWakeAt: loadedLedger.runtimeState.lastWakeAt
+        ? formatBeijingIso(loadedLedger.runtimeState.lastWakeAt)
+        : null,
+    }, '从 canonical agent ledger 恢复 AgentContext')
   } else {
-    log.info('AgentContext 从空启动 (无 snapshot)')
+    log.info({ checkpointStatus: loadedLedger.checkpointStatus }, 'AgentContext 从空 ledger 启动')
   }
 
   // 5. 事件队列 + messageRowId 去重 (replay-missed × live event 重叠时去重, 见 dedup-enqueue.ts)
@@ -276,8 +277,8 @@ async function main() {
   //    messageRowId 去重 (步骤 5), live 已经先入队的就不会被 replay 重复入队.
   const replayedGoalControls = await replayOwnerGoalCommands({
     owner: config.owner,
-    mailboxCursors: persisted?.mailboxCursors ?? {},
-    legacyLastWakeAt: persisted?.lastWakeAt ?? null,
+    mailboxCursors: loadedLedger.runtimeState.mailboxCursors,
+    legacyLastWakeAt: loadedLedger.runtimeState.lastWakeAt,
     goalStore,
   })
   if (replayedGoalControls.matched > 0) {
@@ -285,8 +286,8 @@ async function main() {
   }
   await startupGoalControlGate.finishReplay()
   const replayResult = await replayMissedMessages({
-    mailboxCursors: persisted?.mailboxCursors ?? {},
-    legacyLastWakeAt: persisted?.lastWakeAt ?? null,
+    mailboxCursors: loadedLedger.runtimeState.mailboxCursors,
+    legacyLastWakeAt: loadedLedger.runtimeState.lastWakeAt,
   }, {
     enqueueMessageEvent,
     selfNumber: config.selfNumber,
@@ -294,8 +295,8 @@ async function main() {
   })
   log.info({ enqueued: replayResult.enqueued }, 'replay-missed 完成')
 
-  if (enqueueColdStartBootstrap(eventQueue, persisted != null)) {
-    log.info('无持久 snapshot 且事件队列为空，已注入冷启动 bootstrap')
+  if (enqueueColdStartBootstrap(eventQueue, hasPersistedLedger)) {
+    log.info('无持久 ledger 且事件队列为空，已注入冷启动 bootstrap')
   }
 
   // 10. 工具集 + bot system prompt (启动后定型, 进程内不变)
@@ -314,7 +315,9 @@ async function main() {
     context,
     eventQueue,
     llm,
-    snapshotRepo,
+    ledgerRepo,
+    ledgerLoader,
+    initialLedgerHeadEntryId: loadedLedger.runtimeState.ledgerHeadEntryId,
     sender: messageSender,
     loadFriends: async () => (await napcat.get_friend_list()).map((friend) => ({
       userId: friend.user_id,
@@ -338,10 +341,10 @@ async function main() {
     toolAuditDbEnabled: config.toolAuditDbEnabled,
     owner: config.owner,
     eventDebounceMs: config.eventDebounceMs,
-    initialMailboxCursors: persisted?.mailboxCursors ?? {},
-    initialMailboxContinuity: persisted?.mailboxContinuity,
-    initialLastWakeAt: persisted?.lastWakeAt ?? null,
-    initialGoalRevision: persisted?.goalRevision ?? 0,
+    initialMailboxCursors: loadedLedger.runtimeState.mailboxCursors,
+    initialMailboxContinuity: loadedLedger.runtimeState.mailboxContinuity,
+    initialLastWakeAt: loadedLedger.runtimeState.lastWakeAt,
+    initialGoalRevision: loadedLedger.runtimeState.goalRevision,
     goalStore,
     lifeJournal,
     taskScheduler,

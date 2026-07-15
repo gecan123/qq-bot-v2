@@ -1,4 +1,9 @@
-import { createBotLoopAgent, type BotLoopAgent, type BotLoopLifeJournal } from './bot-loop-agent.js'
+import {
+  createBotLoopAgent,
+  type BotLoopAgent,
+  type BotLoopLifeJournal,
+  type BotSnapshotRepo,
+} from './bot-loop-agent.js'
 import { buildBotSystemPrompt } from './bot-system-prompt.js'
 import {
   createInMemoryTaskRegistry,
@@ -18,7 +23,8 @@ import type { AgentContext } from './agent-context.js'
 import type { EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { LlmClient } from './llm-client.js'
-import type { BotSnapshotRepo } from './snapshot-repo.js'
+import type { AgentLedgerLoader } from './agent-ledger-loader.js'
+import type { AgentLedgerRepo } from './agent-ledger-repo.js'
 import type { MailboxCursors } from './mailbox.js'
 import type { MailboxContinuityState } from './mailbox-continuity.js'
 import type { TargetMetadataMaps } from './resolve-target-meta.js'
@@ -72,7 +78,10 @@ export interface AgentRuntimeInput {
   context: AgentContext
   eventQueue: EventQueue<BotEvent>
   llm: LlmClient
-  snapshotRepo: BotSnapshotRepo
+  snapshotRepo?: BotSnapshotRepo
+  ledgerRepo?: AgentLedgerRepo
+  ledgerLoader?: AgentLedgerLoader
+  initialLedgerHeadEntryId?: bigint | null
   sender: MessageSender
   loadFriends: () => Promise<readonly QqDirectoryFriend[]>
   loadGroups: () => Promise<readonly QqDirectoryGroup[]>
@@ -119,6 +128,7 @@ export interface AgentRuntime {
 }
 
 export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
+  let activeToolCapabilities = [...input.context.getSnapshot().activeToolCapabilities]
   const taskRegistry = input.taskRegistry ?? createInMemoryTaskRegistry()
   const scheduleRuntime = input.scheduleRuntime ?? createScheduleRuntime({
     store: input.scheduleStatePath
@@ -178,9 +188,13 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       },
     }),
     activeCapabilities: {
-      list: () => input.context.getSnapshot().activeToolCapabilities,
-      activate: (capability) => input.context.activateToolCapability(capability),
-      deactivate: (capability) => input.context.deactivateToolCapability(capability),
+      list: () => [...activeToolCapabilities],
+      activate: (capability) => {
+        if (!activeToolCapabilities.includes(capability)) activeToolCapabilities.push(capability)
+      },
+      deactivate: (capability) => {
+        activeToolCapabilities = activeToolCapabilities.filter((item) => item !== capability)
+      },
     },
     trace: {
       path: input.toolCallLogPath,
@@ -213,6 +227,13 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     llm: input.llm,
     tools,
     snapshotRepo: input.snapshotRepo,
+    ledgerRepo: input.ledgerRepo,
+    ledgerLoader: input.ledgerLoader,
+    initialLedgerHeadEntryId: input.initialLedgerHeadEntryId,
+    getActiveToolCapabilities: () => activeToolCapabilities,
+    syncActiveToolCapabilities: (capabilities) => {
+      activeToolCapabilities = [...capabilities]
+    },
     initialMailboxCursors: input.initialMailboxCursors ?? {},
     initialMailboxContinuity: input.initialMailboxContinuity,
     initialLastWakeAt: input.initialLastWakeAt ?? null,

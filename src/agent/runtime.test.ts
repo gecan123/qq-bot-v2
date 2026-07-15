@@ -7,7 +7,7 @@ import { createAgentContext } from './agent-context.js'
 import { InMemoryEventQueue, type EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { LlmClient } from './llm-client.js'
-import type { BotSnapshotRepo } from './snapshot-repo.js'
+import type { BotSnapshotRepo } from './bot-loop-agent.js'
 import { createAgentRuntime, createScheduleRuntimeLogHandler } from './runtime.js'
 import type { MessageSender } from '../messaging/message-sender.js'
 import { McpManager } from './mcp-manager.js'
@@ -223,6 +223,43 @@ describe('createAgentRuntime', () => {
     await writeFile(scheduleStatePath, '{"version":1,"schedules":[]}', 'utf8')
     await runtime.startBackgroundServices()
     await runtime.stopBackgroundServices()
+  })
+
+  test('persists capability activation with its visible help result before installing it', async () => {
+    const context = createAgentContext()
+    context.appendUserMessage('activate research')
+    const saved: Array<Parameters<BotSnapshotRepo['save']>[0]> = []
+    const runtime = createAgentRuntime({
+      ...makeRuntimeInput(),
+      context,
+      llm: {
+        async chat() {
+          return {
+            content: '',
+            toolCalls: [{
+              id: 'activate-research',
+              name: 'help',
+              args: { action: 'activate', capability: 'external_research' },
+            }],
+            usage: { inputTokens: 5, cachedTokens: 0, outputTokens: 2 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      snapshotRepo: {
+        async load() { return null },
+        async save(input) { saved.push(structuredClone(input)) },
+      },
+    })
+
+    await runtime.agent.runOnceForTest()
+
+    const committed = saved.at(-1)
+    assert.ok(committed)
+    assert.deepEqual(committed.snapshot.activeToolCapabilities, ['external_research'])
+    assert.equal(committed.snapshot.messages.at(-1)?.role, 'tool')
+    assert.deepEqual(context.getSnapshot().activeToolCapabilities, ['external_research'])
   })
 
   test('rejects restarting background services after they have stopped', async () => {

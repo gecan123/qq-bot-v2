@@ -26,7 +26,7 @@ describe('runReactRound', () => {
     assert.equal(resolveEffectiveToolName({ id: '3', name: 'inbox', args: {} }), 'inbox')
   })
 
-  test('calls LLM with durable messages and visible tools, then appends assistant tool calls and tool results', async () => {
+  test('stages assistant tool calls and tool results without mutating the durable context', async () => {
     const context = createAgentContext()
     context.appendUserMessage('hello')
     const eventQueue = new InMemoryEventQueue<BotEvent>()
@@ -76,6 +76,8 @@ describe('runReactRound', () => {
     }])
     assert.deepEqual(context.getSnapshot().messages, [
       { role: 'user', content: 'hello' },
+    ])
+    assert.deepEqual(result.messagesToAppend, [
       { role: 'assistant', content: '', toolCalls: [toolCall] },
       { role: 'tool', toolCallId: 'lookup-1', content: '{"ok":true}' },
     ])
@@ -107,7 +109,7 @@ describe('runReactRound', () => {
       },
     }
 
-    await runReactRound({
+    const result = await runReactRound({
       systemPrompt: 'system',
       context,
       llm,
@@ -117,6 +119,8 @@ describe('runReactRound', () => {
 
     assert.deepEqual(context.getSnapshot().messages, [
       { role: 'user', content: 'use tool' },
+    ])
+    assert.deepEqual(result.messagesToAppend, [
       {
         role: 'assistant',
         content: '',
@@ -204,7 +208,8 @@ describe('runReactRound', () => {
     assert.deepEqual(budgets, [undefined, 8_192])
     assert.equal(executions, 1)
     assert.equal(result.tokensUsed, 4_146)
-    assert.equal(context.getSnapshot().messages.length, 3)
+    assert.equal(context.getSnapshot().messages.length, 1)
+    assert.equal(result.messagesToAppend.length, 2)
   })
 
   test('never appends or executes a tool call from a still-truncated response', async () => {
@@ -286,6 +291,7 @@ describe('runReactRound', () => {
     assert.equal(result.tokensUsed, 10)
     assert.equal(result.toolCallCount, 0)
     assert.deepEqual(result.effects, [])
+    assert.deepEqual(result.messagesToAppend, [])
     assert.deepEqual(result.toolOutcomes, [])
     assert.deepEqual(context.getSnapshot().messages, [{ role: 'user', content: 'hello' }])
   })
@@ -337,7 +343,7 @@ describe('runReactRound', () => {
     )
   })
 
-  test('returns pause effect but only appends tool result content to AgentContext', async () => {
+  test('returns pause effect separately from the staged tool result content', async () => {
     const context = createAgentContext()
     context.appendUserMessage('pause now')
     const eventQueue = new InMemoryEventQueue<BotEvent>()
@@ -376,20 +382,22 @@ describe('runReactRound', () => {
     assert.deepEqual(result.effects, [
       { toolCallId: 'pause-1', toolName: 'pause', effect: { type: 'pause' } },
     ])
-    const messages = context.getSnapshot().messages
-    assert.deepEqual(messages, [
+    assert.deepEqual(context.getSnapshot().messages, [
       { role: 'user', content: 'pause now' },
+    ])
+    const messages = result.messagesToAppend
+    assert.deepEqual(messages, [
       { role: 'assistant', content: '', toolCalls: [toolCall] },
       { role: 'tool', toolCallId: 'pause-1', content: '{"ok":true,"action":"rest"}' },
     ])
-    const toolMessage = messages[2]
+    const toolMessage = messages[1]
     if (toolMessage?.role !== 'tool') {
       assert.fail('expected persisted pause result to be a tool message')
     }
     assert.equal('effects' in toolMessage, false)
   })
 
-  test('appends deterministic error tool result when executor rejects after assistant turn is appended', async () => {
+  test('stages deterministic error tool result when executor rejects', async () => {
     const context = createAgentContext()
     context.appendUserMessage('lookup with failure')
     const eventQueue = new InMemoryEventQueue<BotEvent>()
@@ -427,6 +435,8 @@ describe('runReactRound', () => {
     assert.deepEqual(result.effects, [])
     assert.deepEqual(context.getSnapshot().messages, [
       { role: 'user', content: 'lookup with failure' },
+    ])
+    assert.deepEqual(result.messagesToAppend, [
       { role: 'assistant', content: '', toolCalls: [toolCall] },
       {
         role: 'tool',
@@ -489,7 +499,7 @@ describe('runReactRound', () => {
       },
     }
 
-    await runReactRound({
+    const result = await runReactRound({
       systemPrompt: 'system',
       context,
       llm,
@@ -499,11 +509,11 @@ describe('runReactRound', () => {
 
     assert.equal(maxActiveReads, 2)
     assert.deepEqual(
-      context.getSnapshot().messages.filter((message) => message.role === 'tool').map((message) => (
+      result.messagesToAppend.filter((message) => message.role === 'tool').map((message) => (
         message.role === 'tool' ? message.toolCallId : ''
       )),
       ['read-1', 'read-2', 'write-1', 'read-3'],
-      'durable tool results must remain in assistant call order',
+      'staged tool results must remain in assistant call order',
     )
   })
 })

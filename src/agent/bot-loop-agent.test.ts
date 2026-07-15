@@ -6,8 +6,12 @@ import { InMemoryEventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { LlmClient, LlmCallOutput } from './llm-client.js'
 import type { ToolExecutionResult, ToolExecutor } from './tool.js'
-import type { BotSnapshotRepo } from './snapshot-repo.js'
+import type { BotSnapshotRepo } from './bot-loop-agent.js'
 import type { PersistedAgentSnapshot } from './agent-context.types.js'
+import type { AgentMessage } from './agent-context.types.js'
+import type { AgentLedgerRepo, AgentRuntimePatch } from './agent-ledger-repo.js'
+import type { AgentLedgerLoader } from './agent-ledger-loader.js'
+import type { AgentRuntimeState } from './agent-ledger.types.js'
 import type { MailboxCursors } from './mailbox.js'
 import { renderBotEvent } from './render-event.js'
 import { createInMemoryGoalStore } from './goal-store.js'
@@ -95,6 +99,73 @@ function makeMockSnapshotRepo(): {
   return { repo, saved, savedCursors, savedLastWakeAt, savedContinuity }
 }
 
+function makeMockLedgerHarness(
+  contextMessages: readonly AgentMessage[],
+  options: { failAppend?: boolean } = {},
+): {
+  repo: AgentLedgerRepo
+  loader: AgentLedgerLoader
+  appendCalls: Array<{ messages: AgentMessage[]; runtimePatch?: AgentRuntimePatch }>
+} {
+  let messages: AgentMessage[] = structuredClone([...contextMessages])
+  let runtimeState: AgentRuntimeState = {
+    schemaVersion: 1,
+    mailboxCursors: {},
+    mailboxContinuity: createEmptyMailboxContinuityState(),
+    goalRevision: 0,
+    activeToolCapabilities: [],
+    lastWakeAt: null,
+    ledgerHeadEntryId: null,
+  }
+  const appendCalls: Array<{ messages: AgentMessage[]; runtimePatch?: AgentRuntimePatch }> = []
+  const applyPatch = (patch: AgentRuntimePatch = {}): void => {
+    runtimeState = {
+      ...runtimeState,
+      ...structuredClone(patch),
+      lastWakeAt: patch.lastWakeAt === undefined ? runtimeState.lastWakeAt : patch.lastWakeAt,
+    }
+  }
+  const repo: AgentLedgerRepo = {
+    async loadCanonicalState() { throw new Error('not used') },
+    async appendMessages(input) {
+      appendCalls.push({
+        messages: structuredClone([...input.messages]),
+        ...(input.runtimePatch ? { runtimePatch: structuredClone(input.runtimePatch) } : {}),
+      })
+      if (options.failAppend) throw new Error('ledger commit failed')
+      messages = [...messages, ...structuredClone(input.messages)]
+      applyPatch(input.runtimePatch)
+      return { appendedEntries: [], runtimeState }
+    },
+    async appendCompaction() { throw new Error('not used') },
+    async updateRuntime(input) {
+      applyPatch(input.patch)
+      return runtimeState
+    },
+    async saveCheckpoint() {},
+    async loadCheckpoint() { return null },
+  }
+  const loader: AgentLedgerLoader = {
+    async load() {
+      return {
+        projection: {
+          throughEntryId: runtimeState.ledgerHeadEntryId,
+          activeEntryCount: messages.length,
+          permanentEntryCount: messages.length,
+          snapshot: {
+            schemaVersion: 3,
+            messages: structuredClone(messages),
+            activeToolCapabilities: [...runtimeState.activeToolCapabilities],
+          },
+        },
+        runtimeState: structuredClone(runtimeState),
+        checkpointStatus: 'missing',
+      }
+    },
+  }
+  return { repo, loader, appendCalls }
+}
+
 // Note: 'send_group_message' references in fixtures below are intentionally retained as the
 // historical (MVP-1) tool name, mirroring how persisted bot snapshots from before the MVP-2
 // rename look on disk. New code calls the tool 'send_message' (see src/agent/tools/send-message.ts);
@@ -118,6 +189,113 @@ describe('BotLoopAgent.runOnceForTest', () => {
     await agent.flush()
 
     assert.deepEqual(saved, [ctx.exportPersistedSnapshot()])
+  })
+
+  test('does not mutate AgentContext before ledger commit succeeds', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('durable input')
+    const ledger = makeMockLedgerHarness(ctx.getSnapshot().messages, { failAppend: true })
+    const toolCall = { id: 'lookup-commit-fail', name: 'lookup', args: {} }
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [toolCall],
+        usage: { inputTokens: 3, cachedTokens: 0, outputTokens: 2 },
+        model: 'mock',
+        contextWindowTokens: 200_000,
+      }]),
+      tools: makeMockTools({ lookup: async () => ({ content: '{"ok":true}' }) }),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await assert.rejects(agent.runOnceForTest(), /ledger commit failed/)
+    assert.deepEqual(ctx.getSnapshot().messages, [{ role: 'user', content: 'durable input' }])
+  })
+
+  test('commits assistant tool calls and every ordered tool result as one batch', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('run both')
+    const ledger = makeMockLedgerHarness(ctx.getSnapshot().messages)
+    const calls = [
+      { id: 'lookup-a', name: 'lookup', args: { value: 'a' } },
+      { id: 'lookup-b', name: 'lookup', args: { value: 'b' } },
+    ]
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: calls,
+        usage: { inputTokens: 4, cachedTokens: 0, outputTokens: 3 },
+        model: 'mock',
+        contextWindowTokens: 200_000,
+      }]),
+      tools: makeMockTools({ lookup: async () => ({ content: '{"ok":true}' }) }),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(ledger.appendCalls.length, 1)
+    assert.deepEqual(ledger.appendCalls[0]?.messages, [
+      { role: 'assistant', content: '', toolCalls: calls },
+      { role: 'tool', toolCallId: 'lookup-a', content: '{"ok":true}' },
+      { role: 'tool', toolCallId: 'lookup-b', content: '{"ok":true}' },
+    ])
+    assert.deepEqual(ctx.getSnapshot().messages.slice(1), ledger.appendCalls[0]?.messages)
+  })
+
+  test('commits mailbox disclosure and cursor advancement atomically', async () => {
+    const ctx = createAgentContext()
+    const queue = new InMemoryEventQueue<BotEvent>()
+    queue.enqueue({
+      type: 'napcat_private_message',
+      messageRowId: 31,
+      peerId: 9001,
+      messageId: 20_031,
+      senderId: 9001,
+      senderNickname: 'Alice',
+      mentionedSelf: true,
+      sentAt: new Date('2026-07-15T00:00:00.000Z'),
+      renderedText: 'hello',
+    })
+    const ledger = makeMockLedgerHarness([], { failAppend: true })
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: queue,
+      llm: makeMockLlm([]),
+      tools: makeMockTools(),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await assert.rejects(agent.runOnceForTest(), /ledger commit failed/)
+
+    assert.equal(ledger.appendCalls.length, 1)
+    assert.match(
+      ledger.appendCalls[0]?.messages[0]?.role === 'user'
+        ? ledger.appendCalls[0].messages[0].content
+        : '',
+      /"mailbox":"qq_private:9001"/,
+    )
+    assert.deepEqual(ledger.appendCalls[0]?.runtimePatch?.mailboxCursors, {
+      'qq_private:9001': 31,
+    })
+    assert.deepEqual(ctx.getSnapshot().messages, [])
+    assert.equal(queue.size(), 1, 'failed disclosure must remain retryable')
   })
 
   test('appends and persists a handled marker after a confirmed private send', async () => {
@@ -828,7 +1006,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     assert.equal(chatCalls, 3)
     assert.equal(toolExecutions, 1)
-    assert.equal(saved.length, 3, 'pre-round, continuation checkpoint, post-round')
+    assert.equal(saved.length, 2, 'event disclosure and the complete continued round are committed')
     assert.equal(
       seenMessages[2]?.some(
         (message) => message.role === 'assistant' && message.content === 'second partial',
@@ -1517,7 +1695,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       /^\[历史摘要\]/,
       'reminder must be appended after ordinary compaction',
     )
-    assert.equal(saved.length, 3, 'pre-round, post-round, and reminder snapshots must be durable')
+    assert.equal(saved.length, 4, 'event, tool batch, compaction, and reminder must each be durable')
     assert.deepEqual(saved.at(-1)?.messages, messages)
   })
 

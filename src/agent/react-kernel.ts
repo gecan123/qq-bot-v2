@@ -1,4 +1,5 @@
 import type { AgentContext } from './agent-context.js'
+import type { AgentMessage } from './agent-context.types.js'
 import type { LlmCallOutput, LlmClient } from './llm-client.js'
 import type { ToolContext, ToolEffect, ToolExecutionResult, ToolExecutor } from './tool.js'
 import { recordTokenUsage } from './token-stats.js'
@@ -17,6 +18,8 @@ export interface ReactRoundInput {
   llm: LlmClient
   tools: ToolExecutor
   toolContext: ToolContext
+  /** 本次 request 内已成功执行但尚未提交的前序 round 消息。 */
+  stagedMessages?: readonly AgentMessage[]
   workingContext?: WorkingContextOptions
   signal?: AbortSignal
 }
@@ -40,6 +43,10 @@ export interface ReactRoundResult {
   tokensUsed: number
   toolCallCount: number
   effects: ReactToolEffect[]
+  /** assistant tool call 与全部 tool result 的原子追加批次。 */
+  messagesToAppend: AgentMessage[]
+  /** 包含 max_tokens 重试，供 host 做完整观测。 */
+  completions: LlmCallOutput[]
   /** 仅供当前 Runtime Host 决定纠错/等待，不进入 AgentContext。 */
   toolOutcomes: ReactToolOutcome[]
 }
@@ -75,7 +82,11 @@ class LlmContextWindowStopError extends Error {
 export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundResult> {
   const roundIndex = input.toolContext.roundIndex
   const snapshot = input.context.getSnapshot()
-  const workingContext = buildWorkingContextProjection(snapshot.messages, input.workingContext)
+  const sourceMessages = [
+    ...snapshot.messages,
+    ...(input.stagedMessages ?? []),
+  ]
+  const workingContext = buildWorkingContextProjection(sourceMessages, input.workingContext)
   const visibleTools = input.tools.list()
 
   if (workingContext.stats.omittedImages > 0) {
@@ -149,8 +160,10 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
     )
   }
 
+  const messagesToAppend: AgentMessage[] = []
   if (completion.toolCalls.length > 0) {
-    input.context.appendAssistantTurn({
+    messagesToAppend.push({
+      role: 'assistant',
       content: '',
       toolCalls: completion.toolCalls,
       ...(completion.nativeBlocks ? { nativeBlocks: completion.nativeBlocks } : {}),
@@ -199,7 +212,11 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
         ok: result.outcome?.ok ?? true,
         code: result.outcome?.code,
       }, 'round_tool_done')
-      input.context.appendToolResult({ toolCallId: batchCall.id, content: result.content })
+      messagesToAppend.push({
+        role: 'tool',
+        toolCallId: batchCall.id,
+        content: result.content,
+      })
     }
     cursor += batch.length
   }
@@ -209,6 +226,8 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
     tokensUsed: sumTokensUsed(completions),
     toolCallCount: completion.toolCalls.length,
     effects,
+    messagesToAppend,
+    completions,
     toolOutcomes,
   }
 }

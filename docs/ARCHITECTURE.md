@@ -10,8 +10,8 @@
 2. NapCat handlers 注册后先连接 ingress。实时消息立即走 message-row dedup queue；首次群历史 backfill 通过 `initialBackfillDone` barrier 等待所有来源尝试完成后，才执行 missed-message replay。单群失败只记录 source-level error，其余来源继续；重连 backfill 继续串行执行，但不重新阻塞已经启动的 Agent。
 3. `src/bot/**` 接收 NapCat 事件，并通过 `src/database/messages.ts` 写入入站事实；ready 后的消息被投递为 `BotEvent`。
 4. `src/agent/mailbox.ts` 把所有 QQ 消息按来源聚合为不含正文的确定性通知，并计算批次级 `priority=high|normal`；非 QQ 运行时事件仍走稳定 direct 渲染。
-5. `src/agent/runtime.ts` 把已恢复的 context、tools、system prompt 和 `BotLoopAgent` 装配成运行时。
-6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责事件披露、mailbox cursors、Goal revision、context snapshot 原子保存、有界 life journal hook、compaction，以及 pause/autonomy 循环控制。轮次边界按 `priority=high` QQ 通知、`scheduled_wake`、active Goal continuation、普通环境事件的顺序披露；provider-confirmed `send_message` 命中有 pending 通知的同 target mailbox 时，Runtime 在 tool result 闭合后 append `mailbox_handled` 并先保存 snapshot，再做 Goal bookkeeping；compaction 后会重新注入 Goal continuation 并立即保存 snapshot。
+5. `src/agent/runtime.ts` 把已恢复的 context、tools、system prompt 和 `BotLoopAgent` 装配成运行时；它创建共享的 QQ conversation controller。模型先激活 deferred `qq` capability，通过 `invoke qq_conversation open` 显式选择当前群或好友，再通过 `invoke send_message` 发言。
+6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责事件披露、mailbox cursors、Goal revision、context snapshot 原子保存、有界 life journal hook、compaction，以及 pause/autonomy 循环控制。轮次边界按 `priority=high` QQ 通知、`scheduled_wake`、active Goal continuation、普通环境事件的顺序披露；provider-confirmed `send_message` 命中有 pending 通知的实际 target mailbox 时，Runtime 在 tool result 闭合后 append `mailbox_handled` 并先保存 snapshot，再做 Goal bookkeeping；compaction 后会重新注入 Goal continuation 并立即保存 snapshot。
 7. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct：把 system prompt、从 durable `messages` 确定性构造的 working-context projection 和可见 tools 发给 LLM，append assistant tool calls；仅连续且显式只读的 tool calls 可以并行，副作用和未知调用都是 barrier，tool results 严格按原 tool-call 顺序 append。只有 `ToolExecutionResult.content` 进入 ledger；工具的 `outcome` / `effects` 返回 Runtime Host，由 `src/agent/effect-interpreter.ts` 统一解释。
 
 Agent runtime 的非关键后台工作统一走共享 bounded task scheduler：`maintenance=1`、`network=3`、`media-description=2`、`delegate=2`。同一 `resourceKey` 串行，相同 `dedupeKey` 共享任务。它们是 Node async worker，不是 OS 线程；ingress 媒体描述另走独立 `jobQueue`，Browser sidecar 也是独立进程并使用自己的单 worker housekeeping scheduler。
@@ -32,8 +32,8 @@ Goal 不创建第二个主 Agent。主前台仍只有一个串行 `BotLoopAgent`
 ## 持久边界
 
 - `messages` 是入站事实账本，不是 LLM ledger。
-- `bot_agent_snapshot.context_snapshot` 持久化 `AgentContext` 形态：`messages` 是 LLM 可见 ledger，`activeToolCapabilities` 是不进入 `messages` 的 deferred-tool 运行控制状态。
-- `message_sent` effect 只供当前 Runtime Host 解释，不进入 ledger。只有来自 `send_message` 的 provider-confirmed `sent` 且同 target 存在 pending mailbox 时，Runtime 才 append `mailbox_handled`；marker 不从 `messages` 表、side table 或运维日志重建。
+- `bot_agent_snapshot.context_snapshot` 持久化 `AgentContext` 形态：`messages` 是 LLM 可见 ledger；`activeToolCapabilities` 和可空的 `qqConversationFocus` 是不进入 `messages` 的运行控制状态。focus 只由 `qq_conversation open/close` 改变，重启恢复后继续生效。
+- `message_sent` effect 只供当前 Runtime Host 解释，不进入 ledger。`invoke` 执行内部工具时以 effective tool name 记 effect，因此只有实际 `send_message` 的 provider-confirmed `sent` 且其 effect target 存在 pending mailbox 时，Runtime 才 append `mailbox_handled`；marker 不从 `messages` 表、side table 或运维日志重建。
 - compaction 从被压缩的 durable `inbox_update` / `mailbox_handled` 归并 cursor，并在摘要后受控重写单个 `mailbox_attention_state`。旧 state 不交给 summarizer，summarizer 输出中的同名文本也不能改变机器状态；这份 state 只为 replay 确定性服务，不代表新的外部命令。候选 `[summary, controlled state, tail]` 通过完整性检查后一次替换，并随 compaction snapshot 保存。
 - `mailbox_cursors`、`mailbox_continuity`、`goal_revision` 和 legacy recovery boundary `last_wake_at` 是 row-level 运行控制状态，与 `context_snapshot` 原子保存。
 - 长期 side-data 分为 `memory`、Notebook、Life Journal 和 Agenda，全部按需披露且不参与 replay；完整分层、写入路由和维护流程见 `docs/MEMORY_ARCHITECTURE.md`。
@@ -55,7 +55,7 @@ Goal 不创建第二个主 Agent。主前台仍只有一个串行 `BotLoopAgent`
 
 - `src/agent/bot-loop-agent.ts`：Runtime Host，负责披露、持久化、compaction、life journal hook 和 pause/autonomy 控制。
 - `src/agent/mailbox-handled.ts`：归并 durable mailbox 注意 cursor，渲染 `mailbox_handled` 和受控 compaction state。
-- `src/agent/runtime.ts`：Agent runtime 装配边界，负责创建 target policy、task registry、deferred tool executor、system prompt 和 `BotLoopAgent`。
+- `src/agent/runtime.ts`：Agent runtime 装配边界，负责创建 target policy、QQ conversation controller、task registry、deferred tool executor、system prompt 和 `BotLoopAgent`。
 - `src/agent/react-kernel.ts`：单轮 ReAct transcript append 边界，负责 LLM call、assistant tool calls 和 tool result content。
 - `src/agent/**`：永续上下文、LLM client routing、工具、replay、compaction 和 token stats。
 - `src/bot/**`：NapCat 解析和 message readiness。

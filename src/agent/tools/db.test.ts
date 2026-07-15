@@ -6,6 +6,7 @@ import { createDbTool } from './db.js'
 import { buildBotTools } from './index.js'
 import type { SendTargetPolicy } from '../send-target-policy.js'
 import type { ScheduleRuntime } from '../schedule-runtime.js'
+import type { QqConversationController } from './qq-conversation.js'
 
 const mockSender: MessageSender = {
   async sendSegments() {
@@ -17,6 +18,14 @@ const targetPolicy: SendTargetPolicy = {
   async authorize() {
     return { allowed: true }
   },
+}
+
+const conversations: QqConversationController = {
+  getCurrent() { return null },
+  async resolveCurrent() { return { ok: false, code: 'CHAT_CONTEXT_UNAVAILABLE' } },
+  async open() { return { ok: false, code: 'CHAT_TARGET_UNAVAILABLE', current: null } },
+  close() {},
+  async list() { return [] },
 }
 
 const scheduleRuntime: ScheduleRuntime = {
@@ -74,6 +83,7 @@ describe('db tool', () => {
     const names = buildBotTools({
       sender: mockSender,
       targetPolicy,
+      conversations,
       selfNumber: 999,
       taskRegistry: createInMemoryTaskRegistry(),
       scheduleRuntime,

@@ -4,8 +4,8 @@
  *   group event A + private event from peer X + group event B
  *     → render-event labels each correctly
  *     → all QQ messages become priority-aware inbox notifications
- *     → LLM (mocked) produces a send_message tool call targeted at the right source
- *     → tool execution runs the send_message tool with whitelist validation
+ *     → LLM (mocked) activates qq and opens the intended conversation
+ *     → tool execution invokes send_message using the durable conversation focus
  *     → group/private cross-source events do NOT leak into each other
  */
 import assert from 'node:assert/strict'
@@ -15,8 +15,9 @@ import { InMemoryEventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import { renderBotEvent } from './render-event.js'
 import { createBotLoopAgent } from './bot-loop-agent.js'
-import { createToolExecutor } from './tool.js'
+import { createDeferredToolExecutor } from './tool.js'
 import { createSendMessageTool } from './tools/send-message.js'
+import { createQqConversationController, createQqConversationTool } from './tools/qq-conversation.js'
 import type { LlmClient, LlmCallOutput } from './llm-client.js'
 import type { BotSnapshotRepo } from './snapshot-repo.js'
 import type { PersistedAgentSnapshot } from './agent-context.types.js'
@@ -74,6 +75,50 @@ function makeMockSnapshotRepo(): { repo: BotSnapshotRepo; saved: PersistedAgentS
   return { repo, saved }
 }
 
+function makeQqTools(context: ReturnType<typeof createAgentContext>, sender: MessageSender) {
+  const conversations = createQqConversationController({
+    state: {
+      get: () => context.getSnapshot().qqConversationFocus,
+      set: (focus) => context.setQqConversationFocus(focus),
+    },
+    groupIds: [111, 222],
+    async loadGroups() {
+      return [
+        { groupId: 111, groupName: '阳光厨房' },
+        { groupId: 222, groupName: '技术群' },
+      ]
+    },
+    async loadFriends() {
+      return [{ userId: 10001, nickname: 'Alice', remark: '' }]
+    },
+  })
+  return createDeferredToolExecutor({
+    alwaysOnTools: [],
+    capabilities: [{
+      name: 'qq',
+      description: 'QQ conversations and sending',
+      tools: [
+        createQqConversationTool(conversations),
+        createSendMessageTool({ sender, targetPolicy: allowAllTargets, conversations }),
+      ],
+    }],
+    activeCapabilities: {
+      list: () => context.getSnapshot().activeToolCapabilities,
+      activate: (capability) => context.activateToolCapability(capability),
+      deactivate: (capability) => context.deactivateToolCapability(capability),
+    },
+  })
+}
+
+function toolOutput(id: string, name: 'help' | 'invoke', args: Record<string, unknown>): LlmCallOutput {
+  return {
+    content: '',
+    toolCalls: [{ id, name, args }],
+    usage: { inputTokens: 100, cachedTokens: 80, outputTokens: 20 },
+    model: 'mock',
+  }
+}
+
 describe('MVP-2 integration: mixed group + private events through one agent loop', () => {
   test('three events render as distinct mailbox notifications and a successful send appends its handled marker', async () => {
     const ctx = createAgentContext()
@@ -115,34 +160,21 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
       renderedText: '今天天气好',
     })
 
-    // LLM responds: emit a single send_message targeted at group 111 (replying to 张三)
+    // The model activates QQ, opens the exact mailbox conversation, then sends through invoke.
     const llm = makeMockLlm([
-      {
-        content: '思考: 张三 @ 我了, 回他.',
-        toolCalls: [
-          {
-            id: 'tc1',
-            name: 'send_message',
-            args: {
-              target: { type: 'group', groupId: 111 },
-              mode: 'reply',
-              text: '在的',
-              replyToMessageId: 1001,
-            },
-          },
-        ],
-        usage: { inputTokens: 100, cachedTokens: 80, outputTokens: 20 },
-        model: 'mock',
-      },
+      toolOutput('activate-qq', 'help', { action: 'activate', capability: 'qq' }),
+      toolOutput('open-group', 'invoke', {
+        tool: 'qq_conversation',
+        args: { action: 'open', target: { type: 'group', groupId: 111 } },
+      }),
+      toolOutput('send-group', 'invoke', {
+        tool: 'send_message',
+        args: { message: '在的', reply_to: 1001 },
+      }),
     ])
 
     const { sender, calls } = makeMockSender()
-    const tools = createToolExecutor([
-      createSendMessageTool({
-        sender,
-        targetPolicy: allowAllTargets,
-      }),
-    ])
+    const tools = makeQqTools(ctx, sender)
 
     const { repo } = makeMockSnapshotRepo()
     const agent = createBotLoopAgent({
@@ -157,12 +189,18 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     })
 
     await agent.runOnceForTest()
+    await agent.runOnceForTest()
+    await agent.runOnceForTest()
 
     const messages = ctx.getSnapshot().messages
     assert.deepEqual(messages.map((message) => message.role), [
       'user',
       'user',
       'user',
+      'assistant',
+      'tool',
+      'assistant',
+      'tool',
       'assistant',
       'tool',
       'user',
@@ -181,7 +219,7 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     assert.equal(notifications[2]!.source.groupName, '技术群')
     assert.doesNotMatch(notificationMessages.map((message) => message.content).join('\n'), /在吗|私聊问个事|今天天气好/)
 
-    const handledMarker = messages[5]
+    const handledMarker = messages[9]
     assert.ok(handledMarker?.role === 'user')
     assert.deepEqual(JSON.parse(handledMarker.content), {
       event: 'mailbox_handled',
@@ -189,7 +227,8 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
       throughRowId: 1,
     })
 
-    // The send_message tool should have used the unified segment sender, scoped to group 111.
+    assert.deepEqual(ctx.getSnapshot().qqConversationFocus, { type: 'group', groupId: 111 })
+    // The invoked send_message tool should have used the unified segment sender, scoped to group 111.
     assert.equal(calls.length, 1)
     assert.equal(calls[0]!.fn, 'sendSegments')
     const args = calls[0]!.args as { target: { type: string; groupId: number }; segments: Array<{ type: string; data: Record<string, unknown> }> }
@@ -226,32 +265,19 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     })
 
     const llm = makeMockLlm([
-      {
-        content: '',
-        toolCalls: [
-          {
-            id: 'tc1',
-            name: 'send_message',
-            args: {
-              target: { type: 'private', userId: 10001 },
-              mode: 'reply',
-              text: '私聊回复',
-              replyToMessageId: 2,
-            },
-          },
-        ],
-        usage: { inputTokens: 50, cachedTokens: 40, outputTokens: 10 },
-        model: 'mock',
-      },
+      toolOutput('activate-qq', 'help', { action: 'activate', capability: 'qq' }),
+      toolOutput('open-private', 'invoke', {
+        tool: 'qq_conversation',
+        args: { action: 'open', target: { type: 'private', userId: 10001 } },
+      }),
+      toolOutput('send-private', 'invoke', {
+        tool: 'send_message',
+        args: { message: '私聊回复', reply_to: 2 },
+      }),
     ])
 
     const { sender, calls } = makeMockSender()
-    const tools = createToolExecutor([
-      createSendMessageTool({
-        sender,
-        targetPolicy: allowAllTargets,
-      }),
-    ])
+    const tools = makeQqTools(ctx, sender)
 
     const { repo } = makeMockSnapshotRepo()
     const agent = createBotLoopAgent({
@@ -266,7 +292,10 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     })
 
     await agent.runOnceForTest()
+    await agent.runOnceForTest()
+    await agent.runOnceForTest()
 
+    assert.deepEqual(ctx.getSnapshot().qqConversationFocus, { type: 'private', userId: 10001 })
     assert.equal(calls.length, 1)
     assert.equal(calls[0]!.fn, 'sendSegments')
     const args = calls[0]!.args as { target: { type: string; userId: number }; segments: Array<{ type: string; data: Record<string, unknown> }> }

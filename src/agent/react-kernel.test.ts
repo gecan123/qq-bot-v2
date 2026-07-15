@@ -7,6 +7,7 @@ import type { BotEvent } from './event.js'
 import type { LlmClient, LlmCallInput, LlmCallOutput } from './llm-client.js'
 import type { Tool, ToolExecutionResult, ToolExecutor } from './tool.js'
 import { LlmOutputTruncatedError, resolveEffectiveToolName, runReactRound } from './react-kernel.js'
+import { interpretToolEffects } from './effect-interpreter.js'
 
 function makeTool(name: string, schema = z.object({})): Tool {
   return {
@@ -378,6 +379,53 @@ describe('runReactRound', () => {
       assert.fail('expected persisted pause result to be a tool message')
     }
     assert.equal('effects' in toolMessage, false)
+  })
+
+  test('trusts invoked send_message effects under the effective tool identity', async () => {
+    const context = createAgentContext()
+    context.appendUserMessage('send it')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    const toolCall = {
+      id: 'send-1',
+      name: 'invoke',
+      args: { tool: 'send_message', args: { message: 'hi' } },
+    }
+    const llm: LlmClient = {
+      async chat() {
+        return {
+          content: '',
+          toolCalls: [toolCall],
+          usage: { inputTokens: 3, cachedTokens: 0, outputTokens: 2 },
+          model: 'mock',
+        }
+      },
+    }
+    const tools: ToolExecutor = {
+      list: () => [makeTool('invoke')],
+      async execute() {
+        return {
+          content: '{"ok":true}',
+          effects: [{ type: 'message_sent', target: { type: 'private', userId: 123 } }],
+        }
+      },
+    }
+
+    const round = await runReactRound({
+      systemPrompt: 'system',
+      context,
+      llm,
+      tools,
+      toolContext: { eventQueue, roundIndex: 2 },
+    })
+
+    assert.deepEqual(round.effects, [{
+      toolCallId: 'send-1',
+      toolName: 'send_message',
+      effect: { type: 'message_sent', target: { type: 'private', userId: 123 } },
+    }])
+    assert.deepEqual(interpretToolEffects(round.effects).sentTargets, [
+      { type: 'private', userId: 123 },
+    ])
   })
 
   test('appends deterministic error tool result when executor rejects after assistant turn is appended', async () => {

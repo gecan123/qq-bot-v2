@@ -158,7 +158,10 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     loadGroups: input.loadGroups,
     loadFriends: input.loadFriends,
   })
-  const sendMessageSafetyGuard = createSendMessageSafetyGuard()
+  const getCurrentQqTarget = () => conversations.getCurrent()
+  const sendMessageSafetyGuard = createSendMessageSafetyGuard({
+    getCurrentTarget: getCurrentQqTarget,
+  })
   const tools = createDeferredToolExecutor({
     ...buildBotToolManifest({
       sender: input.sender,
@@ -204,7 +207,7 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
           toolName === 'mcp' ? mcpManager?.approvalRequirementForArgs(args) ?? null : null
         ), input.approvalMode ?? 'thin'),
         sendMessageSafetyGuard.beforeTool,
-        createSendMessageAiToneHook(),
+        createSendMessageAiToneHook({ getCurrentTarget: getCurrentQqTarget }),
       ],
       afterTool: [sendMessageSafetyGuard.afterTool, createGenerateImageTaskLogHook()],
     },

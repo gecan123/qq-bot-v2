@@ -174,6 +174,7 @@ export interface BotLoopAgent {
   start(): Promise<void>
   stop(): Promise<void>
   flush(): Promise<void>
+  requestManualCompaction(focus?: string): Promise<boolean>
   /** 测试用:跑一次 runOnce 不进入 while 循环。 */
   runOnceForTest(): Promise<void>
 }
@@ -1081,6 +1082,16 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
           lastWakeAt,
         })
       }
+    },
+    async requestManualCompaction(focus) {
+      if (!deps.ledgerRepo) return false
+      const canonical = await deps.ledgerRepo.loadCanonicalState()
+      return compactCanonical({
+        reason: 'manual',
+        contextTokens: estimateLedgerContextTokens({ entries: canonical.entries }).tokens,
+        contextWindowTokens: lastContextWindowTokens,
+        ...(focus == null ? {} : { manualFocus: focus }),
+      })
     },
     async runOnceForTest() {
       await step()

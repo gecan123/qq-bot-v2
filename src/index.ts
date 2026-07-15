@@ -41,6 +41,10 @@ import {
   replayOwnerGoalCommands,
   tryHandleOwnerGoalMessage,
 } from './agent/goal-control.js'
+import {
+  createStartupCompactionControlGate,
+  replayOwnerCompactionCommands,
+} from './agent/compaction-control.js'
 
 const log = createLogger('APP')
 
@@ -183,6 +187,12 @@ async function main() {
     })
   }
   const enqueueDedupedMessageEvent = createDedupEnqueue(eventQueue)
+  const startupCompactionControlGate = createStartupCompactionControlGate({
+    owner: config.owner,
+    onExecutionError(error, event) {
+      log.error({ error, messageRowId: event.messageRowId }, 'owner_compaction_control_failed')
+    },
+  })
   const processOwnerGoalControl = async (
     event: Extract<BotEvent, { type: 'napcat_private_message' }>,
   ): Promise<void> => {
@@ -214,6 +224,22 @@ async function main() {
   const startupGoalControlGate = createStartupGoalControlGate(processOwnerGoalControl)
   const enqueueMessageEvent = async (event: BotEvent): Promise<boolean> => {
     if (event.type === 'napcat_private_message') {
+      const compactionControl = await startupCompactionControlGate.submit({
+        scene: 'friend_private',
+        peerId: event.peerId,
+        senderId: event.senderId,
+        messageRowId: event.messageRowId,
+        renderedText: event.renderedText,
+      })
+      if (compactionControl.handled) {
+        log.info({
+          messageRowId: event.messageRowId,
+          duplicate: compactionControl.duplicate ?? false,
+          hasFocus: compactionControl.command?.focus != null,
+          error: compactionControl.error,
+        }, 'owner_compaction_control_accepted')
+        return false
+      }
       await startupGoalControlGate.submit(event)
     }
     return enqueueDedupedMessageEvent(event)
@@ -275,6 +301,16 @@ async function main() {
 
   // 9. 关机期间消息回放. 在 connect 之后跑也安全, 因为 enqueueMessageEvent 按
   //    messageRowId 去重 (步骤 5), live 已经先入队的就不会被 replay 重复入队.
+  const replayedCompactionControls = await replayOwnerCompactionCommands({
+    owner: config.owner,
+    mailboxCursors: loadedLedger.runtimeState.mailboxCursors,
+    legacyLastWakeAt: loadedLedger.runtimeState.lastWakeAt,
+    submit: (event) => startupCompactionControlGate.submit(event),
+  })
+  if (replayedCompactionControls.matched > 0) {
+    log.info(replayedCompactionControls, 'owner compaction control replay 完成')
+  }
+  await startupCompactionControlGate.finishReplay()
   const replayedGoalControls = await replayOwnerGoalCommands({
     owner: config.owner,
     mailboxCursors: loadedLedger.runtimeState.mailboxCursors,
@@ -357,6 +393,9 @@ async function main() {
     mcpConfigPath: config.mcpConfigPath,
     mcpSchemaSnapshotDir: config.mcpSchemaSnapshotDir,
   })
+  await startupCompactionControlGate.setRuntime(
+    (focus) => runtime.agent.requestManualCompaction(focus),
+  )
 
   // 10.5 把 system prompt 写到文件, 方便调试查看
   {

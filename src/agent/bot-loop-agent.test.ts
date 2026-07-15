@@ -418,6 +418,42 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(messages.at(-1)?.role, 'tool')
   })
 
+  test('manual compaction bypasses the threshold and keeps focus as trusted metadata', async () => {
+    const seed = ['old-a', 'old-b', 'old-c', 'recent'].map((content) => ({
+      role: 'user' as const,
+      content,
+    }))
+    const ctx = createAgentContext({ initialMessages: seed })
+    const ledger = makeCanonicalCompactionHarness(seed)
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([]),
+      tools: makeMockTools(),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      initialLedgerHeadEntryId: 4n,
+      renderEvent: renderBotEvent,
+      compactOptions: {
+        reserveTokens: 20,
+        keepRecentTokens: 1,
+        summarizeCandidate: async () => validLedgerSummary(),
+      },
+    })
+
+    const compacted = await agent.requestManualCompaction('关注工具结果')
+
+    assert.equal(compacted, true)
+    assert.equal(ledger.compactionCalls.length, 1)
+    const payload = ledger.compactionCalls[0]?.payload as {
+      reason: string
+      manualFocus?: string
+    }
+    assert.equal(payload.reason, 'manual')
+    assert.equal(payload.manualFocus, '关注工具结果')
+  })
+
   test('ledger summarizer failure writes no entry and backs threshold attempts off for ten minutes', async () => {
     const seed = ['old-a', 'old-b', 'old-c', 'recent'].map((content) => ({
       role: 'user' as const,

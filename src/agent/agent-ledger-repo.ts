@@ -1,5 +1,5 @@
 import { prisma } from '../database/client.js'
-import type { DurableAgentMessage } from './agent-context.types.js'
+import type { DurableAgentMessage, QqConversationFocus } from './agent-context.types.js'
 import {
   AGENT_LEDGER_SCHEMA_VERSION,
   type AgentLedgerEntry,
@@ -31,6 +31,7 @@ interface RuntimeStorageRow {
   mailboxContinuity: unknown
   goalRevision: number
   activeToolCapabilities: unknown
+  qqConversationFocus: unknown
   lastWakeAt: Date | null
   ledgerHeadEntryId: bigint | null
   updatedAt: Date
@@ -76,6 +77,7 @@ export interface AgentRuntimePatch {
   mailboxContinuity?: MailboxContinuityState
   goalRevision?: number
   activeToolCapabilities?: string[]
+  qqConversationFocus?: QqConversationFocus
   lastWakeAt?: Date | null
 }
 
@@ -277,6 +279,7 @@ async function loadRuntimeState(client: AgentLedgerPersistenceClient): Promise<A
     mailboxContinuity: row.mailboxContinuity,
     goalRevision: row.goalRevision,
     activeToolCapabilities: row.activeToolCapabilities,
+    qqConversationFocus: row.qqConversationFocus,
     lastWakeAt: row.lastWakeAt,
     ledgerHeadEntryId: row.ledgerHeadEntryId,
   })
@@ -302,6 +305,9 @@ async function persistRuntimeState(
   if (patch?.activeToolCapabilities !== undefined) {
     data.activeToolCapabilities = next.activeToolCapabilities as never
   }
+  if (patch && Object.hasOwn(patch, 'qqConversationFocus')) {
+    data.qqConversationFocus = next.qqConversationFocus as never
+  }
   if (patch && Object.hasOwn(patch, 'lastWakeAt')) data.lastWakeAt = next.lastWakeAt
   const row = await client.botAgentRuntimeState.update({
     where: { id: RUNTIME_SINGLETON_ID },
@@ -313,6 +319,7 @@ async function persistRuntimeState(
     mailboxContinuity: row.mailboxContinuity,
     goalRevision: row.goalRevision,
     activeToolCapabilities: row.activeToolCapabilities,
+    qqConversationFocus: row.qqConversationFocus,
     lastWakeAt: row.lastWakeAt,
     ledgerHeadEntryId: row.ledgerHeadEntryId,
   })
@@ -348,6 +355,9 @@ function definedRuntimePatch(patch: AgentRuntimePatch | undefined): AgentRuntime
   if (patch.goalRevision !== undefined) defined.goalRevision = patch.goalRevision
   if (patch.activeToolCapabilities !== undefined) {
     defined.activeToolCapabilities = patch.activeToolCapabilities
+  }
+  if (Object.hasOwn(patch, 'qqConversationFocus')) {
+    defined.qqConversationFocus = patch.qqConversationFocus
   }
   if (Object.hasOwn(patch, 'lastWakeAt')) defined.lastWakeAt = patch.lastWakeAt
   return defined

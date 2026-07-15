@@ -45,6 +45,7 @@ export async function resetAgentMemory(options: {
         mailboxContinuity: createEmptyMailboxContinuityState(),
         goalRevision: 0,
         activeToolCapabilities: [],
+        qqConversationFocus: null,
         lastWakeAt: null,
         ledgerHeadEntryId: null,
       },

@@ -40,6 +40,7 @@ export function createTestAgentLedger(input: {
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
     activeToolCapabilities: [],
+    qqConversationFocus: null,
     lastWakeAt: null,
     ...structuredClone(input.runtimeState ?? {}),
     ledgerHeadEntryId: entries.at(-1)?.id ?? null,

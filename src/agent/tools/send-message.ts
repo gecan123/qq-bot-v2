@@ -13,6 +13,7 @@ import {
   groupMuteInspector as defaultGroupMuteInspector,
   type GroupMuteInspector,
 } from '../../messaging/group-mute-inspector.js'
+import type { QqConversationController } from './qq-conversation.js'
 
 const log = createLogger('TOOL_SEND')
 const MAX_TEXT_LENGTH = 500
@@ -20,21 +21,9 @@ const MAX_TEXT_LENGTH = 500
 export interface SendMessageDeps {
   sender: MessageSender
   targetPolicy: SendTargetPolicy
+  conversations: QqConversationController
   groupMuteInspector?: GroupMuteInspector
 }
-
-const groupTargetSchema = z.object({
-  type: z.literal('group'),
-  groupId: z.number().int(),
-  mentionUserId: z.number().int().optional(),
-})
-
-const privateTargetSchema = z.object({
-  type: z.literal('private'),
-  userId: z.number().int(),
-})
-
-const targetSchema = z.union([groupTargetSchema, privateTargetSchema])
 const imageRefSchema = z.string().regex(/^(?:media:\d+|ephemeral:[a-f0-9]{64})$/)
 const httpsUrlSchema = z.string().url().refine((value) => new URL(value).protocol === 'https:', {
   message: '必须使用 https URL',
@@ -70,37 +59,33 @@ const musicSchema = z.object({
     }
   }
 })
-const contentFields = {
-  target: targetSchema.describe('显式发送目标. group 必传 groupId, private 必传 userId.'),
-  text: z.string().min(1).max(MAX_TEXT_LENGTH).nullable().optional(),
+const argsSchema = z.object({
+  message: z.string().min(1).max(MAX_TEXT_LENGTH).nullable().optional(),
   imageRef: imageRefSchema.nullable().optional(),
   music: musicSchema.nullable().optional(),
-}
-
-const argsSchema = z.discriminatedUnion('mode', [
-  z.object({
-    ...contentFields,
-    mode: z.literal('ambient'),
-    replyToMessageId: z.null(),
-  }),
-  z.object({
-    ...contentFields,
-    mode: z.literal('reply'),
-    replyToMessageId: z.number().int(),
-  }),
-]).refine((value) => value.text != null || value.imageRef != null || value.music != null, {
-  message: 'text、imageRef 或 music 至少一个非空',
+  reply_to: z.number().int().positive().optional(),
+  mention_user_id: z.number().int().positive().optional(),
+}).refine((value) => value.message != null || value.imageRef != null || value.music != null, {
+  message: 'message、imageRef 或 music 至少一个非空',
 })
 
 interface Args {
-  target: SendTarget
-  mode: SendMode
-  text?: string | null
+  message?: string | null
   /** 仅供内部测试/调用；LLM schema 只暴露 imageRef。 */
   image?: ImageHandle
   imageRef?: string | null
   music?: MusicShare | null
-  replyToMessageId: number | null
+  reply_to?: number
+  mention_user_id?: number
+}
+
+interface ResolvedArgs {
+  target: SendTarget
+  mode: SendMode
+  text?: string
+  image?: ImageHandle
+  music?: MusicShare | null
+  replyToMessageId?: number
 }
 
 interface ImageResultPayload {
@@ -132,18 +117,39 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
   return {
     name: 'send_message',
     description: [
-      '向 QQ 真实发送一条消息。target 必填并明确区分 group/private。',
+      '向当前打开的 QQ 会话真实发送一条消息；发送前必须先用 qq_conversation open 确认正确会话。',
       '文本、图片和图文消息都统一使用 send_message；不存在 send_image 工具。发送图片时把已有句柄传给 imageRef。',
       '音乐卡片也走本工具: music.platform 支持 qq/163/kugou/kuwo/migu + id, 或 custom + https url/image/title.',
-      'mode=ambient 时 replyToMessageId 必须为 null；mode=reply 时必须提供消息标签中 # 后面的 message_id。',
+      'reply_to 有值时引用该 message_id 回复；省略时普通发送。',
       '群 ambient 只能发到主动发送白名单；不在主动发送白名单的监听群只允许 reply 明确 @ 机器人的消息。私聊只能发给当前 QQ 好友。未授权会明确拒绝，不会模拟成功。',
-      'group target 可选 mentionUserId；private target 不支持 mentionUserId。',
-      'imageRef 使用 media:<id> 或 ephemeral:<64-hex>；text、imageRef 和 music 至少一个非 null。',
-      'text 是 QQ 用户可见正文，最多 500 字。只有调用本工具才会真实发送。',
+      'mention_user_id 仅允许当前会话为群聊时使用。',
+      'imageRef 使用 media:<id> 或 ephemeral:<64-hex>；message、imageRef 和 music 至少一个非 null。',
+      'message 是 QQ 用户可见正文，最多 500 字。只有调用本工具才会真实发送。',
     ].join(' '),
     schema: argsSchema,
     async execute(rawArgs) {
-      const args = normalizeArgs(rawArgs as Args)
+      const resolved = await deps.conversations.resolveCurrent()
+      if (!resolved.ok) return conversationErrorResult(resolved.code)
+
+      const input = rawArgs as Args
+      if (resolved.target.type === 'private' && input.mention_user_id != null) {
+        return {
+          content: JSON.stringify({
+            ok: false,
+            status: 'rejected',
+            code: 'MENTION_NOT_ALLOWED',
+            error: 'mention_user_id is only allowed in a group conversation.',
+          }),
+        }
+      }
+
+      const target: SendTarget = resolved.target.type === 'group'
+        ? {
+            ...resolved.target,
+            ...(input.mention_user_id != null ? { mentionUserId: input.mention_user_id } : {}),
+          }
+        : resolved.target
+      const args = normalizeArgs(input, target)
       const authorization = await deps.targetPolicy.authorize({
         target: args.target,
         mode: args.mode,
@@ -179,12 +185,30 @@ export function normalizeSendText(text: string): string {
     .trim()
 }
 
-function normalizeArgs(args: Args): Args & { text?: string; image?: ImageHandle } {
-  const text = args.text ? normalizeSendText(args.text) : undefined
+function normalizeArgs(args: Args, target: SendTarget): ResolvedArgs {
+  const text = args.message ? normalizeSendText(args.message) : undefined
   return {
-    ...args,
+    target,
+    mode: args.reply_to == null ? 'ambient' : 'reply',
     text: text || undefined,
     image: args.image ?? imageRefToHandle(args.imageRef ?? null),
+    music: args.music,
+    replyToMessageId: args.reply_to,
+  }
+}
+
+function conversationErrorResult(
+  code: 'CHAT_CONTEXT_UNAVAILABLE' | 'CHAT_CONTEXT_STALE',
+): SendToolResult {
+  return {
+    content: JSON.stringify({
+      ok: false,
+      status: 'rejected',
+      code,
+      error: code === 'CHAT_CONTEXT_UNAVAILABLE'
+        ? 'Open a QQ conversation before sending.'
+        : 'The current QQ conversation is stale. Reopen the intended conversation.',
+    }),
   }
 }
 
@@ -200,7 +224,7 @@ function imageRefToHandle(ref: string | null): ImageHandle | undefined {
 
 async function sendResolved(
   deps: SendMessageDeps,
-  args: Args & { text?: string; image?: ImageHandle },
+  args: ResolvedArgs,
   imageBytes?: Buffer,
 ): Promise<SendToolResult> {
   const segments = buildOutboundSegments({
@@ -260,7 +284,7 @@ async function diagnoseSendFailure(
 
 async function sendWithImage(
   deps: SendMessageDeps,
-  args: Args & { text?: string; image: ImageHandle },
+  args: ResolvedArgs & { image: ImageHandle },
 ): Promise<SendToolResult> {
   const handle = args.image
   let resolved: Awaited<ReturnType<typeof resolveImageHandle>>
@@ -339,7 +363,7 @@ function toNapcatTarget(target: SendTarget): NapcatSendTarget {
 }
 
 function buildReceipt(
-  args: Pick<Args, 'target' | 'mode'>,
+  args: Pick<ResolvedArgs, 'target' | 'mode'>,
   status: SendReceipt['status'],
   attempts: number,
   providerMessageId: number | null,

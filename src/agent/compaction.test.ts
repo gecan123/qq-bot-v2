@@ -8,6 +8,7 @@ import type {
   CompactionAgentLedgerEntry,
   MessageAgentLedgerEntry,
 } from './agent-ledger.types.js'
+import { AGENT_RUNTIME_STATE_SCHEMA_VERSION } from './agent-ledger.types.js'
 import { estimateEntryTokens } from './compaction-token-estimator.js'
 import { createEmptyMailboxContinuityState } from './mailbox-continuity.js'
 import {
@@ -100,7 +101,12 @@ function projection(entries: readonly AgentLedgerEntry[]): AgentLedgerProjection
     throughEntryId: entries.at(-1)?.id ?? null,
     activeEntryCount: messages.length,
     permanentEntryCount: entries.length,
-    snapshot: { schemaVersion: 3, messages, activeToolCapabilities: [] },
+    snapshot: {
+      schemaVersion: 4,
+      messages,
+      activeToolCapabilities: [],
+      qqConversationFocus: null,
+    },
   }
 }
 
@@ -261,11 +267,12 @@ test('prepareCompaction returns explicit cannot_compact when no legal atomic cut
 
 function runtimeStateFor(entries: readonly AgentLedgerEntry[]) {
   return {
-    schemaVersion: 1 as const,
+    schemaVersion: AGENT_RUNTIME_STATE_SCHEMA_VERSION,
     mailboxCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
     activeToolCapabilities: [],
+    qqConversationFocus: null,
     lastWakeAt: null,
     ledgerHeadEntryId: entries.at(-1)?.id ?? null,
   }

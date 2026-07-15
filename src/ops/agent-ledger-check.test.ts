@@ -7,6 +7,7 @@ import type {
   AgentRuntimeState,
   CompactionLedgerPayload,
 } from '../agent/agent-ledger.types.js'
+import { AGENT_RUNTIME_STATE_SCHEMA_VERSION } from '../agent/agent-ledger.types.js'
 import type {
   CanonicalAgentState,
   StoredAgentCheckpoint,
@@ -59,11 +60,12 @@ function compaction(
 
 function state(entries: AgentLedgerEntry[]): CanonicalAgentState {
   const runtimeState: AgentRuntimeState = {
-    schemaVersion: 1,
+    schemaVersion: AGENT_RUNTIME_STATE_SCHEMA_VERSION,
     mailboxCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
     activeToolCapabilities: [],
+    qqConversationFocus: null,
     lastWakeAt: null,
     ledgerHeadEntryId: entries.at(-1)?.id ?? null,
   }
@@ -162,6 +164,7 @@ describe('checkAgentLedger', () => {
           schemaVersion: SNAPSHOT_SCHEMA_VERSION,
           messages: [{ role: 'user', content: 'one' }],
           activeToolCapabilities: [],
+          qqConversationFocus: null,
         },
         activeEntryCount: 1,
         permanentEntryCount: 1,

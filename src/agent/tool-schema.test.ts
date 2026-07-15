@@ -11,6 +11,15 @@ import { pauseTool } from './tools/pause.js'
 import { createScheduleTool } from './tools/schedule.js'
 import { createSendMessageTool } from './tools/send-message.js'
 import type { ScheduleRuntime } from './schedule-runtime.js'
+import type { QqConversationController } from './tools/qq-conversation.js'
+
+const conversationStub: QqConversationController = {
+  getCurrent: () => null,
+  async resolveCurrent() { return { ok: false, code: 'CHAT_CONTEXT_UNAVAILABLE' } },
+  async open(target) { return { ok: true, current: target } },
+  close() {},
+  async list() { return [] },
+}
 
 test('zodToToolJsonSchema flattens collect_sticker union to Anthropic object schema', () => {
   const json = zodToToolJsonSchema(collectStickerTool.schema)
@@ -64,9 +73,16 @@ test('send_message exposes music as one provider-compatible object schema', () =
   const sendMessage = createSendMessageTool({
     sender: { async sendSegments() { return { success: true, attempts: 1 } } },
     targetPolicy: { async authorize() { return { allowed: true } } },
+    conversations: conversationStub,
   })
   const json = zodToToolJsonSchema(sendMessage.schema)
   const props = json.properties as Record<string, Record<string, unknown>>
+  assert.equal('target' in props, false)
+  assert.equal('mode' in props, false)
+  assert.equal('replyToMessageId' in props, false)
+  assert.ok(props.message)
+  assert.equal(props.reply_to.type, 'integer')
+  assert.equal(props.mention_user_id.type, 'integer')
   const musicVariants = props.music.anyOf as Array<Record<string, unknown>>
   const music = musicVariants.find((variant) => variant.type === 'object')
 

@@ -23,6 +23,7 @@ CREATE TABLE "bot_agent_runtime_state" (
     "mailbox_continuity" JSONB NOT NULL,
     "goal_revision" INTEGER NOT NULL,
     "active_tool_capabilities" JSONB NOT NULL,
+    "qq_conversation_focus" JSONB,
     "last_wake_at" TIMESTAMPTZ(6),
     "ledger_head_entry_id" BIGINT,
     "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -49,15 +50,17 @@ INSERT INTO "bot_agent_runtime_state" (
     "mailbox_continuity",
     "goal_revision",
     "active_tool_capabilities",
+    "qq_conversation_focus",
     "last_wake_at",
     "ledger_head_entry_id"
 ) VALUES (
     1,
-    1,
+    2,
     '{}'::jsonb,
     '{"schemaVersion":1,"roundSeq":0,"lastInputTokens":null,"compactionEpoch":0,"mailboxes":{}}'::jsonb,
     0,
     '[]'::jsonb,
+    NULL,
     NULL,
     NULL
 );

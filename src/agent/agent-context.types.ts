@@ -65,6 +65,11 @@ export type AgentMessage =
 /** Runtime union is shared; canonical writers/parsers enforce the ref-only subset. */
 export type DurableAgentMessage = AgentMessage
 
+export type QqConversationFocus =
+  | { type: 'group'; groupId: number }
+  | { type: 'private'; userId: number }
+  | null
+
 /**
  * 持久化形态。runtime 形态 == 这个对象 (AGENTS.md / CLAUDE.md 红线 1)。
  */
@@ -72,6 +77,7 @@ export interface PersistedAgentSnapshot {
   schemaVersion: number
   messages: DurableAgentMessage[]
   activeToolCapabilities: string[]
+  qqConversationFocus: QqConversationFocus
 }
 
-export const SNAPSHOT_SCHEMA_VERSION = 3
+export const SNAPSHOT_SCHEMA_VERSION = 4

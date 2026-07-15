@@ -54,6 +54,7 @@ import type { MemoryMaintenanceRuntime } from './memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
 import { hasPendingRestAlternative } from './tools/rest.js'
 import { createLogger } from '../logger.js'
+import { createQqConversationController } from './tools/qq-conversation.js'
 
 const scheduleLog = createLogger('SCHEDULE')
 
@@ -127,6 +128,7 @@ export interface AgentRuntime {
 
 export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
   let activeToolCapabilities = [...input.context.getSnapshot().activeToolCapabilities]
+  let qqConversationFocus = input.context.getSnapshot().qqConversationFocus
   const taskRegistry = input.taskRegistry ?? createInMemoryTaskRegistry()
   const scheduleRuntime = input.scheduleRuntime ?? createScheduleRuntime({
     store: input.scheduleStatePath
@@ -156,11 +158,30 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       input.selfNumber,
     ),
   })
-  const sendMessageSafetyGuard = createSendMessageSafetyGuard()
+  const conversations = createQqConversationController({
+    state: {
+      get: () => qqConversationFocus,
+      set: (focus) => {
+        qqConversationFocus = focus == null
+          ? null
+          : focus.type === 'group'
+            ? { type: 'group', groupId: focus.groupId }
+            : { type: 'private', userId: focus.userId }
+      },
+    },
+    groupIds: input.groupIds,
+    loadGroups: input.loadGroups,
+    loadFriends: input.loadFriends,
+  })
+  const getCurrentQqTarget = () => conversations.getCurrent()
+  const sendMessageSafetyGuard = createSendMessageSafetyGuard({
+    getCurrentTarget: getCurrentQqTarget,
+  })
   const tools = createDeferredToolExecutor({
     ...buildBotToolManifest({
       sender: input.sender,
       targetPolicy,
+      conversations,
       taskRegistry,
       taskScheduler: input.taskScheduler,
       scheduleRuntime,
@@ -205,7 +226,7 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
           toolName === 'mcp' ? mcpManager?.approvalRequirementForArgs(args) ?? null : null
         ), input.approvalMode ?? 'thin'),
         sendMessageSafetyGuard.beforeTool,
-        createSendMessageAiToneHook(),
+        createSendMessageAiToneHook({ getCurrentTarget: getCurrentQqTarget }),
       ],
       afterTool: [sendMessageSafetyGuard.afterTool, createGenerateImageTaskLogHook()],
     },
@@ -230,6 +251,10 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     getActiveToolCapabilities: () => activeToolCapabilities,
     syncActiveToolCapabilities: (capabilities) => {
       activeToolCapabilities = [...capabilities]
+    },
+    getQqConversationFocus: () => qqConversationFocus,
+    syncQqConversationFocus: (focus) => {
+      qqConversationFocus = focus
     },
     initialMailboxCursors: input.initialMailboxCursors ?? {},
     initialMailboxContinuity: input.initialMailboxContinuity,

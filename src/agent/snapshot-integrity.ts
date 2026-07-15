@@ -42,6 +42,7 @@ export function validateBotSnapshotIntegrity(input: BotSnapshotIntegrityInput): 
   if (!Array.isArray(snapshot.activeToolCapabilities)) {
     errors.push('snapshot.activeToolCapabilities must be an array')
   }
+  validateQqConversationFocus(snapshot.qqConversationFocus, errors)
   validateActiveCapabilities(activeToolCapabilities, errors)
   validateMessages(messages, errors, warnings)
   validateMailboxCursors(mailboxCursors, errors)
@@ -65,6 +66,46 @@ export function validateBotSnapshotIntegrity(input: BotSnapshotIntegrityInput): 
       mailboxCursors: mailboxCursors.length,
       goalRevision,
     },
+  }
+}
+
+function validateQqConversationFocus(value: unknown, errors: string[]): void {
+  if (value === null) return
+  if (!isRecord(value)) {
+    errors.push('snapshot.qqConversationFocus must be null or an object')
+    return
+  }
+
+  if (value.type === 'group') {
+    validateExactKeys(value, ['type', 'groupId'], 'snapshot.qqConversationFocus', errors)
+    if (!Number.isSafeInteger(value.groupId) || (value.groupId as number) <= 0) {
+      errors.push('snapshot.qqConversationFocus.groupId must be a positive safe integer')
+    }
+    return
+  }
+
+  if (value.type === 'private') {
+    validateExactKeys(value, ['type', 'userId'], 'snapshot.qqConversationFocus', errors)
+    if (!Number.isSafeInteger(value.userId) || (value.userId as number) <= 0) {
+      errors.push('snapshot.qqConversationFocus.userId must be a positive safe integer')
+    }
+    return
+  }
+
+  errors.push('snapshot.qqConversationFocus.type must be group or private')
+}
+
+function validateExactKeys(
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[],
+  path: string,
+  errors: string[],
+): void {
+  const actualKeys = Object.keys(value).sort()
+  const sortedExpectedKeys = [...expectedKeys].sort()
+  if (actualKeys.length !== sortedExpectedKeys.length
+    || actualKeys.some((key, index) => key !== sortedExpectedKeys[index])) {
+    errors.push(`${path} must contain exactly ${sortedExpectedKeys.join(', ')}`)
   }
 }
 

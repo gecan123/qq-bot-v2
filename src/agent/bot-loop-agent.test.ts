@@ -12,7 +12,11 @@ import type { AgentLedgerRepo, AgentRuntimePatch } from './agent-ledger-repo.js'
 import { AgentLedgerHeadChangedError } from './agent-ledger-repo.js'
 import type { AgentLedgerLoader } from './agent-ledger-loader.js'
 import { createAgentLedgerLoader } from './agent-ledger-loader.js'
-import type { AgentLedgerEntry, AgentRuntimeState } from './agent-ledger.types.js'
+import {
+  AGENT_RUNTIME_STATE_SCHEMA_VERSION,
+  type AgentLedgerEntry,
+  type AgentRuntimeState,
+} from './agent-ledger.types.js'
 import { projectAgentLedger } from './agent-ledger-projection.js'
 import type { MailboxCursors } from './mailbox.js'
 import { renderBotEvent } from './render-event.js'
@@ -91,11 +95,12 @@ function makeMockLedgerHarness(
   }))
   let nextId = BigInt(entries.length + 1)
   let runtimeState: AgentRuntimeState = {
-    schemaVersion: 1,
+    schemaVersion: AGENT_RUNTIME_STATE_SCHEMA_VERSION,
     mailboxCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
     activeToolCapabilities: [],
+    qqConversationFocus: null,
     lastWakeAt: null,
     ledgerHeadEntryId: entries.at(-1)?.id ?? null,
   }
@@ -196,11 +201,12 @@ function makeCanonicalCompactionHarness(
   }))
   let nextId = BigInt(entries.length + 1)
   let runtimeState: AgentRuntimeState = {
-    schemaVersion: 1,
+    schemaVersion: AGENT_RUNTIME_STATE_SCHEMA_VERSION,
     mailboxCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
     activeToolCapabilities: [],
+    qqConversationFocus: null,
     lastWakeAt: null,
     ledgerHeadEntryId: entries.at(-1)?.id ?? null,
   }

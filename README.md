@@ -10,10 +10,10 @@
 
 - `bot_agent_ledger_entries` 是唯一持久 LLM history source；`AgentContext` 是其当前内存 projection。
 - `messages` 是入站事实账本。它服务于搜索、媒体解析、审计和 replay recovery，但不能替代 `AgentContext`。
-- `bot_agent_runtime_state` 保存 mailbox cursors、continuity、Goal revision、active capabilities、last wake 和 ledger head，但不保存或重建 transcript；`bot_agent_checkpoint` 只是可丢弃的 projection cache。
+- `bot_agent_runtime_state` 保存 mailbox cursors、continuity、Goal revision、active capabilities、QQ 当前会话 focus、last wake 和 ledger head，但不保存或重建 transcript；`bot_agent_checkpoint` 只是可丢弃的 projection cache。
 - 新的 LLM 可见事实只能通过受控 append 或 compaction 进入；compaction 把完整待压缩 prefix 交给摘要器，只追加新的 boundary entry，不更新或删除旧历史。
 - late media description 和 side table 更新不得改写已经 append 的历史。
-- 对外 QQ 发言必须走 `send_message`，且 target 必须明确。
+- 对外 QQ 发言必须先用 `qq_conversation open` 显式打开 target，再走 `send_message`；新 mailbox 不会自动切换当前会话。
 - 工具日志和其它 `logs/*.ndjson` 是运维旁路，不是 prompt replay 输入。
 
 详细不变量见 `docs/AGENT_CONTEXT.md`。

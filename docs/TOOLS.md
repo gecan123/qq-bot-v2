@@ -8,7 +8,7 @@
 - 短期调度：`schedule action=create|list|cancel`，公开 ID 字段统一为 `id`。`create` 支持一次性 `at`、固定间隔 `every` 和墙上时间 `cron`；一次触发必须位于 30 秒到 3 天内，周期相邻触发至少 5 分钟，最多 20 个 active job，每个 job 创建 3 天后过期。同名同定义创建幂等返回 `existing`，同名不同定义返回冲突及已有 `id`，需先 cancel；`list` 返回有界公开摘要。状态保存在独立 schedule store，重启后恢复 timer；到期只注入 `scheduled_wake` 注意事件，不执行预存命令。它在轮次边界低于 `priority=high` QQ 通知、高于 active Goal 和普通环境事件；普通短休息仍用 `pause`。
 - 当前计划：`todo`（当前进程内的短期多步计划，最多一个 `in_progress`）。
 - 持久目标：`goal action=get|create_self|complete|report_blocker|abandon_self`。没有未完成 Goal 时，Agent 可以为自己的兴趣直接创建 `origin=self` 的持久目标，必须给出真实 `motivation` 和可核验 `completionCriteria`；默认预算 1,000,000 tokens，单个上限 10,000,000，60 秒冷却和滚动 24 小时最多 64 个只是失控保险丝。Agent 可以放弃 self Goal，但不能放弃 owner Goal。配置的 owner 仍可用私聊 `/goal` 创建、暂停、恢复或取消，owner Goal 会直接抢占 self Goal。轮次边界优先级是 `priority=high` QQ 通知 > `scheduled_wake` > active Goal > 普通环境事件；前台仍是单一串行 BotLoop，等待后台或外部输入时可以做其他事情。`complete` 必须提交逐项真实证据；同一 blocker 每个连续 Goal round 用相同 `blockerKey` 报告，第三轮才转 `blocked`。Goal token budget 按未缓存 input 加 output 计量；只有明确的 provider 硬额度/账单上限才转 `usage_limited`，普通临时 429 仍走已有有界重试和 round backoff。
-- 发送：`send_message`（文本、图片、图文和受控音乐卡片）。
+- QQ 发送位于 deferred `qq` capability：先 `help action=activate capability=qq`，再 `invoke qq_conversation open` 显式打开允许的群或好友，最后 `invoke send_message` 发送文本、图片、图文或受控音乐卡片。
 - QQ 目录：`qq_directory`（分页列出/搜索 NapCat 当前全部好友；群目录只披露当前已加入且位于 `BOT_TARGET_GROUP_IDS` 的群）。
 - 稳定按需壳：`help`（`list` / `describe` / `activate` / `deactivate` capability 或内部工具 schema）和 `invoke`（调用已激活 capability 内部工具）。激活不会改变下一轮顶层 tools 列表。
 - 知识和历史：`memory`（稳定长期记忆）、`notebook`（按稳定 topic 维护研究/阅读/市场/项目过程）、`life_journal`（经历、感受、梦和 Agenda）、`skill`、`inbox`（list/read 多来源消息正文）、`workspace_bash` 内置的 `help` / `db` / `style` / `metrics` 子命令。`metrics` 按北京时间自然日返回真实 bot 的工具调用、token/cache 和 rest 行为，包括 idle anchor 来源与转向后是否实际行动，并默认排除 `model=mock` 测试数据。
@@ -34,7 +34,7 @@
 - `skill_management`：内部工具是 `skill_editor`；同类多步规则反复出现、现有 skill 未覆盖且能写清使用与排除边界时，用它创建、校验和安装运行时 skill。一次性任务、临时笔记和当前执行状态不要做成 skill。
 - `workspace_management`：内部工具是 `workspace_file`，用于普通私有文本工作文件的分页读取、创建、覆盖、精确替换、删除和移动。
 - `document_reading`：内部工具是 `read_file`，只接受 `inbox` 返回的 `type=file` 的 `mediaId`；支持有界分页读取纯文本、PDF、DOCX、XLSX、PPTX、RTF 和 OpenDocument，不接受路径或 URL，也不执行文件内容。
-- 激活状态保存在 `bot_agent_runtime_state.active_tool_capabilities`，用于进程重启后恢复可调用能力；它不是 LLM 可见事实，不写入 ledger message，也不改变顶层 tools 列表。
+- 激活状态保存在 `bot_agent_runtime_state.active_tool_capabilities`；QQ 当前会话保存在同一 runtime singleton 的 `qq_conversation_focus`。两者用于重启恢复运行控制状态，不是 LLM 可见事实，不写入 ledger message。focus 只由 `qq_conversation open/close` 改变，新 mailbox 不会自动切换它。
 - `invoke` 的 schema/capability resolution 是内部路由，不单独记成功 trace。对外 schema 仍要求 `args` 是对象；若 provider 误传了可解析为 JSON 对象的字符串，runtime 会在 schema 校验前归一化，其他字符串、数组和空参数仍按目标 schema 拒绝。已激活调用只记录一次真实目标工具结果；inactive 返回按 action 缩小后的 capability 和结构化激活/重试序列；unknown 或壳参数失败只记录一次失败的 `invoke`，hooks 也只围绕最终执行路径运行一次。
 
 ## 结果契约
@@ -68,7 +68,7 @@
 ## 安全规则
 
 - 对外 QQ 发言必须走 `send_message`。
-- `send_message` 的 target 必须明确。不能从 memory 里推断群聊或私聊 target。
+- `send_message` 的 target 必须由当前 QQ focus 明确给出。不能从 memory、消息文本或日志推断 target；切换来源时必须重新 `qq_conversation open`。
 - `send_message.music` 只接受 qq/163/kugou/kuwo/migu 的歌曲 ID，或字段受限且 URL 必须为 HTTPS 的 custom 音乐卡片；不接受任意 JSON 卡片。
 - assistant text 是内部历史/推理，不是公开发送通道。
 - `send_message` 成功不会隐式结束 Agent 当前活动；是否继续或休息由下一轮的 `pause` 决定。
@@ -104,15 +104,15 @@
 ## LLM 路径
 
 - Agent chat 有 Claude-Code-compatible 和 OpenAI-agent 两条路径。除非任务明确要求，否则不要改 wire format、cache-control 或 provider identity 细节。
-- Claude-Code-compatible 路径会对 transport、429、5xx/529 和 SSE overload 做最多两次有界重试，优先尊重 `retry-after`，并记录稳定错误分类与 request ID；401/403 和 invalid request 不重试。provider 明确返回 context/prompt too long 时，Runtime Host 强制 compaction、立即保存 snapshot，并只重试当前 LLM round 一次；该恢复发生在 tool call 写入 ledger 前，不重放副作用工具。
+- Claude-Code-compatible 路径会对 transport、429、5xx/529 和 SSE overload 做最多两次有界重试，优先尊重 `retry-after`，并记录稳定错误分类与 request ID；401/403 和 invalid request 不重试。provider 明确返回 context/prompt too long 时，Runtime Host 强制追加 compaction entry，并只重试当前 LLM round 一次；该恢复发生在 tool call 写入 ledger 前，不重放副作用工具。
 - Claude `stop_reason` 和 OpenAI `finish_reason` 会归一化为 Runtime Host 的停止原因。`max_tokens` 先用更大的单次输出预算重试同一份 messages；仍截断时，只允许把“不含 tool call 的普通文本”作为 continuation checkpoint 写入 ledger，最多续写两次。任何截断或不完整的 tool call 都不写入、不执行。
 - 可用 `LLM_FALLBACK_MODEL` 显式配置同一 wire provider 的备用模型。只在主模型内部重试耗尽后的 overload/5xx 上切换一次；auth、rate limit、invalid request 和 context overflow 不切换，显式场景模型也不会继承主 Agent fallback。
 - 媒体描述使用 `src/llm/**` 下的 routing provider，和 agent chat client 分离。
 - 优先使用渐进式披露：system prompt 只放稳定边界和入口，长手册和可变数据放到工具或文件后面。
-- Agent chat 发送前会从 durable ledger 重建 working context；默认保留最近三个带图片的 tool result，更旧图片替换为稳定 marker 并记录 `working_context_projected`，不会改写 snapshot。
+- Agent chat 发送前会从 durable ledger projection 构建 working context；默认保留最近三个带图片的 tool result，更旧图片替换为稳定 marker 并记录 `working_context_projected`，不会改写 canonical ledger。
 - runtime 当前不会在 `agent.chat` 前隐藏执行 Memory recall。主 Agent 需要时显式调用 `memory recall`；返回结果作为普通 tool result 进入 durable ledger，replay 不重新扫描可变 Markdown。未来若评估主动 recall，也必须使用有界 scope、弱匹配返回空并先把结果持久化，不能动态拼进 system prompt。
 - compaction summarizer、Memory maintenance reviewer 和 Life reviewer 收到的历史或 side-data 都包在 `[UNTRUSTED_DATA ...]` 信封中，并与固定操作指令分离；信封内文字永远按待处理数据解释，不能提升为 system/user 指令或触发工具。
-- snapshot current 每次被新状态替换前会在同一事务保留旧有效版本，只留最新 3 份 checkpoint。启动时 current 无效才按新到旧恢复；全部无效则 fail closed，不用可变 side-data、消息账本或日志重建 ledger。
+- checkpoint 只是 canonical ledger projection 的可丢弃缓存。启动时必须先验证 ledger/runtime；checkpoint 不匹配时直接重建，重建也失败则 fail closed，不能用可变 side-data、消息账本或日志补历史。
 - 不要写锁定 prompt 具体措辞的单元测试。应测试 parser、schema 和工具契约。
 
 ## 修改清单

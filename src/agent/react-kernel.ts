@@ -203,7 +203,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
       for (const effect of result.effects ?? []) {
         effects.push({
           toolCallId: batchCall.id,
-          toolName: batchCall.name,
+          toolName: resolveEffectiveToolName(batchCall),
           effect,
         })
       }

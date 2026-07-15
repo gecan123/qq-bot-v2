@@ -44,6 +44,7 @@ export interface AgentLedgerCheckPrismaClient {
       mailboxContinuity: unknown
       goalRevision: number
       activeToolCapabilities: unknown
+      qqConversationFocus: unknown
       lastWakeAt: Date | null
       ledgerHeadEntryId: bigint | null
     }>

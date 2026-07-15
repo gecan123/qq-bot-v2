@@ -1,5 +1,5 @@
 import type { AgentContext } from './agent-context.js'
-import type { AgentMessage } from './agent-context.types.js'
+import type { AgentMessage, QqConversationFocus } from './agent-context.types.js'
 import { isLlmContextOverflowError, isLlmUsageLimitError, type LlmClient } from './llm-client.js'
 import type { MessageSentTarget, ToolExecutor } from './tool.js'
 import type { EventQueue } from './event-queue.js'
@@ -80,6 +80,9 @@ export interface BotLoopAgentDeps {
   /** deferred capability 的 round-local 状态，在可见 tool result 提交时同行落盘。 */
   getActiveToolCapabilities?: () => readonly string[]
   syncActiveToolCapabilities?: (capabilities: readonly string[]) => void
+  /** QQ 会话焦点也是 runtime control state，与可见 tool result 同事务落盘。 */
+  getQqConversationFocus?: () => QqConversationFocus
+  syncQqConversationFocus?: (focus: QqConversationFocus) => void
   /** 单一持久 goal 控制面；不存在时保持旧自主循环行为。 */
   goalStore?: GoalStore
   /**
@@ -191,6 +194,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     mailboxContinuity: MailboxContinuityState
     goalRevision: number
     activeToolCapabilities: readonly string[]
+    qqConversationFocus: QqConversationFocus
     lastWakeAt: Date | null
     ledgerHeadEntryId: bigint | null
   }): void {
@@ -200,6 +204,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     lastWakeAt = input.lastWakeAt == null ? null : new Date(input.lastWakeAt)
     ledgerHeadEntryId = input.ledgerHeadEntryId
     deps.syncActiveToolCapabilities?.(input.activeToolCapabilities)
+    deps.syncQqConversationFocus?.(input.qqConversationFocus)
   }
 
   async function reloadProjectionFromCanonical(): Promise<void> {
@@ -232,6 +237,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       // deferred capability callbacks only mutate round-local host state; roll it back
       // when its paired visible tool result cannot be committed.
       deps.syncActiveToolCapabilities?.(deps.context.getSnapshot().activeToolCapabilities)
+      deps.syncQqConversationFocus?.(deps.context.getSnapshot().qqConversationFocus)
       throw error
     }
   }
@@ -598,6 +604,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         mailboxContinuity: nextContinuity,
         ...(deps.getActiveToolCapabilities
           ? { activeToolCapabilities: [...deps.getActiveToolCapabilities()] }
+          : {}),
+        ...(deps.getQqConversationFocus
+          ? { qqConversationFocus: deps.getQqConversationFocus() }
           : {}),
       },
     })

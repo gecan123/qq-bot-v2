@@ -28,6 +28,7 @@ interface FakeState {
     mailboxContinuity: unknown
     goalRevision: number
     activeToolCapabilities: unknown
+    qqConversationFocus: unknown
     lastWakeAt: Date | null
     ledgerHeadEntryId: bigint | null
     updatedAt: Date
@@ -51,6 +52,7 @@ function initialRuntime(): AgentRuntimeState {
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
     activeToolCapabilities: [],
+    qqConversationFocus: null,
     lastWakeAt: null,
     ledgerHeadEntryId: null,
   }
@@ -331,12 +333,19 @@ describe('createAgentLedgerRepo', () => {
       expectedHeadEntryId: null,
       patch: {
         activeToolCapabilities: ['browser'],
+        qqConversationFocus: { type: 'private', userId: 2002 },
         lastWakeAt: new Date('2026-07-15T12:30:00.000Z'),
       },
     })
 
     assert.deepEqual(updated.activeToolCapabilities, ['browser'])
+    assert.deepEqual(updated.qqConversationFocus, { type: 'private', userId: 2002 })
     assert.equal(updated.lastWakeAt?.toISOString(), '2026-07-15T12:30:00.000Z')
+    const cleared = await repo.updateRuntime({
+      expectedHeadEntryId: null,
+      patch: { qqConversationFocus: null },
+    })
+    assert.equal(cleared.qqConversationFocus, null)
     await assert.rejects(
       repo.updateRuntime({ expectedHeadEntryId: 99n, patch: { lastWakeAt: null } }),
       AgentLedgerHeadChangedError,

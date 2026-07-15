@@ -3,6 +3,7 @@ import type {
   ClaudeAssistantNativeBlock,
   DurableAgentMessage,
   PersistedAgentSnapshot,
+  QqConversationFocus,
   ToolResultContent,
   ToolResultContentBlock,
 } from './agent-context.types.js'
@@ -14,6 +15,8 @@ export type {
   ClaudeAssistantNativeBlock,
   DurableAgentMessage,
   PersistedAgentSnapshot,
+  QqConversationFocus,
+  ToolResultContent,
 } from './agent-context.types.js'
 
 /**
@@ -27,7 +30,11 @@ export type {
  *    activeToolCapabilities 是 runtime control state, 不进 LLM messages。
  */
 export interface AgentContext {
-  getSnapshot(): { messages: DurableAgentMessage[]; activeToolCapabilities: string[] }
+  getSnapshot(): {
+    messages: DurableAgentMessage[]
+    activeToolCapabilities: string[]
+    qqConversationFocus: QqConversationFocus
+  }
   appendUserMessage(content: string): void
   appendAssistantTurn(turn: {
     content: string
@@ -51,12 +58,18 @@ interface CreateAgentContextOptions {
 export function createAgentContext(options: CreateAgentContextOptions = {}): AgentContext {
   let messages: DurableAgentMessage[] = options.initialMessages ? cloneMessages(options.initialMessages) : []
   let activeToolCapabilities: string[] = []
+  let qqConversationFocus: QqConversationFocus = null
 
   const impl: AgentContext = {
-    getSnapshot(): { messages: DurableAgentMessage[]; activeToolCapabilities: string[] } {
+    getSnapshot(): {
+      messages: DurableAgentMessage[]
+      activeToolCapabilities: string[]
+      qqConversationFocus: QqConversationFocus
+    } {
       return {
         messages: cloneMessages(messages),
         activeToolCapabilities: [...activeToolCapabilities],
+        qqConversationFocus: cloneQqConversationFocus(qqConversationFocus),
       }
     },
     appendUserMessage(content: string): void {
@@ -103,22 +116,33 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
       }
       const nextMessages = cloneMessages(snapshot.messages)
       const nextCapabilities = [...snapshot.activeToolCapabilities]
+      const nextQqConversationFocus = cloneQqConversationFocus(snapshot.qqConversationFocus)
       messages = nextMessages
       activeToolCapabilities = nextCapabilities
+      qqConversationFocus = nextQqConversationFocus
     },
     exportPersistedSnapshot(): PersistedAgentSnapshot {
       return {
         schemaVersion: SNAPSHOT_SCHEMA_VERSION,
         messages: cloneMessages(messages),
         activeToolCapabilities: [...activeToolCapabilities],
+        qqConversationFocus: cloneQqConversationFocus(qqConversationFocus),
       }
     },
     reset(): void {
       messages = []
       activeToolCapabilities = []
+      qqConversationFocus = null
     },
   }
   return impl
+}
+
+function cloneQqConversationFocus(focus: QqConversationFocus): QqConversationFocus {
+  if (focus == null) return null
+  return focus.type === 'group'
+    ? { type: 'group', groupId: focus.groupId }
+    : { type: 'private', userId: focus.userId }
 }
 
 function cloneMessages(input: DurableAgentMessage[]): DurableAgentMessage[] {

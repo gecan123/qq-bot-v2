@@ -59,6 +59,7 @@ function runtimeState(
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
     activeToolCapabilities: [],
+    qqConversationFocus: null,
     lastWakeAt: null,
     ledgerHeadEntryId,
     ...overrides,
@@ -97,6 +98,7 @@ describe('projectAgentLedger', () => {
         schemaVersion: SNAPSHOT_SCHEMA_VERSION,
         messages,
         activeToolCapabilities: [],
+        qqConversationFocus: null,
       },
     })
   })
@@ -162,12 +164,16 @@ describe('projectAgentLedger', () => {
 
     const projection = projectAgentLedger({
       entries,
-      runtimeState: runtimeState(4n, { activeToolCapabilities: ['browser'] }),
+      runtimeState: runtimeState(4n, {
+        activeToolCapabilities: ['browser'],
+        qqConversationFocus: { type: 'group', groupId: 10 },
+      }),
     })
 
     assert.deepEqual(projection.snapshot, {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       activeToolCapabilities: ['browser'],
+      qqConversationFocus: { type: 'group', groupId: 10 },
       messages: [
         {
           role: 'user',

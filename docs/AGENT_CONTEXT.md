@@ -6,7 +6,7 @@
 
 - Postgres `bot_agent_ledger_entries` 是唯一持久 LLM history source。普通事实写成 `message` entry；压缩写成 `compaction` entry。运行时没有更新或删除旧 entry 的接口。
 - `AgentContext` 是当前 canonical ledger 的内存 projection，不是另一份事实源。`messages` / `media` 是 QQ 入站事实账本，只用于 missed replay、搜索、审计和按需读取，不能重建 prompt transcript。
-- `bot_agent_runtime_state` 只保存 mailbox cursors、continuity、Goal revision、active tool capabilities、last wake 和 ledger head。它不保存 LLM history。
+- `bot_agent_runtime_state` 只保存 mailbox cursors、continuity、Goal revision、active tool capabilities、QQ 当前会话 focus、last wake 和 ledger head。它不保存 LLM history；focus 只能由 `qq_conversation open/close` 改变，不能从消息、memory、日志或其他 side state 推断。
 - `bot_agent_checkpoint` 是可丢弃的 projection cache。启动始终先验证 canonical ledger；checkpoint 只有 schema、head、fingerprint 和 projection 都匹配时才命中。missing、stale、corrupt 都从 canonical ledger 重建，checkpoint 写失败不影响已提交历史。
 - `bot_agent_goal`、workspace Markdown、调度文件和 `logs/*` 都是 side state，永远不能作为 transcript replay 来源。
 
@@ -15,7 +15,7 @@
 - 新的 LLM 可见事实只能通过 Runtime Host 的受控 append 或 compaction projection 进入。
 - assistant tool call 和对应 tool result 是不可拆的原子组。结果按 assistant 中的 tool-call 顺序持久化；并行完成时序不进入 ledger。
 - `ToolExecutionResult.content` 是唯一持久化工具结果。`outcome` 和 `effects` 只服务当前轮控制流；只有 Runtime Host 验证后的稳定 marker（例如 `mailbox_handled`）可以另外 append。
-- 可见消息与 mailbox cursor、continuity、Goal revision 或 capability 变化必须在同一事务提交。持久化成功前不得推进内存 projection。
+- 可见消息与 mailbox cursor、continuity、Goal revision、capability 或 QQ focus 变化必须在同一事务提交。持久化成功前不得推进内存 projection；提交失败时 runtime-local focus 必须回滚到 canonical projection。
 - late media、side table 或日志变化不得回写已 append entry。
 
 ## 确定性 replay
@@ -25,7 +25,7 @@
 1. 只读加载所有 ledger entries 和 runtime singleton。
 2. 校验 entry schema、严格递增 ID、runtime head、compaction chain、boundary，以及所有 tool call/result 组。
 3. 找到最新 compaction；把其 summary 和受控机器状态放在最前，保留 `firstKeptEntryId` 起的旧 message entries，再追加 compaction 之后的新 message entries。
-4. 校验完整 projection，原子安装到 `AgentContext`。
+4. 把 runtime singleton 中的 capabilities 和 QQ focus 放入完整 projection，校验后原子安装到 `AgentContext`。
 5. checkpoint 仅作为完全匹配时的加速缓存；否则 best-effort 刷新。
 
 同一 canonical state 必须得到字节一致的 projection。不得从可变 side table、运维日志、当前媒体描述或重新执行工具来补历史。
@@ -39,6 +39,7 @@
 - `beforeCompact` 和 summarizer 在事务外运行，支持 abort；CAS `appendCompaction(expectedHeadEntryId)` 成功后才安装 candidate。head race 丢弃 candidate 并基于新 head 重算一次。
 - threshold 失败退避十分钟；manual/overflow 不读该退避。summarizer 或 commit 失败不改变 canonical history；checkpoint 和 `afterCompact` 失败只记录，不回滚已提交 compaction；shutdown 会中止未提交 summarizer。
 - active Goal 在 compaction 后追加稳定 continuation。mailbox continuity 的 compaction epoch 与 compaction entry 同事务提交；rest reminder 状态和 mailbox attention 状态进入 compaction payload 的受控字段，不交给 summarizer 改写。
+- compaction 只改变 LLM messages projection，不得清空或从 transcript 重建 active capabilities、QQ focus 等 runtime control state。
 
 ## 图片与 working context
 
@@ -49,6 +50,7 @@
 ## Mailbox、Goal 与外部副作用
 
 - bot 在所有允许来源间共享一个串行 `AgentContext`。QQ 消息先写 `messages` / `media`，再以不含正文的 mailbox notification append；正文由 `inbox` 有界读取。
+- 新 mailbox 不会自动切换当前会话。发送前必须通过 `qq_conversation open` 显式选择允许的群或好友；`send_message` 只读取当前 focus，focus 变化和对应可见 tool result 同事务进入 runtime state。
 - provider-confirmed `send_message` 仍与本地数据库不存在分布式事务。只有同 target 有 pending disclosure 时才 append `mailbox_handled`；这防止重复回应，但不承诺 QQ 外发 exactly-once。
 - owner `/compact` 只接受 NapCat 已确认的 friend 私聊，且 peer/sender 都必须等于配置 owner。startup replay 与 live overlap 按 message row 去重；命令文本不进入普通 LLM history，focus 作为有界 trusted metadata 进入 compaction payload。
 - 不实现 pi 风格 session tree。QQ 外发、mailbox cursor、Goal revision 和工具副作用需要一条可审计的线性时间线；分叉历史会让“哪条分支已发送/已处理”失去唯一答案。并行研究继续通过 bounded background task/delegate 完成，结果回到主 ledger。
@@ -73,3 +75,4 @@
 - checkpoint 删除后能否从 canonical ledger 得到相同 projection？
 - 图片或其他可变资源失效后 replay 是否仍确定？
 - 对外副作用是否仍只有一条主时间线和明确 target？
+- QQ focus 是否只来自受控 runtime state，并和产生它的 tool result 原子提交？

@@ -3,6 +3,7 @@ import type { AfterToolHook, BeforeToolHook } from './tool.js'
 import { createLogger } from '../logger.js'
 import { predictAiTone, type AiTonePrediction, type AiTonePredictor } from './tools/ai-tone.js'
 import { normalizeSendText } from './tools/send-message.js'
+import type { QqConversationFocus } from './agent-context.types.js'
 
 const log = createLogger('TOOL_POLICY_HOOKS')
 
@@ -37,6 +38,7 @@ export interface GenerateImageTaskLogEntry {
 }
 
 interface SendMessageAiToneHookOptions {
+  getCurrentTarget: () => QqConversationFocus
   predict?: AiTonePredictor
   logger?: (entry: AiTonePrecheckLogEntry) => void
   threshold?: number
@@ -44,10 +46,8 @@ interface SendMessageAiToneHookOptions {
 }
 
 interface SendMessageHookArgs {
-  target?: { type?: unknown; groupId?: unknown; userId?: unknown }
-  text?: unknown
-  mode?: unknown
-  replyToMessageId?: unknown
+  message?: unknown
+  reply_to?: unknown
 }
 
 type SendMessageAiToneTarget =
@@ -71,6 +71,7 @@ interface GenerateImageTaskLogHookOptions {
 }
 
 export interface SendMessageSafetyGuardOptions {
+  getCurrentTarget: () => QqConversationFocus
   nowMs?: () => number
   privateAmbientCooldownMs?: number
   ambientDuplicateWindowMs?: number
@@ -83,7 +84,7 @@ export interface SendMessageSafetyGuard {
 
 /** 只按成功外发计时的进程内防抖；reply 不受限。 */
 export function createSendMessageSafetyGuard(
-  options: SendMessageSafetyGuardOptions = {},
+  options: SendMessageSafetyGuardOptions,
 ): SendMessageSafetyGuard {
   const nowMs = options.nowMs ?? Date.now
   const privateAmbientCooldownMs = Math.max(
@@ -100,11 +101,11 @@ export function createSendMessageSafetyGuard(
   const beforeTool: BeforeToolHook = ({ call }) => {
     if (call.name !== 'send_message') return
     const args = call.args as SendMessageHookArgs
-    if (args.mode !== 'ambient') return
+    if (args.reply_to != null) return
 
     const now = nowMs()
-    if (typeof args.text === 'string') {
-      const normalized = normalizeSendText(args.text).trim()
+    if (typeof args.message === 'string') {
+      const normalized = normalizeSendText(args.message).trim()
       if (normalized.length > 0) {
         const lastAt = lastAmbientTextAt.get(hashText(normalized))
         if (lastAt != null && now - lastAt < ambientDuplicateWindowMs) {
@@ -117,7 +118,7 @@ export function createSendMessageSafetyGuard(
       }
     }
 
-    const target = parseSendMessageAiToneTarget(args.target)
+    const target = parseSendMessageAiToneTarget(options.getCurrentTarget())
     if (target?.type !== 'private') return
     const lastAt = lastPrivateAmbientAt.get(target.userId)
     if (lastAt != null && now - lastAt < privateAmbientCooldownMs) {
@@ -132,14 +133,18 @@ export function createSendMessageSafetyGuard(
   const afterTool: AfterToolHook = ({ call, result }) => {
     if (call.name !== 'send_message') return
     const args = call.args as SendMessageHookArgs
-    if (args.mode !== 'ambient') return
+    if (args.reply_to != null) return
     if (!result.effects?.some((effect) => effect.type === 'message_sent')) return
 
     const now = nowMs()
-    const target = parseSendMessageAiToneTarget(args.target)
+    const confirmedTarget = result.effects
+      ?.find((effect) => effect.type === 'message_sent')
+      ?.target
+    const target = parseSendMessageAiToneTarget(confirmedTarget)
+      ?? parseSendMessageAiToneTarget(options.getCurrentTarget())
     if (target?.type === 'private') lastPrivateAmbientAt.set(target.userId, now)
-    if (typeof args.text !== 'string') return
-    const normalized = normalizeSendText(args.text).trim()
+    if (typeof args.message !== 'string') return
+    const normalized = normalizeSendText(args.message).trim()
     if (normalized.length > 0) lastAmbientTextAt.set(hashText(normalized), now)
   }
 
@@ -170,7 +175,7 @@ export function createGenerateImageTaskLogHook(options: GenerateImageTaskLogHook
   }
 }
 
-export function createSendMessageAiToneHook(options: SendMessageAiToneHookOptions = {}): BeforeToolHook {
+export function createSendMessageAiToneHook(options: SendMessageAiToneHookOptions): BeforeToolHook {
   const predict = options.predict ?? predictAiTone
   const logger = options.logger ?? ((entry) => log.info(entry, 'send_message_ai_tone_precheck'))
   const threshold = options.threshold ?? DEFAULT_AI_TONE_THRESHOLD
@@ -181,13 +186,13 @@ export function createSendMessageAiToneHook(options: SendMessageAiToneHookOption
     if (call.name !== 'send_message') return
 
     const args = call.args as SendMessageHookArgs
-    if (typeof args.text !== 'string') return
-    const target = parseSendMessageAiToneTarget(args.target)
+    if (typeof args.message !== 'string') return
+    const target = parseSendMessageAiToneTarget(options.getCurrentTarget())
     if (!target) return
 
-    const textLength = Array.from(args.text).length
+    const textLength = Array.from(args.message).length
 
-    const prediction = await predict(args.text, threshold)
+    const prediction = await predict(args.message, threshold)
     const targetKey = buildTargetKey(target)
     const currentBlocked = consecutiveBlockedByTarget.get(targetKey) ?? 0
 
@@ -245,12 +250,14 @@ export function createSendMessageAiToneHook(options: SendMessageAiToneHookOption
 
 export const createGroupSendAiToneHook = createSendMessageAiToneHook
 
-function parseSendMessageAiToneTarget(target: SendMessageHookArgs['target']): SendMessageAiToneTarget | null {
-  if (target?.type === 'group' && typeof target.groupId === 'number') {
-    return { type: 'group', groupId: target.groupId }
+function parseSendMessageAiToneTarget(target: unknown): SendMessageAiToneTarget | null {
+  if (!target || typeof target !== 'object' || Array.isArray(target)) return null
+  const value = target as Record<string, unknown>
+  if (value.type === 'group' && typeof value.groupId === 'number') {
+    return { type: 'group', groupId: value.groupId }
   }
-  if (target?.type === 'private' && typeof target.userId === 'number') {
-    return { type: 'private', userId: target.userId }
+  if (value.type === 'private' && typeof value.userId === 'number') {
+    return { type: 'private', userId: value.userId }
   }
   return null
 }

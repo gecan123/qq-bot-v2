@@ -20,16 +20,17 @@ function makeCtx() {
 }
 
 const sendMessageSchema = z.object({
-  target: z.union([
-    z.object({ type: z.literal('group'), groupId: z.number().int() }),
-    z.object({ type: z.literal('private'), userId: z.number().int() }),
-  ]),
-  text: z.string().nullable().optional(),
-  mode: z.enum(['ambient', 'reply']).optional(),
-  replyToMessageId: z.number().int().nullable().optional(),
+  message: z.string().nullable().optional(),
+  reply_to: z.number().int().positive().optional(),
 })
 
-function createFakeSendTool(calls: unknown[]): Tool<z.infer<typeof sendMessageSchema>> {
+function createFakeSendTool(
+  calls: unknown[],
+  effectTarget: { type: 'group'; groupId: number } | { type: 'private'; userId: number } = {
+    type: 'private',
+    userId: 123,
+  },
+): Tool<z.infer<typeof sendMessageSchema>> {
   return {
     name: 'send_message',
     description: 'send',
@@ -38,7 +39,7 @@ function createFakeSendTool(calls: unknown[]): Tool<z.infer<typeof sendMessageSc
       calls.push(args)
       return {
         content: JSON.stringify({ ok: true, sent: true }),
-        effects: [{ type: 'message_sent', target: args.target }],
+        effects: [{ type: 'message_sent', target: effectTarget }],
       }
     },
   }
@@ -48,40 +49,40 @@ describe('createSendMessageSafetyGuard', () => {
   test('guards successful ambient sends while exempting replies and rejected attempts', async () => {
     const calls: unknown[] = []
     let nowMs = Date.parse('2026-07-14T12:00:00.000Z')
-    const guard = createSendMessageSafetyGuard({ nowMs: () => nowMs })
+    const target = { type: 'private' as const, userId: 123 }
+    const guard = createSendMessageSafetyGuard({
+      nowMs: () => nowMs,
+      getCurrentTarget: () => target,
+    })
     const exec = createToolExecutor([createFakeSendTool(calls)], {
       hooks: {
         beforeTool: [guard.beforeTool],
         afterTool: [guard.afterTool],
       },
     })
-    const target = { type: 'private' as const, userId: 123 }
-
     const first = await exec.execute({
-      id: 'first', name: 'send_message', args: { target, text: '第一句', mode: 'ambient' },
+      id: 'first', name: 'send_message', args: { message: '第一句' },
     }, makeCtx())
     const cooldown = await exec.execute({
-      id: 'cooldown', name: 'send_message', args: { target, text: '第二句', mode: 'ambient' },
+      id: 'cooldown', name: 'send_message', args: { message: '第二句' },
     }, makeCtx())
     nowMs += 30 * 60_000
     const afterCooldown = await exec.execute({
-      id: 'after-cooldown', name: 'send_message', args: { target, text: '第二句', mode: 'ambient' },
+      id: 'after-cooldown', name: 'send_message', args: { message: '第二句' },
     }, makeCtx())
     nowMs += 30 * 60_000
     const duplicate = await exec.execute({
-      id: 'duplicate', name: 'send_message', args: { target, text: '第一句', mode: 'ambient' },
+      id: 'duplicate', name: 'send_message', args: { message: '第一句' },
     }, makeCtx())
     const reply = await exec.execute({
       id: 'reply', name: 'send_message', args: {
-        target,
-        text: '第一句',
-        mode: 'reply',
-        replyToMessageId: 456,
+        message: '第一句',
+        reply_to: 456,
       },
     }, makeCtx())
     nowMs += 12 * 60 * 60_000
     const afterDuplicateWindow = await exec.execute({
-      id: 'after-window', name: 'send_message', args: { target, text: '第一句', mode: 'ambient' },
+      id: 'after-window', name: 'send_message', args: { message: '第一句' },
     }, makeCtx())
 
     assert.equal(JSON.parse(first.content as string).ok, true)
@@ -101,6 +102,7 @@ describe('createSendMessageAiToneHook', () => {
     const exec = createToolExecutor([createFakeSendTool(calls)], {
       hooks: {
         beforeTool: [createSendMessageAiToneHook({
+          getCurrentTarget: () => ({ type: 'group', groupId: 111 }),
           predict: (text, threshold) => ({
             prob: 0.91,
             isAI: true,
@@ -114,8 +116,7 @@ describe('createSendMessageAiToneHook', () => {
     })
 
     const args = {
-      target: { type: 'group', groupId: 111 },
-      text: '综合来看，这个问题需要从多个维度系统性分析一下。',
+      message: '综合来看，这个问题需要从多个维度系统性分析一下。',
     }
 
     const first = await exec.execute({ id: 'c1', name: 'send_message', args }, makeCtx())
@@ -137,6 +138,7 @@ describe('createSendMessageAiToneHook', () => {
     const exec = createToolExecutor([createFakeSendTool(calls)], {
       hooks: {
         beforeTool: [createSendMessageAiToneHook({
+          getCurrentTarget: () => ({ type: 'group', groupId: 111 }),
           predict: (text, threshold) => ({
             prob: isAI ? 0.9 : 0.2,
             isAI,
@@ -152,19 +154,19 @@ describe('createSendMessageAiToneHook', () => {
     await exec.execute({
       id: 'c1',
       name: 'send_message',
-      args: { target: { type: 'group', groupId: 111 }, text: '综合来看，这件事需要系统性分析一下。' },
+      args: { message: '综合来看，这件事需要系统性分析一下。' },
     }, makeCtx())
     isAI = false
     await exec.execute({
       id: 'c2',
       name: 'send_message',
-      args: { target: { type: 'group', groupId: 111 }, text: '就这么回事，先别上价值。' },
+      args: { message: '就这么回事，先别上价值。' },
     }, makeCtx())
     isAI = true
     await exec.execute({
       id: 'c3',
       name: 'send_message',
-      args: { target: { type: 'group', groupId: 111 }, text: '综合来看，这件事需要系统性分析一下。' },
+      args: { message: '综合来看，这件事需要系统性分析一下。' },
     }, makeCtx())
 
     assert.equal(calls.length, 1)
@@ -176,9 +178,14 @@ describe('createSendMessageAiToneHook', () => {
     const calls: unknown[] = []
     const logs: AiTonePrecheckLogEntry[] = []
     let predictionCalls = 0
+    let currentTarget: { type: 'private'; userId: number } | { type: 'group'; groupId: number } = {
+      type: 'private',
+      userId: 123,
+    }
     const exec = createToolExecutor([createFakeSendTool(calls)], {
       hooks: {
         beforeTool: [createSendMessageAiToneHook({
+          getCurrentTarget: () => currentTarget,
           predict: () => {
             predictionCalls++
             return { prob: 1, isAI: true, label: 'AI味', threshold: 0.75, textLength: 20 }
@@ -191,12 +198,13 @@ describe('createSendMessageAiToneHook', () => {
     const privateResult = await exec.execute({
       id: 'private',
       name: 'send_message',
-      args: { target: { type: 'private', userId: 123 }, text: '综合来看，这个回复也可能很 AI。' },
+      args: { message: '综合来看，这个回复也可能很 AI。' },
     }, makeCtx())
+    currentTarget = { type: 'group', groupId: 111 }
     const shortGroupResult = await exec.execute({
       id: 'short',
       name: 'send_message',
-      args: { target: { type: 'group', groupId: 111 }, text: '别急' },
+      args: { message: '别急' },
     }, makeCtx())
 
     assert.equal(calls.length, 0)

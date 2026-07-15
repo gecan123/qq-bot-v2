@@ -19,6 +19,7 @@ import { OutboundCache, setOutboundCacheForTest } from '../../media/outbound-cac
 import type { SendTargetPolicy } from '../send-target-policy.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
 import type { ScheduleRuntime } from '../schedule-runtime.js'
+import type { QqConversationController } from './qq-conversation.js'
 
 function makeCtx(): ToolContext {
   return { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 1 }
@@ -34,6 +35,14 @@ const targetPolicy: SendTargetPolicy = {
   async authorize() {
     return { allowed: true }
   },
+}
+
+const conversations: QqConversationController = {
+  getCurrent() { return null },
+  async resolveCurrent() { return { ok: false, code: 'CHAT_CONTEXT_UNAVAILABLE' } },
+  async open() { return { ok: false, code: 'CHAT_TARGET_UNAVAILABLE', current: null } },
+  close() {},
+  async list() { return [] },
 }
 
 const mockWebsiteTool: Tool<{ action: 'status' }> = {
@@ -81,6 +90,7 @@ describe('merged main-agent tools', () => {
     const manifest = buildBotToolManifest({
       sender: mockSender,
       targetPolicy,
+      conversations,
       selfNumber: 999,
       taskRegistry: createInMemoryTaskRegistry(),
       scheduleRuntime: mockScheduleRuntime,
@@ -102,6 +112,7 @@ describe('merged main-agent tools', () => {
     const names = buildBotTools({
       sender: mockSender,
       targetPolicy,
+      conversations,
       selfNumber: 999,
       taskRegistry: createInMemoryTaskRegistry(),
       scheduleRuntime: mockScheduleRuntime,
@@ -164,6 +175,7 @@ describe('merged main-agent tools', () => {
     const tools = buildBotTools({
       sender: mockSender,
       targetPolicy,
+      conversations,
       selfNumber: 999,
       taskRegistry: createInMemoryTaskRegistry(),
       scheduleRuntime: mockScheduleRuntime,
@@ -225,6 +237,7 @@ describe('merged main-agent tools', () => {
       const manifest = buildBotToolManifest({
         sender: mockSender,
         targetPolicy,
+        conversations,
         selfNumber: 999,
         taskRegistry: createInMemoryTaskRegistry(),
         scheduleRuntime: mockScheduleRuntime,
@@ -274,6 +287,7 @@ describe('merged main-agent tools', () => {
     const manifest = buildBotToolManifest({
       sender: mockSender,
       targetPolicy,
+      conversations,
       selfNumber: 999,
       taskRegistry: createInMemoryTaskRegistry(),
       scheduleRuntime: mockScheduleRuntime,
@@ -306,6 +320,7 @@ describe('merged main-agent tools', () => {
     ]
 
     assert.ok(allToolNames.includes('send_message'))
+    assert.equal(alwaysOnNames.includes('send_message'), false)
     assert.ok(alwaysOnNames.includes('qq_directory'))
     assert.equal(allToolNames.includes('send_image'), false)
     assert.ok(alwaysOnNames.includes('collect_sticker'))
@@ -316,6 +331,7 @@ describe('merged main-agent tools', () => {
     assert.ok(alwaysOnNames.includes('life_journal'))
     assert.equal(alwaysOnNames.includes('skill_editor'), false)
     assert.deepEqual(capabilities.get('workspace_management'), ['workspace_file'])
+    assert.deepEqual(capabilities.get('qq'), ['qq_conversation', 'send_message'])
     assert.deepEqual(capabilities.get('document_reading'), ['read_file'])
     assert.deepEqual(capabilities.get('skill_management'), ['skill_editor'])
     assert.match(capabilityDescriptions.get('skill_management') ?? '', /多步规则反复出现.*现有 skill 未覆盖.*一次性任务/)

@@ -75,6 +75,7 @@ export function projectAgentLedger(input: {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       messages: projectedMessages,
       activeToolCapabilities: [...runtimeState.activeToolCapabilities],
+      qqConversationFocus: runtimeState.qqConversationFocus,
     },
   }
 }
@@ -188,6 +189,7 @@ export function parseAgentRuntimeState(value: unknown): AgentRuntimeState {
     'mailboxContinuity',
     'goalRevision',
     'activeToolCapabilities',
+    'qqConversationFocus',
     'lastWakeAt',
     'ledgerHeadEntryId',
   ], [], path)
@@ -229,9 +231,27 @@ export function parseAgentRuntimeState(value: unknown): AgentRuntimeState {
     ) as unknown as AgentRuntimeState['mailboxContinuity'],
     goalRevision: requireNonNegativeSafeInteger(state.goalRevision, `${path}.goalRevision`),
     activeToolCapabilities: capabilities,
+    qqConversationFocus: parseQqConversationFocus(
+      state.qqConversationFocus,
+      `${path}.qqConversationFocus`,
+    ),
     lastWakeAt: state.lastWakeAt == null ? null : new Date(state.lastWakeAt.getTime()),
     ledgerHeadEntryId: state.ledgerHeadEntryId,
   }
+}
+
+function parseQqConversationFocus(value: unknown, path: string): AgentRuntimeState['qqConversationFocus'] {
+  if (value === null) return null
+  const focus = requireRecord(value, path)
+  if (focus.type === 'group') {
+    requireExactKeys(focus, ['type', 'groupId'], [], path)
+    return { type: 'group', groupId: requirePositiveSafeInteger(focus.groupId, `${path}.groupId`) }
+  }
+  if (focus.type === 'private') {
+    requireExactKeys(focus, ['type', 'userId'], [], path)
+    return { type: 'private', userId: requirePositiveSafeInteger(focus.userId, `${path}.userId`) }
+  }
+  throw new AgentLedgerIntegrityError(`${path}.type must be group or private`)
 }
 
 function parseDurableAgentMessage(value: unknown, path: string): DurableAgentMessage {
@@ -435,6 +455,7 @@ function assertSnapshotIntegrity(
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
     messages: [...messages],
     activeToolCapabilities: [...runtimeState.activeToolCapabilities],
+    qqConversationFocus: runtimeState.qqConversationFocus,
   }
   const result = validateBotSnapshotIntegrity({
     snapshot,

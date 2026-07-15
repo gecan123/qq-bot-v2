@@ -54,7 +54,7 @@ describe('resetAgentMemory', () => {
       assert.deepEqual(fake.created, [{
         data: {
           id: 1,
-          schemaVersion: 1,
+          schemaVersion: 2,
           mailboxCursors: {},
           mailboxContinuity: {
             schemaVersion: 1,
@@ -65,6 +65,7 @@ describe('resetAgentMemory', () => {
           },
           goalRevision: 0,
           activeToolCapabilities: [],
+          qqConversationFocus: null,
           lastWakeAt: null,
           ledgerHeadEntryId: null,
         },

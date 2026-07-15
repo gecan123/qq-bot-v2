@@ -97,7 +97,6 @@ describe('createAgentRuntime', () => {
     assert.match(runtime.systemPrompt, /测试群/)
     assert.deepEqual(runtime.tools.list().map((tool) => tool.name), [
       'pause',
-      'send_message',
       'qq_directory',
       'background_task',
       'schedule',
@@ -136,10 +135,13 @@ describe('createAgentRuntime', () => {
     const externalResearch = payload.capabilities.find((item: { name: string }) => item.name === 'external_research')
     const skillManagement = payload.capabilities.find((item: { name: string }) => item.name === 'skill_management')
     const mcpConnectors = payload.capabilities.find((item: { name: string }) => item.name === 'mcp_connectors')
+    const qq = payload.capabilities.find((item: { name: string }) => item.name === 'qq')
     assert.equal(externalResearch.active, true)
     assert.equal(skillManagement.active, false)
     assert.equal(mcpConnectors.active, false)
     assert.deepEqual(mcpConnectors.tools, ['mcp'])
+    assert.equal(qq.active, false)
+    assert.deepEqual(qq.tools, ['qq_conversation', 'send_message'])
     assert.equal(mcpConnections, 0)
 
     const pauseResult = await runtime.tools.execute({
@@ -165,6 +167,73 @@ describe('createAgentRuntime', () => {
     assert.equal(pausePayload.idleThought.direction, '继续拆解 Agenda 里的 QuadRF 供应链线索')
     await runtime.stopBackgroundServices()
     assert.equal(scheduleStops, 1)
+  })
+
+  test('opens and sends through the deferred qq capability using runtime-local focus', async () => {
+    const context = createAgentContext()
+    const sent: Parameters<MessageSender['sendSegments']>[0][] = []
+    const runtime = createAgentRuntime({
+      ...makeRuntimeInput(),
+      context,
+      sender: {
+        async sendSegments(input) {
+          sent.push(input)
+          return { success: true, attempts: 1, providerMessageId: 77 }
+        },
+      },
+    })
+
+    assert.equal(runtime.tools.list().some((tool) => tool.name === 'send_message'), false)
+
+    await runtime.tools.execute({
+      id: 'activate-qq',
+      name: 'help',
+      args: { action: 'activate', capability: 'qq' },
+    }, {
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      roundIndex: 1,
+    })
+    await runtime.tools.execute({
+      id: 'open-private',
+      name: 'invoke',
+      args: {
+        tool: 'qq_conversation',
+        args: { action: 'open', target: { type: 'private', userId: 2002 } },
+      },
+    }, {
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      roundIndex: 1,
+    })
+    const send = await runtime.tools.execute({
+      id: 'send-private',
+      name: 'invoke',
+      args: { tool: 'send_message', args: { message: 'hi', reply_to: 5 } },
+    }, {
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      roundIndex: 1,
+    })
+
+    const current = await runtime.tools.execute({
+      id: 'current-private',
+      name: 'invoke',
+      args: { tool: 'qq_conversation', args: { action: 'current' } },
+    }, {
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      roundIndex: 1,
+    })
+    assert.deepEqual(JSON.parse(current.content as string).current, {
+      type: 'private',
+      userId: 2002,
+    })
+    assert.equal(context.getSnapshot().qqConversationFocus, null)
+    assert.deepEqual(sent, [{
+      target: { type: 'private', userId: 2002 },
+      segments: [
+        { type: 'reply', data: { id: '5' } },
+        { type: 'text', data: { text: 'hi' } },
+      ],
+    }])
+    assert.match(send.content as string, /"providerMessageId":77/)
   })
 
   test('uses an in-memory schedule store by default and keeps schedule unavailable until startup', async () => {

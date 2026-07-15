@@ -229,6 +229,32 @@ describe('createAgentLedgerRepo', () => {
     assert.equal(fake.state().runtime.goalRevision, 0)
   })
 
+  test('rejects invalid JSON-like tool content before opening a transaction', async () => {
+    const fake = createFakeClient()
+    const repo = createAgentLedgerRepo({ client: fake.client })
+
+    await assert.rejects(
+      repo.appendMessages({
+        messages: [
+          {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'call-1', name: 'browser', args: { action: 'observe' } }],
+          },
+          {
+            role: 'tool',
+            toolCallId: 'call-1',
+            content: '{"ok":true}\n[...truncated 20 chars]',
+          },
+        ],
+      }),
+      /content JSON is invalid/,
+    )
+
+    assert.deepEqual(fake.state().entries, [])
+    assert.equal(fake.transactionCount(), 0)
+  })
+
   test('commits a visible message with mailbox cursor and Goal revision in one transaction', async () => {
     const fake = createFakeClient()
     const repo = createAgentLedgerRepo({ client: fake.client })

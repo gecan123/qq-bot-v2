@@ -321,7 +321,18 @@ function parseDurableAgentMessage(value: unknown, path: string): DurableAgentMes
 }
 
 function parseToolResultContent(value: unknown, path: string): DurableToolResultContent {
-  if (typeof value === 'string') return value
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        JSON.parse(trimmed)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        throw new AgentLedgerIntegrityError(`${path} JSON is invalid: ${message}`)
+      }
+    }
+    return value
+  }
   if (!Array.isArray(value)) {
     throw new AgentLedgerIntegrityError(`${path} must be a string or content block array`)
   }

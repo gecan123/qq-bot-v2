@@ -73,7 +73,16 @@ export function createPrismaAgentLedgerCheckSource(
       if (!runtime) throw new Error('bot_agent_runtime_state singleton row is missing')
       return {
         entries: rows as CanonicalAgentState['entries'],
-        runtimeState: runtime as CanonicalAgentState['runtimeState'],
+        runtimeState: {
+          schemaVersion: runtime.schemaVersion,
+          mailboxCursors: runtime.mailboxCursors,
+          mailboxContinuity: runtime.mailboxContinuity,
+          goalRevision: runtime.goalRevision,
+          activeToolCapabilities: runtime.activeToolCapabilities,
+          qqConversationFocus: runtime.qqConversationFocus,
+          lastWakeAt: runtime.lastWakeAt,
+          ledgerHeadEntryId: runtime.ledgerHeadEntryId,
+        } as CanonicalAgentState['runtimeState'],
       }
     },
     async loadCheckpoint() {

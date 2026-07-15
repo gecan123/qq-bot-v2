@@ -1,18 +1,18 @@
 ---
 name: replay_safety
-description: 修改 AgentContext、mailbox、snapshot、compaction、事件渲染、system prompt、tool result 或图片 handle 契约前使用；不影响持久历史和 prompt 字节的普通功能修改不要使用。
+description: 修改 AgentContext、mailbox、ledger projection、compaction、事件渲染、system prompt、tool result 或图片 handle 契约前使用；不影响持久历史和 prompt 字节的普通功能修改不要使用。
 ---
 
 # Replay 安全
 
-replay 必须确定性。同样输入下，snapshot message 字节应跨运行稳定。
+replay 必须确定性。同一 canonical ledger/runtime 下，projection message 字节应跨运行稳定。
 
 核心不变量:
 
-- `AgentContext` 是 LLM ledger，运行时形态和持久化 snapshot 形态必须一致。
+- `bot_agent_ledger_entries` 是唯一持久 LLM history source；`AgentContext` 是其内存 projection。
 - `messages` 是入站事实账本，不是 LLM ledger。
-- `mailboxCursors` 必须和 `contextSnapshot` 同行保存。
-- `activeToolCapabilities` 随 snapshot 持久化/恢复，但不作为 LLM 可见事实注入 messages。
+- `mailboxCursors` 必须和对应可见 append 在 ledger/runtime 事务中原子提交。
+- `activeToolCapabilities` 随 runtime singleton 持久化/恢复，但不作为 LLM 可见事实注入 messages。
 - `logs/*.ndjson` 不能作为 replay 输入。
 
 禁止做:

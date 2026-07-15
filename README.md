@@ -8,10 +8,10 @@
 
 项目的核心产品契约是稳定、可 replay、低成本扩展的 LLM 历史。
 
-- `bot_agent_snapshot.context_snapshot` 持久化运行时 `AgentContext` 形态：`messages` 是 LLM 可见 ledger，`activeToolCapabilities` 是不进入 `messages` 的运行控制状态。
+- `bot_agent_ledger_entries` 是唯一持久 LLM history source；`AgentContext` 是其当前内存 projection。
 - `messages` 是入站事实账本。它服务于搜索、媒体解析、审计和 replay recovery，但不能替代 `AgentContext`。
-- `mailbox_cursors`、`mailbox_continuity`、`goal_revision` 和 legacy recovery boundary `last_wake_at` 是与 `context_snapshot` 原子保存的 row-level 运行控制状态。
-- 新的 LLM 可见事实只能通过 append 或受控 compaction 进入；compaction 会把完整待压缩 prefix 交给摘要器，并在改写和表情池注入后立即保存 snapshot。
+- `bot_agent_runtime_state` 保存 mailbox cursors、continuity、Goal revision、active capabilities、last wake 和 ledger head，但不保存或重建 transcript；`bot_agent_checkpoint` 只是可丢弃的 projection cache。
+- 新的 LLM 可见事实只能通过受控 append 或 compaction 进入；compaction 把完整待压缩 prefix 交给摘要器，只追加新的 boundary entry，不更新或删除旧历史。
 - late media description 和 side table 更新不得改写已经 append 的历史。
 - 对外 QQ 发言必须走 `send_message`，且 target 必须明确。
 - 工具日志和其它 `logs/*.ndjson` 是运维旁路，不是 prompt replay 输入。
@@ -83,12 +83,12 @@ pnpm toollogf      # follow tool-call 审计日志
 
 1. 加载 config、连接 Prisma，并清理过期的 message/media 数据。
 2. 注册媒体描述 provider、启动 job queue，创建 Agent LLM client。
-3. 把 `BotAgentSnapshot` 恢复进 `AgentContext`，创建 event queue 和 message-row dedup 路径。
+3. 校验 canonical ledger/runtime，从 ledger 恢复 `AgentContext` projection，并创建 event queue 和 message-row dedup 路径；checkpoint 只在完全匹配时加速。
 4. 注册 NapCat handlers 并连接 NapCat；实时消息从连接成功起即可进入 dedup queue。
 5. 等待首次群历史 backfill 的所有来源尝试完成，再读取目标元数据并执行 missed-message replay；单群失败会记录错误，其余来源继续。
 6. 构建稳定工具面、system prompt 和 `BotLoopAgent`，随后进入主循环。
 
-`SIGINT` / `SIGTERM` 走幂等的有序退出：先断开 ingress、请求并等待当前 Agent round 结束、drain backfill、停止 job queue、保存最终 snapshot，最后断开 Prisma。每个阶段都有等待上限，单阶段失败不会跳过后续清理。
+`SIGINT` / `SIGTERM` 走幂等的有序退出：先断开 ingress、中止未提交 compaction、请求并等待当前 Agent round 结束、drain backfill、停止 job queue、同步最终 Goal/runtime 状态，最后断开 Prisma。每个阶段都有等待上限，单阶段失败不会跳过后续清理。
 
 主要源码区域：
 

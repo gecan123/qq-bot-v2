@@ -13,15 +13,17 @@
 
 ## 常用命令
 
-### 重置 Agent 记忆（本地调试）
+### 重置 Agent 持久状态（本地调试）
 
 先停止 bot，再运行：
 
 ```bash
-pnpm agent:reset-memory
+pnpm agent:reset-memory -- --confirm
 ```
 
-该命令删除 `bot_agent_snapshot`、`bot_agent_goal`，以及 `data/agent-workspace/{memory,journal,life,notebook}`。其中 `journal` 只是遗留目录清理项；当前运行时使用 `notebook`、`life` 和 `memory`。无 snapshot 的冷启动不会回放既有消息。消息/媒体账本、表情池、浏览器 profile/artifact 和普通 workspace 文件会保留。命令可重复执行；检测到 `.bot.pid` 对应进程仍存活时会拒绝运行，避免 bot 退出时重新保存旧 snapshot。
+该命令删除 `bot_agent_ledger_entries`、`bot_agent_checkpoint`、`bot_agent_runtime_state`、`bot_agent_goal`，重建空 runtime singleton，并删除 `data/agent-workspace/{memory,journal,life,notebook}`。其中 `journal` 只是遗留目录清理项；当前运行时使用 `notebook`、`life` 和 `memory`。空 ledger 冷启动不会把既有消息拼成旧 prompt history；消息/媒体账本、表情池、浏览器 profile/artifact 和普通 workspace 文件会保留。命令可重复执行；没有 `--confirm` 或检测到 `.bot.pid` 对应进程仍存活时会拒绝运行。
+
+从旧 snapshot 版本 clean cutover 时不做历史迁移：先部署并生成新 schema，停止旧 bot，执行上面的显式 reset，再启动新版本。不要 dual-write 或从 `messages` / 日志重建旧 transcript。
 
 ```bash
 pnpm dev
@@ -35,7 +37,7 @@ pnpm agent:doctor
 pnpm agent:metrics
 pnpm agent:daily-metrics
 pnpm agent:memory-check
-pnpm agent:snapshot-check
+pnpm agent:ledger-check
 pnpm db:generate
 pnpm db:migrate
 pnpm db:push
@@ -133,7 +135,7 @@ invoke tool=mcp args={"action":"call","tool":"mcp__example__search","arguments":
 - 仓库对外展示的机器可读时间统一为北京时间 `YYYY-MM-DDTHH:mm:ss.SSS+08:00`；PostgreSQL `timestamptz` 仍保存绝对时刻。
 - 启动时当前 system prompt 会写入 `logs/system-prompt.txt`，便于检查。
 - 启动恢复会先连接 NapCat，并等待首次群历史 backfill 的所有来源尝试完成，再执行 missed-message replay；单群补拉失败记录 source-level error，其余来源和 replay 继续。
-- `SIGINT` / `SIGTERM` 会触发幂等 graceful shutdown：停止 ingress 和 Agent、等待当前 round、drain backfill、停止 jobs、保存最终 snapshot，最后断开数据库。单阶段超时或失败会记录 `shutdown_phase_failed`，并继续后续清理。
+- `SIGINT` / `SIGTERM` 会触发幂等 graceful shutdown：停止 ingress、中止未提交 compaction、等待当前 round、drain backfill、停止 jobs、同步最终 Goal/runtime 状态，最后断开数据库。单阶段超时或失败会记录 `shutdown_phase_failed`，并继续后续清理。
 
 ## 数据保留
 
@@ -299,14 +301,14 @@ VIBE_TRADING_RESULT_MAX_CHARS=12000
 
 ## Agent 反馈
 
-- `pnpm agent:doctor` 做本地、无网络健康检查：必需文件、必需环境变量、agent 指令镜像、schema anchor、startup anchor 和 tool registry anchor。输出 JSON，有错误时非零退出。
+- `pnpm agent:doctor` 先做本地静态健康检查：必需文件、必需环境变量、agent 指令镜像、schema anchor、startup anchor 和 tool registry anchor；静态检查通过后连接 Postgres 执行同等只读 ledger 检查。输出 JSON，任一阶段有错误时非零退出。
 - `pnpm agent:memory-check` 只读扫描 `data/agent-workspace` 下的 Memory、Notebook、Life Journal 和 Agenda Markdown，输出文件/entry 数量、Memory lifecycle、损坏格式、跨 store 重复 ID、self/unknown supersedes 与 Agenda revision；不会创建目录、默认文件或执行修复。结构问题退出 1；可用 `pnpm agent:memory-check -- --root <path>` 指定其他 workspace。
 - `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson`、`logs/tool-calls.ndjson` 和当前保留的 `logs/app*.log` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率，以及按群 `inboxReads`、`messagesRead`、`sendAttempts`、`sendBlocked`、成功 ambient/reply 和 `readToSendRate`。当前 token operations 包括 `agent.chat`、`compaction`、`life_journal.review`、`life_journal.idle_pick` 和 `memory.maintenance`。
 - `pnpm agent:metrics <token-log> <tool-log> [app-log]` 可以汇总指定日志文件；省略 `app-log` 时自动读取当前 `logs/app*.log` 滚动文件。
 - token/cache 使用继续 best-effort 写入 Postgres `agent_token_usage`；工具调用只有 `BOT_TOOL_AUDIT_DB_ENABLED=true` 时写入 `agent_tool_calls`。写 DB 失败只记 warning，不影响 bot 执行。
 - `pnpm agent:metrics --db` 从 Postgres 汇总持久化事件；可加 `--from <iso> --to <iso> --tool <name> --operation <name> --model <name> --ok true|false --side-effect true|false` 做筛选。
 - `pnpm agent:daily-metrics` 按北京时间自然日统计真实 bot 的全部模型 tool call、token/cache 与 rest 行为，默认查今天并排除 `model=mock` 测试数据。rest 指标包括请求、真正开始、被未完兴趣转向、idle anchor 来源、非法提前确认、时长、理由分类、转向后行动和醒后行动；行动只在非 `pause` / `rest` / `help` 工具实际成功后计数，转向后直接进入 rest 单列为 `restedInstead`，日志缺少后续证据时记为 `unknown`。`--date YYYY-MM-DD` 指定截止自然日，`--days N` 逐日返回包含截止日在内的最近 N 天（最多 31 天）；例如 `pnpm agent:daily-metrics -- --date 2026-07-13` 和 `pnpm agent:daily-metrics -- --days 7`。bot 内可通过 `workspace_bash` 的 `metrics today|yesterday|YYYY-MM-DD` 或 `metrics days <1-7>` 取得有界结构化数据。新日志会把 `invoke` 记成其实际请求的内部工具；旧日志无法展开时保留 `invoke` 并报告 `unresolvedInvokeCalls`。
-- `pnpm agent:snapshot-check` 只读检查当前 `bot_agent_snapshot`：验证 snapshot JSON 可序列化、assistant tool call 与 tool result 相邻匹配、JSON-like tool result 可解析、`activeToolCapabilities` 未混入 messages、mailbox cursor 与 continuity 元数据合法；输出 JSON，有错误时非零退出。runtime 启动还会执行同等完整性校验；current 损坏时只尝试最新 3 份 checkpoint，全部无效则 fail closed，不从消息或日志重建 prompt history。
+- `pnpm agent:ledger-check` 使用原始只读 Prisma 查询检查 canonical rows：验证 entry schema、严格递增 ID、runtime head、compaction chain/boundary、assistant tool call/result 原子组，以及 checkpoint 的 match/stale/corrupt 分类。它不通过 runtime repository 修复或写回数据；输出 JSON，有错误时非零退出。runtime 启动会先校验 canonical ledger，checkpoint 缺失、过期或损坏时只从 ledger 重建，绝不从消息、side-data 或日志重建 prompt history。
 
 ## Git
 

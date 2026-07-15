@@ -1,78 +1,75 @@
 # 永续 Agent Context
 
-项目产品契约是稳定、可 replay、低成本扩展的 LLM 历史。Prompt cache 稳定性是一等产品能力。
+项目产品契约是稳定、可 replay、可审计并能长期增长的 LLM 历史。Prompt cache 稳定性是一等产品能力。
 
-## 不变量
+## 事实模型
 
-- `AgentContext` 是 LLM ledger。运行时形态和持久化 snapshot 形态必须一致。新的 LLM 可见事实只能通过 append 或受控 compaction 进入，不能从 side table 重建历史。
-- `BotAgentSnapshot.mailboxCursors` 是每个 QQ 来源已披露 message row 的高水位。它必须和 `contextSnapshot` 同行保存，不能先推进游标再单独保存上下文。
-- `BotAgentSnapshot.mailboxContinuity` 是条件性同来源上下文补偿的运行控制状态，和 cursor/context 同行保存。它只记录时间、累计 round、最近 input tokens、compaction epoch 与 per-mailbox 锚点，不进入 LLM ledger，也不按消息文本做语义 hardcode。
-- `BotAgentSnapshot.goalRevision` 是当前 Goal 控制状态已披露到 ledger 的 revision。它必须和 `contextSnapshot` 同行保存；`bot_agent_goal` 只保存单例控制状态和 self Goal 保险丝计数，不能用来重建历史 transcript。发现更高 revision 时，Runtime Host 先 append 稳定的 `goal_state_changed`，再推进 cursor 并保存。
-- `BotAgentSnapshot.contextSnapshot` 是持久化运行时形态。schema 由 `src/agent/agent-context.types.ts` 定义。`messages` 是 LLM 可见 ledger；`activeToolCapabilities` 是 deferred tools 的运行控制状态，必须随 snapshot 持久化/恢复，但不作为 LLM 可见事实注入 messages。
-- `messages` 是入站事实账本。它服务于搜索、媒体解析、审计和 replay recovery，但不能替代 snapshot。
-- Message scene 不变量：`sceneKind='qq_group'` 时 `groupId` 非空且 `sceneExternalId=''`；`sceneKind='qq_private'` 时 `groupId=null` 且 `sceneExternalId=String(peerId)`。
-- late media 和 side table 更新不得改写已经 append 的 message。
-- compaction 是正常情况下会破坏性改写 prefix 的路径。它必须保持 assistant tool call 和对应 tool result 的原子性。
-- safe cut 之前除已有摘要外的完整 prefix 都必须进入 summarizer，不能按比例静默丢弃头部消息；图片和过期 native thinking 只能按既定有界规则降级。
-- compaction 只改写 `messages`，不得隐式丢弃或重建 `activeToolCapabilities`。
-- compaction 改写以及随后可能发生的 sticker-pool 注入完成后必须立即保存 snapshot，不能依赖下一轮顺带持久化。
-- active Goal 在正常 compaction 和 context-overflow recovery compaction 后都必须重新 append `goal_continuation`，再保存或重试；摘要不是 Goal 当前状态的唯一载体。
-- provider 在任何 tool call append 前明确拒绝超长 prompt 时，Runtime Host 可以强制执行一次 recovery compaction，立即保存 snapshot 后重试同一 round；每轮最多一次，普通 provider retry 不得修改 ledger 或重放工具。
-- 普通 compaction 失败后可以在进程内短暂退避，避免对持续增长的同一上下文逐轮重复请求；退避不进入 ledger，context overflow recovery 仍可绕过它。候选摘要可以进行至多一次确定性有界修复，修复后仍必须通过结构和 snapshot integrity 校验。
-- provider 以 `max_tokens` 正常结束时，第一次恢复只提高输出预算并重发同一份 snapshot，不修改 ledger。若仍截断，只能持久化不含 tool call 的 assistant 普通文本和固定 continuation 消息；截断 tool call 永远不能 append 或执行，continuation 次数必须有上限。
-- LLM 请求使用从 durable ledger 确定性重建的 working-context projection。投影不得删 message、改 role、拆 assistant tool call/result 原子组；当前只把较旧 tool result 的图片字节替换为稳定 marker，并保留最近三个图片结果。原始图片仍在 snapshot 中，compaction/replay 的事实源不变。
-- 同一 assistant message 的连续显式只读 tool call 可以并行执行，但完成时序不能进入 ledger：对应 tool result 必须严格按 assistant tool-call 原顺序 append。副作用或未知调用是 barrier，不能与前后调用跨越并行。
-- system prompt 字节和 tool description 会影响 cache identity。修改时要有意、集中处理。
-- replay 必须确定性。同样输入下，snapshot message 字节应当跨运行稳定。
-- LLM、工具结果、运行日志、运维输出和 bot 自管 Markdown 中的时间统一使用北京时间。机器可读字段采用 `YYYY-MM-DDTHH:mm:ss.SSS+08:00`；数据库仍使用 `timestamptz` 保存绝对时刻，不把展示时区写进数据库语义。
-- 大块外部内容必须通过有边界的 tool result、摘要或受控文件路径进入。raw pages、feeds、长文件和可变日志不能直接注入主 context。
-- `ToolExecutionResult.content` 是唯一进入 `AgentContext` 的工具结果。`outcome` 和 `effects` 只服务当前运行时的日志、分支和 EffectInterpreter，不得 append、持久化或用于 replay 重建。
-- `message_sent` effect 同样不进入 ledger。只有 `send_message` 的 provider-confirmed `sent` 才能产生该 effect；Runtime Host 校验其来源和目标，并且只在目标 mailbox 的 durable ledger 中存在 `disclosed > handled` 时 append 稳定的 `mailbox_handled`。失败、拒绝、伪造 effect、无 pending mailbox 或发往其他 target 都不能关闭当前批次。
-- `mailbox_handled` 必须在本轮 assistant tool call / tool result 已完整闭合后追加，并和它们一起先保存 snapshot，再进入 Goal round accounting 和 Goal revision bookkeeping。这样 Goal 持久化失败不会丢掉已经记录的处理边界；但 provider 外发和 snapshot save 之间没有分布式事务，save 失败或进程在其间崩溃时不承诺外部 exactly-once。
-- 自然休息结束后的 `rest_resume` reminder 是有界的 LLM ledger 事件：只能在带 `status=elapsed` 的可信 `pause` / `rest` effect 对应 tool result 完整闭合后生成；固定模板不得复制模型生成方向、外部内容或 tool output，只引用本轮最近 tool result 的 `resumePlan`。Runtime 必须先判定本轮资格，再完成 compaction 和 Goal continuation，最后以 user role append 并立即保存。重复提醒的动作门槛要求已有非 `pause` / `rest` / `help` 工具的成功 result，十分钟间隔必须从 durable ledger 确定性计算，不能依赖进程内计数器或 side table；compaction 必须把最后提醒时间和是否已发生成功动作写入历史摘要的固定 `rest_resume_state` 后缀，并在下一次摘要前剥离该运行状态，避免交给 summarizer 改写。若休息被本轮高优注意事件打断，Runtime 在披露事件后追加一次固定的 `rest_interrupted_attention` reminder：它不复制方向，只要求先处理注意事件，再回看最近 pause result 的 `resumePlan`；资格与去重同样只从 durable ledger 判断，并随 pre-round snapshot 一起保存。
-- 第一次 `pause action=rest` 可以把有界的最近 durable context 作为首选锚点，并以 Agenda、近期 Life Journal 与愿望为后备，生成一次 `idle_thought`。若有完整念头和替代方向，tool result 以 `status=alternative_available`、`paused=false` 和结构化 `idleThought` 进入 ledger，且不产生 pause effect；念头是模型可接受或放过的自主联想，不是 runtime 指令。只有模型看到该结果后再次以 `confirmed=true` 调用才真正计时。Picker 成功返回无念头时可以直接休息；超时、provider 错误或不完整结果必须返回 `alternative_check_unavailable` 且不产生 pause effect，不能把运行失败当成“没有念头”放行。Side data 和选择模型只参与首次执行，replay 必须复用已持久化的 tool result，不能重新读取或重新生成念头。
-- 可供下一轮机器判断的 tool result 使用稳定 JSON；截断必须发生在字段或数组条目层，并用显式标记披露，不能直接切断序列化后的 JSON。
-- generated image bytes 可以放在 `OutboundCache` 或 artifact 路径里，压缩 preview 可以进入 context。preview 压缩失败时，降级为稳定文本结果。
-- 图片 handle 遵循共享 schema：吃图工具接受 `{mediaId}` 或 `{ephemeralRef}`；发送链路使用 `media:N` 或 `ephemeral:<64-hex>` 这类字符串 ref。
-- `logs/*.ndjson` 是运维日志，不是 Prisma 事实，也不是 prompt replay 来源。
+- Postgres `bot_agent_ledger_entries` 是唯一持久 LLM history source。普通事实写成 `message` entry；压缩写成 `compaction` entry。运行时没有更新或删除旧 entry 的接口。
+- `AgentContext` 是当前 canonical ledger 的内存 projection，不是另一份事实源。`messages` / `media` 是 QQ 入站事实账本，只用于 missed replay、搜索、审计和按需读取，不能重建 prompt transcript。
+- `bot_agent_runtime_state` 只保存 mailbox cursors、continuity、Goal revision、active tool capabilities、last wake 和 ledger head。它不保存 LLM history。
+- `bot_agent_checkpoint` 是可丢弃的 projection cache。启动始终先验证 canonical ledger；checkpoint 只有 schema、head、fingerprint 和 projection 都匹配时才命中。missing、stale、corrupt 都从 canonical ledger 重建，checkpoint 写失败不影响已提交历史。
+- `bot_agent_goal`、workspace Markdown、调度文件和 `logs/*` 都是 side state，永远不能作为 transcript replay 来源。
 
-## 运行模型
+## Append 与原子性
 
-- bot 在允许来源之间共享一个 owned `AgentContext`。
-- 新事件源必须通过 event queue 和 dedup 路径进入披露规划，不要插入历史中段。所有 QQ 消息按 `groupId` 或 `peerId` 聚合为不含正文的稳定 inbox 通知；私聊和包含结构化 `@bot` 的群批次使用 `priority=high`，其余群批次使用 `priority=normal`。
-- NapCat `group_upload` notice 也进入对应群 mailbox：用 notice 稳定字段生成负数 synthetic messageId 以便落库去重，`inbox.replyable=false` 明确禁止把它当 QQ 消息号引用回复；文件二进制仍走 Media handle。
-- 启动 replay 必须等待首次 NapCat backfill 的所有允许来源尝试完成，并显式接收本次运行允许的 group IDs。单来源失败可以记录后继续；live/backfill/replay 的重叠只通过 message row ID 去重，不能靠时序猜测。
-- 无持久 snapshot 且启动事件队列为空时，runtime 必须注入一次字节稳定的 `bootstrap` 事件来建立首个 `AgentContext` 和 snapshot；启动期间已有实时事件时不得额外注入。单纯存在一条空 snapshot 记录不能替代该启动事实。
-- mailbox 是 `messages` 按 scene 划分的逻辑视图，不复制消息正文。Agent 用有界 `inbox` tool result 按需读取。
-- mailbox 注意状态只从 durable ledger 中的 `inbox_update`、`mailbox_handled` 和已受控生成的 `mailbox_attention_state` 确定性归并。`mailbox_handled` 表示同 mailbox 到该 rowId 已由成功外发处理：后续自主轮次不能再把 `<= handledThroughRowId` 的行当成新请求回应，但它不禁止基于新动机主动延续，也不关闭 cursor 之后的新消息。
-- compaction 压缩 prefix 时先由 runtime 捕获该 prefix 的 mailbox 注意状态，再把旧 `mailbox_attention_state` 从 summarizer history 中剥离，最后在摘要之后写入一个 key 排序、cursor 取最大值的稳定 `mailbox_attention_state`。summarizer 不能伪造或改写这份状态；`[summary, controlled state, tail]` 通过完整性校验后一次替换内存 ledger，并由 Runtime Host 立即保存 snapshot。该事件只保存 replay 确定性所需的机器状态，不是新的外部消息、命令或 side-table 输入。
-- 普通 mailbox 通知会按持久化新鲜度元数据条件性增加 `readArgs.contextBefore`：距同来源上一条消息至少 2 小时时轻量补 1 条；跨过 compaction、累计相隔至少 30 个 LLM round、或 input context 增长至少 128000 tokens 时补 8 条。补偿只读同一 mailbox 且在 `inbox` 结果中单列为 `previousMessages`，不扫描或猜测消息文本。
-- 跨源知识共享是预期行为。跨源发言仍然依赖显式 `send_message` target，以及 ingress/tool 安全规则。
-- curiosity tick、background task 完成等运行时事件如果进入 LLM，必须走稳定的结构化事件渲染或 tool-result 路径。事件载荷只包含受控字段，不拼接面向人的临时提示语。
-- 短期调度到期以稳定 `scheduled_wake` 事件进入 ledger：`scheduleId`、`name`、`scheduleKind`、`scheduledFor`、`intention`、`runCount`。它只是注意信号，不是未来命令；Agent 必须结合最新 Goal、消息和环境重新判断 intention。`schedules.json` 是可变 side store，只用于恢复调度运行状态和 timer，不得从它重建、回填或改写已有 `AgentContext` 历史。
-- 表情包池在 compaction 后以有界 JSON user message 注入，图片引用统一使用 `media:N`。该消息一旦 append 就属于 snapshot ledger；replay 不得重新查询表情池生成它。
+- 新的 LLM 可见事实只能通过 Runtime Host 的受控 append 或 compaction projection 进入。
+- assistant tool call 和对应 tool result 是不可拆的原子组。结果按 assistant 中的 tool-call 顺序持久化；并行完成时序不进入 ledger。
+- `ToolExecutionResult.content` 是唯一持久化工具结果。`outcome` 和 `effects` 只服务当前轮控制流；只有 Runtime Host 验证后的稳定 marker（例如 `mailbox_handled`）可以另外 append。
+- 可见消息与 mailbox cursor、continuity、Goal revision 或 capability 变化必须在同一事务提交。持久化成功前不得推进内存 projection。
+- late media、side table 或日志变化不得回写已 append entry。
+
+## 确定性 replay
+
+启动恢复固定执行：
+
+1. 只读加载所有 ledger entries 和 runtime singleton。
+2. 校验 entry schema、严格递增 ID、runtime head、compaction chain、boundary，以及所有 tool call/result 组。
+3. 找到最新 compaction；把其 summary 和受控机器状态放在最前，保留 `firstKeptEntryId` 起的旧 message entries，再追加 compaction 之后的新 message entries。
+4. 校验完整 projection，原子安装到 `AgentContext`。
+5. checkpoint 仅作为完全匹配时的加速缓存；否则 best-effort 刷新。
+
+同一 canonical state 必须得到字节一致的 projection。不得从可变 side table、运维日志、当前媒体描述或重新执行工具来补历史。
+
+## Append-only compaction
+
+- compaction 不改写旧 prefix。它只追加一个带 summary、`firstKeptEntryId`、previous compaction link、token metrics、reason 和受控机器状态的 entry；projection 只解释最新 compaction boundary。
+- cut point 以 entry token 预算选择，并保持 tool pair 原子性。若单个 tool turn 跨过目标预算，允许 split-turn：summary 同时包含历史部分和该 turn 已压缩的前缀，tail 从合法 assistant boundary 开始。
+- 被压缩的完整 prefix（除受控机器 marker）都进入 summarizer；不能按比例静默丢弃头部。summary 必须通过固定 heading、token 上限和完整 candidate projection 校验。
+- trigger 有三种：动态 threshold、provider context overflow、owner friend-private `/compact [focus]`。threshold 使用 provider input prefix 加本轮新 entry 的本地估算；overflow 每轮最多强制 compact-and-retry 一次；manual 绕过 threshold/backoff。
+- `beforeCompact` 和 summarizer 在事务外运行，支持 abort；CAS `appendCompaction(expectedHeadEntryId)` 成功后才安装 candidate。head race 丢弃 candidate 并基于新 head 重算一次。
+- threshold 失败退避十分钟；manual/overflow 不读该退避。summarizer 或 commit 失败不改变 canonical history；checkpoint 和 `afterCompact` 失败只记录，不回滚已提交 compaction；shutdown 会中止未提交 summarizer。
+- active Goal 在 compaction 后追加稳定 continuation。mailbox continuity 的 compaction epoch 与 compaction entry 同事务提交；rest reminder 状态和 mailbox attention 状态进入 compaction payload 的受控字段，不交给 summarizer 改写。
+
+## 图片与 working context
+
+- canonical tool image 使用稳定 `image_ref`（Media id、类型、可选尺寸/描述），严禁把 base64 写入 ledger。持久化前按内容哈希 upsert Media。
+- working context 在调用 provider 前按需解析近期图片引用；媒体已失效时使用确定性 unavailable marker。失效不能改变已持久化文字、阻止 replay 或让旧 compaction 失效。
+- working-context projection 可以做确定性、有界的 provider 适配，但不能删事实、改 role、拆 tool pair 或成为第二份持久历史。
+
+## Mailbox、Goal 与外部副作用
+
+- bot 在所有允许来源间共享一个串行 `AgentContext`。QQ 消息先写 `messages` / `media`，再以不含正文的 mailbox notification append；正文由 `inbox` 有界读取。
+- provider-confirmed `send_message` 仍与本地数据库不存在分布式事务。只有同 target 有 pending disclosure 时才 append `mailbox_handled`；这防止重复回应，但不承诺 QQ 外发 exactly-once。
+- owner `/compact` 只接受 NapCat 已确认的 friend 私聊，且 peer/sender 都必须等于配置 owner。startup replay 与 live overlap 按 message row 去重；命令文本不进入普通 LLM history，focus 作为有界 trusted metadata 进入 compaction payload。
+- 不实现 pi 风格 session tree。QQ 外发、mailbox cursor、Goal revision 和工具副作用需要一条可审计的线性时间线；分叉历史会让“哪条分支已发送/已处理”失去唯一答案。并行研究继续通过 bounded background task/delegate 完成，结果回到主 ledger。
 
 ## 代码地图
 
-- `src/agent/agent-context.ts`：内存中的 context 操作。
-- `src/agent/snapshot-repo.ts`：`bot_agent_snapshot` 持久化。
-- `src/agent/runtime.ts`：Agent runtime 装配边界，把已恢复的 context 接到 deferred tools、system prompt 和 `BotLoopAgent`。
-- `src/agent/working-context.ts`：从 durable ledger 构造单次 LLM 可见投影并输出 hygiene 统计；这是可重建视图，不是新的持久状态。
-- `src/agent/bot-loop-agent.ts`：Runtime Host，负责事件披露、mailbox cursors、snapshot 原子保存、life journal hook、compaction 和循环控制。
-- `src/agent/react-kernel.ts`：一轮 ReAct transcript append 边界；只把 `ToolExecutionResult.content` 写入 `AgentContext`，`outcome` / `effects` 返回 Runtime Host。
-- `src/agent/effect-interpreter.ts`：解释工具声明的 runtime effects，并集中执行合法性判断。
-- `src/agent/rest-resume-reminder.ts`：渲染固定的醒后与注意事件打断 reminder，并从 durable ledger 判断资格、动作门槛与提醒间隔。
-- `src/agent/compaction.ts`：基于摘要的历史 compaction。
-- `src/agent/mailbox-handled.ts`：从 durable ledger 归并 mailbox 披露/处理 cursor，并渲染稳定 marker 与 compaction state。
-- `src/agent/render-event.ts`：确定性的 event-to-user-message 渲染。
-- `src/agent/mailbox.ts`：来源 key、direct/ambient 分类、通知渲染和 cursor 推进。
-- `src/agent/replay-missed.ts`：启动恢复关机期间漏掉的入站事实。
-- `prisma/schema.prisma`：持久数据库契约。
+- `src/agent/agent-ledger-repo.ts`：append、CAS compaction、runtime 原子更新和 checkpoint I/O。
+- `src/agent/agent-ledger-projection.ts`：canonical 校验与确定性 projection。
+- `src/agent/agent-ledger-loader.ts`：checkpoint 分类、rebuild 和安装输入。
+- `src/agent/agent-context.ts`：当前内存 projection。
+- `src/agent/bot-loop-agent.ts`：Runtime Host、事务边界、trigger 与失败恢复。
+- `src/agent/compaction*.ts`：token cut、serialization、hooks、candidate 和 summary 校验。
+- `src/agent/working-context.ts`、`src/media/agent-image-ref.ts`：单次请求 projection 与稳定图片引用解析。
+- `src/agent/compaction-control.ts`：owner `/compact` 身份、replay gate 和去重。
+- `src/ops/agent-ledger-check.ts`：完全只读的 canonical/checkpoint 检查。
 
-## 检查清单
+## 修改前检查
 
-- 这个改动会改变已经 append 的 message 字节吗？
-- 它会把动态状态加进 system prompt 吗？
-- 它会从可变表或日志重建 prompt history 吗？
-- 它会在 compaction 时切开 tool-call 和 tool-result 对吗？
-- 它会把大块外部内容塞进主 context，而不是有边界的 tool result 或摘要吗？
+- 会不会更新或删除已有 ledger entry？
+- 会不会在事务提交前改变 `AgentContext`？
+- 会不会切开 tool call/result，或从 side state 重建历史？
+- checkpoint 删除后能否从 canonical ledger 得到相同 projection？
+- 图片或其他可变资源失效后 replay 是否仍确定？
+- 对外副作用是否仍只有一条主时间线和明确 target？

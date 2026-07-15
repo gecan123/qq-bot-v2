@@ -32,10 +32,10 @@
 
 项目主线是永续上下文和渐进式披露。
 
-- `AgentContext` 是 LLM ledger。新的 LLM 可见事实只能通过受控 append 或 compaction 进入。
+- `bot_agent_ledger_entries` 是唯一持久 LLM history source；`AgentContext` 是它的当前内存 projection。新的 LLM 可见事实只能通过受控 append 或 compaction 进入。
 - `messages` 是入站事实账本，不是 LLM ledger。
 - 对外 QQ 发言必须走 `send_message`，且 target 必须明确。
-- compaction 是正常情况下会改写 prefix history 的路径，必须保留 assistant tool call 和对应 tool result 的原子性。
+- compaction 只追加 boundary entry，不更新或删除旧 prefix；projection 解释最新 boundary，并必须保留 assistant tool call 和对应 tool result 的原子性。
 - replay 必须确定性。不要从可变 side table 或运维日志重建 prompt history。
 - 长内容或可变内容应通过工具、摘要或有边界的文件路径按需披露，不要塞进常驻 prompt。
 

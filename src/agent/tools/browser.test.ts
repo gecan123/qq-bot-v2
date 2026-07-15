@@ -19,6 +19,36 @@ describe('browser tool', () => {
     assert.match(result.content as string, /"message":"ready"/)
   })
 
+  it('keeps oversized observe results valid JSON while dropping tail elements', async () => {
+    const elements = Array.from({ length: 80 }, (_, index) => ({
+      elementId: `el_${index + 1}`,
+      role: 'link',
+      label: `result ${index + 1} ${'x'.repeat(120)}`,
+      tagName: 'a',
+      href: `https://example.com/${index + 1}/${'y'.repeat(160)}`,
+      visible: true,
+    }))
+    const tool = createBrowserTool({
+      client: {
+        async action() {
+          return { ok: true, action: 'observe', pageId: 'page_1', elements }
+        },
+      },
+    })
+
+    const result = await tool.execute({ action: 'observe' }, { eventQueue: null as never, roundIndex: 1 })
+    assert.equal(typeof result.content, 'string')
+    const parsed = JSON.parse(result.content as string) as {
+      truncated?: boolean
+      omittedElements?: number
+      elements?: unknown[]
+    }
+    assert.equal(parsed.truncated, true)
+    assert.ok((parsed.omittedElements ?? 0) > 0)
+    assert.ok((parsed.elements?.length ?? 0) < elements.length)
+    assert.ok((result.content as string).length <= 6_000)
+  })
+
   it('keeps screenshot image blocks in tool content', async () => {
     const tool = createBrowserTool({
       client: {

@@ -68,6 +68,8 @@ export interface BrowserElementSummary {
 export interface BrowserActionJsonResult {
   ok: boolean
   action: BrowserActionName
+  truncated?: boolean
+  omittedElements?: number
   message?: string
   error?: string
   code?: string
@@ -129,5 +131,40 @@ export function browserJsonResultToText(result: BrowserActionJsonResult): string
       },
     }
   }
-  return clampBrowserText(JSON.stringify(clone))
+
+  let serialized = JSON.stringify(clone)
+  if (serialized.length <= BROWSER_TEXT_OUTPUT_LIMIT) return serialized
+
+  if (clone.elements) {
+    const elements = [...clone.elements]
+    clone.elements = elements
+    clone.truncated = true
+    clone.omittedElements = 0
+    while (elements.length > 0) {
+      elements.pop()
+      clone.omittedElements++
+      serialized = JSON.stringify(clone)
+      if (serialized.length <= BROWSER_TEXT_OUTPUT_LIMIT) return serialized
+    }
+  }
+
+  const fallback: BrowserActionJsonResult = {
+    ok: clone.ok,
+    action: clone.action,
+    truncated: true,
+    message: 'browser result exceeded the text limit; retry with a narrower action',
+    ...(clone.pageId ? { pageId: clone.pageId } : {}),
+    ...(clone.url ? { url: clone.url } : {}),
+    ...(clone.title ? { title: clone.title } : {}),
+    ...(clone.code ? { code: clone.code } : {}),
+    ...(clone.error ? { error: clone.error } : {}),
+  }
+  serialized = JSON.stringify(fallback)
+  if (serialized.length <= BROWSER_TEXT_OUTPUT_LIMIT) return serialized
+  return JSON.stringify({
+    ok: clone.ok,
+    action: clone.action,
+    truncated: true,
+    message: 'browser result exceeded the text limit',
+  })
 }

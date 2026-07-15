@@ -110,6 +110,7 @@ export interface AgentLedgerRepo {
   appendCompaction(input: {
     expectedHeadEntryId: bigint | null
     payload: CompactionLedgerPayload
+    runtimePatch?: AgentRuntimePatch
   }): Promise<AppendResult>
   updateRuntime(input: {
     expectedHeadEntryId: bigint | null
@@ -190,7 +191,7 @@ export function createAgentLedgerRepo(options: {
           data: { entryType: 'compaction', payload },
         })
         const entry = parseAgentLedgerEntry(row, 0)
-        const runtimeState = await persistRuntimeState(tx, current, undefined, entry.id)
+        const runtimeState = await persistRuntimeState(tx, current, input.runtimePatch, entry.id)
         return { appendedEntries: [entry], runtimeState }
       })
     },

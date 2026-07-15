@@ -5,10 +5,17 @@ import type { MessageSentTarget, ToolExecutor } from './tool.js'
 import type { EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { AgentLedgerLoader } from './agent-ledger-loader.js'
-import type { AgentLedgerRepo, AgentRuntimePatch } from './agent-ledger-repo.js'
+import {
+  AgentLedgerHeadChangedError,
+  type AgentLedgerRepo,
+  type AgentRuntimePatch,
+} from './agent-ledger-repo.js'
 import {
   compactConversationForRecovery,
+  createCompactionCandidate,
   maybeCompactConversation,
+  prepareCompaction,
+  summarizeCompactionCandidate,
   type MaybeCompactOptions,
 } from './compaction.js'
 import { injectStickerPoolAfterCompaction } from './sticker-pool.js'
@@ -17,6 +24,7 @@ import { interpretToolEffects } from './effect-interpreter.js'
 import {
   renderInterruptedRestAttentionReminder,
   renderRestResumeReminder,
+  captureRestResumeCompactionState,
   shouldAppendInterruptedRestAttentionReminder,
   shouldAppendRestResumeReminder,
 } from './rest-resume-reminder.js'
@@ -44,6 +52,14 @@ import {
   renderMailboxHandledEvent,
 } from './mailbox-handled.js'
 import type { PersistedAgentSnapshot } from './agent-context.types.js'
+import { projectAgentLedger } from './agent-ledger-projection.js'
+import type {
+  CompactionAgentLedgerEntry,
+  CompactionReason,
+} from './agent-ledger.types.js'
+import { runAfterCompactHook } from './compaction-hooks.js'
+import { config } from '../config/index.js'
+import { estimateLedgerContextTokens } from './compaction-token-estimator.js'
 
 const log = createLogger('BOT_LOOP')
 
@@ -137,6 +153,7 @@ const DEFAULT_MAX_CONSECUTIVE_ROUNDS = 20
 const DEFAULT_AUTONOMY_COOLDOWN_MS = 15 * 60_000
 const DEFAULT_IDLE_WAIT_MS = 15 * 60_000
 const DEFAULT_ACTION_RETRY_WAIT_MS = 60_000
+const DEFAULT_COMPACTION_FAILURE_BACKOFF_MS = 10 * 60_000
 const MAX_OUTPUT_CONTINUATIONS_PER_ROUND = 2
 const MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS = 3
 const RECOVERABLE_TOOL_ERROR_CODES = new Set(['capability_inactive', 'invalid_arguments'])
@@ -187,6 +204,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let consecutiveRounds = 0
   let noToolActionRetryPending = false
   let recoverableToolCorrectionRounds = 0
+  let nextCompactionAttemptAt = 0
+  let compactionAbortController = new AbortController()
+  let lastContextWindowTokens =
+    config.llm.contextWindowTokensByModel[config.llm.defaultModel] ?? 200_000
 
   function installRuntimeState(input: {
     mailboxCursors: MailboxCursors
@@ -280,6 +301,170 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       deps.syncActiveToolCapabilities?.(deps.context.getSnapshot().activeToolCapabilities)
       throw error
     }
+  }
+
+  async function compactCanonical(input: {
+    reason: CompactionReason
+    contextTokens: number
+    contextWindowTokens: number
+    providerPrefixHeadEntryId?: bigint | null
+    manualFocus?: string
+  }): Promise<boolean> {
+    if (!deps.ledgerRepo || !deps.ledgerLoader) return false
+    const options = deps.compactOptions ?? {}
+    const nowMs = options.nowMs ?? Date.now
+    if (input.reason === 'threshold' && nowMs() < nextCompactionAttemptAt) {
+      log.debug({ retryAfterMs: nextCompactionAttemptAt - nowMs() }, 'compaction_failure_backoff_skipped')
+      return false
+    }
+    const recordThresholdFailure = (reason: string): void => {
+      if (input.reason !== 'threshold') return
+      nextCompactionAttemptAt = nowMs()
+        + Math.max(1, options.failureBackoffMs ?? DEFAULT_COMPACTION_FAILURE_BACKOFF_MS)
+      log.warn({ reason, nextCompactionAttemptAt }, 'canonical_compaction_backoff_recorded')
+    }
+    const reserveTokens = options.reserveTokens
+      ?? (options.triggerTokens == null
+        ? config.compaction.reserveTokens
+        : Math.max(0, input.contextWindowTokens - options.triggerTokens))
+    const keepRecentTokens = options.keepRecentTokens ?? config.compaction.keepRecentTokens
+    if (
+      input.reason === 'threshold'
+      && input.providerPrefixHeadEntryId == null
+      && input.contextTokens <= Math.max(0, input.contextWindowTokens - reserveTokens)
+    ) {
+      return false
+    }
+
+    for (let headAttempt = 0; headAttempt < 2; headAttempt++) {
+      const canonical = await deps.ledgerRepo.loadCanonicalState()
+      const effectiveContextTokens = input.reason === 'threshold'
+        && input.providerPrefixHeadEntryId != null
+        ? estimateLedgerContextTokens({
+            entries: canonical.entries,
+            providerPrefix: {
+              throughEntryId: input.providerPrefixHeadEntryId,
+              inputTokens: input.contextTokens,
+            },
+          }).tokens
+        : input.contextTokens
+      if (
+        input.reason === 'threshold'
+        && effectiveContextTokens <= Math.max(0, input.contextWindowTokens - reserveTokens)
+      ) {
+        return false
+      }
+      const latestProjection = projectAgentLedger({
+        entries: canonical.entries,
+        runtimeState: canonical.runtimeState,
+      })
+      const previousCompaction = [...canonical.entries]
+        .reverse()
+        .find((entry): entry is CompactionAgentLedgerEntry => entry.entryType === 'compaction')
+        ?? null
+      const preparation = prepareCompaction({
+        entries: canonical.entries,
+        latestProjection,
+        previousCompaction,
+        contextTokens: effectiveContextTokens,
+        contextWindowTokens: input.contextWindowTokens,
+        reserveTokens,
+        keepRecentTokens,
+        reason: input.reason,
+        ...(input.manualFocus == null ? {} : { manualFocus: input.manualFocus }),
+      })
+      if (preparation == null) return false
+      if (preparation.status !== 'ready') {
+        recordThresholdFailure(preparation.reason)
+        return false
+      }
+
+      let candidate: Awaited<ReturnType<typeof createCompactionCandidate>>
+      const compactedContinuity = parseMailboxContinuityState(
+        canonical.runtimeState.mailboxContinuity,
+      )
+      recordMailboxCompaction(compactedContinuity)
+      const candidateRuntimeState = {
+        ...canonical.runtimeState,
+        mailboxContinuity: compactedContinuity,
+      }
+      try {
+        candidate = await createCompactionCandidate({
+          entries: canonical.entries,
+          runtimeState: candidateRuntimeState,
+          preparation,
+          summarize: options.summarizeCandidate
+            ?? ((request) => summarizeCompactionCandidate(request, {
+              signal: compactionAbortController.signal,
+            })),
+          hooks: options.hooks,
+          signal: compactionAbortController.signal,
+          maxSummaryTokens: options.maxSummaryTokens,
+          restResumeState: captureRestResumeCompactionState(latestProjection.snapshot.messages),
+        })
+      } catch (err) {
+        recordThresholdFailure('summarizer_failed')
+        log.error({ err, reason: input.reason }, 'canonical_compaction_candidate_failed')
+        return false
+      }
+      if (candidate.status !== 'ready') {
+        if (candidate.status !== 'cancelled' || candidate.reason !== 'aborted') {
+          recordThresholdFailure(candidate.reason)
+        }
+        return false
+      }
+
+      try {
+        const committed = await deps.ledgerRepo.appendCompaction({
+          expectedHeadEntryId: preparation.expectedHeadEntryId,
+          payload: candidate.payload,
+          runtimePatch: { mailboxContinuity: compactedContinuity },
+        })
+        const committedEntry = committed.appendedEntries.find(
+          (entry): entry is CompactionAgentLedgerEntry => entry.entryType === 'compaction',
+        )
+        if (!committedEntry) throw new Error('compaction commit returned no compaction entry')
+
+        // CAS makes the validated candidate authoritative. Install immediately;
+        // loader then refreshes the disposable checkpoint best-effort.
+        deps.context.installProjection(candidate.projection.snapshot)
+        installRuntimeState(committed.runtimeState)
+        try {
+          await reloadProjectionFromCanonical()
+        } catch (err) {
+          log.warn({ err }, 'post_compaction_reload_failed_committed_projection_retained')
+        }
+        nextCompactionAttemptAt = 0
+        await runAfterCompactHook(options.hooks ?? {}, {
+          committedEntry,
+          metrics: {
+            tokensBefore: candidate.payload.tokensBefore,
+            estimatedTokensAfter: candidate.payload.estimatedTokensAfter,
+            compressedEntryCount: preparation.entriesToSummarize.length,
+            keptEntryCount: preparation.tailEntries.length,
+          },
+        }, (error) => log.warn({ error }, 'after_compact_hook_failed'))
+        log.info({
+          reason: input.reason,
+          committedEntryId: committedEntry.id,
+          tokensBefore: candidate.payload.tokensBefore,
+          estimatedTokensAfter: candidate.payload.estimatedTokensAfter,
+        }, 'canonical_compaction_committed')
+        return true
+      } catch (err) {
+        if (err instanceof AgentLedgerHeadChangedError && headAttempt === 0) {
+          log.info({
+            expectedHeadEntryId: err.expectedHeadEntryId,
+            actualHeadEntryId: err.actualHeadEntryId,
+          }, 'canonical_compaction_head_changed_recalculating')
+          continue
+        }
+        recordThresholdFailure(err instanceof AgentLedgerHeadChangedError ? 'head_changed' : 'commit_failed')
+        log.error({ err, reason: input.reason }, 'canonical_compaction_commit_failed')
+        return false
+      }
+    }
+    return false
   }
 
   function drainEvents(): {
@@ -392,6 +577,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
 
   async function runRound(goalRoundIndex?: number): Promise<{
     inputTokens: number | null
+    contextWindowTokens: number
+    providerPrefixHeadEntryId: bigint | null
     tokensUsed: number
     toolCallCount: number
     didPause: boolean
@@ -406,8 +593,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     let recoveryTokensUsed = 0
     const stagedMessages: AgentMessage[] = []
     let result: Awaited<ReturnType<typeof runReactRound>>
+    let providerPrefixHeadEntryId = ledgerHeadEntryId
     while (true) {
       try {
+        providerPrefixHeadEntryId = ledgerHeadEntryId
         result = await runReactRound({
           systemPrompt: deps.systemPrompt,
           context: deps.context,
@@ -420,6 +609,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
           },
           stagedMessages,
         })
+        lastContextWindowTokens = result.contextWindowTokens
         break
       } catch (err) {
         if (err instanceof LlmOutputTruncatedError) {
@@ -447,7 +637,24 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         }
         if (recoveredContextOverflow || !isLlmContextOverflowError(err)) throw err
         recoveredContextOverflow = true
-        if (deps.ledgerRepo) throw err
+        if (deps.ledgerRepo) {
+          const overflowContextWindow = resolveOverflowContextWindowTokens(
+            err,
+            lastContextWindowTokens,
+          )
+          const compacted = await compactCanonical({
+            reason: 'overflow',
+            contextTokens: overflowContextWindow,
+            contextWindowTokens: overflowContextWindow,
+          })
+          if (!compacted) throw err
+          const syncedAfterRecoveryCompaction = await syncGoalState()
+          if (syncedAfterRecoveryCompaction.goal?.status === 'active') {
+            await appendGoalContinuation(syncedAfterRecoveryCompaction.goal, 'post_compaction')
+          }
+          log.warn({ roundIndex }, 'context_overflow_compacted_retrying_round')
+          continue
+        }
         const recoveryContext = createAgentContext()
         recoveryContext.replaceMessages(deps.context.getSnapshot().messages)
         let compacted = false
@@ -493,6 +700,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     })
     return {
       inputTokens: result.inputTokens,
+      contextWindowTokens: result.contextWindowTokens,
+      providerPrefixHeadEntryId,
       tokensUsed: recoveryTokensUsed + result.tokensUsed,
       toolCallCount: result.toolCallCount,
       didPause,
@@ -543,10 +752,20 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     })
   }
 
-  async function maybeCompact(inputTokens: number | null): Promise<boolean> {
-    // 新 ledger 的 compaction entry 在 Task 7/8 接入；这里仅保留旧测试仓储的
-    // persistence-first 路径，绝不先改正式 AgentContext。
-    if (deps.ledgerRepo) return false
+  async function maybeCompact(
+    inputTokens: number | null,
+    contextWindowTokens: number,
+    providerPrefixHeadEntryId: bigint | null,
+  ): Promise<boolean> {
+    if (deps.ledgerRepo) {
+      if (inputTokens == null) return false
+      return compactCanonical({
+        reason: 'threshold',
+        contextTokens: inputTokens,
+        contextWindowTokens,
+        providerPrefixHeadEntryId,
+      })
+    }
     const workingContext = createAgentContext()
     workingContext.replaceMessages(deps.context.getSnapshot().messages)
     let compacted = false
@@ -684,6 +903,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     }
     const {
       inputTokens,
+      contextWindowTokens,
+      providerPrefixHeadEntryId,
       tokensUsed,
       toolCallCount,
       didPause,
@@ -711,7 +932,11 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     const restReminderNow = didCompleteRest ? autonomy.now() : null
     const shouldAppendRestReminder = restReminderNow != null
       && shouldAppendRestResumeReminder(deps.context.getSnapshot().messages, restReminderNow)
-    const compacted = await maybeCompact(inputTokens)
+    const compacted = await maybeCompact(
+      inputTokens,
+      contextWindowTokens,
+      providerPrefixHeadEntryId,
+    )
     if (compacted) {
       const syncedAfterCompaction = await syncGoalState()
       if (syncedAfterCompaction.goal?.status === 'active') {
@@ -832,11 +1057,15 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   return {
     async start() {
       stopRequested = false
+      if (compactionAbortController.signal.aborted) {
+        compactionAbortController = new AbortController()
+      }
       log.info('bot_loop_started')
       await loop()
     },
     async stop() {
       stopRequested = true
+      compactionAbortController.abort(new Error('bot loop stopping'))
       cancelDebounceSleep?.()
       deps.eventQueue.enqueue({ type: 'wake' })
       log.info('bot_loop_stop_requested')
@@ -869,6 +1098,14 @@ function isAttentionEvent(event: BotEvent): boolean {
   return event.type === 'background_task_completed'
     || event.type === 'scheduled_wake'
     || event.type === 'wake'
+}
+
+function resolveOverflowContextWindowTokens(error: unknown, fallback: number): number {
+  if (error && typeof error === 'object' && 'contextWindowTokens' in error) {
+    const value = error.contextWindowTokens
+    if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) return value
+  }
+  return fallback
 }
 
 async function waitForAttentionOrTimeout(

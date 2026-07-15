@@ -1,4 +1,5 @@
 import type { AgentMessage, ToolResultContent } from './agent-context.types.js'
+import type { RestResumeCompactionState } from './agent-ledger.types.js'
 import { formatBeijingIso } from '../utils/beijing-time.js'
 
 export const REST_RESUME_REMINDER_MIN_INTERVAL_MS = 10 * 60 * 1_000
@@ -106,6 +107,15 @@ export function renderRestResumeReminderCompactionSuffix(
     nonPauseActionSince: state.nonPauseActionSince,
   }
   return `${COMPACTION_STATE_MARKER}${JSON.stringify(payload)}`
+}
+
+export function captureRestResumeCompactionState(
+  messages: readonly AgentMessage[],
+): RestResumeCompactionState | null {
+  const state = captureRestResumeReminderState(messages)
+  return state == null
+    ? null
+    : { emittedAt: state.emittedAt, nonPauseActionSince: state.nonPauseActionSince }
 }
 
 export function stripRestResumeReminderCompactionSuffix(content: string): string {

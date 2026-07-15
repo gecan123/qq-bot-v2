@@ -261,6 +261,24 @@ describe('createAgentLedgerRepo', () => {
     assert.equal(fake.state().runtime.ledgerHeadEntryId, 1n)
   })
 
+  test('commits compaction and its runtime continuity patch atomically', async () => {
+    const fake = createFakeClient()
+    const repo = createAgentLedgerRepo({ client: fake.client })
+    await repo.appendMessages({ messages: [messages[0]!] })
+    const continuity = createEmptyMailboxContinuityState()
+    continuity.compactionEpoch = 1
+
+    const result = await repo.appendCompaction({
+      expectedHeadEntryId: 1n,
+      payload: compactionPayload(),
+      runtimePatch: { mailboxContinuity: continuity },
+    })
+
+    assert.equal(result.runtimeState.ledgerHeadEntryId, 2n)
+    assert.deepEqual(result.runtimeState.mailboxContinuity, continuity)
+    assert.equal(fake.transactionCount(), 2)
+  })
+
   test('stores checkpoints outside the canonical transaction', async () => {
     const fake = createFakeClient()
     const repo = createAgentLedgerRepo({ client: fake.client })

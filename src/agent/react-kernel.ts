@@ -43,6 +43,7 @@ export interface ReactToolOutcome {
 
 export interface ReactRoundResult {
   inputTokens: number | null
+  contextWindowTokens: number
   tokensUsed: number
   toolCallCount: number
   effects: ReactToolEffect[]
@@ -75,10 +76,12 @@ export class LlmOutputTruncatedError extends Error {
 
 class LlmContextWindowStopError extends Error {
   readonly kind = 'context_overflow'
+  readonly contextWindowTokens: number
 
-  constructor() {
+  constructor(contextWindowTokens: number) {
     super('LLM stopped because the model context window was exhausted')
     this.name = 'LlmContextWindowStopError'
+    this.contextWindowTokens = contextWindowTokens
   }
 }
 
@@ -119,7 +122,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
     recordCompletion(roundIndex, completion)
 
     if (completion.stopReason === 'model_context_window_exceeded') {
-      throw new LlmContextWindowStopError()
+      throw new LlmContextWindowStopError(completion.contextWindowTokens)
     }
     if (completion.stopReason !== 'max_tokens') break
 
@@ -229,6 +232,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
 
   return {
     inputTokens: completion.usage.inputTokens,
+    contextWindowTokens: completion.contextWindowTokens,
     tokensUsed: sumTokensUsed(completions),
     toolCallCount: completion.toolCalls.length,
     effects,

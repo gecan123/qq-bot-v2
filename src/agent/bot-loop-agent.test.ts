@@ -10,8 +10,10 @@ import type { BotSnapshotRepo } from './bot-loop-agent.js'
 import type { PersistedAgentSnapshot } from './agent-context.types.js'
 import type { AgentMessage } from './agent-context.types.js'
 import type { AgentLedgerRepo, AgentRuntimePatch } from './agent-ledger-repo.js'
+import { AgentLedgerHeadChangedError } from './agent-ledger-repo.js'
 import type { AgentLedgerLoader } from './agent-ledger-loader.js'
-import type { AgentRuntimeState } from './agent-ledger.types.js'
+import { createAgentLedgerLoader } from './agent-ledger-loader.js'
+import type { AgentLedgerEntry, AgentRuntimeState } from './agent-ledger.types.js'
 import type { MailboxCursors } from './mailbox.js'
 import { renderBotEvent } from './render-event.js'
 import { createInMemoryGoalStore } from './goal-store.js'
@@ -46,6 +48,18 @@ function validSummary(content = '保留关键历史。'): string {
     '## 工具调用结果',
     '',
     '## 情绪和氛围',
+  ].join('\n')
+}
+
+function validLedgerSummary(content = '保留关键历史。'): string {
+  return [
+    '## 讨论过的话题', content,
+    '## 群友信息', '无。',
+    '## 我的目标、承诺和状态', '继续当前目标。',
+    '## 关键约束与决定', '遵守安全边界。',
+    '## 工具调用结果', '无。',
+    '## 情绪和氛围', '平静。',
+    '## 下一步', '继续执行。',
   ].join('\n')
 }
 
@@ -166,6 +180,112 @@ function makeMockLedgerHarness(
   return { repo, loader, appendCalls }
 }
 
+function makeCanonicalCompactionHarness(
+  seedMessages: readonly AgentMessage[],
+  options: { headRaceOnce?: boolean; failCheckpoint?: boolean; failCompaction?: boolean } = {},
+): {
+  repo: AgentLedgerRepo
+  loader: AgentLedgerLoader
+  compactionCalls: Array<{ expectedHeadEntryId: bigint | null; payload: unknown }>
+  checkpointAttempts: () => number
+} {
+  let entries: AgentLedgerEntry[] = seedMessages.map((message, index) => ({
+    id: BigInt(index + 1),
+    entryType: 'message' as const,
+    payload: { schemaVersion: 1 as const, message: structuredClone(message) },
+    createdAt: new Date('2026-07-15T00:00:00.000Z'),
+  }))
+  let nextId = BigInt(entries.length + 1)
+  let runtimeState: AgentRuntimeState = {
+    schemaVersion: 1,
+    mailboxCursors: {},
+    mailboxContinuity: createEmptyMailboxContinuityState(),
+    goalRevision: 0,
+    activeToolCapabilities: [],
+    lastWakeAt: null,
+    ledgerHeadEntryId: entries.at(-1)?.id ?? null,
+  }
+  let raced = false
+  let checkpointAttempts = 0
+  const compactionCalls: Array<{ expectedHeadEntryId: bigint | null; payload: unknown }> = []
+  const repo: AgentLedgerRepo = {
+    async loadCanonicalState() {
+      return { entries: structuredClone(entries), runtimeState: structuredClone(runtimeState) }
+    },
+    async appendMessages(input) {
+      const appendedEntries: AgentLedgerEntry[] = input.messages.map((message) => ({
+        id: nextId++,
+        entryType: 'message' as const,
+        payload: { schemaVersion: 1 as const, message: structuredClone(message) },
+        createdAt: new Date('2026-07-15T00:00:00.000Z'),
+      }))
+      entries.push(...appendedEntries)
+      runtimeState = {
+        ...runtimeState,
+        ...structuredClone(input.runtimePatch ?? {}),
+        ledgerHeadEntryId: entries.at(-1)?.id ?? null,
+      }
+      return { appendedEntries, runtimeState: structuredClone(runtimeState) }
+    },
+    async appendCompaction(input) {
+      compactionCalls.push(structuredClone(input))
+      if (options.failCompaction) throw new Error('compaction commit failed')
+      if (options.headRaceOnce && !raced) {
+        raced = true
+        const racedEntry: AgentLedgerEntry = {
+          id: nextId++,
+          entryType: 'message',
+          payload: { schemaVersion: 1, message: { role: 'user', content: 'concurrent message' } },
+          createdAt: new Date('2026-07-15T00:00:01.000Z'),
+        }
+        entries.push(racedEntry)
+        runtimeState = { ...runtimeState, ledgerHeadEntryId: racedEntry.id }
+        throw new AgentLedgerHeadChangedError(input.expectedHeadEntryId, racedEntry.id)
+      }
+      if (input.expectedHeadEntryId !== runtimeState.ledgerHeadEntryId) {
+        throw new AgentLedgerHeadChangedError(
+          input.expectedHeadEntryId,
+          runtimeState.ledgerHeadEntryId,
+        )
+      }
+      const entry: AgentLedgerEntry = {
+        id: nextId++,
+        entryType: 'compaction',
+        payload: structuredClone(input.payload),
+        createdAt: new Date('2026-07-15T00:00:02.000Z'),
+      }
+      entries.push(entry)
+      runtimeState = {
+        ...runtimeState,
+        ...structuredClone(input.runtimePatch ?? {}),
+        ledgerHeadEntryId: entry.id,
+      }
+      return { appendedEntries: [entry], runtimeState: structuredClone(runtimeState) }
+    },
+    async updateRuntime(input) {
+      if (input.expectedHeadEntryId !== runtimeState.ledgerHeadEntryId) {
+        throw new AgentLedgerHeadChangedError(
+          input.expectedHeadEntryId,
+          runtimeState.ledgerHeadEntryId,
+        )
+      }
+      runtimeState = { ...runtimeState, ...structuredClone(input.patch) }
+      return structuredClone(runtimeState)
+    },
+    async saveCheckpoint() {
+      checkpointAttempts++
+      if (options.failCheckpoint) throw new Error('checkpoint unavailable')
+    },
+    async loadCheckpoint() { return null },
+  }
+  return {
+    repo,
+    loader: createAgentLedgerLoader({ repo }),
+    compactionCalls,
+    checkpointAttempts: () => checkpointAttempts,
+  }
+}
+
 // Note: 'send_group_message' references in fixtures below are intentionally retained as the
 // historical (MVP-1) tool name, mirroring how persisted bot snapshots from before the MVP-2
 // rename look on disk. New code calls the tool 'send_message' (see src/agent/tools/send-message.ts);
@@ -216,6 +336,267 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     await assert.rejects(agent.runOnceForTest(), /ledger commit failed/)
     assert.deepEqual(ctx.getSnapshot().messages, [{ role: 'user', content: 'durable input' }])
+  })
+
+  test('ledger threshold compacts canonical history before the next LLM round', async () => {
+    const seed = ['old-a', 'old-b', 'old-c', 'recent'].map((content) => ({
+      role: 'user' as const,
+      content,
+    }))
+    const ctx = createAgentContext({ initialMessages: seed })
+    const ledger = makeCanonicalCompactionHarness(seed)
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([{
+        content: '', toolCalls: [],
+        usage: { inputTokens: 91, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock', contextWindowTokens: 100, stopReason: 'end_turn',
+      }]),
+      tools: makeMockTools(),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      initialLedgerHeadEntryId: 4n,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      compactOptions: {
+        reserveTokens: 20,
+        keepRecentTokens: 1,
+        summarizeCandidate: async () => validLedgerSummary(),
+      },
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(ledger.compactionCalls.length, 1)
+    assert.match((ctx.getSnapshot().messages[0] as { content: string }).content, /^\[历史摘要\]/)
+    assert.equal(ctx.getSnapshot().messages.at(-1)?.content, 'recent')
+    const canonical = await ledger.repo.loadCanonicalState()
+    assert.equal(canonical.runtimeState.mailboxContinuity.compactionEpoch, 1)
+  })
+
+  test('ledger threshold includes tool output appended after the provider token prefix', async () => {
+    const seed = ['old-a', 'old-b', 'old-c', 'recent'].map((content) => ({
+      role: 'user' as const,
+      content,
+    }))
+    const ctx = createAgentContext({ initialMessages: seed })
+    const ledger = makeCanonicalCompactionHarness(seed)
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [{ id: 'large-result', name: 'lookup', args: {} }],
+        usage: { inputTokens: 60, cachedTokens: 0, outputTokens: 1 },
+        model: 'mock',
+        contextWindowTokens: 100,
+        stopReason: 'tool_use',
+      }]),
+      tools: makeMockTools({
+        lookup: async () => ({ content: JSON.stringify({ value: 'x'.repeat(200) }) }),
+      }),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      initialLedgerHeadEntryId: 4n,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      compactOptions: {
+        reserveTokens: 20,
+        keepRecentTokens: 1,
+        summarizeCandidate: async () => validLedgerSummary(),
+      },
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(ledger.compactionCalls.length, 1)
+    const messages = ctx.getSnapshot().messages
+    assert.match((messages[0] as { content: string }).content, /^\[历史摘要\]/)
+    assert.equal(messages.at(-1)?.role, 'tool')
+  })
+
+  test('ledger summarizer failure writes no entry and backs threshold attempts off for ten minutes', async () => {
+    const seed = ['old-a', 'old-b', 'old-c', 'recent'].map((content) => ({
+      role: 'user' as const,
+      content,
+    }))
+    const ctx = createAgentContext({ initialMessages: seed })
+    const ledger = makeCanonicalCompactionHarness(seed)
+    let summarizeAttempts = 0
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([{
+        content: '', toolCalls: [],
+        usage: { inputTokens: 91, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock', contextWindowTokens: 100, stopReason: 'end_turn',
+      }]),
+      tools: makeMockTools(),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      initialLedgerHeadEntryId: 4n,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      compactOptions: {
+        reserveTokens: 20,
+        keepRecentTokens: 1,
+        failureBackoffMs: 10 * 60_000,
+        nowMs: () => 1_000,
+        summarizeCandidate: async () => {
+          summarizeAttempts++
+          throw new Error('summarizer unavailable')
+        },
+      },
+    })
+
+    await agent.runOnceForTest()
+    await agent.runOnceForTest()
+
+    assert.equal(summarizeAttempts, 1)
+    assert.equal(ledger.compactionCalls.length, 0)
+    assert.deepEqual(ctx.getSnapshot().messages, seed)
+  })
+
+  test('shutdown aborts an in-flight canonical summarizer before it can commit', async () => {
+    const seed = ['old-a', 'old-b', 'old-c', 'recent'].map((content) => ({
+      role: 'user' as const,
+      content,
+    }))
+    const ctx = createAgentContext({ initialMessages: seed })
+    const ledger = makeCanonicalCompactionHarness(seed)
+    let markStarted!: () => void
+    const started = new Promise<void>((resolve) => { markStarted = resolve })
+    const agent = createBotLoopAgent({
+      systemPrompt: '', context: ctx, eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([{
+        content: '', toolCalls: [], usage: { inputTokens: 91, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock', contextWindowTokens: 100, stopReason: 'end_turn',
+      }]),
+      tools: makeMockTools(), ledgerRepo: ledger.repo, ledgerLoader: ledger.loader,
+      initialLedgerHeadEntryId: 4n, renderEvent: renderBotEvent, eventDebounceMs: 0,
+      compactOptions: {
+        reserveTokens: 20,
+        keepRecentTokens: 1,
+        summarizeCandidate: async (_request, { signal }) => {
+          markStarted()
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) resolve()
+            else signal.addEventListener('abort', () => resolve(), { once: true })
+          })
+          return validLedgerSummary()
+        },
+      },
+    })
+
+    const running = agent.runOnceForTest()
+    await started
+    await agent.stop()
+    await running
+
+    assert.equal(ledger.compactionCalls.length, 0)
+    assert.deepEqual(ctx.getSnapshot().messages, seed)
+  })
+
+  test('canonical compaction commit failure leaves the in-memory context unchanged', async () => {
+    const seed = ['old-a', 'old-b', 'old-c', 'recent'].map((content) => ({
+      role: 'user' as const,
+      content,
+    }))
+    const ctx = createAgentContext({ initialMessages: seed })
+    const ledger = makeCanonicalCompactionHarness(seed, { failCompaction: true })
+    const agent = createBotLoopAgent({
+      systemPrompt: '', context: ctx, eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([{
+        content: '', toolCalls: [], usage: { inputTokens: 91, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock', contextWindowTokens: 100, stopReason: 'end_turn',
+      }]),
+      tools: makeMockTools(), ledgerRepo: ledger.repo, ledgerLoader: ledger.loader,
+      initialLedgerHeadEntryId: 4n, renderEvent: renderBotEvent, eventDebounceMs: 0,
+      compactOptions: {
+        reserveTokens: 20, keepRecentTokens: 1,
+        summarizeCandidate: async () => validLedgerSummary(),
+      },
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(ledger.compactionCalls.length, 1)
+    assert.deepEqual(ctx.getSnapshot().messages, seed)
+  })
+
+  test('ledger overflow forces one compact-and-retry and survives checkpoint failure', async () => {
+    const seed = ['old-a', 'old-b', 'old-c', 'recent'].map((content) => ({
+      role: 'user' as const,
+      content,
+    }))
+    const ctx = createAgentContext({ initialMessages: seed })
+    const ledger = makeCanonicalCompactionHarness(seed, { failCheckpoint: true })
+    let llmCalls = 0
+    const llm: LlmClient = {
+      async chat() {
+        llmCalls++
+        if (llmCalls === 1) {
+          throw Object.assign(new Error('prompt too long'), { kind: 'context_overflow' })
+        }
+        return {
+          content: '', toolCalls: [],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 0 },
+          model: 'mock', contextWindowTokens: 100, stopReason: 'end_turn',
+        }
+      },
+    }
+    const agent = createBotLoopAgent({
+      systemPrompt: '', context: ctx, eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm, tools: makeMockTools(), ledgerRepo: ledger.repo, ledgerLoader: ledger.loader,
+      initialLedgerHeadEntryId: 4n, renderEvent: renderBotEvent, eventDebounceMs: 0,
+      compactOptions: {
+        reserveTokens: 20,
+        keepRecentTokens: 1,
+        summarizeCandidate: async () => validLedgerSummary(),
+      },
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(llmCalls, 2)
+    assert.equal(ledger.compactionCalls.length, 1)
+    assert.ok(ledger.checkpointAttempts() >= 1)
+    assert.match((ctx.getSnapshot().messages[0] as { content: string }).content, /^\[历史摘要\]/)
+  })
+
+  test('head race discards the candidate and recalculates against the new canonical head', async () => {
+    const seed = ['old-a', 'old-b', 'old-c', 'recent'].map((content) => ({
+      role: 'user' as const,
+      content,
+    }))
+    const ctx = createAgentContext({ initialMessages: seed })
+    const ledger = makeCanonicalCompactionHarness(seed, { headRaceOnce: true })
+    let summaries = 0
+    const agent = createBotLoopAgent({
+      systemPrompt: '', context: ctx, eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([{
+        content: '', toolCalls: [], usage: { inputTokens: 91, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock', contextWindowTokens: 100, stopReason: 'end_turn',
+      }]),
+      tools: makeMockTools(), ledgerRepo: ledger.repo, ledgerLoader: ledger.loader,
+      initialLedgerHeadEntryId: 4n, renderEvent: renderBotEvent, eventDebounceMs: 0,
+      compactOptions: {
+        reserveTokens: 20,
+        keepRecentTokens: 1,
+        summarizeCandidate: async () => { summaries++; return validLedgerSummary() },
+      },
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(ledger.compactionCalls.length, 2)
+    assert.equal(summaries, 2)
+    assert.equal(ledger.compactionCalls[1]?.expectedHeadEntryId, 5n)
+    assert.equal(ctx.getSnapshot().messages.at(-1)?.content, 'concurrent message')
   })
 
   test('commits assistant tool calls and every ordered tool result as one batch', async () => {

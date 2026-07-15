@@ -18,6 +18,35 @@ function createFakeClient(response: unknown, calls: ChatCompletionCreateParamsNo
 }
 
 describe('openai-agent llm client', () => {
+  test('normalizes OpenAI context length errors for provider-neutral recovery', async () => {
+    const client = createOpenAIAgentLlmClient({
+      model: 'gpt-5.1',
+      contextWindowTokens: 400_000,
+      baseURL: 'http://127.0.0.1:8317/v1',
+      apiKey: 'sk-local',
+      client: {
+        chat: {
+          completions: {
+            async create() {
+              throw Object.assign(new Error('maximum context length exceeded'), {
+                code: 'context_length_exceeded',
+              })
+            },
+          },
+        },
+      },
+    })
+
+    await assert.rejects(
+      () => client.chat({ systemPrompt: 'system', messages: [], tools: [] }),
+      (error: unknown) => {
+        assert.equal((error as { kind?: string }).kind, 'context_overflow')
+        assert.equal((error as { contextWindowTokens?: number }).contextWindowTokens, 400_000)
+        return true
+      },
+    )
+  })
+
   test('forwards a call-level abort signal to the OpenAI SDK', async () => {
     const controller = new AbortController()
     let receivedSignal: AbortSignal | undefined

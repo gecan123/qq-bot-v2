@@ -138,14 +138,23 @@ export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput)
       })
       const bodyJson = JSON.stringify(body)
 
-      const { parsed, status } = await callWithRetry({
-        url,
-        body: bodyJson,
-        requestBody: body,
-        accessToken: apiKey,
-        signal: req.signal,
-        retry,
-      })
+      let response: Awaited<ReturnType<typeof callWithRetry>>
+      try {
+        response = await callWithRetry({
+          url,
+          body: bodyJson,
+          requestBody: body,
+          accessToken: apiKey,
+          signal: req.signal,
+          retry,
+        })
+      } catch (error) {
+        if (error && typeof error === 'object' && 'kind' in error && error.kind === 'context_overflow') {
+          Object.assign(error, { contextWindowTokens })
+        }
+        throw error
+      }
+      const { parsed, status } = response
 
       // content:[] 是合法的 — 模型可以选择 end_turn 不输出任何 block。
       // 这种情况返回空 completion, BotLoop 会自然 skip 这一轮 (不 append assistant turn)。

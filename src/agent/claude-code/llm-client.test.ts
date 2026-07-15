@@ -440,6 +440,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
         assert.ok(err instanceof ClaudeCodeApiError)
         assert.equal(err.kind, 'context_overflow')
         assert.equal(err.retryable, false)
+        assert.equal((err as ClaudeCodeApiError & { contextWindowTokens?: number }).contextWindowTokens, 200_000)
         return true
       },
     )

@@ -95,6 +95,7 @@ export type CompactionCandidateResult =
 
 export type CompactionCandidateSummarize = (
   request: CompactionSummarizerRequest,
+  options: { signal: AbortSignal },
 ) => Promise<string>
 
 interface AtomicMessageUnit {
@@ -244,7 +245,7 @@ export async function createCompactionCandidate(input: {
       ...(input.preparation.manualFocus === undefined
         ? {}
         : { manualFocus: input.preparation.manualFocus }),
-    }))
+    }), { signal })
     if (signal.aborted) return { status: 'cancelled', reason: 'aborted' }
     if (input.preparation.isSplitTurn) {
       const prefixSummary = await input.summarize(buildCompactionSummarizerRequest({
@@ -254,7 +255,7 @@ export async function createCompactionCandidate(input: {
         ...(input.preparation.manualFocus === undefined
           ? {}
           : { manualFocus: input.preparation.manualFocus }),
-      }))
+      }), { signal })
       rawSummary = combineSplitTurnSummary(mainSummary, prefixSummary)
     } else {
       rawSummary = mainSummary
@@ -506,12 +507,38 @@ export type SummarizeFn = (input: SummarizeInput) => Promise<string>
 
 export interface MaybeCompactOptions {
   summarize?: SummarizeFn
+  summarizeCandidate?: CompactionCandidateSummarize
+  hooks?: CompactionHooks
   triggerTokens?: number
+  reserveTokens?: number
+  keepRecentTokens?: number
+  maxSummaryTokens?: number
   tailMaxChars?: number
   failureBackoffMs?: number
   nowMs?: () => number
   /** 兼容测试/调用方；显式传入时转换为确定性的 serialized-char budget。 */
   keepRatio?: number
+}
+
+export async function summarizeCompactionCandidate(
+  request: CompactionSummarizerRequest,
+  options: { signal?: AbortSignal; llm?: ReturnType<typeof createLlmClient> } = {},
+): Promise<string> {
+  const llm = options.llm ?? createLlmClient()
+  const result = await llm.chat({
+    systemPrompt: request.systemPrompt,
+    messages: request.messages,
+    tools: [],
+    signal: options.signal,
+  })
+  recordTokenUsage({
+    operation: 'compaction',
+    inputTokens: result.usage.inputTokens,
+    cachedTokens: result.usage.cachedTokens,
+    outputTokens: result.usage.outputTokens,
+    model: result.model,
+  })
+  return result.content.trim()
 }
 
 export function findSafeCutIndex(messages: AgentMessage[], keepCount: number): number {

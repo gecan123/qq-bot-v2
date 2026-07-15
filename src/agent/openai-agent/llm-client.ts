@@ -47,18 +47,43 @@ export function createOpenAIAgentLlmClient(input: CreateOpenAIAgentLlmClientInpu
 
   return {
     async chat(req: LlmCallInput): Promise<LlmCallOutput> {
-      const response = await client.chat.completions.create(
-        buildOpenAIAgentRequest({
-          model: input.model,
-          systemPrompt: req.systemPrompt,
-          messages: req.messages,
-          tools: req.tools,
-          maxOutputTokens: req.maxOutputTokens,
-        }),
-        req.signal ? { signal: req.signal } : undefined,
-      )
-      return toLlmCallOutput(response, input.model, input.contextWindowTokens, req.tools)
+      try {
+        const response = await client.chat.completions.create(
+          buildOpenAIAgentRequest({
+            model: input.model,
+            systemPrompt: req.systemPrompt,
+            messages: req.messages,
+            tools: req.tools,
+            maxOutputTokens: req.maxOutputTokens,
+          }),
+          req.signal ? { signal: req.signal } : undefined,
+        )
+        return toLlmCallOutput(response, input.model, input.contextWindowTokens, req.tools)
+      } catch (error) {
+        throw normalizeOpenAIError(error, input.contextWindowTokens)
+      }
     },
+  }
+}
+
+function normalizeOpenAIError(error: unknown, contextWindowTokens: number): unknown {
+  if (!error || typeof error !== 'object') return error
+  const record = error as Record<string, unknown>
+  const code = typeof record.code === 'string' ? record.code.toLowerCase() : ''
+  const message = typeof record.message === 'string' ? record.message : ''
+  const isOverflow = code === 'context_length_exceeded'
+    || code === 'prompt_too_long'
+    || /(?:maximum )?context length.*(?:exceed|limit)|prompt.*too long|too many input tokens/i.test(message)
+  if (!isOverflow) return error
+  try {
+    Object.assign(record, { kind: 'context_overflow', contextWindowTokens })
+    return error
+  } catch {
+    return Object.assign(new Error(message || 'model context window exceeded', { cause: error }), {
+      kind: 'context_overflow' as const,
+      contextWindowTokens,
+      code: record.code,
+    })
   }
 }
 

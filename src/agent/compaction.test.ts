@@ -10,9 +10,11 @@ import type {
   MessageAgentLedgerEntry,
 } from './agent-ledger.types.js'
 import { estimateEntryTokens } from './compaction-token-estimator.js'
+import { createEmptyMailboxContinuityState } from './mailbox-continuity.js'
 import {
   buildCompactionSummarizerMessages,
   compactConversationForRecovery,
+  createCompactionCandidate,
   findSafeCutIndex,
   maybeCompactConversation,
   prepareCompaction,
@@ -69,6 +71,18 @@ function validSummary(content = '保留了关键历史。'): string {
     '## 工具调用结果',
     '',
     '## 情绪和氛围',
+  ].join('\n')
+}
+
+function validLedgerSummary(content = '保留了关键历史。'): string {
+  return [
+    '## 讨论过的话题', content,
+    '## 群友信息', '无。',
+    '## 我的目标、承诺和状态', '继续当前目标。',
+    '## 关键约束与决定', '遵守安全边界。',
+    '## 工具调用结果', '无。',
+    '## 情绪和氛围', '平静。',
+    '## 下一步', '继续执行。',
   ].join('\n')
 }
 
@@ -248,6 +262,120 @@ test('prepareCompaction returns explicit cannot_compact when no legal atomic cut
     reason: 'no_legal_cut',
     expectedHeadEntryId: 2n,
   })
+})
+
+function runtimeStateFor(entries: readonly AgentLedgerEntry[]) {
+  return {
+    schemaVersion: 1 as const,
+    mailboxCursors: {},
+    mailboxContinuity: createEmptyMailboxContinuityState(),
+    goalRevision: 0,
+    activeToolCapabilities: [],
+    lastWakeAt: null,
+    ledgerHeadEntryId: entries.at(-1)?.id ?? null,
+  }
+}
+
+async function createCandidate(input: Parameters<typeof createCompactionCandidate>[0]) {
+  return await createCompactionCandidate(input)
+}
+
+test('createCompactionCandidate summarizes split-turn history and prefix separately', async () => {
+  const entries = [
+    ledgerMessage(1n, user('old turn')),
+    ledgerMessage(2n, user('latest oversized turn')),
+    ledgerMessage(3n, asst('large prefix '.repeat(200))),
+    ledgerMessage(4n, asst('', [{ id: 'split-call', name: 'lookup' }])),
+    ledgerMessage(5n, tool('split-call', '{"ok":true}')),
+    ledgerMessage(6n, asst('final action')),
+  ]
+  const preparation = prepare({
+    entries,
+    keepRecentTokens: entries.slice(3).reduce(
+      (sum, entry) => sum + estimateEntryTokens(entry).tokens,
+      0,
+    ),
+  })
+  assertReady(preparation)
+  const kinds: string[] = []
+
+  const result = await createCandidate({
+    entries,
+    runtimeState: runtimeStateFor(entries),
+    preparation,
+    summarize: async (request: { kind: string }) => {
+      kinds.push(request.kind)
+      return request.kind === 'history' ? validLedgerSummary('main history') : 'turn prefix facts'
+    },
+  })
+
+  assert.equal(result.status, 'ready')
+  assert.deepEqual(kinds, ['history', 'split_turn_prefix'])
+  const payload = result.payload
+  assert.equal(payload.isSplitTurn, true)
+  assert.match(payload.summary, /main history/)
+  assert.match(payload.summary, /\[单轮前缀摘要\]\nturn prefix facts\n\[\/单轮前缀摘要\]/)
+})
+
+test('createCompactionCandidate repairs an oversized summary at most once', async () => {
+  const entries = [ledgerMessage(1n, user('old')), ledgerMessage(2n, user('tail'))]
+  const preparation = prepare({ entries, keepRecentTokens: 1 })
+  assertReady(preparation)
+
+  const result = await createCandidate({
+    entries,
+    runtimeState: runtimeStateFor(entries),
+    preparation,
+    summarize: async () => validLedgerSummary('x'.repeat(30_000)),
+    maxSummaryTokens: 400,
+  })
+
+  assert.equal(result.status, 'ready')
+  assert.equal(result.repairCount, 1)
+  assert.ok(result.summaryTokens <= 400)
+})
+
+test('createCompactionCandidate validates a beforeCompact custom summary and never calls afterCompact', async () => {
+  const entries = [ledgerMessage(1n, user('old')), ledgerMessage(2n, user('tail'))]
+  const preparation = prepare({ entries, keepRecentTokens: 1 })
+  assertReady(preparation)
+  let afterCalls = 0
+
+  const result = await createCandidate({
+    entries,
+    runtimeState: runtimeStateFor(entries),
+    preparation,
+    summarize: async () => { throw new Error('must not summarize') },
+    hooks: {
+      beforeCompact: async () => ({ action: 'use_summary', summary: 'invalid custom summary' }),
+      afterCompact: async () => { afterCalls += 1 },
+    },
+  })
+
+  assert.equal(result.status, 'invalid')
+  assert.equal(result.reason, 'missing_heading:## 讨论过的话题')
+  assert.equal(afterCalls, 0)
+})
+
+test('createCompactionCandidate validates the complete projected ledger', async () => {
+  const entries = [
+    ledgerMessage(1n, user('old')),
+    ledgerMessage(2n, asst('', [{ id: 'call', name: 'lookup' }])),
+    ledgerMessage(3n, tool('call', '{"ok":true}')),
+    ledgerMessage(4n, user('tail')),
+  ]
+  const preparation = prepare({ entries, keepRecentTokens: 1 })
+  assertReady(preparation)
+
+  const result = await createCandidate({
+    entries,
+    runtimeState: runtimeStateFor(entries),
+    preparation: { ...preparation, firstKeptEntryId: 3n },
+    summarize: async () => validLedgerSummary(),
+  })
+
+  assert.equal(result.status, 'invalid')
+  assert.equal(result.reason, 'candidate_projection_invalid')
 })
 
 test('compaction auxiliary LLM sees history only inside an untrusted data envelope', () => {

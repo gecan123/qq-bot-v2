@@ -16,14 +16,33 @@ import {
   isMailboxAttentionStateMessage,
   renderMailboxAttentionStateEvent,
 } from './mailbox-handled.js'
-import type {
-  AgentLedgerEntry,
-  AgentLedgerProjection,
-  CompactionAgentLedgerEntry,
-  CompactionReason,
-  MessageAgentLedgerEntry,
+import {
+  AGENT_LEDGER_SCHEMA_VERSION,
+  type AgentLedgerEntry,
+  type AgentLedgerProjection,
+  type AgentRuntimeState,
+  type CompactionAgentLedgerEntry,
+  type CompactionLedgerPayload,
+  type CompactionReason,
+  type MessageAgentLedgerEntry,
+  type RestResumeCompactionState,
 } from './agent-ledger.types.js'
 import { estimateEntryTokens } from './compaction-token-estimator.js'
+import { projectAgentLedger } from './agent-ledger-projection.js'
+import {
+  buildCompactionSummarizerRequest,
+  combineSplitTurnSummary,
+  DEFAULT_COMPACTION_SUMMARY_MAX_TOKENS,
+  estimateCompactionTextTokens,
+  repairOversizedCompactionSummary,
+  validateCompactionSummary,
+  type CompactionSummarizerRequest,
+} from './compaction-serialization.js'
+import {
+  runBeforeCompactHook,
+  type CompactionHooks,
+} from './compaction-hooks.js'
+import type { MailboxAttentionState } from './mailbox-handled.js'
 
 const DEFAULT_COMPACTION_TAIL_CHARS = 12_000
 const DEFAULT_COMPACTION_FAILURE_BACKOFF_MS = 10 * 60_000
@@ -62,6 +81,21 @@ export interface CannotCompactPreparation {
 }
 
 export type CompactionPreparation = ReadyCompactionPreparation | CannotCompactPreparation
+
+export type CompactionCandidateResult =
+  | {
+      status: 'ready'
+      payload: CompactionLedgerPayload
+      projection: AgentLedgerProjection
+      summaryTokens: number
+      repairCount: 0 | 1
+    }
+  | { status: 'cancelled'; reason: string }
+  | { status: 'invalid'; reason: string; repairCount: 0 | 1 }
+
+export type CompactionCandidateSummarize = (
+  request: CompactionSummarizerRequest,
+) => Promise<string>
 
 interface AtomicMessageUnit {
   entries: MessageAgentLedgerEntry[]
@@ -163,6 +197,153 @@ export function prepareCompaction(input: {
     previousCompaction,
     ...(input.manualFocus === undefined ? {} : { manualFocus: input.manualFocus }),
   }
+}
+
+/**
+ * 在事务外生成并验证 compaction candidate。这里绝不写 ledger，也不调用 afterCompact；
+ * Task 10 的 coordinator 只有在 appendCompaction 成功后才能发送 afterCompact 通知。
+ */
+export async function createCompactionCandidate(input: {
+  entries: readonly AgentLedgerEntry[]
+  runtimeState: AgentRuntimeState
+  preparation: ReadyCompactionPreparation
+  summarize: CompactionCandidateSummarize
+  hooks?: CompactionHooks
+  signal?: AbortSignal
+  maxSummaryTokens?: number
+  mailboxAttentionState?: MailboxAttentionState
+  restResumeState?: RestResumeCompactionState | null
+}): Promise<CompactionCandidateResult> {
+  const hooks = input.hooks ?? {}
+  const signal = input.signal ?? new AbortController().signal
+  const beforeResult = await runBeforeCompactHook(hooks, {
+    preparation: input.preparation,
+    reason: input.preparation.reason,
+    ...(input.preparation.manualFocus === undefined
+      ? {}
+      : { manualFocus: input.preparation.manualFocus }),
+    signal,
+  })
+  if (beforeResult.action === 'cancel') {
+    return { status: 'cancelled', reason: beforeResult.reason }
+  }
+  if (signal.aborted) return { status: 'cancelled', reason: 'aborted' }
+
+  const maxSummaryTokens = input.maxSummaryTokens
+    ?? DEFAULT_COMPACTION_SUMMARY_MAX_TOKENS
+  let rawSummary: string
+  if (beforeResult.action === 'use_summary') {
+    rawSummary = beforeResult.summary
+  } else {
+    const previousSummary = input.preparation.previousCompaction?.payload.summary ?? null
+    const historyEntries = filterSummarizerMachineState(input.preparation.historyEntries)
+    const mainSummary = await input.summarize(buildCompactionSummarizerRequest({
+      previousSummary,
+      entries: historyEntries,
+      kind: 'history',
+      ...(input.preparation.manualFocus === undefined
+        ? {}
+        : { manualFocus: input.preparation.manualFocus }),
+    }))
+    if (signal.aborted) return { status: 'cancelled', reason: 'aborted' }
+    if (input.preparation.isSplitTurn) {
+      const prefixSummary = await input.summarize(buildCompactionSummarizerRequest({
+        previousSummary: null,
+        entries: filterSummarizerMachineState(input.preparation.splitTurnPrefixEntries),
+        kind: 'split_turn_prefix',
+        ...(input.preparation.manualFocus === undefined
+          ? {}
+          : { manualFocus: input.preparation.manualFocus }),
+      }))
+      rawSummary = combineSplitTurnSummary(mainSummary, prefixSummary)
+    } else {
+      rawSummary = mainSummary
+    }
+  }
+  if (signal.aborted) return { status: 'cancelled', reason: 'aborted' }
+
+  let repairCount: 0 | 1 = 0
+  let validation = validateCompactionSummary(rawSummary, {
+    maxTokens: maxSummaryTokens,
+    isSplitTurn: input.preparation.isSplitTurn,
+  })
+  if (!validation.ok && validation.reason === 'token_limit') {
+    repairCount = 1
+    const repaired = repairOversizedCompactionSummary(rawSummary, {
+      maxTokens: maxSummaryTokens,
+      isSplitTurn: input.preparation.isSplitTurn,
+    })
+    if (repaired) {
+      validation = validateCompactionSummary(repaired, {
+        maxTokens: maxSummaryTokens,
+        isSplitTurn: input.preparation.isSplitTurn,
+      })
+    }
+  }
+  if (!validation.ok) {
+    return { status: 'invalid', reason: validation.reason, repairCount }
+  }
+
+  const compressedMessages = input.preparation.entriesToSummarize
+    .map((entry) => entry.payload.message)
+  const mailboxAttentionState = input.mailboxAttentionState
+    ?? captureMailboxAttentionState(compressedMessages)
+  const payload: CompactionLedgerPayload = {
+    schemaVersion: AGENT_LEDGER_SCHEMA_VERSION,
+    summary: validation.summary,
+    firstKeptEntryId: input.preparation.firstKeptEntryId.toString(),
+    tokensBefore: input.preparation.tokensBefore,
+    estimatedTokensAfter: safeTokenSum(
+      input.preparation.estimatedTailTokens,
+      estimateCompactionTextTokens(validation.summary),
+    ),
+    reason: input.preparation.reason,
+    isSplitTurn: input.preparation.isSplitTurn,
+    previousCompactionEntryId: input.preparation.previousCompaction?.id.toString() ?? null,
+    mailboxAttentionState,
+    restResumeState: input.restResumeState ?? null,
+    ...(input.preparation.manualFocus === undefined
+      ? {}
+      : { manualFocus: input.preparation.manualFocus }),
+  }
+
+  const expectedHead = input.preparation.expectedHeadEntryId
+  if (expectedHead == null || input.runtimeState.ledgerHeadEntryId !== expectedHead) {
+    return { status: 'invalid', reason: 'candidate_projection_invalid', repairCount }
+  }
+  const candidateId = expectedHead + 1n
+  const candidateEntry: CompactionAgentLedgerEntry = {
+    id: candidateId,
+    entryType: 'compaction',
+    payload,
+    createdAt: new Date(0),
+  }
+  try {
+    const projection = projectAgentLedger({
+      entries: [...input.entries, candidateEntry],
+      runtimeState: { ...input.runtimeState, ledgerHeadEntryId: candidateId },
+    })
+    return {
+      status: 'ready',
+      payload,
+      projection,
+      summaryTokens: validation.tokens,
+      repairCount,
+    }
+  } catch {
+    return { status: 'invalid', reason: 'candidate_projection_invalid', repairCount }
+  }
+}
+
+function filterSummarizerMachineState(
+  entries: readonly MessageAgentLedgerEntry[],
+): MessageAgentLedgerEntry[] {
+  return entries.filter((entry) => !isMailboxAttentionStateMessage(entry.payload.message))
+}
+
+function safeTokenSum(left: number, right: number): number {
+  const total = left + right
+  return Number.isSafeInteger(total) ? total : Number.MAX_SAFE_INTEGER
 }
 
 function validatePreparationNumbers(input: {

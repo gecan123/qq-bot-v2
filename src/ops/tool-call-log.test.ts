@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { isSideEffectTool } from './tool-call-log.js'
+import { classifyBotToolPolicy } from '../agent/tools/policies.js'
+
+function isSideEffectTool(toolName: string, args: Record<string, unknown>): boolean {
+  return classifyBotToolPolicy(toolName, args).sideEffect
+}
 
 describe('tool-call-log side effect classification', () => {
   test('classifies Moomoo reads separately from simulated trading writes', () => {
@@ -46,5 +50,15 @@ describe('tool-call-log side effect classification', () => {
     assert.equal(isSideEffectTool('goal', { action: 'complete' }), true)
     assert.equal(isSideEffectTool('goal', { action: 'report_blocker' }), true)
     assert.equal(isSideEffectTool('goal', { action: 'abandon_self' }), true)
+  })
+
+  test('fails closed for unknown tools/actions and covers runtime state mutations', () => {
+    assert.equal(isSideEffectTool('unknown_future_tool', {}), true)
+    assert.equal(isSideEffectTool('schedule', { action: 'create' }), true)
+    assert.equal(isSideEffectTool('todo', { action: 'update' }), true)
+    assert.equal(isSideEffectTool('qq_conversation', { action: 'open' }), true)
+    assert.equal(isSideEffectTool('approval', { action: 'approve' }), true)
+    assert.equal(isSideEffectTool('memory', { action: 'mark_disputed' }), true)
+    assert.equal(isSideEffectTool('fetch_content', { action: 'future_action' }), true)
   })
 })

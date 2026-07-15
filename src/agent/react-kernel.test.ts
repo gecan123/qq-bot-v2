@@ -20,6 +20,10 @@ function makeTool(name: string, schema = z.object({})): Tool {
   }
 }
 
+function classifyExclusive() {
+  return { sideEffect: true, concurrency: 'exclusive' as const }
+}
+
 describe('runReactRound', () => {
   test('resolves invoke to its requested deferred tool for observability', () => {
     assert.equal(resolveEffectiveToolName({ id: '1', name: 'invoke', args: { tool: 'browser', args: {} } }), 'browser')
@@ -51,6 +55,7 @@ describe('runReactRound', () => {
 
     const tools: ToolExecutor = {
       list: () => [makeTool('lookup', z.object({ query: z.string() }))],
+      classify: classifyExclusive,
       async execute(call, ctx): Promise<ToolExecutionResult> {
         executionOrder.push(`${ctx.roundIndex}:${call.name}`)
         return { content: '{"ok":true}' }
@@ -105,6 +110,7 @@ describe('runReactRound', () => {
 
     const tools: ToolExecutor = {
       list: () => [makeTool('lookup', z.object({ query: z.string() }))],
+      classify: classifyExclusive,
       async execute(): Promise<ToolExecutionResult> {
         return { content: '{"ok":true}' }
       },
@@ -152,7 +158,7 @@ describe('runReactRound', () => {
       systemPrompt: 'system',
       context,
       llm,
-      tools: { list: () => [], async execute() { return { content: '{}' } } },
+      tools: { list: () => [], classify: classifyExclusive, async execute() { return { content: '{}' } } },
       toolContext: { eventQueue, roundIndex: 1 },
     })
 
@@ -198,6 +204,7 @@ describe('runReactRound', () => {
       llm,
       tools: {
         list: () => [makeTool('done')],
+        classify: classifyExclusive,
         async execute() {
           executions++
           return { content: '{"ok":true}' }
@@ -238,8 +245,9 @@ describe('runReactRound', () => {
         systemPrompt: 'system',
         context,
         llm,
-        tools: {
-          list: () => [makeTool('dangerous')],
+      tools: {
+        list: () => [makeTool('dangerous')],
+        classify: classifyExclusive,
           async execute() {
             executions++
             return { content: '{"ok":true}' }
@@ -275,6 +283,7 @@ describe('runReactRound', () => {
 
     const tools: ToolExecutor = {
       list: () => [],
+      classify: classifyExclusive,
       async execute(): Promise<ToolExecutionResult> {
         assert.fail('no tool should execute when the LLM returns no tool calls')
       },
@@ -320,6 +329,7 @@ describe('runReactRound', () => {
       llm,
       tools: {
         list: () => [makeTool('render')],
+        classify: classifyExclusive,
         async execute() {
           return { content: [{
             type: 'image' as const,
@@ -361,6 +371,7 @@ describe('runReactRound', () => {
 
     const tools: ToolExecutor = {
       list: () => [makeTool('pause', z.object({ action: z.literal('rest') }))],
+      classify: classifyExclusive,
       async execute(): Promise<ToolExecutionResult> {
         return {
           content: '{"ok":true,"action":"rest"}',
@@ -417,6 +428,7 @@ describe('runReactRound', () => {
     }
     const tools: ToolExecutor = {
       list: () => [makeTool('invoke')],
+      classify: classifyExclusive,
       async execute() {
         return {
           content: '{"ok":true}',
@@ -463,6 +475,7 @@ describe('runReactRound', () => {
 
     const tools: ToolExecutor = {
       list: () => [makeTool('lookup', z.object({ query: z.string() }))],
+      classify: classifyExclusive,
       async execute(): Promise<ToolExecutionResult> {
         throw new Error('boom')
       },
@@ -525,6 +538,10 @@ describe('runReactRound', () => {
     }
     const tools: ToolExecutor = {
       list: () => calls.map((item) => makeTool(item.name)),
+      classify: (call) => ({
+        sideEffect: call.name === 'send_message',
+        concurrency: call.name === 'send_message' ? 'exclusive' : 'parallel',
+      }),
       async execute(call) {
         execution.push(`start:${call.id}`)
         if (call.id === 'read-1' || call.id === 'read-2') {

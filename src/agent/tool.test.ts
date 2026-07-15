@@ -5,6 +5,7 @@ import { createDeferredToolExecutor, createToolExecutor, type Tool } from './too
 import { InMemoryEventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import { createAgentContext } from './agent-context.js'
+import { applyBotToolPolicy } from './tools/policies.js'
 
 function makeCtx() {
   return {
@@ -82,7 +83,7 @@ describe('createToolExecutor', () => {
       schema: z.object({}),
       async execute() { return { content: '{"ok":true}' } },
     }
-    const thin = createToolExecutor([read, send], {
+    const thin = createToolExecutor([applyBotToolPolicy(read), applyBotToolPolicy(send)], {
       trace: {
         mode: 'side_effects',
         appender: async (_path, line) => { writes.push(line) },
@@ -92,7 +93,7 @@ describe('createToolExecutor', () => {
     await thin.execute({ id: 'send', name: 'send_message', args: {} }, makeCtx())
     assert.deepEqual(writes.map((line) => JSON.parse(line).toolName), ['send_message'])
 
-    const off = createToolExecutor([send], {
+    const off = createToolExecutor([applyBotToolPolicy(send)], {
       trace: {
         mode: 'off',
         appender: async (_path, line) => { writes.push(line) },
@@ -141,7 +142,7 @@ describe('createToolExecutor', () => {
     assert.equal(entry.roundIndex, 8)
     assert.equal(entry.durationMs, 3)
     assert.equal(entry.ok, false)
-    assert.equal(entry.sideEffect, false)
+    assert.equal(entry.sideEffect, true)
     assert.equal(entry.error, 'Invalid tool arguments')
   })
 
@@ -185,7 +186,7 @@ describe('createToolExecutor', () => {
         return { content: JSON.stringify({ ok: true }) }
       },
     }
-    const exec = createToolExecutor([memory], {
+    const exec = createToolExecutor([applyBotToolPolicy(memory)], {
       trace: {
         now: () => new Date('2026-05-25T12:00:00.000Z'),
         clockMs: () => 100,
@@ -224,7 +225,7 @@ describe('createToolExecutor', () => {
         return { content: JSON.stringify({ ok: true }) }
       },
     }
-    const exec = createToolExecutor([fetchContent], {
+    const exec = createToolExecutor([applyBotToolPolicy(fetchContent)], {
       trace: {
         now: () => new Date('2026-05-25T12:00:00.000Z'),
         clockMs: () => 100,
@@ -253,7 +254,7 @@ describe('createToolExecutor', () => {
         return { content: JSON.stringify({ ok: true }) }
       },
     }
-    const exec = createToolExecutor([website], {
+    const exec = createToolExecutor([applyBotToolPolicy(website)], {
       trace: {
         now: () => new Date('2026-07-10T00:00:00.000Z'),
         clockMs: () => 100,
@@ -296,7 +297,10 @@ describe('createToolExecutor', () => {
         return { content: JSON.stringify({ ok: true }) }
       },
     }
-    const exec = createToolExecutor([workspaceFile, collectSticker], {
+    const exec = createToolExecutor([
+      applyBotToolPolicy(workspaceFile),
+      applyBotToolPolicy(collectSticker),
+    ], {
       trace: {
         now: () => new Date('2026-05-25T12:00:00.000Z'),
         clockMs: () => 100,
@@ -339,7 +343,7 @@ describe('createToolExecutor', () => {
         return { content: JSON.stringify({ ok: true }) }
       },
     }
-    const exec = createToolExecutor([workspaceBash], {
+    const exec = createToolExecutor([applyBotToolPolicy(workspaceBash)], {
       trace: {
         now: () => new Date('2026-05-25T12:00:00.000Z'),
         clockMs: () => 100,
@@ -372,7 +376,7 @@ describe('createToolExecutor', () => {
         return { content: JSON.stringify({ ok: true }) }
       },
     }
-    const exec = createToolExecutor([notebook], {
+    const exec = createToolExecutor([applyBotToolPolicy(notebook)], {
       trace: {
         now: () => new Date('2026-05-25T12:00:00.000Z'),
         clockMs: () => 100,
@@ -411,7 +415,7 @@ describe('createToolExecutor', () => {
         return { content: JSON.stringify({ ok: true }) }
       },
     }
-    const exec = createToolExecutor([lifeJournal], {
+    const exec = createToolExecutor([applyBotToolPolicy(lifeJournal)], {
       trace: {
         now: () => new Date('2026-05-25T12:00:00.000Z'),
         clockMs: () => 100,
@@ -450,7 +454,7 @@ describe('createToolExecutor', () => {
         return { content: JSON.stringify({ ok: true }) }
       },
     }
-    const exec = createToolExecutor([skillEditor], {
+    const exec = createToolExecutor([applyBotToolPolicy(skillEditor)], {
       trace: {
         now: () => new Date('2026-05-25T12:00:00.000Z'),
         clockMs: () => 100,

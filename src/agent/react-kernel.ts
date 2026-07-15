@@ -184,8 +184,8 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
   let cursor = 0
   while (cursor < completion.toolCalls.length) {
     const call = completion.toolCalls[cursor]!
-    const batch = isParallelSafeToolCall(call)
-      ? takeParallelSafeBatch(completion.toolCalls, cursor)
+    const batch = isParallelSafeToolCall(input.tools, call)
+      ? takeParallelSafeBatch(input.tools, completion.toolCalls, cursor)
       : [call]
     if (batch.length > 1) {
       log.info(
@@ -243,13 +243,14 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
 }
 
 function takeParallelSafeBatch(
+  tools: ToolExecutor,
   calls: readonly Parameters<ToolExecutor['execute']>[0][],
   start: number,
 ): Parameters<ToolExecutor['execute']>[0][] {
   const batch: Parameters<ToolExecutor['execute']>[0][] = []
   for (let index = start; index < calls.length; index++) {
     const call = calls[index]!
-    if (!isParallelSafeToolCall(call)) break
+    if (!isParallelSafeToolCall(tools, call)) break
     batch.push(call)
   }
   return batch

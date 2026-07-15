@@ -2,7 +2,7 @@ import { z, type ZodTypeAny } from 'zod'
 import type { EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { AssistantToolCall, ToolResultContent } from './agent-context.types.js'
-import { isSideEffectTool, logToolCall, summarizeToolArgs } from '../ops/tool-call-log.js'
+import { logToolCall, summarizeToolArgs } from '../ops/tool-call-log.js'
 import { stripNullsFromOptionalFields, zodToToolJsonSchema } from './tool-schema.js'
 import { createLogger } from '../logger.js'
 import { formatBeijingIso } from '../utils/beijing-time.js'
@@ -28,7 +28,30 @@ export interface Tool<TArgs = unknown> {
   name: string
   description: string
   schema: ZodTypeAny
+  /** 调度与审计共用的运行时策略；未声明时 fail closed（exclusive + side effect）。 */
+  policy?: ToolPolicy
   execute(args: TArgs, ctx: ToolContext): Promise<ToolExecutionResult>
+}
+
+export interface ToolPolicyDecision {
+  /** true 时会进入 side_effects 模式的工具审计日志。 */
+  sideEffect: boolean
+  /** parallel 只允许与同一连续批次里的其他 parallel 调用并发。 */
+  concurrency: 'parallel' | 'exclusive'
+}
+
+export type ToolPolicy = (args: Record<string, unknown>) => ToolPolicyDecision
+
+export const CONSERVATIVE_TOOL_POLICY: ToolPolicyDecision = Object.freeze({
+  sideEffect: true,
+  concurrency: 'exclusive',
+})
+
+export function classifyToolExecution(
+  tool: Tool | undefined,
+  args: Record<string, unknown>,
+): ToolPolicyDecision {
+  return tool?.policy?.(args) ?? CONSERVATIVE_TOOL_POLICY
 }
 
 export interface ToolExecutionResult {
@@ -76,6 +99,8 @@ export type AfterToolHook = (
 
 export interface ToolExecutor {
   list(): Tool[]
+  /** 对真实调用（包括 deferred invoke 的内部目标）做统一调度/审计分类。 */
+  classify(call: AssistantToolCall): ToolPolicyDecision
   /** 翻译 LLM 给的 toolCall (含 id + name + 已 parsed 的 args), 找对应工具执行。 */
   execute(call: AssistantToolCall, ctx: ToolContext): Promise<ToolExecutionResult>
 }
@@ -131,6 +156,9 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
     list() {
       return [...tools]
     },
+    classify(call) {
+      return classifyToolExecution(byName.get(call.name), call.args)
+    },
     async execute(call, ctx) {
       const startedAt = options.trace ? (options.trace.clockMs?.() ?? Date.now()) : 0
       const tool = byName.get(call.name)
@@ -148,7 +176,9 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
           }),
           outcome: { ok: false, code: 'unknown_tool', error },
         }
-        await traceToolCall(options.trace, call, ctx.roundIndex, startedAt, result, error)
+        await traceToolCall(options.trace, call, ctx.roundIndex, startedAt, result, {
+          forcedError: error,
+        })
         return result
       }
       const normalizedArgs = stripNullsFromOptionalFields(tool.schema, call.args) as Record<string, unknown>
@@ -170,18 +200,21 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
           }),
           outcome: { ok: false, code: 'invalid_arguments', error },
         }
-        await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result, error)
+        await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result, {
+          tool,
+          forcedError: error,
+        })
         return result
       }
       const blocked = await runBeforeToolHooks(options.hooks?.beforeTool ?? [], { ...ctx, tool, call: normalizedCall })
       if (blocked) {
-        await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, blocked)
+        await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, blocked, { tool })
         return blocked
       }
       try {
         const result = await tool.execute(parseResult.data as never, ctx)
         await runAfterToolHooks(options.hooks?.afterTool ?? [], { ...ctx, tool, call: normalizedCall, result })
-        await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result)
+        await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result, { tool })
         return result
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
@@ -190,7 +223,10 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
           content: JSON.stringify({ ok: false, code: 'execution_failed', error }),
           outcome: { ok: false, code: 'execution_failed', error },
         }
-        await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result, error)
+        await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result, {
+          tool,
+          forcedError: error,
+        })
         return result
       }
     },
@@ -265,6 +301,20 @@ export function createDeferredToolExecutor(options: DeferredToolExecutorOptions)
     list() {
       return visibleTools()
     },
+    classify(call) {
+      if (call.name !== invoke.name) {
+        return classifyToolExecution(visibleTools().find((tool) => tool.name === call.name), call.args)
+      }
+      const parsed = invoke.schema.safeParse(normalizeInvokeToolArgs(call.args))
+      if (!parsed.success) return classifyToolExecution(invoke, call.args)
+      const invokeArgs = parsed.data as InvokeToolArgs
+      const targetArgs = invokeArgs.args ?? {}
+      const entries = deferredToolEntriesByName.get(invokeArgs.tool) ?? []
+      const entry = entries.find((item) => (
+        item.capability.acceptsToolCall?.(invokeArgs.tool, targetArgs) ?? true
+      )) ?? entries[0]
+      return classifyToolExecution(entry?.tool ?? invoke, targetArgs)
+    },
     execute(call, ctx) {
       if (call.name === invoke.name) {
         return executeInvokeToolCall({
@@ -333,6 +383,10 @@ function createHelpTool(options: {
       '顶层 tools 不会因 activate/deactivate 改变.',
     ].join(' '),
     schema,
+    policy: (args) => ({
+      sideEffect: args.action === 'activate' || args.action === 'deactivate',
+      concurrency: 'exclusive',
+    }),
     async execute(args) {
       if (args.action === 'list') {
         return {
@@ -467,6 +521,7 @@ function createInvokeTool(): Tool<InvokeToolArgs> {
       tool: z.string().trim().min(1).describe('要调用的内部工具名, 例如 browser、web_search、fetch_content、generate_image、openbb_cli.'),
       args: z.record(z.string(), z.unknown()).optional().describe('内部工具参数对象. 具体字段先用 help action=describe tool=<tool> 查看.'),
     }),
+    policy: () => ({ sideEffect: false, concurrency: 'exclusive' }),
     async execute(args) {
       return { content: JSON.stringify({ ok: true, tool: args.tool }) }
     },
@@ -497,6 +552,7 @@ async function executeInvokeToolCall(options: {
       options.ctx.roundIndex,
       startedAt,
       shellResult,
+      { tool: options.invoke },
     )
     return shellResult
   }
@@ -509,6 +565,7 @@ async function executeInvokeToolCall(options: {
       options.ctx.roundIndex,
       startedAt,
       shellResult,
+      { tool: options.invoke },
     )
     return shellResult
   }
@@ -534,6 +591,7 @@ async function executeInvokeToolCall(options: {
       options.ctx.roundIndex,
       startedAt,
       result,
+      { tool: options.invoke },
     )
     return result
   }
@@ -576,6 +634,7 @@ async function executeInvokeToolCall(options: {
       options.ctx.roundIndex,
       startedAt,
       result,
+      { tool: options.invoke },
     )
     return result
   }
@@ -650,15 +709,15 @@ async function traceToolCall(
   roundIndex: number,
   startedAt: number,
   result: ToolExecutionResult,
-  forcedError?: string,
+  options: { tool?: Tool; forcedError?: string } = {},
 ): Promise<void> {
   if (!trace) return
 
-  const sideEffect = isSideEffectTool(call.name, call.args)
+  const sideEffect = classifyToolExecution(options.tool, call.args).sideEffect
   if (trace.mode === 'off' || (trace.mode === 'side_effects' && !sideEffect)) return
 
   const finishedAt = trace.clockMs?.() ?? Date.now()
-  const classified = classifyToolResult(result, forcedError)
+  const classified = classifyToolResult(result, options.forcedError)
   const entry = {
     ts: formatBeijingIso(trace.now?.() ?? new Date()),
     toolCallId: call.id,

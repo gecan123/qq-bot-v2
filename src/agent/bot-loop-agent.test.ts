@@ -68,6 +68,7 @@ function makeMockTools(impl: Record<string, () => Promise<ToolExecutionResult>> 
   const noop = async () => ({ content: 'ok' })
   return {
     list: () => [],
+    classify: () => ({ sideEffect: true, concurrency: 'exclusive' }),
     async execute(call) {
       const fn = impl[call.name] ?? noop
       return fn()

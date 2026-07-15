@@ -45,6 +45,7 @@ import type { MemoryMaintenanceRuntime } from '../memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
 import type { AgentMessage } from '../agent-context.types.js'
 import { createQqConversationTool, type QqConversationController } from './qq-conversation.js'
+import { applyBotToolPolicy } from './policies.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -312,7 +313,13 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     },
   )
 
-  return { alwaysOnTools: tools, capabilities }
+  return {
+    alwaysOnTools: tools.map(applyBotToolPolicy),
+    capabilities: capabilities.map((capability) => ({
+      ...capability,
+      tools: capability.tools.map(applyBotToolPolicy),
+    })),
+  }
 }
 
 function resolveOptionalTool(

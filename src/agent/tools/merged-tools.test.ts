@@ -320,6 +320,12 @@ describe('merged main-agent tools', () => {
     ]
 
     assert.ok(allToolNames.includes('send_message'))
+    assert.equal(
+      [...manifest.alwaysOnTools, ...manifest.capabilities.flatMap((capability) => capability.tools)]
+        .every((tool) => typeof tool.policy === 'function'),
+      true,
+      'every bot tool must carry the centralized runtime policy',
+    )
     assert.equal(alwaysOnNames.includes('send_message'), false)
     assert.ok(alwaysOnNames.includes('qq_directory'))
     assert.equal(allToolNames.includes('send_image'), false)

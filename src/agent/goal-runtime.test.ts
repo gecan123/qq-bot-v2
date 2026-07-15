@@ -299,6 +299,7 @@ describe('BotLoop goal integration', () => {
       },
       tools: {
         list: () => [],
+        classify: () => ({ sideEffect: false, concurrency: 'exclusive' }),
         async execute() {
           return {
             content: JSON.stringify({ ok: true, status: 'elapsed', resumePlan: {} }),

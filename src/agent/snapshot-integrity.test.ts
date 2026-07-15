@@ -8,6 +8,7 @@ describe('validateBotSnapshotIntegrity', () => {
     const snapshot: PersistedAgentSnapshot = {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       activeToolCapabilities: ['external_research'],
+      qqConversationFocus: null,
       messages: [
         { role: 'user', content: '{"event":"inbox_update"}' },
         {
@@ -59,6 +60,7 @@ describe('validateBotSnapshotIntegrity', () => {
       snapshot: {
         schemaVersion: SNAPSHOT_SCHEMA_VERSION,
         activeToolCapabilities: [],
+        qqConversationFocus: null,
         messages: [
           {
             role: 'assistant',
@@ -81,6 +83,7 @@ describe('validateBotSnapshotIntegrity', () => {
       snapshot: {
         schemaVersion: SNAPSHOT_SCHEMA_VERSION,
         activeToolCapabilities: [],
+        qqConversationFocus: null,
         messages: [
           { role: 'tool', toolCallId: 'orphan', content: '{"ok":true}' },
           {
@@ -108,6 +111,7 @@ describe('validateBotSnapshotIntegrity', () => {
       snapshot: {
         schemaVersion: SNAPSHOT_SCHEMA_VERSION,
         activeToolCapabilities: [],
+        qqConversationFocus: null,
         messages: [
           {
             role: 'assistant',
@@ -131,6 +135,7 @@ describe('validateBotSnapshotIntegrity', () => {
       snapshot: {
         schemaVersion: SNAPSHOT_SCHEMA_VERSION,
         activeToolCapabilities: [],
+        qqConversationFocus: null,
         messages: [],
       },
       mailboxCursors: {},
@@ -153,6 +158,7 @@ describe('validateBotSnapshotIntegrity', () => {
     const malformed = {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       activeToolCapabilities: [],
+      qqConversationFocus: null,
       messages: [{ role: 'user', content: 42 }],
     } as unknown as PersistedAgentSnapshot
 
@@ -164,5 +170,32 @@ describe('validateBotSnapshotIntegrity', () => {
 
     assert.equal(result.ok, false)
     assert.match(result.errors.join('\n'), /messages\[0\]\.content must be a string/)
+  })
+
+  test('rejects malformed QQ conversation focus values', () => {
+    const malformedFocuses = [
+      undefined,
+      { type: 'group', groupId: 0 },
+      { type: 'group', groupId: Number.MAX_SAFE_INTEGER + 1 },
+      { type: 'private', userId: -1 },
+      { type: 'private', userId: 123, extra: true },
+      { type: 'unknown', userId: 123 },
+    ]
+
+    for (const qqConversationFocus of malformedFocuses) {
+      const result = validateBotSnapshotIntegrity({
+        snapshot: {
+          schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+          activeToolCapabilities: [],
+          messages: [],
+          qqConversationFocus,
+        } as unknown as PersistedAgentSnapshot,
+        mailboxCursors: {},
+        goalRevision: 0,
+      })
+
+      assert.equal(result.ok, false, `expected rejection for ${JSON.stringify(qqConversationFocus)}`)
+      assert.match(result.errors.join('\n'), /qqConversationFocus/)
+    }
   })
 })

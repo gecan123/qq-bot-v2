@@ -32,6 +32,7 @@ function snapshot(label: string): PersistedAgentSnapshot {
   return {
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
     activeToolCapabilities: [],
+    qqConversationFocus: null,
     messages: [{ role: 'user', content: label }],
   }
 }
@@ -53,6 +54,7 @@ function corruptRow(label: string): SnapshotRow {
     contextSnapshot: {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       activeToolCapabilities: [],
+      qqConversationFocus: null,
       messages: [{
         role: 'assistant',
         content: '',

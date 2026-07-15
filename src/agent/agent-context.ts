@@ -3,6 +3,7 @@ import type {
   AssistantToolCall,
   ClaudeAssistantNativeBlock,
   PersistedAgentSnapshot,
+  QqConversationFocus,
   ToolResultContent,
   ToolResultContentBlock,
 } from './agent-context.types.js'
@@ -13,6 +14,7 @@ export type {
   AssistantToolCall,
   ClaudeAssistantNativeBlock,
   PersistedAgentSnapshot,
+  QqConversationFocus,
   ToolResultContent,
 } from './agent-context.types.js'
 
@@ -27,7 +29,11 @@ export type {
  *    activeToolCapabilities 是 runtime control state, 不进 LLM messages。
  */
 export interface AgentContext {
-  getSnapshot(): { messages: AgentMessage[]; activeToolCapabilities: string[] }
+  getSnapshot(): {
+    messages: AgentMessage[]
+    activeToolCapabilities: string[]
+    qqConversationFocus: QqConversationFocus
+  }
   appendUserMessage(content: string): void
   appendAssistantTurn(turn: {
     content: string
@@ -37,6 +43,7 @@ export interface AgentContext {
   appendToolResult(input: { toolCallId: string; content: ToolResultContent }): void
   activateToolCapability(capability: string): void
   deactivateToolCapability(capability: string): void
+  setQqConversationFocus(focus: QqConversationFocus): void
   /** compaction 唯一写口。原子替换全部 messages。 */
   replaceMessages(messages: AgentMessage[]): void
   exportPersistedSnapshot(): PersistedAgentSnapshot
@@ -52,12 +59,14 @@ interface CreateAgentContextOptions {
 export function createAgentContext(options: CreateAgentContextOptions = {}): AgentContext {
   let messages: AgentMessage[] = options.initialMessages ? cloneMessages(options.initialMessages) : []
   let activeToolCapabilities: string[] = []
+  let qqConversationFocus: QqConversationFocus = null
 
   const impl: AgentContext = {
-    getSnapshot(): { messages: AgentMessage[]; activeToolCapabilities: string[] } {
+    getSnapshot() {
       return {
         messages: cloneMessages(messages),
         activeToolCapabilities: [...activeToolCapabilities],
+        qqConversationFocus: cloneQqConversationFocus(qqConversationFocus),
       }
     },
     appendUserMessage(content: string): void {
@@ -93,6 +102,9 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
     deactivateToolCapability(capability: string): void {
       activeToolCapabilities = activeToolCapabilities.filter((item) => item !== capability)
     },
+    setQqConversationFocus(focus: QqConversationFocus): void {
+      qqConversationFocus = cloneQqConversationFocus(focus)
+    },
     replaceMessages(next: AgentMessage[]): void {
       messages = cloneMessages(next)
     },
@@ -101,18 +113,28 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
         schemaVersion: SNAPSHOT_SCHEMA_VERSION,
         messages: cloneMessages(messages),
         activeToolCapabilities: [...activeToolCapabilities],
+        qqConversationFocus: cloneQqConversationFocus(qqConversationFocus),
       }
     },
     restorePersistedSnapshot(snapshot: PersistedAgentSnapshot): void {
       messages = cloneMessages(snapshot.messages)
       activeToolCapabilities = sanitizeToolCapabilities(snapshot.activeToolCapabilities)
+      qqConversationFocus = cloneQqConversationFocus(snapshot.qqConversationFocus)
     },
     reset(): void {
       messages = []
       activeToolCapabilities = []
+      qqConversationFocus = null
     },
   }
   return impl
+}
+
+function cloneQqConversationFocus(focus: QqConversationFocus): QqConversationFocus {
+  if (focus == null) return null
+  return focus.type === 'group'
+    ? { type: 'group', groupId: focus.groupId }
+    : { type: 'private', userId: focus.userId }
 }
 
 function sanitizeToolCapabilities(input: unknown): string[] {

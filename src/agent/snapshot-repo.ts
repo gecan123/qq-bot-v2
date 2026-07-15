@@ -17,6 +17,7 @@ type RawPersistedAgentSnapshot = {
   schemaVersion: number
   messages: PersistedAgentSnapshot['messages']
   activeToolCapabilities?: unknown
+  qqConversationFocus: PersistedAgentSnapshot['qqConversationFocus']
 }
 
 interface SnapshotStorageRow {
@@ -242,6 +243,7 @@ function migrateSnapshot(raw: RawPersistedAgentSnapshot): PersistedAgentSnapshot
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
     messages: raw.messages,
     activeToolCapabilities: sanitizeToolCapabilities(raw.activeToolCapabilities),
+    qqConversationFocus: raw.qqConversationFocus,
   }
 }
 
@@ -250,7 +252,8 @@ function isPersistedAgentSnapshot(value: unknown): value is RawPersistedAgentSna
   const obj = value as Record<string, unknown>
   return (
     typeof obj['schemaVersion'] === 'number' &&
-    Array.isArray(obj['messages'])
+    Array.isArray(obj['messages']) &&
+    Object.prototype.hasOwnProperty.call(obj, 'qqConversationFocus')
   )
 }
 

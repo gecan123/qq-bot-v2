@@ -450,6 +450,7 @@ async function compactConversation(
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       messages: candidateMessages,
       activeToolCapabilities: snapshot.activeToolCapabilities,
+      qqConversationFocus: snapshot.qqConversationFocus,
     },
     mailboxCursors: {},
     goalRevision: 0,

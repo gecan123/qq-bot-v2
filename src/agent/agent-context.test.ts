@@ -69,9 +69,36 @@ describe('createAgentContext', () => {
     assert.deepEqual(ctx2.getSnapshot(), {
       messages: persisted.messages,
       activeToolCapabilities: ['browser', 'media_generation'],
+      qqConversationFocus: null,
     })
     ctx2.deactivateToolCapability('browser')
     assert.deepEqual(ctx2.getSnapshot().activeToolCapabilities, ['media_generation'])
+  })
+
+  test('QQ conversation focus is cloned, persisted, restored, and survives message replacement', () => {
+    const ctx = createAgentContext()
+    const focus = { type: 'group' as const, groupId: 123 }
+
+    ctx.setQqConversationFocus(focus)
+    focus.groupId = 456
+    assert.deepEqual(ctx.getSnapshot().qqConversationFocus, { type: 'group', groupId: 123 })
+
+    const snapshot = ctx.getSnapshot()
+    if (snapshot.qqConversationFocus?.type === 'group') {
+      snapshot.qqConversationFocus.groupId = 789
+    }
+    assert.deepEqual(ctx.getSnapshot().qqConversationFocus, { type: 'group', groupId: 123 })
+
+    const persisted = ctx.exportPersistedSnapshot()
+    const restored = createAgentContext()
+    restored.restorePersistedSnapshot(persisted)
+    assert.deepEqual(restored.getSnapshot().qqConversationFocus, { type: 'group', groupId: 123 })
+
+    restored.replaceMessages([{ role: 'user', content: 'summary' }])
+    assert.deepEqual(restored.getSnapshot().qqConversationFocus, { type: 'group', groupId: 123 })
+
+    restored.setQqConversationFocus(null)
+    assert.equal(restored.getSnapshot().qqConversationFocus, null)
   })
 
   test('cloning isolates assistant tool call args', () => {

@@ -49,6 +49,7 @@ import type { MemoryMaintenanceRuntime } from './memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
 import { hasPendingRestAlternative } from './tools/rest.js'
 import { createLogger } from '../logger.js'
+import { createQqConversationController } from './tools/qq-conversation.js'
 
 const scheduleLog = createLogger('SCHEDULE')
 
@@ -148,11 +149,21 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       input.selfNumber,
     ),
   })
+  const conversations = createQqConversationController({
+    state: {
+      get: () => input.context.getSnapshot().qqConversationFocus,
+      set: (focus) => input.context.setQqConversationFocus(focus),
+    },
+    groupIds: input.groupIds,
+    loadGroups: input.loadGroups,
+    loadFriends: input.loadFriends,
+  })
   const sendMessageSafetyGuard = createSendMessageSafetyGuard()
   const tools = createDeferredToolExecutor({
     ...buildBotToolManifest({
       sender: input.sender,
       targetPolicy,
+      conversations,
       taskRegistry,
       taskScheduler: input.taskScheduler,
       scheduleRuntime,

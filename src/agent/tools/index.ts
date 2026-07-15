@@ -44,10 +44,12 @@ import type { GoalStore } from '../goal-store.js'
 import type { MemoryMaintenanceRuntime } from '../memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
 import type { AgentMessage } from '../agent-context.types.js'
+import { createQqConversationTool, type QqConversationController } from './qq-conversation.js'
 
 export interface BotToolDeps {
   sender: MessageSender
   targetPolicy: SendTargetPolicy
+  conversations: QqConversationController
   taskRegistry: BackgroundTaskRegistry
   groupIds: readonly number[]
   selfNumber: number
@@ -113,6 +115,12 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     () => maybeCreateTradingAgentTool({ taskRegistry: deps.taskRegistry }) ?? null,
   )
   const qqDirectory = createQqDirectoryTool(deps.qqDirectory)
+  const qqConversation = createQqConversationTool(deps.conversations)
+  const sendMessage = createSendMessageTool({
+    sender: deps.sender,
+    targetPolicy: deps.targetPolicy,
+    conversations: deps.conversations,
+  })
   const backgroundTask = createBackgroundTaskTool({ taskRegistry: deps.taskRegistry })
   const inbox = createInboxTool({ groupIds: deps.groupIds, selfNumber: deps.selfNumber })
   const chatStyle = createChatStyleTool({
@@ -179,10 +187,6 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   }) : null
   const tools: Tool[] = [
     pause,
-    createSendMessageTool({
-      sender: deps.sender,
-      targetPolicy: deps.targetPolicy,
-    }),
     qqDirectory,
     backgroundTask,
     createScheduleTool(deps.scheduleRuntime),
@@ -212,6 +216,12 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     workspaceBash,
   ]
   const capabilities: DeferredToolCapability[] = []
+
+  capabilities.push({
+    name: 'qq',
+    description: 'QQ 会话导航与发送；先打开当前会话，再通过 invoke 发送文本、图片或音乐.',
+    tools: [qqConversation, sendMessage],
+  })
 
   if (deps.mcpManager?.hasServers()) {
     capabilities.push({

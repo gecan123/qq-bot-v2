@@ -7,6 +7,7 @@ import type {
   ToolResultContentBlock,
 } from './agent-context.types.js'
 import { SNAPSHOT_SCHEMA_VERSION } from './agent-context.types.js'
+import { validateBotSnapshotIntegrity } from './snapshot-integrity.js'
 
 export type {
   AgentMessage,
@@ -39,6 +40,8 @@ export interface AgentContext {
   deactivateToolCapability(capability: string): void
   /** compaction 唯一写口。原子替换全部 messages。 */
   replaceMessages(messages: AgentMessage[]): void
+  /** Runtime Host 在 canonical commit/reload 后安装完整 projection。 */
+  installProjection(snapshot: PersistedAgentSnapshot): void
   exportPersistedSnapshot(): PersistedAgentSnapshot
   restorePersistedSnapshot(snapshot: PersistedAgentSnapshot): void
   /** 测试用。 */
@@ -96,6 +99,20 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
     replaceMessages(next: AgentMessage[]): void {
       messages = cloneMessages(next)
     },
+    installProjection(snapshot: PersistedAgentSnapshot): void {
+      const validation = validateBotSnapshotIntegrity({
+        snapshot,
+        mailboxCursors: {},
+        goalRevision: 0,
+      })
+      if (!validation.ok) {
+        throw new Error(`projection integrity validation failed: ${validation.errors.join('; ')}`)
+      }
+      const nextMessages = cloneMessages(snapshot.messages)
+      const nextCapabilities = [...snapshot.activeToolCapabilities]
+      messages = nextMessages
+      activeToolCapabilities = nextCapabilities
+    },
     exportPersistedSnapshot(): PersistedAgentSnapshot {
       return {
         schemaVersion: SNAPSHOT_SCHEMA_VERSION,
@@ -104,8 +121,10 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
       }
     },
     restorePersistedSnapshot(snapshot: PersistedAgentSnapshot): void {
-      messages = cloneMessages(snapshot.messages)
-      activeToolCapabilities = sanitizeToolCapabilities(snapshot.activeToolCapabilities)
+      impl.installProjection({
+        ...snapshot,
+        activeToolCapabilities: sanitizeToolCapabilities(snapshot.activeToolCapabilities),
+      })
     },
     reset(): void {
       messages = []

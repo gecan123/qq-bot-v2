@@ -51,6 +51,34 @@ describe('createAgentContext', () => {
     assert.equal(messages[0]?.role, 'user')
   })
 
+  test('installProjection validates, clones, and atomically replaces the complete snapshot', () => {
+    const ctx = createAgentContext()
+    const projection = {
+      schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+      messages: [{ role: 'user' as const, content: 'projected' }],
+      activeToolCapabilities: ['browser'],
+    }
+
+    ctx.installProjection(projection)
+    projection.messages[0]!.content = 'mutated'
+    projection.activeToolCapabilities.push('media_generation')
+
+    assert.deepEqual(ctx.exportPersistedSnapshot(), {
+      schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+      messages: [{ role: 'user', content: 'projected' }],
+      activeToolCapabilities: ['browser'],
+    })
+    assert.throws(
+      () => ctx.installProjection({
+        schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+        messages: [{ role: 'tool', toolCallId: 'orphan', content: 'bad' }],
+        activeToolCapabilities: [],
+      }),
+      /projection integrity validation failed/,
+    )
+    assert.deepEqual(ctx.getSnapshot().messages, [{ role: 'user', content: 'projected' }])
+  })
+
   test('exportPersistedSnapshot includes schemaVersion and is round-trippable', () => {
     const ctx1 = createAgentContext()
     ctx1.appendUserMessage('hello')

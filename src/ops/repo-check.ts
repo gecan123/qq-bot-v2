@@ -111,9 +111,7 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
     errors.push('README.md must document bot_agent_snapshot as the persistent AgentContext table')
   }
 
-  if (!files['prisma/schema.prisma'].includes('@@map("bot_agent_snapshot")')) {
-    errors.push('prisma/schema.prisma must map BotAgentSnapshot to bot_agent_snapshot')
-  }
+  checkAgentPersistenceSchema(files['prisma/schema.prisma'], errors)
 
   const packageJson = parsePackageJson(files['package.json'], errors)
   const scripts = packageJson?.scripts
@@ -153,6 +151,28 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   }
 
   return { errors }
+}
+
+function checkAgentPersistenceSchema(schema: string, errors: string[]): void {
+  const requiredModels = [
+    ['BotAgentLedgerEntry', 'bot_agent_ledger_entries'],
+    ['BotAgentRuntimeState', 'bot_agent_runtime_state'],
+    ['BotAgentCheckpoint', 'bot_agent_checkpoint'],
+  ] as const
+  for (const [model, table] of requiredModels) {
+    const pattern = new RegExp(
+      `model\\s+${model}\\s*\\{[\\s\\S]*?@@map\\("${table}"\\)[\\s\\S]*?\\}`,
+    )
+    if (!pattern.test(schema)) {
+      errors.push(`prisma/schema.prisma must map ${model} to ${table}`)
+    }
+  }
+
+  for (const model of ['BotAgentSnapshot', 'BotAgentSnapshotCheckpoint']) {
+    if (new RegExp(`(?:^|\\n)model\\s+${model}\\s*\\{`).test(schema)) {
+      errors.push(`prisma/schema.prisma must not define legacy model ${model}`)
+    }
+  }
 }
 
 function checkMemoryArchitecture(files: RepoCheckFiles, errors: string[]): void {

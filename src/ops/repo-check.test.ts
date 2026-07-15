@@ -71,7 +71,17 @@ const validFiles = {
   ].join('\n'),
   'prompts/bot-chat-constraints.md': '<!-- section:chat_constraints -->\n聊天约束\n单条消息 ≤ 500 字.\n<!-- /section:chat_constraints -->\n',
   'prompts/bot-style.md': '<!-- section:style_index -->\nLuna 按需风格指南\nconstraints\n<!-- /section:style_index -->\n',
-  'prisma/schema.prisma': 'model BotAgentSnapshot {\n  @@map("bot_agent_snapshot")\n}\n',
+  'prisma/schema.prisma': [
+    'model BotAgentLedgerEntry {',
+    '  @@map("bot_agent_ledger_entries")',
+    '}',
+    'model BotAgentRuntimeState {',
+    '  @@map("bot_agent_runtime_state")',
+    '}',
+    'model BotAgentCheckpoint {',
+    '  @@map("bot_agent_checkpoint")',
+    '}',
+  ].join('\n'),
   'docs/README.md': 'docs/ARCHITECTURE.md\ndocs/AGENT_CONTEXT.md\ndocs/MEMORY_ARCHITECTURE.md\ndocs/TOOLS.md\ndocs/OPERATIONS.md\ndocs/TECH_DEBT.md\n',
   'docs/ARCHITECTURE.md': '# Architecture\n',
   'docs/AGENT_CONTEXT.md': '# Persistent Agent Context\n',
@@ -90,6 +100,26 @@ describe('runRepoChecks', () => {
     const result = runRepoChecks(validFiles)
 
     assert.deepEqual(result.errors, [])
+  })
+
+  test('requires append-only agent ledger models and rejects legacy snapshot models', () => {
+    const result = runRepoChecks({
+      ...validFiles,
+      'prisma/schema.prisma': [
+        'model BotAgentSnapshot {',
+        '  @@map("bot_agent_snapshot")',
+        '}',
+        'model BotAgentSnapshotCheckpoint {',
+        '  @@map("bot_agent_snapshot_checkpoints")',
+        '}',
+      ].join('\n'),
+    })
+
+    assert.match(result.errors.join('\n'), /BotAgentLedgerEntry.*bot_agent_ledger_entries/)
+    assert.match(result.errors.join('\n'), /BotAgentRuntimeState.*bot_agent_runtime_state/)
+    assert.match(result.errors.join('\n'), /BotAgentCheckpoint.*bot_agent_checkpoint/)
+    assert.match(result.errors.join('\n'), /must not define legacy model BotAgentSnapshot/)
+    assert.match(result.errors.join('\n'), /must not define legacy model BotAgentSnapshotCheckpoint/)
   })
 
   test('rejects stale README references to removed architecture surfaces', () => {

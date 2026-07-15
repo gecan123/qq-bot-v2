@@ -54,41 +54,47 @@ model Media {
   @@map("media")
 }
 
-/// 单上下文 bot 的 AgentContext 持久化。永远只有 id=1 这一行。
-/// contextSnapshot 保存 durable messages 和非 LLM 可见的 activeToolCapabilities。
-/// LLM 请求使用从 durable messages 确定性构造的 working-context projection。
-/// 详见 src/agent/agent-context.ts 和 AGENTS.md / CLAUDE.md「永续上下文契约」。
-model BotAgentSnapshot {
-  id              Int      @id @default(1)
-  schemaVersion   Int      @default(1) @map("schema_version")
-  contextSnapshot Json     @map("context_snapshot")
-  mailboxCursors  Json     @default("{}") @map("mailbox_cursors")
-  mailboxContinuity Json   @default("{}") @map("mailbox_continuity")
-  goalRevision    Int      @default(0) @map("goal_revision")
-  lastWakeAt      DateTime? @map("last_wake_at") @db.Timestamptz(3)
-  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+/// LLM 历史的 canonical append-only ledger。运行时只允许追加，不更新或删除旧 entry。
+model BotAgentLedgerEntry {
+  id        BigInt   @id @default(autoincrement())
+  entryType String   @map("entry_type")
+  payload   Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  @@map("bot_agent_snapshot")
+  @@index([entryType, id])
+  @@map("bot_agent_ledger_entries")
 }
 
-/// AgentContext 当前快照的最近历史版本，只用于完整性恢复和审计。
-/// 正常 replay 永远读取 BotAgentSnapshot；checkpoint 不参与 prompt history 拼装。
-model BotAgentSnapshotCheckpoint {
-  id                BigInt    @id @default(autoincrement())
-  schemaVersion     Int       @map("schema_version")
-  contextSnapshot   Json      @map("context_snapshot")
-  mailboxCursors    Json      @map("mailbox_cursors")
-  mailboxContinuity Json      @map("mailbox_continuity")
-  goalRevision      Int       @map("goal_revision")
-  lastWakeAt        DateTime? @map("last_wake_at") @db.Timestamptz(3)
-  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+/// 非 LLM 历史的单例控制状态。和可见事实一起变化时，必须与 ledger append 同事务。
+model BotAgentRuntimeState {
+  id                     Int       @id
+  schemaVersion          Int       @map("schema_version")
+  mailboxCursors         Json      @map("mailbox_cursors")
+  mailboxContinuity      Json      @map("mailbox_continuity")
+  goalRevision           Int       @map("goal_revision")
+  activeToolCapabilities Json      @map("active_tool_capabilities")
+  lastWakeAt             DateTime? @map("last_wake_at") @db.Timestamptz(6)
+  ledgerHeadEntryId      BigInt?   @map("ledger_head_entry_id")
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  @@index([createdAt(sort: Desc)])
-  @@map("bot_agent_snapshot_checkpoints")
+  @@map("bot_agent_runtime_state")
+}
+
+/// 当前 ledger projection 的可重建启动缓存；不是历史事实来源。
+model BotAgentCheckpoint {
+  id             Int      @id
+  schemaVersion  Int      @map("schema_version")
+  throughEntryId BigInt?  @map("through_entry_id")
+  fingerprint    String
+  projection     Json
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("bot_agent_checkpoint")
 }
 
 /// 主 Agent 的单一持久目标控制状态。id 永远为 1；goalId 用来隔离目标替换后的迟到调用。
-/// 该表只控制 runtime 调度，LLM 可见事实仍必须 append 到 BotAgentSnapshot.contextSnapshot。
+/// 该表只控制 runtime 调度，LLM 可见事实仍必须 append 到 BotAgentLedgerEntry。
 model BotAgentGoal {
   id                      Int      @id @default(1)
   goalId                  String   @unique @map("goal_id") @db.Uuid

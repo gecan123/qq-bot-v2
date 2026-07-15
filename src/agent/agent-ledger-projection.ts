@@ -180,7 +180,7 @@ function parseCompactionPayload(value: unknown, path: string): CompactionLedgerP
   }
 }
 
-function parseAgentRuntimeState(value: unknown): AgentRuntimeState {
+export function parseAgentRuntimeState(value: unknown): AgentRuntimeState {
   const path = 'runtimeState'
   const state = requireRecord(value, path)
   requireExactKeys(state, [

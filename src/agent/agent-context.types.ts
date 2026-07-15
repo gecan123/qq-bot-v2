@@ -34,9 +34,23 @@ export interface ToolResultImageBlock {
   }
 }
 
-export type ToolResultContentBlock = ToolResultTextBlock | ToolResultImageBlock
+/** Canonical image representation. Binary data stays in Media, never in the ledger. */
+export interface ToolResultImageRefBlock {
+  type: 'image_ref'
+  mediaId: string
+  mediaType: string
+  width?: number
+  height?: number
+  description?: string
+}
 
+export type ToolResultContentBlock =
+  | ToolResultTextBlock
+  | ToolResultImageBlock
+  | ToolResultImageRefBlock
 export type ToolResultContent = string | ToolResultContentBlock[]
+export type DurableToolResultContentBlock = ToolResultTextBlock | ToolResultImageRefBlock
+export type DurableToolResultContent = string | DurableToolResultContentBlock[]
 
 export type AgentMessage =
   | { role: 'user'; content: string }
@@ -48,10 +62,7 @@ export type AgentMessage =
     }
   | { role: 'tool'; toolCallId: string; content: ToolResultContent }
 
-/**
- * Canonical ledger message shape. It is currently identical to the working
- * message shape and can evolve independently when stable media refs are added.
- */
+/** Runtime union is shared; canonical writers/parsers enforce the ref-only subset. */
 export type DurableAgentMessage = AgentMessage
 
 /**

@@ -1,7 +1,7 @@
 import type {
-  AgentMessage,
   AssistantToolCall,
   ClaudeAssistantNativeBlock,
+  DurableAgentMessage,
   PersistedAgentSnapshot,
   ToolResultContent,
   ToolResultContentBlock,
@@ -10,11 +10,10 @@ import { SNAPSHOT_SCHEMA_VERSION } from './agent-context.types.js'
 import { validateBotSnapshotIntegrity } from './snapshot-integrity.js'
 
 export type {
-  AgentMessage,
   AssistantToolCall,
   ClaudeAssistantNativeBlock,
+  DurableAgentMessage,
   PersistedAgentSnapshot,
-  ToolResultContent,
 } from './agent-context.types.js'
 
 /**
@@ -28,7 +27,7 @@ export type {
  *    activeToolCapabilities 是 runtime control state, 不进 LLM messages。
  */
 export interface AgentContext {
-  getSnapshot(): { messages: AgentMessage[]; activeToolCapabilities: string[] }
+  getSnapshot(): { messages: DurableAgentMessage[]; activeToolCapabilities: string[] }
   appendUserMessage(content: string): void
   appendAssistantTurn(turn: {
     content: string
@@ -39,7 +38,7 @@ export interface AgentContext {
   activateToolCapability(capability: string): void
   deactivateToolCapability(capability: string): void
   /** compaction 唯一写口。原子替换全部 messages。 */
-  replaceMessages(messages: AgentMessage[]): void
+  replaceMessages(messages: DurableAgentMessage[]): void
   /** Runtime Host 在 canonical commit/reload 后安装完整 projection。 */
   installProjection(snapshot: PersistedAgentSnapshot): void
   exportPersistedSnapshot(): PersistedAgentSnapshot
@@ -49,15 +48,15 @@ export interface AgentContext {
 }
 
 interface CreateAgentContextOptions {
-  initialMessages?: AgentMessage[]
+  initialMessages?: DurableAgentMessage[]
 }
 
 export function createAgentContext(options: CreateAgentContextOptions = {}): AgentContext {
-  let messages: AgentMessage[] = options.initialMessages ? cloneMessages(options.initialMessages) : []
+  let messages: DurableAgentMessage[] = options.initialMessages ? cloneMessages(options.initialMessages) : []
   let activeToolCapabilities: string[] = []
 
   const impl: AgentContext = {
-    getSnapshot(): { messages: AgentMessage[]; activeToolCapabilities: string[] } {
+    getSnapshot(): { messages: DurableAgentMessage[]; activeToolCapabilities: string[] } {
       return {
         messages: cloneMessages(messages),
         activeToolCapabilities: [...activeToolCapabilities],
@@ -71,7 +70,7 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
       toolCalls: AssistantToolCall[]
       nativeBlocks?: ClaudeAssistantNativeBlock[]
     }): void {
-      const message: AgentMessage = {
+      const message: DurableAgentMessage = {
         role: 'assistant',
         content: turn.content,
         toolCalls: turn.toolCalls.map(cloneToolCall),
@@ -96,7 +95,7 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
     deactivateToolCapability(capability: string): void {
       activeToolCapabilities = activeToolCapabilities.filter((item) => item !== capability)
     },
-    replaceMessages(next: AgentMessage[]): void {
+    replaceMessages(next: DurableAgentMessage[]): void {
       messages = cloneMessages(next)
     },
     installProjection(snapshot: PersistedAgentSnapshot): void {
@@ -148,17 +147,17 @@ function sanitizeToolCapabilities(input: unknown): string[] {
   return output
 }
 
-function cloneMessages(input: AgentMessage[]): AgentMessage[] {
+function cloneMessages(input: DurableAgentMessage[]): DurableAgentMessage[] {
   return input.map(cloneMessage)
 }
 
-function cloneMessage(input: AgentMessage): AgentMessage {
+function cloneMessage(input: DurableAgentMessage): DurableAgentMessage {
   switch (input.role) {
     case 'user':
       return { role: 'user', content: input.content }
     case 'assistant':
       {
-        const output: AgentMessage = {
+        const output: DurableAgentMessage = {
           role: 'assistant',
           content: input.content,
           toolCalls: input.toolCalls.map(cloneToolCall),
@@ -194,13 +193,17 @@ function cloneToolResultBlock(block: ToolResultContentBlock): ToolResultContentB
   if (block.type === 'text') {
     return { type: 'text', text: block.text }
   }
+  if (block.type === 'image_ref') return {
+    type: 'image_ref',
+    mediaId: block.mediaId,
+    mediaType: block.mediaType,
+    ...(block.width == null ? {} : { width: block.width }),
+    ...(block.height == null ? {} : { height: block.height }),
+    ...(block.description == null ? {} : { description: block.description }),
+  }
   return {
     type: 'image',
-    source: {
-      type: 'base64',
-      media_type: block.source.media_type,
-      data: block.source.data,
-    },
+    source: { ...block.source },
   }
 }
 

@@ -1,5 +1,5 @@
 import type { AgentContext } from './agent-context.js'
-import type { AgentMessage } from './agent-context.types.js'
+import type { DurableAgentMessage } from './agent-context.types.js'
 import type { LlmCallOutput, LlmClient } from './llm-client.js'
 import type { ToolContext, ToolEffect, ToolExecutionResult, ToolExecutor } from './tool.js'
 import { recordTokenUsage } from './token-stats.js'
@@ -9,6 +9,8 @@ import {
   type WorkingContextOptions,
 } from './working-context.js'
 import { isParallelSafeToolCall } from './tool-concurrency.js'
+import { toDurableAgentMessage } from './durable-agent-message.js'
+import type { AgentImageRefStore } from '../media/agent-image-ref.js'
 
 const log = createLogger('REACT_KERNEL')
 
@@ -19,8 +21,9 @@ export interface ReactRoundInput {
   tools: ToolExecutor
   toolContext: ToolContext
   /** 本次 request 内已成功执行但尚未提交的前序 round 消息。 */
-  stagedMessages?: readonly AgentMessage[]
+  stagedMessages?: readonly DurableAgentMessage[]
   workingContext?: WorkingContextOptions
+  imageRefs?: AgentImageRefStore
   signal?: AbortSignal
 }
 
@@ -44,7 +47,7 @@ export interface ReactRoundResult {
   toolCallCount: number
   effects: ReactToolEffect[]
   /** assistant tool call 与全部 tool result 的原子追加批次。 */
-  messagesToAppend: AgentMessage[]
+  messagesToAppend: DurableAgentMessage[]
   /** 包含 max_tokens 重试，供 host 做完整观测。 */
   completions: LlmCallOutput[]
   /** 仅供当前 Runtime Host 决定纠错/等待，不进入 AgentContext。 */
@@ -86,7 +89,10 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
     ...snapshot.messages,
     ...(input.stagedMessages ?? []),
   ]
-  const workingContext = buildWorkingContextProjection(sourceMessages, input.workingContext)
+  const workingContext = await buildWorkingContextProjection(sourceMessages, {
+    ...input.workingContext,
+    ...(input.imageRefs ? { imageRefs: input.imageRefs } : {}),
+  })
   const visibleTools = input.tools.list()
 
   if (workingContext.stats.omittedImages > 0) {
@@ -160,7 +166,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
     )
   }
 
-  const messagesToAppend: AgentMessage[] = []
+  const messagesToAppend: DurableAgentMessage[] = []
   if (completion.toolCalls.length > 0) {
     messagesToAppend.push({
       role: 'assistant',
@@ -212,11 +218,11 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
         ok: result.outcome?.ok ?? true,
         code: result.outcome?.code,
       }, 'round_tool_done')
-      messagesToAppend.push({
+      messagesToAppend.push(await toDurableAgentMessage({
         role: 'tool',
         toolCallId: batchCall.id,
         content: result.content,
-      })
+      }, input.imageRefs))
     }
     cursor += batch.length
   }

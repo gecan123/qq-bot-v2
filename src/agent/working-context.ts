@@ -1,22 +1,28 @@
 import type {
   AgentMessage,
+  DurableAgentMessage,
   ToolResultContentBlock,
-  ToolResultImageBlock,
+  ToolResultImageRefBlock,
 } from './agent-context.types.js'
+import {
+  agentImageRefStore,
+  type AgentImageRefStore,
+} from '../media/agent-image-ref.js'
 
 const DEFAULT_RECENT_IMAGE_TOOL_RESULTS = 3
 
 export interface WorkingContextOptions {
-  /** 从 ledger 尾部保留完整图片的 tool-result 消息数；更早图片只在投影中替换为稳定文本。 */
+  /** Hydrate image refs only in this many most-recent tool-result messages. */
   recentImageToolResults?: number
+  imageRefs?: AgentImageRefStore
 }
 
 export interface WorkingContextStats {
   sourceMessages: number
   projectedMessages: number
-  preservedImages: number
+  hydratedImages: number
   omittedImages: number
-  omittedBase64Chars: number
+  unavailableImages: number
 }
 
 export interface WorkingContextProjection {
@@ -24,71 +30,94 @@ export interface WorkingContextProjection {
   stats: WorkingContextStats
 }
 
-/**
- * 从 durable AgentContext 构造单次 LLM 请求的可重建投影。
- *
- * 它不删 message、不改 role、不拆 tool call/result，只降级较旧 tool result 中的图片字节。
- * 因而 snapshot/replay 仍保存原始事实，working context 可以在每轮从 ledger 确定性重建。
- */
-export function buildWorkingContextProjection(
-  source: readonly AgentMessage[],
+/** Build a disposable LLM projection. Canonical messages remain stable refs. */
+export async function buildWorkingContextProjection(
+  source: readonly DurableAgentMessage[],
   options: WorkingContextOptions = {},
-): WorkingContextProjection {
+): Promise<WorkingContextProjection> {
   const recentImageToolResults = normalizeNonNegativeInteger(
     options.recentImageToolResults,
     DEFAULT_RECENT_IMAGE_TOOL_RESULTS,
   )
-  const preservedImageMessageIndexes = findRecentImageToolResultIndexes(
-    source,
-    recentImageToolResults,
-  )
+  const hydratedIndexes = findRecentImageToolResultIndexes(source, recentImageToolResults)
+  const imageRefs = options.imageRefs ?? agentImageRefStore
   const stats: WorkingContextStats = {
     sourceMessages: source.length,
     projectedMessages: source.length,
-    preservedImages: 0,
+    hydratedImages: 0,
     omittedImages: 0,
-    omittedBase64Chars: 0,
+    unavailableImages: 0,
   }
+  const messages: AgentMessage[] = []
 
-  const messages = source.map((message, index): AgentMessage => {
+  for (let index = 0; index < source.length; index++) {
+    const message = source[index]!
     if (message.role !== 'tool' || typeof message.content === 'string') {
-      return structuredClone(message)
+      messages.push(structuredClone(message))
+      continue
     }
-
-    const preserveImages = preservedImageMessageIndexes.has(index)
-    const content = message.content.map((block): ToolResultContentBlock => {
-      if (block.type !== 'image') return { ...block }
-      if (preserveImages) {
-        stats.preservedImages++
-        return cloneImageBlock(block)
+    const content: ToolResultContentBlock[] = []
+    for (const block of message.content) {
+      if (block.type === 'text') {
+        content.push({ ...block })
+        continue
       }
-
-      stats.omittedImages++
-      stats.omittedBase64Chars += block.source.data.length
-      return {
-        type: 'text',
-        text: renderOmittedImageMarker(block),
+      if (block.type === 'image') {
+        if (hydratedIndexes.has(index)) {
+          stats.hydratedImages++
+          content.push({ type: 'image', source: { ...block.source } })
+        } else {
+          stats.omittedImages++
+          content.push({
+            type: 'text',
+            text: JSON.stringify({
+              type: 'working_context_legacy_image_omitted',
+              mediaType: block.source.media_type,
+            }),
+          })
+        }
+        continue
       }
-    })
-    return { role: 'tool', toolCallId: message.toolCallId, content }
-  })
+      if (!hydratedIndexes.has(index)) {
+        stats.omittedImages++
+        content.push({ type: 'text', text: renderImageMarker('working_context_image_omitted', block) })
+        continue
+      }
+      let hydrated = null
+      try {
+        hydrated = await imageRefs.resolve(block)
+      } catch {
+        // Missing/corrupt media is a projection concern and must not break replay.
+      }
+      if (hydrated == null) {
+        stats.unavailableImages++
+        content.push({
+          type: 'text',
+          text: renderImageMarker('working_context_image_unavailable', block),
+        })
+      } else {
+        stats.hydratedImages++
+        content.push(hydrated)
+      }
+    }
+    messages.push({ role: 'tool', toolCallId: message.toolCallId, content })
+  }
 
   return { messages, stats }
 }
 
 function findRecentImageToolResultIndexes(
-  messages: readonly AgentMessage[],
+  messages: readonly DurableAgentMessage[],
   limit: number,
 ): Set<number> {
   const indexes = new Set<number>()
   if (limit === 0) return indexes
-
   for (let index = messages.length - 1; index >= 0 && indexes.size < limit; index--) {
     const message = messages[index]
     if (
       message?.role === 'tool'
       && Array.isArray(message.content)
-      && message.content.some((block) => block.type === 'image')
+      && message.content.some((block) => block.type === 'image_ref' || block.type === 'image')
     ) {
       indexes.add(index)
     }
@@ -96,19 +125,17 @@ function findRecentImageToolResultIndexes(
   return indexes
 }
 
-function cloneImageBlock(block: ToolResultImageBlock): ToolResultImageBlock {
-  return {
-    type: 'image',
-    source: { ...block.source },
-  }
-}
-
-function renderOmittedImageMarker(block: ToolResultImageBlock): string {
+function renderImageMarker(
+  type: 'working_context_image_omitted' | 'working_context_image_unavailable',
+  ref: ToolResultImageRefBlock,
+): string {
   return JSON.stringify({
-    type: 'working_context_image_omitted',
-    mediaType: block.source.media_type,
-    base64Chars: block.source.data.length,
-    durableLedgerRetainsOriginal: true,
+    type,
+    mediaId: ref.mediaId,
+    mediaType: ref.mediaType,
+    ...(ref.width == null ? {} : { width: ref.width }),
+    ...(ref.height == null ? {} : { height: ref.height }),
+    ...(ref.description == null ? {} : { description: ref.description }),
   })
 }
 

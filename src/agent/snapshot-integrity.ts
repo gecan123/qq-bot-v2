@@ -218,15 +218,15 @@ function validateToolContent(content: unknown, index: number, errors: string[]):
       }
       continue
     }
-    if (block.type !== 'image' || !isRecord(block.source)) {
-      errors.push(`messages[${index}].content[${blockIndex}] must be a text or image block`)
+    if (block.type !== 'image_ref') {
+      errors.push(`messages[${index}].content[${blockIndex}] must be a text or image_ref block`)
       continue
     }
-    if (block.source.type !== 'base64') {
-      errors.push(`messages[${index}].content[${blockIndex}] image source type must be base64`)
+    if (typeof block.mediaId !== 'string' || !/^[1-9]\d*$/.test(block.mediaId)) {
+      errors.push(`messages[${index}].content[${blockIndex}].mediaId must be a positive decimal string`)
     }
-    if (!block.source.media_type || !block.source.data) {
-      errors.push(`messages[${index}].content[${blockIndex}] image source must include media_type and data`)
+    if (typeof block.mediaType !== 'string' || !block.mediaType.trim()) {
+      errors.push(`messages[${index}].content[${blockIndex}].mediaType must be a non-empty string`)
     }
   }
 }

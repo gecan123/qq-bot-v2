@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { SNAPSHOT_SCHEMA_VERSION, type AgentMessage } from './agent-context.types.js'
+import { SNAPSHOT_SCHEMA_VERSION, type DurableAgentMessage } from './agent-context.types.js'
 import {
   AGENT_LEDGER_SCHEMA_VERSION,
   AGENT_RUNTIME_STATE_SCHEMA_VERSION,
@@ -16,7 +16,7 @@ import { createEmptyMailboxContinuityState } from './mailbox-continuity.js'
 
 const CREATED_AT = new Date('2026-07-15T10:00:00.000Z')
 
-function messageEntry(id: bigint, message: AgentMessage): AgentLedgerEntry {
+function messageEntry(id: bigint, message: DurableAgentMessage): AgentLedgerEntry {
   return {
     id,
     entryType: 'message',
@@ -65,7 +65,7 @@ function runtimeState(
   }
 }
 
-function assistantWithTool(callId: string): AgentMessage {
+function assistantWithTool(callId: string): DurableAgentMessage {
   return {
     role: 'assistant',
     content: '',
@@ -73,13 +73,13 @@ function assistantWithTool(callId: string): AgentMessage {
   }
 }
 
-function toolResult(callId: string, content = '{"ok":true}'): AgentMessage {
+function toolResult(callId: string, content = '{"ok":true}'): DurableAgentMessage {
   return { role: 'tool', toolCallId: callId, content }
 }
 
 describe('projectAgentLedger', () => {
   test('projects every message entry when no compaction exists', () => {
-    const messages: AgentMessage[] = [
+    const messages: DurableAgentMessage[] = [
       { role: 'user', content: '问题' },
       assistantWithTool('call-1'),
       toolResult('call-1'),
@@ -99,6 +99,46 @@ describe('projectAgentLedger', () => {
         activeToolCapabilities: [],
       },
     })
+  })
+
+  test('accepts stable image refs and rejects base64 in canonical entries', () => {
+    const refMessage: DurableAgentMessage = {
+      role: 'tool',
+      toolCallId: 'image-1',
+      content: [{
+        type: 'image_ref',
+        mediaId: '42',
+        mediaType: 'image/png',
+        width: 640,
+        height: 480,
+        description: 'saved image',
+      }],
+    }
+    const projection = projectAgentLedger({
+      entries: [messageEntry(1n, assistantWithTool('image-1')), messageEntry(2n, refMessage)],
+      runtimeState: runtimeState(2n),
+    })
+    assert.deepEqual(projection.snapshot.messages[1], refMessage)
+    assert.doesNotMatch(JSON.stringify(projection.snapshot), /"type":"base64"/)
+
+    const unsafe = messageEntry(2n, refMessage) as unknown as {
+      payload: { message: unknown }
+    }
+    unsafe.payload.message = {
+      role: 'tool',
+      toolCallId: 'image-1',
+      content: [{
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/png', data: 'aW1hZ2U=' },
+      }],
+    }
+    assert.throws(
+      () => projectAgentLedger({
+        entries: [messageEntry(1n, assistantWithTool('image-1')), unsafe as never],
+        runtimeState: runtimeState(2n),
+      }),
+      /type is unsupported: image/,
+    )
   })
 
   test('projects fixed summary and sorted machine state before the kept tail', () => {

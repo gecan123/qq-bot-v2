@@ -296,27 +296,15 @@ describe('runReactRound', () => {
     assert.deepEqual(context.getSnapshot().messages, [{ role: 'user', content: 'hello' }])
   })
 
-  test('sends a derived working-context projection without mutating durable image history', async () => {
+  test('persists tool-result images as refs before returning the canonical append batch', async () => {
     const context = createAgentContext()
-    context.replaceMessages([
-      {
-        role: 'tool',
-        toolCallId: 'image-1',
-        content: [{
-          type: 'image',
-          source: { type: 'base64', media_type: 'image/png', data: 'original-bytes' },
-        }],
-      },
-      { role: 'user', content: 'inspect it' },
-    ])
+    context.appendUserMessage('render an image')
     const eventQueue = new InMemoryEventQueue<BotEvent>()
-    let projected: LlmCallInput['messages'] | undefined
     const llm: LlmClient = {
-      async chat(input) {
-        projected = input.messages
+      async chat() {
         return {
           content: '',
-          toolCalls: [],
+          toolCalls: [{ id: 'image-1', name: 'render', args: {} }],
           usage: { inputTokens: 2, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
           contextWindowTokens: 200_000,
@@ -325,22 +313,31 @@ describe('runReactRound', () => {
       },
     }
 
-    await runReactRound({
+    const result = await runReactRound({
       systemPrompt: 'system',
       context,
       llm,
-      tools: { list: () => [], async execute() { return { content: '{}' } } },
+      tools: {
+        list: () => [makeTool('render')],
+        async execute() {
+          return { content: [{
+            type: 'image' as const,
+            source: { type: 'base64' as const, media_type: 'image/png', data: 'aW1hZ2U=' },
+          }] }
+        },
+      },
       toolContext: { eventQueue, roundIndex: 11 },
-      workingContext: { recentImageToolResults: 0 },
+      imageRefs: {
+        async persist() {
+          return { type: 'image_ref', mediaId: '77', mediaType: 'image/png' }
+        },
+        async resolve() { return null },
+      },
     })
 
-    assert.equal(JSON.stringify(projected).includes('original-bytes'), false)
-    assert.equal(JSON.stringify(projected).includes('working_context_image_omitted'), true)
-    assert.equal(
-      JSON.stringify(context.getSnapshot().messages).includes('original-bytes'),
-      true,
-      'durable AgentContext must retain the original image bytes',
-    )
+    assert.match(JSON.stringify(result.messagesToAppend), /"type":"image_ref"/)
+    assert.doesNotMatch(JSON.stringify(result.messagesToAppend), /"type":"base64"/)
+    assert.doesNotMatch(JSON.stringify(context.getSnapshot().messages), /"type":"base64"/)
   })
 
   test('returns pause effect separately from the staged tool result content', async () => {

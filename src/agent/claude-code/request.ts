@@ -251,6 +251,9 @@ function toAnthropicToolResultBlock(
   if (block.type === 'text') {
     return { type: 'text', text: block.text }
   }
+  if (block.type === 'image_ref') {
+    return { type: 'text', text: JSON.stringify(block) }
+  }
   return {
     type: 'image',
     source: {

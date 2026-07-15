@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { describe, test, beforeEach, afterEach } from 'node:test'
 import { OutboundCache, setOutboundCacheForTest } from './outbound-cache.js'
-import { resolveImageHandle, releaseHandle } from './image-handle.js'
+import { prisma } from '../database/client.js'
+import { resolveImageHandle, resolvePersistedImage, releaseHandle } from './image-handle.js'
 
 const HASH_A = 'a'.repeat(64)
 
@@ -76,5 +77,35 @@ describe('resolveImageHandle (ephemeralRef path)', () => {
 
   test('releaseHandle on mediaId is no-op', () => {
     releaseHandle({ mediaId: 999 })
+  })
+})
+
+describe('resolvePersistedImage', () => {
+  test('accepts a durable string media id and returns null for missing media', async () => {
+    const original = prisma.media.findUnique
+    let available = true
+    prisma.media.findUnique = (async (args: { where: { mediaId: number } }) => {
+      assert.equal(args.where.mediaId, 42)
+      return available ? {
+        data: new Uint8Array(Buffer.from('image')),
+        dataHash: 'hash',
+        contentType: 'image/png',
+        descriptionRaw: { description: 'saved description' },
+      } : null
+    }) as never
+    try {
+      assert.deepEqual(await resolvePersistedImage('42'), {
+        bytes: Buffer.from('image'),
+        dataHash: 'hash',
+        byteSize: 5,
+        contentType: 'image/png',
+        description: 'saved description',
+      })
+      available = false
+      assert.equal(await resolvePersistedImage('42'), null)
+      await assert.rejects(() => resolvePersistedImage('not-an-id'), /invalid media id/)
+    } finally {
+      prisma.media.findUnique = original
+    }
   })
 })

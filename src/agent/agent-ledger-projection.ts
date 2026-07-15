@@ -1,10 +1,9 @@
 import {
   SNAPSHOT_SCHEMA_VERSION,
-  type AgentMessage,
   type ClaudeAssistantNativeBlock,
   type DurableAgentMessage,
-  type ToolResultContent,
-  type ToolResultContentBlock,
+  type DurableToolResultContent,
+  type DurableToolResultContentBlock,
 } from './agent-context.types.js'
 import {
   AGENT_LEDGER_SCHEMA_VERSION,
@@ -252,7 +251,7 @@ function parseDurableAgentMessage(value: unknown, path: string): DurableAgentMes
     if (!Array.isArray(message.toolCalls)) {
       throw new AgentLedgerIntegrityError(`${path}.toolCalls must be an array`)
     }
-    const parsed: AgentMessage = {
+    const parsed: DurableAgentMessage = {
       role: 'assistant',
       content: message.content,
       toolCalls: message.toolCalls.map((call, index) => {
@@ -301,12 +300,12 @@ function parseDurableAgentMessage(value: unknown, path: string): DurableAgentMes
   throw new AgentLedgerIntegrityError(`${path}.role is unsupported: ${String(message.role)}`)
 }
 
-function parseToolResultContent(value: unknown, path: string): ToolResultContent {
+function parseToolResultContent(value: unknown, path: string): DurableToolResultContent {
   if (typeof value === 'string') return value
   if (!Array.isArray(value)) {
     throw new AgentLedgerIntegrityError(`${path} must be a string or content block array`)
   }
-  return value.map((block, index): ToolResultContentBlock => {
+  return value.map((block, index): DurableToolResultContentBlock => {
     const blockPath = `${path}[${index}]`
     const record = requireRecord(block, blockPath)
     if (record.type === 'text') {
@@ -316,24 +315,37 @@ function parseToolResultContent(value: unknown, path: string): ToolResultContent
       }
       return { type: 'text', text: record.text }
     }
-    if (record.type === 'image') {
-      requireExactKeys(record, ['type', 'source'], [], blockPath)
-      const sourcePath = `${blockPath}.source`
-      const source = requireRecord(record.source, sourcePath)
-      requireExactKeys(source, ['type', 'media_type', 'data'], [], sourcePath)
-      if (source.type !== 'base64') {
-        throw new AgentLedgerIntegrityError(`${sourcePath}.type must be base64`)
+    if (record.type === 'image_ref') {
+      requireExactKeys(
+        record,
+        ['type', 'mediaId', 'mediaType'],
+        ['width', 'height', 'description'],
+        blockPath,
+      )
+      if (typeof record.mediaId !== 'string' || !/^[1-9]\d*$/.test(record.mediaId)) {
+        throw new AgentLedgerIntegrityError(`${blockPath}.mediaId must be a positive decimal string`)
       }
-      if (typeof source.media_type !== 'string' || source.media_type.trim() === '') {
-        throw new AgentLedgerIntegrityError(`${sourcePath}.media_type must be a non-empty string`)
+      if (typeof record.mediaType !== 'string' || record.mediaType.trim() === '') {
+        throw new AgentLedgerIntegrityError(`${blockPath}.mediaType must be a non-empty string`)
       }
-      if (typeof source.data !== 'string' || source.data === '') {
-        throw new AgentLedgerIntegrityError(`${sourcePath}.data must be a non-empty string`)
+      const output: DurableToolResultContentBlock = {
+        type: 'image_ref',
+        mediaId: record.mediaId,
+        mediaType: record.mediaType,
       }
-      return {
-        type: 'image',
-        source: { type: 'base64', media_type: source.media_type, data: source.data },
+      if (record.width !== undefined) {
+        output.width = requirePositiveSafeInteger(record.width, `${blockPath}.width`)
       }
+      if (record.height !== undefined) {
+        output.height = requirePositiveSafeInteger(record.height, `${blockPath}.height`)
+      }
+      if (record.description !== undefined) {
+        if (typeof record.description !== 'string') {
+          throw new AgentLedgerIntegrityError(`${blockPath}.description must be a string`)
+        }
+        output.description = record.description
+      }
+      return output
     }
     throw new AgentLedgerIntegrityError(`${blockPath}.type is unsupported: ${String(record.type)}`)
   })
@@ -495,6 +507,12 @@ function requireNonNegativeSafeInteger(value: unknown, path: string): number {
     throw new AgentLedgerIntegrityError(`${path} must be a non-negative safe integer`)
   }
   return value as number
+}
+
+function requirePositiveSafeInteger(value: unknown, path: string): number {
+  const parsed = requireNonNegativeSafeInteger(value, path)
+  if (parsed === 0) throw new AgentLedgerIntegrityError(`${path} must be positive`)
+  return parsed
 }
 
 function cloneJsonObject(value: unknown, path: string): Record<string, unknown> {

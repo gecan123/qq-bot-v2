@@ -141,8 +141,10 @@ function splitToolResultContent(content: ToolResultContent): {
   for (const block of content) {
     if (block.type === 'text') {
       if (block.text.length > 0) textParts.push(block.text)
-    } else {
+    } else if (block.type === 'image') {
       images.push(block)
+    } else {
+      textParts.push(JSON.stringify(block))
     }
   }
   return { text: textParts.join('\n'), images }

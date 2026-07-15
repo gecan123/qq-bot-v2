@@ -16,6 +16,14 @@ import {
   isMailboxAttentionStateMessage,
   renderMailboxAttentionStateEvent,
 } from './mailbox-handled.js'
+import type {
+  AgentLedgerEntry,
+  AgentLedgerProjection,
+  CompactionAgentLedgerEntry,
+  CompactionReason,
+  MessageAgentLedgerEntry,
+} from './agent-ledger.types.js'
+import { estimateEntryTokens } from './compaction-token-estimator.js'
 
 const DEFAULT_COMPACTION_TAIL_CHARS = 12_000
 const DEFAULT_COMPACTION_FAILURE_BACKOFF_MS = 10 * 60_000
@@ -30,6 +38,249 @@ const SUMMARY_HEADINGS = [
 ] as const
 
 const log = createLogger('COMPACTION')
+
+export interface ReadyCompactionPreparation {
+  status: 'ready'
+  reason: CompactionReason
+  expectedHeadEntryId: bigint | null
+  firstKeptEntryId: bigint
+  entriesToSummarize: MessageAgentLedgerEntry[]
+  historyEntries: MessageAgentLedgerEntry[]
+  splitTurnPrefixEntries: MessageAgentLedgerEntry[]
+  tailEntries: MessageAgentLedgerEntry[]
+  isSplitTurn: boolean
+  tokensBefore: number
+  estimatedTailTokens: number
+  previousCompaction: CompactionAgentLedgerEntry | null
+  manualFocus?: string
+}
+
+export interface CannotCompactPreparation {
+  status: 'cannot_compact'
+  reason: 'no_legal_cut' | 'invalid_atomic_history' | 'stale_projection'
+  expectedHeadEntryId: bigint | null
+}
+
+export type CompactionPreparation = ReadyCompactionPreparation | CannotCompactPreparation
+
+interface AtomicMessageUnit {
+  entries: MessageAgentLedgerEntry[]
+  tokens: number
+}
+
+/**
+ * 只做确定性切点准备，不调用 LLM、不写 ledger，也不修改 AgentContext。
+ * threshold 使用严格大于；overflow/manual 由调用方显式触发。
+ */
+export function prepareCompaction(input: {
+  entries: readonly AgentLedgerEntry[]
+  latestProjection: AgentLedgerProjection
+  previousCompaction: CompactionAgentLedgerEntry | null
+  contextTokens: number
+  contextWindowTokens: number
+  reserveTokens: number
+  keepRecentTokens: number
+  reason: CompactionReason
+  manualFocus?: string
+}): CompactionPreparation | null {
+  validatePreparationNumbers(input)
+  const triggerTokens = Math.max(0, input.contextWindowTokens - input.reserveTokens)
+  if (input.reason === 'threshold' && input.contextTokens <= triggerTokens) return null
+
+  const expectedHeadEntryId = input.latestProjection.throughEntryId
+  const canonicalHead = input.entries.at(-1)?.id ?? null
+  if (canonicalHead !== expectedHeadEntryId) {
+    return { status: 'cannot_compact', reason: 'stale_projection', expectedHeadEntryId }
+  }
+
+  const latestCanonicalCompaction = findLatestCompaction(input.entries)
+  const previousCompaction = input.previousCompaction ?? latestCanonicalCompaction
+  if (
+    latestCanonicalCompaction?.id !== previousCompaction?.id
+    || (input.previousCompaction != null
+      && !input.entries.some((entry) => entry.id === input.previousCompaction!.id))
+  ) {
+    return { status: 'cannot_compact', reason: 'stale_projection', expectedHeadEntryId }
+  }
+
+  const activeEntries = selectActiveMessageEntries(input.entries, previousCompaction)
+  const units = buildAtomicUnits(activeEntries)
+  if (units == null) {
+    return { status: 'cannot_compact', reason: 'invalid_atomic_history', expectedHeadEntryId }
+  }
+  if (units.length < 2) {
+    return { status: 'cannot_compact', reason: 'no_legal_cut', expectedHeadEntryId }
+  }
+
+  const rawBoundary = selectRawBoundary(units, input.keepRecentTokens)
+  if (rawBoundary <= 0) {
+    return { status: 'cannot_compact', reason: 'no_legal_cut', expectedHeadEntryId }
+  }
+  const latestTurnStart = findLatestUserUnitIndex(units)
+  const latestTurnTokens = units
+    .slice(Math.max(0, latestTurnStart))
+    .reduce((sum, unit) => sum + unit.tokens, 0)
+  const latestTurnIsOversized = latestTurnTokens > input.keepRecentTokens
+  const preferredUserBoundary = latestTurnIsOversized
+    ? -1
+    : findPreferredUserBoundary(units, rawBoundary)
+  const boundaryUnitIndex = preferredUserBoundary > 0 ? preferredUserBoundary : rawBoundary
+  if (boundaryUnitIndex <= 0 || boundaryUnitIndex >= units.length) {
+    return { status: 'cannot_compact', reason: 'no_legal_cut', expectedHeadEntryId }
+  }
+
+  const entriesToSummarize = units
+    .slice(0, boundaryUnitIndex)
+    .flatMap((unit) => unit.entries)
+  const tailUnits = units.slice(boundaryUnitIndex)
+  const tailEntries = tailUnits.flatMap((unit) => unit.entries)
+  if (entriesToSummarize.length === 0 || tailEntries.length === 0) {
+    return { status: 'cannot_compact', reason: 'no_legal_cut', expectedHeadEntryId }
+  }
+
+  const firstKept = tailEntries[0]!
+  const isSplitTurn = firstKept.payload.message.role !== 'user'
+    && (latestTurnStart < 0 || boundaryUnitIndex > latestTurnStart || preferredUserBoundary <= 0)
+  const splitTurnStart = isSplitTurn ? Math.max(0, latestTurnStart) : boundaryUnitIndex
+  const historyEntries = units
+    .slice(0, splitTurnStart)
+    .flatMap((unit) => unit.entries)
+  const splitTurnPrefixEntries = isSplitTurn
+    ? units.slice(splitTurnStart, boundaryUnitIndex).flatMap((unit) => unit.entries)
+    : []
+  return {
+    status: 'ready',
+    reason: input.reason,
+    expectedHeadEntryId,
+    firstKeptEntryId: firstKept.id,
+    entriesToSummarize,
+    historyEntries,
+    splitTurnPrefixEntries,
+    tailEntries,
+    isSplitTurn,
+    tokensBefore: input.contextTokens,
+    estimatedTailTokens: tailUnits.reduce((sum, unit) => sum + unit.tokens, 0),
+    previousCompaction,
+    ...(input.manualFocus === undefined ? {} : { manualFocus: input.manualFocus }),
+  }
+}
+
+function validatePreparationNumbers(input: {
+  contextTokens: number
+  contextWindowTokens: number
+  reserveTokens: number
+  keepRecentTokens: number
+}): void {
+  const values = {
+    contextTokens: input.contextTokens,
+    contextWindowTokens: input.contextWindowTokens,
+    reserveTokens: input.reserveTokens,
+    keepRecentTokens: input.keepRecentTokens,
+  }
+  for (const [name, value] of Object.entries(values)) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new RangeError(`${name} must be a non-negative safe integer`)
+    }
+  }
+  if (input.contextWindowTokens === 0) {
+    throw new RangeError('contextWindowTokens must be greater than zero')
+  }
+}
+
+function findLatestCompaction(
+  entries: readonly AgentLedgerEntry[],
+): CompactionAgentLedgerEntry | null {
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index]!
+    if (entry.entryType === 'compaction') return entry
+  }
+  return null
+}
+
+function selectActiveMessageEntries(
+  entries: readonly AgentLedgerEntry[],
+  previousCompaction: CompactionAgentLedgerEntry | null,
+): MessageAgentLedgerEntry[] {
+  if (previousCompaction == null) {
+    return entries.filter((entry): entry is MessageAgentLedgerEntry => entry.entryType === 'message')
+  }
+  const boundary = previousCompaction.payload.firstKeptEntryId == null
+    ? null
+    : BigInt(previousCompaction.payload.firstKeptEntryId)
+  return entries.filter((entry): entry is MessageAgentLedgerEntry => (
+    entry.entryType === 'message'
+    && (entry.id > previousCompaction.id || (boundary != null && entry.id >= boundary))
+  ))
+}
+
+function buildAtomicUnits(
+  entries: readonly MessageAgentLedgerEntry[],
+): AtomicMessageUnit[] | null {
+  const units: AtomicMessageUnit[] = []
+  let index = 0
+  while (index < entries.length) {
+    const entry = entries[index]!
+    const message = entry.payload.message
+    if (message.role === 'tool') return null
+    if (message.role !== 'assistant' || message.toolCalls.length === 0) {
+      units.push({ entries: [entry], tokens: estimateEntryTokens(entry).tokens })
+      index += 1
+      continue
+    }
+
+    const expectedIds = message.toolCalls.map((call) => call.id)
+    const toolEntries = entries.slice(index + 1, index + 1 + expectedIds.length)
+    if (
+      toolEntries.length !== expectedIds.length
+      || toolEntries.some((toolEntry, offset) => (
+        toolEntry.payload.message.role !== 'tool'
+        || toolEntry.payload.message.toolCallId !== expectedIds[offset]
+      ))
+    ) return null
+    const atomicEntries = [entry, ...toolEntries]
+    units.push({
+      entries: atomicEntries,
+      tokens: atomicEntries.reduce(
+        (sum, atomicEntry) => sum + estimateEntryTokens(atomicEntry).tokens,
+        0,
+      ),
+    })
+    index += atomicEntries.length
+  }
+  return units
+}
+
+function selectRawBoundary(units: readonly AtomicMessageUnit[], keepRecentTokens: number): number {
+  let tokens = 0
+  for (let index = units.length - 1; index >= 0; index--) {
+    tokens += units[index]!.tokens
+    if (tokens >= keepRecentTokens) return index
+  }
+  return 0
+}
+
+function findPreferredUserBoundary(
+  units: readonly AtomicMessageUnit[],
+  rawBoundary: number,
+): number {
+  for (let index = rawBoundary; index >= 0; index--) {
+    if (units[index]!.entries[0]!.payload.message.role === 'user') {
+      if (index > 0) return index
+      break
+    }
+  }
+  for (let index = rawBoundary + 1; index < units.length; index++) {
+    if (units[index]!.entries[0]!.payload.message.role === 'user') return index
+  }
+  return -1
+}
+
+function findLatestUserUnitIndex(units: readonly AtomicMessageUnit[]): number {
+  for (let index = units.length - 1; index >= 0; index--) {
+    if (units[index]!.entries[0]!.payload.message.role === 'user') return index
+  }
+  return -1
+}
 const failureBackoffByContext = new WeakMap<AgentContext, {
   nextRetryAtMs: number
   failedMessageCount: number

@@ -66,7 +66,7 @@ export function createOpenAIAgentLlmClient(input: CreateOpenAIAgentLlmClientInpu
   }
 }
 
-function normalizeOpenAIError(error: unknown, contextWindowTokens: number): unknown {
+export function normalizeOpenAIError(error: unknown, contextWindowTokens: number): unknown {
   if (!error || typeof error !== 'object') return error
   const record = error as Record<string, unknown>
   const code = typeof record.code === 'string' ? record.code.toLowerCase() : ''
@@ -87,7 +87,7 @@ function normalizeOpenAIError(error: unknown, contextWindowTokens: number): unkn
   }
 }
 
-interface BuildOpenAIAgentRequestInput {
+export interface BuildOpenAIAgentRequestInput {
   model: string
   systemPrompt: string
   messages: AgentMessage[]
@@ -95,7 +95,7 @@ interface BuildOpenAIAgentRequestInput {
   maxOutputTokens?: number
 }
 
-function buildOpenAIAgentRequest(input: BuildOpenAIAgentRequestInput): ChatCompletionCreateParamsNonStreaming {
+export function buildOpenAIAgentRequest(input: BuildOpenAIAgentRequestInput): ChatCompletionCreateParamsNonStreaming {
   const messages: ChatCompletionMessageParam[] = [
     { role: 'developer', content: input.systemPrompt },
   ]
@@ -245,7 +245,7 @@ function toLlmCallOutput(
   }
 }
 
-function normalizeOpenAIStopReason(value: string | null | undefined): LlmStopReason {
+export function normalizeOpenAIStopReason(value: string | null | undefined): LlmStopReason {
   switch (value) {
     case 'tool_calls':
     case 'function_call':

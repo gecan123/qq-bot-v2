@@ -371,7 +371,7 @@ function classifyHttpStatus(
   return { kind: 'http', retryable: false }
 }
 
-function classifyProviderError(
+export function classifyProviderError(
   type: string,
   message: string,
 ): { kind: ClaudeCodeErrorKind; retryable: boolean } {
@@ -504,7 +504,7 @@ function toLlmCallOutput(
   }
 }
 
-function normalizeClaudeStopReason(value: string | null | undefined): LlmStopReason {
+export function normalizeClaudeStopReason(value: string | null | undefined): LlmStopReason {
   switch (value) {
     case 'tool_use':
     case 'end_turn':

@@ -1152,7 +1152,7 @@ describe('createDeferredToolExecutor', () => {
     const persisted = ctx1.exportPersistedSnapshot()
 
     const ctx2 = createAgentContext()
-    ctx2.restorePersistedSnapshot(persisted)
+    ctx2.installProjection(persisted)
     const exec2 = createDeferredToolExecutor({
       alwaysOnTools: [],
       activeCapabilities: {

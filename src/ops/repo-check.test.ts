@@ -18,7 +18,7 @@ const validFiles = {
   'README.md': [
     '# qq-bot-v2',
     '',
-    'Uses `bot_agent_snapshot` for the single persistent AgentContext.',
+    'Uses `bot_agent_ledger_entries` for the persistent LLM ledger.',
     'Run `pnpm repo-check` before handing work back.',
   ].join('\n'),
   'package.json': JSON.stringify({
@@ -28,6 +28,7 @@ const validFiles = {
       'agent:metrics': 'tsx scripts/agent-metrics.ts',
       'agent:daily-metrics': 'tsx scripts/agent-daily-metrics.ts',
       'agent:memory-check': 'tsx scripts/agent-memory-check.ts',
+      'agent:ledger-check': 'tsx scripts/agent-ledger-check.ts',
       lint: 'pnpm typecheck && pnpm repo-check',
     },
   }),
@@ -206,7 +207,7 @@ describe('runRepoChecks', () => {
   test('rejects stale README environment variable names', () => {
     const result = runRepoChecks({
       ...validFiles,
-      'README.md': 'Configure `GROUP_IDS` before startup. Uses `bot_agent_snapshot`.',
+      'README.md': 'Configure `GROUP_IDS` before startup. Uses `bot_agent_ledger_entries`.',
     })
 
     assert.match(result.errors.join('\n'), /README\.md references stale env var "GROUP_IDS"/)

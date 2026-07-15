@@ -1,4 +1,4 @@
-import { createAgentContext, type AgentContext } from './agent-context.js'
+import type { AgentContext } from './agent-context.js'
 import type { AgentMessage } from './agent-context.types.js'
 import { isLlmContextOverflowError, isLlmUsageLimitError, type LlmClient } from './llm-client.js'
 import type { MessageSentTarget, ToolExecutor } from './tool.js'
@@ -11,14 +11,11 @@ import {
   type AgentRuntimePatch,
 } from './agent-ledger-repo.js'
 import {
-  compactConversationForRecovery,
   createCompactionCandidate,
-  maybeCompactConversation,
   prepareCompaction,
   summarizeCompactionCandidate,
   type MaybeCompactOptions,
 } from './compaction.js'
-import { injectStickerPoolAfterCompaction } from './sticker-pool.js'
 import { LlmOutputTruncatedError, runReactRound } from './react-kernel.js'
 import { interpretToolEffects } from './effect-interpreter.js'
 import {
@@ -51,7 +48,6 @@ import {
   findPendingMailboxThroughRowId,
   renderMailboxHandledEvent,
 } from './mailbox-handled.js'
-import type { PersistedAgentSnapshot } from './agent-context.types.js'
 import { projectAgentLedger } from './agent-ledger-projection.js'
 import type {
   CompactionAgentLedgerEntry,
@@ -63,36 +59,22 @@ import { estimateLedgerContextTokens } from './compaction-token-estimator.js'
 
 const log = createLogger('BOT_LOOP')
 
-/** 只供旧单元测试驱动 persistence-first 行为；生产必须使用 AgentLedgerRepo。 */
-export interface BotSnapshotRepo {
-  load(): Promise<unknown | null>
-  save(input: {
-    snapshot: PersistedAgentSnapshot
-    mailboxCursors: MailboxCursors
-    mailboxContinuity?: MailboxContinuityState
-    goalRevision: number
-    lastWakeAt: Date | null
-  }): Promise<void>
-}
-
 export interface BotLoopAgentDeps {
   systemPrompt: string
   context: AgentContext
   eventQueue: EventQueue<BotEvent>
   llm: LlmClient
   tools: ToolExecutor
-  /** 生产 canonical 存储；和 ledgerLoader 必须成对提供。 */
-  ledgerRepo?: AgentLedgerRepo
-  ledgerLoader?: AgentLedgerLoader
-  /** 迁移期测试用 persistence-first 适配器。 */
-  snapshotRepo?: BotSnapshotRepo
-  /** 从持久 snapshot 同行恢复的 per-source 披露游标。 */
+  /** 唯一 canonical 存储及其确定性 loader。 */
+  ledgerRepo: AgentLedgerRepo
+  ledgerLoader: AgentLedgerLoader
+  /** 从 runtime singleton 恢复的 per-source 披露游标。 */
   initialMailboxCursors?: Readonly<MailboxCursors>
-  /** 与 snapshot 同行恢复的 per-source 上下文新鲜度状态。 */
+  /** 从 runtime singleton 恢复的 per-source 上下文新鲜度状态。 */
   initialMailboxContinuity?: MailboxContinuityState
   /** 新来源在尚无 cursor 时使用的旧式恢复边界。 */
   initialLastWakeAt?: Date | null
-  /** 与 snapshot 同行恢复的 goal control revision；只控制 LLM 可见状态事件的去重。 */
+  /** 从 runtime singleton 恢复的 goal control revision；只控制 LLM 可见状态事件的去重。 */
   initialGoalRevision?: number
   initialLedgerHeadEntryId?: bigint | null
   /** deferred capability 的 round-local 状态，在可见 tool result 提交时同行落盘。 */
@@ -115,7 +97,7 @@ export interface BotLoopAgentDeps {
   keepAlive?: {
     open: () => { close: () => void }
   }
-  /** 运行时自主循环保护；不进入 AgentContext 或 snapshot。 */
+  /** 运行时自主循环保护；不进入 ledger 或 runtime singleton。 */
   autonomy?: BotLoopAutonomyOptions
   /** 可选的 Life Journal 自省 hook；输出不进入 AgentContext。 */
   lifeJournal?: BotLoopLifeJournal
@@ -180,12 +162,6 @@ export interface BotLoopAgent {
 }
 
 export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
-  if ((deps.ledgerRepo == null) !== (deps.ledgerLoader == null)) {
-    throw new Error('ledgerRepo and ledgerLoader must be provided together')
-  }
-  if (!deps.ledgerRepo && !deps.snapshotRepo) {
-    throw new Error('BotLoopAgent requires ledger persistence')
-  }
   const autonomy = {
     maxConsecutiveRounds: Math.max(1, deps.autonomy?.maxConsecutiveRounds ?? DEFAULT_MAX_CONSECUTIVE_ROUNDS),
     cooldownMs: Math.max(1, deps.autonomy?.cooldownMs ?? DEFAULT_AUTONOMY_COOLDOWN_MS),
@@ -226,20 +202,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     deps.syncActiveToolCapabilities?.(input.activeToolCapabilities)
   }
 
-  function installLegacySnapshot(snapshot: ReturnType<AgentContext['exportPersistedSnapshot']>): void {
-    deps.context.replaceMessages(snapshot.messages)
-    const current = new Set(deps.context.getSnapshot().activeToolCapabilities)
-    const next = new Set(snapshot.activeToolCapabilities)
-    for (const capability of current) {
-      if (!next.has(capability)) deps.context.deactivateToolCapability(capability)
-    }
-    for (const capability of next) {
-      if (!current.has(capability)) deps.context.activateToolCapability(capability)
-    }
-  }
-
   async function reloadProjectionFromCanonical(): Promise<void> {
-    const loaded = await deps.ledgerLoader!.load()
+    const loaded = await deps.ledgerLoader.load()
     deps.context.installProjection(loaded.projection.snapshot)
     installRuntimeState(loaded.runtimeState)
   }
@@ -252,50 +216,18 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     if (messages.length === 0 && input.runtimePatch == null) return
 
     try {
-      if (deps.ledgerRepo) {
-        if (messages.length > 0) {
-          await deps.ledgerRepo.appendMessages({
-            messages,
-            ...(input.runtimePatch ? { runtimePatch: input.runtimePatch } : {}),
-          })
-        } else {
-          await deps.ledgerRepo.updateRuntime({
-            expectedHeadEntryId: ledgerHeadEntryId,
-            patch: input.runtimePatch!,
-          })
-        }
-        await reloadProjectionFromCanonical()
-        return
+      if (messages.length > 0) {
+        await deps.ledgerRepo.appendMessages({
+          messages,
+          ...(input.runtimePatch ? { runtimePatch: input.runtimePatch } : {}),
+        })
+      } else {
+        await deps.ledgerRepo.updateRuntime({
+          expectedHeadEntryId: ledgerHeadEntryId,
+          patch: input.runtimePatch!,
+        })
       }
-
-      // 旧测试仓储也遵守 persistence-first：先保存目标投影，成功后才安装到内存。
-      const current = deps.context.exportPersistedSnapshot()
-      const runtimePatch = input.runtimePatch ?? {}
-      const nextSnapshot = {
-        ...current,
-        messages: [...current.messages, ...structuredClone(messages)],
-        activeToolCapabilities: runtimePatch.activeToolCapabilities == null
-          ? current.activeToolCapabilities
-          : [...runtimePatch.activeToolCapabilities],
-      }
-      const nextRuntime = {
-        mailboxCursors: runtimePatch.mailboxCursors ?? mailboxCursors,
-        mailboxContinuity: runtimePatch.mailboxContinuity ?? mailboxContinuity,
-        goalRevision: runtimePatch.goalRevision ?? goalRevision,
-        activeToolCapabilities: runtimePatch.activeToolCapabilities
-          ?? current.activeToolCapabilities,
-        lastWakeAt: runtimePatch.lastWakeAt === undefined ? lastWakeAt : runtimePatch.lastWakeAt,
-        ledgerHeadEntryId,
-      }
-      await deps.snapshotRepo!.save({
-        snapshot: nextSnapshot,
-        mailboxCursors: nextRuntime.mailboxCursors,
-        mailboxContinuity: nextRuntime.mailboxContinuity,
-        goalRevision: nextRuntime.goalRevision,
-        lastWakeAt: nextRuntime.lastWakeAt,
-      })
-      installLegacySnapshot(nextSnapshot)
-      installRuntimeState(nextRuntime)
+      await reloadProjectionFromCanonical()
     } catch (error) {
       // deferred capability callbacks only mutate round-local host state; roll it back
       // when its paired visible tool result cannot be committed.
@@ -638,46 +570,16 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         }
         if (recoveredContextOverflow || !isLlmContextOverflowError(err)) throw err
         recoveredContextOverflow = true
-        if (deps.ledgerRepo) {
-          const overflowContextWindow = resolveOverflowContextWindowTokens(
-            err,
-            lastContextWindowTokens,
-          )
-          const compacted = await compactCanonical({
-            reason: 'overflow',
-            contextTokens: overflowContextWindow,
-            contextWindowTokens: overflowContextWindow,
-          })
-          if (!compacted) throw err
-          const syncedAfterRecoveryCompaction = await syncGoalState()
-          if (syncedAfterRecoveryCompaction.goal?.status === 'active') {
-            await appendGoalContinuation(syncedAfterRecoveryCompaction.goal, 'post_compaction')
-          }
-          log.warn({ roundIndex }, 'context_overflow_compacted_retrying_round')
-          continue
-        }
-        const recoveryContext = createAgentContext()
-        recoveryContext.replaceMessages(deps.context.getSnapshot().messages)
-        let compacted = false
-        try {
-          compacted = await compactConversationForRecovery(recoveryContext, deps.compactOptions)
-        } catch (compactionError) {
-          log.error({ err: compactionError, roundIndex }, 'context_overflow_compaction_failed')
-          throw err
-        }
-        if (!compacted) throw err
-        const nextContinuity = parseMailboxContinuityState(mailboxContinuity)
-        recordMailboxCompaction(nextContinuity)
-        const nextSnapshot = recoveryContext.exportPersistedSnapshot()
-        await deps.snapshotRepo!.save({
-          snapshot: nextSnapshot,
-          mailboxCursors,
-          mailboxContinuity: nextContinuity,
-          goalRevision,
-          lastWakeAt,
+        const overflowContextWindow = resolveOverflowContextWindowTokens(
+          err,
+          lastContextWindowTokens,
+        )
+        const compacted = await compactCanonical({
+          reason: 'overflow',
+          contextTokens: overflowContextWindow,
+          contextWindowTokens: overflowContextWindow,
         })
-        installLegacySnapshot(nextSnapshot)
-        mailboxContinuity = nextContinuity
+        if (!compacted) throw err
         const syncedAfterRecoveryCompaction = await syncGoalState()
         if (syncedAfterRecoveryCompaction.goal?.status === 'active') {
           await appendGoalContinuation(syncedAfterRecoveryCompaction.goal, 'post_compaction')
@@ -758,43 +660,13 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     contextWindowTokens: number,
     providerPrefixHeadEntryId: bigint | null,
   ): Promise<boolean> {
-    if (deps.ledgerRepo) {
-      if (inputTokens == null) return false
-      return compactCanonical({
-        reason: 'threshold',
-        contextTokens: inputTokens,
-        contextWindowTokens,
-        providerPrefixHeadEntryId,
-      })
-    }
-    const workingContext = createAgentContext()
-    workingContext.replaceMessages(deps.context.getSnapshot().messages)
-    let compacted = false
-    try {
-      compacted = await maybeCompactConversation(workingContext, inputTokens, deps.compactOptions)
-    } catch (err) {
-      log.error({ err }, 'compaction_failed_skipped')
-    }
-    if (compacted) {
-      const nextContinuity = parseMailboxContinuityState(mailboxContinuity)
-      recordMailboxCompaction(nextContinuity)
-      try {
-        await injectStickerPoolAfterCompaction(workingContext)
-      } catch (err) {
-        log.warn({ err }, 'sticker_pool_injection_failed')
-      }
-      const nextSnapshot = workingContext.exportPersistedSnapshot()
-      await deps.snapshotRepo!.save({
-        snapshot: nextSnapshot,
-        mailboxCursors,
-        mailboxContinuity: nextContinuity,
-        goalRevision,
-        lastWakeAt,
-      })
-      installLegacySnapshot(nextSnapshot)
-      mailboxContinuity = nextContinuity
-    }
-    return compacted
+    if (inputTokens == null) return false
+    return compactCanonical({
+      reason: 'threshold',
+      contextTokens: inputTokens,
+      contextWindowTokens,
+      providerPrefixHeadEntryId,
+    })
   }
 
   async function step(): Promise<{
@@ -1073,18 +945,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     },
     async flush() {
       await syncGoalState()
-      if (!deps.ledgerRepo && deps.snapshotRepo) {
-        await deps.snapshotRepo.save({
-          snapshot: deps.context.exportPersistedSnapshot(),
-          mailboxCursors,
-          mailboxContinuity,
-          goalRevision,
-          lastWakeAt,
-        })
-      }
     },
     async requestManualCompaction(focus) {
-      if (!deps.ledgerRepo) return false
       const canonical = await deps.ledgerRepo.loadCanonicalState()
       return compactCanonical({
         reason: 'manual',

@@ -6,22 +6,32 @@ import { InMemoryEventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import { createInMemoryGoalStore } from './goal-store.js'
 import { renderBotEvent } from './render-event.js'
-import type { BotSnapshotRepo } from './bot-loop-agent.js'
 import { createToolExecutor } from './tool.js'
 import { createGoalTool } from './tools/goal.js'
+import { createTestAgentLedger } from './test-support/agent-ledger.js'
 
-function validSummary(content: string): string {
+function validLedgerSummary(content: string): string {
   return [
     '## 讨论过的话题',
     content,
     '',
     '## 群友信息',
+    '无。',
     '',
-    '## 我的承诺和状态',
+    '## 我的目标、承诺和状态',
+    '继续当前目标。',
+    '',
+    '## 关键约束与决定',
+    '遵守安全边界。',
     '',
     '## 工具调用结果',
+    '无。',
     '',
     '## 情绪和氛围',
+    '平静。',
+    '',
+    '## 下一步',
+    '继续执行。',
   ].join('\n')
 }
 
@@ -68,7 +78,7 @@ describe('BotLoop goal integration', () => {
         },
       },
       tools: createToolExecutor([createGoalTool(goalStore)]),
-      snapshotRepo: makeSnapshotRepo([]),
+      ...ledgerDeps(context),
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       goalStore,
@@ -97,8 +107,7 @@ describe('BotLoop goal integration', () => {
       command: { action: 'set', objective: '完成测试目标', tokenBudget: 100 },
     })
     const goal = (await goalStore.get())!
-    const savedGoalRevisions: number[] = []
-    const snapshotRepo = makeSnapshotRepo(savedGoalRevisions)
+    const ledger = createTestAgentLedger()
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context,
@@ -120,7 +129,8 @@ describe('BotLoop goal integration', () => {
         },
       },
       tools: createToolExecutor([createGoalTool(goalStore)]),
-      snapshotRepo,
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       goalStore,
@@ -138,7 +148,7 @@ describe('BotLoop goal integration', () => {
     assert.match(userMessages[0]!, /goal_state_changed/)
     assert.match(userMessages[1]!, /goal_continuation/)
     assert.match(userMessages.at(-1)!, /"status":"complete"/)
-    assert.equal(savedGoalRevisions.at(-1), finished?.revision)
+    assert.equal(ledger.runtimeStates.at(-1)?.goalRevision, finished?.revision)
   })
 
   test('priority attention is appended before goal continuation and budget transition stops goal continuation', async () => {
@@ -174,7 +184,7 @@ describe('BotLoop goal integration', () => {
         },
       },
       tools: createToolExecutor([]),
-      snapshotRepo: makeSnapshotRepo([]),
+      ...ledgerDeps(context),
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       goalStore,
@@ -212,7 +222,7 @@ describe('BotLoop goal integration', () => {
         },
       },
       tools: createToolExecutor([]),
-      snapshotRepo: makeSnapshotRepo([]),
+      ...ledgerDeps(context),
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       goalStore,
@@ -246,14 +256,14 @@ describe('BotLoop goal integration', () => {
         },
       },
       tools: createToolExecutor([]),
-      snapshotRepo: makeSnapshotRepo([]),
+      ...ledgerDeps(context),
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       goalStore,
       compactOptions: {
         triggerTokens: 1,
-        keepRatio: 0.5,
-        summarize: async () => validSummary('压缩摘要'),
+        keepRecentTokens: 1,
+        summarizeCandidate: async () => validLedgerSummary('压缩摘要'),
       },
     })
 
@@ -296,14 +306,14 @@ describe('BotLoop goal integration', () => {
           }
         },
       },
-      snapshotRepo: makeSnapshotRepo([]),
+      ...ledgerDeps(context),
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       goalStore,
       compactOptions: {
         triggerTokens: 1,
-        keepRatio: 0.5,
-        summarize: async () => validSummary('休息前摘要'),
+        keepRecentTokens: 1,
+        summarizeCandidate: async () => validLedgerSummary('休息前摘要'),
       },
       autonomy: {
         now: () => new Date('2026-07-13T08:00:00.000Z'),
@@ -353,13 +363,13 @@ describe('BotLoop goal integration', () => {
         },
       },
       tools: createToolExecutor([]),
-      snapshotRepo: makeSnapshotRepo([]),
+      ...ledgerDeps(context),
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       goalStore,
       compactOptions: {
-        keepRatio: 0.5,
-        summarize: async () => validSummary('恢复摘要'),
+        keepRecentTokens: 1,
+        summarizeCandidate: async () => validLedgerSummary('恢复摘要'),
       },
     })
 
@@ -386,7 +396,7 @@ describe('BotLoop goal integration', () => {
         },
       },
       tools: createToolExecutor([]),
-      snapshotRepo: makeSnapshotRepo([]),
+      ...ledgerDeps(context),
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       goalStore,
@@ -400,9 +410,12 @@ describe('BotLoop goal integration', () => {
   })
 })
 
-function makeSnapshotRepo(savedGoalRevisions: number[]): BotSnapshotRepo {
-  return {
-    async load() { return null },
-    async save(input) { savedGoalRevisions.push(input.goalRevision) },
-  }
+function ledgerDeps(context: ReturnType<typeof createAgentContext>) {
+  const ledger = createTestAgentLedger({
+    messages: context.getSnapshot().messages,
+    runtimeState: {
+      activeToolCapabilities: context.getSnapshot().activeToolCapabilities,
+    },
+  })
+  return { ledgerRepo: ledger.repo, ledgerLoader: ledger.loader }
 }

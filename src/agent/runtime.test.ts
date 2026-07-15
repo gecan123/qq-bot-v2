@@ -7,12 +7,12 @@ import { createAgentContext } from './agent-context.js'
 import { InMemoryEventQueue, type EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { LlmClient } from './llm-client.js'
-import type { BotSnapshotRepo } from './bot-loop-agent.js'
 import { createAgentRuntime, createScheduleRuntimeLogHandler } from './runtime.js'
 import type { MessageSender } from '../messaging/message-sender.js'
 import { McpManager } from './mcp-manager.js'
 import { createInMemoryGoalStore } from './goal-store.js'
 import type { ScheduleRuntime, ScheduleRuntimeLogEntry } from './schedule-runtime.js'
+import { createTestAgentLedger } from './test-support/agent-ledger.js'
 
 const tempDirs: string[] = []
 
@@ -24,6 +24,9 @@ describe('createAgentRuntime', () => {
   test('wires deferred tool activation state through AgentContext', async () => {
     const context = createAgentContext()
     context.activateToolCapability('external_research')
+    const ledger = createTestAgentLedger({
+      runtimeState: { activeToolCapabilities: ['external_research'] },
+    })
     let mcpConnections = 0
     let scheduleStarts = 0
     let scheduleStops = 0
@@ -58,7 +61,8 @@ describe('createAgentRuntime', () => {
       context,
       eventQueue: new InMemoryEventQueue<BotEvent>(),
       llm: makeMockLlm(),
-      snapshotRepo: makeSnapshotRepo(),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
       sender: makeMessageSender(),
       loadFriends: async () => [{ userId: 2002, nickname: '好友', remark: '主人' }],
       loadGroups: async () => [{ groupId: 1001, groupName: '测试群' }],
@@ -228,7 +232,7 @@ describe('createAgentRuntime', () => {
   test('persists capability activation with its visible help result before installing it', async () => {
     const context = createAgentContext()
     context.appendUserMessage('activate research')
-    const saved: Array<Parameters<BotSnapshotRepo['save']>[0]> = []
+    const ledger = createTestAgentLedger({ messages: context.getSnapshot().messages })
     const runtime = createAgentRuntime({
       ...makeRuntimeInput(),
       context,
@@ -247,18 +251,16 @@ describe('createAgentRuntime', () => {
           }
         },
       },
-      snapshotRepo: {
-        async load() { return null },
-        async save(input) { saved.push(structuredClone(input)) },
-      },
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
     })
 
     await runtime.agent.runOnceForTest()
 
-    const committed = saved.at(-1)
+    const committed = ledger.snapshots.at(-1)
     assert.ok(committed)
-    assert.deepEqual(committed.snapshot.activeToolCapabilities, ['external_research'])
-    assert.equal(committed.snapshot.messages.at(-1)?.role, 'tool')
+    assert.deepEqual(committed.activeToolCapabilities, ['external_research'])
+    assert.equal(committed.messages.at(-1)?.role, 'tool')
     assert.deepEqual(context.getSnapshot().activeToolCapabilities, ['external_research'])
   })
 
@@ -389,11 +391,14 @@ describe('createAgentRuntime', () => {
 })
 
 function makeRuntimeInput() {
+  const context = createAgentContext()
+  const ledger = createTestAgentLedger()
   return {
-    context: createAgentContext(),
+    context,
     eventQueue: new InMemoryEventQueue<BotEvent>(),
     llm: makeMockLlm(),
-    snapshotRepo: makeSnapshotRepo(),
+    ledgerRepo: ledger.repo,
+    ledgerLoader: ledger.loader,
     sender: makeMessageSender(),
     loadFriends: async () => [{ userId: 2002, nickname: '好友', remark: '主人' }],
     loadGroups: async () => [{ groupId: 1001, groupName: '测试群' }],
@@ -474,15 +479,6 @@ function disabledOptionalTools() {
     website: null,
     webSearch: null,
     cryptoPaper: null,
-  }
-}
-
-function makeSnapshotRepo(): BotSnapshotRepo {
-  return {
-    async load() {
-      return null
-    },
-    async save() {},
   }
 }
 

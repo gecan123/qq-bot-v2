@@ -2,12 +2,10 @@ import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, test } from 'node:test'
 import { prisma } from '../database/client.js'
 import {
-  injectStickerPoolAfterCompaction,
   renderStickerPoolSummary,
   STICKER_POOL_SUMMARY_LIMIT,
   STICKER_POOL_SUMMARY_MAX_CHARS,
 } from './sticker-pool.js'
-import { createAgentContext } from './agent-context.js'
 
 describe('sticker pool summary', () => {
   let originalFindMany: typeof prisma.stickerPool.findMany
@@ -50,21 +48,5 @@ describe('sticker pool summary', () => {
     assert.equal(payload.truncated, true)
     assert.equal(summary.includes('#100'), false)
     assert.ok(summary.length <= STICKER_POOL_SUMMARY_MAX_CHARS)
-  })
-
-  test('compaction injection appends one valid JSON user message', async () => {
-    prisma.stickerPool.findMany = (async () => [{
-      mediaId: 100,
-      name: '测试表情',
-      tags: ['测试'],
-      description: '描述',
-    }]) as never
-    const context = createAgentContext()
-
-    await injectStickerPoolAfterCompaction(context)
-
-    const message = context.getSnapshot().messages[0]
-    assert.equal(message?.role, 'user')
-    assert.equal(message?.role === 'user' ? JSON.parse(message.content).stickers[0].mediaRef : '', 'media:100')
   })
 })

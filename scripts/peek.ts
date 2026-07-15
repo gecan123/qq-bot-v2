@@ -1,7 +1,7 @@
 /**
  * peek: 实时观察 BotAgentContext 在想啥.
  *
- * 读 bot_agent_snapshot 单行表 (LLM 真看到的那份), 格式化 messages 流式打印.
+ * 只读 canonical append-only ledger，确定性投影出 LLM 真看到的 messages 后格式化打印。
  * 不动 bot 进程, 不影响 prompt cache, 不影响主循环 — bot 挂了也照样能 dump 历史.
  *
  * 用法:
@@ -12,10 +12,12 @@
  *   pnpm peek --no-color      # 关 ANSI 颜色 (pipe 到文件 / grep 时建议关)
  *
  * 自然交互:
- *   - 检测到 compaction (messages.length 变小) 会打印一条标记线再继续.
+ *   - 检测到新 compaction boundary（projection messages 变短）会打印标记线再继续。
  *   - Ctrl-C 干净退出.
  */
 import { prisma } from '../src/database/client.js'
+import { createAgentLedgerRepo } from '../src/agent/agent-ledger-repo.js'
+import { projectAgentLedger } from '../src/agent/agent-ledger-projection.js'
 
 interface ToolCall {
   id: string
@@ -157,10 +159,9 @@ function formatMessage(args: Args, i: number, m: Msg): string {
 }
 
 async function loadMessages(): Promise<Msg[] | null> {
-  const row = await prisma.botAgentSnapshot.findUnique({ where: { id: 1 } })
-  if (!row) return null
-  const snap = row.contextSnapshot as { messages?: Msg[] }
-  return snap.messages ?? []
+  const canonical = await createAgentLedgerRepo().loadCanonicalState()
+  if (canonical.entries.length === 0) return null
+  return projectAgentLedger(canonical).snapshot.messages as Msg[]
 }
 
 function printRange(args: Args, msgs: Msg[], from: number, to: number): void {
@@ -177,7 +178,7 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
   let msgs = await loadMessages()
   if (msgs == null) {
-    console.error('no snapshot yet (bot 还没启动过, 或 bot_agent_snapshot 表为空)')
+    console.error('no ledger entries yet (bot 还没产生 LLM 历史，或 ledger 已重置)')
     process.exit(0)
   }
   const start = Math.max(0, msgs.length - args.count)
@@ -203,7 +204,7 @@ async function main(): Promise<void> {
     if (next.length > lastLen) {
       printRange(args, next, lastLen, next.length)
     } else if (next.length < lastLen) {
-      // compaction rewrote the prefix — re-baseline
+      // A newer append-only compaction boundary changed the active projection.
       const banner = `\n--- compaction detected: ${lastLen} → ${next.length} messages, re-baseline ---\n`
       process.stdout.write(paint(args, 'meta', banner) + '\n')
       const reStart = Math.max(0, next.length - args.count)

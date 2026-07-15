@@ -6,7 +6,6 @@ import { InMemoryEventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { LlmClient, LlmCallOutput } from './llm-client.js'
 import type { ToolExecutionResult, ToolExecutor } from './tool.js'
-import type { BotSnapshotRepo } from './bot-loop-agent.js'
 import type { PersistedAgentSnapshot } from './agent-context.types.js'
 import type { AgentMessage } from './agent-context.types.js'
 import type { AgentLedgerRepo, AgentRuntimePatch } from './agent-ledger-repo.js'
@@ -14,6 +13,7 @@ import { AgentLedgerHeadChangedError } from './agent-ledger-repo.js'
 import type { AgentLedgerLoader } from './agent-ledger-loader.js'
 import { createAgentLedgerLoader } from './agent-ledger-loader.js'
 import type { AgentLedgerEntry, AgentRuntimeState } from './agent-ledger.types.js'
+import { projectAgentLedger } from './agent-ledger-projection.js'
 import type { MailboxCursors } from './mailbox.js'
 import { renderBotEvent } from './render-event.js'
 import { createInMemoryGoalStore } from './goal-store.js'
@@ -34,21 +34,6 @@ function makeMockLlm(outputs: LlmCallOutput[]): LlmClient {
       return next
     },
   }
-}
-
-function validSummary(content = '保留关键历史。'): string {
-  return [
-    '## 讨论过的话题',
-    content,
-    '',
-    '## 群友信息',
-    '',
-    '## 我的承诺和状态',
-    '',
-    '## 工具调用结果',
-    '',
-    '## 情绪和氛围',
-  ].join('\n')
 }
 
 function validLedgerSummary(content = '保留关键历史。'): string {
@@ -86,33 +71,6 @@ function makeMockTools(impl: Record<string, () => Promise<ToolExecutionResult>> 
   }
 }
 
-function makeMockSnapshotRepo(): {
-  repo: BotSnapshotRepo
-  saved: PersistedAgentSnapshot[]
-  savedCursors: Array<MailboxCursors | undefined>
-  savedLastWakeAt: Array<Date | null>
-  savedContinuity: Array<MailboxContinuityState | undefined>
-} {
-  const saved: PersistedAgentSnapshot[] = []
-  const savedCursors: Array<MailboxCursors | undefined> = []
-  const savedLastWakeAt: Array<Date | null> = []
-  const savedContinuity: Array<MailboxContinuityState | undefined> = []
-  const repo: BotSnapshotRepo = {
-    async load() {
-      return null
-    },
-    async save(input) {
-      saved.push(input.snapshot)
-      savedCursors.push((input as typeof input & { mailboxCursors?: MailboxCursors }).mailboxCursors)
-      savedLastWakeAt.push(input.lastWakeAt)
-      savedContinuity.push(input.mailboxContinuity == null
-        ? undefined
-        : structuredClone(input.mailboxContinuity))
-    },
-  }
-  return { repo, saved, savedCursors, savedLastWakeAt, savedContinuity }
-}
-
 function makeMockLedgerHarness(
   contextMessages: readonly AgentMessage[],
   options: { failAppend?: boolean } = {},
@@ -120,8 +78,18 @@ function makeMockLedgerHarness(
   repo: AgentLedgerRepo
   loader: AgentLedgerLoader
   appendCalls: Array<{ messages: AgentMessage[]; runtimePatch?: AgentRuntimePatch }>
+  saved: PersistedAgentSnapshot[]
+  savedCursors: Array<MailboxCursors | undefined>
+  savedLastWakeAt: Array<Date | null>
+  savedContinuity: Array<MailboxContinuityState | undefined>
 } {
-  let messages: AgentMessage[] = structuredClone([...contextMessages])
+  let entries: AgentLedgerEntry[] = contextMessages.map((message, index) => ({
+    id: BigInt(index + 1),
+    entryType: 'message',
+    payload: { schemaVersion: 1, message: structuredClone(message) },
+    createdAt: new Date('2026-07-15T00:00:00.000Z'),
+  }))
+  let nextId = BigInt(entries.length + 1)
   let runtimeState: AgentRuntimeState = {
     schemaVersion: 1,
     mailboxCursors: {},
@@ -129,9 +97,13 @@ function makeMockLedgerHarness(
     goalRevision: 0,
     activeToolCapabilities: [],
     lastWakeAt: null,
-    ledgerHeadEntryId: null,
+    ledgerHeadEntryId: entries.at(-1)?.id ?? null,
   }
   const appendCalls: Array<{ messages: AgentMessage[]; runtimePatch?: AgentRuntimePatch }> = []
+  const saved: PersistedAgentSnapshot[] = []
+  const savedCursors: Array<MailboxCursors | undefined> = []
+  const savedLastWakeAt: Array<Date | null> = []
+  const savedContinuity: Array<MailboxContinuityState | undefined> = []
   const applyPatch = (patch: AgentRuntimePatch = {}): void => {
     runtimeState = {
       ...runtimeState,
@@ -139,45 +111,72 @@ function makeMockLedgerHarness(
       lastWakeAt: patch.lastWakeAt === undefined ? runtimeState.lastWakeAt : patch.lastWakeAt,
     }
   }
+  const recordCommittedState = (): void => {
+    const projection = projectAgentLedger({ entries, runtimeState })
+    saved.push(structuredClone(projection.snapshot))
+    savedCursors.push(structuredClone(runtimeState.mailboxCursors))
+    savedLastWakeAt.push(runtimeState.lastWakeAt == null ? null : new Date(runtimeState.lastWakeAt))
+    savedContinuity.push(structuredClone(runtimeState.mailboxContinuity))
+  }
   const repo: AgentLedgerRepo = {
-    async loadCanonicalState() { throw new Error('not used') },
+    async loadCanonicalState() {
+      return { entries: structuredClone(entries), runtimeState: structuredClone(runtimeState) }
+    },
     async appendMessages(input) {
       appendCalls.push({
         messages: structuredClone([...input.messages]),
         ...(input.runtimePatch ? { runtimePatch: structuredClone(input.runtimePatch) } : {}),
       })
       if (options.failAppend) throw new Error('ledger commit failed')
-      messages = [...messages, ...structuredClone(input.messages)]
+      const appendedEntries: AgentLedgerEntry[] = input.messages.map((message) => ({
+        id: nextId++,
+        entryType: 'message',
+        payload: { schemaVersion: 1, message: structuredClone(message) },
+        createdAt: new Date('2026-07-15T00:00:01.000Z'),
+      }))
+      entries.push(...appendedEntries)
       applyPatch(input.runtimePatch)
-      return { appendedEntries: [], runtimeState }
+      runtimeState.ledgerHeadEntryId = entries.at(-1)?.id ?? null
+      recordCommittedState()
+      return { appendedEntries, runtimeState: structuredClone(runtimeState) }
     },
-    async appendCompaction() { throw new Error('not used') },
+    async appendCompaction(input) {
+      if (input.expectedHeadEntryId !== runtimeState.ledgerHeadEntryId) {
+        throw new AgentLedgerHeadChangedError(input.expectedHeadEntryId, runtimeState.ledgerHeadEntryId)
+      }
+      const entry: AgentLedgerEntry = {
+        id: nextId++,
+        entryType: 'compaction',
+        payload: structuredClone(input.payload),
+        createdAt: new Date('2026-07-15T00:00:02.000Z'),
+      }
+      entries.push(entry)
+      applyPatch(input.runtimePatch)
+      runtimeState.ledgerHeadEntryId = entry.id
+      recordCommittedState()
+      return { appendedEntries: [entry], runtimeState: structuredClone(runtimeState) }
+    },
     async updateRuntime(input) {
+      if (input.expectedHeadEntryId !== runtimeState.ledgerHeadEntryId) {
+        throw new AgentLedgerHeadChangedError(input.expectedHeadEntryId, runtimeState.ledgerHeadEntryId)
+      }
       applyPatch(input.patch)
-      return runtimeState
+      recordCommittedState()
+      return structuredClone(runtimeState)
     },
     async saveCheckpoint() {},
     async loadCheckpoint() { return null },
   }
-  const loader: AgentLedgerLoader = {
-    async load() {
-      return {
-        projection: {
-          throughEntryId: runtimeState.ledgerHeadEntryId,
-          activeEntryCount: messages.length,
-          permanentEntryCount: messages.length,
-          snapshot: {
-            schemaVersion: 3,
-            messages: structuredClone(messages),
-            activeToolCapabilities: [...runtimeState.activeToolCapabilities],
-          },
-        },
-        runtimeState: structuredClone(runtimeState),
-        checkpointStatus: 'missing',
-      }
-    },
+  const loader = createAgentLedgerLoader({ repo })
+  return {
+    repo,
+    loader,
+    appendCalls,
+    saved,
+    savedCursors,
+    savedLastWakeAt,
+    savedContinuity,
   }
-  return { repo, loader, appendCalls }
 }
 
 function makeCanonicalCompactionHarness(
@@ -287,28 +286,31 @@ function makeCanonicalCompactionHarness(
 }
 
 // Note: 'send_group_message' references in fixtures below are intentionally retained as the
-// historical (MVP-1) tool name, mirroring how persisted bot snapshots from before the MVP-2
-// rename look on disk. New code calls the tool 'send_message' (see src/agent/tools/send-message.ts);
-// already-persisted history stays as-is (red line 5: byte stability of historical turns).
+// historical (MVP-1) tool name, mirroring immutable ledger rows from before the MVP-2 rename.
+// New code calls the tool 'send_message' (see src/agent/tools/send-message.ts).
 describe('BotLoopAgent.runOnceForTest', () => {
-  test('flush persists the current context without running an LLM round', async () => {
+  test('flush does not rewrite already canonical context', async () => {
     const ctx = createAgentContext()
     ctx.appendUserMessage('durable before shutdown')
-    const { repo, saved } = makeMockSnapshotRepo()
+    const { repo, loader, saved } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
       eventQueue: new InMemoryEventQueue<BotEvent>(),
       llm: makeMockLlm([]),
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })
 
     await agent.flush()
 
-    assert.deepEqual(saved, [ctx.exportPersistedSnapshot()])
+    assert.deepEqual(saved, [])
+    assert.deepEqual(ctx.getSnapshot().messages, [
+      { role: 'user', content: 'durable before shutdown' },
+    ])
   })
 
   test('does not mutate AgentContext before ledger commit succeeds', async () => {
@@ -720,7 +722,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     ctx.appendUserMessage(
       '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
     )
-    const { repo, saved } = makeMockSnapshotRepo()
+    const { repo, loader, saved } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -738,7 +740,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
           effects: [{ type: 'message_sent', target: { type: 'private', userId: 9001 } }],
         }),
       }),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })
@@ -768,7 +771,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     ctx.appendUserMessage(
       '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
     )
-    const { repo, saved } = makeMockSnapshotRepo()
+    const { repo, loader, saved } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -786,7 +789,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
           effects: [{ type: 'message_sent', target: { type: 'private', userId: 9001 } }],
         }),
       }),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       goalStore,
       initialGoalRevision: created.goal.revision,
       renderEvent: renderBotEvent,
@@ -813,7 +817,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     ctx.appendUserMessage(
       '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
     )
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -841,7 +845,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
           effects: [{ type: 'message_sent', target: { type: 'private', userId: 9001 } }],
         }),
       }),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })
@@ -867,7 +872,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     ctx.appendUserMessage(
       '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
     )
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -882,7 +887,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       tools: makeMockTools({
         send_message: async () => ({ content: '{"ok":false,"status":"failed"}' }),
       }),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })
@@ -902,7 +908,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     ctx.appendUserMessage(
       '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
     )
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -920,7 +926,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
           effects: [{ type: 'message_sent', target: { type: 'private', userId: 9002 } }],
         }),
       }),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })
@@ -940,7 +947,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     ctx.appendUserMessage(
       '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
     )
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -961,7 +968,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
           effects: [{ type: 'message_sent', target: { type: 'private', userId: 9001 } }],
         }),
       }),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })
@@ -1010,7 +1018,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       },
     })
 
-    const { repo, saved } = makeMockSnapshotRepo()
+    const { repo, loader, saved } = makeMockLedgerHarness(ctx.getSnapshot().messages)
 
     const agent = createBotLoopAgent({
       systemPrompt: 'you are a bot',
@@ -1018,7 +1026,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       eventQueue,
       llm,
       tools,
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: async (event) => {
         if (event.type !== 'napcat_message') return null
         return `[${event.senderNickname}] hello`
@@ -1043,7 +1052,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     }
     assert.equal(messages[2]?.role, 'tool')
     assert.equal(toolExecuted, true)
-    assert.equal(saved.length, 2, 'snapshot persisted twice (pre-round + post-round)')
+    assert.equal(saved.length, 2, 'event disclosure and tool batch must commit separately')
   })
 
   test('adds one prior-message compensation after a durable two-hour mailbox gap', async () => {
@@ -1063,7 +1072,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     })
     const continuity = createEmptyMailboxContinuityState()
     recordMailboxDisclosure(continuity, 'qq_private:9001', firstAt.getTime())
-    const { repo, savedContinuity } = makeMockSnapshotRepo()
+    const { repo, loader, savedContinuity } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -1076,7 +1085,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
         contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       initialMailboxContinuity: continuity,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
@@ -1111,14 +1121,15 @@ describe('BotLoopAgent.runOnceForTest', () => {
       },
     ])
 
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
       eventQueue,
       llm,
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: () => null,
       eventDebounceMs: 0,
     })
@@ -1143,7 +1154,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       renderedText: 'hello',
     })
     const received: PersistedAgentSnapshot['messages'][] = []
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: 'you are a bot',
       context: ctx,
@@ -1158,7 +1169,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       tools: makeMockTools({
         send_message: async () => ({ content: '{"ok":true,"status":"sent"}' }),
       }),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       lifeJournal: {
@@ -1186,7 +1198,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'curiosity_tick' })
     let summarized = false
-    const { repo, saved } = makeMockSnapshotRepo()
+    const { repo, loader, saved } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -1201,15 +1213,16 @@ describe('BotLoopAgent.runOnceForTest', () => {
       tools: makeMockTools({
         lookup: async () => ({ content: 'tool result' }),
       }),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       compactOptions: {
         triggerTokens: 1,
-        keepRatio: 0.1,
-        summarize: async () => {
+        keepRecentTokens: 1,
+        summarizeCandidate: async () => {
           summarized = true
-          return validSummary()
+          return validLedgerSummary()
         },
       },
       lifeJournal: {
@@ -1226,7 +1239,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.deepEqual(
       lastSaved,
       ctx.exportPersistedSnapshot(),
-      'the snapshot saved at the end of the step must include compaction output',
+      'the latest committed projection must include compaction output',
     )
     const head = lastSaved?.messages[0]
     assert.equal(head?.role, 'user')
@@ -1259,27 +1272,28 @@ describe('BotLoopAgent.runOnceForTest', () => {
         }
       },
     }
-    const { repo, saved } = makeMockSnapshotRepo()
+    const { repo, loader, saved } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
       eventQueue,
       llm,
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       compactOptions: {
         triggerTokens: 100_000,
-        keepRatio: 0.2,
-        summarize: async ({ history }) => validSummary(`recovered ${history.length}`),
+        keepRecentTokens: 1,
+        summarizeCandidate: async () => validLedgerSummary('recovered history'),
       },
     })
 
     await agent.runOnceForTest()
 
     assert.equal(chatCalls, 2)
-    assert.equal(saved.length, 3, 'pre-round, recovery-compacted, post-round snapshots')
+    assert.equal(saved.length, 3, 'event disclosure, recovery compaction, and round result')
     const messages = ctx.getSnapshot().messages
     assert.equal(messages[0]?.role, 'user')
     if (messages[0]?.role === 'user') assert.match(messages[0].content, /^\[历史摘要\][\s\S]*recovered /)
@@ -1294,7 +1308,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     eventQueue.enqueue({ type: 'curiosity_tick' })
     let chatCalls = 0
     let summarizeCalls = 0
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -1306,14 +1320,15 @@ describe('BotLoopAgent.runOnceForTest', () => {
         },
       },
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       compactOptions: {
-        keepRatio: 0.2,
-        summarize: async () => {
+        keepRecentTokens: 1,
+        summarizeCandidate: async () => {
           summarizeCalls += 1
-          return validSummary()
+          return validLedgerSummary()
         },
       },
     })
@@ -1331,7 +1346,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     eventQueue.enqueue({ type: 'curiosity_tick' })
     let chatCalls = 0
     let summarizeCalls = 0
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -1353,12 +1368,13 @@ describe('BotLoopAgent.runOnceForTest', () => {
         },
       },
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       compactOptions: {
-        keepRatio: 0.2,
-        summarize: async () => {
+        keepRecentTokens: 1,
+        summarizeCandidate: async () => {
           summarizeCalls++
           throw new Error('summarizer unavailable')
         },
@@ -1402,7 +1418,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         }
       },
     }
-    const { repo, saved } = makeMockSnapshotRepo()
+    const { repo, loader, saved } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -1414,7 +1430,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
           return { content: '{"ok":true}' }
         },
       }),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })
@@ -1449,7 +1466,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'curiosity_tick' })
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -1462,7 +1479,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
         contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       lifeJournal: {
@@ -1482,7 +1500,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'wake' })
     let called = false
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -1495,7 +1513,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
         contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       lifeJournal: {
@@ -1545,14 +1564,15 @@ describe('BotLoopAgent.runOnceForTest', () => {
       model: 'mock',
       contextWindowTokens: 200_000,
     }])
-    const { repo, savedCursors } = makeMockSnapshotRepo()
+    const { repo, loader, savedCursors } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
       eventQueue,
       llm,
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: (event) => event.type === 'napcat_message' ? event.renderedText : null,
       eventDebounceMs: 0,
     })
@@ -1598,14 +1618,15 @@ describe('BotLoopAgent.runOnceForTest', () => {
       model: 'mock',
       contextWindowTokens: 200_000,
     }])
-    const { repo, savedCursors } = makeMockSnapshotRepo()
+    const { repo, loader, savedCursors } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
       eventQueue,
       llm,
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: (event) => event.type === 'napcat_private_message' ? event.renderedText : null,
       eventDebounceMs: 0,
     })
@@ -1644,7 +1665,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       },
     })
 
-    const { repo, savedCursors } = makeMockSnapshotRepo()
+    const { repo, loader, savedCursors } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -1657,7 +1678,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
         contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })
@@ -1688,7 +1710,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'curiosity_tick' })
     const restoredWakeAt = new Date('2026-07-02T12:00:00Z')
-    const { repo, savedLastWakeAt } = makeMockSnapshotRepo()
+    const { repo, loader, savedLastWakeAt } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -1701,7 +1723,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
         contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       initialLastWakeAt: restoredWakeAt,
       renderEvent: () => '[好奇心 tick]',
       eventDebounceMs: 0,
@@ -1728,7 +1751,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       renderedText: 'must be ignored',
     })
     let llmCalled = false
-    const { repo, saved } = makeMockSnapshotRepo()
+    const { repo, loader, saved } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -1740,7 +1763,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
         },
       },
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       initialMailboxCursors: { 'qq_group:999': 10 },
       renderEvent: () => 'must not render',
       eventDebounceMs: 0,
@@ -1761,7 +1785,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         throw new Error('LLM should not run while there are no events')
       },
     }
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     let opened = 0
     let closed = 0
 
@@ -1771,7 +1795,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       eventQueue,
       llm,
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: () => null,
       eventDebounceMs: 0,
       keepAlive: {
@@ -1854,17 +1879,17 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     let sendMessageCalled = false
     const tools = makeMockTools({
-      reddit: async () => ({ content: '[reddit] r/programming top: foo bar' }),
+      reddit: async () => ({ content: '{"source":"reddit","result":"foo bar"}' }),
       send_message: async () => {
         sendMessageCalled = true
         return { content: '{"ok":true,"status":"sent"}' }
       },
       rest: async () => {
         await agent.stop()
-        return { content: '[休息结束] 已休息约 30 秒。' }
+        return { content: '{"ok":true,"status":"elapsed"}' }
       },
     })
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
 
     agent = createBotLoopAgent({
       systemPrompt: 'you are a bot',
@@ -1872,7 +1897,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       eventQueue,
       llm,
       tools,
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: async (event) => {
         if (event.type !== 'napcat_message') return null
         return `[${event.senderNickname}] hello`
@@ -1952,10 +1978,10 @@ describe('BotLoopAgent.runOnceForTest', () => {
       pause: async () => {
         pauseCalled = true
         await agent.stop()
-        return { content: '[休息结束] 继续: 醒来后继续自己的研究' }
+        return { content: '{"ok":true,"status":"elapsed","resume":"继续自己的研究"}' }
       },
     })
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
 
     agent = createBotLoopAgent({
       systemPrompt: 'you are a bot',
@@ -1963,7 +1989,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       eventQueue,
       llm,
       tools,
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: async (event) => {
         if (event.type !== 'napcat_message') return null
         return `[${event.senderNickname}] hello`
@@ -2015,14 +2042,15 @@ describe('BotLoopAgent.runOnceForTest', () => {
         }
       },
     })
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
       eventQueue,
       llm,
       tools,
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
@@ -2049,7 +2077,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     ctx.appendUserMessage('older history')
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'curiosity_tick' })
-    const { repo, saved } = makeMockSnapshotRepo()
+    const { repo, loader, saved } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -2074,13 +2102,14 @@ describe('BotLoopAgent.runOnceForTest', () => {
           effects: [{ type: 'pause', status: 'elapsed' }],
         }),
       }),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       compactOptions: {
         triggerTokens: 1,
-        keepRatio: 0.1,
-        summarize: async () => validSummary('rest 前的历史'),
+        keepRecentTokens: 1,
+        summarizeCandidate: async () => validLedgerSummary('rest 前的历史'),
       },
       autonomy: {
         now: () => new Date('2026-07-13T08:00:00.000Z'),
@@ -2120,7 +2149,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'curiosity_tick' })
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -2138,7 +2167,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
           effects: [{ type: 'pause', status: 'interrupted' }],
         }),
       }),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })
@@ -2182,7 +2212,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       sentAt: new Date('2026-07-13T09:00:00.000Z'),
       renderedText: '在吗',
     })
-    const { repo, saved } = makeMockSnapshotRepo()
+    const { repo, loader, saved } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -2195,7 +2225,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
         contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })
@@ -2212,7 +2243,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         (message) => message.role === 'user' && message.content.includes('"event":"rest_interrupted_attention"'),
       ),
       true,
-      'the pre-round snapshot must durably include the reminder',
+      'the pre-round ledger append must durably include the reminder',
     )
   })
 
@@ -2235,7 +2266,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     })
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue(makeScheduledWake())
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -2248,7 +2279,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
         contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })
@@ -2285,7 +2317,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       sentAt: new Date('2026-07-13T09:00:01.000Z'),
       renderedText: '在吗',
     })
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -2298,7 +2330,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
         contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       goalStore,
       initialGoalRevision: created.goal.revision,
       renderEvent: renderBotEvent,
@@ -2342,7 +2375,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       renderedText: '@bot 新消息',
     })
     const ctx = createAgentContext()
-    const { repo, savedContinuity } = makeMockSnapshotRepo()
+    const { repo, loader, savedContinuity } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -2364,7 +2397,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
         },
       ]),
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })
@@ -2433,7 +2467,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       renderedText: '@bot 新消息',
     })
     const ctx = createAgentContext()
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -2446,7 +2480,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
         contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })
@@ -2472,7 +2507,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue(makeScheduledWake())
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -2485,7 +2520,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
         contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       goalStore,
       initialGoalRevision: created.goal.revision,
       renderEvent: renderBotEvent,
@@ -2521,7 +2557,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       sentAt: new Date('2026-07-13T09:00:01.000Z'),
       renderedText: '普通群消息',
     })
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
@@ -2534,7 +2570,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
         contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       goalStore,
       initialGoalRevision: created.goal.revision,
       renderEvent: renderBotEvent,
@@ -2552,7 +2589,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'curiosity_tick' })
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: 'you are a bot',
       context: ctx,
@@ -2569,7 +2606,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
           throw new Error('kernel catches this')
         },
       }),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })
@@ -2619,7 +2657,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         effects: [{ type: 'pause' }],
       }),
     })
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
 
     agent = createBotLoopAgent({
       systemPrompt: 'you are a bot',
@@ -2627,7 +2665,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       eventQueue,
       llm,
       tools,
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
@@ -2692,10 +2731,10 @@ describe('BotLoopAgent.runOnceForTest', () => {
       rest: async () => {
         restCalled = true
         await agent.stop()
-        return { content: '[休息结束] 已休息约 30 秒。' }
+        return { content: '{"ok":true,"status":"elapsed"}' }
       },
     })
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
 
     agent = createBotLoopAgent({
       systemPrompt: 'you are a bot',
@@ -2703,7 +2742,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       eventQueue,
       llm,
       tools,
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: async (event) => {
         if (event.type !== 'napcat_message') return null
         return `[${event.senderNickname}] hello`
@@ -2742,7 +2782,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         }
       },
     }
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
 
     agent = createBotLoopAgent({
       systemPrompt: 'you are a bot',
@@ -2752,7 +2792,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       tools: makeMockTools({
         lookup: async () => ({ content: '{"ok":true}' }),
       }),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
@@ -2796,7 +2837,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         }
       },
     }
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
 
     agent = createBotLoopAgent({
       systemPrompt: 'you are a bot',
@@ -2812,7 +2853,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
           : { content: '{"ok":true}' },
         help: async () => ({ content: '{"ok":true}' }),
       }),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
@@ -2851,14 +2893,15 @@ describe('BotLoopAgent.runOnceForTest', () => {
         }
       },
     }
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
       eventQueue,
       llm,
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
@@ -2902,14 +2945,15 @@ describe('BotLoopAgent.runOnceForTest', () => {
         }
       },
     }
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
       eventQueue,
       llm,
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
@@ -2947,7 +2991,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         }
       },
     }
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
 
     agent = createBotLoopAgent({
       systemPrompt: 'you are a bot',
@@ -2957,7 +3001,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       tools: makeMockTools({
         pause: async () => ({ content: '{"error":"Invalid tool arguments"}' }),
       }),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
@@ -3021,10 +3066,10 @@ describe('BotLoopAgent.runOnceForTest', () => {
       rest: async () => {
         restCalled = true
         await agent.stop()
-        return { content: '[休息结束] 已休息约 30 秒。' }
+        return { content: '{"ok":true,"status":"elapsed"}' }
       },
     })
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
 
     agent = createBotLoopAgent({
       systemPrompt: 'you are a bot',
@@ -3032,7 +3077,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       eventQueue,
       llm,
       tools,
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: async (event) => {
         if (event.type !== 'napcat_message') return null
         return `[${event.senderNickname}] hello`
@@ -3096,7 +3142,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         return { content: '{"ok":true,"status":"sent"}' }
       },
     })
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
 
     const agent = createBotLoopAgent({
       systemPrompt: 'you are a bot',
@@ -3104,7 +3150,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       eventQueue,
       llm,
       tools,
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: async (event) => {
         if (event.type !== 'napcat_message') return null
         return `[${event.senderNickname}] hello`
@@ -3152,7 +3199,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         contextWindowTokens: 200_000,
       },
     ])
-    const { repo } = makeMockSnapshotRepo()
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
 
     const agent = createBotLoopAgent({
       systemPrompt: '',
@@ -3160,7 +3207,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       eventQueue,
       llm,
       tools: makeMockTools(),
-      snapshotRepo: repo,
+      ledgerRepo: repo,
+      ledgerLoader: loader,
       renderEvent: () => null,
       eventDebounceMs: 0,
     })

@@ -107,8 +107,11 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
     errors.push('README.md references stale env var "GROUP_IDS"; use "BOT_TARGET_GROUP_IDS"')
   }
 
-  if (!files['README.md'].includes('bot_agent_snapshot')) {
-    errors.push('README.md must document bot_agent_snapshot as the persistent AgentContext table')
+  if (!files['README.md'].includes('bot_agent_ledger_entries')) {
+    errors.push('README.md must document bot_agent_ledger_entries as the persistent LLM ledger')
+  }
+  if (files['README.md'].includes('bot_agent_snapshot')) {
+    errors.push('README.md must not document removed bot_agent_snapshot persistence')
   }
 
   checkAgentPersistenceSchema(files['prisma/schema.prisma'], errors)
@@ -143,6 +146,11 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   const agentMemoryCheck = (scripts as Record<string, unknown>)['agent:memory-check']
   if (agentMemoryCheck !== 'tsx scripts/agent-memory-check.ts') {
     errors.push('package.json must define scripts["agent:memory-check"] as "tsx scripts/agent-memory-check.ts"')
+  }
+
+  const agentLedgerCheck = (scripts as Record<string, unknown>)['agent:ledger-check']
+  if (agentLedgerCheck !== 'tsx scripts/agent-ledger-check.ts') {
+    errors.push('package.json must define scripts["agent:ledger-check"] as "tsx scripts/agent-ledger-check.ts"')
   }
 
   const lint = (scripts as Record<string, unknown>).lint

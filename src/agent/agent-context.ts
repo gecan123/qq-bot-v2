@@ -21,8 +21,8 @@ export type {
  *
  * AGENTS.md / CLAUDE.md「永续上下文契约」红线:
  *  - getSnapshot() 返回深拷贝, 外部修改不影响内部 (字节稳定的前提)
- *  - messages 仅 appendXxx 和 replaceMessages 两类写口
- *  - replaceMessages 仅 compaction 调用
+ *  - 主 Runtime Host 只能在 canonical commit/reload 后用 installProjection 整体安装
+ *  - appendXxx 只服务不持久化的局部 AgentContext（例如 delegate）和测试 fixture
  *  - 持久形态 == 运行时形态; snapshot.messages 是 LLM 看到的 messages,
  *    activeToolCapabilities 是 runtime control state, 不进 LLM messages。
  */
@@ -37,12 +37,9 @@ export interface AgentContext {
   appendToolResult(input: { toolCallId: string; content: ToolResultContent }): void
   activateToolCapability(capability: string): void
   deactivateToolCapability(capability: string): void
-  /** compaction 唯一写口。原子替换全部 messages。 */
-  replaceMessages(messages: DurableAgentMessage[]): void
   /** Runtime Host 在 canonical commit/reload 后安装完整 projection。 */
   installProjection(snapshot: PersistedAgentSnapshot): void
   exportPersistedSnapshot(): PersistedAgentSnapshot
-  restorePersistedSnapshot(snapshot: PersistedAgentSnapshot): void
   /** 测试用。 */
   reset(): void
 }
@@ -95,9 +92,6 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
     deactivateToolCapability(capability: string): void {
       activeToolCapabilities = activeToolCapabilities.filter((item) => item !== capability)
     },
-    replaceMessages(next: DurableAgentMessage[]): void {
-      messages = cloneMessages(next)
-    },
     installProjection(snapshot: PersistedAgentSnapshot): void {
       const validation = validateBotSnapshotIntegrity({
         snapshot,
@@ -119,32 +113,12 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
         activeToolCapabilities: [...activeToolCapabilities],
       }
     },
-    restorePersistedSnapshot(snapshot: PersistedAgentSnapshot): void {
-      impl.installProjection({
-        ...snapshot,
-        activeToolCapabilities: sanitizeToolCapabilities(snapshot.activeToolCapabilities),
-      })
-    },
     reset(): void {
       messages = []
       activeToolCapabilities = []
     },
   }
   return impl
-}
-
-function sanitizeToolCapabilities(input: unknown): string[] {
-  if (!Array.isArray(input)) return []
-  const seen = new Set<string>()
-  const output: string[] = []
-  for (const item of input) {
-    if (typeof item !== 'string') continue
-    const capability = item.trim()
-    if (!capability || seen.has(capability)) continue
-    seen.add(capability)
-    output.push(capability)
-  }
-  return output
 }
 
 function cloneMessages(input: DurableAgentMessage[]): DurableAgentMessage[] {

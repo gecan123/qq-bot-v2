@@ -41,14 +41,9 @@ describe('createAgentContext', () => {
     }
   })
 
-  test('replaceMessages atomically resets the array', () => {
+  test('does not expose a prefix-rewrite mutation API', () => {
     const ctx = createAgentContext()
-    ctx.appendUserMessage('a')
-    ctx.appendUserMessage('b')
-    ctx.replaceMessages([{ role: 'user', content: 'summary' }])
-    const messages = ctx.getSnapshot().messages
-    assert.equal(messages.length, 1)
-    assert.equal(messages[0]?.role, 'user')
+    assert.equal('replaceMessages' in ctx, false)
   })
 
   test('installProjection validates, clones, and atomically replaces the complete snapshot', () => {
@@ -93,7 +88,7 @@ describe('createAgentContext', () => {
     assert.deepEqual(persisted.activeToolCapabilities, ['browser', 'media_generation'])
 
     const ctx2 = createAgentContext()
-    ctx2.restorePersistedSnapshot(persisted)
+    ctx2.installProjection(persisted)
     assert.deepEqual(ctx2.getSnapshot(), {
       messages: persisted.messages,
       activeToolCapabilities: ['browser', 'media_generation'],

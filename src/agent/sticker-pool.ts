@@ -1,8 +1,4 @@
-import type { AgentContext } from './agent-context.js'
 import { prisma } from '../database/client.js'
-import { createLogger } from '../logger.js'
-
-const log = createLogger('STICKER_POOL')
 
 export const STICKER_POOL_SUMMARY_LIMIT = 20
 export const STICKER_POOL_DESCRIPTION_PREVIEW_CHARS = 160
@@ -83,13 +79,6 @@ export async function loadStickerPoolPayload(): Promise<StickerPoolPayload | nul
 export async function renderStickerPoolSummary(): Promise<string | null> {
   const payload = await loadStickerPoolPayload()
   return payload ? JSON.stringify({ source: 'sticker_pool', ...payload }) : null
-}
-
-export async function injectStickerPoolAfterCompaction(context: AgentContext): Promise<void> {
-  const summary = await renderStickerPoolSummary()
-  if (!summary) return
-  context.appendUserMessage(summary)
-  log.info({ length: summary.length }, 'sticker_pool_injected')
 }
 
 function truncateText(text: string, maxChars: number): string {

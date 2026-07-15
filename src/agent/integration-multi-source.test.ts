@@ -18,8 +18,7 @@ import { createBotLoopAgent } from './bot-loop-agent.js'
 import { createToolExecutor } from './tool.js'
 import { createSendMessageTool } from './tools/send-message.js'
 import type { LlmClient, LlmCallOutput } from './llm-client.js'
-import type { BotSnapshotRepo } from './bot-loop-agent.js'
-import type { PersistedAgentSnapshot } from './agent-context.types.js'
+import { createTestAgentLedger } from './test-support/agent-ledger.js'
 import type { MessageSender } from '../messaging/message-sender.js'
 import type { SendNapcatResult } from '../messaging/napcat-sender.js'
 import type { SendTargetPolicy } from './send-target-policy.js'
@@ -59,19 +58,6 @@ function makeMockLlm(outputs: LlmCallOutput[]): LlmClient {
       return next
     },
   }
-}
-
-function makeMockSnapshotRepo(): { repo: BotSnapshotRepo; saved: PersistedAgentSnapshot[] } {
-  const saved: PersistedAgentSnapshot[] = []
-  const repo: BotSnapshotRepo = {
-    async load() {
-      return null
-    },
-    async save(input) {
-      saved.push(input.snapshot)
-    },
-  }
-  return { repo, saved }
 }
 
 describe('MVP-2 integration: mixed group + private events through one agent loop', () => {
@@ -145,14 +131,15 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
       }),
     ])
 
-    const { repo } = makeMockSnapshotRepo()
+    const ledger = createTestAgentLedger()
     const agent = createBotLoopAgent({
       systemPrompt: 'integration test',
       context: ctx,
       eventQueue,
       llm,
       tools,
-      snapshotRepo: repo,
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })
@@ -255,14 +242,15 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
       }),
     ])
 
-    const { repo } = makeMockSnapshotRepo()
+    const ledger = createTestAgentLedger()
     const agent = createBotLoopAgent({
       systemPrompt: '',
       context: ctx,
       eventQueue,
       llm,
       tools,
-      snapshotRepo: repo,
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })

@@ -2,7 +2,6 @@ import {
   createBotLoopAgent,
   type BotLoopAgent,
   type BotLoopLifeJournal,
-  type BotSnapshotRepo,
 } from './bot-loop-agent.js'
 import { buildBotSystemPrompt } from './bot-system-prompt.js'
 import {
@@ -78,9 +77,8 @@ export interface AgentRuntimeInput {
   context: AgentContext
   eventQueue: EventQueue<BotEvent>
   llm: LlmClient
-  snapshotRepo?: BotSnapshotRepo
-  ledgerRepo?: AgentLedgerRepo
-  ledgerLoader?: AgentLedgerLoader
+  ledgerRepo: AgentLedgerRepo
+  ledgerLoader: AgentLedgerLoader
   initialLedgerHeadEntryId?: bigint | null
   sender: MessageSender
   loadFriends: () => Promise<readonly QqDirectoryFriend[]>
@@ -226,7 +224,6 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     eventQueue: input.eventQueue,
     llm: input.llm,
     tools,
-    snapshotRepo: input.snapshotRepo,
     ledgerRepo: input.ledgerRepo,
     ledgerLoader: input.ledgerLoader,
     initialLedgerHeadEntryId: input.initialLedgerHeadEntryId,

@@ -6,7 +6,11 @@ const healthyFiles = {
   'AGENTS.md': 'same\n',
   'CLAUDE.md': 'same\n',
   'package.json': '{"scripts":{"repo-check":"tsx scripts/repo-check.ts","agent:doctor":"tsx scripts/agent-doctor.ts","agent:metrics":"tsx scripts/agent-metrics.ts"}}',
-  'prisma/schema.prisma': '@@map("bot_agent_snapshot")\n',
+  'prisma/schema.prisma': [
+    '@@map("bot_agent_ledger_entries")',
+    '@@map("bot_agent_runtime_state")',
+    '@@map("bot_agent_checkpoint")',
+  ].join('\n'),
   '.env.example': 'BOT_TARGET_GROUP_IDS=\nLLM_DEFAULT_PROVIDER=openai-agent\n',
   'src/index.ts': 'createAgentRuntime()\n',
   'src/agent/tools/index.ts': 'buildBotToolManifest\n',

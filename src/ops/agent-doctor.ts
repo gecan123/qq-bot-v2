@@ -51,8 +51,15 @@ export function runAgentDoctor(input: AgentDoctorInput): AgentDoctorResult {
     checks.push({ name: 'agent-instructions-mirror', ok: true, message: 'mirrored' })
   }
 
-  if (!(input.files['prisma/schema.prisma'] ?? '').includes('@@map("bot_agent_snapshot")')) {
-    errors.push('prisma/schema.prisma does not map bot_agent_snapshot')
+  const prismaSchema = input.files['prisma/schema.prisma'] ?? ''
+  for (const table of [
+    'bot_agent_ledger_entries',
+    'bot_agent_runtime_state',
+    'bot_agent_checkpoint',
+  ]) {
+    if (!prismaSchema.includes(`@@map("${table}")`)) {
+      errors.push(`prisma/schema.prisma does not map ${table}`)
+    }
   }
 
   if (!(input.files['src/index.ts'] ?? '').includes('createAgentRuntime')) {

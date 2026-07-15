@@ -3,7 +3,31 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, test } from 'node:test'
-import { resetAgentMemory } from './reset-agent-memory.js'
+import { resetAgentMemory, type AgentMemoryResetDb } from './reset-agent-memory.js'
+
+function fakeResetDb(counts: {
+  ledgerEntries: number
+  checkpoints: number
+  runtimeStates: number
+  goals: number
+}): { db: AgentMemoryResetDb; created: unknown[] } {
+  const created: unknown[] = []
+  const tx = {
+    botAgentLedgerEntry: { deleteMany: async () => ({ count: counts.ledgerEntries }) },
+    botAgentCheckpoint: { deleteMany: async () => ({ count: counts.checkpoints }) },
+    botAgentRuntimeState: {
+      deleteMany: async () => ({ count: counts.runtimeStates }),
+      create: async (input: unknown) => { created.push(input); return input },
+    },
+    botAgentGoal: { deleteMany: async () => ({ count: counts.goals }) },
+  }
+  return {
+    created,
+    db: {
+      async $transaction(run) { return run(tx) },
+    },
+  }
+}
 
 describe('resetAgentMemory', () => {
   test('clears persistent context and managed memory directories while preserving ordinary workspace files', async () => {
@@ -16,19 +40,35 @@ describe('resetAgentMemory', () => {
       await mkdir(join(workspaceDir, 'notes'), { recursive: true })
       await writeFile(join(workspaceDir, 'notes', 'keep.md'), 'keep', 'utf8')
 
-      const result = await resetAgentMemory({
-        workspaceDir,
-        db: {
-          botAgentSnapshot: { deleteMany: async () => ({ count: 1 }) },
-          botAgentGoal: { deleteMany: async () => ({ count: 1 }) },
-        },
-      })
+      const fake = fakeResetDb({ ledgerEntries: 7, checkpoints: 1, runtimeStates: 1, goals: 1 })
+      const result = await resetAgentMemory({ workspaceDir, db: fake.db })
 
       assert.deepEqual(result, {
-        deletedSnapshots: 1,
+        deletedLedgerEntries: 7,
+        deletedCheckpoints: 1,
+        deletedRuntimeStates: 1,
         deletedGoals: 1,
+        createdRuntimeState: true,
         removedDirectories: ['memory', 'journal', 'life', 'notebook'],
       })
+      assert.deepEqual(fake.created, [{
+        data: {
+          id: 1,
+          schemaVersion: 1,
+          mailboxCursors: {},
+          mailboxContinuity: {
+            schemaVersion: 1,
+            roundSeq: 0,
+            lastInputTokens: null,
+            compactionEpoch: 0,
+            mailboxes: {},
+          },
+          goalRevision: 0,
+          activeToolCapabilities: [],
+          lastWakeAt: null,
+          ledgerHeadEntryId: null,
+        },
+      }])
       for (const directory of ['memory', 'journal', 'life', 'notebook']) {
         await assert.rejects(access(join(workspaceDir, directory)))
       }
@@ -41,15 +81,12 @@ describe('resetAgentMemory', () => {
   test('is idempotent when rows and directories are already absent', async () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), 'agent-memory-reset-empty-'))
     try {
-      const result = await resetAgentMemory({
-        workspaceDir,
-        db: {
-          botAgentSnapshot: { deleteMany: async () => ({ count: 0 }) },
-          botAgentGoal: { deleteMany: async () => ({ count: 0 }) },
-        },
-      })
-      assert.equal(result.deletedSnapshots, 0)
+      const fake = fakeResetDb({ ledgerEntries: 0, checkpoints: 0, runtimeStates: 0, goals: 0 })
+      const result = await resetAgentMemory({ workspaceDir, db: fake.db })
+      assert.equal(result.deletedLedgerEntries, 0)
+      assert.equal(result.deletedRuntimeStates, 0)
       assert.equal(result.deletedGoals, 0)
+      assert.equal(fake.created.length, 1)
     } finally {
       await rm(workspaceDir, { recursive: true, force: true })
     }

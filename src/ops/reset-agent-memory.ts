@@ -1,16 +1,30 @@
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import { AGENT_RUNTIME_STATE_SCHEMA_VERSION } from '../agent/agent-ledger.types.js'
+import { createEmptyMailboxContinuityState } from '../agent/mailbox-continuity.js'
 
 const MEMORY_DIRECTORIES = ['memory', 'journal', 'life', 'notebook'] as const
 
-export interface AgentMemoryResetDb {
-  botAgentSnapshot: { deleteMany(): Promise<{ count: number }> }
+export interface AgentMemoryResetTx {
+  botAgentLedgerEntry: { deleteMany(): Promise<{ count: number }> }
+  botAgentCheckpoint: { deleteMany(): Promise<{ count: number }> }
+  botAgentRuntimeState: {
+    deleteMany(): Promise<{ count: number }>
+    create(input: { data: Record<string, unknown> }): Promise<unknown>
+  }
   botAgentGoal: { deleteMany(): Promise<{ count: number }> }
 }
 
+export interface AgentMemoryResetDb {
+  $transaction<T>(run: (tx: AgentMemoryResetTx) => Promise<T>): Promise<T>
+}
+
 export interface AgentMemoryResetResult {
-  deletedSnapshots: number
+  deletedLedgerEntries: number
+  deletedCheckpoints: number
+  deletedRuntimeStates: number
   deletedGoals: number
+  createdRuntimeState: true
   removedDirectories: string[]
 }
 
@@ -18,10 +32,25 @@ export async function resetAgentMemory(options: {
   db: AgentMemoryResetDb
   workspaceDir: string
 }): Promise<AgentMemoryResetResult> {
-  const [snapshots, goals] = await Promise.all([
-    options.db.botAgentSnapshot.deleteMany(),
-    options.db.botAgentGoal.deleteMany(),
-  ])
+  const deleted = await options.db.$transaction(async (tx) => {
+    const checkpoints = await tx.botAgentCheckpoint.deleteMany()
+    const ledgerEntries = await tx.botAgentLedgerEntry.deleteMany()
+    const goals = await tx.botAgentGoal.deleteMany()
+    const runtimeStates = await tx.botAgentRuntimeState.deleteMany()
+    await tx.botAgentRuntimeState.create({
+      data: {
+        id: 1,
+        schemaVersion: AGENT_RUNTIME_STATE_SCHEMA_VERSION,
+        mailboxCursors: {},
+        mailboxContinuity: createEmptyMailboxContinuityState(),
+        goalRevision: 0,
+        activeToolCapabilities: [],
+        lastWakeAt: null,
+        ledgerHeadEntryId: null,
+      },
+    })
+    return { checkpoints, ledgerEntries, goals, runtimeStates }
+  })
 
   const removedDirectories: string[] = []
   for (const directory of MEMORY_DIRECTORIES) {
@@ -30,8 +59,11 @@ export async function resetAgentMemory(options: {
   }
 
   return {
-    deletedSnapshots: snapshots.count,
-    deletedGoals: goals.count,
+    deletedLedgerEntries: deleted.ledgerEntries.count,
+    deletedCheckpoints: deleted.checkpoints.count,
+    deletedRuntimeStates: deleted.runtimeStates.count,
+    deletedGoals: deleted.goals.count,
+    createdRuntimeState: true,
     removedDirectories,
   }
 }

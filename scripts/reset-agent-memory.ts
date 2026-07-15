@@ -5,6 +5,13 @@ import { resetAgentMemory } from '../src/ops/reset-agent-memory.js'
 
 const PID_FILE = '.bot.pid'
 
+function assertExplicitConfirmation(): void {
+  if (process.argv.includes('--confirm')) return
+  throw new Error(
+    'agent memory reset is destructive; rerun with `pnpm agent:reset-memory -- --confirm`',
+  )
+}
+
 async function assertBotStopped(): Promise<void> {
   let raw: string
   try {
@@ -34,6 +41,7 @@ async function assertBotStopped(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  assertExplicitConfirmation()
   await assertBotStopped()
   await prisma.$connect()
   try {

@@ -1,4 +1,4 @@
-import type { PersistedAgentSnapshot } from './agent-context.types.js'
+import { SNAPSHOT_SCHEMA_VERSION, type PersistedAgentSnapshot } from './agent-context.types.js'
 import type { MailboxCursors } from './mailbox.js'
 
 export interface BotSnapshotIntegrityInput {
@@ -33,8 +33,8 @@ export function validateBotSnapshotIntegrity(input: BotSnapshotIntegrityInput): 
   const mailboxCursors = normalizeCursorEntries(input.mailboxCursors, errors)
 
   validateStableJson(input.snapshot, errors)
-  if (!Number.isSafeInteger(snapshot.schemaVersion) || (snapshot.schemaVersion as number) < 1) {
-    errors.push('snapshot.schemaVersion must be a positive safe integer')
+  if (snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) {
+    errors.push(`unsupported snapshot schemaVersion: ${String(snapshot.schemaVersion)}`)
   }
   if (!Array.isArray(snapshot.messages)) {
     errors.push('snapshot.messages must be an array')

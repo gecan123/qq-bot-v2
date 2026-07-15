@@ -49,11 +49,17 @@ export type AgentMessage =
   | { role: 'tool'; toolCallId: string; content: ToolResultContent }
 
 /**
+ * Canonical ledger message shape. It is currently identical to the working
+ * message shape and can evolve independently when stable media refs are added.
+ */
+export type DurableAgentMessage = AgentMessage
+
+/**
  * 持久化形态。runtime 形态 == 这个对象 (AGENTS.md / CLAUDE.md 红线 1)。
  */
 export interface PersistedAgentSnapshot {
   schemaVersion: number
-  messages: AgentMessage[]
+  messages: DurableAgentMessage[]
   activeToolCapabilities: string[]
 }
 

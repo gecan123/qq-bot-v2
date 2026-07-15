@@ -165,4 +165,19 @@ describe('validateBotSnapshotIntegrity', () => {
     assert.equal(result.ok, false)
     assert.match(result.errors.join('\n'), /messages\[0\]\.content must be a string/)
   })
+
+  test('rejects an unknown snapshot schema version', () => {
+    const result = validateBotSnapshotIntegrity({
+      snapshot: {
+        schemaVersion: SNAPSHOT_SCHEMA_VERSION + 1,
+        activeToolCapabilities: [],
+        messages: [],
+      },
+      mailboxCursors: {},
+      goalRevision: 0,
+    })
+
+    assert.equal(result.ok, false)
+    assert.match(result.errors.join('\n'), /unsupported snapshot schemaVersion/)
+  })
 })

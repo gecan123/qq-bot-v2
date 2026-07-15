@@ -17,7 +17,6 @@ import {
   renderMailboxAttentionStateEvent,
 } from './mailbox-handled.js'
 
-const DEFAULT_COMPACTION_TRIGGER_TOKENS = 16_000
 const DEFAULT_COMPACTION_TAIL_CHARS = 12_000
 const DEFAULT_COMPACTION_FAILURE_BACKOFF_MS = 10 * 60_000
 const MAX_SUMMARY_CHARS = 4_000
@@ -335,7 +334,9 @@ async function compactConversation(
   if (lastInputTokens == null && !force) return false
 
   const summarize = options.summarize ?? defaultSummarize
-  const triggerTokens = options.triggerTokens ?? config.compactionTriggerTokens ?? DEFAULT_COMPACTION_TRIGGER_TOKENS
+  const configuredContextWindow = config.llm.contextWindowTokensByModel[config.llm.defaultModel]
+  const triggerTokens = options.triggerTokens
+    ?? configuredContextWindow - config.compaction.reserveTokens
   const selectionOptions = options.keepRatio == null && options.tailMaxChars == null
     ? { ...options, tailMaxChars: DEFAULT_COMPACTION_TAIL_CHARS }
     : options

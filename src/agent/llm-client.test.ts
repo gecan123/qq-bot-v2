@@ -6,6 +6,7 @@ describe('createLlmClient provider routing', () => {
   test('allows openai-agent as a main agent provider', async () => {
     const originalDefaultProvider = process.env.LLM_DEFAULT_PROVIDER
     const originalDefaultModel = process.env.LLM_DEFAULT_MODEL
+    const originalContextWindows = process.env.LLM_MODEL_CONTEXT_WINDOWS_JSON
     const originalOpenAIUrl = process.env.LLM_PROVIDER_OPENAI_URL
     const originalOpenAIKey = process.env.LLM_PROVIDER_OPENAI_API_KEY
     const originalDatabaseUrl = process.env.DATABASE_URL
@@ -15,6 +16,7 @@ describe('createLlmClient provider routing', () => {
     const originalSelfNumber = process.env.SELF_NUMBER
     process.env.LLM_DEFAULT_PROVIDER = 'openai-agent'
     process.env.LLM_DEFAULT_MODEL = 'gpt-5.1'
+    process.env.LLM_MODEL_CONTEXT_WINDOWS_JSON = JSON.stringify({ 'gpt-5.1': 400_000 })
     process.env.LLM_PROVIDER_OPENAI_URL = 'http://127.0.0.1:8317/v1'
     process.env.LLM_PROVIDER_OPENAI_API_KEY = 'sk-local'
     process.env.DATABASE_URL = 'postgresql://user:pass@localhost:5432/db'
@@ -25,9 +27,14 @@ describe('createLlmClient provider routing', () => {
     try {
       const mod = await import(`./llm-client.js?openai-agent-route=${Date.now()}`)
       assert.doesNotThrow(() => mod.createLlmClient())
+      assert.throws(
+        () => mod.createLlmClient({ model: 'unregistered-model' }),
+        /missing context-window metadata for model unregistered-model/,
+      )
     } finally {
       restoreEnv('LLM_DEFAULT_PROVIDER', originalDefaultProvider)
       restoreEnv('LLM_DEFAULT_MODEL', originalDefaultModel)
+      restoreEnv('LLM_MODEL_CONTEXT_WINDOWS_JSON', originalContextWindows)
       restoreEnv('LLM_PROVIDER_OPENAI_URL', originalOpenAIUrl)
       restoreEnv('LLM_PROVIDER_OPENAI_API_KEY', originalOpenAIKey)
       restoreEnv('DATABASE_URL', originalDatabaseUrl)
@@ -63,6 +70,7 @@ describe('fallback llm client', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'fallback-model',
+          contextWindowTokens: 200_000,
           stopReason: 'end_turn',
         }
       },

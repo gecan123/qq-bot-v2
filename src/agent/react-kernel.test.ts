@@ -43,6 +43,7 @@ describe('runReactRound', () => {
           toolCalls: [toolCall],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -94,6 +95,7 @@ describe('runReactRound', () => {
           toolCalls: [toolCall],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -136,6 +138,7 @@ describe('runReactRound', () => {
           toolCalls: [],
           usage: { inputTokens: 100_000, cachedTokens: 99_000, outputTokens: 250 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -169,6 +172,7 @@ describe('runReactRound', () => {
             toolCalls: [],
             usage: { inputTokens: 100, cachedTokens: 80, outputTokens: 4_096 },
             model: 'mock',
+            contextWindowTokens: 200_000,
             stopReason: 'max_tokens',
           }
         }
@@ -177,6 +181,7 @@ describe('runReactRound', () => {
           toolCalls: [toolCall],
           usage: { inputTokens: 100, cachedTokens: 80, outputTokens: 10 },
           model: 'mock',
+          contextWindowTokens: 200_000,
           stopReason: 'tool_use',
         }
       },
@@ -216,6 +221,7 @@ describe('runReactRound', () => {
           toolCalls: calls === 1 ? [] : [{ id: 'partial-1', name: 'dangerous', args: {} }],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 8 },
           model: 'mock',
+          contextWindowTokens: 200_000,
           stopReason: 'max_tokens',
         }
       },
@@ -256,6 +262,7 @@ describe('runReactRound', () => {
           toolCalls: [],
           usage: { inputTokens: 4, cachedTokens: 0, outputTokens: 6 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -306,6 +313,7 @@ describe('runReactRound', () => {
           toolCalls: [],
           usage: { inputTokens: 2, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
           stopReason: 'end_turn',
         }
       },
@@ -342,6 +350,7 @@ describe('runReactRound', () => {
           toolCalls: [toolCall],
           usage: { inputTokens: 3, cachedTokens: 0, outputTokens: 2 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -393,6 +402,7 @@ describe('runReactRound', () => {
           toolCalls: [toolCall],
           usage: { inputTokens: 6, cachedTokens: 0, outputTokens: 4 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -452,6 +462,7 @@ describe('runReactRound', () => {
           toolCalls: calls,
           usage: { inputTokens: 5, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',
+          contextWindowTokens: 200_000,
           stopReason: 'tool_use',
         }
       },

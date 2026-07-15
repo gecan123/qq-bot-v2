@@ -135,6 +135,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [{ id: 'send-1', name: 'send_message', args: { text: '收到' } }],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools({
         send_message: async () => ({
@@ -182,6 +183,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [{ id: 'send-1', name: 'send_message', args: { text: '收到' } }],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools({
         send_message: async () => ({
@@ -227,12 +229,14 @@ describe('BotLoopAgent.runOnceForTest', () => {
           toolCalls: [{ id: 'inbox-1', name: 'inbox', args: { peerId: 9001 } }],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         },
         {
           content: '',
           toolCalls: [{ id: 'send-1', name: 'send_message', args: { text: '稍后回复' } }],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         },
       ]),
       tools: makeMockTools({
@@ -278,6 +282,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [{ id: 'send-1', name: 'send_message', args: { text: '收到' } }],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools({
         send_message: async () => ({ content: '{"ok":false,"status":"failed"}' }),
@@ -312,6 +317,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [{ id: 'send-1', name: 'send_message', args: { text: '发给别人' } }],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools({
         send_message: async () => ({
@@ -352,6 +358,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         ],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools({
         send_message: async () => ({
@@ -396,6 +403,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [{ id: 'c1', name: 'send_group_message', args: { text: '在' } }],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       },
     ])
 
@@ -470,6 +478,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [],
         usage: { inputTokens: 100, cachedTokens: 0, outputTokens: 0 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
       snapshotRepo: repo,
@@ -503,6 +512,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [],
         usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       },
     ])
 
@@ -548,6 +558,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [{ id: 'c1', name: 'send_message', args: { text: '在' } }],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools({
         send_message: async () => ({ content: '{"ok":true,"status":"sent"}' }),
@@ -590,6 +601,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [{ id: 'c1', name: 'lookup', args: {} }],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools({
         lookup: async () => ({ content: 'tool result' }),
@@ -648,6 +660,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 0 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -740,6 +753,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
             toolCalls: [],
             usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 0 },
             model: 'mock',
+            contextWindowTokens: 200_000,
           }
         },
       },
@@ -779,6 +793,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
             toolCalls: [],
             usage: { inputTokens: 10, cachedTokens: 5, outputTokens: 8 },
             model: 'mock',
+            contextWindowTokens: 200_000,
             stopReason: 'max_tokens',
           }
         }
@@ -787,6 +802,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
           toolCalls: [{ id: 'done-1', name: 'done', args: {} }],
           usage: { inputTokens: 12, cachedTokens: 6, outputTokens: 2 },
           model: 'mock',
+          contextWindowTokens: 200_000,
           stopReason: 'tool_use',
         }
       },
@@ -848,6 +864,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [],
         usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 0 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
       snapshotRepo: repo,
@@ -880,6 +897,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [],
         usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
       snapshotRepo: repo,
@@ -930,6 +948,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       toolCalls: [],
       usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
       model: 'mock',
+      contextWindowTokens: 200_000,
     }])
     const { repo, savedCursors } = makeMockSnapshotRepo()
     const agent = createBotLoopAgent({
@@ -982,6 +1001,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       toolCalls: [],
       usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
       model: 'mock',
+      contextWindowTokens: 200_000,
     }])
     const { repo, savedCursors } = makeMockSnapshotRepo()
     const agent = createBotLoopAgent({
@@ -1039,6 +1059,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
       snapshotRepo: repo,
@@ -1082,6 +1103,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [],
         usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 0 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
       snapshotRepo: repo,
@@ -1212,6 +1234,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
             toolCalls: [{ id: 'c1', name: 'reddit', args: { action: 'list', subreddit: 'technology' } }],
             usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
             model: 'mock',
+            contextWindowTokens: 200_000,
           }
         }
         if (llmCallCount === 2) {
@@ -1220,6 +1243,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
             toolCalls: [{ id: 'c2', name: 'send_message', args: {} }],
             usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
             model: 'mock',
+            contextWindowTokens: 200_000,
           }
         }
         // 如果 send_message 后仍继续跑, 这里会 stop; 正常情况下不会走到这里.
@@ -1228,6 +1252,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
           toolCalls: [{ id: 'c3', name: 'rest', args: { durationSeconds: 30 } }],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -1297,6 +1322,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
             toolCalls: [{ id: 'c1', name: 'send_message', args: { text: '在' } }],
             usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
             model: 'mock',
+            contextWindowTokens: 200_000,
           }
         }
         return {
@@ -1316,6 +1342,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
           }],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -1375,6 +1402,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
           toolCalls: [{ id: `pause-${llmCallCount}`, name: 'pause', args: {} }],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -1436,6 +1464,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [{ id: 'pause-1', name: 'pause', args: {} }],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 2 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools({
         pause: async () => ({
@@ -1506,6 +1535,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [{ id: 'pause-1', name: 'pause', args: {} }],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 2 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools({
         pause: async () => ({
@@ -1567,6 +1597,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
       snapshotRepo: repo,
@@ -1619,6 +1650,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
       snapshotRepo: repo,
@@ -1668,6 +1700,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
       snapshotRepo: repo,
@@ -1725,12 +1758,14 @@ describe('BotLoopAgent.runOnceForTest', () => {
           toolCalls: [],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         },
         {
           content: '',
           toolCalls: [],
           usage: { inputTokens: 20, cachedTokens: 0, outputTokens: 0 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         },
       ]),
       tools: makeMockTools(),
@@ -1813,6 +1848,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
       snapshotRepo: repo,
@@ -1851,6 +1887,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
       snapshotRepo: repo,
@@ -1899,6 +1936,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools(),
       snapshotRepo: repo,
@@ -1929,6 +1967,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [{ id: 'boom-1', name: 'boom', args: {} }],
         usage: { inputTokens: 4, cachedTokens: 0, outputTokens: 3 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }]),
       tools: makeMockTools({
         boom: async () => {
@@ -1975,6 +2014,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
             : [],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -2038,6 +2078,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
             toolCalls: [{ id: 'c1', name: 'send_message', args: { text: '在' } }],
             usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
             model: 'mock',
+            contextWindowTokens: 200_000,
           }
         }
         return {
@@ -2045,6 +2086,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
           toolCalls: [{ id: 'c2', name: 'rest', args: { durationSeconds: 30 } }],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -2101,6 +2143,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
           toolCalls: [{ id: `lookup-${llmCallCount}`, name: 'lookup', args: {} }],
           usage: { inputTokens: 500_000, cachedTokens: 0, outputTokens: 500_000 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -2154,6 +2197,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
           toolCalls,
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -2208,6 +2252,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
           toolCalls: [],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -2258,6 +2303,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
           toolCalls: [],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -2302,6 +2348,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
             : [],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -2362,6 +2409,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
             toolCalls: [],
             usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
             model: 'mock',
+            contextWindowTokens: 200_000,
           }
         }
         return {
@@ -2369,6 +2417,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
           toolCalls: [{ id: 'c2', name: 'rest', args: { durationSeconds: 30 } }],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -2441,6 +2490,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         }],
         usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       },
     ])
 
@@ -2504,6 +2554,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         toolCalls: [],
         usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       },
     ])
     const { repo } = makeMockSnapshotRepo()

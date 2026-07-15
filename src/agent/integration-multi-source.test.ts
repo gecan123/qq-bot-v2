@@ -133,6 +133,7 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
         ],
         usage: { inputTokens: 100, cachedTokens: 80, outputTokens: 20 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       },
     ])
 
@@ -242,6 +243,7 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
         ],
         usage: { inputTokens: 50, cachedTokens: 40, outputTokens: 10 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       },
     ])
 

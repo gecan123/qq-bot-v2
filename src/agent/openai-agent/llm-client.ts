@@ -25,6 +25,7 @@ import { recordCurrentTokenUsage } from '../../llm/token-usage.js'
 
 export interface CreateOpenAIAgentLlmClientInput {
   model: string
+  contextWindowTokens: number
   baseURL: string
   apiKey: string
   client?: OpenAIChatCompletionClient
@@ -56,7 +57,7 @@ export function createOpenAIAgentLlmClient(input: CreateOpenAIAgentLlmClientInpu
         }),
         req.signal ? { signal: req.signal } : undefined,
       )
-      return toLlmCallOutput(response, input.model, req.tools)
+      return toLlmCallOutput(response, input.model, input.contextWindowTokens, req.tools)
     },
   }
 }
@@ -181,7 +182,12 @@ function toOpenAIToolDecl(tool: Tool): ChatCompletionTool {
   }
 }
 
-function toLlmCallOutput(response: ChatCompletion, fallbackModel: string, tools: Tool[]): LlmCallOutput {
+function toLlmCallOutput(
+  response: ChatCompletion,
+  fallbackModel: string,
+  contextWindowTokens: number,
+  tools: Tool[],
+): LlmCallOutput {
   const message = response.choices[0]?.message
   const toolByName = new Map(tools.map((tool) => [tool.name, tool]))
   const toolCalls = (message?.tool_calls ?? []).flatMap((call) => toAssistantToolCall(call, toolByName))
@@ -207,6 +213,7 @@ function toLlmCallOutput(response: ChatCompletion, fallbackModel: string, tools:
       outputTokens,
     },
     model: response.model ?? fallbackModel,
+    contextWindowTokens,
     stopReason: normalizeOpenAIStopReason(response.choices[0]?.finish_reason),
   }
 }

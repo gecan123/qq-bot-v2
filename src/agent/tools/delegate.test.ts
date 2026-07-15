@@ -30,6 +30,7 @@ describe('delegate tool', () => {
             toolCalls: [{ id: 'lookup-1', name: 'ai_tone', args: { text: 'hello' } }],
             usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 2 },
             model: 'mock',
+            contextWindowTokens: 200_000,
             stopReason: 'tool_use',
           }
         }
@@ -42,6 +43,7 @@ describe('delegate tool', () => {
           }],
           usage: { inputTokens: 12, cachedTokens: 0, outputTokens: 3 },
           model: 'mock',
+          contextWindowTokens: 200_000,
           stopReason: 'tool_use',
         }
       },
@@ -114,6 +116,7 @@ describe('delegate tool', () => {
             toolCalls: [],
             usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
             model: 'mock',
+            contextWindowTokens: 200_000,
             stopReason: 'end_turn',
           }
         },

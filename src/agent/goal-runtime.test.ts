@@ -51,7 +51,7 @@ describe('BotLoop goal integration', () => {
                 },
               }],
               usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 2 },
-              model: 'mock', stopReason: 'tool_use' as const,
+              model: 'mock', contextWindowTokens: 200_000, stopReason: 'tool_use' as const,
             }
           }
           const goal = (await goalStore.get())!
@@ -63,7 +63,7 @@ describe('BotLoop goal integration', () => {
               args: { action: 'complete', goalId: goal.goalId, evidence: ['结论与反例均已记录'] },
             }],
             usage: { inputTokens: 12, cachedTokens: 4, outputTokens: 3 },
-            model: 'mock', stopReason: 'tool_use' as const,
+            model: 'mock', contextWindowTokens: 200_000, stopReason: 'tool_use' as const,
           }
         },
       },
@@ -114,6 +114,7 @@ describe('BotLoop goal integration', () => {
             }],
             usage: { inputTokens: 20, cachedTokens: 5, outputTokens: 4 },
             model: 'mock',
+            contextWindowTokens: 200_000,
             stopReason: 'tool_use' as const,
           }
         },
@@ -168,7 +169,7 @@ describe('BotLoop goal integration', () => {
           return {
             content: '', toolCalls: [],
             usage: { inputTokens: 8, cachedTokens: 0, outputTokens: 1 },
-            model: 'mock', stopReason: 'end_turn' as const,
+            model: 'mock', contextWindowTokens: 200_000, stopReason: 'end_turn' as const,
           }
         },
       },
@@ -206,7 +207,7 @@ describe('BotLoop goal integration', () => {
           return {
             content: '', toolCalls: [],
             usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0 },
-            model: 'mock', stopReason: 'end_turn' as const,
+            model: 'mock', contextWindowTokens: 200_000, stopReason: 'end_turn' as const,
           }
         },
       },
@@ -240,7 +241,7 @@ describe('BotLoop goal integration', () => {
           return {
             content: '', toolCalls: [],
             usage: { inputTokens: 10, cachedTokens: 10, outputTokens: 0 },
-            model: 'mock', stopReason: 'end_turn' as const,
+            model: 'mock', contextWindowTokens: 200_000, stopReason: 'end_turn' as const,
           }
         },
       },
@@ -282,7 +283,7 @@ describe('BotLoop goal integration', () => {
             content: '',
             toolCalls: [{ id: 'pause-1', name: 'pause', args: {} }],
             usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
-            model: 'mock', stopReason: 'tool_use' as const,
+            model: 'mock', contextWindowTokens: 200_000, stopReason: 'tool_use' as const,
           }
         },
       },
@@ -347,7 +348,7 @@ describe('BotLoop goal integration', () => {
           return {
             content: '', toolCalls: [],
             usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0 },
-            model: 'mock', stopReason: 'end_turn' as const,
+            model: 'mock', contextWindowTokens: 200_000, stopReason: 'end_turn' as const,
           }
         },
       },

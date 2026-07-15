@@ -423,6 +423,7 @@ function makeMockLlm(): LlmClient {
         toolCalls: [],
         usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }
     },
   }

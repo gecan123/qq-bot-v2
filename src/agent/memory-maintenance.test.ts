@@ -64,6 +64,7 @@ describe('memory maintenance runtime', () => {
             toolCalls: [],
             usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
             model: 'mock',
+            contextWindowTokens: 200_000,
           }
         },
       },
@@ -108,6 +109,7 @@ describe('memory maintenance runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 100, cachedTokens: 0, outputTokens: 30 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -159,6 +161,7 @@ describe('memory maintenance runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -201,6 +204,7 @@ describe('memory maintenance runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -244,6 +248,7 @@ describe('memory maintenance runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -284,6 +289,7 @@ describe('memory maintenance runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }

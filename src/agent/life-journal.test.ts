@@ -59,6 +59,7 @@ describe('life journal runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 100, cachedTokens: 0, outputTokens: 50 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -100,6 +101,7 @@ describe('life journal runtime', () => {
             toolCalls: [],
             usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
             model: 'mock',
+            contextWindowTokens: 200_000,
           }
         },
       },
@@ -144,6 +146,7 @@ describe('life journal runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -222,6 +225,7 @@ describe('life journal runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -266,6 +270,7 @@ describe('life journal runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -295,6 +300,7 @@ describe('life journal runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -321,6 +327,7 @@ describe('life journal runtime', () => {
           toolCalls: [],
           usage: { inputTokens: null, cachedTokens: null, outputTokens: null },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -346,6 +353,7 @@ describe('life journal runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -377,6 +385,7 @@ describe('life journal runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -407,6 +416,7 @@ describe('life journal runtime', () => {
             toolCalls: [],
             usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
             model: 'mock',
+            contextWindowTokens: 200_000,
           }
         }
         assert.match(input.systemPrompt, /follow the SKIP\/RECORD fallback protocol exactly/)
@@ -419,6 +429,7 @@ describe('life journal runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -456,6 +467,7 @@ describe('life journal runtime', () => {
           }],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -488,6 +500,7 @@ describe('life journal runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 0 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -518,6 +531,7 @@ describe('life journal runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -608,6 +622,7 @@ describe('life journal runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -657,6 +672,7 @@ describe('life journal runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -684,6 +700,7 @@ describe('life journal runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 100, cachedTokens: 20, outputTokens: 5 },
           model: 'journal-model',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -718,6 +735,7 @@ describe('life journal runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -752,6 +770,7 @@ describe('life journal runtime', () => {
           toolCalls: [],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }
@@ -804,6 +823,7 @@ describe('life journal runtime', () => {
           }],
           usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
           model: 'mock',
+          contextWindowTokens: 200_000,
         }
       },
     }

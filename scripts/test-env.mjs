@@ -10,6 +10,7 @@ Object.assign(process.env, {
   SELF_NUMBER: '789',
   LLM_DEFAULT_PROVIDER: 'openai-agent',
   LLM_DEFAULT_MODEL: 'test-model',
+  LLM_MODEL_CONTEXT_WINDOWS_JSON: JSON.stringify({ 'test-model': 200_000 }),
   LLM_PROVIDER_OPENAI_URL: 'http://127.0.0.1:8317/v1',
   LLM_PROVIDER_OPENAI_API_KEY: 'test-key',
 })

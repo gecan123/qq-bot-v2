@@ -10,6 +10,11 @@ function createBaseEnv(overrides: Record<string, string | undefined> = {}): Node
     SELF_NUMBER: '789',
     LLM_DEFAULT_PROVIDER: 'claude-code',
     LLM_DEFAULT_MODEL: 'claude-sonnet-4-6',
+    LLM_MODEL_CONTEXT_WINDOWS_JSON: JSON.stringify({
+      'claude-sonnet-4-6': 200_000,
+      'claude-haiku-4-5': 200_000,
+      'gpt-5.1': 400_000,
+    }),
     LLM_PROVIDER_CLAUDE_URL: 'http://127.0.0.1:8317/v1',
     LLM_PROVIDER_CLAUDE_API_KEY: 'sk-local',
     LLM_PROVIDER_OPENAI_URL: 'http://127.0.0.1:8317/v1',
@@ -535,14 +540,76 @@ describe('config', () => {
     )
   })
 
-  test('compactionTriggerTokens defaults to 16_000 and accepts override', () => {
-    const dflt = parseConfig(createBaseEnv())
-    assert.equal(dflt.compactionTriggerTokens, 16_000)
-
-    const override = parseConfig(createBaseEnv({
-      COMPACTION_TRIGGER_TOKENS: '24000',
+  test('parses model context windows and Pi-style compaction budgets', () => {
+    const parsed = parseConfig(createBaseEnv({
+      LLM_MODEL_CONTEXT_WINDOWS_JSON: JSON.stringify({
+        'claude-sonnet-4-6': 200_000,
+        'claude-haiku-4-5': 180_000,
+      }),
+      LLM_FALLBACK_MODEL: 'claude-haiku-4-5',
+      COMPACTION_RESERVE_TOKENS: '16384',
+      COMPACTION_KEEP_RECENT_TOKENS: '20000',
+      COMPACTION_FAILURE_BACKOFF_MS: '600000',
     }))
-    assert.equal(override.compactionTriggerTokens, 24_000)
+
+    assert.deepEqual(parsed.compaction, {
+      reserveTokens: 16_384,
+      keepRecentTokens: 20_000,
+      failureBackoffMs: 600_000,
+    })
+    assert.deepEqual(parsed.llm.contextWindowTokensByModel, {
+      'claude-sonnet-4-6': 200_000,
+      'claude-haiku-4-5': 180_000,
+    })
+  })
+
+  test('defaults Pi-style compaction budgets', () => {
+    assert.deepEqual(parseConfig(createBaseEnv()).compaction, {
+      reserveTokens: 16_384,
+      keepRecentTokens: 20_000,
+      failureBackoffMs: 600_000,
+    })
+  })
+
+  test('rejects invalid model context-window registries', () => {
+    for (const value of [
+      'not-json',
+      '[]',
+      JSON.stringify({ 'claude-sonnet-4-6': 0 }),
+      JSON.stringify({ 'claude-sonnet-4-6': 1.5 }),
+    ]) {
+      assert.throws(
+        () => parseConfig(createBaseEnv({ LLM_MODEL_CONTEXT_WINDOWS_JSON: value })),
+        /LLM_MODEL_CONTEXT_WINDOWS_JSON/,
+      )
+    }
+  })
+
+  test('requires context-window metadata for the default and fallback models', () => {
+    assert.throws(
+      () => parseConfig(createBaseEnv({
+        LLM_MODEL_CONTEXT_WINDOWS_JSON: JSON.stringify({ other: 200_000 }),
+      })),
+      /default model claude-sonnet-4-6/,
+    )
+    assert.throws(
+      () => parseConfig(createBaseEnv({
+        LLM_FALLBACK_MODEL: 'claude-haiku-4-5',
+        LLM_MODEL_CONTEXT_WINDOWS_JSON: JSON.stringify({ 'claude-sonnet-4-6': 200_000 }),
+      })),
+      /fallback model claude-haiku-4-5/,
+    )
+  })
+
+  test('rejects compaction budgets that cannot fit a configured runtime model', () => {
+    assert.throws(
+      () => parseConfig(createBaseEnv({
+        LLM_MODEL_CONTEXT_WINDOWS_JSON: JSON.stringify({ 'claude-sonnet-4-6': 30_000 }),
+        COMPACTION_RESERVE_TOKENS: '16384',
+        COMPACTION_KEEP_RECENT_TOKENS: '20000',
+      })),
+      /reserve plus keep.*smaller than.*context window/i,
+    )
   })
 })
 

@@ -92,6 +92,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const client = createClaudeCodeLlmClient({
       model: 'LongCat-2.0',
+      contextWindowTokens: 200_000,
       baseURL: 'https://api.longcat.chat/anthropic/v1',
       apiKey: 'longcat-key',
       toolChoice: 'auto',
@@ -112,6 +113,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const client = createClaudeCodeLlmClient({
       model: 'claude-sonnet-4-5',
+      contextWindowTokens: 200_000,
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
       toolChoice: 'any',
@@ -134,6 +136,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const client = createClaudeCodeLlmClient({
       model: 'claude-sonnet-4-5',
+      contextWindowTokens: 200_000,
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
     })
@@ -156,6 +159,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const client = createClaudeCodeLlmClient({
       model: 'claude-sonnet-4-5',
+      contextWindowTokens: 200_000,
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
     })
@@ -171,6 +175,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
     // inputTokens = uncached(50) + cache_read(200) + cache_create(0) = 250
     assert.equal(out.usage.inputTokens, 250)
     assert.equal(out.model, 'claude-sonnet-4-5')
+    assert.equal(out.contextWindowTokens, 200_000)
     assert.equal(out.stopReason, 'end_turn')
   })
 
@@ -179,6 +184,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
     t.mock.method(globalThis, 'fetch', fn)
     const client = createClaudeCodeLlmClient({
       model: 'claude-sonnet-4-5',
+      contextWindowTokens: 200_000,
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
     })
@@ -213,6 +219,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const client = createClaudeCodeLlmClient({
       model: 'm',
+      contextWindowTokens: 200_000,
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
     })
@@ -267,6 +274,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const client = createClaudeCodeLlmClient({
       model: 'fallback-model',
+      contextWindowTokens: 200_000,
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
       thinkingLog: {
@@ -344,6 +352,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const client = createClaudeCodeLlmClient({
       model: 'fallback-model',
+      contextWindowTokens: 200_000,
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
       thinkingLog: {
@@ -381,6 +390,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const client = createClaudeCodeLlmClient({
       model: 'm',
+      contextWindowTokens: 200_000,
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
     })
@@ -418,6 +428,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const client = createClaudeCodeLlmClient({
       model: 'm',
+      contextWindowTokens: 200_000,
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
       retry: noWaitRetry,
@@ -448,6 +459,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const client = createClaudeCodeLlmClient({
       model: 'LongCat-2.0',
+      contextWindowTokens: 200_000,
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
       retry: noWaitRetry,
@@ -473,6 +485,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const client = createClaudeCodeLlmClient({
       model: 'LongCat-2.0',
+      contextWindowTokens: 200_000,
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
       retry: noWaitRetry,
@@ -506,6 +519,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const client = createClaudeCodeLlmClient({
       model: 'm',
+      contextWindowTokens: 200_000,
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
       retry: {
@@ -535,6 +549,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const client = createClaudeCodeLlmClient({
       model: 'm',
+      contextWindowTokens: 200_000,
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
       retry: noWaitRetry,
@@ -568,6 +583,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const client = createClaudeCodeLlmClient({
       model: 'LongCat-2.0',
+      contextWindowTokens: 200_000,
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
     })
@@ -590,6 +606,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const client = createClaudeCodeLlmClient({
       model: 'claude-sonnet-4-5',
+      contextWindowTokens: 200_000,
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
     })
@@ -617,6 +634,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const client = createClaudeCodeLlmClient({
       model: 'claude-sonnet-4-6',
+      contextWindowTokens: 200_000,
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
       retry: noWaitRetry,
@@ -657,6 +675,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const client = createClaudeCodeLlmClient({
       model: 'claude-sonnet-4-5',
+      contextWindowTokens: 200_000,
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
     })

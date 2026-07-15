@@ -19,6 +19,7 @@ function mockLlm(reply: string | (() => Promise<string>)): LlmClient {
         toolCalls: [],
         usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
         model: 'mock',
+        contextWindowTokens: 200_000,
       }
     },
   }
@@ -142,6 +143,7 @@ describe('fetch_url tool — hard truncation', () => {
             toolCalls: [],
             usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
             model: 'mock',
+            contextWindowTokens: 200_000,
           }
         },
       },
@@ -175,6 +177,7 @@ describe('fetch_url tool — hard truncation', () => {
             toolCalls: [],
             usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
             model: 'mock',
+            contextWindowTokens: 200_000,
           }
         },
       },
@@ -253,6 +256,7 @@ describe('fetch_url tool — failure modes', () => {
             toolCalls: [],
             usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0 },
             model: 'mock',
+            contextWindowTokens: 200_000,
           }
         },
       },
@@ -282,6 +286,7 @@ describe('fetch_url tool — failure modes', () => {
             toolCalls: [],
             usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0 },
             model: 'mock',
+            contextWindowTokens: 200_000,
           }
         },
       },

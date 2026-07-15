@@ -169,6 +169,15 @@ function parsePositiveInteger(value: string | undefined, defaultValue: number): 
   return Math.floor(parsed)
 }
 
+function parseStrictPositiveInteger(name: string, value: string | undefined, defaultValue: number): number {
+  if (value == null || value.trim() === '') return defaultValue
+  const parsed = Number(value.trim())
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`Invalid ${name} "${value}" (must be positive safe integer)`)
+  }
+  return parsed
+}
+
 function parsePositiveSafeInteger(name: string, value: string): number {
   const parsed = Number(value.trim())
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
@@ -360,11 +369,63 @@ function parseScenarioConfigs(env: EnvSource): Record<LlmScenarioKey, LlmScenari
   return scenarios
 }
 
+function parseModelContextWindows(value: string | undefined): Record<string, number> {
+  const raw = value?.trim()
+  if (!raw) {
+    throw new Error('Missing required environment variable: LLM_MODEL_CONTEXT_WINDOWS_JSON')
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error('Invalid LLM_MODEL_CONTEXT_WINDOWS_JSON (must be a JSON object)')
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Invalid LLM_MODEL_CONTEXT_WINDOWS_JSON (must be a JSON object)')
+  }
+
+  const entries = Object.entries(parsed as Record<string, unknown>)
+    .map(([rawModel, tokens]) => {
+      const model = rawModel.trim()
+      if (!model || !Number.isSafeInteger(tokens) || (tokens as number) <= 0) {
+        throw new Error(
+          'Invalid LLM_MODEL_CONTEXT_WINDOWS_JSON (model names must be non-empty and values positive safe integers)',
+        )
+      }
+      return [model, tokens as number] as const
+    })
+    .sort(([left], [right]) => left.localeCompare(right))
+
+  return Object.fromEntries(entries)
+}
+
+function parseCompactionConfig(env: EnvSource) {
+  return {
+    reserveTokens: parseStrictPositiveInteger(
+      'COMPACTION_RESERVE_TOKENS',
+      env.COMPACTION_RESERVE_TOKENS,
+      16_384,
+    ),
+    keepRecentTokens: parseStrictPositiveInteger(
+      'COMPACTION_KEEP_RECENT_TOKENS',
+      env.COMPACTION_KEEP_RECENT_TOKENS,
+      20_000,
+    ),
+    failureBackoffMs: parseStrictPositiveInteger(
+      'COMPACTION_FAILURE_BACKOFF_MS',
+      env.COMPACTION_FAILURE_BACKOFF_MS,
+      600_000,
+    ),
+  }
+}
+
 function parseLlmConfig(env: EnvSource) {
   const providers = parseProviderConfigs(env)
   const defaultProvider = requireEnv(env, 'LLM_DEFAULT_PROVIDER').toLowerCase()
   const defaultModel = requireEnv(env, 'LLM_DEFAULT_MODEL')
   const fallbackModel = env.LLM_FALLBACK_MODEL?.trim() || null
+  const contextWindowTokensByModel = parseModelContextWindows(env.LLM_MODEL_CONTEXT_WINDOWS_JSON)
   const claudeToolChoice = parseClaudeToolChoice(env.LLM_PROVIDER_CLAUDE_TOOL_CHOICE)
   const claudeThinking = parseClaudeThinking(env)
 
@@ -389,10 +450,22 @@ function parseLlmConfig(env: EnvSource) {
     }
   }
 
+  if (contextWindowTokensByModel[defaultModel] == null) {
+    throw new Error(
+      `LLM_MODEL_CONTEXT_WINDOWS_JSON is missing default model ${defaultModel}`,
+    )
+  }
+  if (fallbackModel && contextWindowTokensByModel[fallbackModel] == null) {
+    throw new Error(
+      `LLM_MODEL_CONTEXT_WINDOWS_JSON is missing fallback model ${fallbackModel}`,
+    )
+  }
+
   return {
     defaultProvider,
     defaultModel,
     fallbackModel,
+    contextWindowTokensByModel,
     claudeToolChoice,
     claudeThinking,
     providers,
@@ -402,8 +475,16 @@ function parseLlmConfig(env: EnvSource) {
 
 export function parseConfig(env: EnvSource) {
   const groupIds = parseIdList('BOT_TARGET_GROUP_IDS', env.BOT_TARGET_GROUP_IDS)
-
-  const compactionTriggerTokens = parsePositiveInteger(env.COMPACTION_TRIGGER_TOKENS, 16_000)
+  const compaction = parseCompactionConfig(env)
+  const llm = parseLlmConfig(env)
+  for (const model of [llm.defaultModel, llm.fallbackModel].filter((value): value is string => Boolean(value))) {
+    const contextWindowTokens = llm.contextWindowTokensByModel[model]
+    if (compaction.reserveTokens + compaction.keepRecentTokens >= contextWindowTokens) {
+      throw new Error(
+        `Compaction reserve plus keep must be smaller than context window for model ${model}`,
+      )
+    }
+  }
   const lifeJournalIdlePickTimeoutMs = parsePositiveInteger(
     env.BOT_LIFE_JOURNAL_IDLE_PICK_TIMEOUT_MS,
     30_000,
@@ -488,11 +569,7 @@ export function parseConfig(env: EnvSource) {
     nodeEnv: env.NODE_ENV || 'development',
     replyMediaTimeoutMs: parsePositiveInteger(env.REPLY_MEDIA_TIMEOUT_MS, 15_000),
     jobInterDelayMs: parsePositiveInteger(env.JOB_INTER_DELAY_MS, 200),
-    /**
-     * Compaction trigger token threshold (estimated). Default 16k bumped from 12k for
-     * multi-source token-velocity. Override via COMPACTION_TRIGGER_TOKENS env.
-     */
-    compactionTriggerTokens,
+    compaction,
     lifeJournal: {
       /** Hard timeout for the pre-rest idle intention picker (AbortController). */
       idlePickTimeoutMs: lifeJournalIdlePickTimeoutMs,
@@ -561,7 +638,7 @@ export function parseConfig(env: EnvSource) {
     tavily: env.TAVILY_API_KEY
       ? { apiKey: env.TAVILY_API_KEY }
       : undefined,
-    llm: parseLlmConfig(env),
+    llm,
   } as const
 }
 

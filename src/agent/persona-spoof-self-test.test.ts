@@ -9,6 +9,7 @@ function output(content: string): LlmCallOutput {
     toolCalls: [],
     usage: { inputTokens: null, cachedTokens: null, outputTokens: null },
     model: 'claude-sonnet-4-6',
+    contextWindowTokens: 200_000,
   }
 }
 

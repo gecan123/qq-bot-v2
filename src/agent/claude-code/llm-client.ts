@@ -106,6 +106,7 @@ export class ClaudeCodeApiError extends Error {
 
 export interface CreateClaudeCodeLlmClientInput {
   model: string
+  contextWindowTokens: number
   /** 已含 `/v1` 后缀, 例: `http://127.0.0.1:8317/v1`. endpoint 拼 `${baseURL}/messages?beta=true`. */
   baseURL: string
   /** cliproxy 自家 management key (`sk-local`)。 */
@@ -118,7 +119,7 @@ export interface CreateClaudeCodeLlmClientInput {
 }
 
 export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput): LlmClient {
-  const { model, baseURL, apiKey, toolChoice, thinking, thinkingLog } = input
+  const { model, contextWindowTokens, baseURL, apiKey, toolChoice, thinking, thinkingLog } = input
   const url = `${baseURL}/messages?beta=true`
   const retry = normalizeRetryOptions(input.retry)
 
@@ -159,7 +160,7 @@ export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput)
         )
       }
 
-      const output = toLlmCallOutput(parsed, model)
+      const output = toLlmCallOutput(parsed, model, contextWindowTokens)
       void logClaudeThinkingBlocks({
         model: output.model,
         blocks: thinkingLogBlocks(parsed),
@@ -435,7 +436,11 @@ async function sleepWithSignal(ms: number, signal?: AbortSignal): Promise<void> 
   })
 }
 
-function toLlmCallOutput(parsed: ClaudeMessageResponse, fallbackModel: string): LlmCallOutput {
+function toLlmCallOutput(
+  parsed: ClaudeMessageResponse,
+  fallbackModel: string,
+  contextWindowTokens: number,
+): LlmCallOutput {
   const textParts: string[] = []
   const toolCalls: AssistantToolCall[] = []
   const nativeBlocks: ClaudeAssistantNativeBlock[] = []
@@ -485,6 +490,7 @@ function toLlmCallOutput(parsed: ClaudeMessageResponse, fallbackModel: string): 
       outputTokens,
     },
     model: parsed.model ?? fallbackModel,
+    contextWindowTokens,
     stopReason: normalizeClaudeStopReason(parsed.stop_reason),
   }
 }

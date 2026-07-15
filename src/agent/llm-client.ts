@@ -62,6 +62,8 @@ export interface LlmCallOutput {
     outputTokens: number | null
   }
   model: string
+  /** 本次实际调用模型的输入上下文窗口；来自显式配置，不按模型名猜测。 */
+  contextWindowTokens: number
   /** Provider-neutral 的生成停止原因；unknown 表示上游未提供或无法映射。 */
   stopReason?: LlmStopReason
 }
@@ -154,6 +156,11 @@ export function createLlmClient(options: CreateLlmClientOptions = {}): LlmClient
 }
 
 function createProviderLlmClient(model: string, options: CreateLlmClientOptions): LlmClient {
+  const contextWindowTokens = config.llm.contextWindowTokensByModel[model]
+  if (contextWindowTokens == null) {
+    throw new Error(`missing context-window metadata for model ${model}`)
+  }
+
   if (config.llm.defaultProvider === OPENAI_AGENT_PROVIDER_NAME) {
     const openaiProvider = config.llm.providers[OPENAI_AGENT_BASE_PROVIDER_NAME]
     if (!openaiProvider) {
@@ -161,6 +168,7 @@ function createProviderLlmClient(model: string, options: CreateLlmClientOptions)
     }
     return createOpenAIAgentLlmClient({
       model,
+      contextWindowTokens,
       baseURL: openaiProvider.url,
       apiKey: openaiProvider.apiKey,
     })
@@ -175,6 +183,7 @@ function createProviderLlmClient(model: string, options: CreateLlmClientOptions)
     }
     return createClaudeCodeLlmClient({
       model,
+      contextWindowTokens,
       baseURL: claudeProvider.url,
       apiKey: claudeProvider.apiKey,
       toolChoice: config.llm.claudeToolChoice,

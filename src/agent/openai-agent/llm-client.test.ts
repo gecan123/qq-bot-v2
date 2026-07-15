@@ -23,6 +23,7 @@ describe('openai-agent llm client', () => {
     let receivedSignal: AbortSignal | undefined
     const client = createOpenAIAgentLlmClient({
       model: 'gpt-5.1',
+      contextWindowTokens: 400_000,
       baseURL: 'http://127.0.0.1:8317/v1',
       apiKey: 'sk-local',
       client: {
@@ -54,6 +55,7 @@ describe('openai-agent llm client', () => {
     const calls: ChatCompletionCreateParamsNonStreaming[] = []
     const client = createOpenAIAgentLlmClient({
       model: 'gpt-5.1',
+      contextWindowTokens: 400_000,
       baseURL: 'http://127.0.0.1:8317/v1',
       apiKey: 'sk-local',
       client: createFakeClient({
@@ -94,6 +96,7 @@ describe('openai-agent llm client', () => {
   test('maps assistant tool calls and cached token usage back to LlmCallOutput', async () => {
     const client = createOpenAIAgentLlmClient({
       model: 'gpt-5.1',
+      contextWindowTokens: 400_000,
       baseURL: 'http://127.0.0.1:8317/v1',
       apiKey: 'sk-local',
       client: createFakeClient({
@@ -139,6 +142,7 @@ describe('openai-agent llm client', () => {
       outputTokens: 7,
     })
     assert.equal(result.model, 'gpt-5.1-2025-11-13')
+    assert.equal(result.contextWindowTokens, 400_000)
     assert.equal(result.stopReason, 'tool_use')
   })
 
@@ -146,6 +150,7 @@ describe('openai-agent llm client', () => {
     const calls: ChatCompletionCreateParamsNonStreaming[] = []
     const client = createOpenAIAgentLlmClient({
       model: 'gpt-5.1',
+      contextWindowTokens: 400_000,
       baseURL: 'http://127.0.0.1:8317/v1',
       apiKey: 'sk-local',
       client: createFakeClient({
@@ -168,6 +173,7 @@ describe('openai-agent llm client', () => {
   test('normalizes strict-mode null optional tool arguments before returning tool calls', async () => {
     const client = createOpenAIAgentLlmClient({
       model: 'gpt-5.1',
+      contextWindowTokens: 400_000,
       baseURL: 'http://127.0.0.1:8317/v1',
       apiKey: 'sk-local',
       client: createFakeClient({
@@ -231,6 +237,7 @@ describe('openai-agent llm client', () => {
     const calls: ChatCompletionCreateParamsNonStreaming[] = []
     const client = createOpenAIAgentLlmClient({
       model: 'gpt-5.1',
+      contextWindowTokens: 400_000,
       baseURL: 'http://127.0.0.1:8317/v1',
       apiKey: 'sk-local',
       client: createFakeClient({
@@ -274,6 +281,7 @@ describe('openai-agent llm client', () => {
     const calls: ChatCompletionCreateParamsNonStreaming[] = []
     const client = createOpenAIAgentLlmClient({
       model: 'gpt-5.1',
+      contextWindowTokens: 400_000,
       baseURL: 'http://127.0.0.1:8317/v1',
       apiKey: 'sk-local',
       client: createFakeClient({

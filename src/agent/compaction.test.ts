@@ -204,6 +204,22 @@ test('maybeCompactConversation: under threshold → no-op', async () => {
   assert.equal(ctx.getSnapshot().messages.length, 1)
 })
 
+test('maybeCompactConversation: default threshold follows model window minus reserve', async () => {
+  const ctx = createAgentContext()
+  for (let i = 0; i < 20; i += 1) ctx.appendUserMessage(`message ${i} ${'x'.repeat(1_000)}`)
+  let summarizeCalls = 0
+
+  const changed = await maybeCompactConversation(ctx, 100_000, {
+    summarize: async () => {
+      summarizeCalls += 1
+      return validSummary()
+    },
+  })
+
+  assert.equal(changed, false)
+  assert.equal(summarizeCalls, 0)
+})
+
 test('maybeCompactConversation: above threshold → replaces with [summary, ...tail]', async () => {
   const ctx = createAgentContext()
   for (let i = 0; i < 30; i++) ctx.appendUserMessage(`msg-${i}-with-some-content-for-tokens`)

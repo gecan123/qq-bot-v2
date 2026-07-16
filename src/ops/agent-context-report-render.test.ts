@@ -74,6 +74,7 @@ test('default rendering shows the complete operational context summary', () => {
   assert.match(text, /headroom 690\.2k/)
   assert.match(text, /Projection: canonical 45 · working 42/)
   assert.match(text, /Images: hydrated 2 · omitted 3 · unavailable 1/)
+  assert.match(text, /Top tool-result contributors:\n- inbox\s+200\.0k\s+9 results/)
   assert.match(text, /Estimate: local_structure_utf8_bytes/)
   assert.match(text, /Surface: live/)
   assert.match(text, /Warnings:\n- Example aggregate warning\./)
@@ -125,8 +126,30 @@ test('compact token rendering is deterministic for large values', () => {
   assert.equal(renderCompactTokens(999), '999')
   assert.equal(renderCompactTokens(1_000), '1.0k')
   assert.equal(renderCompactTokens(12_345), '12.3k')
+  assert.equal(renderCompactTokens(999_999), '1.0m')
   assert.equal(renderCompactTokens(1_000_000), '1.0m')
+  assert.equal(renderCompactTokens(999_999_999), '1.0b')
   assert.equal(renderCompactTokens(2_500_000_000), '2.5b')
+  assert.throws(() => renderCompactTokens(1.5), /non-negative safe integer/)
+  assert.throws(() => renderCompactTokens(Number.MAX_SAFE_INTEGER + 1), /non-negative safe integer/)
+})
+
+test('terminal rendering escapes controls in contributor names and warnings', () => {
+  const text = renderAgentContextReport({
+    ...fixtureReport,
+    toolResultContributors: [{
+      toolName: 'inbox\n\u001b[31mspoof',
+      tokens: 12,
+      resultCount: 1,
+    }],
+    warnings: ['warning\r\nspoof'],
+  })
+
+  assert.equal(text.includes('\u001b'), false)
+  assert.equal(text.includes('inbox\n'), false)
+  assert.equal(text.includes('warning\r'), false)
+  assert.match(text, /inbox\\u000a\\u001b\[31mspoof/)
+  assert.match(text, /warning\\u000d\\u000aspoof/)
 })
 
 test('argument parsing accepts only the documented json forms', () => {

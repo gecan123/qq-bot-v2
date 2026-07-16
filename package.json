@@ -7,7 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "dev:once": "tsx src/index.ts",
     "build": "rm -rf dist && tsc && mkdir -p dist/agent/tools/ai-tone && cp src/agent/tools/ai-tone/model.json dist/agent/tools/ai-tone/model.json",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json",
     "lint": "pnpm typecheck && pnpm repo-check",
     "repo-check": "tsx scripts/repo-check.ts",
     "agent:doctor": "tsx scripts/agent-doctor.ts",

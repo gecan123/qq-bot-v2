@@ -8,9 +8,10 @@ import * as zod from 'zod'
 import { createInMemoryTaskRegistry } from '../background-task-registry.js'
 import { InMemoryEventQueue } from '../event-queue.js'
 import type { BotEvent } from '../event.js'
+import { createInMemoryGoalStore } from '../goal-store.js'
 import type { Tool, ToolContext } from '../tool.js'
 import type { MessageSender } from '../../messaging/message-sender.js'
-import { buildBotToolManifest, buildBotTools } from './index.js'
+import { buildBotToolManifest, buildBotTools, type BotToolManifest } from './index.js'
 import { createBackgroundTaskTool } from './background-task.js'
 import { TASK_RESULT_TEXT_CAP_CHARS } from './get-task-result.js'
 import { createMemoryTool, memoryTool } from './memory.js'
@@ -85,8 +86,17 @@ const TINY_PNG = Buffer.from(
   'base64',
 )
 
+function findManifestTool(manifest: BotToolManifest, name: string): Tool {
+  const tool = [
+    ...manifest.alwaysOnTools,
+    ...manifest.capabilities.flatMap((capability) => capability.tools),
+  ].find((item) => item.name === name)
+  assert.ok(tool, `missing manifest tool: ${name}`)
+  return tool
+}
+
 describe('merged main-agent tools', () => {
-  test('always registers schedule in the main Agent manifest', () => {
+  test('defers low-frequency state tools while keeping continuity tools always-on', () => {
     const manifest = buildBotToolManifest({
       sender: mockSender,
       targetPolicy,
@@ -103,9 +113,24 @@ describe('merged main-agent tools', () => {
         async loadGroups() { return [] },
       },
       optionalTools: disabledOptionalTools,
+      goalStore: createInMemoryGoalStore(),
     })
 
-    assert.equal(manifest.alwaysOnTools.some((tool) => tool.name === 'schedule'), true)
+    const alwaysOnNames = manifest.alwaysOnTools.map((tool) => tool.name)
+    const capabilities = new Map(manifest.capabilities.map((capability) => [
+      capability.name,
+      capability.tools.map((tool) => tool.name),
+    ]))
+
+    assert.equal(alwaysOnNames.includes('schedule'), false)
+    assert.equal(alwaysOnNames.includes('notebook'), false)
+    assert.equal(alwaysOnNames.includes('life_journal'), false)
+    assert.equal(alwaysOnNames.includes('collect_sticker'), false)
+    assert.deepEqual(capabilities.get('short_term_scheduling'), ['schedule'])
+    assert.deepEqual(capabilities.get('life_state'), ['notebook', 'life_journal'])
+    assert.deepEqual(capabilities.get('sticker_management'), ['collect_sticker'])
+    assert.ok(alwaysOnNames.includes('memory'))
+    assert.ok(alwaysOnNames.includes('goal'))
   })
 
   test('buildBotTools exposes default entries and defers heavy typed tools', () => {
@@ -125,11 +150,13 @@ describe('merged main-agent tools', () => {
         async loadGroups() { return [] },
       },
       optionalTools: disabledOptionalTools,
+      goalStore: createInMemoryGoalStore(),
     }).map((tool) => tool.name)
 
     assert.ok(names.includes('background_task'))
     assert.ok(names.includes('qq_directory'))
     assert.ok(names.includes('memory'))
+    assert.ok(names.includes('goal'))
     assert.ok(names.includes('inbox'))
     assert.ok(names.includes('pause'))
     assert.ok(names.includes('skill'))
@@ -140,12 +167,13 @@ describe('merged main-agent tools', () => {
     assert.ok(names.includes('workspace_bash'))
     assert.ok(names.includes('chat_style'))
     assert.ok(names.includes('ai_tone'))
-    assert.ok(names.includes('notebook'))
+    assert.equal(names.includes('notebook'), false)
     assert.equal(names.includes('journal'), false)
-    assert.ok(names.includes('life_journal'))
+    assert.equal(names.includes('life_journal'), false)
     assert.equal(names.includes('skill_editor'), false)
     assert.equal(names.includes('generate_image'), false)
-    assert.ok(names.includes('collect_sticker'))
+    assert.equal(names.includes('collect_sticker'), false)
+    assert.equal(names.includes('schedule'), false)
     assert.equal(names.includes('fetch_content'), false)
     assert.equal(names.includes('db'), false)
     assert.equal(names.includes('openbb_cli'), false)
@@ -202,9 +230,9 @@ describe('merged main-agent tools', () => {
         optionalTools: disabledOptionalTools,
         workspaceStateCoordinator,
       })
-      const memory = manifest.alwaysOnTools.find((tool) => tool.name === 'memory')!
-      const notebook = manifest.alwaysOnTools.find((tool) => tool.name === 'notebook')!
-      const lifeJournal = manifest.alwaysOnTools.find((tool) => tool.name === 'life_journal')!
+      const memory = findManifestTool(manifest, 'memory')
+      const notebook = findManifestTool(manifest, 'notebook')
+      const lifeJournal = findManifestTool(manifest, 'life_journal')
 
       await memory.execute({
         action: 'write',
@@ -254,6 +282,7 @@ describe('merged main-agent tools', () => {
         tradingAgent: mockTradingAgentTool,
         website: mockWebsiteTool,
       },
+      goalStore: createInMemoryGoalStore(),
     })
     const capabilities = new Map(manifest.capabilities.map((capability) => [
       capability.name,
@@ -279,13 +308,19 @@ describe('merged main-agent tools', () => {
     assert.equal(alwaysOnNames.includes('send_message'), false)
     assert.ok(alwaysOnNames.includes('qq_directory'))
     assert.equal(allToolNames.includes('send_image'), false)
-    assert.ok(alwaysOnNames.includes('collect_sticker'))
+    assert.equal(alwaysOnNames.includes('schedule'), false)
+    assert.equal(alwaysOnNames.includes('notebook'), false)
+    assert.equal(alwaysOnNames.includes('life_journal'), false)
+    assert.equal(alwaysOnNames.includes('collect_sticker'), false)
+    assert.ok(alwaysOnNames.includes('memory'))
+    assert.ok(alwaysOnNames.includes('goal'))
     assert.ok(alwaysOnNames.includes('chat_style'))
     assert.ok(alwaysOnNames.includes('ai_tone'))
-    assert.ok(alwaysOnNames.includes('notebook'))
     assert.equal(alwaysOnNames.includes('journal'), false)
-    assert.ok(alwaysOnNames.includes('life_journal'))
     assert.equal(alwaysOnNames.includes('skill_editor'), false)
+    assert.deepEqual(capabilities.get('short_term_scheduling'), ['schedule'])
+    assert.deepEqual(capabilities.get('life_state'), ['notebook', 'life_journal'])
+    assert.deepEqual(capabilities.get('sticker_management'), ['collect_sticker'])
     assert.deepEqual(capabilities.get('workspace_management'), ['workspace_file'])
     assert.deepEqual(capabilities.get('qq'), ['qq_conversation', 'send_message'])
     assert.deepEqual(capabilities.get('document_reading'), ['read_file'])

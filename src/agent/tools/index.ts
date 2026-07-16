@@ -116,6 +116,16 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   })
   const aiTone = createAiToneTool()
   const pause = createPauseTool()
+  const schedule = createScheduleTool(deps.scheduleRuntime)
+  const notebook = createNotebookTool({
+    rootDir: deps.workspaceDir,
+    workspaceStateCoordinator: deps.workspaceStateCoordinator,
+  })
+  const lifeJournal = createLifeJournalTool({
+    rootDir: deps.workspaceDir,
+    workspaceStateCoordinator: deps.workspaceStateCoordinator,
+  })
+  const collectSticker = collectStickerTool
   const workspaceBash = createWorkspaceBashTool({
     groupIdWhitelist: deps.groupIds,
     groupIds: deps.groupIds,
@@ -132,7 +142,6 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     pause,
     qqDirectory,
     backgroundTask,
-    createScheduleTool(deps.scheduleRuntime),
     ...(delegate ? [delegate] : []),
     ...(deps.approvalManager ? [createApprovalTool(deps.approvalManager)] : []),
     ...(deps.goalStore ? [createGoalTool(deps.goalStore)] : []),
@@ -144,17 +153,8 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
       workspaceStateCoordinator: deps.workspaceStateCoordinator,
     }),
     inbox,
-    collectStickerTool,
     chatStyle,
     aiTone,
-    createNotebookTool({
-      rootDir: deps.workspaceDir,
-      workspaceStateCoordinator: deps.workspaceStateCoordinator,
-    }),
-    createLifeJournalTool({
-      rootDir: deps.workspaceDir,
-      workspaceStateCoordinator: deps.workspaceStateCoordinator,
-    }),
     ...(cryptoPaper ? [cryptoPaper] : []),
     workspaceBash,
   ]
@@ -165,6 +165,24 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     description: 'QQ 会话导航与发送；先打开当前会话，再通过 invoke 发送文本、图片或音乐.',
     tools: [qqConversation, sendMessage],
   })
+
+  capabilities.push(
+    {
+      name: 'short_term_scheduling',
+      description: '未来三天内的一次性或短周期重新唤醒；scheduled wake 只是重新评估信号，不用于等回复或机械轮询.',
+      tools: [schedule],
+    },
+    {
+      name: 'life_state',
+      description: '跨天主题过程、经历、感受、梦和当前 Agenda；稳定事实仍写 memory.',
+      tools: [notebook, lifeJournal],
+    },
+    {
+      name: 'sticker_management',
+      description: '收藏、搜索、随机选择或移除 QQ 表情包候选.',
+      tools: [collectSticker],
+    },
+  )
 
   if (deps.mcpManager?.hasServers()) {
     capabilities.push({

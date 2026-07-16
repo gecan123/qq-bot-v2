@@ -88,7 +88,6 @@ describe('createAgentRuntime', () => {
       'pause',
       'qq_directory',
       'background_task',
-      'schedule',
       'delegate',
       'approval',
       'goal',
@@ -96,11 +95,8 @@ describe('createAgentRuntime', () => {
       'skill',
       'memory',
       'inbox',
-      'collect_sticker',
       'chat_style',
       'ai_tone',
-      'notebook',
-      'life_journal',
       'workspace_bash',
       'help',
       'invoke',
@@ -125,13 +121,46 @@ describe('createAgentRuntime', () => {
     const skillManagement = payload.capabilities.find((item: { name: string }) => item.name === 'skill_management')
     const mcpConnectors = payload.capabilities.find((item: { name: string }) => item.name === 'mcp_connectors')
     const qq = payload.capabilities.find((item: { name: string }) => item.name === 'qq')
+    const shortTermScheduling = payload.capabilities.find((item: { name: string }) => item.name === 'short_term_scheduling')
+    const lifeState = payload.capabilities.find((item: { name: string }) => item.name === 'life_state')
+    const stickerManagement = payload.capabilities.find((item: { name: string }) => item.name === 'sticker_management')
     assert.equal(externalResearch.active, true)
     assert.equal(skillManagement.active, false)
     assert.equal(mcpConnectors.active, false)
     assert.deepEqual(mcpConnectors.tools, ['mcp'])
     assert.equal(qq.active, false)
     assert.deepEqual(qq.tools, ['qq_conversation', 'send_message'])
+    assert.equal(shortTermScheduling.active, false)
+    assert.deepEqual(shortTermScheduling.tools, ['schedule'])
+    assert.equal(lifeState.active, false)
+    assert.deepEqual(lifeState.tools, ['notebook', 'life_journal'])
+    assert.equal(stickerManagement.active, false)
+    assert.deepEqual(stickerManagement.tools, ['collect_sticker'])
     assert.equal(mcpConnections, 0)
+
+    const inactiveSchedule = await runtime.tools.execute({
+      id: 'schedule-inactive',
+      name: 'invoke',
+      args: { tool: 'schedule', args: { action: 'list' } },
+    }, {
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      roundIndex: 1,
+    })
+    assert.deepEqual(inactiveSchedule.outcome, {
+      ok: false,
+      code: 'capability_inactive',
+      error: 'tool schedule is not active; activate one of: short_term_scheduling',
+    })
+    assert.deepEqual(JSON.parse(inactiveSchedule.content as string).next, [
+      {
+        tool: 'help',
+        args: { action: 'activate', capability: 'short_term_scheduling' },
+      },
+      {
+        tool: 'invoke',
+        args: { tool: 'schedule', args: { action: 'list' } },
+      },
+    ])
 
     const pauseQueue = new InMemoryEventQueue<BotEvent>()
     pauseQueue.enqueue({ type: 'wake' })
@@ -532,10 +561,20 @@ async function executeSchedule(
   runtime: ReturnType<typeof createAgentRuntime>,
   args: Record<string, unknown>,
 ) {
-  return await runtime.tools.execute({ id: 'schedule-test', name: 'schedule', args }, {
+  const ctx = {
     eventQueue: new InMemoryEventQueue<BotEvent>(),
     roundIndex: 1,
-  })
+  }
+  await runtime.tools.execute({
+    id: 'activate-schedule',
+    name: 'help',
+    args: { action: 'activate', capability: 'short_term_scheduling' },
+  }, ctx)
+  return await runtime.tools.execute({
+    id: 'schedule-test',
+    name: 'invoke',
+    args: { tool: 'schedule', args },
+  }, ctx)
 }
 
 function makeScheduleRuntime(overrides: Partial<ScheduleRuntime> = {}): ScheduleRuntime {

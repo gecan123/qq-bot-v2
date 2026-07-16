@@ -131,6 +131,19 @@ describe('memory tool schema', () => {
       action: 'recall',
       query: '宽泛探索',
     }).success, true)
+    assert.equal(memoryTool.schema.safeParse({
+      action: 'recall',
+      query: '不能带无归属目标',
+      id: '12345',
+    }).success, false)
+    for (const id of ['', '   ', '../other', 'a/b', 'a\\b', 1.5, -1, Number.MAX_SAFE_INTEGER + 1]) {
+      assert.equal(memoryTool.schema.safeParse({
+        action: 'recall',
+        query: '目标格式校验',
+        scope: 'person',
+        id,
+      }).success, false, `expected recall id ${String(id)} to be rejected`)
+    }
   })
 
   test('description guides contextual recall without encouraging duplicate lookup', () => {

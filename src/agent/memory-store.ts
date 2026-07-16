@@ -1059,6 +1059,9 @@ function fileForRecall(input: RecallMemoryInput): string | null {
   if ((input.scope === 'self' || input.scope === 'topic') && input.id != null) {
     throw new MemoryStoreError('invalid_input', `${input.scope} recall does not accept id`)
   }
+  if (input.scope == null && input.id != null) {
+    throw new MemoryStoreError('invalid_input', 'unscoped recall does not accept id')
+  }
   return null
 }
 

@@ -85,7 +85,7 @@ flowchart LR
 - scope 为 `self|person|group|topic`，路径分别落入 `self/`、`people/`、`groups/`、`topics/`。
 - Markdown v1 entry 带稳定 ID、北京时间、`sourceMessageIds` 和 `tier=recent|stable`。
 - 普通 write 先生成 recent；完全相同内容在同文件内去重。
-- `recall` 扫描 Markdown entry 后做确定性 lexical scoring：精确 ID/alias、短语、分词命中和稳定层级形成可解释分数；`person|group` recall 必须同时提供具体 `id`，只读取 `people/<id>.md` 或 `groups/<id>.md`，目标不存在就返回空。`self|topic` recall 禁止提供 `id`；不传 scope 时保留跨范围探索。`search` 只做宽泛的文件级发现，`review` 只给重复/冲突候选。相同输入和文件内容必须得到相同排序。
+- `recall` 扫描 Markdown entry 后做确定性 lexical scoring：精确 ID/alias、短语、分词命中和稳定层级形成可解释分数；`person|group` recall 必须同时提供具体 `id`，只读取 `people/<id>.md` 或 `groups/<id>.md`，目标不存在就返回空。`self|topic` recall 禁止提供 `id`；scope 和 id 都不传时保留跨范围探索，禁止只有 id 而没有 scope。`search` 只做宽泛的文件级发现，`review` 只给重复/冲突候选。相同输入和文件内容必须得到相同排序。
 - `compact` 和自动 `merge` 产生新的 stable entry，并把原 entry 标为 `superseded` 后保留，使 `supersedes` 始终可解析；已 superseded 内容不参与 search、recall、review 或 maintenance 阈值。
 - 显式 mutation 和自动 maintenance 都使用文件 revision；stable 不会被自动 discard。
 
@@ -120,7 +120,7 @@ flowchart LR
 
 ### 召回触发策略
 
-当前采用**显式工具召回**：新消息先进入正常 Agent round；主 Agent 在当前上下文不足且消息涉及具体人、当前群、旧话题、偏好、承诺、稳定事实或自己做过的经验时，决定是否调用 `memory recall`。已有足够且未冲突的上下文时不重复调用。person/group recall 带具体 `id`，只扫描对应 Markdown；无 scope recall 才保留跨范围探索。结果有界返回后，这个 tool call 和 tool result 随即进入 `AgentContext`，后续 replay 直接使用已保存的结果，不重新扫描已经变化的 Markdown。
+当前采用**显式工具召回**：新消息先进入正常 Agent round；主 Agent 在当前上下文不足且消息涉及具体人、当前群、旧话题、偏好、承诺、稳定事实或自己做过的经验时，决定是否调用 `memory recall`。已有足够且未冲突的上下文时不重复调用。person/group recall 带具体 `id`，只扫描对应 Markdown；scope 和 id 都不传时才保留跨范围探索。结果有界返回后，这个 tool call 和 tool result 随即进入 `AgentContext`，后续 replay 直接使用已保存的结果，不重新扫描已经变化的 Markdown。
 
 runtime 当前不会在 `agent.chat` 前自动预取 Memory，也不会把检索结果拼进 system prompt。保持这个边界有四个原因：
 

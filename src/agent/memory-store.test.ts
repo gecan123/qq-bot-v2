@@ -485,6 +485,12 @@ describe('memory-store', () => {
           && error.code === 'invalid_input'
           && /topic recall does not accept id/.test(error.message),
       )
+      await assert.rejects(
+        recallMemoryEntries({ rootDir }, { query: '偏好', id: '10001' }),
+        (error: unknown) => error instanceof MemoryStoreError
+          && error.code === 'invalid_input'
+          && /unscoped recall does not accept id/.test(error.message),
+      )
 
       const discovered = await recallMemoryEntries({ rootDir }, { query: '偏好' })
       assert.deepEqual(discovered.matches.map((match) => match.file), ['self/habits.md'])

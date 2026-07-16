@@ -9,24 +9,10 @@ import type { AgentImageRefStore } from '../media/agent-image-ref.js'
 import { formatBeijingIso } from '../utils/beijing-time.js'
 import type { AgentContextSurfaceReadResult } from './agent-context-surface.js'
 import { analyzeAgentContext, type AgentContextReport } from './agent-context-report.js'
-
-interface LedgerStorageRow {
-  id: bigint
-  entryType: string
-  payload: unknown
-  createdAt: Date
-}
-
-interface RuntimeStorageRow {
-  schemaVersion: number
-  mailboxCursors: unknown
-  mailboxContinuity: unknown
-  goalRevision: number
-  activeToolCapabilities: unknown
-  qqConversationFocus: unknown
-  lastWakeAt: Date | null
-  ledgerHeadEntryId: bigint | null
-}
+import {
+  loadCanonicalAgentState,
+  type CanonicalAgentStatePrismaClient,
+} from './agent-ledger-check.js'
 
 interface AgentChatUsageRow {
   ts: Date
@@ -36,13 +22,7 @@ interface AgentChatUsageRow {
   outputTokens: number | null
 }
 
-export interface AgentContextReportPrismaClient {
-  botAgentLedgerEntry: {
-    findMany(input: { orderBy: { id: 'asc' } }): Promise<LedgerStorageRow[]>
-  }
-  botAgentRuntimeState: {
-    findUnique(input: { where: { id: 1 } }): Promise<RuntimeStorageRow | null>
-  }
+export interface AgentContextReportPrismaClient extends CanonicalAgentStatePrismaClient {
   agentTokenUsage: {
     findFirst(input: {
       where: { operation: 'agent.chat' }
@@ -67,28 +47,7 @@ export function createPrismaAgentContextReportSource(
   client: AgentContextReportPrismaClient,
 ): AgentContextReportSource {
   return {
-    async loadCanonicalState() {
-      const [rows, runtime] = await Promise.all([
-        client.botAgentLedgerEntry.findMany({ orderBy: { id: 'asc' } }),
-        client.botAgentRuntimeState.findUnique({ where: { id: 1 } }),
-      ])
-      if (runtime === null) {
-        throw new Error('bot_agent_runtime_state singleton row is missing')
-      }
-      return {
-        entries: rows as CanonicalAgentState['entries'],
-        runtimeState: {
-          schemaVersion: runtime.schemaVersion,
-          mailboxCursors: runtime.mailboxCursors,
-          mailboxContinuity: runtime.mailboxContinuity,
-          goalRevision: runtime.goalRevision,
-          activeToolCapabilities: runtime.activeToolCapabilities,
-          qqConversationFocus: runtime.qqConversationFocus,
-          lastWakeAt: runtime.lastWakeAt,
-          ledgerHeadEntryId: runtime.ledgerHeadEntryId,
-        } as CanonicalAgentState['runtimeState'],
-      }
-    },
+    async loadCanonicalState() { return loadCanonicalAgentState(client) },
 
     async loadLatestAgentChatUsage() {
       const row = await client.agentTokenUsage.findFirst({
@@ -127,8 +86,18 @@ export async function buildCurrentAgentContextReport(input: {
   fallbackProvider: 'claude-code' | 'openai-agent'
   fallbackContextWindowTokens: number
 }): Promise<AgentContextReport> {
-  const canonical = await input.source.loadCanonicalState()
-  const projection = projectAgentLedger(canonical)
+  let projection: ReturnType<typeof projectAgentLedger> | null = null
+  let projectionError: unknown
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const canonical = await input.source.loadCanonicalState()
+    try {
+      projection = projectAgentLedger(canonical)
+      break
+    } catch (error) {
+      projectionError = error
+    }
+  }
+  if (projection === null) throw projectionError
   const working = await buildWorkingContextProjection(projection.snapshot.messages, {
     imageRefs: input.imageRefs,
   })

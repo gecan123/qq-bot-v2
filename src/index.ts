@@ -418,7 +418,11 @@ async function main() {
       tools: runtime.tools.list(),
     })
     log.info(
-      { path: AGENT_CONTEXT_SURFACE_PATH, fingerprint: surface.fingerprint },
+      {
+        path: AGENT_CONTEXT_SURFACE_PATH,
+        schemaVersion: surface.schemaVersion,
+        generatedAt: surface.generatedAt,
+      },
       'context surface 已写入',
     )
   } catch (error) {

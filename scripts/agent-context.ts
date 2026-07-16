@@ -1,12 +1,12 @@
-import { runAgentContextCli } from '../src/ops/agent-context-cli.js'
+import { buildAgentContextCliOutput } from '../src/ops/agent-context-cli.js'
 
-const exitCode = await runAgentContextCli(process.argv.slice(2), {
-  writeStdout(value) {
-    process.stdout.write(value)
-  },
-  writeStderr(value) {
-    process.stderr.write(value)
-  },
-})
-
-if (exitCode !== 0) process.exitCode = exitCode
+try {
+  process.stdout.write(`${await buildAgentContextCliOutput(process.argv.slice(2))}\n`)
+} catch (error) {
+  process.stderr.write(`${JSON.stringify({
+    ok: false,
+    code: 'agent_context_report_failed',
+    error: error instanceof Error ? error.message : String(error),
+  })}\n`)
+  process.exitCode = 1
+}

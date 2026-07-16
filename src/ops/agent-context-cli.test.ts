@@ -2,119 +2,60 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { resolve } from 'node:path'
 import { test } from 'node:test'
+import { AGENT_RUNTIME_STATE_SCHEMA_VERSION } from '../agent/agent-ledger.types.js'
+import { createEmptyMailboxContinuityState } from '../agent/mailbox-continuity.js'
 import {
-  runAgentContextCli,
-  type AgentContextCliDependencies,
+  buildAgentContextCliOutput,
   type AgentContextCliRuntime,
 } from './agent-context-cli.js'
 
 const projectRoot = resolve(import.meta.dirname, '../..')
 
-test('unknown arguments return one structured line without loading runtime or connecting DB', async () => {
-  const output = captureOutput()
+test('unknown arguments reject before loading runtime', async () => {
   let runtimeLoads = 0
-  const dependencies: AgentContextCliDependencies = {
-    async loadRuntime() {
+  await assert.rejects(
+    buildAgentContextCliOutput(['--watch'], async () => {
       runtimeLoads++
-      throw new Error('must not load')
-    },
-    async buildOutput() {
-      throw new Error('must not build')
-    },
-  }
-
-  const exitCode = await runAgentContextCli(['--watch'], output.io, dependencies)
-
-  assert.equal(exitCode, 1)
+      return fakeRuntime([])
+    }),
+    /unknown argument: --watch/,
+  )
   assert.equal(runtimeLoads, 0)
-  assert.equal(output.stdout, '')
-  assertStructuredError(output.stderr, 'unknown argument: --watch')
 })
 
-test('runtime initialization failures are contained by the stable error boundary', async () => {
-  const output = captureOutput()
-  const dependencies: AgentContextCliDependencies = {
-    async loadRuntime() {
-      throw new Error('missing config\nno stack')
-    },
-    async buildOutput() {
-      throw new Error('must not build')
-    },
-  }
-
-  const exitCode = await runAgentContextCli(['--json'], output.io, dependencies)
-
-  assert.equal(exitCode, 1)
-  assert.equal(output.stdout, '')
-  assertStructuredError(output.stderr, 'missing config\nno stack')
-  assert.equal(output.stderr.includes(import.meta.dirname), false)
-})
-
-test('disconnect errors cannot override a primary failure', async () => {
-  const output = captureOutput()
+test('successful json output connects, builds the real report, then disconnects', async () => {
   const calls: string[] = []
-  const dependencies = fakeDependencies({
-    calls,
-    async buildOutput() {
-      calls.push('build')
-      throw new Error('primary failure')
-    },
-    async disconnect() {
-      calls.push('disconnect')
-      throw new Error('disconnect failure')
-    },
+  const output = await buildAgentContextCliOutput(['--json'], async () => {
+    calls.push('load')
+    return fakeRuntime(calls)
   })
 
-  const exitCode = await runAgentContextCli([], output.io, dependencies)
-
-  assert.equal(exitCode, 1)
-  assert.deepEqual(calls, ['load', 'connect', 'build', 'disconnect'])
-  assert.equal(output.stdout, '')
-  assertStructuredError(output.stderr, 'primary failure')
+  assert.deepEqual(calls, ['load', 'connect', 'disconnect'])
+  const report = JSON.parse(output) as { schemaVersion: number; messages: { canonical: number } }
+  assert.equal(report.schemaVersion, 2)
+  assert.equal(report.messages.canonical, 0)
 })
 
-test('a lone disconnect failure suppresses the report and becomes the stable error', async () => {
-  const output = captureOutput()
-  const dependencies = fakeDependencies({
-    async disconnect() {
-      throw new Error('disconnect failure')
-    },
-  })
-
-  const exitCode = await runAgentContextCli([], output.io, dependencies)
-
-  assert.equal(exitCode, 1)
-  assert.equal(output.stdout, '')
-  assertStructuredError(output.stderr, 'disconnect failure')
-})
-
-test('successful json output is parseable and written only after disconnect', async () => {
-  const output = captureOutput()
+test('report failures still disconnect', async () => {
   const calls: string[] = []
-  const reportJson = JSON.stringify({ schemaVersion: 1, ok: true })
-  const dependencies = fakeDependencies({
-    calls,
-    async buildOutput(_runtime, options) {
-      calls.push('build')
-      assert.deepEqual(options, { json: true })
-      return reportJson
-    },
-  })
-  const io = {
-    writeStdout(value: string) {
-      calls.push('stdout')
-      output.io.writeStdout(value)
-    },
-    writeStderr: output.io.writeStderr,
-  }
+  const runtime = fakeRuntime(calls)
+  runtime.prisma.botAgentRuntimeState.findUnique = async () => null
 
-  const exitCode = await runAgentContextCli(['--json'], io, dependencies)
+  await assert.rejects(
+    buildAgentContextCliOutput([], async () => runtime),
+    /singleton row is missing/,
+  )
+  assert.deepEqual(calls, ['connect', 'disconnect'])
+})
 
-  assert.equal(exitCode, 0)
-  assert.deepEqual(calls, ['load', 'connect', 'build', 'disconnect', 'stdout'])
-  assert.equal(output.stderr, '')
-  assert.equal(output.stdout, `${reportJson}\n`)
-  assert.deepEqual(JSON.parse(output.stdout), { schemaVersion: 1, ok: true })
+test('disconnect failure rejects instead of returning an already-built report', async () => {
+  const runtime = fakeRuntime([])
+  runtime.prisma.$disconnect = async () => { throw new Error('disconnect failure') }
+
+  await assert.rejects(
+    buildAgentContextCliOutput([], async () => runtime),
+    /disconnect failure/,
+  )
 })
 
 test('direct script contains missing config failures without a raw stack', async () => {
@@ -132,12 +73,7 @@ test('direct script contains missing config failures without a raw stack', async
 })
 
 test('pnpm silent keeps the command-level error channel machine clean', async () => {
-  const result = await runProcess('pnpm', [
-    '--silent',
-    'agent:context',
-    '--',
-    '--json',
-  ])
+  const result = await runProcess('pnpm', ['--silent', 'agent:context', '--', '--json'])
 
   assert.equal(result.code, 1)
   assert.equal(result.stdout, '')
@@ -145,49 +81,42 @@ test('pnpm silent keeps the command-level error channel machine clean', async ()
   assert.equal(result.stderr.includes(projectRoot), false)
 })
 
-function fakeDependencies(overrides: {
-  calls?: string[]
-  buildOutput?: AgentContextCliDependencies['buildOutput']
-  disconnect?: () => Promise<void>
-} = {}): AgentContextCliDependencies {
-  const calls = overrides.calls ?? []
-  const runtime = {
-    prisma: {
-      async $connect() {
-        calls.push('connect')
-      },
-      async $disconnect() {
-        if (overrides.disconnect) return overrides.disconnect()
-        calls.push('disconnect')
-      },
-    },
-  } as AgentContextCliRuntime
+function fakeRuntime(calls: string[]): AgentContextCliRuntime {
   return {
-    async loadRuntime() {
-      calls.push('load')
-      return runtime
-    },
-    buildOutput: overrides.buildOutput ?? (async () => {
-      calls.push('build')
-      return 'report'
-    }),
-  }
-}
-
-function captureOutput() {
-  const capture = {
-    stdout: '',
-    stderr: '',
-    io: {
-      writeStdout(value: string) {
-        capture.stdout += value
-      },
-      writeStderr(value: string) {
-        capture.stderr += value
+    config: {
+      compaction: { reserveTokens: 10_000, keepRecentTokens: 2_000 },
+      llm: {
+        defaultProvider: 'openai-agent',
+        defaultModel: 'gpt-test',
+        contextWindowTokensByModel: { 'gpt-test': 400_000 },
+        claudeThinking: { mode: 'disabled', retention: 'active-tool-cycle' },
       },
     },
+    prisma: {
+      async $connect() { calls.push('connect') },
+      async $disconnect() { calls.push('disconnect') },
+      botAgentLedgerEntry: { async findMany() { return [] } },
+      botAgentRuntimeState: {
+        async findUnique() {
+          return {
+            schemaVersion: AGENT_RUNTIME_STATE_SCHEMA_VERSION,
+            mailboxCursors: {},
+            mailboxContinuity: createEmptyMailboxContinuityState(),
+            goalRevision: 0,
+            activeToolCapabilities: [],
+            qqConversationFocus: null,
+            lastWakeAt: null,
+            ledgerHeadEntryId: null,
+          }
+        },
+      },
+      agentTokenUsage: { async findFirst() { return null } },
+    },
+    imageRefs: {
+      async persist() { throw new Error('persist must not be called') },
+      async resolve() { return null },
+    },
   }
-  return capture
 }
 
 function assertStructuredError(stderr: string, expectedMessage: string): void {

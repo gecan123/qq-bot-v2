@@ -41,16 +41,15 @@ export function renderAgentContextReport(report: AgentContextReport): string {
     `Model: ${report.model === null ? 'n/a' : terminalText(report.model)}`,
     `Provider: ${report.provider ?? 'n/a'}`,
     `Window: ${formatTokens(report.contextWindowTokens)}`,
-    `Estimated current: ${formatTokens(report.estimatedCurrentInputTokens)}${formatParenthesizedPercent(report.usagePercent)}`,
-    `Known categories: ${renderCompactTokens(report.estimatedKnownInputTokens)} · complete ${report.estimateComplete ? 'yes' : 'no'}`,
+    `Snapshot estimate: ${formatTokens(report.estimatedSnapshotTokens)}${formatParenthesizedPercent(report.usagePercent)}`,
     `Latest provider input: ${formatTokens(latest?.inputTokens ?? null)} · cached ${formatTokens(latest?.cachedTokens ?? null)} · output ${formatTokens(latest?.outputTokens ?? null)}`,
     `Latest provider sample: ${latest === null ? 'n/a' : `${terminalText(latest.ts)} · ${terminalText(latest.model)}`}`,
     '',
   ]
 
   for (const [name, label] of categoryLabels) {
-    const category = report.categories[name]
-    lines.push(renderMetricLine(label, category.tokens, category.percent))
+    const tokens = report.categories[name]
+    lines.push(renderMetricLine(label, tokens, percentage(tokens, report.contextWindowTokens)))
   }
   lines.push(renderMetricLine(
     'Free space',
@@ -60,7 +59,7 @@ export function renderAgentContextReport(report: AgentContextReport): string {
 
   lines.push(
     '',
-    `Compaction trigger: ${formatTokens(report.compaction.triggerTokens)} · headroom ${formatTokens(report.compaction.tokensUntilTrigger)} · over ${formatBoolean(report.compaction.overTrigger)}`,
+    `Compaction trigger: ${formatTokens(report.compaction.triggerTokens)} · headroom ${formatTokens(report.compaction.tokensUntilTrigger)}`,
     `Compaction policy: reserve ${renderCompactTokens(report.compaction.reserveTokens)} · keep recent ${renderCompactTokens(report.compaction.keepRecentTokens)}`,
     `Projection: canonical ${report.messages.canonical} · working ${report.messages.working}`,
     `Images: hydrated ${report.messages.hydratedImages} · omitted ${report.messages.omittedImages} · unavailable ${report.messages.unavailableImages}`,
@@ -71,7 +70,6 @@ export function renderAgentContextReport(report: AgentContextReport): string {
       : report.toolResultContributors.slice(0, 5).map((contributor) => (
           `- ${terminalText(contributor.toolName)}  ${renderCompactTokens(contributor.tokens)}  ${contributor.resultCount} results`
         ))),
-    `Estimate: ${report.estimateMethod}`,
     `Surface: ${report.surfaceStatus}`,
     `Generated: ${terminalText(report.generatedAt)}`,
   )
@@ -101,10 +99,6 @@ function formatPercent(value: number | null): string {
 
 function formatParenthesizedPercent(value: number | null): string {
   return value === null ? '' : ` (${value.toFixed(1)}%)`
-}
-
-function formatBoolean(value: boolean | null): string {
-  return value === null ? 'n/a' : value ? 'yes' : 'no'
 }
 
 function percentage(value: number | null, total: number | null): number | null {

@@ -17,6 +17,7 @@ import { projectAgentLedger } from '../agent/agent-ledger-projection.js'
 import {
   checkAgentLedger,
   createPrismaAgentLedgerCheckSource,
+  loadCanonicalAgentState,
 } from './agent-ledger-check.js'
 
 const createdAt = new Date('2026-07-15T00:00:00.000Z')
@@ -89,6 +90,16 @@ function checkpointFor(canonical: CanonicalAgentState): StoredAgentCheckpoint {
 }
 
 describe('checkAgentLedger', () => {
+  test('shared raw loader reads the canonical ledger and runtime singleton', async () => {
+    const canonical = state([message(1n, 'hello')])
+    const loaded = await loadCanonicalAgentState({
+      botAgentLedgerEntry: { async findMany() { return canonical.entries } },
+      botAgentRuntimeState: { async findUnique() { return canonical.runtimeState } },
+    })
+
+    assert.deepEqual(loaded, canonical)
+  })
+
   test('reports a valid repeated-compaction ledger and matching checkpoint without writes', async () => {
     const canonical = state([
       message(1n, 'old'),

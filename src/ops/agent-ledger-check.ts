@@ -28,7 +28,7 @@ export interface AgentLedgerCheckSource {
   loadCheckpoint(): Promise<StoredAgentCheckpoint | null>
 }
 
-export interface AgentLedgerCheckPrismaClient {
+export interface CanonicalAgentStatePrismaClient {
   botAgentLedgerEntry: {
     findMany(input: { orderBy: { id: 'asc' } }): Promise<Array<{
       id: bigint
@@ -49,6 +49,9 @@ export interface AgentLedgerCheckPrismaClient {
       ledgerHeadEntryId: bigint | null
     }>
   }
+}
+
+export interface AgentLedgerCheckPrismaClient extends CanonicalAgentStatePrismaClient {
   botAgentCheckpoint: {
     findUnique(input: { where: { id: 1 } }): Promise<null | {
       schemaVersion: number
@@ -65,30 +68,34 @@ export function createPrismaAgentLedgerCheckSource(
   client: AgentLedgerCheckPrismaClient,
 ): AgentLedgerCheckSource {
   return {
-    async loadCanonicalState() {
-      const [rows, runtime] = await Promise.all([
-        client.botAgentLedgerEntry.findMany({ orderBy: { id: 'asc' } }),
-        client.botAgentRuntimeState.findUnique({ where: { id: 1 } }),
-      ])
-      if (!runtime) throw new Error('bot_agent_runtime_state singleton row is missing')
-      return {
-        entries: rows as CanonicalAgentState['entries'],
-        runtimeState: {
-          schemaVersion: runtime.schemaVersion,
-          mailboxCursors: runtime.mailboxCursors,
-          mailboxContinuity: runtime.mailboxContinuity,
-          goalRevision: runtime.goalRevision,
-          activeToolCapabilities: runtime.activeToolCapabilities,
-          qqConversationFocus: runtime.qqConversationFocus,
-          lastWakeAt: runtime.lastWakeAt,
-          ledgerHeadEntryId: runtime.ledgerHeadEntryId,
-        } as CanonicalAgentState['runtimeState'],
-      }
-    },
+    async loadCanonicalState() { return loadCanonicalAgentState(client) },
     async loadCheckpoint() {
       const checkpoint = await client.botAgentCheckpoint.findUnique({ where: { id: 1 } })
       return checkpoint as StoredAgentCheckpoint | null
     },
+  }
+}
+
+export async function loadCanonicalAgentState(
+  client: CanonicalAgentStatePrismaClient,
+): Promise<CanonicalAgentState> {
+  const [rows, runtime] = await Promise.all([
+    client.botAgentLedgerEntry.findMany({ orderBy: { id: 'asc' } }),
+    client.botAgentRuntimeState.findUnique({ where: { id: 1 } }),
+  ])
+  if (!runtime) throw new Error('bot_agent_runtime_state singleton row is missing')
+  return {
+    entries: rows as CanonicalAgentState['entries'],
+    runtimeState: {
+      schemaVersion: runtime.schemaVersion,
+      mailboxCursors: runtime.mailboxCursors,
+      mailboxContinuity: runtime.mailboxContinuity,
+      goalRevision: runtime.goalRevision,
+      activeToolCapabilities: runtime.activeToolCapabilities,
+      qqConversationFocus: runtime.qqConversationFocus,
+      lastWakeAt: runtime.lastWakeAt,
+      ledgerHeadEntryId: runtime.ledgerHeadEntryId,
+    } as CanonicalAgentState['runtimeState'],
   }
 }
 

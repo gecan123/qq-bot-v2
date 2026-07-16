@@ -9,15 +9,12 @@ import {
 } from './agent-context-report-render.js'
 
 const fixtureReport: AgentContextReport = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   generatedAt: '2026-07-16T12:00:00.000+08:00',
   model: 'claude-opus-4-7',
   provider: 'claude-code',
   contextWindowTokens: 1_000_000,
-  estimateMethod: 'local_structure_utf8_bytes',
-  estimateComplete: true,
-  estimatedKnownInputTokens: 293_400,
-  estimatedCurrentInputTokens: 293_400,
+  estimatedSnapshotTokens: 293_400,
   freeTokens: 706_600,
   usagePercent: 29.3,
   compaction: {
@@ -25,18 +22,17 @@ const fixtureReport: AgentContextReport = {
     keepRecentTokens: 20_000,
     triggerTokens: 983_616,
     tokensUntilTrigger: 690_216,
-    overTrigger: false,
   },
   categories: {
-    systemIdentity: { available: true, tokens: 1_200, percent: 0.1 },
-    botSystemPrompt: { available: true, tokens: 10_300, percent: 1 },
-    visibleTools: { available: true, tokens: 18_100, percent: 1.8 },
-    userAndRuntimeMessages: { available: true, tokens: 31_400, percent: 3.1 },
-    assistantToolCalls: { available: true, tokens: 22_700, percent: 2.3 },
-    assistantThinking: { available: true, tokens: 0, percent: 0 },
-    toolResultsText: { available: true, tokens: 207_900, percent: 20.8 },
-    workingImages: { available: true, tokens: 1_800, percent: 0.2 },
-    assistantText: { available: true, tokens: 0, percent: 0 },
+    systemIdentity: 1_200,
+    botSystemPrompt: 10_300,
+    visibleTools: 18_100,
+    userAndRuntimeMessages: 31_400,
+    assistantToolCalls: 22_700,
+    assistantThinking: 0,
+    toolResultsText: 207_900,
+    workingImages: 1_800,
+    assistantText: 0,
   },
   messages: {
     canonical: 45,
@@ -53,7 +49,7 @@ const fixtureReport: AgentContextReport = {
     cachedTokens: 286_100,
     outputTokens: 1_234,
   },
-  surfaceStatus: 'live',
+  surfaceStatus: 'available',
   warnings: ['Example aggregate warning.'],
 }
 
@@ -64,7 +60,7 @@ test('default rendering shows the complete operational context summary', () => {
   assert.match(text, /Model: claude-opus-4-7/)
   assert.match(text, /Provider: claude-code/)
   assert.match(text, /Window: 1\.0m/)
-  assert.match(text, /Estimated current: 293\.4k \(29\.3%\)/)
+  assert.match(text, /Snapshot estimate: 293\.4k \(29\.3%\)/)
   assert.match(text, /Latest provider input: 291\.8k/)
   assert.match(text, /System identity/)
   assert.match(text, /Visible tools/)
@@ -75,8 +71,7 @@ test('default rendering shows the complete operational context summary', () => {
   assert.match(text, /Projection: canonical 45 · working 42/)
   assert.match(text, /Images: hydrated 2 · omitted 3 · unavailable 1/)
   assert.match(text, /Top tool-result contributors:\n- inbox\s+200\.0k\s+9 results/)
-  assert.match(text, /Estimate: local_structure_utf8_bytes/)
-  assert.match(text, /Surface: live/)
+  assert.match(text, /Surface: available/)
   assert.match(text, /Warnings:\n- Example aggregate warning\./)
   assert.equal(/\u001b\[[0-9;]*m/.test(text), false)
 })
@@ -87,19 +82,17 @@ test('unavailable values render as n/a without exposing report-adjacent sensitiv
     model: null,
     provider: null,
     contextWindowTokens: null,
-    estimateComplete: false,
-    estimatedCurrentInputTokens: null,
+    estimatedSnapshotTokens: null,
     freeTokens: null,
     usagePercent: null,
     compaction: {
       ...fixtureReport.compaction,
       triggerTokens: null,
       tokensUntilTrigger: null,
-      overTrigger: null,
     },
     categories: {
       ...fixtureReport.categories,
-      visibleTools: { available: false, tokens: null, percent: null },
+      visibleTools: null,
     },
     latestProviderUsage: null,
     surfaceStatus: 'missing' as const,
@@ -113,7 +106,7 @@ test('unavailable values render as n/a without exposing report-adjacent sensitiv
   assert.match(text, /Model: n\/a/)
   assert.match(text, /Provider: n\/a/)
   assert.match(text, /Window: n\/a/)
-  assert.match(text, /Estimated current: n\/a/)
+  assert.match(text, /Snapshot estimate: n\/a/)
   assert.match(text, /Latest provider input: n\/a/)
   assert.match(text, /Visible tools\s+n\/a\s+n\/a/)
   assert.equal(text.includes('SYSTEM_PROMPT_MUST_NOT_RENDER'), false)
@@ -165,7 +158,7 @@ test('json rendering preserves the versioned report without BigInt values', () =
   const json = renderAgentContextReportJson(fixtureReport)
   const parsed = JSON.parse(json) as AgentContextReport
 
-  assert.equal(parsed.schemaVersion, 1)
+  assert.equal(parsed.schemaVersion, 2)
   assert.deepEqual(parsed, fixtureReport)
   assert.doesNotThrow(() => JSON.stringify(parsed))
 })

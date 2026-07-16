@@ -42,16 +42,12 @@ function canonical(messages: readonly DurableAgentMessage[]): CanonicalAgentStat
 }
 
 const surface: AgentContextSurface = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   generatedAt,
-  pid: 123,
   provider: 'claude-code',
   model: 'claude-opus-4-7',
   contextWindowTokens: 1_000_000,
-  systemIdentity: { bytes: 4, tokens: 1 },
-  botSystemPrompt: { bytes: 4, tokens: 1 },
-  tools: { totalBytes: 0, totalTokens: 0, items: [] },
-  fingerprint: 'a'.repeat(64),
+  fixedTokens: { systemIdentity: 1, botSystemPrompt: 1, visibleTools: 0 },
 }
 
 function buildInput(overrides: Partial<Parameters<typeof buildCurrentAgentContextReport>[0]> = {}) {
@@ -61,7 +57,7 @@ function buildInput(overrides: Partial<Parameters<typeof buildCurrentAgentContex
       async loadLatestAgentChatUsage() { return null },
     },
     surfaceRead: { status: 'available' as const, surface },
-    surfaceStatus: 'live' as const,
+    surfaceStatus: 'available' as const,
     imageRefs: {
       async persist() { throw new Error('persist must not be called') },
       async resolve() { return null },
@@ -210,23 +206,44 @@ describe('buildCurrentAgentContextReport', () => {
       omittedImages: 0,
       unavailableImages: 0,
     })
-    assert.ok(report.categories.workingImages.tokens! > 0)
+    assert.ok(report.categories.workingImages! > 0)
   })
 
-  test('fails closed on corrupt canonical state before reading provider usage', async () => {
+  test('rereads once after a transient canonical projection mismatch', async () => {
+    const state = canonical([{ role: 'user', content: 'hello' }])
+    const transient = structuredClone(state)
+    transient.runtimeState.ledgerHeadEntryId = 999n
+    let canonicalReads = 0
+    const report = await buildCurrentAgentContextReport(buildInput({
+      source: {
+        async loadCanonicalState() {
+          canonicalReads++
+          return canonicalReads === 1 ? transient : state
+        },
+        async loadLatestAgentChatUsage() { return null },
+      },
+    }))
+
+    assert.equal(canonicalReads, 2)
+    assert.equal(report.messages.canonical, 1)
+  })
+
+  test('fails closed after two corrupt canonical reads before reading provider usage', async () => {
     const state = canonical([{ role: 'user', content: 'hello' }])
     state.runtimeState.ledgerHeadEntryId = 999n
+    let canonicalReads = 0
     let usageReads = 0
 
     await assert.rejects(
       buildCurrentAgentContextReport(buildInput({
         source: {
-          async loadCanonicalState() { return state },
+          async loadCanonicalState() { canonicalReads++; return state },
           async loadLatestAgentChatUsage() { usageReads++; return null },
         },
       })),
       /integrity validation failed/,
     )
+    assert.equal(canonicalReads, 2)
     assert.equal(usageReads, 0)
   })
 
@@ -255,8 +272,8 @@ describe('buildCurrentAgentContextReport', () => {
       source, claudeThinkingMode: 'adaptive', claudeThinkingRetention: 'always',
     }))
 
-    assert.equal(disabled.categories.assistantThinking.tokens, 0)
-    assert.equal(closedCycle.categories.assistantThinking.tokens, 0)
-    assert.ok(retained.categories.assistantThinking.tokens! > 0)
+    assert.equal(disabled.categories.assistantThinking, 0)
+    assert.equal(closedCycle.categories.assistantThinking, 0)
+    assert.ok(retained.categories.assistantThinking! > 0)
   })
 })

@@ -34,67 +34,22 @@ export interface AgentContextCliRuntime {
   imageRefs: AgentImageRefStore
 }
 
-export interface AgentContextCliIo {
-  writeStdout(value: string): void
-  writeStderr(value: string): void
-}
-
-export interface AgentContextCliDependencies {
-  loadRuntime(): Promise<AgentContextCliRuntime>
-  buildOutput(runtime: AgentContextCliRuntime, options: { json: boolean }): Promise<string>
-}
-
-const defaultDependencies: AgentContextCliDependencies = {
-  loadRuntime: loadDefaultRuntime,
-  buildOutput: buildDefaultOutput,
-}
-
-export async function runAgentContextCli(
+export async function buildAgentContextCliOutput(
   args: string[],
-  io: AgentContextCliIo,
-  dependencies: AgentContextCliDependencies = defaultDependencies,
-): Promise<0 | 1> {
-  let runtime: AgentContextCliRuntime | undefined
-  let output: string | undefined
-  let failed = false
-  let failure: unknown
-
+  loadRuntime: () => Promise<AgentContextCliRuntime> = loadDefaultRuntime,
+): Promise<string> {
+  const options = parseAgentContextArgs(args)
+  const runtime = await loadRuntime()
+  await runtime.prisma.$connect()
   try {
-    const options = parseAgentContextArgs(args)
-    runtime = await dependencies.loadRuntime()
-    await runtime.prisma.$connect()
-    output = await dependencies.buildOutput(runtime, options)
-  } catch (error) {
-    failed = true
-    failure = error
+    return await buildDefaultOutput(runtime, options)
+  } finally {
+    await runtime.prisma.$disconnect()
   }
-
-  if (runtime !== undefined) {
-    try {
-      await runtime.prisma.$disconnect()
-    } catch (error) {
-      if (!failed) {
-        failed = true
-        failure = error
-      }
-    }
-  }
-
-  if (failed) {
-    io.writeStderr(`${JSON.stringify({
-      ok: false,
-      code: 'agent_context_report_failed',
-      error: errorMessage(failure),
-    })}\n`)
-    return 1
-  }
-
-  io.writeStdout(`${output ?? ''}\n`)
-  return 0
 }
 
 async function loadDefaultRuntime(): Promise<AgentContextCliRuntime> {
-  // Keep configuration and Prisma initialization inside runAgentContextCli's error boundary.
+  // Keep configuration and Prisma initialization inside the script's error boundary.
   const { config } = await import('../config/index.js')
   const { prisma } = await import('../database/client.js')
   const { agentImageRefStore } = await import('../media/agent-image-ref.js')
@@ -111,7 +66,6 @@ async function buildDefaultOutput(
 ): Promise<string> {
   const {
     AGENT_CONTEXT_SURFACE_PATH,
-    classifySurfaceStatus,
     readAgentContextSurface,
   } = await import('./agent-context-surface.js')
   const {
@@ -129,11 +83,10 @@ async function buildDefaultOutput(
   }
 
   const surfaceRead = await readAgentContextSurface(AGENT_CONTEXT_SURFACE_PATH)
-  const surfaceStatus = await classifySurfaceStatus(surfaceRead, '.bot.pid')
   const report = await buildCurrentAgentContextReport({
     source: createPrismaAgentContextReportSource(runtime.prisma),
     surfaceRead,
-    surfaceStatus,
+    surfaceStatus: surfaceRead.status,
     imageRefs: runtime.imageRefs,
     reserveTokens: runtime.config.compaction.reserveTokens,
     keepRecentTokens: runtime.config.compaction.keepRecentTokens,
@@ -147,8 +100,4 @@ async function buildDefaultOutput(
   return options.json
     ? renderAgentContextReportJson(report)
     : renderAgentContextReport(report)
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

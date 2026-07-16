@@ -26,11 +26,20 @@ const MESSAGE_ENVELOPE_TOKENS = 8
 const STRUCTURED_ENVELOPE_TOKENS = 16
 const UTF8_BYTES_PER_TOKEN = 4
 
+export function estimateUtf8Tokens(value: string, envelopeTokens = 0): number {
+  if (!Number.isSafeInteger(envelopeTokens) || envelopeTokens < 0) {
+    throw new RangeError('envelopeTokens must be a non-negative safe integer')
+  }
+  const bytes = Buffer.byteLength(value, 'utf8')
+  const contentTokens = Math.max(1, Math.ceil(bytes / UTF8_BYTES_PER_TOKEN))
+  return safeAdd(contentTokens, envelopeTokens)
+}
+
 export function estimateEntryTokens(entry: AgentLedgerEntry): EntryTokenEstimate {
   if (entry.entryType === 'compaction') {
     return {
       entryId: entry.id,
-      tokens: boundedTokenEstimate(JSON.stringify(entry.payload), STRUCTURED_ENVELOPE_TOKENS),
+      tokens: estimateUtf8Tokens(JSON.stringify(entry.payload), STRUCTURED_ENVELOPE_TOKENS),
       source: 'local_structure',
     }
   }
@@ -39,7 +48,7 @@ export function estimateEntryTokens(entry: AgentLedgerEntry): EntryTokenEstimate
   if (hasLocalStructure(message)) {
     return {
       entryId: entry.id,
-      tokens: boundedTokenEstimate(JSON.stringify(message), STRUCTURED_ENVELOPE_TOKENS),
+      tokens: estimateUtf8Tokens(JSON.stringify(message), STRUCTURED_ENVELOPE_TOKENS),
       source: 'local_structure',
     }
   }
@@ -48,7 +57,7 @@ export function estimateEntryTokens(entry: AgentLedgerEntry): EntryTokenEstimate
     : message.content
   return {
     entryId: entry.id,
-    tokens: boundedTokenEstimate(plainContent, MESSAGE_ENVELOPE_TOKENS),
+    tokens: estimateUtf8Tokens(plainContent, MESSAGE_ENVELOPE_TOKENS),
     source: 'utf8_bytes',
   }
 }
@@ -83,12 +92,6 @@ function hasLocalStructure(message: AgentMessage): boolean {
   return message.role === 'assistant'
     ? message.toolCalls.length > 0 || message.nativeBlocks !== undefined
     : message.role === 'tool' && typeof message.content !== 'string'
-}
-
-function boundedTokenEstimate(value: string, envelopeTokens: number): number {
-  const bytes = Buffer.byteLength(value, 'utf8')
-  const contentTokens = Math.max(1, Math.ceil(bytes / UTF8_BYTES_PER_TOKEN))
-  return safeAdd(contentTokens, envelopeTokens)
 }
 
 function aggregateLocalSource(entries: readonly EntryTokenEstimate[]): LedgerContextTokenEstimate['source'] {

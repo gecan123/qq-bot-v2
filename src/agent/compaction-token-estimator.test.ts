@@ -15,6 +15,19 @@ function entry(id: bigint, message: AgentMessage): AgentLedgerEntry {
 }
 
 describe('compaction token estimator', () => {
+  test('estimateUtf8Tokens exposes the same bounded byte heuristic used by ledger entries', async () => {
+    const { estimateUtf8Tokens } = await import('./compaction-token-estimator.js')
+    assert.equal(estimateUtf8Tokens('abcd'), 1)
+    assert.equal(estimateUtf8Tokens('abcd', 8), 9)
+    assert.equal(estimateUtf8Tokens('你'), 1)
+    assert.equal(estimateUtf8Tokens('', 8), 9)
+  })
+
+  test('estimateUtf8Tokens rejects invalid envelopes', async () => {
+    const { estimateUtf8Tokens } = await import('./compaction-token-estimator.js')
+    assert.throws(() => estimateUtf8Tokens('x', -1), /non-negative safe integer/)
+  })
+
   test('uses the latest provider input as an exact prefix and estimates only newer entries', async () => {
     const estimator = await import('./compaction-token-estimator.js')
     const entries = [

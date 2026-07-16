@@ -88,6 +88,35 @@ test('a lone disconnect failure suppresses the report and becomes the stable err
   assertStructuredError(output.stderr, 'disconnect failure')
 })
 
+test('successful json output is parseable and written only after disconnect', async () => {
+  const output = captureOutput()
+  const calls: string[] = []
+  const reportJson = JSON.stringify({ schemaVersion: 1, ok: true })
+  const dependencies = fakeDependencies({
+    calls,
+    async buildOutput(_runtime, options) {
+      calls.push('build')
+      assert.deepEqual(options, { json: true })
+      return reportJson
+    },
+  })
+  const io = {
+    writeStdout(value: string) {
+      calls.push('stdout')
+      output.io.writeStdout(value)
+    },
+    writeStderr: output.io.writeStderr,
+  }
+
+  const exitCode = await runAgentContextCli(['--json'], io, dependencies)
+
+  assert.equal(exitCode, 0)
+  assert.deepEqual(calls, ['load', 'connect', 'build', 'disconnect', 'stdout'])
+  assert.equal(output.stderr, '')
+  assert.equal(output.stdout, `${reportJson}\n`)
+  assert.deepEqual(JSON.parse(output.stdout), { schemaVersion: 1, ok: true })
+})
+
 test('direct script contains missing config failures without a raw stack', async () => {
   const result = await runProcess(process.execPath, [
     '--import',

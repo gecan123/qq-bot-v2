@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 新增严格只读、对 LLM context 零污染的 `pnpm agent:context`，以终端文本或版本化 JSON 展示当前 context 分类占用、模型窗口、compaction headroom 和最近 provider usage。
+**Goal:** 新增严格只读、对 LLM context 零污染的 `pnpm agent:context` 默认文本命令，并以 `pnpm --silent agent:context -- --json` 提供版本化机器 JSON，展示当前 context 分类占用、模型窗口、compaction headroom 和最近 provider usage。
 
 **Architecture:** Canonical ledger 继续是消息事实来源；CLI 用 raw read-only Prisma source 和 `projectAgentLedger` 重建 projection，再复用 `buildWorkingContextProjection` 得到当前请求视图。bot 启动时额外写一个不含正文的可丢弃 request-surface 统计快照，让离线 CLI 获得真实 system/tool 固定开销而无需创建 NapCat 或工具依赖；纯分析模块把 surface、working messages、compaction 配置和最近 usage 合成为一份版本化 report。
 
@@ -752,7 +752,7 @@ git commit -m "feat: 启动时记录上下文请求面"
 
 ```bash
 pnpm agent:context
-pnpm agent:context -- --json
+pnpm --silent agent:context -- --json
 ```
 
 在“Agent 反馈”增加一条，明确：
@@ -799,7 +799,7 @@ Expected: 全部通过。
 
 ```bash
 pnpm agent:context
-pnpm agent:context -- --json
+pnpm --silent agent:context -- --json
 ```
 
 Expected:

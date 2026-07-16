@@ -38,6 +38,8 @@ pnpm agent:metrics
 pnpm agent:daily-metrics
 pnpm agent:memory-check
 pnpm agent:ledger-check
+pnpm agent:context
+pnpm --silent agent:context -- --json
 pnpm db:generate
 pnpm db:migrate
 pnpm db:push
@@ -46,6 +48,21 @@ pnpm browser:controller
 pnpm toollog
 pnpm toollogf
 ```
+
+### Agent Context 占用分析
+
+默认输出适合人在终端阅读；需要机器可读结果时使用 `--json`：
+
+```bash
+pnpm agent:context
+pnpm --silent agent:context -- --json
+```
+
+JSON 报告带当前为 `1` 的 `schemaVersion`。机器消费时必须保留 `--silent`，否则 pnpm banner 会混入 stdout，结果不再是纯 JSON。
+
+报告的 message context 来自 canonical `bot_agent_ledger_entries` 与 `bot_agent_runtime_state`：命令以只读方式重建 ledger projection 和当前 working projection。`logs/context-surface.json` 只是 bot 最近一次启动时写出的 system identity、system prompt 和 provider-facing tool declarations 聚合快照，不含正文，也不参与 replay。分类 token 数是本地 UTF-8 结构估算；`Latest provider usage` 是最近一次 `agent.chat` 的独立 provider 实测样本，两者用途不同，不应视为同一时刻或强行对齐。
+
+该命令只读：不调用 LLM，不启动 QQ、NapCat、browser 或 MCP，也不写数据库、checkpoint、runtime state 或 ledger，因此不会给 LLM context 增加消息。surface 为 `missing`、`invalid` 或 `last_startup` 时，命令仍输出 message context，但固定分类降级为 `n/a`；终端报告还会按估算 token 展示 tool result 的 top contributors，便于定位占用最大的工具返回。
 
 ## 本地运行
 

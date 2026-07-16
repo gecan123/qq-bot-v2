@@ -15,6 +15,7 @@ import {
   classifySurfaceStatus,
   readAgentContextSurface,
   writeAgentContextSurface,
+  writeRuntimeAgentContextSurface,
 } from './agent-context-surface.js'
 
 const roots: string[] = []
@@ -138,6 +139,46 @@ test('missing surfaces degrade and written surfaces round-trip', async () => {
   await writeAgentContextSurface(path, surface)
   assert.deepEqual(await readAgentContextSurface(path), { status: 'available', surface })
   assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), surface)
+})
+
+test('writes a runtime surface with Beijing time and provider-facing tool metrics', async () => {
+  const root = await makeRoot()
+  const path = join(root, 'logs/context-surface.json')
+  const tool = createTool('demo', 'runtime tool description')
+
+  const surface = await writeRuntimeAgentContextSurface({
+    path,
+    provider: 'claude-code',
+    model: 'claude-opus-4-7',
+    contextWindowTokens: 1_000_000,
+    systemPrompt: 'runtime prompt',
+    tools: [tool],
+    now: () => new Date('2026-07-16T04:00:00.123Z'),
+    pid: 123,
+  })
+  const declaration = JSON.stringify(buildClaudeCodeRequestBody({
+    model: 'claude-opus-4-7',
+    systemPrompt: 'runtime prompt',
+    messages: [],
+    tools: [tool],
+  }).tools![0])
+
+  assert.equal(surface.generatedAt, '2026-07-16T12:00:00.123+08:00')
+  assert.equal(surface.pid, 123)
+  assert.deepEqual(surface.tools.items, [{ name: 'demo', ...measure(declaration) }])
+  assert.deepEqual(await readAgentContextSurface(path), { status: 'available', surface })
+})
+
+test('startup writes the runtime surface best-effort before starting the agent lifecycle', async () => {
+  const source = await readFile(new URL('../index.ts', import.meta.url), 'utf8')
+  const writeIndex = source.indexOf('await writeRuntimeAgentContextSurface({')
+  const lifecycleIndex = source.indexOf('const agentLifecycle = createAgentStartupLifecycle({')
+
+  assert.ok(writeIndex >= 0, 'startup should write the runtime context surface')
+  assert.ok(lifecycleIndex > writeIndex, 'surface should be written before the agent lifecycle starts')
+  assert.match(source.slice(writeIndex, lifecycleIndex), /runtime\.systemPrompt/)
+  assert.match(source.slice(writeIndex, lifecycleIndex), /runtime\.tools\.list\(\)/)
+  assert.match(source.slice(writeIndex, lifecycleIndex), /catch \(error\) \{[\s\S]*log\.warn/)
 })
 
 test('invalid JSON and unsupported schema versions return invalid without throwing', async () => {

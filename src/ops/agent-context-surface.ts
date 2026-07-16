@@ -9,6 +9,7 @@ import {
   zodToOpenAIStrictToolJsonSchema,
   zodToToolJsonSchema,
 } from '../agent/tool-schema.js'
+import { formatBeijingIso } from '../utils/beijing-time.js'
 
 export const AGENT_CONTEXT_SURFACE_SCHEMA_VERSION = 1 as const
 export const AGENT_CONTEXT_SURFACE_PATH = 'logs/context-surface.json'
@@ -126,6 +127,29 @@ export async function writeAgentContextSurface(
   } finally {
     await rm(temporaryPath, { force: true }).catch(() => undefined)
   }
+}
+
+export async function writeRuntimeAgentContextSurface(input: {
+  path: string
+  provider: AgentContextSurface['provider']
+  model: string
+  contextWindowTokens: number
+  systemPrompt: string
+  tools: Tool[]
+  now?: () => Date
+  pid?: number
+}): Promise<AgentContextSurface> {
+  const surface = buildAgentContextSurface({
+    provider: input.provider,
+    model: input.model,
+    contextWindowTokens: input.contextWindowTokens,
+    systemPrompt: input.systemPrompt,
+    tools: input.tools,
+    generatedAt: formatBeijingIso((input.now ?? (() => new Date()))()),
+    pid: input.pid ?? process.pid,
+  })
+  await writeAgentContextSurface(input.path, surface)
+  return surface
 }
 
 export async function readAgentContextSurface(path: string): Promise<AgentContextSurfaceReadResult> {

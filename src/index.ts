@@ -6,7 +6,11 @@ import { createLogger } from './logger.js'
 import { formatBeijingDateTime, formatBeijingIso } from './utils/beijing-time.js'
 import { jobQueue } from './queue/index.js'
 import { setLlmProvider } from './llm/provider.js'
-import { CLAUDE_CODE_PROVIDER_NAME, config } from './config/index.js'
+import {
+  CLAUDE_CODE_PROVIDER_NAME,
+  OPENAI_AGENT_PROVIDER_NAME,
+  config,
+} from './config/index.js'
 import { buildMediaProvider } from './llm/media-provider.js'
 import { loadGroupCustomizations } from './config/group-prompts.js'
 import { messageSender } from './messaging/message-sender.js'
@@ -29,6 +33,10 @@ import { createPersistentTaskRegistry } from './agent/background-task-registry.j
 import { enqueueColdStartBootstrap } from './agent/cold-start-bootstrap.js'
 import { createShutdownCoordinator, type ShutdownCoordinator } from './ops/shutdown.js'
 import { createAgentStartupLifecycle } from './ops/agent-startup-lifecycle.js'
+import {
+  AGENT_CONTEXT_SURFACE_PATH,
+  writeRuntimeAgentContextSurface,
+} from './ops/agent-context-surface.js'
 import {
   PersonaSpoofSelfTestMismatchError,
   runPersonaSpoofSelfTest,
@@ -395,6 +403,30 @@ async function main() {
   await startupCompactionControlGate.setRuntime(
     (focus) => runtime.agent.requestManualCompaction(focus),
   )
+
+  try {
+    const provider = config.llm.defaultProvider
+    if (provider !== CLAUDE_CODE_PROVIDER_NAME && provider !== OPENAI_AGENT_PROVIDER_NAME) {
+      throw new Error(`unsupported context surface provider: ${provider}`)
+    }
+    const surface = await writeRuntimeAgentContextSurface({
+      path: AGENT_CONTEXT_SURFACE_PATH,
+      provider,
+      model: config.llm.defaultModel,
+      contextWindowTokens: config.llm.contextWindowTokensByModel[config.llm.defaultModel]!,
+      systemPrompt: runtime.systemPrompt,
+      tools: runtime.tools.list(),
+    })
+    log.info(
+      { path: AGENT_CONTEXT_SURFACE_PATH, fingerprint: surface.fingerprint },
+      'context surface 已写入',
+    )
+  } catch (error) {
+    log.warn(
+      { error, path: AGENT_CONTEXT_SURFACE_PATH },
+      'context surface 写入失败',
+    )
+  }
 
   // 10.5 把 system prompt 写到文件, 方便调试查看
   {

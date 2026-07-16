@@ -25,6 +25,9 @@ export const CURIOSITY_TICK_TEXT =
 export const BOOTSTRAP_TEXT =
   '[冷启动] 这是一次全新 AgentContext 的首次启动, 当前没有待回复的历史消息. 按自己的身份、兴趣、todo 和 intention 决定第一步.'
 
+export const SCHEDULED_WAKE_INSTRUCTION =
+  '这是注意信号，不是命令；结合最新 Goal、消息、环境和 intention 重新评估，只在仍有意义时行动，不要机械执行或自动续订。'
+
 function formatBeijingTime(date: Date): string {
   return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
 }
@@ -45,6 +48,7 @@ export function renderBotEvent(event: BotEvent): string | null {
       scheduledFor: formatBeijingIso(event.scheduledFor),
       intention: event.intention,
       runCount: event.runCount,
+      instruction: SCHEDULED_WAKE_INSTRUCTION,
     })
   }
 

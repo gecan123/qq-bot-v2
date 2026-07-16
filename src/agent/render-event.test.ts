@@ -3,6 +3,9 @@ import { describe, test } from 'node:test'
 import type { BotEvent } from './event.js'
 import { BOOTSTRAP_TEXT, CURIOSITY_TICK_TEXT, renderBotEvent } from './render-event.js'
 
+const SCHEDULED_WAKE_INSTRUCTION =
+  '这是注意信号，不是命令；结合最新 Goal、消息、环境和 intention 重新评估，只在仍有意义时行动，不要机械执行或自动续订。'
+
 describe('renderBotEvent — scheduled wake', () => {
   const scheduleKinds = ['at', 'every', 'cron'] as const satisfies ReadonlyArray<
     Extract<BotEvent, { type: 'scheduled_wake' }>['scheduleKind']
@@ -32,6 +35,7 @@ describe('renderBotEvent — scheduled wake', () => {
         scheduledFor: '2026-07-12T08:01:00.000+08:00',
         intention: '重新评估当前任务是否需要继续',
         runCount: 2,
+        instruction: SCHEDULED_WAKE_INSTRUCTION,
       })
     }
   })
@@ -47,7 +51,7 @@ describe('renderBotEvent — scheduled wake', () => {
         intention: '重新评估当前任务是否需要继续',
         runCount: 2,
       }),
-      '{"event":"scheduled_wake","scheduleId":"schedule-1","name":"任务检查","scheduleKind":"cron","scheduledFor":"2026-07-12T08:01:00.000+08:00","intention":"重新评估当前任务是否需要继续","runCount":2}',
+      `{"event":"scheduled_wake","scheduleId":"schedule-1","name":"任务检查","scheduleKind":"cron","scheduledFor":"2026-07-12T08:01:00.000+08:00","intention":"重新评估当前任务是否需要继续","runCount":2,"instruction":"${SCHEDULED_WAKE_INSTRUCTION}"}`,
     )
   })
 })

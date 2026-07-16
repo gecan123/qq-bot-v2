@@ -47,16 +47,6 @@ if (!configModule) throw new Error('Failed to import config module')
 const { parseConfig, parseIdList } = configModule
 
 describe('config', () => {
-  test('defaults and overrides the Life Journal idle picker timeout', () => {
-    assert.equal(parseConfig(createBaseEnv()).lifeJournal.idlePickTimeoutMs, 30_000)
-    assert.equal(parseConfig(createBaseEnv({
-      BOT_LIFE_JOURNAL_IDLE_PICK_TIMEOUT_MS: '45000',
-    })).lifeJournal.idlePickTimeoutMs, 45_000)
-    assert.equal(parseConfig(createBaseEnv({
-      BOT_LIFE_JOURNAL_IDLE_PICK_TIMEOUT_MS: 'invalid',
-    })).lifeJournal.idlePickTimeoutMs, 30_000)
-  })
-
   test('parses provider registry and scenario provider/model routing', () => {
     const config = parseConfig(createBaseEnv({
       LLM_PROVIDER_GEMINI_URL: 'https://generativelanguage.googleapis.com/v1beta/openai/',

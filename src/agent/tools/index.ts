@@ -43,7 +43,6 @@ import { createGoalTool } from './goal.js'
 import type { GoalStore } from '../goal-store.js'
 import type { MemoryMaintenanceRuntime } from '../memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
-import type { AgentMessage } from '../agent-context.types.js'
 import { createQqConversationTool, type QqConversationController } from './qq-conversation.js'
 import { applyBotToolPolicy } from './policies.js'
 
@@ -67,20 +66,6 @@ export interface BotToolDeps {
   memoryMaintenance?: MemoryMaintenanceRuntime
   workspaceDir?: string
   workspaceStateCoordinator?: WorkspaceStateCoordinator
-  restGuide?: {
-    pickIdleIntention?(input?: { recentMessages?: readonly AgentMessage[] }): Promise<{
-      ok: boolean
-      thought: string | null
-      intention: string | null
-      anchorSource?: 'recent_context' | 'agenda' | 'journal' | 'wishes' | null
-      whyNow?: string | null
-      firstStep?: string | null
-      promoteToGoal?: boolean
-      error?: string
-    }>
-  }
-  getRestGuideContext?: () => readonly AgentMessage[]
-  canConfirmRestAlternative?: () => boolean
 }
 
 export interface BotOptionalTools {
@@ -130,50 +115,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     groupCustomizations: deps.groupCustomizations,
   })
   const aiTone = createAiToneTool()
-  const pickIdleIntention = deps.restGuide?.pickIdleIntention?.bind(deps.restGuide)
-  const pause = createPauseTool({
-    rest: pickIdleIntention || deps.canConfirmRestAlternative
-      ? {
-          ...(pickIdleIntention
-            ? {
-                pickAlternative: async () => {
-                  const picked = await pickIdleIntention({
-                    recentMessages: deps.getRestGuideContext?.() ?? [],
-                  })
-                  if (!picked.ok) {
-                    return {
-                      status: 'unavailable' as const,
-                      error: picked.error ?? 'idle intention picker failed',
-                    }
-                  }
-                  const { thought, intention, anchorSource, whyNow, firstStep } = picked
-                  if (!thought && !intention && !anchorSource && !whyNow && !firstStep) {
-                    return { status: 'none' as const }
-                  }
-                  if (!thought || !intention || !anchorSource || !whyNow || !firstStep) {
-                    return {
-                      status: 'unavailable' as const,
-                      error: 'idle intention picker returned an incomplete alternative',
-                    }
-                  }
-                  return {
-                    status: 'available' as const,
-                    alternative: {
-                      thought,
-                      direction: intention,
-                      anchorSource,
-                      whyNow,
-                      firstStep,
-                      promoteToGoal: picked.promoteToGoal ?? false,
-                    },
-                  }
-                },
-              }
-            : {}),
-          canConfirmAlternative: deps.canConfirmRestAlternative,
-        }
-      : undefined,
-  })
+  const pause = createPauseTool()
   const workspaceBash = createWorkspaceBashTool({
     groupIdWhitelist: deps.groupIds,
     groupIds: deps.groupIds,

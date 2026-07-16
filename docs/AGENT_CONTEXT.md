@@ -51,6 +51,7 @@
 
 - bot 在所有允许来源间共享一个串行 `AgentContext`。QQ 消息先写 `messages` / `media`，再以不含正文的 mailbox notification append；正文由 `inbox` 有界读取。
 - 新 mailbox 不会自动切换当前会话。发送前必须通过 `qq_conversation open` 显式选择允许的群或好友；`send_message` 只读取当前 focus，focus 变化和对应可见 tool result 同事务进入 runtime state。
+- 私聊发送是否属于“回应新入站”由同 target 的 durable pending mailbox 判断，不依赖 `reply_to`。`reply_to` 只控制 QQ 引用展示；进程内主动私聊冷却不得拦截 pending mailbox 的回复。
 - provider-confirmed `send_message` 仍与本地数据库不存在分布式事务。只有同 target 有 pending disclosure 时才 append `mailbox_handled`；这防止重复回应，但不承诺 QQ 外发 exactly-once。
 - owner `/compact` 只接受 NapCat 已确认的 friend 私聊，且 peer/sender 都必须等于配置 owner。startup replay 与 live overlap 按 message row 去重；命令文本不进入普通 LLM history，focus 作为有界 trusted metadata 进入 compaction payload。
 - 不实现 pi 风格 session tree。QQ 外发、mailbox cursor、Goal revision 和工具副作用需要一条可审计的线性时间线；分叉历史会让“哪条分支已发送/已处理”失去唯一答案。并行研究继续通过 bounded background task/delegate 完成，结果回到主 ledger。

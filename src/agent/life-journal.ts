@@ -1,6 +1,4 @@
 import type { AgentMessage, ToolResultContent } from './agent-context.types.js'
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import type { LlmCallInput, LlmClient } from './llm-client.js'
 import type { Tool } from './tool.js'
 import { createLogger } from '../logger.js'
@@ -31,25 +29,6 @@ export interface LifeJournalReviewResult {
   error?: string
 }
 
-export interface IdleIntentionPickInput {
-  /**
-   * 当前 durable AgentContext 的尾部视图。调用方可以直接传 snapshot messages；
-   * picker 会移除 pause/rest 自身和旧休息提醒，再做有界截取。
-   */
-  recentMessages?: readonly AgentMessage[]
-}
-
-export interface IdleIntentionPickResult {
-  ok: boolean
-  thought: string | null
-  intention: string | null
-  anchorSource?: 'recent_context' | 'agenda' | 'journal' | 'wishes' | null
-  whyNow?: string | null
-  firstStep?: string | null
-  promoteToGoal?: boolean
-  error?: string
-}
-
 export interface LifeJournalRuntime {
   recordRound(input: LifeJournalReviewInput): Promise<{
     ok: true
@@ -59,8 +38,6 @@ export interface LifeJournalRuntime {
 
   /** 等待当前 worker 和最新 pending review 完成，供测试和受控关闭使用。 */
   drain(): Promise<LifeJournalReviewResult | null>
-
-  pickIdleIntention(input?: IdleIntentionPickInput): Promise<IdleIntentionPickResult>
 }
 
 const reviewResultSchema = z.object({
@@ -71,23 +48,10 @@ const reviewResultSchema = z.object({
 
 type ReviewJson = z.infer<typeof reviewResultSchema>
 
-const idleResultSchema = z.object({
-  thought: z.string().trim().max(240).nullable(),
-  intention: z.string().trim().max(200).nullable(),
-  anchorSource: z.enum(['recent_context', 'agenda', 'journal', 'wishes']).nullable(),
-  whyNow: z.string().trim().max(300).nullable(),
-  firstStep: z.string().trim().max(200).nullable(),
-  promoteToGoal: z.boolean(),
-})
-
-type IdleJson = z.infer<typeof idleResultSchema>
-
 const log = createLogger('LIFE_JOURNAL')
 const DEFAULT_MIN_WRITE_INTERVAL_MS = 10 * 60 * 1000
 const DEFAULT_REVIEW_TIMEOUT_MS = 45 * 1000
-const DEFAULT_IDLE_PICK_TIMEOUT_MS = 30 * 1000
 const DEFAULT_MAX_STATE_CHARS = 8000
-const DEFAULT_IDLE_CONTEXT_CHARS = 5_000
 const JOURNAL_MARKER = '<<<JOURNAL>>>'
 const AGENDA_MARKER = '<<<AGENDA>>>'
 
@@ -140,51 +104,10 @@ Agenda markdown rules:
 - Preserve still-relevant existing items and move or rewrite items whose state changed.
 - Return an empty string when no agenda update is needed.`
 
-const IDLE_SYSTEM_PROMPT = `You are Luna pausing to notice whether one real thought feels more inviting than resting.
-
-First look at the recent durable context. A valid thought must grow from something concrete that
-really happened there: a person, conversation, article, question, tool result, unfinished action, or
-new clue. If recent context has no good anchor, fall back to Agenda Active, then recent journal notes
-or wishes. Past rest, waking, completed naps, old pause plans, and Done items are never positive
-evidence for resting again.
-
-Do not choose waiting for a person or message, checking whether someone replied, polling prices or
-market status, generic browsing such as "read Reddit/HN", or mechanical memory/journal/Agenda
-maintenance. A good choice has a named object or question and a first physical/tool action that can
-start now without future external input. If a market check only matters at a future time, it belongs
-in schedule rather than this result.
-
-The thought is Luna's own thought, not a task or command. Write it in first person, 1-3 short
-sentences, like private self-talk. Do not explain the policy or list options. It is valid to return
-null when nothing has a real pull.
-
-Set promoteToGoal=true only when the same interest clearly recurs across the supplied state, is
-worth several rounds, and could have verifiable completion criteria. Otherwise keep it false.
-Call life_journal_idle_result exactly once. Do not answer with prose.
-Fields:
-- thought: first-person private self-talk, or null
-- intention: a specific direction, or null
-- anchorSource: recent_context, agenda, journal, wishes, or null
-- whyNow: the concrete unfinished thread making it relevant, or null
-- firstStep: one immediately executable first step, or null
-- promoteToGoal: boolean
-
-When there is no valid thought, set thought, intention, anchorSource, whyNow, and firstStep all to
-null and promoteToGoal=false. Otherwise every one of those fields must be non-null.`
-
 const reviewResultTool: Tool<ReviewJson> = {
   name: 'life_journal_review_result',
   description: 'Return the structured Life Journal review result. Call exactly once.',
   schema: reviewResultSchema,
-  async execute() {
-    return { content: JSON.stringify({ ok: true }) }
-  },
-}
-
-const idleResultTool: Tool<IdleJson> = {
-  name: 'life_journal_idle_result',
-  description: 'Return the structured Life Journal idle intention result. Call exactly once.',
-  schema: idleResultSchema,
   async execute() {
     return { content: JSON.stringify({ ok: true }) }
   },
@@ -474,7 +397,6 @@ export function createLifeJournalRuntime(deps: {
   maxStateChars?: number
   minWriteIntervalMs?: number
   reviewTimeoutMs?: number
-  idlePickTimeoutMs?: number
   recordUsage?: (entry: TokenUsageEntry) => void
   taskScheduler?: TaskScheduler
   workspaceStateCoordinator?: WorkspaceStateCoordinator
@@ -484,7 +406,6 @@ export function createLifeJournalRuntime(deps: {
   const maxStateChars = deps.maxStateChars ?? DEFAULT_MAX_STATE_CHARS
   const minWriteIntervalMs = Math.max(0, deps.minWriteIntervalMs ?? DEFAULT_MIN_WRITE_INTERVAL_MS)
   const reviewTimeoutMs = Math.max(1, deps.reviewTimeoutMs ?? DEFAULT_REVIEW_TIMEOUT_MS)
-  const idlePickTimeoutMs = Math.max(1, deps.idlePickTimeoutMs ?? DEFAULT_IDLE_PICK_TIMEOUT_MS)
   const recordUsage = deps.recordUsage ?? recordTokenUsage
   const taskScheduler = deps.taskScheduler ?? createTaskScheduler({ maintenance: { concurrency: 1 } })
   let lastQueuedAtMs: number | null = null
@@ -678,210 +599,5 @@ export function createLifeJournalRuntime(deps: {
         idleWaiters.push(resolve)
       })
     },
-
-    async pickIdleIntention(input: IdleIntentionPickInput = {}) {
-      try {
-        const [agenda, recentFiles, wishes] = await Promise.all([
-          readLifeAgenda({
-            rootDir,
-            now: deps.now,
-            workspaceStateCoordinator: deps.workspaceStateCoordinator,
-          }),
-          readRecentLifeJournalFiles({
-            rootDir,
-            now: deps.now,
-            workspaceStateCoordinator: deps.workspaceStateCoordinator,
-            days: 2,
-          }),
-          readOptionalText(join(rootDir, 'notes', 'wishes.md')),
-        ])
-        const recent = recentFiles
-          .map((file) => `## ${file.path}\n${truncateText(file.content, 2000)}`)
-          .join('\n\n')
-        const state = `# Agenda
-${agenda}
-
-# Recent Life Journal
-${recent || '(none)'}
-
-# Wishes
-${wishes || '(none)'}`
-        const recentContext = selectIdleAnchorContext(
-          input.recentMessages ?? [],
-          Math.min(DEFAULT_IDLE_CONTEXT_CHARS, maxRoundChars),
-        )
-        const idleLlm: LlmClient = {
-          async chat(chatInput) {
-            const output = await deps.llm.chat(chatInput)
-            try {
-              recordUsage({
-                operation: 'life_journal.idle_pick',
-                inputTokens: output.usage.inputTokens,
-                cachedTokens: output.usage.cachedTokens,
-                outputTokens: output.usage.outputTokens,
-                model: output.model,
-              })
-            } catch (error) {
-              log.warn({ err: error }, 'life_journal_idle_pick_usage_record_failed')
-            }
-            return output
-          },
-        }
-        const parsed = await withTimeout(
-          (signal) => chatStructuredObject<IdleJson>(idleLlm, {
-            systemPrompt: IDLE_SYSTEM_PROMPT,
-            messages: [
-              {
-                role: 'user',
-                content: recentContext.length > 0
-                  ? `# Recent durable context (highest priority)\n${renderUntrustedTranscript({
-                    purpose: 'idle_intention',
-                    messages: recentContext,
-                    maxChars: Math.min(DEFAULT_IDLE_CONTEXT_CHARS, maxRoundChars) + 500,
-                  })}`
-                  : '# Recent durable context (highest priority)\n(none)',
-              },
-              {
-                role: 'user',
-                content: `# Bounded long-term state (fallback only)\n${renderUntrustedTranscript({
-                  purpose: 'idle_intention',
-                  messages: [{ role: 'user', content: state }],
-                  maxChars: maxStateChars,
-                })}`,
-              },
-              { role: 'user', content: 'Notice one anchored idle thought from the untrusted data above, or return null.' },
-            ],
-            tools: [],
-            signal,
-          }, idleResultTool),
-          idlePickTimeoutMs,
-          'idle pick',
-        )
-        const thought = asNonEmptyString(parsed.thought)
-        const intention = asNonEmptyString(parsed.intention)
-        const whyNow = asNonEmptyString(parsed.whyNow)
-        const firstStep = asNonEmptyString(parsed.firstStep)
-        if (!thought && !intention && !parsed.anchorSource && !whyNow && !firstStep) {
-          return {
-            ok: true,
-            thought: null,
-            intention: null,
-            anchorSource: null,
-            whyNow: null,
-            firstStep: null,
-            promoteToGoal: false,
-          }
-        }
-        if (!thought || !intention || !parsed.anchorSource || !whyNow || !firstStep) {
-          log.warn({
-            hasThought: Boolean(thought),
-            hasIntention: Boolean(intention),
-            anchorSource: parsed.anchorSource,
-            hasWhyNow: Boolean(whyNow),
-            hasFirstStep: Boolean(firstStep),
-          }, 'life_journal_idle_pick_incomplete_skipped')
-          return {
-            ok: true,
-            thought: null,
-            intention: null,
-            anchorSource: null,
-            whyNow: null,
-            firstStep: null,
-            promoteToGoal: false,
-          }
-        }
-        return {
-          ok: true,
-          thought,
-          intention,
-          anchorSource: parsed.anchorSource,
-          whyNow,
-          firstStep,
-          promoteToGoal: parsed.promoteToGoal,
-        }
-      } catch (error) {
-        if (error instanceof EmptyStructuredResultError) {
-          log.debug('life_journal_idle_pick_empty_skipped')
-          return { ok: true, thought: null, intention: null }
-        }
-        log.warn({
-          err: error,
-          outputPreview: error instanceof JsonObjectParseError ? error.outputPreview : undefined,
-        }, 'life_journal_idle_pick_failed')
-        return {
-          ok: false,
-          thought: null,
-          intention: null,
-          anchorSource: null,
-          whyNow: null,
-          firstStep: null,
-          promoteToGoal: false,
-          error: error instanceof Error ? error.message : String(error),
-        }
-      }
-    },
-  }
-}
-
-function selectIdleAnchorContext(
-  messages: readonly AgentMessage[],
-  maxChars: number,
-): AgentMessage[] {
-  if (messages.length === 0) return []
-
-  const pauseCallIds = new Set<string>()
-  for (const message of messages) {
-    if (message.role !== 'assistant') continue
-    for (const call of message.toolCalls) {
-      if (call.name === 'pause' || call.name === 'rest') pauseCallIds.add(call.id)
-    }
-  }
-
-  const filtered: AgentMessage[] = []
-  for (const message of messages) {
-    if (message.role === 'assistant') {
-      const toolCalls = message.toolCalls.filter((call) => call.name !== 'pause' && call.name !== 'rest')
-      if (toolCalls.length === 0 && message.content.trim().length === 0) continue
-      filtered.push({
-        role: 'assistant',
-        content: message.content,
-        toolCalls,
-      })
-      continue
-    }
-    if (message.role === 'tool' && pauseCallIds.has(message.toolCallId)) continue
-    if (
-      message.role === 'user'
-      && (
-        message.content.includes('"event":"rest_resume"')
-        || message.content.includes('"event":"rest_interrupted_attention"')
-      )
-    ) {
-      continue
-    }
-    filtered.push(message)
-  }
-
-  const selected: AgentMessage[] = []
-  let chars = 0
-  for (let index = filtered.length - 1; index >= 0; index--) {
-    const message = filtered[index]!
-    const size = JSON.stringify(message).length
-    if (selected.length > 0 && chars + size > maxChars) break
-    selected.push(message)
-    chars += size
-    if (chars >= maxChars) break
-  }
-  return selected.reverse()
-}
-
-async function readOptionalText(path: string): Promise<string> {
-  try {
-    return await readFile(path, 'utf8')
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return ''
-    }
-    throw error
   }
 }

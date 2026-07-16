@@ -485,10 +485,6 @@ export function parseConfig(env: EnvSource) {
       )
     }
   }
-  const lifeJournalIdlePickTimeoutMs = parsePositiveInteger(
-    env.BOT_LIFE_JOURNAL_IDLE_PICK_TIMEOUT_MS,
-    30_000,
-  )
   const redditTimeoutMs = parsePositiveInteger(env.BOT_REDDIT_TIMEOUT_MS, 8_000)
   const fetchUrlTimeoutMs = parsePositiveInteger(env.BOT_FETCH_URL_TIMEOUT_MS, 12_000)
   const fetchLogPath = env.BOT_FETCH_LOG_PATH && env.BOT_FETCH_LOG_PATH.trim().length > 0
@@ -570,10 +566,6 @@ export function parseConfig(env: EnvSource) {
     replyMediaTimeoutMs: parsePositiveInteger(env.REPLY_MEDIA_TIMEOUT_MS, 15_000),
     jobInterDelayMs: parsePositiveInteger(env.JOB_INTER_DELAY_MS, 200),
     compaction,
-    lifeJournal: {
-      /** Hard timeout for the pre-rest idle intention picker (AbortController). */
-      idlePickTimeoutMs: lifeJournalIdlePickTimeoutMs,
-    },
     /** Hard timeout for reddit action=list / action=get_post (AbortController). */
     redditTimeoutMs,
     /** Hard timeout for fetch_url (AbortController). */

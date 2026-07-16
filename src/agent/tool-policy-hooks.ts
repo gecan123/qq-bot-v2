@@ -72,6 +72,7 @@ interface GenerateImageTaskLogHookOptions {
 
 export interface SendMessageSafetyGuardOptions {
   getCurrentTarget: () => QqConversationFocus
+  hasPendingPrivateMailbox?: (userId: number) => boolean
   nowMs?: () => number
   privateAmbientCooldownMs?: number
   ambientDuplicateWindowMs?: number
@@ -82,7 +83,7 @@ export interface SendMessageSafetyGuard {
   afterTool: AfterToolHook
 }
 
-/** 只按成功外发计时的进程内防抖；reply 不受限。 */
+/** 只按成功主动外发计时的进程内防抖；pending mailbox 回复不受限。 */
 export function createSendMessageSafetyGuard(
   options: SendMessageSafetyGuardOptions,
 ): SendMessageSafetyGuard {
@@ -101,7 +102,8 @@ export function createSendMessageSafetyGuard(
   const beforeTool: BeforeToolHook = ({ call }) => {
     if (call.name !== 'send_message') return
     const args = call.args as SendMessageHookArgs
-    if (args.reply_to != null) return
+    const target = parseSendMessageAiToneTarget(options.getCurrentTarget())
+    if (isReplySend(args, target, options.hasPendingPrivateMailbox)) return
 
     const now = nowMs()
     if (typeof args.message === 'string') {
@@ -118,14 +120,13 @@ export function createSendMessageSafetyGuard(
       }
     }
 
-    const target = parseSendMessageAiToneTarget(options.getCurrentTarget())
     if (target?.type !== 'private') return
     const lastAt = lastPrivateAmbientAt.get(target.userId)
     if (lastAt != null && now - lastAt < privateAmbientCooldownMs) {
       return rejectSendMessage(
         'private_ambient_cooldown',
         privateAmbientCooldownMs - (now - lastAt),
-        '刚刚已经主动联系过这个人。先让对方有回应空间；reply 模式不受这个主动发言冷却影响。',
+        '刚刚已经主动联系过这个人，且当前没有待处理的新私聊。先让对方有回应空间；收到对方新消息后，runtime 会按 pending mailbox 识别为回复，不要传 mode。reply_to 只用于需要 QQ 引用展示时。',
       )
     }
   }
@@ -133,15 +134,16 @@ export function createSendMessageSafetyGuard(
   const afterTool: AfterToolHook = ({ call, result }) => {
     if (call.name !== 'send_message') return
     const args = call.args as SendMessageHookArgs
-    if (args.reply_to != null) return
     if (!result.effects?.some((effect) => effect.type === 'message_sent')) return
 
-    const now = nowMs()
     const confirmedTarget = result.effects
       ?.find((effect) => effect.type === 'message_sent')
       ?.target
     const target = parseSendMessageAiToneTarget(confirmedTarget)
       ?? parseSendMessageAiToneTarget(options.getCurrentTarget())
+    if (isReplySend(args, target, options.hasPendingPrivateMailbox)) return
+
+    const now = nowMs()
     if (target?.type === 'private') lastPrivateAmbientAt.set(target.userId, now)
     if (typeof args.message !== 'string') return
     const normalized = normalizeSendText(args.message).trim()
@@ -149,6 +151,15 @@ export function createSendMessageSafetyGuard(
   }
 
   return { beforeTool, afterTool }
+}
+
+function isReplySend(
+  args: SendMessageHookArgs,
+  target: SendMessageAiToneTarget | null,
+  hasPendingPrivateMailbox: SendMessageSafetyGuardOptions['hasPendingPrivateMailbox'],
+): boolean {
+  if (args.reply_to != null) return true
+  return target?.type === 'private' && hasPendingPrivateMailbox?.(target.userId) === true
 }
 
 export function createGenerateImageTaskLogHook(options: GenerateImageTaskLogHookOptions = {}): AfterToolHook {

@@ -93,6 +93,38 @@ describe('createSendMessageSafetyGuard', () => {
     assert.equal(JSON.parse(afterDuplicateWindow.content as string).ok, true)
     assert.equal(calls.length, 4)
   })
+
+  test('treats a send to a pending private mailbox as a reply without requiring reply_to', async () => {
+    const calls: unknown[] = []
+    let pendingUserId: number | null = null
+    const target = { type: 'private' as const, userId: 123 }
+    const guard = createSendMessageSafetyGuard({
+      getCurrentTarget: () => target,
+      hasPendingPrivateMailbox: (userId) => userId === pendingUserId,
+    })
+    const exec = createToolExecutor([createFakeSendTool(calls)], {
+      hooks: {
+        beforeTool: [guard.beforeTool],
+        afterTool: [guard.afterTool],
+      },
+    })
+
+    await exec.execute({
+      id: 'ambient', name: 'send_message', args: { message: '早上好' },
+    }, makeCtx())
+    pendingUserId = 123
+    const response = await exec.execute({
+      id: 'response', name: 'send_message', args: { message: '我今天想继续看那篇论文' },
+    }, makeCtx())
+    pendingUserId = null
+    const ambientAgain = await exec.execute({
+      id: 'ambient-again', name: 'send_message', args: { message: '又想起一件事' },
+    }, makeCtx())
+
+    assert.equal(JSON.parse(response.content as string).ok, true)
+    assert.equal(JSON.parse(ambientAgain.content as string).code, 'private_ambient_cooldown')
+    assert.equal(calls.length, 2)
+  })
 })
 
 describe('createSendMessageAiToneHook', () => {

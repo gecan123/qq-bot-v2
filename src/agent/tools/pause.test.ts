@@ -37,7 +37,6 @@ describe('pause tool', () => {
     const rest = pauseTool.schema.safeParse({ action: 'rest', reason: '现在确实想短暂放空', intention })
     assert.equal(rest.success, true)
     assert.equal((rest.data as { durationSeconds: number }).durationSeconds, 60)
-    assert.equal((rest.data as { confirmed: boolean }).confirmed, false)
     assert.equal(pauseTool.schema.safeParse({
       action: 'rest',
       reason: '短暂放空',
@@ -99,9 +98,9 @@ describe('pause tool', () => {
 
   test('description asks for reassessment after rest without forcing activity', () => {
     const tool = createPauseTool()
-    assert.match(tool.description, /alternative_available/)
-    assert.match(tool.description, /confirmed=true/)
     assert.match(tool.description, /没有未处理义务或牵引力就结束当前活动轮/)
+    assert.match(tool.description, /立即进入计时/)
+    assert.match(tool.description, /不再同步请求额外的 LLM 判断/)
   })
 
   test('description frames intention as two concrete directions', () => {
@@ -120,7 +119,6 @@ describe('pause tool', () => {
     const result = await pauseTool.execute({
       action: 'rest',
       durationSeconds: 30,
-      confirmed: false,
       reason: '刚完成一段集中阅读，想短暂放空',
       intention,
     }, ctx)

@@ -27,7 +27,7 @@
 | 长期语义记忆 | `data/agent-workspace/memory/` | 否 | `memory` tool；有界异步 maintenance | `recall/search/list/read` | side-data，不参与 replay |
 | 主题过程 | `data/agent-workspace/notebook/` | 否 | `notebook` tool | `list/search/read` | side-data，不参与 replay |
 | 主观经历 | `data/agent-workspace/life/journal/` | 否 | `life_journal` tool；异步 round review | `read_recent/read_day/read_entry` | side-data，不参与 replay |
-| 当前生活状态 | `data/agent-workspace/life/agenda.md` | 否 | `life_journal write_agenda`；异步 round review | `read_agenda`；idle picker | side-data，不参与 replay |
+| 当前生活状态 | `data/agent-workspace/life/agenda.md` | 否 | `life_journal write_agenda`；异步 round review | `read_agenda` | side-data，不参与 replay |
 | Goal 控制状态 | Postgres `bot_agent_goal` | 否；revision 事件可见 | owner 命令或 `goal` tool | Runtime Host / `goal get` | 不能重建 transcript |
 | 运维证据 | `logs/*`、观测表 | 否 | runtime best-effort | 运维命令 | 永远不是 replay 或记忆来源 |
 
@@ -107,7 +107,7 @@ flowchart LR
 
 - 单文件 `life/agenda.md` 表示“现在仍有效的状态”，不是 append-only 历史。
 - 主 Agent 显式修改时必须先 read，再带最新 revision 覆盖完整 Agenda。
-- 异步 Life review 会读取 Agenda，也可能更新它。idle intention picker 首先有界读取最近 durable context，再以 Agenda、最近两天 Journal 和 `notes/wishes.md` 为后备，只返回一个带具体锚点、念头和第一步的替代方向；它只有通过 `pause` 的结构化 `idleThought` tool result 进入 `AgentContext`，不会作为隐藏 request-time 注入，replay 也不会重算。
+- 异步 Life review 会读取 Agenda，也可能更新它。`pause` 不读取 Agenda 或 Journal，也不会同步请求额外 LLM；没有牵引力时由主循环以无工具轮自然结束活动。
 
 ## 读取与披露
 

@@ -52,9 +52,9 @@ import {
 import type { GoalStore } from './goal-store.js'
 import type { MemoryMaintenanceRuntime } from './memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
-import { hasPendingRestAlternative } from './tools/rest.js'
 import { createLogger } from '../logger.js'
 import { createQqConversationController } from './tools/qq-conversation.js'
+import { findPendingMailboxThroughRowId } from './mailbox-handled.js'
 
 const scheduleLog = createLogger('SCHEDULE')
 
@@ -176,6 +176,10 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
   const getCurrentQqTarget = () => conversations.getCurrent()
   const sendMessageSafetyGuard = createSendMessageSafetyGuard({
     getCurrentTarget: getCurrentQqTarget,
+    hasPendingPrivateMailbox: (userId) => findPendingMailboxThroughRowId(
+      input.context.getSnapshot().messages,
+      `qq_private:${userId}`,
+    ) != null,
   })
   const tools = createDeferredToolExecutor({
     ...buildBotToolManifest({
@@ -192,9 +196,6 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       memoryMaintenance: input.memoryMaintenance,
       workspaceDir: input.workspaceDir,
       workspaceStateCoordinator: input.workspaceStateCoordinator,
-      restGuide: input.lifeJournal,
-      getRestGuideContext: () => input.context.getSnapshot().messages,
-      canConfirmRestAlternative: () => hasPendingRestAlternative(input.context.getSnapshot().messages),
       optionalTools: input.optionalTools,
       groupIds: input.groupIds,
       selfNumber: input.selfNumber,

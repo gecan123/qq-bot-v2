@@ -171,56 +171,6 @@ describe('merged main-agent tools', () => {
     assert.equal(names.includes('fetch_avatar'), false)
   })
 
-  test('pause does not enter rest when the idle picker is unavailable', async () => {
-    const tools = buildBotTools({
-      sender: mockSender,
-      targetPolicy,
-      conversations,
-      selfNumber: 999,
-      taskRegistry: createInMemoryTaskRegistry(),
-      scheduleRuntime: mockScheduleRuntime,
-      groupIds: [],
-      metadata: { groupNames: new Map() },
-      groupCustomizations: [],
-      qqDirectory: {
-        groupIds: [],
-        async loadFriends() { return [] },
-        async loadGroups() { return [] },
-      },
-      optionalTools: disabledOptionalTools,
-      restGuide: {
-        async pickIdleIntention() {
-          return {
-            ok: false,
-            thought: null,
-            intention: null,
-            error: 'life journal idle pick timed out after 30000ms',
-          }
-        },
-      },
-    })
-    const pause = tools.find((tool) => tool.name === 'pause')!
-
-    const result = await pause.execute({
-      action: 'rest',
-      durationSeconds: 30,
-      confirmed: false,
-      reason: '刚完成一件事，想停一下',
-      intention: {
-        primaryDirection: '复核一条 SOL 观察假设的失效条件',
-        alternativeDirection: '挑一篇群友文章读第一节',
-      },
-    } as never, makeCtx())
-
-    assert.deepEqual(result.outcome, {
-      ok: false,
-      code: 'alternative_check_unavailable',
-      error: 'life journal idle pick timed out after 30000ms',
-    })
-    assert.equal(result.effects, undefined)
-    assert.equal(JSON.parse(result.content as string).paused, false)
-  })
-
   test('production manifest shares one coordinator across markdown state tools', async () => {
     const temporaryCwd = await mkdtemp(join(tmpdir(), 'merged-markdown-state-'))
     const originalCwd = process.cwd()

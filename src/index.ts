@@ -105,7 +105,6 @@ async function main() {
   })
   const lifeJournal = createLifeJournalRuntime({
     llm: lifeJournalLlm,
-    idlePickTimeoutMs: config.lifeJournal.idlePickTimeoutMs,
     taskScheduler,
     workspaceStateCoordinator,
   })

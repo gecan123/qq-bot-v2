@@ -141,7 +141,7 @@ test('zodToOpenAIStrictToolJsonSchema keeps pause schema strict and rest-only', 
   assert.equal(json.type, 'object')
   assert.equal('oneOf' in json, false)
   assert.equal('anyOf' in json, false)
-  assert.deepEqual(json.required, ['action', 'durationSeconds', 'confirmed', 'reason', 'intention'])
+  assert.deepEqual(json.required, ['action', 'durationSeconds', 'reason', 'intention'])
 
   const props = json.properties as Record<string, Record<string, unknown>>
   assert.equal(props.action.const, 'rest')
@@ -158,11 +158,7 @@ test('zodToOpenAIStrictToolJsonSchema keeps pause schema strict and rest-only', 
     minimum: 30,
     maximum: 600,
   })
-  assert.deepEqual(props.confirmed, {
-    default: false,
-    description: '第一次请求必须为 false. 仅当前一次 pause 已返回 alternative_available、此后没有别的工具结果且你仍真想休息时, 再次调用并设为 true.',
-    type: 'boolean',
-  })
+  assert.equal('confirmed' in props, false)
 })
 
 test('zodToOpenAIStrictToolJsonSchema removes unsupported string formats', () => {

@@ -80,17 +80,6 @@ describe('createAgentRuntime', () => {
       goalStore: createInMemoryGoalStore(),
       lifeJournal: {
         async recordRound() {},
-        async pickIdleIntention() {
-          return {
-            ok: true,
-            thought: '我还想把 QuadRF 那条线索往前推一步。',
-            intention: '继续拆解 Agenda 里的 QuadRF 供应链线索',
-            anchorSource: 'agenda',
-            whyNow: '它仍在 Active',
-            firstStep: '读取现有 notebook 的第一段',
-            promoteToGoal: false,
-          }
-        },
       },
     })
 
@@ -144,6 +133,8 @@ describe('createAgentRuntime', () => {
     assert.deepEqual(qq.tools, ['qq_conversation', 'send_message'])
     assert.equal(mcpConnections, 0)
 
+    const pauseQueue = new InMemoryEventQueue<BotEvent>()
+    pauseQueue.enqueue({ type: 'wake' })
     const pauseResult = await runtime.tools.execute({
       id: 'pause-1',
       name: 'pause',
@@ -157,14 +148,12 @@ describe('createAgentRuntime', () => {
         },
       },
     }, {
-      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      eventQueue: pauseQueue,
       roundIndex: 1,
     })
     const pausePayload = JSON.parse(pauseResult.content as string)
-    assert.equal(pausePayload.status, 'alternative_available')
-    assert.equal(pausePayload.paused, false)
-    assert.equal(pausePayload.idleThought.event, 'idle_thought')
-    assert.equal(pausePayload.idleThought.direction, '继续拆解 Agenda 里的 QuadRF 供应链线索')
+    assert.equal(pausePayload.status, 'interrupted')
+    assert.deepEqual(pauseResult.effects, [{ type: 'pause', status: 'interrupted' }])
     await runtime.stopBackgroundServices()
     assert.equal(scheduleStops, 1)
   })
@@ -234,6 +223,60 @@ describe('createAgentRuntime', () => {
       ],
     }])
     assert.match(send.content as string, /"providerMessageId":77/)
+  })
+
+  test('lets a pending private mailbox response bypass the ambient cooldown without reply_to', async () => {
+    const context = createAgentContext()
+    const sent: Parameters<MessageSender['sendSegments']>[0][] = []
+    const runtime = createAgentRuntime({
+      ...makeRuntimeInput(),
+      context,
+      sender: {
+        async sendSegments(input) {
+          sent.push(input)
+          return { success: true, attempts: 1, providerMessageId: sent.length }
+        },
+      },
+    })
+    const toolContext = {
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      roundIndex: 1,
+    }
+
+    await runtime.tools.execute({
+      id: 'activate-qq',
+      name: 'help',
+      args: { action: 'activate', capability: 'qq' },
+    }, toolContext)
+    await runtime.tools.execute({
+      id: 'open-private',
+      name: 'invoke',
+      args: {
+        tool: 'qq_conversation',
+        args: { action: 'open', target: { type: 'private', userId: 2002 } },
+      },
+    }, toolContext)
+    await runtime.tools.execute({
+      id: 'ambient',
+      name: 'invoke',
+      args: { tool: 'send_message', args: { message: '早，今天要做什么？' } },
+    }, toolContext)
+
+    context.appendUserMessage(
+      '{"event":"inbox_update","mailbox":"qq_private:2002","throughRowId":88}',
+    )
+    const response = await runtime.tools.execute({
+      id: 'response',
+      name: 'invoke',
+      args: { tool: 'send_message', args: { message: '我今天想继续看 Anka 那篇论文。' } },
+    }, toolContext)
+
+    assert.equal(JSON.parse(response.content as string).status, 'sent')
+    assert.equal(sent.length, 2)
+    assert.deepEqual(sent[1], {
+      target: { type: 'private', userId: 2002 },
+      segments: [{ type: 'text', data: { text: '我今天想继续看 Anka 那篇论文。' } }],
+    })
   })
 
   test('uses an in-memory schedule store by default and keeps schedule unavailable until startup', async () => {

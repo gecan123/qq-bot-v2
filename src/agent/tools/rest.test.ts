@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { createRestTool, hasPendingRestAlternative, restTool } from './rest.js'
+import { createRestTool, restTool } from './rest.js'
 import { InMemoryEventQueue } from '../event-queue.js'
 import type { BotEvent } from '../event.js'
 import type { ToolContext } from '../tool.js'
@@ -68,33 +68,6 @@ function privateEvent(): BotEvent {
 }
 
 describe('rest tool', () => {
-  test('durably recognizes only the latest completed alternative result', () => {
-    const alternativeResult = JSON.stringify({
-      ok: true,
-      status: 'alternative_available',
-      paused: false,
-    })
-    const messages = [
-      {
-        role: 'assistant' as const,
-        content: '',
-        toolCalls: [{ id: 'pause-1', name: 'pause', args: {} }],
-      },
-      { role: 'tool' as const, toolCallId: 'pause-1', content: alternativeResult },
-      {
-        role: 'assistant' as const,
-        content: '',
-        toolCalls: [{ id: 'pause-2', name: 'pause', args: { confirmed: true } }],
-      },
-    ]
-
-    assert.equal(hasPendingRestAlternative(messages), true)
-    assert.equal(hasPendingRestAlternative([
-      ...messages,
-      { role: 'tool' as const, toolCallId: 'other-1', content: '{"ok":true}' },
-    ]), false)
-  })
-
   test('schema requires an intention and defaults to 60 seconds', () => {
     assert.equal(restTool.schema.safeParse({}).success, false)
     const parsed = restTool.schema.safeParse({
@@ -113,147 +86,7 @@ describe('rest tool', () => {
     assert.match(tool.description, /机械检查行情/)
     assert.match(tool.description, /未来某个时点再看时用 schedule/)
     assert.match(tool.description, /没有未处理义务或牵引力就结束当前活动轮/)
-    assert.match(tool.description, /alternative_check_unavailable/)
-  })
-
-  test('first request returns a journal alternative without pausing', async () => {
-    let picked = 0
-    const tool = createRestTool({
-      pickAlternative: async () => {
-        picked++
-        return {
-          status: 'available' as const,
-          alternative: {
-            thought: '我还惦记着 QuadRF 那条没查完的供应链线索，先把第一个器件来源钉住。',
-            direction: '继续拆解 QuadRF 众筹页面的供应链线索',
-            anchorSource: 'agenda' as const,
-            whyNow: 'Agenda 里仍是 Active',
-            firstStep: '打开现有 notebook 并列出第一条待查证问题',
-            promoteToGoal: true,
-          },
-        }
-      },
-    })
-    const { ctx, queue } = makeCtx()
-
-    const result = await tool.execute({
-      durationSeconds: 30,
-      confirmed: false,
-      reason: '刚完成一件事，想停一下',
-      intention: TEST_INTENTION,
-    }, ctx)
-
-    assert.equal(picked, 1)
-    assert.deepEqual(result.outcome, { ok: true, code: 'alternative_available' })
-    assert.equal(result.effects, undefined)
-    assert.deepEqual(JSON.parse(result.content as string), {
-      ok: true,
-      status: 'alternative_available',
-      paused: false,
-      idleThought: {
-        event: 'idle_thought',
-        thought: '我还惦记着 QuadRF 那条没查完的供应链线索，先把第一个器件来源钉住。',
-        direction: '继续拆解 QuadRF 众筹页面的供应链线索',
-        anchorSource: 'agenda',
-        whyNow: 'Agenda 里仍是 Active',
-        firstStep: '打开现有 notebook 并列出第一条待查证问题',
-        promoteToGoal: true,
-      },
-      instruction: '没有进入休息。idleThought 是你自己的念头而不是任务；若它确实有吸引力且值得跨多轮推进, 用 goal action=create_self 建立持久主线并完成 firstStep。若让它过去后仍真想休息, 再次调用 pause 并设 confirmed=true.',
-    })
-
-    queue.enqueue(privateEvent())
-    const confirmed = await tool.execute({
-      durationSeconds: 30,
-      confirmed: true,
-      reason: '看过建议后仍然确实想短暂放空',
-      intention: TEST_INTENTION,
-    }, { ...ctx, roundIndex: ctx.roundIndex + 1 })
-    assert.equal(picked, 1)
-    assert.equal(JSON.parse(confirmed.content as string).status, 'interrupted')
-    assert.deepEqual(confirmed.effects, [{ type: 'pause', status: 'interrupted' }])
-  })
-
-  test('confirmed cannot bypass the first alternative check', async () => {
-    let picked = 0
-    const tool = createRestTool({
-      pickAlternative: async () => {
-        picked++
-        return { status: 'none' as const }
-      },
-    })
-    const { ctx } = makeCtx()
-
-    const result = await tool.execute({
-      durationSeconds: 30,
-      confirmed: true,
-      reason: '想直接跳过检查',
-      intention: TEST_INTENTION,
-    }, ctx)
-
-    assert.equal(picked, 0)
-    assert.deepEqual(result.outcome, { ok: true, code: 'confirmation_required' })
-    assert.equal(result.effects, undefined)
-    assert.deepEqual(JSON.parse(result.content as string), {
-      ok: true,
-      status: 'confirmation_required',
-      paused: false,
-      instruction: '没有进入休息。confirmed 不能用于跳过第一次检查; 请先以 confirmed=false 调用并查看是否返回 alternative_available.',
-    })
-  })
-
-  test('unavailable alternative check does not enter rest', async () => {
-    const tool = createRestTool({
-      pickAlternative: async () => ({
-        status: 'unavailable',
-        error: 'life journal idle pick timed out after 30000ms',
-      }),
-    })
-    const { ctx } = makeCtx()
-
-    const result = await tool.execute({
-      durationSeconds: 30,
-      confirmed: false,
-      reason: '刚完成一件事，想停一下',
-      intention: TEST_INTENTION,
-    }, ctx)
-
-    assert.deepEqual(result.outcome, {
-      ok: false,
-      code: 'alternative_check_unavailable',
-      error: 'life journal idle pick timed out after 30000ms',
-    })
-    assert.equal(result.effects, undefined)
-    assert.deepEqual(JSON.parse(result.content as string), {
-      ok: false,
-      status: 'alternative_check_unavailable',
-      paused: false,
-      error: 'life journal idle pick timed out after 30000ms',
-      instruction: '没有进入休息。空闲念头检查暂时不可用；不要用 confirmed=true 跳过检查，请稍后以 confirmed=false 重试或继续当前活动.',
-    })
-  })
-
-  test('thrown alternative check error does not enter rest', async () => {
-    const tool = createRestTool({
-      pickAlternative: async () => {
-        throw new Error('provider unavailable')
-      },
-    })
-    const { ctx } = makeCtx()
-
-    const result = await tool.execute({
-      durationSeconds: 30,
-      confirmed: false,
-      reason: '刚完成一件事，想停一下',
-      intention: TEST_INTENTION,
-    }, ctx)
-
-    assert.deepEqual(result.outcome, {
-      ok: false,
-      code: 'alternative_check_unavailable',
-      error: 'provider unavailable',
-    })
-    assert.equal(result.effects, undefined)
+    assert.match(tool.description, /立即进入计时/)
   })
 
   test('already queued mentioned group message interrupts rest without consuming the event', async () => {
@@ -262,7 +95,6 @@ describe('rest tool', () => {
 
     const result = await restTool.execute({
       durationSeconds: 30,
-      confirmed: false,
       reason: '短暂放空',
       intention: TEST_INTENTION,
     }, ctx)
@@ -285,7 +117,6 @@ describe('rest tool', () => {
 
     const result = await restTool.execute({
       durationSeconds: 30,
-      confirmed: false,
       reason: '短暂放空',
       intention: TEST_INTENTION,
     }, ctx)
@@ -303,7 +134,6 @@ describe('rest tool', () => {
 
     const restPromise = tool.execute({
       durationSeconds: 30,
-      confirmed: false,
       reason: '短暂放空',
       intention: TEST_INTENTION,
     }, ctx)

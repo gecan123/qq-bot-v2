@@ -46,7 +46,7 @@ describe('buildBotSystemPrompt', () => {
     assert.doesNotMatch(prompt, /先用 help 激活 finance.*openbb_cli.*产业链.*供需.*技术路线/s)
     assert.match(prompt, /不必等到观点足够强或信息增量足够大/)
     assert.match(prompt, /pause 是.*安全阀.*不是行动优先级/s)
-    assert.match(prompt, /alternative_available.*idleThought.*自己的念头而不是任务.*confirmed=true/s)
+    assert.match(prompt, /调用 pause.*立即进入计时.*不再同步请求另一个模型替你决定/s)
     assert.match(prompt, /时间晚、owner 不在线、群聊与你无关或刚完成一件事.*不是休息的充分理由/s)
     assert.match(prompt, /primaryDirection.*alternativeDirection.*不制造菜单/s)
     assert.match(prompt, /外部消息.*中断条件.*等待状态/s)

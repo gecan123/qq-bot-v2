@@ -52,9 +52,25 @@ const argsSchema = z.discriminatedUnion('action', [
   }),
   z.object({
     action: z.literal('recall').describe('按相关性召回 entry 级长期记忆并返回可解释分数.'),
-    query: z.string().trim().min(1).max(300),
-    scope: scopeSchema.optional(),
+    query: z.string().trim().min(1).max(300).describe('描述要回忆的旧事、偏好、事实或经验.'),
+    scope: scopeSchema.optional().describe('person/group 定向召回时必填；不传则跨 scope 宽泛探索.'),
+    id: idSchema.optional().describe('scope=person 时传具体 QQ 号；scope=group 时传具体群号.'),
     limit: z.number().int().min(1).max(20).optional(),
+  }).superRefine((value, ctx) => {
+    if ((value.scope === 'person' || value.scope === 'group') && value.id == null) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['id'],
+        message: `scope=${value.scope} recall 必须提供 id`,
+      })
+    }
+    if ((value.scope === 'self' || value.scope === 'topic') && value.id != null) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['id'],
+        message: `scope=${value.scope} recall 不允许提供 id`,
+      })
+    }
   }),
   z.object({
     action: z.literal('review').describe('只读扫描重复、近重复和可能冲突，返回整理 proposal，不自动改写.'),
@@ -144,8 +160,9 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
     description: [
       '本地 Markdown 长期记忆库, 一个入口用 action 决定动作.',
       'action=write: 写入以后可能用得上的真实信息或经验; 写前先 recall，已有事实优先 update_entry/compact，避免重复追加.',
-      'action=search: 搜索自己、人物、群或主题记忆; 不确定旧事、偏好、项目线索或自己做过什么时先查.',
-      'action=recall: 用自然查询召回 entry 级相关记忆，返回 matchedTerms 和可解释 score.',
+      'action=recall: 当前聊天上下文不足，且涉及旧事、偏好、稳定事实或经验时优先使用；上下文已有足够且未冲突信息时不要重复 recall.',
+      'person/group recall 必须传具体 QQ 号/群 id，只召回对应人物或群；不传 scope 才用于跨范围探索.',
+      'action=search: 只用于宽泛的文件发现；要取得可直接用于回答的 entry 内容时使用 recall.',
       'action=review: 只读提出重复/近重复/可能冲突候选；不会自动删除或合并，确认后仍需 read + revision mutation.',
       'action=read: 读取 search/write 返回的某个记忆文件; 只在需要深读时使用.',
       'action=list: 按 scope 列出有界文件元数据, 用于发现重复或过时记忆.',
@@ -200,11 +217,17 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
         if (args.action === 'recall') {
           const result = await recallMemoryEntries(
             storeOptions,
-            { query: args.query, scope: args.scope, limit: args.limit },
+            {
+              query: args.query,
+              scope: args.scope,
+              id: args.id == null ? undefined : String(args.id),
+              limit: args.limit,
+            },
           )
           log.info({
             query: args.query,
             scope: args.scope ?? null,
+            id: args.id == null ? null : String(args.id),
             hitCount: result.matches.length,
             skippedCorrupt: result.skippedCorrupt,
           }, 'memory_recalled')

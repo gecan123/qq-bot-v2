@@ -126,6 +126,7 @@ describe('markdown memory lexical recall evaluation', () => {
       const phrase = await recallMemoryEntries({ rootDir, now: () => NOW }, {
         query: '手冲、咖啡',
         scope: 'person',
+        id: '10001',
       })
       assert.equal(phrase.matches[0]?.entryId, 'person-coffee')
       assert.equal(phrase.matches[0]?.scoreReasons.includes('content_phrase'), true)
@@ -160,6 +161,7 @@ describe('markdown memory lexical recall evaluation', () => {
       const person = await recallMemoryEntries({ rootDir, now: () => NOW }, {
         query: '手冲咖啡',
         scope: 'person',
+        id: '10001',
       })
       assert.equal(person.matches.length > 0, true)
       assert.equal(person.matches.every((match) => match.scope === 'person'), true)

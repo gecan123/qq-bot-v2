@@ -414,6 +414,7 @@ describe('memory-store', () => {
       const result = await recallMemoryEntries({ rootDir }, {
         query: '主人喜欢什么咖啡',
         scope: 'person',
+        id: '123',
         limit: 5,
       })
 
@@ -422,6 +423,71 @@ describe('memory-store', () => {
       assert.equal(result.matches[0]!.score > 0, true)
       assert.equal(result.matches[0]!.matchedTerms.includes('主人'), true)
       assert.equal(result.matches.some((match) => match.entryId === 'entry-3'), false)
+    })
+  })
+
+  test('recall targets one person or group file even when other files contain the same terms', async () => {
+    await withTempMemory(async (rootDir) => {
+      let index = 0
+      const options = { rootDir, id: () => `targeted-${++index}` }
+      await writeMemoryEntry(options, { scope: 'person', id: '10001', content: '喜欢无糖拿铁' })
+      await writeMemoryEntry(options, { scope: 'person', id: '10002', content: '喜欢无糖拿铁' })
+      await writeMemoryEntry(options, { scope: 'group', id: '20001', content: '群里约定周五复盘' })
+      await writeMemoryEntry(options, { scope: 'group', id: '20002', content: '群里约定周五复盘' })
+
+      const person = await recallMemoryEntries({ rootDir }, {
+        query: '无糖拿铁',
+        scope: 'person',
+        id: '10002',
+      })
+      const group = await recallMemoryEntries({ rootDir }, {
+        query: '周五复盘',
+        scope: 'group',
+        id: '20001',
+      })
+      const missing = await recallMemoryEntries({ rootDir }, {
+        query: '无糖拿铁',
+        scope: 'person',
+        id: '99999',
+      })
+
+      assert.deepEqual(person.matches.map((match) => match.file), ['people/10002.md'])
+      assert.deepEqual(group.matches.map((match) => match.file), ['groups/20001.md'])
+      assert.deepEqual(missing.matches, [])
+    })
+  })
+
+  test('recall validates scope and id combinations while preserving unscoped discovery', async () => {
+    await withTempMemory(async (rootDir) => {
+      await writeMemoryEntry({ rootDir }, { scope: 'self', title: 'habits', content: '偏好短回复' })
+
+      await assert.rejects(
+        recallMemoryEntries({ rootDir }, { query: '偏好', scope: 'person' }),
+        (error: unknown) => error instanceof MemoryStoreError
+          && error.code === 'invalid_input'
+          && /person recall requires id/.test(error.message),
+      )
+      await assert.rejects(
+        recallMemoryEntries({ rootDir }, { query: '偏好', scope: 'group' }),
+        (error: unknown) => error instanceof MemoryStoreError
+          && error.code === 'invalid_input'
+          && /group recall requires id/.test(error.message),
+      )
+      await assert.rejects(
+        recallMemoryEntries({ rootDir }, { query: '偏好', scope: 'self', id: '10001' }),
+        (error: unknown) => error instanceof MemoryStoreError
+          && error.code === 'invalid_input'
+          && /self recall does not accept id/.test(error.message),
+      )
+      await assert.rejects(
+        recallMemoryEntries({ rootDir }, { query: '偏好', scope: 'topic', id: '10001' }),
+        (error: unknown) => error instanceof MemoryStoreError
+          && error.code === 'invalid_input'
+          && /topic recall does not accept id/.test(error.message),
+      )
+
+      const discovered = await recallMemoryEntries({ rootDir }, { query: '偏好' })
+      assert.deepEqual(discovered.matches.map((match) => match.file), ['self/habits.md'])
     })
   })
 

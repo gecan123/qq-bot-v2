@@ -34,6 +34,7 @@ export interface SearchMemoryInput {
 export interface RecallMemoryInput {
   query: string
   scope?: MemoryScope
+  id?: string
   limit?: number
 }
 
@@ -344,17 +345,19 @@ export async function recallMemoryEntries(
   options: MemoryStoreOptions,
   input: RecallMemoryInput,
 ): Promise<MemoryRecallResult> {
+  const targetedFile = fileForRecall(input)
   const query = normalizeSearchText(input.query)
   const queryTerms = recallQueryTerms(input.query)
   const limit = Math.min(Math.max(1, input.limit ?? DEFAULT_SEARCH_LIMIT), MAX_SEARCH_LIMIT)
   const nowMs = (options.now?.() ?? new Date()).getTime()
   const root = memoryRoot(options.rootDir)
-  const files = await listMarkdownFiles(root)
+  const files = targetedFile ? [targetedFile] : await listMarkdownFiles(root)
   const matches: MemoryRecallResult['matches'] = []
   let skippedCorrupt = 0
 
   for (const file of files) {
-    const raw = await readFile(join(root, file), 'utf8')
+    const raw = await readOptional(join(root, file))
+    if (raw == null) continue
     const parsed = parseMemoryDocument(raw)
     if (!parsed) {
       skippedCorrupt++
@@ -1042,6 +1045,21 @@ function requiredId(input: WriteMemoryInput): string {
   if (!value) throw new MemoryStoreError('invalid_input', `${input.scope} memory requires id`)
   if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new MemoryStoreError('invalid_input', `${input.scope} id is invalid`)
   return value
+}
+
+function fileForRecall(input: RecallMemoryInput): string | null {
+  if (input.scope === 'person' || input.scope === 'group') {
+    const id = input.id?.trim()
+    if (!id) throw new MemoryStoreError('invalid_input', `${input.scope} recall requires id`)
+    if (!/^[A-Za-z0-9_-]+$/.test(id)) {
+      throw new MemoryStoreError('invalid_input', `${input.scope} recall id is invalid`)
+    }
+    return input.scope === 'person' ? `people/${id}.md` : `groups/${id}.md`
+  }
+  if ((input.scope === 'self' || input.scope === 'topic') && input.id != null) {
+    throw new MemoryStoreError('invalid_input', `${input.scope} recall does not accept id`)
+  }
+  return null
 }
 
 function safeMemoryFile(rootDir: string, relativeFile: string): string {

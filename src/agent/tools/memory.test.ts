@@ -92,6 +92,55 @@ describe('memory tool schema', () => {
     if (untrusted.success) assert.equal('trust' in (untrusted.data as object), false)
   })
 
+  test('validates recall scope and id combinations', () => {
+    assert.equal(memoryTool.schema.safeParse({
+      action: 'recall',
+      query: '喜欢什么',
+      scope: 'person',
+      id: 12345,
+    }).success, true)
+    assert.equal(memoryTool.schema.safeParse({
+      action: 'recall',
+      query: '群里有什么约定',
+      scope: 'group',
+      id: '67890',
+    }).success, true)
+    assert.equal(memoryTool.schema.safeParse({
+      action: 'recall',
+      query: '喜欢什么',
+      scope: 'person',
+    }).success, false)
+    assert.equal(memoryTool.schema.safeParse({
+      action: 'recall',
+      query: '群里有什么约定',
+      scope: 'group',
+    }).success, false)
+    assert.equal(memoryTool.schema.safeParse({
+      action: 'recall',
+      query: '自己的经验',
+      scope: 'self',
+      id: '12345',
+    }).success, false)
+    assert.equal(memoryTool.schema.safeParse({
+      action: 'recall',
+      query: '主题资料',
+      scope: 'topic',
+      id: '12345',
+    }).success, false)
+    assert.equal(memoryTool.schema.safeParse({
+      action: 'recall',
+      query: '宽泛探索',
+    }).success, true)
+  })
+
+  test('description guides contextual recall without encouraging duplicate lookup', () => {
+    assert.match(memoryTool.description, /上下文不足/)
+    assert.match(memoryTool.description, /旧事.*偏好.*稳定事实.*经验/)
+    assert.match(memoryTool.description, /不要重复 recall/)
+    assert.match(memoryTool.description, /search.*宽泛.*文件/)
+    assert.match(memoryTool.description, /person\/group recall.*QQ.*群 id/)
+  })
+
   test('rejects topic write without stable title at execution boundary', async () => {
     await withTempMemory(async (rootDir) => {
       const tool = createMemoryTool({ workspaceDir: rootDir })
@@ -148,6 +197,28 @@ describe('memory tool schema', () => {
 })
 
 describe('memory tool execute', () => {
+  test('passes recall id through and only returns the selected person', async () => {
+    await withTempMemory(async (workspaceDir) => {
+      const tool = createMemoryTool({ workspaceDir })
+      await tool.execute({
+        action: 'write', scope: 'person', id: '10001', content: '喜欢无糖拿铁',
+      }, makeCtx())
+      await tool.execute({
+        action: 'write', scope: 'person', id: '10002', content: '喜欢无糖拿铁',
+      }, makeCtx())
+
+      const recalled = JSON.parse((await tool.execute({
+        action: 'recall',
+        query: '无糖拿铁',
+        scope: 'person',
+        id: '10002',
+      }, makeCtx())).content as string) as { ok: boolean; matches: Array<{ file: string }> }
+
+      assert.equal(recalled.ok, true)
+      assert.deepEqual(recalled.matches.map((match) => match.file), ['people/10002.md'])
+    })
+  })
+
   test('writes, searches, and reads self memory from the configured root', async () => {
     await withTempMemory(async (workspaceDir) => {
       const tool = createMemoryTool({

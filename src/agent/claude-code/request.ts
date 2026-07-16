@@ -101,7 +101,7 @@ export function buildClaudeCodeRequestBody(
       toClaudeMessage(
         message,
         adaptiveThinkingEnabled &&
-          shouldReplayNativeBlocks(input.messages, index, thinkingRetention),
+          shouldReplayClaudeNativeBlocks(input.messages, index, thinkingRetention),
       ),
     ),
   }
@@ -203,7 +203,7 @@ function toClaudeMessage(
   ]
 }
 
-function shouldReplayNativeBlocks(
+export function shouldReplayClaudeNativeBlocks(
   messages: AgentMessage[],
   index: number,
   retention: ClaudeThinkingRetention,

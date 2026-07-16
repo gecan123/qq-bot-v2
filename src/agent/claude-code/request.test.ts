@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { z } from 'zod'
-import { buildClaudeCodeRequestBody, toClaudeSystemBlocks } from './request.js'
+import {
+  buildClaudeCodeRequestBody,
+  shouldReplayClaudeNativeBlocks,
+  toClaudeSystemBlocks,
+} from './request.js'
 import type { Tool } from '../tool.js'
 import type { AgentMessage } from '../agent-context.types.js'
 import { CLAUDE_CODE_BILLING_HEADER } from './headers.js'
@@ -43,6 +47,74 @@ describe('toClaudeSystemBlocks', () => {
   test('persona 为空时 cache_control 落到 billing header 块上', () => {
     const blocks = toClaudeSystemBlocks('')
     assert.deepEqual(blocks[0]?.cache_control, { type: 'ephemeral', ttl: '1h' })
+  })
+})
+
+describe('shouldReplayClaudeNativeBlocks', () => {
+  const assistant: AgentMessage = {
+    role: 'assistant',
+    content: '',
+    nativeBlocks: [{ type: 'thinking', thinking: 'plan', signature: 'sig' }],
+    toolCalls: [{ id: 'call_1', name: 'send_message', args: { text: 'hi' } }],
+  }
+  const completedToolCycle: AgentMessage[] = [
+    assistant,
+    { role: 'tool', toolCallId: 'call_1', content: '{"ok":true}' },
+  ]
+
+  test('active-tool-cycle replays only a complete tool cycle at the tail', () => {
+    assert.equal(
+      shouldReplayClaudeNativeBlocks(completedToolCycle, 0, 'active-tool-cycle'),
+      true,
+    )
+    assert.equal(
+      shouldReplayClaudeNativeBlocks([assistant], 0, 'active-tool-cycle'),
+      false,
+    )
+  })
+
+  test('active-tool-cycle stops replaying after a later user message closes the cycle', () => {
+    assert.equal(
+      shouldReplayClaudeNativeBlocks(
+        [...completedToolCycle, { role: 'user', content: 'new input' }],
+        0,
+        'active-tool-cycle',
+      ),
+      false,
+    )
+  })
+
+  test('always replays native blocks after the tool cycle has closed', () => {
+    assert.equal(
+      shouldReplayClaudeNativeBlocks(
+        [...completedToolCycle, { role: 'user', content: 'new input' }],
+        0,
+        'always',
+      ),
+      true,
+    )
+  })
+
+  test('request body retains the existing replay shape selected by the helper', () => {
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 's',
+      messages: completedToolCycle,
+      tools: [dummyTool],
+      thinking: { mode: 'adaptive', retention: 'active-tool-cycle' },
+    })
+
+    assert.equal(
+      shouldReplayClaudeNativeBlocks(completedToolCycle, 0, 'active-tool-cycle'),
+      true,
+    )
+    assert.deepEqual(body.messages[0], {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'plan', signature: 'sig' },
+        { type: 'tool_use', id: 'call_1', name: 'send_message', input: { text: 'hi' } },
+      ],
+    })
   })
 })
 

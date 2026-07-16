@@ -339,6 +339,22 @@ describe('analyzeAgentContext window and provenance', () => {
 })
 
 describe('analyzeAgentContext degraded inputs', () => {
+  test('does not count Claude native thinking when provider is unknown', () => {
+    const report = analyze({
+      surface: null,
+      surfaceStatus: 'missing',
+      fallbackModel: undefined,
+      fallbackProvider: undefined,
+      fallbackContextWindowTokens: undefined,
+      claudeThinkingMode: 'adaptive',
+      claudeThinkingRetention: 'always',
+    })
+
+    assert.equal(report.provider, null)
+    assert.equal(report.categories.assistantThinking.tokens, 0)
+    assert.ok(report.warnings.some((warning) => /generic raw/i.test(warning)))
+  })
+
   test('keeps message estimates but marks fixed categories unavailable without a surface', () => {
     const report = analyze({
       surface: null,

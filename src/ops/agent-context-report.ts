@@ -4,7 +4,6 @@ import type {
 } from '../agent/agent-context.types.js'
 import {
   buildClaudeCodeRequestBody,
-  shouldReplayClaudeNativeBlocks,
   type ClaudeThinkingMode,
   type ClaudeThinkingRetention,
 } from '../agent/claude-code/request.js'
@@ -159,8 +158,6 @@ export function analyzeAgentContext(input: {
     warnings.push('Provider unavailable; using generic raw message estimation.')
     measureGenericMessages({
       messages: input.working.messages,
-      thinkingMode: input.claudeThinkingMode,
-      thinkingRetention: input.claudeThinkingRetention,
       categoryTokens,
       contributors,
       toolNamesByCallId,
@@ -484,8 +481,6 @@ function applyProviderMessageEstimate(input: {
 
 function measureGenericMessages(input: {
   messages: AgentMessage[]
-  thinkingMode: ClaudeThinkingMode
-  thinkingRetention: ClaudeThinkingRetention
   categoryTokens: Record<AgentContextCategoryName, number | null>
   contributors: Map<string, MutableContributor>
   toolNamesByCallId: ReadonlyMap<string, string>
@@ -510,17 +505,6 @@ function measureGenericMessages(input: {
         input.categoryTokens.assistantToolCalls = safeAdd(
           input.categoryTokens.assistantToolCalls ?? 0,
           estimateStructure(message.toolCalls),
-        )
-      }
-      if (
-        input.thinkingMode === 'adaptive'
-        && message.nativeBlocks
-        && message.nativeBlocks.length > 0
-        && shouldReplayClaudeNativeBlocks(input.messages, index, input.thinkingRetention)
-      ) {
-        input.categoryTokens.assistantThinking = safeAdd(
-          input.categoryTokens.assistantThinking ?? 0,
-          estimateStructure(message.nativeBlocks),
         )
       }
       continue

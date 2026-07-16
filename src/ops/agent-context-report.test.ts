@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import type { AgentMessage } from '../agent/agent-context.types.js'
+import { buildClaudeCodeRequestBody } from '../agent/claude-code/request.js'
 import { estimateUtf8Tokens } from '../agent/compaction-token-estimator.js'
+import { buildOpenAIAgentRequest } from '../agent/openai-agent/llm-client.js'
 import type { WorkingContextProjection } from '../agent/working-context.js'
 import type { AgentContextSurface } from './agent-context-surface.js'
 import {
@@ -79,6 +81,19 @@ function tokens(value: unknown): number {
   return estimateUtf8Tokens(stableJson(value))
 }
 
+function messageCategoryTotal(report: AgentContextReport): number {
+  return [
+    'userAndRuntimeMessages',
+    'assistantToolCalls',
+    'assistantThinking',
+    'toolResultsText',
+    'workingImages',
+    'assistantText',
+  ].reduce((sum, name) => (
+    sum + (report.categories[name as AgentContextCategoryName].tokens ?? 0)
+  ), 0)
+}
+
 function analyze(overrides: Partial<Parameters<typeof analyzeAgentContext>[0]> = {}) {
   return analyzeAgentContext({
     canonicalMessageCount: 5,
@@ -98,28 +113,19 @@ function analyze(overrides: Partial<Parameters<typeof analyzeAgentContext>[0]> =
 describe('analyzeAgentContext categories', () => {
   test('reports complete mutually exclusive surface and message categories', () => {
     const report = analyze()
-    const expected: Record<AgentContextCategoryName, number> = {
-      systemIdentity: 10,
-      botSystemPrompt: 20,
-      visibleTools: 30,
-      userAndRuntimeMessages: tokens({ role: 'user', content: 'runtime notice' }),
-      assistantToolCalls: tokens(messages[1]?.role === 'assistant' ? messages[1].toolCalls : []),
-      assistantThinking: tokens(messages[1]?.role === 'assistant' ? messages[1].nativeBlocks : []),
-      toolResultsText: tokens({ type: 'text', text: 'tool text' }),
-      workingImages: tokens({
-        type: 'image',
-        source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
-      }),
-      assistantText: tokens({ role: 'assistant', content: 'assistant reply' }),
+    assert.equal(report.categories.systemIdentity.tokens, 10)
+    assert.equal(report.categories.botSystemPrompt.tokens, 20)
+    assert.equal(report.categories.visibleTools.tokens, 30)
+    for (const category of Object.values(report.categories)) {
+      assert.equal(category.available, true)
+      assert.ok(category.tokens !== null && category.tokens >= 0)
+      assert.equal(category.percent, Math.round(category.tokens / 1_000 * 1_000) / 10)
     }
-
-    for (const [name, expectedTokens] of Object.entries(expected)) {
-      assert.deepEqual(report.categories[name as AgentContextCategoryName], {
-        available: true,
-        tokens: expectedTokens,
-        percent: Math.round(expectedTokens / 1_000 * 1_000) / 10,
-      })
-      assert.ok(expectedTokens >= 0)
+    for (const name of [
+      'userAndRuntimeMessages', 'assistantToolCalls', 'assistantThinking',
+      'toolResultsText', 'workingImages', 'assistantText',
+    ] as const) {
+      assert.ok(report.categories[name].tokens! > 0)
     }
     assert.equal(
       report.estimatedKnownInputTokens,
@@ -157,11 +163,57 @@ describe('analyzeAgentContext categories', () => {
     const openai = analyze({ surface: { ...surface, provider: 'openai-agent' } })
 
     assert.equal(closedCycle.categories.assistantThinking.tokens, 0)
-    assert.equal(always.categories.assistantThinking.tokens, tokens(
-      messages[1]?.role === 'assistant' ? messages[1].nativeBlocks : [],
-    ))
+    assert.ok(always.categories.assistantThinking.tokens! > 0)
     assert.equal(disabled.categories.assistantThinking.tokens, 0)
     assert.equal(openai.categories.assistantThinking.tokens, 0)
+  })
+
+  test('matches the complete Claude provider-facing message envelope', () => {
+    const report = analyze()
+    const providerMessages = buildClaudeCodeRequestBody({
+      model: surface.model,
+      systemPrompt: '',
+      messages,
+      tools: [],
+      thinking: { mode: 'adaptive', retention: 'always' },
+    }).messages
+    const rawContentOnly = tokens(messages[0])
+      + tokens(messages[1]?.role === 'assistant' ? messages[1].toolCalls : [])
+      + tokens(messages[1]?.role === 'assistant' ? messages[1].nativeBlocks : [])
+      + tokens({ role: 'assistant', content: 'assistant reply' })
+      + tokens({ type: 'text', text: 'tool text' })
+      + tokens({
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+      })
+
+    assert.equal(messageCategoryTotal(report), tokens(providerMessages))
+    assert.ok(messageCategoryTotal(report) > rawContentOnly)
+  })
+
+  test('matches OpenAI tool and image marker envelopes from the real request builder', () => {
+    const openaiSurface = { ...surface, provider: 'openai-agent' as const, model: 'gpt-5.5' }
+    const report = analyze({ surface: openaiSurface })
+    const providerMessages = buildOpenAIAgentRequest({
+      model: openaiSurface.model,
+      systemPrompt: '',
+      messages,
+      tools: [],
+    }).messages.slice(1)
+    const rawContentOnly = tokens(messages[0])
+      + tokens(messages[1]?.role === 'assistant' ? messages[1].toolCalls : [])
+      + tokens({ role: 'assistant', content: 'assistant reply' })
+      + tokens({ type: 'text', text: 'tool text' })
+      + tokens({
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+      })
+
+    assert.equal(messageCategoryTotal(report), tokens(providerMessages))
+    assert.ok(JSON.stringify(providerMessages).includes('image_url'))
+    assert.ok(report.categories.workingImages.tokens! > 0)
+    assert.ok(report.categories.toolResultsText.tokens! > 0)
+    assert.ok(messageCategoryTotal(report) > rawContentOnly)
   })
 })
 
@@ -178,7 +230,7 @@ describe('analyzeAgentContext window and provenance', () => {
       keepRecentTokens: 50,
       triggerTokens: 900,
       tokensUntilTrigger: Math.max(0, 900 - estimated),
-      overTrigger: estimated >= 900,
+      overTrigger: estimated > 900,
     })
   })
 
@@ -193,6 +245,23 @@ describe('analyzeAgentContext window and provenance', () => {
     assert.equal(report.compaction.overTrigger, true)
     assert.equal(report.freeTokens, 0)
     assert.equal(report.usagePercent, 100)
+  })
+
+  test('crosses the compaction trigger only after exceeding it', () => {
+    const estimated = analyze().estimatedCurrentInputTokens!
+    const atTrigger = analyze({
+      surface: { ...surface, contextWindowTokens: estimated + 100 },
+      reserveTokens: 100,
+    })
+    const aboveTrigger = analyze({
+      surface: { ...surface, contextWindowTokens: estimated + 99 },
+      reserveTokens: 100,
+    })
+
+    assert.equal(atTrigger.compaction.triggerTokens, estimated)
+    assert.equal(atTrigger.compaction.overTrigger, false)
+    assert.equal(aboveTrigger.compaction.triggerTokens, estimated - 1)
+    assert.equal(aboveTrigger.compaction.overTrigger, true)
   })
 
   test('maps tool result contributors and sorts by tokens then name', () => {
@@ -215,16 +284,23 @@ describe('analyzeAgentContext window and provenance', () => {
     }
     const report = analyze({ working: contributorWorking })
 
-    assert.deepEqual(report.toolResultContributors.map((item) => item.toolName), [
-      'unknown', 'alpha', 'zeta',
-    ])
+    assert.equal(report.toolResultContributors[0]?.toolName, '<unmatched-tool-result>')
+    assert.deepEqual(
+      new Set(report.toolResultContributors.slice(1).map((item) => item.toolName)),
+      new Set(['alpha', 'zeta']),
+    )
     assert.equal(report.toolResultContributors[0]?.resultCount, 1)
-    assert.equal(report.toolResultContributors[1]?.tokens, report.toolResultContributors[2]?.tokens)
+    for (let index = 1; index < report.toolResultContributors.length; index++) {
+      const previous = report.toolResultContributors[index - 1]!
+      const current = report.toolResultContributors[index]!
+      assert.ok(previous.tokens >= current.tokens)
+      if (previous.tokens === current.tokens) assert.ok(previous.toolName < current.toolName)
+    }
     assert.ok(report.warnings.some((warning) => /unknown tool result/i.test(warning)))
     assert.equal(JSON.stringify(report).includes('much longer unknown result'), false)
   })
 
-  test('does not treat a tool literally named unknown as an orphan result', () => {
+  test('keeps a real unknown tool contributor separate from unmatched results', () => {
     const report = analyze({
       working: {
         messages: [
@@ -233,16 +309,20 @@ describe('analyzeAgentContext window and provenance', () => {
             toolCalls: [{ id: 'known', name: 'unknown', args: {} }],
           },
           { role: 'tool', toolCallId: 'known', content: 'known result' },
+          { role: 'tool', toolCallId: 'orphan', content: 'unmatched result' },
         ],
         stats: {
-          sourceMessages: 2, projectedMessages: 2, hydratedImages: 0,
+          sourceMessages: 3, projectedMessages: 3, hydratedImages: 0,
           omittedImages: 0, unavailableImages: 0,
         },
       },
     })
 
-    assert.deepEqual(report.toolResultContributors.map((item) => item.toolName), ['unknown'])
-    assert.equal(report.warnings.some((warning) => /unknown tool result/i.test(warning)), false)
+    assert.deepEqual(
+      new Set(report.toolResultContributors.map((item) => item.toolName)),
+      new Set(['unknown', '<unmatched-tool-result>']),
+    )
+    assert.equal(report.warnings.some((warning) => /unknown tool result/i.test(warning)), true)
   })
 
   test('reports canonical, working, and working image projection counts verbatim', () => {
@@ -267,6 +347,12 @@ describe('analyzeAgentContext degraded inputs', () => {
       fallbackProvider: 'openai-agent',
       fallbackContextWindowTokens: 2_000,
     })
+    const fallbackProviderMessages = buildOpenAIAgentRequest({
+      model: 'fallback-model',
+      systemPrompt: '',
+      messages,
+      tools: [],
+    }).messages.slice(1)
 
     for (const name of ['systemIdentity', 'botSystemPrompt', 'visibleTools'] as const) {
       assert.deepEqual(report.categories[name], { available: false, tokens: null, percent: null })
@@ -279,7 +365,9 @@ describe('analyzeAgentContext degraded inputs', () => {
     assert.equal(report.model, 'fallback-model')
     assert.equal(report.provider, 'openai-agent')
     assert.equal(report.contextWindowTokens, 2_000)
+    assert.equal(messageCategoryTotal(report), tokens(fallbackProviderMessages))
     assert.ok(report.warnings.some((warning) => /fallback/i.test(warning)))
+    assert.equal(report.warnings.some((warning) => /generic raw/i.test(warning)), false)
   })
 
   test('normalizes unsafe counts and arithmetic without producing negative or unsafe values', () => {
@@ -341,6 +429,7 @@ describe('analyzeAgentContext degraded inputs', () => {
     assert.equal(report.provider, null)
     assert.equal(report.contextWindowTokens, null)
     assert.equal(report.estimatedKnownInputTokens, 0)
+    assert.ok(report.warnings.some((warning) => /generic raw/i.test(warning)))
     assert.ok(Object.values(report.categories).every((category) => (
       category.tokens === null || category.tokens === 0
     )))

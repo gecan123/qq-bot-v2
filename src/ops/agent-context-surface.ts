@@ -36,6 +36,7 @@ export type AgentContextSurfaceReadResult =
   | { status: 'invalid'; error: string }
 
 const nonNegativeSafeIntegerSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+const maxSafeIntegerBigInt = BigInt(Number.MAX_SAFE_INTEGER)
 const metricSchema = z.object({
   bytes: nonNegativeSafeIntegerSchema,
   tokens: nonNegativeSafeIntegerSchema,
@@ -58,12 +59,12 @@ const agentContextSurfaceSchema = z.object({
   }).strict(),
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict().superRefine((surface, ctx) => {
-  const totalBytes = surface.tools.items.reduce((sum, item) => safeAdd(sum, item.bytes), 0)
-  const totalTokens = surface.tools.items.reduce((sum, item) => safeAdd(sum, item.tokens), 0)
-  if (surface.tools.totalBytes !== totalBytes) {
+  const totalBytes = sumBigInts(surface.tools.items.map((item) => item.bytes))
+  const totalTokens = sumBigInts(surface.tools.items.map((item) => item.tokens))
+  if (BigInt(surface.tools.totalBytes) !== totalBytes) {
     ctx.addIssue({ code: 'custom', path: ['tools', 'totalBytes'], message: 'must equal item bytes' })
   }
-  if (surface.tools.totalTokens !== totalTokens) {
+  if (BigInt(surface.tools.totalTokens) !== totalTokens) {
     ctx.addIssue({ code: 'custom', path: ['tools', 'totalTokens'], message: 'must equal item tokens' })
   }
 })
@@ -93,8 +94,8 @@ export function buildAgentContextSurface(input: {
     systemIdentity: measure(serializeSystemIdentity(input.provider)),
     botSystemPrompt: measure(input.systemPrompt),
     tools: {
-      totalBytes: items.reduce((sum, item) => safeAdd(sum, item.bytes), 0),
-      totalTokens: items.reduce((sum, item) => safeAdd(sum, item.tokens), 0),
+      totalBytes: sumSafeIntegers(items.map((item) => item.bytes), 'tool bytes'),
+      totalTokens: sumSafeIntegers(items.map((item) => item.tokens), 'tool tokens'),
       items,
     },
     fingerprint: createHash('sha256').update(stableStringify({
@@ -187,9 +188,16 @@ function stableStringify(value: unknown): string {
     .join(',')}}`
 }
 
-function safeAdd(left: number, right: number): number {
-  const value = left + right
-  return Number.isSafeInteger(value) ? value : Number.MAX_SAFE_INTEGER
+function sumBigInts(values: readonly number[]): bigint {
+  return values.reduce((sum, value) => sum + BigInt(value), 0n)
+}
+
+function sumSafeIntegers(values: readonly number[], label: string): number {
+  const total = sumBigInts(values)
+  if (total > maxSafeIntegerBigInt) {
+    throw new RangeError(`${label} total exceeds Number.MAX_SAFE_INTEGER`)
+  }
+  return Number(total)
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

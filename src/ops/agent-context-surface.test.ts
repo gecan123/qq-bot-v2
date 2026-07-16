@@ -162,6 +162,28 @@ test('invalid JSON and unsupported schema versions return invalid without throwi
   assert.equal(invalidMetadata.status, 'invalid')
 })
 
+test('reader rejects tool totals whose exact sum exceeds the safe integer range', async () => {
+  const root = await makeRoot()
+  const path = join(root, 'context-surface.json')
+  const surface = createSurface()
+  const overflowingSurface = {
+    ...surface,
+    tools: {
+      totalBytes: Number.MAX_SAFE_INTEGER,
+      totalTokens: Number.MAX_SAFE_INTEGER,
+      items: [
+        { name: 'first', bytes: Number.MAX_SAFE_INTEGER, tokens: Number.MAX_SAFE_INTEGER },
+        { name: 'second', bytes: 1, tokens: 1 },
+      ],
+    },
+  }
+
+  await writeFile(path, JSON.stringify(overflowingSurface), 'utf8')
+
+  const result = await readAgentContextSurface(path)
+  assert.equal(result.status, 'invalid')
+})
+
 test('atomic writes create parents, replace old data, and leave no temporary file', async () => {
   const root = await makeRoot()
   const directory = join(root, 'nested', 'logs')

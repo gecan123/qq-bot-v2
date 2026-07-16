@@ -15,6 +15,7 @@
     "agent:daily-metrics": "tsx scripts/agent-daily-metrics.ts",
     "agent:memory-check": "tsx scripts/agent-memory-check.ts",
     "agent:ledger-check": "tsx scripts/agent-ledger-check.ts",
+    "agent:context": "tsx scripts/agent-context.ts",
     "agent:reset-memory": "tsx scripts/reset-agent-memory.ts",
     "start": "node dist/index.js",
     "db:generate": "prisma generate",

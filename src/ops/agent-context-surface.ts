@@ -35,6 +35,11 @@ export type AgentContextSurfaceReadResult =
   | { status: 'missing' }
   | { status: 'invalid'; error: string }
 
+export type AgentContextSurfaceStatus = 'live' | 'last_startup' | 'missing' | 'invalid'
+
+type ReadTextFile = (path: string, encoding: 'utf8') => Promise<string>
+type KillProcess = (pid: number, signal: 0) => boolean
+
 const nonNegativeSafeIntegerSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const maxSafeIntegerBigInt = BigInt(Number.MAX_SAFE_INTEGER)
 const metricSchema = z.object({
@@ -141,6 +146,34 @@ export async function readAgentContextSurface(path: string): Promise<AgentContex
     return { status: 'available', surface: result.data }
   } catch (error) {
     return { status: 'invalid', error: errorMessage(error) }
+  }
+}
+
+export async function classifySurfaceStatus(
+  surfaceRead: AgentContextSurfaceReadResult,
+  pidPath: string,
+  readTextFile: ReadTextFile = async (path, encoding) => readFile(path, encoding),
+  killProcess: KillProcess = (pid, signal) => process.kill(pid, signal),
+): Promise<AgentContextSurfaceStatus> {
+  if (surfaceRead.status !== 'available') return surfaceRead.status
+
+  let rawPid: string
+  try {
+    rawPid = await readTextFile(pidPath, 'utf8')
+  } catch {
+    return 'last_startup'
+  }
+
+  const normalizedPid = rawPid.trim()
+  if (!/^[1-9]\d*$/.test(normalizedPid)) return 'last_startup'
+  const pid = Number(normalizedPid)
+  if (!Number.isSafeInteger(pid) || pid !== surfaceRead.surface.pid) return 'last_startup'
+
+  try {
+    killProcess(pid, 0)
+    return 'live'
+  } catch (error) {
+    return isNodeError(error) && error.code === 'EPERM' ? 'live' : 'last_startup'
   }
 }
 

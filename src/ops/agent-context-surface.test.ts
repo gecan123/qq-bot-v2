@@ -12,6 +12,7 @@ import type { Tool } from '../agent/tool.js'
 import {
   AGENT_CONTEXT_SURFACE_SCHEMA_VERSION,
   buildAgentContextSurface,
+  classifySurfaceStatus,
   readAgentContextSurface,
   writeAgentContextSurface,
 } from './agent-context-surface.js'
@@ -207,6 +208,64 @@ test('failed atomic replacement removes its temporary file', async () => {
   await assert.rejects(writeAgentContextSurface(path, createSurface()))
 
   assert.deepEqual(await readdir(directory), ['context-surface.json'])
+})
+
+test('surface status preserves missing and invalid reads without touching the pid file', async () => {
+  let reads = 0
+  const readPid = async () => {
+    reads++
+    return '123'
+  }
+  const kill = () => true
+
+  assert.equal(await classifySurfaceStatus({ status: 'missing' }, '.bot.pid', readPid, kill), 'missing')
+  assert.equal(await classifySurfaceStatus(
+    { status: 'invalid', error: 'bad schema' },
+    '.bot.pid',
+    readPid,
+    kill,
+  ), 'invalid')
+  assert.equal(reads, 0)
+})
+
+test('surface status is live only for the matching active pid, including EPERM', async () => {
+  const surfaceRead = { status: 'available' as const, surface: createSurface() }
+  const successfulPids: number[] = []
+
+  assert.equal(await classifySurfaceStatus(
+    surfaceRead,
+    '.bot.pid',
+    async () => '123\n',
+    (pid, signal) => {
+      successfulPids.push(pid)
+      assert.equal(signal, 0)
+      return true
+    },
+  ), 'live')
+  assert.deepEqual(successfulPids, [123])
+
+  assert.equal(await classifySurfaceStatus(
+    surfaceRead,
+    '.bot.pid',
+    async () => '123',
+    () => {
+      const error = new Error('not permitted') as NodeJS.ErrnoException
+      error.code = 'EPERM'
+      throw error
+    },
+  ), 'live')
+})
+
+test('surface status treats stale, missing, invalid, or dead pids as last startup', async () => {
+  const surfaceRead = { status: 'available' as const, surface: createSurface() }
+  const dead = new Error('no such process') as NodeJS.ErrnoException
+  dead.code = 'ESRCH'
+
+  assert.equal(await classifySurfaceStatus(surfaceRead, '.bot.pid', async () => '456', () => true), 'last_startup')
+  assert.equal(await classifySurfaceStatus(surfaceRead, '.bot.pid', async () => 'not-a-pid', () => true), 'last_startup')
+  assert.equal(await classifySurfaceStatus(surfaceRead, '.bot.pid', async () => '', () => true), 'last_startup')
+  assert.equal(await classifySurfaceStatus(surfaceRead, '.bot.pid', async () => { throw dead }, () => true), 'last_startup')
+  assert.equal(await classifySurfaceStatus(surfaceRead, '.bot.pid', async () => '123', () => { throw dead }), 'last_startup')
 })
 
 test('fingerprint changes with every request-surface input', () => {

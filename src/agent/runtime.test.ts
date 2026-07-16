@@ -13,6 +13,7 @@ import { McpManager } from './mcp-manager.js'
 import { createInMemoryGoalStore } from './goal-store.js'
 import type { ScheduleRuntime, ScheduleRuntimeLogEntry } from './schedule-runtime.js'
 import { createTestAgentLedger } from './test-support/agent-ledger.js'
+import { buildAgentContextSurface } from '../ops/agent-context-surface.js'
 
 const tempDirs: string[] = []
 
@@ -21,6 +22,30 @@ afterEach(async () => {
 })
 
 describe('createAgentRuntime', () => {
+  test('keeps the fixed Agent surface within provider budgets', () => {
+    const runtime = createAgentRuntime(makeRuntimeInput())
+    const base = {
+      model: 'test-model',
+      contextWindowTokens: 200_000,
+      systemPrompt: runtime.systemPrompt,
+      tools: runtime.tools.list(),
+      generatedAt: '2026-07-16T12:00:00.000+08:00',
+    }
+    const claude = buildAgentContextSurface({ ...base, provider: 'claude-code' })
+    const openai = buildAgentContextSurface({ ...base, provider: 'openai-agent' })
+    const total = (surface: typeof claude) => (
+      surface.fixedTokens.systemIdentity
+      + surface.fixedTokens.botSystemPrompt
+      + surface.fixedTokens.visibleTools
+    )
+
+    assert.ok(claude.fixedTokens.botSystemPrompt <= 2_800)
+    assert.ok(claude.fixedTokens.visibleTools <= 7_000)
+    assert.ok(openai.fixedTokens.visibleTools <= 7_800)
+    assert.ok(total(claude) <= 9_900)
+    assert.ok(total(openai) <= 10_700)
+  })
+
   test('wires deferred tool activation state through AgentContext', async () => {
     const context = createAgentContext()
     context.activateToolCapability('external_research')

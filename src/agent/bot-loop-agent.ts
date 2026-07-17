@@ -13,6 +13,7 @@ import {
 import {
   createCompactionCandidate,
   prepareCompaction,
+  summarizeCachedClaudeCompaction,
   summarizeCompactionCandidate,
   type MaybeCompactOptions,
 } from './compaction.js'
@@ -56,6 +57,7 @@ import type {
 import { runAfterCompactHook } from './compaction-hooks.js'
 import { config } from '../config/index.js'
 import { estimateLedgerContextTokens } from './compaction-token-estimator.js'
+import { buildWorkingContextProjection } from './working-context.js'
 
 const log = createLogger('BOT_LOOP')
 
@@ -319,14 +321,49 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         mailboxContinuity: compactedContinuity,
       }
       try {
+        let summarize = options.summarizeCandidate
+        if (summarize == null && deps.llm.provider === 'claude-code' && !preparation.isSplitTurn) {
+          const activeMessageCount = preparation.entriesToSummarize.length
+            + preparation.tailEntries.length
+          const syntheticMessageCount = latestProjection.snapshot.messages.length
+            - activeMessageCount
+          const prefixMessageCount = syntheticMessageCount
+            + preparation.entriesToSummarize.length
+          if (
+            syntheticMessageCount < 0
+            || prefixMessageCount <= 0
+            || prefixMessageCount >= latestProjection.snapshot.messages.length
+          ) {
+            throw new Error('cached Claude compaction prefix does not match canonical projection')
+          }
+          const workingProjection = await buildWorkingContextProjection(
+            latestProjection.snapshot.messages,
+          )
+          const cachedPrefix = workingProjection.messages.slice(0, prefixMessageCount)
+          const visibleTools = deps.tools.list()
+          summarize = (_request, { signal }) => summarizeCachedClaudeCompaction({
+            llm: deps.llm,
+            systemPrompt: deps.systemPrompt,
+            messages: cachedPrefix,
+            tools: visibleTools,
+            ...(preparation.manualFocus == null
+              ? {}
+              : { manualFocus: preparation.manualFocus }),
+            ...(options.maxSummaryTokens == null
+              ? {}
+              : { maxSummaryTokens: options.maxSummaryTokens }),
+            signal,
+          })
+        }
+        summarize ??= (request, { signal }) => summarizeCompactionCandidate(request, {
+          signal,
+          llm: deps.llm,
+        })
         candidate = await createCompactionCandidate({
           entries: canonical.entries,
           runtimeState: candidateRuntimeState,
           preparation,
-          summarize: options.summarizeCandidate
-            ?? ((request) => summarizeCompactionCandidate(request, {
-              signal: compactionAbortController.signal,
-            })),
+          summarize,
           hooks: options.hooks,
           signal: compactionAbortController.signal,
           maxSummaryTokens: options.maxSummaryTokens,

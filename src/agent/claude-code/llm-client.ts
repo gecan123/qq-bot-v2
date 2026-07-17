@@ -124,6 +124,7 @@ export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput)
   const retry = normalizeRetryOptions(input.retry)
 
   return {
+    provider: 'claude-code',
     async chat(req: LlmCallInput): Promise<LlmCallOutput> {
       // 注: req.temperature 这里被显式吃掉. Anthropic reasoning 模型拒收 temperature 字段
       // (见 request.ts 顶部注释), OpenAI 路径在 ../llm-client.ts 仍 honor 它。

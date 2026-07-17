@@ -46,6 +46,7 @@ export function createOpenAIAgentLlmClient(input: CreateOpenAIAgentLlmClientInpu
   const client = input.client ?? new OpenAI({ baseURL: input.baseURL, apiKey: input.apiKey })
 
   return {
+    provider: 'openai-agent',
     async chat(req: LlmCallInput): Promise<LlmCallOutput> {
       try {
         const response = await client.chat.completions.create(

@@ -4,7 +4,7 @@ import { createBotLoopAgent } from './bot-loop-agent.js'
 import { createAgentContext } from './agent-context.js'
 import { InMemoryEventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
-import type { LlmClient, LlmCallOutput } from './llm-client.js'
+import type { LlmCallInput, LlmClient, LlmCallOutput } from './llm-client.js'
 import type { ToolExecutionResult, ToolExecutor } from './tool.js'
 import type { PersistedAgentSnapshot } from './agent-context.types.js'
 import type { AgentMessage } from './agent-context.types.js'
@@ -383,6 +383,120 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(ctx.getSnapshot().messages.at(-1)?.content, 'recent')
     const canonical = await ledger.repo.loadCanonicalState()
     assert.equal(canonical.runtimeState.mailboxContinuity.compactionEpoch, 1)
+  })
+
+  test('Claude compaction reuses the main system, tools, and raw projected prefix', async () => {
+    const seed = ['old-a', 'old-b', 'old-c', 'recent'].map((content) => ({
+      role: 'user' as const,
+      content,
+    }))
+    const calls: LlmCallInput[] = []
+    const llm: LlmClient = {
+      provider: 'claude-code',
+      async chat(input) {
+        calls.push(input)
+        if (calls.length === 1) {
+          return {
+            content: '', toolCalls: [],
+            usage: { inputTokens: 91, cachedTokens: 0, outputTokens: 0 },
+            model: 'mock', contextWindowTokens: 100, stopReason: 'end_turn',
+          }
+        }
+        return {
+          content: validLedgerSummary(), toolCalls: [],
+          usage: { inputTokens: 80, cachedTokens: 70, outputTokens: 10 },
+          model: 'mock', contextWindowTokens: 100, stopReason: 'end_turn',
+        }
+      },
+    }
+    const ctx = createAgentContext({ initialMessages: seed })
+    const ledger = makeCanonicalCompactionHarness(seed)
+    const tools = makeMockTools()
+    const agent = createBotLoopAgent({
+      systemPrompt: 'main system bytes',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm,
+      tools,
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      initialLedgerHeadEntryId: 4n,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      compactOptions: { reserveTokens: 20, keepRecentTokens: 1 },
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(calls.length, 2)
+    const compaction = calls[1]!
+    assert.equal(compaction.systemPrompt, 'main system bytes')
+    assert.deepEqual(compaction.messages.slice(0, -1), seed.slice(0, 3))
+    assert.match(
+      compaction.messages.at(-1)?.role === 'user'
+        ? compaction.messages.at(-1)!.content as string
+        : '',
+      /trusted runtime compaction control/,
+    )
+    assert.deepEqual(compaction.tools, tools.list())
+    assert.deepEqual(compaction.cacheBreakpointMessageIndexes, [2])
+    assert.equal(compaction.claudeToolChoice, 'auto')
+    assert.equal(ledger.compactionCalls.length, 1)
+  })
+
+  test('OpenAI compaction keeps the dedicated summarizer request shape', async () => {
+    const seed = ['old-a', 'old-b', 'old-c', 'recent'].map((content) => ({
+      role: 'user' as const,
+      content,
+    }))
+    const calls: LlmCallInput[] = []
+    const llm: LlmClient = {
+      provider: 'openai-agent',
+      async chat(input) {
+        calls.push(input)
+        return calls.length === 1
+          ? {
+              content: '', toolCalls: [],
+              usage: { inputTokens: 91, cachedTokens: 0, outputTokens: 0 },
+              model: 'mock', contextWindowTokens: 100, stopReason: 'end_turn',
+            }
+          : {
+              content: validLedgerSummary(), toolCalls: [],
+              usage: { inputTokens: 80, cachedTokens: 0, outputTokens: 10 },
+              model: 'mock', contextWindowTokens: 100, stopReason: 'end_turn',
+            }
+      },
+    }
+    const ctx = createAgentContext({ initialMessages: seed })
+    const ledger = makeCanonicalCompactionHarness(seed)
+    const agent = createBotLoopAgent({
+      systemPrompt: 'main system bytes',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm,
+      tools: makeMockTools(),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      initialLedgerHeadEntryId: 4n,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      compactOptions: { reserveTokens: 20, keepRecentTokens: 1 },
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(calls.length, 2)
+    const compaction = calls[1]!
+    assert.notEqual(compaction.systemPrompt, 'main system bytes')
+    assert.match(compaction.systemPrompt, /compaction summarizer/)
+    assert.deepEqual(compaction.tools, [])
+    const text = compaction.messages
+      .filter((message) => message.role === 'user')
+      .map((message) => message.content)
+      .join('\n')
+    assert.match(text, /\[UNTRUSTED_DATA/)
+    assert.equal(compaction.cacheBreakpointMessageIndexes, undefined)
+    assert.equal(ledger.compactionCalls.length, 1)
   })
 
   test('ledger threshold includes tool output appended after the provider token prefix', async () => {

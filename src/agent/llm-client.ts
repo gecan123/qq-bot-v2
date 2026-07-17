@@ -73,6 +73,8 @@ export interface LlmCallOutput {
 }
 
 export interface LlmClient {
+  /** 运行时实际 wire adapter；用于选择 provider-specific 性能路径。 */
+  readonly provider?: 'claude-code' | 'openai-agent'
   chat(input: LlmCallInput): Promise<LlmCallOutput>
 }
 
@@ -115,6 +117,9 @@ export function createFallbackLlmClient(input: {
   fallbackModel: string
 }): LlmClient {
   return {
+    ...(input.primary.provider === input.fallback.provider && input.primary.provider != null
+      ? { provider: input.primary.provider }
+      : {}),
     async chat(request) {
       try {
         return await input.primary.chat(request)

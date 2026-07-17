@@ -10,7 +10,7 @@ import {
 } from '../config/index.js'
 import { createClaudeCodeLlmClient } from './claude-code/llm-client.js'
 import { createOpenAIAgentLlmClient } from './openai-agent/llm-client.js'
-import type { ClaudeThinkingConfig } from './claude-code/request.js'
+import type { ClaudeThinkingConfig, ClaudeToolChoice } from './claude-code/request.js'
 import { createLogger } from '../logger.js'
 
 const log = createLogger('llm-client')
@@ -35,6 +35,8 @@ export interface LlmCallInput {
   tools: Tool[]
   /** Claude-only: 在指定源消息结尾增加 prompt-cache breakpoint。其他 provider 忽略。 */
   cacheBreakpointMessageIndexes?: readonly number[]
+  /** Claude-only call override；compaction 用 auto 保留 tools prefix 但不强制工具调用。 */
+  claudeToolChoice?: ClaudeToolChoice
   /** 单次生成的输出 token 上限；不改变输入上下文窗口。 */
   maxOutputTokens?: number
   /** 可选调用级取消信号，供旁路/有界任务真正终止底层 HTTP 请求。 */

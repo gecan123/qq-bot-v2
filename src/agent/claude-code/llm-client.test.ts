@@ -107,6 +107,28 @@ describe('ClaudeCodeLlmClient.chat', () => {
     assert.deepEqual(body.tool_choice, { type: 'auto' })
   })
 
+  test('allows compaction to override configured any tool choice with auto', async (t) => {
+    const { fn, calls } = makeFetchMock([{ body: SAMPLE_TEXT_SSE }])
+    t.mock.method(globalThis, 'fetch', fn)
+
+    const client = createClaudeCodeLlmClient({
+      model: 'claude-sonnet-4-5',
+      contextWindowTokens: 200_000,
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+      toolChoice: 'any',
+    })
+    await client.chat({
+      systemPrompt: 'persona',
+      messages: [{ role: 'user', content: 'compact this' }],
+      tools: [echoTool],
+      claudeToolChoice: 'auto',
+    })
+
+    const body = JSON.parse(String(calls[0]?.init.body)) as Record<string, unknown>
+    assert.deepEqual(body.tool_choice, { type: 'auto' })
+  })
+
   test('forwards adaptive thinking mode into the request body', async (t) => {
     const { fn, calls } = makeFetchMock([{ body: SAMPLE_TEXT_SSE }])
     t.mock.method(globalThis, 'fetch', fn)

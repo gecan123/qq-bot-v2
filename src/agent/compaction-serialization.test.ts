@@ -5,6 +5,7 @@ import type { MessageAgentLedgerEntry } from './agent-ledger.types.js'
 import {
   buildCompactionSummarizerRequest,
   estimateCompactionTextTokens,
+  renderCachedClaudeCompactionControl,
   serializeCompactionSources,
   validateCompactionSummary,
 } from './compaction-serialization.js'
@@ -80,6 +81,29 @@ describe('compaction serialization', () => {
     assert.match(result.transcriptEnvelope, /history-0-/)
     assert.match(result.transcriptEnvelope, /history-179-/)
     assert.doesNotMatch(result.transcriptEnvelope, /"omittedMessages"/)
+  })
+
+  test('renders stable trusted control for cache-preserving Claude compaction', () => {
+    const control = renderCachedClaudeCompactionControl({
+      manualFocus: '只保留已经确认的工具事实',
+      maxSummaryTokens: 2_048,
+    })
+
+    for (const heading of [
+      '## 讨论过的话题',
+      '## 群友信息',
+      '## 我的目标、承诺和状态',
+      '## 关键约束与决定',
+      '## 工具调用结果',
+      '## 情绪和氛围',
+      '## 下一步',
+    ]) assert.match(control, new RegExp(heading))
+    assert.match(control, /原始历史前缀将被这份摘要替换/)
+    assert.match(control, /后续工作必须能仅凭摘要继续/)
+    assert.match(control, /只输出纯文本摘要，不得调用任何工具/)
+    assert.match(control, /受控机器状态标记.*权威状态/)
+    assert.match(control, /2048/)
+    assert.match(control, /只保留已经确认的工具事实/)
   })
 
   test('requires seven ordered non-empty headings and a token budget', () => {

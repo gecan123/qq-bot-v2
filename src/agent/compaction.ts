@@ -1,5 +1,6 @@
 import type { AgentMessage } from './agent-context.types.js'
-import { createLlmClient } from './llm-client.js'
+import { createLlmClient, type LlmClient } from './llm-client.js'
+import type { Tool } from './tool.js'
 import { recordTokenUsage } from './token-stats.js'
 import {
   captureMailboxAttentionState,
@@ -27,6 +28,7 @@ import {
   DEFAULT_COMPACTION_SUMMARY_MAX_TOKENS,
   estimateCompactionTextTokens,
   repairOversizedCompactionSummary,
+  renderCachedClaudeCompactionControl,
   validateCompactionSummary,
   type CompactionSummarizerRequest,
 } from './compaction-serialization.js'
@@ -523,4 +525,63 @@ export async function summarizeCompactionCandidate(
     model: result.model,
   })
   return result.content.trim()
+}
+
+export async function summarizeCachedClaudeCompaction(input: {
+  llm: LlmClient
+  systemPrompt: string
+  messages: readonly AgentMessage[]
+  tools: readonly Tool[]
+  manualFocus?: string
+  maxSummaryTokens?: number
+  signal?: AbortSignal
+}): Promise<string> {
+  throwIfCompactionAborted(input.signal)
+  const maxSummaryTokens = input.maxSummaryTokens
+    ?? DEFAULT_COMPACTION_SUMMARY_MAX_TOKENS
+  const controlMessage: AgentMessage = {
+    role: 'user',
+    content: renderCachedClaudeCompactionControl({
+      ...(input.manualFocus == null ? {} : { manualFocus: input.manualFocus }),
+      maxSummaryTokens,
+    }),
+  }
+  const prefixMessages = input.messages.map((message) => structuredClone(message))
+  const result = await input.llm.chat({
+    systemPrompt: input.systemPrompt,
+    messages: [...prefixMessages, controlMessage],
+    tools: [...input.tools],
+    ...(prefixMessages.length === 0
+      ? {}
+      : { cacheBreakpointMessageIndexes: [prefixMessages.length - 1] }),
+    claudeToolChoice: 'auto',
+    maxOutputTokens: maxSummaryTokens,
+    signal: input.signal,
+  })
+  recordTokenUsage({
+    operation: 'compaction',
+    inputTokens: result.usage.inputTokens,
+    cachedTokens: result.usage.cachedTokens,
+    outputTokens: result.usage.outputTokens,
+    model: result.model,
+  })
+  throwIfCompactionAborted(input.signal)
+  if (result.toolCalls.length > 0) {
+    throw new Error('cached Claude compaction failed: tool_call')
+  }
+  if (result.stopReason === 'max_tokens') {
+    throw new Error('cached Claude compaction failed: max_tokens')
+  }
+  if (result.stopReason === 'model_context_window_exceeded') {
+    throw new Error('cached Claude compaction failed: context_stop')
+  }
+  const summary = result.content.trim()
+  if (!summary) throw new Error('cached Claude compaction failed: empty_output')
+  return summary
+}
+
+function throwIfCompactionAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return
+  if (signal.reason instanceof Error) throw signal.reason
+  throw new Error('cached Claude compaction cancelled')
 }

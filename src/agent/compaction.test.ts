@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { z } from 'zod'
 
 import type { AgentMessage } from './agent-context.types.js'
 import type {
@@ -10,11 +11,14 @@ import type {
 } from './agent-ledger.types.js'
 import { AGENT_RUNTIME_STATE_SCHEMA_VERSION } from './agent-ledger.types.js'
 import { estimateEntryTokens } from './compaction-token-estimator.js'
+import type { LlmCallInput, LlmCallOutput, LlmClient } from './llm-client.js'
+import type { Tool } from './tool.js'
 import { createEmptyMailboxContinuityState } from './mailbox-continuity.js'
 import {
   createCompactionCandidate,
   prepareCompaction,
   selectCompactionCacheBreakpointMessageIndex,
+  summarizeCachedClaudeCompaction,
   type CompactionPreparation,
   type ReadyCompactionPreparation,
 } from './compaction.js'
@@ -166,6 +170,100 @@ test('selectCompactionCacheBreakpointMessageIndex returns null without a legal c
   ]
 
   assert.equal(selectCompactionCacheBreakpointMessageIndex(messages, 1), null)
+})
+
+test('summarizeCachedClaudeCompaction appends one control message to the unchanged main prefix', async () => {
+  const prefix = [user('old turn'), asst('old answer')]
+  const visibleTools: Tool[] = [{
+    name: 'lookup',
+    description: 'lookup facts',
+    schema: z.object({ query: z.string() }),
+    async execute() { return { content: 'ok' } },
+  }]
+  const captured: LlmCallInput[] = []
+  const llm: LlmClient = {
+    async chat(input): Promise<LlmCallOutput> {
+      captured.push(input)
+      return {
+        content: validLedgerSummary(),
+        toolCalls: [],
+        usage: { inputTokens: 100, cachedTokens: 80, outputTokens: 20 },
+        model: 'claude-test',
+        contextWindowTokens: 200_000,
+        stopReason: 'end_turn',
+      }
+    },
+  }
+
+  const result = await summarizeCachedClaudeCompaction({
+    llm,
+    systemPrompt: 'main system bytes',
+    messages: prefix,
+    tools: visibleTools,
+    manualFocus: 'owner focus',
+    maxSummaryTokens: 2_048,
+  })
+
+  const request = captured[0]!
+  assert.equal(result, validLedgerSummary())
+  assert.equal(request.systemPrompt, 'main system bytes')
+  assert.deepEqual(request.messages.slice(0, -1), prefix)
+  const control = request.messages.at(-1)
+  assert.equal(control?.role, 'user')
+  assert.match(control?.role === 'user' ? control.content : '', /owner focus/)
+  assert.deepEqual(request.tools, visibleTools)
+  assert.deepEqual(request.cacheBreakpointMessageIndexes, [1])
+  assert.equal(request.maxOutputTokens, 2_048)
+  assert.equal(request.claudeToolChoice, 'auto')
+})
+
+test('summarizeCachedClaudeCompaction rejects unsafe or incomplete completions', async () => {
+  const cases: Array<{ name: string; output: Partial<LlmCallOutput> }> = [
+    { name: 'tool call', output: { content: validLedgerSummary(), toolCalls: [{ id: 'x', name: 'lookup', args: {} }] } },
+    { name: 'empty output', output: { content: '   ' } },
+    { name: 'max tokens', output: { content: validLedgerSummary(), stopReason: 'max_tokens' } },
+    { name: 'context stop', output: { content: validLedgerSummary(), stopReason: 'model_context_window_exceeded' } },
+  ]
+
+  for (const item of cases) {
+    const llm: LlmClient = {
+      async chat(): Promise<LlmCallOutput> {
+        return {
+          content: validLedgerSummary(),
+          toolCalls: [],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+          model: 'claude-test',
+          contextWindowTokens: 200_000,
+          stopReason: 'end_turn',
+          ...item.output,
+        }
+      },
+    }
+    await assert.rejects(
+      summarizeCachedClaudeCompaction({
+        llm,
+        systemPrompt: 'main system',
+        messages: [user('old')],
+        tools: [],
+      }),
+      new RegExp(item.name.replace(' ', '_')),
+    )
+  }
+
+  const controller = new AbortController()
+  controller.abort(new Error('cancelled'))
+  let called = false
+  await assert.rejects(
+    summarizeCachedClaudeCompaction({
+      llm: { async chat() { called = true; throw new Error('unexpected') } },
+      systemPrompt: 'main system',
+      messages: [user('old')],
+      tools: [],
+      signal: controller.signal,
+    }),
+    /cancelled/,
+  )
+  assert.equal(called, false)
 })
 
 test('prepareCompaction triggers only above context window minus reserve', () => {

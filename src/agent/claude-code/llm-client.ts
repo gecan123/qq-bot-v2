@@ -134,7 +134,7 @@ export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput)
         tools: req.tools,
         cacheBreakpointMessageIndexes: req.cacheBreakpointMessageIndexes,
         maxOutputTokens: req.maxOutputTokens,
-        toolChoice,
+        toolChoice: req.claudeToolChoice ?? toolChoice,
         thinking,
       })
       const bodyJson = JSON.stringify(body)

@@ -31,6 +31,44 @@ describe('runReactRound', () => {
     assert.equal(resolveEffectiveToolName({ id: '3', name: 'inbox', args: {} }), 'inbox')
   })
 
+  test('forwards the future compaction cut as a provider cache breakpoint', async () => {
+    const context = createAgentContext({
+      initialMessages: [
+        { role: 'user', content: 'old turn' },
+        { role: 'assistant', content: 'old answer', toolCalls: [] },
+        { role: 'user', content: 'recent turn' },
+      ],
+    })
+    const llm: LlmClient = {
+      async chat(input): Promise<LlmCallOutput> {
+        assert.deepEqual(input.cacheBreakpointMessageIndexes, [1])
+        return {
+          content: '',
+          toolCalls: [],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+          contextWindowTokens: 200_000,
+        }
+      },
+    }
+    const tools: ToolExecutor = {
+      list: () => [],
+      classify: classifyExclusive,
+      async execute(): Promise<ToolExecutionResult> {
+        throw new Error('unexpected tool execution')
+      },
+    }
+
+    await runReactRound({
+      systemPrompt: 'system',
+      context,
+      llm,
+      tools,
+      toolContext: { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 1 },
+      compactionKeepRecentTokens: 1,
+    })
+  })
+
   test('stages assistant tool calls and tool results without mutating the durable context', async () => {
     const context = createAgentContext()
     context.appendUserMessage('hello')

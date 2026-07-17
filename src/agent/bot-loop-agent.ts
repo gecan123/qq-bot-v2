@@ -538,6 +538,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
             ...(goalRoundIndex != null ? { goalRoundIndex } : {}),
           },
           stagedMessages,
+          compactionKeepRecentTokens:
+            deps.compactOptions?.keepRecentTokens ?? config.compaction.keepRecentTokens,
         })
         lastContextWindowTokens = result.contextWindowTokens
         break

@@ -11,6 +11,7 @@ import {
 import { isParallelSafeToolCall } from './tool-concurrency.js'
 import { toDurableAgentMessage } from './durable-agent-message.js'
 import type { AgentImageRefStore } from '../media/agent-image-ref.js'
+import { selectCompactionCacheBreakpointMessageIndex } from './compaction.js'
 
 const log = createLogger('REACT_KERNEL')
 
@@ -23,6 +24,8 @@ export interface ReactRoundInput {
   /** 本次 request 内已成功执行但尚未提交的前序 round 消息。 */
   stagedMessages?: readonly DurableAgentMessage[]
   workingContext?: WorkingContextOptions
+  /** 主请求预热的未来 compaction prefix；仅作为 provider cache 元数据。 */
+  compactionKeepRecentTokens?: number
   imageRefs?: AgentImageRefStore
   signal?: AbortSignal
 }
@@ -97,6 +100,12 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
     ...(input.imageRefs ? { imageRefs: input.imageRefs } : {}),
   })
   const visibleTools = input.tools.list()
+  const cacheBreakpointMessageIndex = input.compactionKeepRecentTokens == null
+    ? null
+    : selectCompactionCacheBreakpointMessageIndex(
+        workingContext.messages,
+        input.compactionKeepRecentTokens,
+      )
 
   if (workingContext.stats.omittedImages > 0) {
     log.info(
@@ -115,6 +124,9 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
       systemPrompt: input.systemPrompt,
       messages: workingContext.messages,
       tools: visibleTools,
+      ...(cacheBreakpointMessageIndex == null
+        ? {}
+        : { cacheBreakpointMessageIndexes: [cacheBreakpointMessageIndex] }),
       signal: input.signal,
       ...(maxOutputTokens != null ? { maxOutputTokens } : {}),
     })

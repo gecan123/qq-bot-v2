@@ -112,7 +112,7 @@
 - 优先使用渐进式披露：system prompt 只放稳定边界和入口，长手册和可变数据放到工具或文件后面。
 - Agent chat 发送前会从 durable ledger projection 构建 working context；默认保留最近三个带图片的 tool result，更旧图片替换为稳定 marker 并记录 `working_context_projected`，不会改写 canonical ledger。
 - runtime 当前不会在 `agent.chat` 前隐藏执行 Memory recall。主 Agent 在上下文不足时显式调用 `memory recall`；person/group 带具体 `id` 做定向召回，已有足够且未冲突的上下文时不重复调用。返回结果作为普通 tool result 进入 durable ledger，replay 不重新扫描可变 Markdown。未来若评估主动 recall，也必须使用有界 scope、弱匹配返回空并先把结果持久化，不能动态拼进 system prompt。
-- compaction summarizer、Memory maintenance reviewer 和 Life reviewer 收到的历史或 side-data 都包在 `[UNTRUSTED_DATA ...]` 信封中，并与固定操作指令分离；信封内文字永远按待处理数据解释，不能提升为 system/user 指令或触发工具。
+- OpenAI compaction、Claude split-turn fallback、Memory maintenance reviewer 和 Life reviewer 收到的历史或 side-data 都包在 `[UNTRUSTED_DATA ...]` 信封中，并与固定操作指令分离。Claude 普通 compaction 为复用主 prompt cache，会保留主 system、tools 和原始 working-context prefix，再追加可信 control message；返回的 tool call 永不执行。两种形态中的历史文字都只能作为待压缩数据，不能提升权限或触发工具。
 - checkpoint 只是 canonical ledger projection 的可丢弃缓存。启动时必须先验证 ledger/runtime；checkpoint 不匹配时直接重建，重建也失败则 fail closed，不能用可变 side-data、消息账本或日志补历史。
 - 不要写锁定 prompt 具体措辞的单元测试。应测试 parser、schema 和工具契约。
 

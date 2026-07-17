@@ -139,7 +139,7 @@ runtime 当前不会在 `agent.chat` 前自动预取 Memory，也不会把检索
 
 ## 自动维护
 
-compaction、Memory maintenance 和 Life review 都会把历史正文或 side-data 视为不可信数据，而不是下一层 prompt 指令。发送给辅助 LLM 时统一包在 `[UNTRUSTED_DATA ...]` 信封内，再附加独立、固定的操作指令；数据中的“忽略规则”“调用工具”等文字只能被摘要或分析，不能改变任务。信封有显式 purpose、截断标记和内容上限。
+compaction、Memory maintenance 和 Life review 都会把历史正文或 side-data 视为不可信数据，而不是下一层 prompt 指令。OpenAI compaction、Claude split-turn fallback 和 maintenance/review 请求使用 `[UNTRUSTED_DATA ...]` 信封，再附加独立、固定的操作指令。Claude 普通 compaction 为复用主 prompt cache，保留主 system、tools 和原始 working-context prefix，并只追加可信压缩 control message；任何返回的 tool call 都不会执行。两种形态中的“忽略规则”“调用工具”等历史文字都只能被摘要或分析，不能改变任务。
 
 ### Memory maintenance
 

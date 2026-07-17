@@ -34,7 +34,8 @@
 
 - compaction 不改写旧 prefix。它只追加一个带 summary、`firstKeptEntryId`、previous compaction link、token metrics、reason 和受控机器状态的 entry；projection 只解释最新 compaction boundary。
 - cut point 以 entry token 预算选择，并保持 tool pair 原子性。若单个 tool turn 跨过目标预算，允许 split-turn：summary 同时包含历史部分和该 turn 已压缩的前缀，tail 从合法 assistant boundary 开始。
-- 被压缩的完整 prefix（除受控机器 marker）都进入 summarizer；不能按比例静默丢弃头部。summary 必须通过固定 heading、token 上限和完整 candidate projection 校验。
+- 被压缩的完整 prefix 都进入 summarizer，不能按比例静默丢弃头部。Claude 的普通 history compaction 复用主 Agent 的 system、tools 和原始 working-context prefix，只在末尾追加可信 control message；受控机器 marker 只能作为线索，不能由摘要改写为权威状态。OpenAI 与 Claude split-turn fallback 继续使用隔离的 `[UNTRUSTED_DATA]` 序列化请求。summary 必须通过固定 heading、token 上限和完整 candidate projection 校验。
+- Claude 主请求会在同一原子 cut 规则算出的 future compaction boundary 增加 provider-only 1h cache breakpoint；真正压缩时在相同 prefix 末尾再次声明该 breakpoint。cache marker 不进入 ledger/projection，cache miss 也不改变摘要语义。压缩调用可携带相同 tool declarations，但其 tool call 永不执行；tool call、空输出或截断都按 summarizer failure 处理。
 - trigger 有三种：动态 threshold、provider context overflow、owner friend-private `/compact [focus]`。threshold 使用 provider input prefix 加本轮新 entry 的本地估算；overflow 每轮最多强制 compact-and-retry 一次；manual 绕过 threshold/backoff。
 - `beforeCompact` 和 summarizer 在事务外运行，支持 abort；CAS `appendCompaction(expectedHeadEntryId)` 成功后才安装 candidate。head race 丢弃 candidate 并基于新 head 重算一次。
 - threshold 失败退避十分钟；manual/overflow 不读该退避。summarizer 或 commit 失败不改变 canonical history；checkpoint 和 `afterCompact` 失败只记录，不回滚已提交 compaction；shutdown 会中止未提交 summarizer。

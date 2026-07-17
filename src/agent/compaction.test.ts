@@ -14,6 +14,7 @@ import { createEmptyMailboxContinuityState } from './mailbox-continuity.js'
 import {
   createCompactionCandidate,
   prepareCompaction,
+  selectCompactionCacheBreakpointMessageIndex,
   type CompactionPreparation,
   type ReadyCompactionPreparation,
 } from './compaction.js'
@@ -135,6 +136,37 @@ function assertReady(
 ): asserts result is ReadyCompactionPreparation {
   assert.equal(result?.status, 'ready')
 }
+
+test('selectCompactionCacheBreakpointMessageIndex returns the prefix end before recent tail', () => {
+  const messages = [
+    user('old turn'),
+    asst('old answer'),
+    user('newest turn'),
+  ]
+
+  assert.equal(selectCompactionCacheBreakpointMessageIndex(messages, 1), 1)
+})
+
+test('selectCompactionCacheBreakpointMessageIndex keeps tool call results atomic', () => {
+  const messages = [
+    user('old turn'),
+    asst('', [{ id: 'a', name: 'lookup' }, { id: 'b', name: 'lookup' }]),
+    tool('a'),
+    tool('b'),
+    user('newest turn'),
+  ]
+
+  assert.equal(selectCompactionCacheBreakpointMessageIndex(messages, 1), 3)
+})
+
+test('selectCompactionCacheBreakpointMessageIndex returns null without a legal cut', () => {
+  const messages = [
+    asst('', [{ id: 'only', name: 'lookup' }]),
+    tool('only'),
+  ]
+
+  assert.equal(selectCompactionCacheBreakpointMessageIndex(messages, 1), null)
+})
 
 test('prepareCompaction triggers only above context window minus reserve', () => {
   const entries = [

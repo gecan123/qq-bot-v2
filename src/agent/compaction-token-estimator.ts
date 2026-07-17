@@ -10,6 +10,11 @@ export interface EntryTokenEstimate {
   source: Exclude<TokenEstimateSource, 'provider_prefix'>
 }
 
+export interface MessageTokenEstimate {
+  tokens: number
+  source: Exclude<TokenEstimateSource, 'provider_prefix'>
+}
+
 export interface LedgerContextTokenEstimate {
   tokens: number
   source: TokenEstimateSource
@@ -44,10 +49,15 @@ export function estimateEntryTokens(entry: AgentLedgerEntry): EntryTokenEstimate
     }
   }
 
-  const message = entry.payload.message
+  return {
+    entryId: entry.id,
+    ...estimateMessageTokens(entry.payload.message),
+  }
+}
+
+export function estimateMessageTokens(message: AgentMessage): MessageTokenEstimate {
   if (hasLocalStructure(message)) {
     return {
-      entryId: entry.id,
       tokens: estimateUtf8Tokens(JSON.stringify(message), STRUCTURED_ENVELOPE_TOKENS),
       source: 'local_structure',
     }
@@ -56,7 +66,6 @@ export function estimateEntryTokens(entry: AgentLedgerEntry): EntryTokenEstimate
     ? typeof message.content === 'string' ? message.content : JSON.stringify(message.content)
     : message.content
   return {
-    entryId: entry.id,
     tokens: estimateUtf8Tokens(plainContent, MESSAGE_ENVELOPE_TOKENS),
     source: 'utf8_bytes',
   }

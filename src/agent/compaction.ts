@@ -16,7 +16,10 @@ import {
   type MessageAgentLedgerEntry,
   type RestResumeCompactionState,
 } from './agent-ledger.types.js'
-import { estimateEntryTokens } from './compaction-token-estimator.js'
+import {
+  estimateEntryTokens,
+  estimateMessageTokens,
+} from './compaction-token-estimator.js'
 import { projectAgentLedger } from './agent-ledger-projection.js'
 import {
   buildCompactionSummarizerRequest,
@@ -73,9 +76,36 @@ export type CompactionCandidateSummarize = (
   options: { signal: AbortSignal },
 ) => Promise<string>
 
-interface AtomicMessageUnit {
-  entries: MessageAgentLedgerEntry[]
+interface AtomicMessageUnit<T> {
+  items: T[]
+  firstRole: AgentMessage['role']
   tokens: number
+}
+
+interface AtomicBoundarySelection {
+  boundaryUnitIndex: number
+  latestTurnStart: number
+  preferredUserBoundary: number
+}
+
+export function selectCompactionCacheBreakpointMessageIndex(
+  messages: readonly AgentMessage[],
+  keepRecentTokens: number,
+): number | null {
+  if (!Number.isSafeInteger(keepRecentTokens) || keepRecentTokens < 0) {
+    throw new RangeError('keepRecentTokens must be a non-negative safe integer')
+  }
+  const indexedMessages = messages.map((message, index) => ({ index, message }))
+  const units = buildAtomicUnits(
+    indexedMessages,
+    (item) => item.message,
+    (item) => estimateMessageTokens(item.message).tokens,
+  )
+  if (units == null || units.length < 2) return null
+
+  const { boundaryUnitIndex } = selectAtomicBoundary(units, keepRecentTokens)
+  if (boundaryUnitIndex <= 0 || boundaryUnitIndex >= units.length) return null
+  return units[boundaryUnitIndex - 1]!.items.at(-1)!.index
 }
 
 /**
@@ -114,7 +144,11 @@ export function prepareCompaction(input: {
   }
 
   const activeEntries = selectActiveMessageEntries(input.entries, previousCompaction)
-  const units = buildAtomicUnits(activeEntries)
+  const units = buildAtomicUnits(
+    activeEntries,
+    (entry) => entry.payload.message,
+    (entry) => estimateEntryTokens(entry).tokens,
+  )
   if (units == null) {
     return { status: 'cannot_compact', reason: 'invalid_atomic_history', expectedHeadEntryId }
   }
@@ -122,28 +156,20 @@ export function prepareCompaction(input: {
     return { status: 'cannot_compact', reason: 'no_legal_cut', expectedHeadEntryId }
   }
 
-  const rawBoundary = selectRawBoundary(units, input.keepRecentTokens)
-  if (rawBoundary <= 0) {
-    return { status: 'cannot_compact', reason: 'no_legal_cut', expectedHeadEntryId }
-  }
-  const latestTurnStart = findLatestUserUnitIndex(units)
-  const latestTurnTokens = units
-    .slice(Math.max(0, latestTurnStart))
-    .reduce((sum, unit) => sum + unit.tokens, 0)
-  const latestTurnIsOversized = latestTurnTokens > input.keepRecentTokens
-  const preferredUserBoundary = latestTurnIsOversized
-    ? -1
-    : findPreferredUserBoundary(units, rawBoundary)
-  const boundaryUnitIndex = preferredUserBoundary > 0 ? preferredUserBoundary : rawBoundary
+  const {
+    boundaryUnitIndex,
+    latestTurnStart,
+    preferredUserBoundary,
+  } = selectAtomicBoundary(units, input.keepRecentTokens)
   if (boundaryUnitIndex <= 0 || boundaryUnitIndex >= units.length) {
     return { status: 'cannot_compact', reason: 'no_legal_cut', expectedHeadEntryId }
   }
 
   const entriesToSummarize = units
     .slice(0, boundaryUnitIndex)
-    .flatMap((unit) => unit.entries)
+    .flatMap((unit) => unit.items)
   const tailUnits = units.slice(boundaryUnitIndex)
-  const tailEntries = tailUnits.flatMap((unit) => unit.entries)
+  const tailEntries = tailUnits.flatMap((unit) => unit.items)
   if (entriesToSummarize.length === 0 || tailEntries.length === 0) {
     return { status: 'cannot_compact', reason: 'no_legal_cut', expectedHeadEntryId }
   }
@@ -154,9 +180,9 @@ export function prepareCompaction(input: {
   const splitTurnStart = isSplitTurn ? Math.max(0, latestTurnStart) : boundaryUnitIndex
   const historyEntries = units
     .slice(0, splitTurnStart)
-    .flatMap((unit) => unit.entries)
+    .flatMap((unit) => unit.items)
   const splitTurnPrefixEntries = isSplitTurn
-    ? units.slice(splitTurnStart, boundaryUnitIndex).flatMap((unit) => unit.entries)
+    ? units.slice(splitTurnStart, boundaryUnitIndex).flatMap((unit) => unit.items)
     : []
   return {
     status: 'ready',
@@ -370,44 +396,73 @@ function selectActiveMessageEntries(
   ))
 }
 
-function buildAtomicUnits(
-  entries: readonly MessageAgentLedgerEntry[],
-): AtomicMessageUnit[] | null {
-  const units: AtomicMessageUnit[] = []
+function buildAtomicUnits<T>(
+  items: readonly T[],
+  getMessage: (item: T) => AgentMessage,
+  getTokens: (item: T) => number,
+): AtomicMessageUnit<T>[] | null {
+  const units: AtomicMessageUnit<T>[] = []
   let index = 0
-  while (index < entries.length) {
-    const entry = entries[index]!
-    const message = entry.payload.message
+  while (index < items.length) {
+    const item = items[index]!
+    const message = getMessage(item)
     if (message.role === 'tool') return null
     if (message.role !== 'assistant' || message.toolCalls.length === 0) {
-      units.push({ entries: [entry], tokens: estimateEntryTokens(entry).tokens })
+      units.push({ items: [item], firstRole: message.role, tokens: getTokens(item) })
       index += 1
       continue
     }
 
     const expectedIds = message.toolCalls.map((call) => call.id)
-    const toolEntries = entries.slice(index + 1, index + 1 + expectedIds.length)
+    const toolItems = items.slice(index + 1, index + 1 + expectedIds.length)
     if (
-      toolEntries.length !== expectedIds.length
-      || toolEntries.some((toolEntry, offset) => (
-        toolEntry.payload.message.role !== 'tool'
-        || toolEntry.payload.message.toolCallId !== expectedIds[offset]
-      ))
+      toolItems.length !== expectedIds.length
+      || toolItems.some((toolItem, offset) => {
+        const toolMessage = getMessage(toolItem)
+        return (
+          toolMessage.role !== 'tool'
+          || toolMessage.toolCallId !== expectedIds[offset]
+        )
+      })
     ) return null
-    const atomicEntries = [entry, ...toolEntries]
+    const atomicItems = [item, ...toolItems]
     units.push({
-      entries: atomicEntries,
-      tokens: atomicEntries.reduce(
-        (sum, atomicEntry) => sum + estimateEntryTokens(atomicEntry).tokens,
+      items: atomicItems,
+      firstRole: message.role,
+      tokens: atomicItems.reduce(
+        (sum, atomicItem) => sum + getTokens(atomicItem),
         0,
       ),
     })
-    index += atomicEntries.length
+    index += atomicItems.length
   }
   return units
 }
 
-function selectRawBoundary(units: readonly AtomicMessageUnit[], keepRecentTokens: number): number {
+function selectAtomicBoundary<T>(
+  units: readonly AtomicMessageUnit<T>[],
+  keepRecentTokens: number,
+): AtomicBoundarySelection {
+  const rawBoundary = selectRawBoundary(units, keepRecentTokens)
+  const latestTurnStart = findLatestUserUnitIndex(units)
+  const latestTurnTokens = units
+    .slice(Math.max(0, latestTurnStart))
+    .reduce((sum, unit) => sum + unit.tokens, 0)
+  const latestTurnIsOversized = latestTurnTokens > keepRecentTokens
+  const preferredUserBoundary = latestTurnIsOversized
+    ? -1
+    : findPreferredUserBoundary(units, rawBoundary)
+  return {
+    boundaryUnitIndex: preferredUserBoundary > 0 ? preferredUserBoundary : rawBoundary,
+    latestTurnStart,
+    preferredUserBoundary,
+  }
+}
+
+function selectRawBoundary<T>(
+  units: readonly AtomicMessageUnit<T>[],
+  keepRecentTokens: number,
+): number {
   let tokens = 0
   for (let index = units.length - 1; index >= 0; index--) {
     tokens += units[index]!.tokens
@@ -416,25 +471,25 @@ function selectRawBoundary(units: readonly AtomicMessageUnit[], keepRecentTokens
   return 0
 }
 
-function findPreferredUserBoundary(
-  units: readonly AtomicMessageUnit[],
+function findPreferredUserBoundary<T>(
+  units: readonly AtomicMessageUnit<T>[],
   rawBoundary: number,
 ): number {
   for (let index = rawBoundary; index >= 0; index--) {
-    if (units[index]!.entries[0]!.payload.message.role === 'user') {
+    if (units[index]!.firstRole === 'user') {
       if (index > 0) return index
       break
     }
   }
   for (let index = rawBoundary + 1; index < units.length; index++) {
-    if (units[index]!.entries[0]!.payload.message.role === 'user') return index
+    if (units[index]!.firstRole === 'user') return index
   }
   return -1
 }
 
-function findLatestUserUnitIndex(units: readonly AtomicMessageUnit[]): number {
+function findLatestUserUnitIndex<T>(units: readonly AtomicMessageUnit<T>[]): number {
   for (let index = units.length - 1; index >= 0; index--) {
-    if (units[index]!.entries[0]!.payload.message.role === 'user') return index
+    if (units[index]!.firstRole === 'user') return index
   }
   return -1
 }

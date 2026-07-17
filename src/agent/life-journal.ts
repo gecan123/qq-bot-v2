@@ -7,6 +7,8 @@ import { recordTokenUsage, type TokenUsageEntry } from './token-stats.js'
 import { createTaskScheduler, type TaskScheduler } from './task-scheduler.js'
 import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
 import { renderUntrustedTranscript } from './untrusted-transcript.js'
+import { writeMemoryEntry } from './memory-store.js'
+import type { MemoryMaintenanceRuntime } from './memory-maintenance.js'
 import {
   appendLifeJournalEntry,
   ensureLifeAgenda,
@@ -40,8 +42,17 @@ export interface LifeJournalRuntime {
   drain(): Promise<LifeJournalReviewResult | null>
 }
 
+const memoryCandidateSchema = z.object({
+  scope: z.enum(['self', 'person', 'group', 'topic']),
+  id: z.union([z.string().trim().min(1).max(80), z.number().int().nonnegative()]).optional(),
+  title: z.string().trim().min(1).max(80).optional(),
+  content: z.string().trim().min(1).max(2_000),
+  sourceMessageIds: z.array(z.number().int().positive()).max(20).optional(),
+})
+
 const reviewResultSchema = z.object({
   shouldWrite: z.boolean(),
+  memoryCandidates: z.array(memoryCandidateSchema).max(3).default([]),
   journalMarkdown: z.string(),
   agendaMarkdown: z.string(),
 })
@@ -75,8 +86,16 @@ Do not update it for ordinary chatter or by returning an unchanged copy.
 Prefer calling life_journal_review_result exactly once.
 Fields:
 - shouldWrite: boolean
+- memoryCandidates: array with 0-3 durable Memory candidates
 - journalMarkdown: string
 - agendaMarkdown: string
+
+Memory candidate rules:
+- Save only durable facts, preferences, verified methods, or stable conclusions that can be reused directly later.
+- Skip ordinary chatter, one-off meals or weather, unverified rumors, temporary plans, and evolving research notes.
+- Use scope=self for Luna's verified methods or preferences; person/group require the explicit QQ/group id; topic requires a stable title.
+- Paraphrase briefly instead of copying chat text. Include only sourceMessageIds that visibly occur as real Message row ids in the round data.
+- Every candidate is stored as recent. Never claim that a candidate is already stable.
 
 If tool calling is unavailable, use exactly one of these plain-text fallbacks instead of prose:
 
@@ -246,7 +265,7 @@ function asNonEmptyString(value: unknown): string {
 function parseReviewTextProtocol(text: string): ReviewJson | null {
   const trimmed = text.trim()
   if (trimmed === 'SKIP') {
-    return { shouldWrite: false, journalMarkdown: '', agendaMarkdown: '' }
+    return { shouldWrite: false, memoryCandidates: [], journalMarkdown: '', agendaMarkdown: '' }
   }
 
   const firstNewline = trimmed.indexOf('\n')
@@ -273,6 +292,7 @@ function parseReviewTextProtocol(text: string): ReviewJson | null {
 
   return {
     shouldWrite: Boolean(journalMarkdown),
+    memoryCandidates: [],
     journalMarkdown,
     agendaMarkdown,
   }
@@ -400,6 +420,7 @@ export function createLifeJournalRuntime(deps: {
   recordUsage?: (entry: TokenUsageEntry) => void
   taskScheduler?: TaskScheduler
   workspaceStateCoordinator?: WorkspaceStateCoordinator
+  memoryMaintenance?: MemoryMaintenanceRuntime
 }): LifeJournalRuntime {
   const rootDir = deps.rootDir ?? 'data/agent-workspace'
   const maxRoundChars = deps.maxRoundChars ?? 6000
@@ -486,6 +507,9 @@ export function createLifeJournalRuntime(deps: {
 
       let wroteJournal = false
       let updatedAgenda = false
+      let memoryCreated = 0
+      let memoryDeduplicated = 0
+      let memoryFailed = 0
       if (shouldWrite && journalMarkdown) {
         await appendLifeJournalEntry({
           rootDir,
@@ -510,12 +534,46 @@ export function createLifeJournalRuntime(deps: {
           log.info({ roundIndex: input.roundIndex }, 'life_agenda_revision_conflict')
         }
       }
+      for (const candidate of parsed.memoryCandidates) {
+        try {
+          const memory = await writeMemoryEntry({
+            rootDir,
+            now: deps.now,
+            workspaceStateCoordinator: deps.workspaceStateCoordinator,
+          }, {
+            scope: candidate.scope,
+            id: candidate.id == null ? undefined : String(candidate.id),
+            title: candidate.title,
+            content: candidate.content,
+            sourceMessageIds: candidate.sourceMessageIds,
+          })
+          if (memory.created) {
+            memoryCreated += 1
+            deps.memoryMaintenance?.enqueue(memory.file)
+          } else if (memory.deduplicated) {
+            memoryDeduplicated += 1
+          }
+        } catch (error) {
+          memoryFailed += 1
+          log.warn({
+            err: error,
+            roundIndex: input.roundIndex,
+            scope: candidate.scope,
+            id: candidate.id ?? null,
+            title: candidate.title ?? null,
+          }, 'life_journal_memory_candidate_failed')
+        }
+      }
 
       log.info({
         roundIndex: input.roundIndex,
         decision: wroteJournal || updatedAgenda ? 'record' : 'skip',
         wroteJournal,
         updatedAgenda,
+        memoryCandidates: parsed.memoryCandidates.length,
+        memoryCreated,
+        memoryDeduplicated,
+        memoryFailed,
       }, 'life_journal_review_completed')
 
       return { ok: true, wroteJournal, updatedAgenda }

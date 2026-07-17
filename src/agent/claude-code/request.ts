@@ -80,6 +80,7 @@ export interface BuildClaudeCodeRequestBodyInput {
   systemPrompt: string
   messages: AgentMessage[]
   tools: Tool[]
+  cacheBreakpointMessageIndexes?: readonly number[]
   maxOutputTokens?: number
   toolChoice?: ClaudeToolChoice
   thinking?: ClaudeThinkingConfig
@@ -91,19 +92,25 @@ export function buildClaudeCodeRequestBody(
   const toolsEnabled = input.tools.length > 0
   const adaptiveThinkingEnabled = input.thinking?.mode === 'adaptive'
   const thinkingRetention = input.thinking?.retention ?? 'active-tool-cycle'
+  const messages: ClaudeMessageRequestBody['messages'] = []
+  const emittedMessageIndexBySource = new Map<number, number>()
+  for (const [sourceIndex, message] of input.messages.entries()) {
+    const emitted = toClaudeMessage(
+      message,
+      adaptiveThinkingEnabled &&
+        shouldReplayClaudeNativeBlocks(input.messages, sourceIndex, thinkingRetention),
+    )
+    if (emitted.length === 0) continue
+    messages.push(...emitted)
+    emittedMessageIndexBySource.set(sourceIndex, messages.length - 1)
+  }
 
   const body: ClaudeMessageRequestBody = {
     model: input.model,
     stream: true,
     max_tokens: normalizeMaxOutputTokens(input.maxOutputTokens) ?? resolveMaxTokens(input.model),
     system: toClaudeSystemBlocks(input.systemPrompt),
-    messages: input.messages.flatMap((message, index) =>
-      toClaudeMessage(
-        message,
-        adaptiveThinkingEnabled &&
-          shouldReplayClaudeNativeBlocks(input.messages, index, thinkingRetention),
-      ),
-    ),
+    messages,
   }
 
   if (adaptiveThinkingEnabled) {
@@ -120,15 +127,20 @@ export function buildClaudeCodeRequestBody(
   // 本轮的 cache 仍作为 prefix 命中 — 只有新增部分 uncached (~500 tokens)。
   // 没有这个 breakpoint 时 messages 只有 auto-cache (~5min TTL),
   // wait 工具挂 >5min 后整段 ~750k messages 全部 miss。
-  if (body.messages.length > 0) {
-    const lastMsg = body.messages[body.messages.length - 1]
-    if (lastMsg.content.length > 0) {
-      const lastBlock = lastMsg.content[lastMsg.content.length - 1];
-      (lastBlock as Record<string, unknown>).cache_control = { type: 'ephemeral', ttl: '1h' }
-    }
+  for (const sourceIndex of input.cacheBreakpointMessageIndexes ?? []) {
+    const emittedIndex = emittedMessageIndexBySource.get(sourceIndex)
+    if (emittedIndex != null) applyMessageCacheBreakpoint(body.messages[emittedIndex])
   }
+  applyMessageCacheBreakpoint(body.messages.at(-1))
 
   return body
+}
+
+function applyMessageCacheBreakpoint(
+  message: ClaudeMessageRequestBody['messages'][number] | undefined,
+): void {
+  const lastBlock = message?.content.at(-1)
+  if (lastBlock) lastBlock.cache_control = { type: 'ephemeral', ttl: '1h' }
 }
 
 function normalizeMaxOutputTokens(value: number | undefined): number | undefined {

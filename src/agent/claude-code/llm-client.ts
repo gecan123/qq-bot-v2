@@ -132,6 +132,7 @@ export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput)
         systemPrompt: req.systemPrompt,
         messages: req.messages,
         tools: req.tools,
+        cacheBreakpointMessageIndexes: req.cacheBreakpointMessageIndexes,
         maxOutputTokens: req.maxOutputTokens,
         toolChoice,
         thinking,

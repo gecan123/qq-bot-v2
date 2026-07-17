@@ -148,6 +148,29 @@ describe('buildClaudeCodeRequestBody', () => {
     assert.deepEqual(body.system[1]?.cache_control, { type: 'ephemeral', ttl: '1h' })
   })
 
+  test('adds a 1h message cache breakpoint at a selected source message index', () => {
+    const body = buildClaudeCodeRequestBody({
+      model: 'claude-sonnet-4-5',
+      systemPrompt: 'persona',
+      messages: [
+        { role: 'user', content: 'old prefix' },
+        { role: 'assistant', content: '', toolCalls: [] },
+        { role: 'user', content: 'recent tail' },
+      ],
+      tools: [],
+      cacheBreakpointMessageIndexes: [0],
+    })
+
+    assert.deepEqual(body.messages[0]?.content.at(-1)?.cache_control, {
+      type: 'ephemeral',
+      ttl: '1h',
+    })
+    assert.deepEqual(body.messages[1]?.content.at(-1)?.cache_control, {
+      type: 'ephemeral',
+      ttl: '1h',
+    })
+  })
+
   test('stream is literally true', () => {
     const body = buildClaudeCodeRequestBody({
       model: 'claude-sonnet-4-5',

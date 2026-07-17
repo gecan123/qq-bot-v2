@@ -33,6 +33,8 @@ export interface LlmCallInput {
   systemPrompt: string
   messages: AgentMessage[]
   tools: Tool[]
+  /** Claude-only: 在指定源消息结尾增加 prompt-cache breakpoint。其他 provider 忽略。 */
+  cacheBreakpointMessageIndexes?: readonly number[]
   /** 单次生成的输出 token 上限；不改变输入上下文窗口。 */
   maxOutputTokens?: number
   /** 可选调用级取消信号，供旁路/有界任务真正终止底层 HTTP 请求。 */

@@ -111,15 +111,16 @@ async function main() {
   const lifeJournalLlm = createLlmClient({
     claudeThinking: { mode: 'disabled' },
   })
-  const lifeJournal = createLifeJournalRuntime({
-    llm: lifeJournalLlm,
-    taskScheduler,
-    workspaceStateCoordinator,
-  })
   const memoryMaintenance = createMemoryMaintenanceRuntime({
     llm: lifeJournalLlm,
     taskScheduler,
     workspaceStateCoordinator,
+  })
+  const lifeJournal = createLifeJournalRuntime({
+    llm: lifeJournalLlm,
+    taskScheduler,
+    workspaceStateCoordinator,
+    memoryMaintenance,
   })
 
   // 3.5 启动期 persona-spoof 自检 (claude-code 路径专用): 若 cliproxy mode=auto

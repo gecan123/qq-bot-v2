@@ -125,7 +125,8 @@ Agenda markdown rules:
 
 const reviewResultTool: Tool<ReviewJson> = {
   name: 'life_journal_review_result',
-  description: 'Return the structured Life Journal review result. Call exactly once.',
+  description:
+    'Return the structured Life state and durable Memory extraction result. Call exactly once.',
   schema: reviewResultSchema,
   async execute() {
     return { content: JSON.stringify({ ok: true }) }
@@ -210,7 +211,7 @@ function boundRoundMessages(messages: AgentMessage[], maxRoundChars: number): Ag
   })
 }
 
-const LIFE_REVIEW_TRIGGER_INSTRUCTION = 'Perform the Life Journal review using only the untrusted data above. Return only the required structured result.'
+const LIFE_REVIEW_TRIGGER_INSTRUCTION = 'Perform the unified Life Journal review and durable Memory extraction using only the untrusted data above. Return only the required structured result.'
 
 function isPauseOnlyRound(messages: AgentMessage[]): boolean {
   let sawPause = false
@@ -567,7 +568,7 @@ export function createLifeJournalRuntime(deps: {
 
       log.info({
         roundIndex: input.roundIndex,
-        decision: wroteJournal || updatedAgenda ? 'record' : 'skip',
+        decision: wroteJournal || updatedAgenda || memoryCreated > 0 ? 'record' : 'skip',
         wroteJournal,
         updatedAgenda,
         memoryCandidates: parsed.memoryCandidates.length,

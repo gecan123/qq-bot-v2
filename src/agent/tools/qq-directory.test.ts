@@ -14,11 +14,39 @@ const groups = [
   { groupId: 20002, groupName: '未配置群', memberCount: 30, maxMemberCount: 500 },
 ]
 
+const observed = [
+  {
+    rowId: 40,
+    senderNickname: '堂吉诃德',
+    senderGroupNickname: '未授权群名片',
+    groupId: 20002,
+    groupName: '未配置群',
+    seenAt: new Date('2026-07-18T05:00:00.000Z'),
+  },
+  {
+    rowId: 30,
+    senderNickname: '堂吉诃德',
+    senderGroupNickname: '桑丘',
+    groupId: 20001,
+    groupName: '配置群',
+    seenAt: new Date('2026-07-18T04:00:00.000Z'),
+  },
+  {
+    rowId: 20,
+    senderNickname: '堂吉诃德',
+    senderGroupNickname: '堂吉诃德',
+    groupId: 20001,
+    groupName: '配置群',
+    seenAt: new Date('2026-07-17T04:00:00.000Z'),
+  },
+]
+
 function createTool() {
   return createQqDirectoryTool({
     groupIds: [20001, 29999],
     async loadFriends() { return friends },
     async loadGroups() { return groups },
+    async loadObservedIdentity() { return observed },
   })
 }
 
@@ -70,6 +98,38 @@ describe('qq_directory tool', () => {
       memberCount: 12,
       maxMemberCount: 200,
     }])
+  })
+
+  test('builds a deterministic profile from directory and message-ledger identity facts', async () => {
+    const tool = createTool()
+    const result = await tool.execute({ action: 'profile', userId: 10001 }, undefined as never)
+    const payload = JSON.parse(result.content as string) as {
+      userId: number
+      currentFriend: { displayName: string }
+      aliases: Array<{ value: string; source: string; lastSeenRowId: number | null }>
+      groups: Array<{ groupId: number; groupName: string; aliases: string[]; lastSeenRowId: number }>
+    }
+
+    assert.equal(payload.userId, 10001)
+    assert.equal(payload.currentFriend.displayName, '项目搭档')
+    assert.deepEqual(payload.aliases.map((item) => [item.value, item.source]), [
+      ['项目搭档', 'friend_remark'],
+      ['Alice', 'friend_nickname'],
+      ['堂吉诃德', 'sender_nickname'],
+      ['桑丘', 'group_nickname'],
+    ])
+    assert.equal(payload.aliases.some((item) => item.value === '未授权群名片'), false)
+    assert.deepEqual(payload.groups, [{
+      groupId: 20001,
+      groupName: '配置群',
+      aliases: ['桑丘', '堂吉诃德'],
+      lastSeenRowId: 30,
+      lastSeenAt: '2026-07-18T12:00:00.000+08:00',
+    }])
+    assert.equal(result.outcome?.progress, true)
+
+    const repeated = await tool.execute({ action: 'profile', userId: 10001 }, undefined as never)
+    assert.deepEqual(repeated.outcome, { ok: true, code: 'unchanged', progress: false })
   })
 
   test('returns a structured error when NapCat directory loading fails', async () => {

@@ -1,7 +1,7 @@
 import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { prisma } from './database/client.js'
 import { connectNapcat, registerNapcatHandlers, type IngestedMessage } from './bot/core.js'
-import { napcat } from './bot/napcat.js'
+import { disconnectNapcatForShutdown, napcat } from './bot/napcat.js'
 import { createLogger } from './logger.js'
 import { formatBeijingDateTime, formatBeijingIso } from './utils/beijing-time.js'
 import { jobQueue } from './queue/index.js'
@@ -16,6 +16,7 @@ import { loadGroupCustomizations } from './config/group-prompts.js'
 import { messageSender } from './messaging/message-sender.js'
 
 import { purgeOldData } from './database/retention.js'
+import { findValidMemoryEvidenceRowIds } from './database/messages.js'
 import { createAgentContext } from './agent/agent-context.js'
 import { InMemoryEventQueue } from './agent/event-queue.js'
 import type { BotEvent } from './agent/event.js'
@@ -121,6 +122,7 @@ async function main() {
     taskScheduler,
     workspaceStateCoordinator,
     memoryMaintenance,
+    validateSourceMessageIds: findValidMemoryEvidenceRowIds,
   })
 
   // 3.5 启动期 persona-spoof 自检 (claude-code 路径专用): 若 cliproxy mode=auto
@@ -451,7 +453,7 @@ async function main() {
     stopAgent: () => runtime.agent.stop(),
   })
   shutdownCoordinator = createShutdownCoordinator({
-    disconnectIngress: () => napcat.disconnect(),
+    disconnectIngress: disconnectNapcatForShutdown,
     stopAgent: agentLifecycle.stopAgent,
     awaitAgent: agentLifecycle.awaitAgent,
     drainIngress: () => napcatLifecycle.drain(),
@@ -481,7 +483,7 @@ function removePidFile(): void {
 
 function shutdownBeforeRuntimeReady(): Promise<void> {
   fallbackShutdownPromise ??= (async () => {
-    napcat.disconnect()
+    disconnectNapcatForShutdown()
     jobQueue.stop()
     removePidFile()
     await prisma.$disconnect()

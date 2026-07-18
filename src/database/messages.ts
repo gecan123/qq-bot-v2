@@ -5,6 +5,7 @@ import type { ParsedSegment } from '../types/message-segments.js'
 import { segmentsToPlainText } from '../utils/segment-text.js'
 import { createLogger } from '../logger.js'
 import { formatBeijingIso } from '../utils/beijing-time.js'
+import type { MemorySourceEvidenceQuery } from '../agent/memory-evidence.js'
 
 const log = createLogger('DB')
 
@@ -96,6 +97,62 @@ export async function findExistingMessageIds(groupId: number, messageIds: number
     select: { messageId: true },
   })
   return new Set(rows.map((r) => Number(r.messageId)))
+}
+
+export async function findValidMemoryEvidenceRowIds(
+  query: MemorySourceEvidenceQuery,
+): Promise<number[]> {
+  if (query.sourceMessageIds.length === 0) return []
+  let entityWhere: { senderId: bigint } | { sceneKind: 'qq_group'; groupId: bigint } | undefined
+  try {
+    entityWhere = query.scope === 'person' && query.id != null
+      ? { senderId: BigInt(query.id) }
+      : query.scope === 'group' && query.id != null
+        ? { sceneKind: 'qq_group', groupId: BigInt(query.id) }
+        : undefined
+  } catch {
+    return []
+  }
+  const rows = await prisma.message.findMany({
+    where: {
+      id: { in: [...new Set(query.sourceMessageIds)] },
+      ...entityWhere,
+    },
+    select: { id: true },
+  })
+  return rows.map((row) => row.id)
+}
+
+export async function findObservedQqIdentityRows(userId: number, limit = 200): Promise<Array<{
+  rowId: number
+  senderNickname: string | null
+  senderGroupNickname: string | null
+  groupId: number | null
+  groupName: string | null
+  seenAt: Date
+}>> {
+  const rows = await prisma.message.findMany({
+    where: { senderId: BigInt(userId) },
+    orderBy: { id: 'desc' },
+    take: Math.min(Math.max(1, limit), 500),
+    select: {
+      id: true,
+      senderNickname: true,
+      senderGroupNickname: true,
+      groupId: true,
+      groupName: true,
+      sentAt: true,
+      createdAt: true,
+    },
+  })
+  return rows.map((row) => ({
+    rowId: row.id,
+    senderNickname: row.senderNickname,
+    senderGroupNickname: row.senderGroupNickname,
+    groupId: row.groupId == null ? null : Number(row.groupId),
+    groupName: row.groupName,
+    seenAt: row.sentAt ?? row.createdAt,
+  }))
 }
 
 /**

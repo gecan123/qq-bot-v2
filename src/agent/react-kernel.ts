@@ -42,6 +42,8 @@ export interface ReactToolOutcome {
   toolName: string
   ok: boolean
   code?: string
+  progress: boolean
+  retryClass?: 'immediate' | 'after_event' | 'backoff' | 'terminal'
 }
 
 export interface ReactRoundResult {
@@ -224,6 +226,8 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
         requestedToolName: batchCall.name,
         toolName: resolveEffectiveToolName(batchCall),
         ok: result.outcome?.ok ?? true,
+        progress: result.outcome?.progress ?? true,
+        ...(result.outcome?.retryClass ? { retryClass: result.outcome.retryClass } : {}),
         ...(result.outcome?.code ? { code: result.outcome.code } : {}),
       })
       log.info({
@@ -232,6 +236,8 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
         toolName: resolveEffectiveToolName(batchCall),
         ok: result.outcome?.ok ?? true,
         code: result.outcome?.code,
+        progress: result.outcome?.progress ?? true,
+        retryClass: result.outcome?.retryClass,
       }, 'round_tool_done')
       messagesToAppend.push(await toDurableAgentMessage({
         role: 'tool',

@@ -152,7 +152,7 @@ invoke tool=mcp args={"action":"call","tool":"mcp__example__search","arguments":
 - 仓库对外展示的机器可读时间统一为北京时间 `YYYY-MM-DDTHH:mm:ss.SSS+08:00`；PostgreSQL `timestamptz` 仍保存绝对时刻。
 - 启动时当前 system prompt 会写入 `logs/system-prompt.txt`，便于检查。
 - 启动恢复会先连接 NapCat，并等待首次群历史 backfill 的所有来源尝试完成，再执行 missed-message replay；单群补拉失败记录 source-level error，其余来源和 replay 继续。
-- `SIGINT` / `SIGTERM` 会触发幂等 graceful shutdown：停止 ingress、中止未提交 compaction、等待当前 round、drain backfill、停止 jobs、同步最终 Goal/runtime 状态，最后断开数据库。单阶段超时或失败会记录 `shutdown_phase_failed`，并继续后续清理。
+- `SIGINT` / `SIGTERM` 会触发幂等 graceful shutdown：停止 ingress、中止未提交 compaction、等待当前 round、drain backfill、停止 jobs、同步最终 Goal/runtime 状态，最后断开数据库。关闭 NapCat WebSocket 时会先禁用 SDK 自动重连，避免退出流程被重新建立的连接拖住；单阶段超时或失败会记录 `shutdown_phase_failed`，并继续后续清理。
 
 ## 数据保留
 

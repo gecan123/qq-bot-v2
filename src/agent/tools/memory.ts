@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { Tool } from '../tool.js'
 import {
   compactMemoryEntries,
+  correctMemoryEntry,
   deleteMemoryEntry,
   deleteMemoryFiles,
   listMemoryFiles,
@@ -20,6 +21,8 @@ import {
 import { createLogger } from '../../logger.js'
 import type { MemoryMaintenanceRuntime } from '../memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
+import { createToolResultProgressTracker } from '../tool-progress.js'
+import type { MemorySourceEvidenceQuery, ValidateMemorySourceEvidence } from '../memory-evidence.js'
 
 const log = createLogger('TOOL_MEMORY')
 
@@ -38,6 +41,18 @@ const memoryFileSchema = z.string().trim().min(1).max(200).refine(
     && !file.split('/').includes('..'),
   '必须是 memory 内的 .md 相对路径',
 ).describe('memory 内的 .md 相对路径, 必须来自 memory list/search/read 结果; 不允许绝对路径、反斜杠或 .. 路径段.')
+function requireEvidenceForEntityFile(
+  value: { file: string; sourceMessageIds?: number[] },
+  ctx: z.RefinementCtx,
+): void {
+  if (/^(?:people|groups)\//.test(value.file) && !value.sourceMessageIds?.length) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['sourceMessageIds'],
+      message: 'people/groups memory mutation 必须提供 sourceMessageIds',
+    })
+  }
+}
 
 const argsSchema = z.discriminatedUnion('action', [
   z.object({
@@ -46,7 +61,16 @@ const argsSchema = z.discriminatedUnion('action', [
     id: idSchema.optional().describe('person/group 需要: QQ 号或群号. topic/self 通常不需要.'),
     title: z.string().trim().min(1).max(80).optional().describe('topic 必填稳定主题标题; self 可选. 不要用“今日速记”这类日期流水账标题.'),
     content: z.string().trim().min(1).max(500).describe('要记下来的内容. ≤500 字, 用自己的话写, 一条记一件事.'),
-    sourceMessageIds: z.array(z.number().int()).optional().describe('可选: 来源 Message.id 列表, 仅供人工排查.'),
+    sourceMessageIds: z.array(z.number().int().positive()).min(1).max(20).optional()
+      .describe('person/group 必填: 支撑这条事实的真实 messages.id；self/topic 可选.'),
+  }).superRefine((value, ctx) => {
+    if ((value.scope === 'person' || value.scope === 'group') && !value.sourceMessageIds?.length) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['sourceMessageIds'],
+        message: `scope=${value.scope} write 必须提供 sourceMessageIds`,
+      })
+    }
   }),
   z.object({
     action: z.literal('search').describe('搜索长期记忆.'),
@@ -110,7 +134,16 @@ const argsSchema = z.discriminatedUnion('action', [
     entryId: z.string().trim().min(1).max(160),
     expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
     content: z.string().trim().min(1).max(500),
-  }),
+    sourceMessageIds: z.array(z.number().int().positive()).min(1).max(20).optional(),
+  }).superRefine(requireEvidenceForEntityFile),
+  z.object({
+    action: z.literal('correct_entry').describe('原子替代一条错误事实：旧条目标为 superseded，并新建带证据的 replacement.'),
+    file: memoryFileSchema,
+    entryId: z.string().trim().min(1).max(160),
+    expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
+    content: z.string().trim().min(1).max(500),
+    sourceMessageIds: z.array(z.number().int().positive()).min(1).max(20).optional(),
+  }).superRefine(requireEvidenceForEntityFile),
   z.object({
     action: z.literal('delete_entry').describe('按 entryId 永久删除记忆文件中的一条记录.'),
     file: memoryFileSchema,
@@ -155,6 +188,7 @@ export interface MemoryToolDeps {
   id?: () => string
   maintenance?: MemoryMaintenanceRuntime
   workspaceStateCoordinator?: WorkspaceStateCoordinator
+  validateSourceMessageIds?: ValidateMemorySourceEvidence
 }
 
 export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
@@ -165,6 +199,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
     id: deps.id,
     workspaceStateCoordinator: deps.workspaceStateCoordinator,
   }
+  const progress = createToolResultProgressTracker()
 
   return {
     name: 'memory',
@@ -179,6 +214,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
       'action=list: 按 scope 列出有界文件元数据, 用于发现重复或过时记忆.',
       'action=delete: 永久删除明确指定的记忆文件; 先确认有价值内容已写入保留版本.',
       'action=update_entry/delete_entry/promote_entry/mark_disputed/supersede_entry/compact: 修改文件内记录; 先 read 取得 entryId 和最新 revision. compact 会生成 stable 记忆.',
+      'person/group 写入和修正必须引用真实 sourceMessageIds；事实错误时优先用 correct_entry 原子保留旧条目并写 replacement.',
       '可信度不接受 trust=high 这类模型自报字段; 对冲突事实用 mark_disputed，对已有替代事实用 supersede_entry 保留演化链.',
       'person/group 写入需要 id; topic 写入必须提供稳定 title，禁止落入无主题 topic.md; self 可用 title 分主题.',
       '写入要用自己的话, 不要照搬原话; 查询结果用于自然说话, 不要像报数据库.',
@@ -186,6 +222,25 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
     schema: argsSchema,
     async execute(args) {
       try {
+        if ('sourceMessageIds' in args && args.sourceMessageIds?.length && deps.validateSourceMessageIds) {
+          const evidenceQuery = memoryEvidenceQuery(args, args.sourceMessageIds)
+          const existing = new Set(await deps.validateSourceMessageIds(evidenceQuery))
+          const missing = args.sourceMessageIds.filter((id) => !existing.has(id))
+          if (missing.length > 0) {
+            const error = `sourceMessageIds contain unknown message rows: ${missing.join(',')}`
+            return {
+              content: JSON.stringify({ ok: false, code: 'invalid_evidence', error, missingSourceMessageIds: missing }),
+              outcome: {
+                ok: false,
+                code: 'invalid_evidence',
+                error,
+                progress: false,
+                retryClass: 'immediate',
+              },
+            }
+          }
+        }
+
         if (args.action === 'write') {
           const result = await writeMemoryEntry(
             storeOptions,
@@ -207,7 +262,14 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             deduplicated: result.deduplicated,
           }, 'memory_written')
           if (result.created) deps.maintenance?.enqueue(result.file)
-          return { content: JSON.stringify(result) }
+          return {
+            content: JSON.stringify(result),
+            outcome: {
+              ok: true,
+              code: result.changed ? 'written' : 'unchanged',
+              progress: result.changed,
+            },
+          }
         }
 
         if (args.action === 'search') {
@@ -222,7 +284,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             hitCount: result.matches.length,
             skippedCorrupt: result.skippedCorrupt,
           }, 'memory_searched')
-          return { content: JSON.stringify(result) }
+          return observedMemoryResult(progress, `search:${JSON.stringify(args)}`, result)
         }
 
         if (args.action === 'recall') {
@@ -242,7 +304,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             hitCount: result.matches.length,
             skippedCorrupt: result.skippedCorrupt,
           }, 'memory_recalled')
-          return { content: JSON.stringify(result), outcome: { ok: true } }
+          return observedMemoryResult(progress, `recall:${JSON.stringify(args)}`, result)
         }
 
         if (args.action === 'review') {
@@ -256,7 +318,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             proposalCount: result.proposals.length,
             scannedEntries: result.scannedEntries,
           }, 'memory_review_proposed')
-          return { content: JSON.stringify(result), outcome: { ok: true } }
+          return observedMemoryResult(progress, `review:${JSON.stringify(args)}`, result)
         }
 
         if (args.action === 'list') {
@@ -272,7 +334,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             truncated: result.truncated,
             skippedCorrupt: result.skippedCorrupt,
           }, 'memory_listed')
-          return { content: JSON.stringify(result), outcome: { ok: true } }
+          return observedMemoryResult(progress, `list:${JSON.stringify(args)}`, result)
         }
 
         if (args.action === 'delete') {
@@ -289,8 +351,18 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
           return {
             content: JSON.stringify(result),
             outcome: result.ok
-              ? { ok: true }
-              : { ok: false, code: 'delete_failed', error: '部分记忆文件删除失败' },
+              ? {
+                  ok: true,
+                  code: result.deleted.length > 0 ? 'deleted' : 'unchanged',
+                  progress: result.deleted.length > 0,
+                }
+              : {
+                  ok: false,
+                  code: 'delete_failed',
+                  error: '部分记忆文件删除失败',
+                  progress: result.deleted.length > 0,
+                  retryClass: 'immediate',
+                },
           }
         }
 
@@ -302,10 +374,30 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
               entryId: args.entryId,
               expectedRevision: args.expectedRevision,
               content: args.content,
+              sourceMessageIds: args.sourceMessageIds,
             },
           )
           log.info({ file: args.file, entryId: args.entryId }, 'memory_entry_updated')
-          return { content: JSON.stringify(result), outcome: { ok: true } }
+          return { content: JSON.stringify(result), outcome: { ok: true, code: 'updated', progress: true } }
+        }
+
+        if (args.action === 'correct_entry') {
+          const result = await correctMemoryEntry(
+            storeOptions,
+            {
+              file: args.file,
+              entryId: args.entryId,
+              expectedRevision: args.expectedRevision,
+              content: args.content,
+              sourceMessageIds: args.sourceMessageIds,
+            },
+          )
+          log.info({
+            file: args.file,
+            oldEntryId: args.entryId,
+            replacementEntryId: result.replacementEntryId,
+          }, 'memory_entry_corrected')
+          return { content: JSON.stringify(result), outcome: { ok: true, code: 'corrected', progress: true } }
         }
 
         if (args.action === 'delete_entry') {
@@ -314,7 +406,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             { file: args.file, entryId: args.entryId, expectedRevision: args.expectedRevision },
           )
           log.info({ file: args.file, entryId: args.entryId }, 'memory_entry_deleted')
-          return { content: JSON.stringify(result), outcome: { ok: true } }
+          return { content: JSON.stringify(result), outcome: { ok: true, code: 'deleted', progress: true } }
         }
 
         if (args.action === 'promote_entry') {
@@ -328,7 +420,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             },
           )
           log.info({ file: args.file, entryId: args.entryId }, 'memory_entry_promoted')
-          return { content: JSON.stringify(result), outcome: { ok: true } }
+          return { content: JSON.stringify(result), outcome: { ok: true, code: 'promoted', progress: true } }
         }
 
         if (args.action === 'mark_disputed') {
@@ -337,7 +429,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             { file: args.file, entryId: args.entryId, expectedRevision: args.expectedRevision },
           )
           log.info({ file: args.file, entryId: args.entryId }, 'memory_entry_marked_disputed')
-          return { content: JSON.stringify(result), outcome: { ok: true } }
+          return { content: JSON.stringify(result), outcome: { ok: true, code: 'disputed', progress: true } }
         }
 
         if (args.action === 'supersede_entry') {
@@ -355,7 +447,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             entryId: args.entryId,
             replacementEntryId: args.replacementEntryId,
           }, 'memory_entry_superseded')
-          return { content: JSON.stringify(result), outcome: { ok: true } }
+          return { content: JSON.stringify(result), outcome: { ok: true, code: 'superseded', progress: true } }
         }
 
         if (args.action === 'compact') {
@@ -373,24 +465,84 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             entryId: result.entryId,
             compactedCount: args.entryIds.length,
           }, 'memory_entries_compacted')
-          return { content: JSON.stringify(result), outcome: { ok: true } }
+          return { content: JSON.stringify(result), outcome: { ok: true, code: 'compacted', progress: true } }
         }
 
         const result = await readMemoryFile(
           storeOptions,
           { file: args.file, offset: args.offset, maxChars: args.maxChars },
         )
-        return { content: JSON.stringify(result) }
+        if (!result.ok) {
+          return {
+            content: JSON.stringify(result),
+            outcome: {
+              ok: false,
+              code: 'not_found',
+              error: result.error,
+              progress: false,
+              retryClass: 'immediate',
+            },
+          }
+        }
+        return observedMemoryResult(progress, `read:${JSON.stringify(args)}`, result)
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         log.warn({ err }, 'memory_tool_failed')
         const code = err instanceof MemoryStoreError ? err.code : 'memory_failed'
+        let recovery: Record<string, unknown> = {}
+        if (code === 'revision_conflict' && 'file' in args && typeof args.file === 'string') {
+          const latest = await readMemoryFile(storeOptions, { file: args.file, maxChars: 500 })
+          if (latest.ok) {
+            recovery = {
+              latestRevision: latest.revision,
+              currentEntry: 'entryId' in args
+                ? latest.entries.find((entry) => entry.id === args.entryId) ?? null
+                : null,
+            }
+          }
+        }
         return {
-          content: JSON.stringify({ ok: false, code, error: message }),
-          outcome: { ok: false, code, error: message },
+          content: JSON.stringify({ ok: false, code, error: message, ...recovery }),
+          outcome: {
+            ok: false,
+            code,
+            error: message,
+            progress: false,
+            retryClass: code === 'memory_failed' ? 'backoff' : 'immediate',
+          },
         }
       }
     },
+  }
+}
+
+function memoryEvidenceQuery(args: Args, sourceMessageIds: number[]): MemorySourceEvidenceQuery {
+  if (args.action === 'write' && (args.scope === 'person' || args.scope === 'group')) {
+    return { sourceMessageIds, scope: args.scope, id: String(args.id ?? '') }
+  }
+  if (args.action === 'update_entry' || args.action === 'correct_entry') {
+    const match = /^(people|groups)\/([^/]+)\.md$/.exec(args.file)
+    if (match) {
+      return {
+        sourceMessageIds,
+        scope: match[1] === 'people' ? 'person' : 'group',
+        id: match[2]!,
+      }
+    }
+  }
+  return { sourceMessageIds }
+}
+
+function observedMemoryResult(
+  tracker: ReturnType<typeof createToolResultProgressTracker>,
+  key: string,
+  result: unknown,
+) {
+  const content = JSON.stringify(result)
+  const changed = tracker.observe(key, content)
+  return {
+    content,
+    outcome: { ok: true as const, code: changed ? 'observed' : 'unchanged', progress: changed },
   }
 }
 

@@ -90,6 +90,7 @@ describe('life journal runtime', () => {
 
   test('recordRound writes and deduplicates recent memory from the same review', async () => {
     const enqueued: string[] = []
+    const validatedEvidence: Array<{ sourceMessageIds: readonly number[]; scope?: string; id?: string }> = []
     const llm: LlmClient = {
       async chat() {
         return {
@@ -116,6 +117,10 @@ describe('life journal runtime', () => {
       llm,
       now: () => new Date('2026-07-07T15:18:00.000Z'),
       minWriteIntervalMs: 0,
+      async validateSourceMessageIds(query) {
+        validatedEvidence.push(query)
+        return query.sourceMessageIds
+      },
       memoryMaintenance: {
         enqueue(file) {
           enqueued.push(file)
@@ -138,8 +143,51 @@ describe('life journal runtime', () => {
     assert.match(memory, /sourceMessageIds: 101/)
     assert.equal(memory.match(/<!-- memory-entry/g)?.length, 1)
     assert.deepEqual(enqueued, ['people/10001.md'])
+    assert.deepEqual(validatedEvidence, [
+      { sourceMessageIds: [101], scope: 'person', id: '10001' },
+      { sourceMessageIds: [101], scope: 'person', id: '10001' },
+    ])
     assert.match(await readFile(join(rootDir, 'life', 'journal', '2026-07-07.md'), 'utf8'), /长期代码示例偏好/)
     assert.match(await readFile(join(rootDir, 'life', 'agenda.md'), 'utf8'), /优先使用 TypeScript/)
+  })
+
+  test('skips an entity memory candidate whose source Message row does not exist', async () => {
+    const runtime = createLifeJournalRuntime({
+      rootDir,
+      llm: {
+        async chat() {
+          return {
+            content: JSON.stringify({
+              shouldWrite: false,
+              memoryCandidates: [{
+                scope: 'person',
+                id: '10001',
+                content: '这个长期偏好没有可验证的消息来源',
+                sourceMessageIds: [404],
+              }],
+              journalMarkdown: '',
+              agendaMarkdown: '',
+            }),
+            toolCalls: [],
+            usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      minWriteIntervalMs: 0,
+      async validateSourceMessageIds() {
+        return []
+      },
+    })
+
+    const result = await recordAndDrain(runtime, {
+      roundIndex: 9,
+      messages: [{ role: 'user', content: '没有 row 404' }],
+    })
+
+    assert.deepEqual(result, { ok: true, wroteJournal: false, updatedAgenda: false })
+    await assert.rejects(readFile(join(rootDir, 'memory', 'people', '10001.md')), /ENOENT/)
   })
 
   test('wraps round transcript as untrusted data before calling the reviewer', async () => {

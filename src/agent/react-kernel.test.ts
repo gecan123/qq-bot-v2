@@ -117,6 +117,7 @@ describe('runReactRound', () => {
       requestedToolName: 'lookup',
       toolName: 'lookup',
       ok: true,
+      progress: true,
     }])
     assert.deepEqual(context.getSnapshot().messages, [
       { role: 'user', content: 'hello' },

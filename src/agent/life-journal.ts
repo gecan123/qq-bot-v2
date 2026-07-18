@@ -9,6 +9,7 @@ import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js
 import { renderUntrustedTranscript } from './untrusted-transcript.js'
 import { writeMemoryEntry } from './memory-store.js'
 import type { MemoryMaintenanceRuntime } from './memory-maintenance.js'
+import type { ValidateMemorySourceEvidence } from './memory-evidence.js'
 import {
   appendLifeJournalEntry,
   ensureLifeAgenda,
@@ -48,6 +49,22 @@ const memoryCandidateSchema = z.object({
   title: z.string().trim().min(1).max(80).optional(),
   content: z.string().trim().min(1).max(2_000),
   sourceMessageIds: z.array(z.number().int().positive()).max(20).optional(),
+}).superRefine((candidate, ctx) => {
+  if (candidate.scope !== 'person' && candidate.scope !== 'group') return
+  if (candidate.id == null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['id'],
+      message: 'person/group memory candidate 必须提供明确 id。',
+    })
+  }
+  if (!candidate.sourceMessageIds?.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['sourceMessageIds'],
+      message: 'person/group memory candidate 必须引用本轮真实 Message row id。',
+    })
+  }
 })
 
 const reviewResultSchema = z.object({
@@ -322,7 +339,14 @@ function extractToolResultOrJson<T>(
 
   const textResult = parseText?.(output.content)
   if (textResult) {
-    return textResult
+    const parsed = tool.schema.safeParse(textResult)
+    if (!parsed.success) {
+      throw new JsonObjectParseError(
+        `invalid ${tool.name} text result: ${parsed.error.message}`,
+        output.content,
+      )
+    }
+    return parsed.data as T
   }
 
   const json = extractJsonObject(output.content)
@@ -422,6 +446,7 @@ export function createLifeJournalRuntime(deps: {
   taskScheduler?: TaskScheduler
   workspaceStateCoordinator?: WorkspaceStateCoordinator
   memoryMaintenance?: MemoryMaintenanceRuntime
+  validateSourceMessageIds?: ValidateMemorySourceEvidence
 }): LifeJournalRuntime {
   const rootDir = deps.rootDir ?? 'data/agent-workspace'
   const maxRoundChars = deps.maxRoundChars ?? 6000
@@ -537,6 +562,18 @@ export function createLifeJournalRuntime(deps: {
       }
       for (const candidate of parsed.memoryCandidates) {
         try {
+          if (candidate.sourceMessageIds?.length && deps.validateSourceMessageIds) {
+            const existing = new Set(await deps.validateSourceMessageIds({
+              sourceMessageIds: candidate.sourceMessageIds,
+              ...(candidate.scope === 'person' || candidate.scope === 'group'
+                ? { scope: candidate.scope, id: String(candidate.id ?? '') }
+                : {}),
+            }))
+            const missing = candidate.sourceMessageIds.filter((id) => !existing.has(id))
+            if (missing.length > 0) {
+              throw new Error(`memory candidate references unknown Message rows: ${missing.join(',')}`)
+            }
+          }
           const memory = await writeMemoryEntry({
             rootDir,
             now: deps.now,

@@ -3,6 +3,7 @@ import { prisma } from '../../database/client.js'
 import { createLogger } from '../../logger.js'
 import { formatBeijingIso } from '../../utils/beijing-time.js'
 import type { Tool } from '../tool.js'
+import { createToolResultProgressTracker } from '../tool-progress.js'
 
 const log = createLogger('INBOX')
 
@@ -65,6 +66,7 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
   const monitoredGroups = new Set(deps.groupIds)
   const selfNumber = String(deps.selfNumber)
   const findMessages = deps.findMessages ?? defaultFindMessages
+  const progress = createToolResultProgressTracker()
 
   return {
     name: 'inbox',
@@ -104,7 +106,12 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
             latestRowId: row.id,
           })
         }
-        return { content: JSON.stringify({ ok: true, mailboxes }, null, 2) }
+        const content = JSON.stringify({ ok: true, mailboxes }, null, 2)
+        const changed = progress.observe('list', content)
+        return {
+          content,
+          outcome: { ok: true, code: changed ? 'observed' : 'unchanged', progress: changed },
+        }
       }
 
       const afterRowId = args.afterRowId ?? 0
@@ -150,7 +157,16 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
           returnedPreviousMessages: previousRows.length,
         }, 'inbox_group_read_completed')
       }
-      return { content: renderBoundedRead(mailbox, previousRows, rows, contextBefore, limit, selfNumber) }
+      const content = renderBoundedRead(mailbox, previousRows, rows, contextBefore, limit, selfNumber)
+      if (rows.length === 0 && previousRows.length === 0) {
+        return { content, outcome: { ok: true, code: 'empty', progress: false } }
+      }
+      const key = JSON.stringify({ mailbox, afterRowId, contextBefore, limit })
+      const changed = progress.observe(key, content)
+      return {
+        content,
+        outcome: { ok: true, code: changed ? 'observed' : 'unchanged', progress: changed },
+      }
     },
   }
 }
@@ -325,8 +341,11 @@ function extractMentionTargets(content: unknown): string[] {
   return targets
 }
 
-function errorResult(error: string): { content: string } {
-  return { content: JSON.stringify({ ok: false, error }) }
+function errorResult(error: string) {
+  return {
+    content: JSON.stringify({ ok: false, error }),
+    outcome: { ok: false as const, code: 'invalid_source', error, progress: false, retryClass: 'immediate' as const },
+  }
 }
 
 async function defaultFindMessages(args: InboxFindManyArgs): Promise<InboxMessageRow[]> {

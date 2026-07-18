@@ -60,6 +60,33 @@ describe('inbox tool', () => {
     assert.deepEqual(payload.messages.map((message) => message.rowId), [11, 12])
     assert.equal(payload.messages[0]!.text, 'message-11')
     assert.equal(payload.messages[0]!.replyable, true)
+    assert.equal(result.outcome?.progress, true)
+
+    const repeated = await tool.execute({
+      action: 'read',
+      source: 'group',
+      groupId: 111,
+      afterRowId: 10,
+      limit: 2,
+    }, undefined as never)
+    assert.deepEqual(repeated.outcome, { ok: true, code: 'unchanged', progress: false })
+  })
+
+  test('empty mailbox read is an explicit no-progress result', async () => {
+    const tool = createInboxTool({
+      groupIds: [111],
+      selfNumber: 999,
+      async findMessages() { return [] },
+    })
+
+    const result = await tool.execute({
+      action: 'read',
+      source: 'group',
+      groupId: 111,
+      afterRowId: 10,
+    }, undefined as never)
+
+    assert.deepEqual(result.outcome, { ok: true, code: 'empty', progress: false })
   })
 
   test('exposes structured mention targets without treating plain-text @你 as a bot mention', async () => {

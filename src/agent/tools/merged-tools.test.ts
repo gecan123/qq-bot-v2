@@ -347,14 +347,36 @@ describe('merged main-agent tools', () => {
     registry.complete(task.id, { summary: 'done', data: { ephemeralRef: 'abc' } })
     const tool = createBackgroundTaskTool({ taskRegistry: registry })
 
-    const listed = JSON.parse((await tool.execute({ action: 'list' }, makeCtx())).content as string) as {
+    const firstList = await tool.execute({ action: 'list' }, makeCtx())
+    const listed = JSON.parse(firstList.content as string) as {
       recentCompleted: { taskId: string }[]
     }
     const detail = await tool.execute({ action: 'get', taskId: task.id }, makeCtx())
+    const repeatedList = await tool.execute({ action: 'list' }, makeCtx())
+    const repeatedDetail = await tool.execute({ action: 'get', taskId: task.id }, makeCtx())
 
     assert.equal(listed.recentCompleted[0]!.taskId, task.id)
+    assert.deepEqual(firstList.outcome, { ok: true, code: 'observed', progress: true })
+    assert.deepEqual(repeatedList.outcome, { ok: true, code: 'unchanged', progress: false })
     assert.match(JSON.stringify(detail.content), /abc/)
     assert.match(JSON.stringify(detail.content), /send_message imageRef=ephemeral:abc/)
+    assert.deepEqual(detail.outcome, { ok: true, code: 'completed', progress: true })
+    assert.deepEqual(repeatedDetail.outcome, { ok: true, code: 'unchanged', progress: false })
+  })
+
+  test('background_task marks a running result as wait-for-event rather than progress', async () => {
+    const registry = createInMemoryTaskRegistry()
+    const task = registry.register({ toolName: 'generate_image', description: '生成图片' })
+    const tool = createBackgroundTaskTool({ taskRegistry: registry })
+
+    const result = await tool.execute({ action: 'get', taskId: task.id }, makeCtx())
+
+    assert.deepEqual(result.outcome, {
+      ok: true,
+      code: 'still_running',
+      progress: false,
+      retryClass: 'after_event',
+    })
   })
 
   test('background_task action=get renders batched image metadata with one preview image', async () => {

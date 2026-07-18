@@ -68,6 +68,7 @@ export interface MemoryWriteResult {
   tier: MemoryTier
   created: boolean
   deduplicated: boolean
+  changed: boolean
   revision: string
 }
 
@@ -271,6 +272,7 @@ export async function writeMemoryEntry(
         tier: duplicate.tier,
         created: false,
         deduplicated: true,
+        changed: deduplicatedRaw !== base,
         revision: revisionOf(deduplicatedRaw),
       }
     }
@@ -300,6 +302,7 @@ export async function writeMemoryEntry(
       tier: 'recent',
       created: true,
       deduplicated: false,
+      changed: true,
       revision: revisionOf(raw),
     }
   }
@@ -598,15 +601,73 @@ export async function readMemoryFile(
 
 export async function updateMemoryEntry(
   options: MemoryStoreOptions,
-  input: { file: string; entryId: string; expectedRevision: string; content: string },
+  input: { file: string; entryId: string; expectedRevision: string; content: string; sourceMessageIds?: number[] },
 ): Promise<{ ok: true; file: string; entryId: string; revision: string }> {
   return mutateMemoryFile(options, input.file, input.expectedRevision, (entries, updatedAt) => {
     const target = entries.find((entry) => entry.id === input.entryId)
     if (!target) throw new MemoryStoreError('not_found', `memory entry not found: ${input.entryId}`)
     return entries.map((entry) => entry.id === input.entryId
-      ? { ...entry, updatedAt, content: input.content.trim() }
+      ? {
+          ...entry,
+          updatedAt,
+          content: input.content.trim(),
+          sourceMessageIds: [...new Set([...entry.sourceMessageIds, ...(input.sourceMessageIds ?? [])])],
+        }
       : entry)
   }, input.entryId)
+}
+
+export async function correctMemoryEntry(
+  options: MemoryStoreOptions,
+  input: {
+    file: string
+    entryId: string
+    expectedRevision: string
+    content: string
+    sourceMessageIds?: number[]
+  },
+): Promise<{
+  ok: true
+  file: string
+  oldEntryId: string
+  replacementEntryId: string
+  revision: string
+}> {
+  const now = options.now?.() ?? new Date()
+  const nowIso = formatBeijingIso(now)
+  const replacementEntryId = options.id?.() ?? `mem_${formatBeijingCompact(now)}_${randomUUID().slice(0, 8)}`
+  if (replacementEntryId === input.entryId) {
+    throw new MemoryStoreError('invalid_selection', 'replacement memory entry cannot supersede itself')
+  }
+  const result = await mutateMemoryFile(options, input.file, input.expectedRevision, (entries) => {
+    const targetIndex = entries.findIndex((entry) => entry.id === input.entryId)
+    if (targetIndex < 0) throw new MemoryStoreError('not_found', `memory entry not found: ${input.entryId}`)
+    const target = entries[targetIndex]!
+    if (target.status === 'superseded') {
+      throw new MemoryStoreError('invalid_selection', `memory entry is already superseded: ${input.entryId}`)
+    }
+    const replacement: MemoryEntry = {
+      id: replacementEntryId,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      content: input.content.trim(),
+      sourceMessageIds: [...new Set(input.sourceMessageIds ?? [])],
+      tier: 'recent',
+      status: 'active',
+      aliases: [...target.aliases],
+      supersedes: [input.entryId],
+    }
+    return entries.flatMap((entry, index) => index === targetIndex
+      ? [{ ...entry, updatedAt: nowIso, status: 'superseded' as const }, replacement]
+      : [entry])
+  }, replacementEntryId)
+  return {
+    ok: true,
+    file: result.file,
+    oldEntryId: input.entryId,
+    replacementEntryId,
+    revision: result.revision,
+  }
 }
 
 export async function deleteMemoryEntry(

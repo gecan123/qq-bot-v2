@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { QqConversationFocus } from '../agent-context.types.js'
 import type { Tool } from '../tool.js'
+import { createToolResultProgressTracker } from '../tool-progress.js'
 import type { QqDirectoryFriend, QqDirectoryGroup } from './qq-directory.js'
 
 type ActiveQqConversationFocus = Exclude<QqConversationFocus, null>
@@ -127,6 +128,8 @@ export function createQqConversationController(
 }
 
 export function createQqConversationTool(controller: QqConversationController): Tool<Args> {
+  const progress = createToolResultProgressTracker()
+
   return {
     name: 'qq_conversation',
     description: [
@@ -137,25 +140,22 @@ export function createQqConversationTool(controller: QqConversationController): 
     schema: argsSchema,
     async execute(args) {
       if (args.action === 'list') {
-        return {
-          content: JSON.stringify({
-            ok: true,
-            action: args.action,
-            current: controller.getCurrent(),
-            conversations: await controller.list(),
-          }),
-        }
+        return observedConversationResult(progress, 'list', {
+          ok: true,
+          action: args.action,
+          current: controller.getCurrent(),
+          conversations: await controller.list(),
+        })
       }
       if (args.action === 'current') {
-        return {
-          content: JSON.stringify({
-            ok: true,
-            action: args.action,
-            current: controller.getCurrent(),
-          }),
-        }
+        return observedConversationResult(progress, 'current', {
+          ok: true,
+          action: args.action,
+          current: controller.getCurrent(),
+        })
       }
       if (args.action === 'close') {
+        const changed = controller.getCurrent() != null
         controller.close()
         return {
           content: JSON.stringify({
@@ -163,18 +163,54 @@ export function createQqConversationTool(controller: QqConversationController): 
             action: args.action,
             current: null,
           }),
+          outcome: {
+            ok: true,
+            code: changed ? 'closed' : 'unchanged',
+            progress: changed,
+          },
         }
       }
 
+      const previous = controller.getCurrent()
       const result = await controller.open(args.target)
+      const changed = result.ok && !sameFocus(previous, result.current)
       return {
         content: JSON.stringify({
           ...result,
           action: args.action,
         }),
+        outcome: result.ok
+          ? { ok: true, code: changed ? 'opened' : 'unchanged', progress: changed }
+          : {
+              ok: false,
+              code: result.code,
+              progress: false,
+              retryClass: 'immediate',
+            },
       }
     },
   }
+}
+
+function observedConversationResult(
+  tracker: ReturnType<typeof createToolResultProgressTracker>,
+  key: string,
+  value: unknown,
+) {
+  const content = JSON.stringify(value)
+  const changed = tracker.observe(key, content)
+  return {
+    content,
+    outcome: { ok: true as const, code: changed ? 'observed' : 'unchanged', progress: changed },
+  }
+}
+
+function sameFocus(left: QqConversationFocus, right: QqConversationFocus): boolean {
+  if (left == null || right == null) return left === right
+  if (left.type !== right.type) return false
+  return left.type === 'group'
+    ? left.groupId === (right as Extract<QqConversationFocus, { type: 'group' }>).groupId
+    : left.userId === (right as Extract<QqConversationFocus, { type: 'private' }>).userId
 }
 
 function cloneFocus(focus: QqConversationFocus): QqConversationFocus {

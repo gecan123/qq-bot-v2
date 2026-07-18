@@ -30,8 +30,12 @@ import type { TargetMetadataMaps } from './resolve-target-meta.js'
 import type { GroupCustomization } from '../config/group-prompts.js'
 import type { BotOwner } from '../config/index.js'
 import type { MessageSender } from '../messaging/message-sender.js'
-import { isGroupMessageMentioningUser } from '../database/messages.js'
-import { findApprovalEvidenceMessage } from '../database/messages.js'
+import {
+  findApprovalEvidenceMessage,
+  findValidMemoryEvidenceRowIds,
+  findObservedQqIdentityRows,
+  isGroupMessageMentioningUser,
+} from '../database/messages.js'
 import type { TaskScheduler } from './task-scheduler.js'
 import type { QqDirectoryFriend, QqDirectoryGroup } from './tools/qq-directory.js'
 import {
@@ -205,7 +209,9 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
         groupIds: input.groupIds,
         loadFriends: input.loadFriends,
         loadGroups: input.loadGroups,
+        loadObservedIdentity: findObservedQqIdentityRows,
       },
+      validateMemorySourceMessageIds: findValidMemoryEvidenceRowIds,
     }),
     activeCapabilities: {
       list: () => [...activeToolCapabilities],

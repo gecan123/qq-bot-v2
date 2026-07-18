@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { Tool } from '../tool.js'
 import type { ToolResultContentBlock } from '../agent-context.types.js'
 import type { BackgroundTaskRegistry } from '../background-task-registry.js'
+import { createToolResultProgressTracker } from '../tool-progress.js'
 
 const argsSchema = z.object({
   taskId: z.string().min(1).describe('要查看结果的后台任务 ID.'),
@@ -19,6 +20,8 @@ export interface GetTaskResultDeps {
 }
 
 export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
+  const progressTracker = createToolResultProgressTracker()
+
   return {
     name: 'get_task_result',
     description: [
@@ -32,7 +35,10 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
       const task = deps.taskRegistry.get(args.taskId)
 
       if (!task) {
-        return { content: JSON.stringify({ ok: false, error: `任务 #${args.taskId} 不存在` }) }
+        return {
+          content: JSON.stringify({ ok: false, error: `任务 #${args.taskId} 不存在` }),
+          outcome: { ok: false, code: 'not_found', progress: false, retryClass: 'terminal' },
+        }
       }
 
       if (task.status === 'running') {
@@ -42,6 +48,7 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
             ok: false,
             error: `任务 #${args.taskId} 仍在运行中 (已耗时 ${Math.round(elapsedMs / 1000)}s)`,
           }),
+          outcome: { ok: true, code: 'still_running', progress: false, retryClass: 'after_event' },
         }
       }
 
@@ -55,6 +62,7 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
             error: task.error,
             ...(task.recovery ? { recovery: task.recovery } : {}),
           }),
+          outcome: { ok: false, code: task.status, progress: false, retryClass: 'terminal' },
         }
       }
 
@@ -110,7 +118,14 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
         }
       }
 
-      return { content: blocks }
+      const changed = progressTracker.observe(
+        task.id,
+        `${task.status}:${task.updatedAt.toISOString()}:${task.resultSummary ?? ''}`,
+      )
+      return {
+        content: blocks,
+        outcome: { ok: true, code: changed ? 'completed' : 'unchanged', progress: changed },
+      }
     },
   }
 }

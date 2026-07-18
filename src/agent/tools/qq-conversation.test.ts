@@ -65,6 +65,9 @@ describe('qq_conversation', () => {
         },
       ],
     })
+    assert.deepEqual(result.outcome, { ok: true, code: 'observed', progress: true })
+    const repeated = await tool.execute({ action: 'list' }, makeContext())
+    assert.deepEqual(repeated.outcome, { ok: true, code: 'unchanged', progress: false })
   })
 
   test('current is null before opening a conversation', async () => {
@@ -77,6 +80,9 @@ describe('qq_conversation', () => {
       action: 'current',
       current: null,
     })
+    assert.deepEqual(result.outcome, { ok: true, code: 'observed', progress: true })
+    const repeated = await tool.execute({ action: 'current' }, makeContext())
+    assert.deepEqual(repeated.outcome, { ok: true, code: 'unchanged', progress: false })
   })
 
   test('open accepts a joined monitored group and a current friend', async () => {
@@ -103,6 +109,13 @@ describe('qq_conversation', () => {
       current: { type: 'private', userId: 2002 },
     })
     assert.deepEqual(getFocus(), { type: 'private', userId: 2002 })
+    assert.deepEqual(friend.outcome, { ok: true, code: 'opened', progress: true })
+
+    const repeated = await tool.execute({
+      action: 'open',
+      target: { type: 'private', userId: 2002 },
+    }, makeContext())
+    assert.deepEqual(repeated.outcome, { ok: true, code: 'unchanged', progress: false })
   })
 
   test('open rejects unavailable targets without changing the existing focus', async () => {
@@ -136,6 +149,10 @@ describe('qq_conversation', () => {
       current: null,
     })
     assert.equal(getFocus(), null)
+    assert.deepEqual(result.outcome, { ok: true, code: 'closed', progress: true })
+
+    const repeated = await tool.execute({ action: 'close' }, makeContext())
+    assert.deepEqual(repeated.outcome, { ok: true, code: 'unchanged', progress: false })
   })
 
   test('resolveCurrent clears a private focus after the friend disappears', async () => {

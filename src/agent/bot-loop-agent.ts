@@ -116,6 +116,7 @@ export interface BotLoopAutonomyOptions {
   maxConsecutiveRounds?: number
   cooldownMs?: number
   idleWaitMs?: number
+  maxIdleWaitMs?: number
   actionRetryWaitMs?: number
   now?: () => Date
   waitForAttentionOrTimeout?: (
@@ -130,6 +131,7 @@ const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 86_400_000
 const DEFAULT_MAX_CONSECUTIVE_ROUNDS = 20
 const DEFAULT_AUTONOMY_COOLDOWN_MS = 15 * 60_000
 const DEFAULT_IDLE_WAIT_MS = 15 * 60_000
+const DEFAULT_MAX_IDLE_WAIT_MS = 4 * 60 * 60_000
 const DEFAULT_ACTION_RETRY_WAIT_MS = 60_000
 const DEFAULT_COMPACTION_FAILURE_BACKOFF_MS = 10 * 60_000
 const MAX_OUTPUT_CONTINUATIONS_PER_ROUND = 2
@@ -158,10 +160,12 @@ export interface BotLoopAgent {
 }
 
 export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
+  const idleWaitMs = Math.max(1, deps.autonomy?.idleWaitMs ?? DEFAULT_IDLE_WAIT_MS)
   const autonomy = {
     maxConsecutiveRounds: Math.max(1, deps.autonomy?.maxConsecutiveRounds ?? DEFAULT_MAX_CONSECUTIVE_ROUNDS),
     cooldownMs: Math.max(1, deps.autonomy?.cooldownMs ?? DEFAULT_AUTONOMY_COOLDOWN_MS),
-    idleWaitMs: Math.max(1, deps.autonomy?.idleWaitMs ?? DEFAULT_IDLE_WAIT_MS),
+    idleWaitMs,
+    maxIdleWaitMs: Math.max(idleWaitMs, deps.autonomy?.maxIdleWaitMs ?? DEFAULT_MAX_IDLE_WAIT_MS),
     actionRetryWaitMs: Math.max(1, deps.autonomy?.actionRetryWaitMs ?? DEFAULT_ACTION_RETRY_WAIT_MS),
     now: deps.autonomy?.now ?? (() => new Date()),
     waitForAttentionOrTimeout: deps.autonomy?.waitForAttentionOrTimeout ?? waitForAttentionOrTimeout,
@@ -177,6 +181,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let consecutiveRounds = 0
   let noToolActionRetryPending = false
   let recoverableToolCorrectionRounds = 0
+  let idleBackoffLevel = 0
   let nextCompactionAttemptAt = 0
   let compactionAbortController = new AbortController()
   let lastContextWindowTokens =
@@ -553,6 +558,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     sentTargets: MessageSentTarget[]
     recoverableToolFailure: boolean
     onlyHelpToolCalls: boolean
+    madeToolProgress: boolean
   }> {
     roundIndex++
     let recoveredContextOverflow = false
@@ -650,10 +656,14 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       didCompleteRest,
       sentTargets,
       recoverableToolFailure: result.toolOutcomes.some((outcome) => (
-        !outcome.ok && outcome.code != null && RECOVERABLE_TOOL_ERROR_CODES.has(outcome.code)
+        !outcome.ok && (
+          outcome.retryClass === 'immediate'
+          || (outcome.code != null && RECOVERABLE_TOOL_ERROR_CODES.has(outcome.code))
+        )
       )),
       onlyHelpToolCalls: result.toolOutcomes.length > 0
         && result.toolOutcomes.every((outcome) => outcome.requestedToolName === 'help'),
+      madeToolProgress: result.toolOutcomes.some((outcome) => outcome.progress),
     }
   }
 
@@ -715,6 +725,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     actionRequired?: boolean
     recoverableToolFailure?: boolean
     onlyHelpToolCalls?: boolean
+    madeToolProgress?: boolean
   }> {
     const beforeStepCount = deps.context.getSnapshot().messages.length
     const goalAtRoundStart = await deps.goalStore?.get() ?? null
@@ -824,6 +835,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       sentTargets,
       recoverableToolFailure,
       onlyHelpToolCalls,
+      madeToolProgress,
     } = roundResult
     const handledMailboxMarkers = collectHandledMailboxMarkers(sentTargets)
     await commitChanges({ messages: handledMailboxMarkers })
@@ -866,6 +878,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       toolCallCount,
       recoverableToolFailure,
       onlyHelpToolCalls,
+      madeToolProgress,
       actionRequired: goalAtRoundStart?.status === 'active' || (drained.hadAttention && disclosed > 0),
     }
   }
@@ -878,6 +891,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       actionRequired = false,
       recoverableToolFailure = false,
       onlyHelpToolCalls = false,
+      madeToolProgress = false,
     } = await step()
     if (!ranRound && !stopRequested) {
       await waitForExternalEvent()
@@ -889,6 +903,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       consecutiveRounds = 0
       noToolActionRetryPending = false
       recoverableToolCorrectionRounds = 0
+      idleBackoffLevel = 0
       return
     }
 
@@ -912,7 +927,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         return
       }
       log.info({ consecutiveRounds, cooldownMs: autonomy.cooldownMs }, 'autonomy_round_cooldown_enter')
-      await autonomy.waitForAttentionOrTimeout(deps.eventQueue, autonomy.cooldownMs)
+      const wake = await autonomy.waitForAttentionOrTimeout(deps.eventQueue, autonomy.cooldownMs)
+      if (wake === 'attention') idleBackoffLevel = 0
       consecutiveRounds = 0
       noToolActionRetryPending = false
       recoverableToolCorrectionRounds = 0
@@ -921,10 +937,40 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
 
     if (toolCallCount > 0) {
       noToolActionRetryPending = false
-      return
+      const continuingCorrection = recoverableToolFailure
+        || (recoverableToolCorrectionRounds > 0 && onlyHelpToolCalls)
+      if (
+        continuingCorrection
+        && recoverableToolCorrectionRounds < MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS
+      ) {
+        recoverableToolCorrectionRounds++
+        idleBackoffLevel = 0
+        log.info({
+          consecutiveRounds,
+          correctionRound: recoverableToolCorrectionRounds,
+          maxCorrectionRounds: MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS,
+          recoverableToolFailure,
+          onlyHelpToolCalls,
+        }, 'recoverable_tool_error_retry_immediate')
+        return
+      }
+      if (!recoverableToolFailure && !onlyHelpToolCalls) recoverableToolCorrectionRounds = 0
+      if (madeToolProgress) {
+        idleBackoffLevel = 0
+        return
+      }
+      if (!madeToolProgress) {
+        if (actionRequired) idleBackoffLevel = 0
+        const waitMs = actionRequired ? autonomy.actionRetryWaitMs : currentIdleWaitMs()
+        log.info({ consecutiveRounds, waitMs, actionRequired, idleBackoffLevel }, 'tool_no_progress_wait')
+        const wake = await autonomy.waitForAttentionOrTimeout(deps.eventQueue, waitMs)
+        updateIdleBackoff(wake, !actionRequired)
+        return
+      }
     }
 
     if (actionRequired || noToolActionRetryPending) {
+      idleBackoffLevel = 0
       if (!noToolActionRetryPending) {
         noToolActionRetryPending = true
         log.info({ consecutiveRounds }, 'no_tool_action_retry_immediate')
@@ -939,10 +985,27 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       return
     }
 
-    log.info({ consecutiveRounds, waitMs: autonomy.idleWaitMs }, 'no_tool_quiescent_wait')
-    await autonomy.waitForAttentionOrTimeout(deps.eventQueue, autonomy.idleWaitMs)
+    const waitMs = currentIdleWaitMs()
+    log.info({ consecutiveRounds, waitMs, idleBackoffLevel, actionAnchor: 'none' }, 'no_tool_quiescent_wait')
+    const wake = await autonomy.waitForAttentionOrTimeout(deps.eventQueue, waitMs)
+    updateIdleBackoff(wake, true)
     consecutiveRounds = 0
     recoverableToolCorrectionRounds = 0
+  }
+
+  function currentIdleWaitMs(): number {
+    return Math.min(
+      autonomy.maxIdleWaitMs,
+      autonomy.idleWaitMs * (2 ** Math.min(idleBackoffLevel, 20)),
+    )
+  }
+
+  function updateIdleBackoff(wake: 'attention' | 'elapsed', unanchored: boolean): void {
+    if (wake === 'attention' || !unanchored) {
+      idleBackoffLevel = 0
+      return
+    }
+    idleBackoffLevel = Math.min(idleBackoffLevel + 1, 20)
   }
 
   async function waitForExternalEvent(): Promise<void> {

@@ -43,6 +43,7 @@ import { createGoalTool } from './goal.js'
 import type { GoalStore } from '../goal-store.js'
 import type { MemoryMaintenanceRuntime } from '../memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
+import type { ValidateMemorySourceEvidence } from '../memory-evidence.js'
 import { createQqConversationTool, type QqConversationController } from './qq-conversation.js'
 import { applyBotToolPolicy } from './policies.js'
 
@@ -66,6 +67,7 @@ export interface BotToolDeps {
   memoryMaintenance?: MemoryMaintenanceRuntime
   workspaceDir?: string
   workspaceStateCoordinator?: WorkspaceStateCoordinator
+  validateMemorySourceMessageIds?: ValidateMemorySourceEvidence
 }
 
 export interface BotOptionalTools {
@@ -151,6 +153,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
       workspaceDir: deps.workspaceDir,
       maintenance: deps.memoryMaintenance,
       workspaceStateCoordinator: deps.workspaceStateCoordinator,
+      validateSourceMessageIds: deps.validateMemorySourceMessageIds,
     }),
     inbox,
     chatStyle,

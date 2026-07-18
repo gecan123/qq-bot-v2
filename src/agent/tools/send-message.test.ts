@@ -116,6 +116,11 @@ describe('send_message current conversation contract', () => {
       code: 'CHAT_CONTEXT_UNAVAILABLE',
       error: 'Open a QQ conversation before sending.',
     })
+    assert.deepEqual(result.outcome, {
+      ok: false,
+      code: 'CHAT_CONTEXT_UNAVAILABLE',
+      error: 'Open a QQ conversation before sending.',
+    })
     assert.equal(authorizationCalls, 0)
     assert.equal(calls.length, 0)
   })
@@ -137,6 +142,8 @@ describe('send_message current conversation contract', () => {
     const result = await tool.execute({ message: 'hi' }, makeContext())
 
     assert.equal(parse(result.content).code, 'CHAT_CONTEXT_STALE')
+    assert.equal(result.outcome?.ok, false)
+    assert.equal(result.outcome?.code, 'CHAT_CONTEXT_STALE')
     assert.equal(authorizationCalls, 0)
     assert.equal(calls.length, 0)
   })
@@ -203,6 +210,8 @@ describe('send_message current conversation contract', () => {
     const result = await tool.execute({ message: 'hi', mention_user_id: 100 }, makeContext())
 
     assert.equal(parse(result.content).code, 'MENTION_NOT_ALLOWED')
+    assert.equal(result.outcome?.ok, false)
+    assert.equal(result.outcome?.code, 'MENTION_NOT_ALLOWED')
     assert.equal(authorizationCalls, 0)
     assert.equal(calls.length, 0)
   })
@@ -225,6 +234,7 @@ describe('send_message current conversation contract', () => {
       type: 'message_sent',
       target: { type: 'private', userId: 10001 },
     }])
+    assert.deepEqual(result.outcome, { ok: true })
   })
 
   test('returns policy rejection without calling sender', async () => {
@@ -249,6 +259,11 @@ describe('send_message current conversation contract', () => {
       error: 'not allowed',
     })
     assert.equal(result.effects, undefined)
+    assert.deepEqual(result.outcome, {
+      ok: false,
+      code: 'send_rejected',
+      error: 'not allowed',
+    })
     assert.equal(calls.length, 0)
   })
 })
@@ -326,6 +341,11 @@ describe('send_message failure diagnostics', () => {
     assert.deepEqual(calls, [111])
     assert.equal(parse(result.content).reason, 'group_muted')
     assert.equal(parse(result.content).mutedUntil, mutedUntil)
+    assert.deepEqual(result.outcome, {
+      ok: false,
+      code: 'group_muted',
+      error: 'send failed (see SEND log)',
+    })
     assert.equal(result.effects, undefined)
   })
 
@@ -338,6 +358,11 @@ describe('send_message failure diagnostics', () => {
 
     assert.deepEqual(calls, [])
     assert.equal(parse(result.content).reason, 'send_failed')
+    assert.deepEqual(result.outcome, {
+      ok: false,
+      code: 'send_failed',
+      error: 'send failed (see SEND log)',
+    })
   })
 })
 
@@ -422,6 +447,8 @@ describe('send_message image handling', () => {
     assert.equal(parse(result.content).status, 'failed')
     assert.equal(upsertCalled, false)
     assert.equal(result.effects, undefined)
+    assert.equal(result.outcome?.ok, false)
+    assert.equal(result.outcome?.code, 'send_failed')
   })
 
   test('returns a stable resolve failure for an expired ephemeral image', async () => {
@@ -444,6 +471,8 @@ describe('send_message image handling', () => {
 
     assert.equal(parse(result.content).status, 'failed')
     assert.match(String(parse(result.content).error), /resolve failed/)
+    assert.equal(result.outcome?.ok, false)
+    assert.equal(result.outcome?.code, 'image_resolve_failed')
   })
 
   test('authorizes before resolving or sending an image', async () => {
@@ -465,6 +494,8 @@ describe('send_message image handling', () => {
     const result = await tool.execute({ image: { ephemeralRef: hash } }, makeContext())
 
     assert.equal(parse(result.content).status, 'rejected')
+    assert.equal(result.outcome?.ok, false)
+    assert.equal(result.outcome?.code, 'send_rejected')
     assert.equal(calls.length, 0)
     assert.equal(upsertCalled, false)
     assert.equal(cache.get(hash)?.refcount, 0)

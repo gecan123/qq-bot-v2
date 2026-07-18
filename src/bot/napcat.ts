@@ -11,3 +11,12 @@ export const napcat = new NCWebsocket({
     delay: 5000,
   },
 })
+
+export function disableNapcatReconnection(context: { reconnection: { enable: boolean } }): void {
+  context.reconnection.enable = false
+}
+
+export function disconnectNapcatForShutdown(): void {
+  napcat.once('socket.close', disableNapcatReconnection)
+  napcat.disconnect()
+}

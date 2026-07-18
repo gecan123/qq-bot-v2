@@ -39,8 +39,21 @@ describe('memory tool schema', () => {
       scope: 'person',
       id: 12345,
       content: '喜欢短句',
+      sourceMessageIds: [12],
     })
     assert.equal(parsed.success, true)
+  })
+
+  test('requires message-row evidence for person and group writes', () => {
+    assert.equal(memoryTool.schema.safeParse({
+      action: 'write', scope: 'person', id: 10001, content: '对方喜欢无糖拿铁',
+    }).success, false)
+    assert.equal(memoryTool.schema.safeParse({
+      action: 'write', scope: 'group', id: 20001, content: '群里只允许被提及时回复',
+    }).success, false)
+    assert.equal(memoryTool.schema.safeParse({
+      action: 'write', scope: 'person', id: 10001, content: '对方喜欢无糖拿铁', sourceMessageIds: [12],
+    }).success, true)
   })
 
   test('rejects empty content', () => {
@@ -214,10 +227,10 @@ describe('memory tool execute', () => {
     await withTempMemory(async (workspaceDir) => {
       const tool = createMemoryTool({ workspaceDir })
       await tool.execute({
-        action: 'write', scope: 'person', id: '10001', content: '喜欢无糖拿铁',
+        action: 'write', scope: 'person', id: '10001', content: '喜欢无糖拿铁', sourceMessageIds: [1],
       }, makeCtx())
       await tool.execute({
-        action: 'write', scope: 'person', id: '10002', content: '喜欢无糖拿铁',
+        action: 'write', scope: 'person', id: '10002', content: '喜欢无糖拿铁', sourceMessageIds: [2],
       }, makeCtx())
 
       const recalled = JSON.parse((await tool.execute({
@@ -273,10 +286,88 @@ describe('memory tool execute', () => {
         action: 'write',
         scope: 'person',
         content: '缺 id 不应该写入',
+        sourceMessageIds: [1],
       }, makeCtx())).content as string) as { ok: boolean; error: string }
 
       assert.equal(result.ok, false)
       assert.match(result.error, /requires id/)
+    })
+  })
+
+  test('rejects person evidence rows that do not exist', async () => {
+    await withTempMemory(async (workspaceDir) => {
+      const tool = createMemoryTool({
+        workspaceDir,
+        async validateSourceMessageIds(query) {
+          assert.deepEqual(query, {
+            sourceMessageIds: [404],
+            scope: 'person',
+            id: '10001',
+          })
+          return query.sourceMessageIds.filter((id) => id !== 404)
+        },
+      })
+      const result = await tool.execute({
+        action: 'write',
+        scope: 'person',
+        id: 10001,
+        content: '对方是公务员',
+        sourceMessageIds: [404],
+      }, makeCtx())
+
+      assert.deepEqual(result.outcome, {
+        ok: false,
+        code: 'invalid_evidence',
+        error: 'sourceMessageIds contain unknown message rows: 404',
+        progress: false,
+        retryClass: 'immediate',
+      })
+    })
+  })
+
+  test('correct_entry atomically supersedes an old fact with an evidenced replacement', async () => {
+    await withTempMemory(async (workspaceDir) => {
+      let nextId = 0
+      const tool = createMemoryTool({
+        workspaceDir,
+        id: () => `memory-${++nextId}`,
+        async validateSourceMessageIds(query) { return query.sourceMessageIds },
+      })
+      await tool.execute({
+        action: 'write', scope: 'person', id: 10001, content: '对方是程序员', sourceMessageIds: [10],
+      }, makeCtx())
+      const before = JSON.parse((await tool.execute({
+        action: 'read', file: 'people/10001.md',
+      }, makeCtx())).content as string) as { revision: string }
+
+      const corrected = await tool.execute({
+        action: 'correct_entry',
+        file: 'people/10001.md',
+        entryId: 'memory-1',
+        expectedRevision: before.revision,
+        content: '对方是公务员，owner 已明确纠正',
+        sourceMessageIds: [11],
+      }, makeCtx())
+      const payload = JSON.parse(corrected.content as string) as {
+        ok: boolean
+        oldEntryId: string
+        replacementEntryId: string
+      }
+      assert.equal(payload.ok, true)
+      assert.equal(payload.oldEntryId, 'memory-1')
+      assert.equal(payload.replacementEntryId, 'memory-2')
+      assert.deepEqual(corrected.outcome, { ok: true, code: 'corrected', progress: true })
+
+      const after = JSON.parse((await tool.execute({
+        action: 'read', file: 'people/10001.md',
+      }, makeCtx())).content as string) as {
+        entries: Array<{ id: string; status: string; content: string; sourceMessageIds: number[]; supersedes: string[] }>
+      }
+      assert.equal(after.entries.find((entry) => entry.id === 'memory-1')?.status, 'superseded')
+      const replacement = after.entries.find((entry) => entry.id === 'memory-2')
+      assert.equal(replacement?.content, '对方是公务员，owner 已明确纠正')
+      assert.deepEqual(replacement?.sourceMessageIds, [11])
+      assert.deepEqual(replacement?.supersedes, ['memory-1'])
     })
   })
 

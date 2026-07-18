@@ -67,6 +67,10 @@ export interface ToolExecutionOutcome {
   ok: boolean
   code?: string
   error?: string
+  /** false 表示调用成功但没有获得新信息、改变状态或完成外部动作。 */
+  progress?: boolean
+  /** runtime 应如何安排下一次尝试；不进入 durable ledger。 */
+  retryClass?: 'immediate' | 'after_event' | 'backoff' | 'terminal'
 }
 
 export type MessageSentTarget =

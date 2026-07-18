@@ -133,13 +133,15 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
 
       const input = rawArgs as Args
       if (resolved.target.type === 'private' && input.mention_user_id != null) {
+        const error = 'mention_user_id is only allowed in a group conversation.'
         return {
           content: JSON.stringify({
             ok: false,
             status: 'rejected',
             code: 'MENTION_NOT_ALLOWED',
-            error: 'mention_user_id is only allowed in a group conversation.',
+            error,
           }),
+          outcome: { ok: false, code: 'MENTION_NOT_ALLOWED', error },
         }
       }
 
@@ -156,19 +158,23 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
         replyToMessageId: args.replyToMessageId,
       })
       if (!authorization.allowed) {
-        return { content: JSON.stringify(buildReceipt(args, 'rejected', 0, null, authorization.error)) }
+        return resultFromReceipt(
+          buildReceipt(args, 'rejected', 0, null, authorization.error),
+          'send_rejected',
+        )
       }
 
       if (!args.text && !args.image && !args.music) {
-        return {
-          content: JSON.stringify(buildReceipt(
+        return resultFromReceipt(
+          buildReceipt(
             args,
             'rejected',
             0,
             null,
             'send_message text became empty after normalization',
-          )),
-        }
+          ),
+          'empty_message',
+        )
       }
 
       if (!args.image) return sendResolved(deps, args)
@@ -200,15 +206,17 @@ function normalizeArgs(args: Args, target: SendTarget): ResolvedArgs {
 function conversationErrorResult(
   code: 'CHAT_CONTEXT_UNAVAILABLE' | 'CHAT_CONTEXT_STALE',
 ): SendToolResult {
+  const error = code === 'CHAT_CONTEXT_UNAVAILABLE'
+    ? 'Open a QQ conversation before sending.'
+    : 'The current QQ conversation is stale. Reopen the intended conversation.'
   return {
     content: JSON.stringify({
       ok: false,
       status: 'rejected',
       code,
-      error: code === 'CHAT_CONTEXT_UNAVAILABLE'
-        ? 'Open a QQ conversation before sending.'
-        : 'The current QQ conversation is stale. Reopen the intended conversation.',
+      error,
     }),
+    outcome: { ok: false, code, error },
   }
 }
 
@@ -240,8 +248,8 @@ async function sendResolved(
   })
   if (!result.success) {
     const diagnosis = await diagnoseSendFailure(deps, args.target)
-    return {
-      content: JSON.stringify({
+    return resultFromReceipt(
+      {
         ...buildReceipt(
           args,
           'failed',
@@ -250,18 +258,20 @@ async function sendResolved(
           'send failed (see SEND log)',
         ),
         ...diagnosis,
-      }),
-    }
+      },
+      diagnosis.reason,
+    )
   }
-  return {
-    content: JSON.stringify(buildReceipt(
+  return resultFromReceipt(
+    buildReceipt(
       args,
       'sent',
       result.attempts,
       result.providerMessageId ?? null,
-    )),
-    effects: [{ type: 'message_sent', target: toNapcatTarget(args.target) }],
-  }
+    ),
+    undefined,
+    [{ type: 'message_sent', target: toNapcatTarget(args.target) }],
+  )
 }
 
 async function diagnoseSendFailure(
@@ -294,15 +304,16 @@ async function sendWithImage(
     const message = error instanceof Error ? error.message : String(error)
     log.warn({ handle, error: message }, 'send_message_image_resolve_failed')
     if (!args.text) {
-      return {
-        content: JSON.stringify(buildReceipt(
+      return resultFromReceipt(
+        buildReceipt(
           args,
           'failed',
           0,
           null,
           `image resolve failed: ${message}`,
-        )),
-      }
+        ),
+        'image_resolve_failed',
+      )
     }
     const fallbackResult = await sendResolved(deps, args)
     const fallback = JSON.parse(fallbackResult.content) as SendReceipt
@@ -311,13 +322,13 @@ async function sendWithImage(
       ...('ephemeralRef' in handle ? { ephemeralRef: handle.ephemeralRef } : {}),
       resolveError: message,
     }
-    return { content: JSON.stringify(fallback), effects: fallbackResult.effects }
+    return { ...fallbackResult, content: JSON.stringify(fallback) }
   }
 
   try {
     const sendResult = await sendResolved(deps, args, resolved.bytes)
     const sent = JSON.parse(sendResult.content) as SendReceipt
-    if (sent.status !== 'sent') return { content: JSON.stringify(sent) }
+    if (sent.status !== 'sent') return sendResult
 
     const image: ImageResultPayload = {
       mediaId: null,
@@ -350,7 +361,7 @@ async function sendWithImage(
         data: { useCount: { increment: 1 }, lastUsedAt: new Date() },
       }).catch(() => {})
     }
-    return { content: JSON.stringify(sent), effects: sendResult.effects }
+    return { ...sendResult, content: JSON.stringify(sent) }
   } finally {
     releaseHandle(handle)
   }
@@ -377,5 +388,23 @@ function buildReceipt(
     attempts,
     providerMessageId,
     ...(error ? { error } : {}),
+  }
+}
+
+function resultFromReceipt(
+  receipt: SendReceipt,
+  code?: string,
+  effects?: ToolExecutionResult['effects'],
+): SendToolResult {
+  return {
+    content: JSON.stringify(receipt),
+    outcome: receipt.ok
+      ? { ok: true }
+      : {
+          ok: false,
+          code: code ?? receipt.reason ?? `send_${receipt.status}`,
+          ...(receipt.error ? { error: receipt.error } : {}),
+        },
+    ...(effects ? { effects } : {}),
   }
 }

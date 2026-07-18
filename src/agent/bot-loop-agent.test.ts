@@ -2995,6 +2995,64 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(cooldownWaits, 1)
   })
 
+  test('retryClass=immediate 在连续轮次上限前也立即进入有界纠错', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    let llmCallCount = 0
+    let waits = 0
+    const llm: LlmClient = {
+      async chat() {
+        llmCallCount++
+        return {
+          content: '',
+          toolCalls: llmCallCount === 1
+            ? [{ id: 'bad-evidence', name: 'lookup', args: {} }]
+            : [{ id: 'pause-after-correction', name: 'pause', args: {} }],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+          model: 'mock',
+          contextWindowTokens: 200_000,
+        }
+      },
+    }
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
+    const agent = createBotLoopAgent({
+      systemPrompt: 'you are a bot',
+      context: ctx,
+      eventQueue,
+      llm,
+      tools: makeMockTools({
+        lookup: async () => ({
+          content: '{"ok":false,"code":"invalid_evidence"}',
+          outcome: {
+            ok: false,
+            code: 'invalid_evidence',
+            progress: false,
+            retryClass: 'immediate',
+          },
+        }),
+        pause: async () => ({ content: '{"ok":true}', outcome: { ok: true } }),
+      }),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        maxConsecutiveRounds: 10,
+        async waitForAttentionOrTimeout() {
+          waits++
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.runOnceForTest()
+    await agent.runOnceForTest()
+
+    assert.equal(llmCallCount, 2)
+    assert.equal(waits, 0)
+  })
+
   test('free no-tool round enters a 15-minute attention-interruptible wait', async () => {
     const ctx = createAgentContext()
     ctx.appendUserMessage('已有上下文')
@@ -3036,6 +3094,102 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     await agent.start()
     assert.equal(llmCallCount, 1)
+  })
+
+  test('repeated unanchored idle rounds back off exponentially up to a bounded maximum', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('已有上下文')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    const waits: number[] = []
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat() {
+          return {
+            content: '',
+            toolCalls: [],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools(),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        idleWaitMs: 100,
+        maxIdleWaitMs: 400,
+        async waitForAttentionOrTimeout(_queue, timeoutMs) {
+          waits.push(timeoutMs)
+          if (waits.length === 4) await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+    assert.deepEqual(waits, [100, 200, 400, 400])
+  })
+
+  test('successful no-progress tool call waits instead of immediately rerunning', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('已有上下文')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    let llmCallCount = 0
+    let toolCallCount = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat() {
+          llmCallCount++
+          return {
+            content: '',
+            toolCalls: [{ id: `todo-${llmCallCount}`, name: 'todo', args: { action: 'update', items: [] } }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools({
+        todo: async () => {
+          toolCallCount++
+          return {
+            content: '{"ok":true,"status":"unchanged","changed":false}',
+            outcome: { ok: true, code: 'unchanged', progress: false },
+          }
+        },
+      }),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        async waitForAttentionOrTimeout(_queue, timeoutMs) {
+          assert.equal(timeoutMs, 15 * 60_000)
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 1)
+    assert.equal(toolCallCount, 1)
   })
 
   test('attention with no tool retries immediately once, then waits 60 seconds', async () => {

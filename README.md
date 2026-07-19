@@ -52,12 +52,13 @@ pnpm dev
 - `DATABASE_URL`
 - `NAPCAT_WS_URL`
 - `NAPCAT_ACCESS_TOKEN`
-- `BOT_TARGET_GROUP_IDS`
 - `SELF_NUMBER`
 - `LLM_DEFAULT_PROVIDER`
 - `LLM_DEFAULT_MODEL`
 - `LLM_PROVIDER_<NAME>_URL`
 - `LLM_PROVIDER_<NAME>_API_KEY`
+
+群监听范围、主动发送权限和参与节奏统一维护在 `prompts/groups.md`；没有群 section 时只接受好友私聊。
 
 ## 常用命令
 

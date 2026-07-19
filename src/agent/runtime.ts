@@ -27,7 +27,7 @@ import type { AgentLedgerRepo } from './agent-ledger-repo.js'
 import type { MailboxCursors } from './mailbox.js'
 import type { MailboxContinuityState } from './mailbox-continuity.js'
 import type { TargetMetadataMaps } from './resolve-target-meta.js'
-import type { GroupCustomization } from '../config/group-prompts.js'
+import { groupPolicyAllowsAmbient, type GroupPolicy } from '../config/group-policies.js'
 import type { BotOwner } from '../config/index.js'
 import type { MessageSender } from '../messaging/message-sender.js'
 import {
@@ -88,11 +88,9 @@ export interface AgentRuntimeInput {
   sender: MessageSender
   loadFriends: () => Promise<readonly QqDirectoryFriend[]>
   loadGroups: () => Promise<readonly QqDirectoryGroup[]>
-  groupIds: readonly number[]
-  groupAmbientSendIds: ReadonlySet<number>
   selfNumber: number
   metadata: TargetMetadataMaps
-  groupCustomizations: readonly GroupCustomization[]
+  groupPolicies: readonly GroupPolicy[]
   toolCallLogPath: string
   toolAuditMode?: 'all' | 'side_effects' | 'off'
   toolAuditDbEnabled?: boolean
@@ -133,8 +131,14 @@ export interface AgentRuntime {
 export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
   let activeToolCapabilities = [...input.context.getSnapshot().activeToolCapabilities]
   let qqConversationFocus = input.context.getSnapshot().qqConversationFocus
-  const groupFrequencyHints = new Map(
-    input.groupCustomizations.map((customization) => [customization.id, customization.frequencyHint]),
+  const groupIds = input.groupPolicies.map((policy) => policy.id)
+  const groupAmbientSendIds = new Set(
+    input.groupPolicies
+      .filter(groupPolicyAllowsAmbient)
+      .map((policy) => policy.id),
+  )
+  const groupParticipations = new Map(
+    input.groupPolicies.map((policy) => [policy.id, policy.participation]),
   )
   const taskRegistry = input.taskRegistry ?? createInMemoryTaskRegistry()
   const scheduleRuntime = input.scheduleRuntime ?? createScheduleRuntime({
@@ -156,8 +160,8 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       })
     : undefined)
   const targetPolicy = createSendTargetPolicy({
-    groupIds: input.groupIds,
-    groupAmbientSendIds: input.groupAmbientSendIds,
+    groupIds,
+    groupAmbientSendIds,
     loadFriendIds: async () => (await input.loadFriends()).map((friend) => friend.userId),
     isGroupReplyToSelf: ({ groupId, messageId }) => isGroupMessageMentioningUser(
       groupId,
@@ -176,7 +180,7 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
             : { type: 'private', userId: focus.userId }
       },
     },
-    groupIds: input.groupIds,
+    groupIds,
     loadGroups: input.loadGroups,
     loadFriends: input.loadFriends,
   })
@@ -204,12 +208,12 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       workspaceDir: input.workspaceDir,
       workspaceStateCoordinator: input.workspaceStateCoordinator,
       optionalTools: input.optionalTools,
-      groupIds: input.groupIds,
+      groupIds,
       selfNumber: input.selfNumber,
       metadata: input.metadata,
-      groupCustomizations: input.groupCustomizations,
+      groupPolicies: input.groupPolicies,
       qqDirectory: {
-        groupIds: input.groupIds,
+        groupIds,
         loadFriends: input.loadFriends,
         loadGroups: input.loadGroups,
         loadObservedIdentity: findObservedQqIdentityRows,
@@ -244,7 +248,7 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
   })
 
   const systemPrompt = buildBotSystemPrompt({
-    groupIds: input.groupIds,
+    groupIds,
     metadata: input.metadata,
     selfNumber: input.selfNumber,
     owner: input.owner,
@@ -274,7 +278,7 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     goalStore: input.goalStore,
     renderEvent: renderBotEvent,
     eventDebounceMs: input.eventDebounceMs,
-    groupFrequencyHints,
+    groupParticipations,
     lifeJournal: input.lifeJournal,
   })
 

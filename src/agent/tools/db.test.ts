@@ -89,7 +89,7 @@ describe('db tool', () => {
       scheduleRuntime,
       groupIds: [],
       metadata: { groupNames: new Map() },
-      groupCustomizations: [],
+      groupPolicies: [],
       qqDirectory: {
         groupIds: [],
         async loadFriends() { return [] },

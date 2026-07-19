@@ -1,6 +1,0 @@
-# 复制为 prompts/groups.yaml 后填写真实群号；该文件本身不应包含真实群信息。
-groups:
-  - id: 111111
-    frequency_hint: normal
-    body: |
-      这个群的稳定主题、互动节奏和需要按需披露的风格提示。

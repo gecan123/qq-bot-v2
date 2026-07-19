@@ -35,11 +35,8 @@ const validFiles = {
   '.env.example': [
     'BOT_EVENT_DEBOUNCE_MS=3000',
     'BOT_TOKEN_USAGE_LOG_PATH=logs/token-usage.ndjson',
-    '# Optional group configuration; missing file falls back to no customizations.',
-    '# Copy prompts/groups.yaml.example when needed.',
-    '# BOT_GROUP_PROMPTS_PATH=./prompts/groups.yaml',
   ].join('\n'),
-  'prompts/groups.yaml.example': 'groups: []\n',
+  'prompts/groups.md': '# 群聊配置\n\n## 群 111\n\n- participation: mentions\n',
   'src/agent/tools/index.ts': [
     'createDeferredToolExecutor',
     'pauseTool,',
@@ -252,32 +249,32 @@ describe('runRepoChecks', () => {
   test('rejects missing test and observability env markers', () => {
     const result = runRepoChecks({
       ...validFiles,
-      '.env.example': '# BOT_GROUP_PROMPTS_PATH=./prompts/groups.yaml\n',
+      '.env.example': '# no observability markers\n',
     })
 
     assert.match(result.errors.join('\n'), /.env\.example must mention BOT_EVENT_DEBOUNCE_MS/)
     assert.match(result.errors.join('\n'), /.env\.example must mention BOT_TOKEN_USAGE_LOG_PATH/)
   })
 
-  test('rejects a missing group customization template referenced by env docs', () => {
+  test('rejects an invalid Markdown group policy document', () => {
     const result = runRepoChecks({
       ...validFiles,
-      'prompts/groups.yaml.example': undefined,
+      'prompts/groups.md': '# 群聊配置\n',
     })
 
-    assert.match(result.errors.join('\n'), /prompts\/groups\.yaml\.example is referenced but missing/)
+    assert.match(result.errors.join('\n'), /prompts\/groups\.md must define readable group participation policies/)
   })
 
-  test('rejects fail-fast documentation for optional group customization files', () => {
+  test('rejects stale group env configuration', () => {
     const result = runRepoChecks({
       ...validFiles,
       '.env.example': [
         'BOT_EVENT_DEBOUNCE_MS=3000',
         'BOT_TOKEN_USAGE_LOG_PATH=logs/token-usage.ndjson',
-        '# BOT_GROUP_PROMPTS_PATH file must exist (loader fail-fast).',
+        'BOT_GROUP_AMBIENT_SEND_IDS=111',
       ].join('\n'),
     })
 
-    assert.match(result.errors.join('\n'), /group customization file must document missing-file fallback/)
+    assert.match(result.errors.join('\n'), /must not mention stale group config BOT_GROUP_AMBIENT_SEND_IDS/)
   })
 })

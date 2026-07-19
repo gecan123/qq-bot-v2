@@ -6,7 +6,6 @@ Object.assign(process.env, {
   DATABASE_URL: 'postgresql://user:pass@127.0.0.1:5432/qq_bot_v2_test',
   NAPCAT_WS_URL: 'ws://127.0.0.1:3001',
   NAPCAT_ACCESS_TOKEN: 'test-token',
-  BOT_TARGET_GROUP_IDS: '123',
   SELF_NUMBER: '789',
   LLM_DEFAULT_PROVIDER: 'openai-agent',
   LLM_DEFAULT_MODEL: 'test-model',

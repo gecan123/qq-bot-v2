@@ -106,7 +106,7 @@ describe('merged main-agent tools', () => {
       scheduleRuntime: mockScheduleRuntime,
       groupIds: [],
       metadata: { groupNames: new Map() },
-      groupCustomizations: [],
+      groupPolicies: [],
       qqDirectory: {
         groupIds: [],
         async loadFriends() { return [] },
@@ -143,7 +143,7 @@ describe('merged main-agent tools', () => {
       scheduleRuntime: mockScheduleRuntime,
       groupIds: [],
       metadata: { groupNames: new Map() },
-      groupCustomizations: [],
+      groupPolicies: [],
       qqDirectory: {
         groupIds: [],
         async loadFriends() { return [] },
@@ -221,7 +221,7 @@ describe('merged main-agent tools', () => {
         scheduleRuntime: mockScheduleRuntime,
         groupIds: [],
         metadata: { groupNames: new Map() },
-        groupCustomizations: [],
+        groupPolicies: [],
         qqDirectory: {
           groupIds: [],
           async loadFriends() { return [] },
@@ -271,7 +271,7 @@ describe('merged main-agent tools', () => {
       scheduleRuntime: mockScheduleRuntime,
       groupIds: [],
       metadata: { groupNames: new Map() },
-      groupCustomizations: [],
+      groupPolicies: [],
       qqDirectory: {
         groupIds: [],
         async loadFriends() { return [] },

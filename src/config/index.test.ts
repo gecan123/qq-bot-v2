@@ -6,7 +6,6 @@ function createBaseEnv(overrides: Record<string, string | undefined> = {}): Node
     DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',
     NAPCAT_WS_URL: 'ws://localhost:3001',
     NAPCAT_ACCESS_TOKEN: 'token',
-    BOT_TARGET_GROUP_IDS: '123',
     SELF_NUMBER: '789',
     LLM_DEFAULT_PROVIDER: 'claude-code',
     LLM_DEFAULT_MODEL: 'claude-sonnet-4-6',
@@ -44,7 +43,7 @@ try {
 }
 
 if (!configModule) throw new Error('Failed to import config module')
-const { parseConfig, parseIdList } = configModule
+const { parseConfig } = configModule
 
 describe('config', () => {
   test('parses provider registry and scenario provider/model routing', () => {
@@ -153,7 +152,7 @@ describe('config', () => {
 
     assert.deepEqual(config.llm.scenarios.describeImage, {})
     assert.deepEqual(config.llm.scenarios.describeVideo, {})
-    assert.deepEqual(config.botTargetGroupIds, [123])
+    assert.deepEqual(config.botTargetGroupIds, [])
     assert.equal(config.selfNumber, 789)
   })
 
@@ -199,17 +198,23 @@ describe('config', () => {
     )
   })
 
-  test('parses group whitelist, sorted + deduped', () => {
-    const config = parseConfig(createBaseEnv({
-      BOT_TARGET_GROUP_IDS: '222,111,222',
-    }))
-    assert.deepEqual(config.botTargetGroupIds, [111, 222])
+  test('derives group whitelist, ambient authorization, and participation from one config', () => {
+    const config = parseConfig(createBaseEnv(), [
+      { id: 222, participation: 'mentions', guidance: '只在被叫到时回应。' },
+      { id: 111, participation: 'active', guidance: '低门槛参与。' },
+      { id: 333, participation: 'selective', guidance: '' },
+    ])
+    assert.deepEqual(config.groupPolicies, [
+      { id: 111, participation: 'active', guidance: '低门槛参与。' },
+      { id: 222, participation: 'mentions', guidance: '只在被叫到时回应。' },
+      { id: 333, participation: 'selective', guidance: '' },
+    ])
+    assert.deepEqual(config.botTargetGroupIds, [111, 222, 333])
   })
 
   test('empty group whitelist is allowed (private 永远在线)', () => {
-    const config = parseConfig(createBaseEnv({
-      BOT_TARGET_GROUP_IDS: '',
-    }))
+    const config = parseConfig(createBaseEnv(), [])
+    assert.deepEqual(config.groupPolicies, [])
     assert.deepEqual(config.botTargetGroupIds, [])
   })
 
@@ -220,14 +225,6 @@ describe('config', () => {
         /Invalid SELF_NUMBER/,
       )
     }
-  })
-
-  test('groupAmbientSendIds defaults to empty set and parses comma-separated ids', () => {
-    const dflt = parseConfig(createBaseEnv())
-    assert.deepEqual(dflt.groupAmbientSendIds, new Set<number>())
-
-    const config = parseConfig(createBaseEnv({ BOT_GROUP_AMBIENT_SEND_IDS: '111,222,333' }))
-    assert.deepEqual(config.groupAmbientSendIds, new Set([111, 222, 333]))
   })
 
   test('owner: 都不给 → null', () => {
@@ -600,42 +597,5 @@ describe('config', () => {
       })),
       /reserve plus keep.*smaller than.*context window/i,
     )
-  })
-})
-
-describe('parseIdList', () => {
-  test('parses comma-separated numbers, trims whitespace, drops empties', () => {
-    assert.deepEqual(parseIdList('X', '111, 222 ,, 333  '), [111, 222, 333])
-  })
-
-  test('dedupes and sorts ascending', () => {
-    assert.deepEqual(parseIdList('X', '333,111,222,111'), [111, 222, 333])
-  })
-
-  test('accepts a single ID with no trailing comma', () => {
-    assert.deepEqual(parseIdList('X', '999'), [999])
-  })
-
-  test('treats undefined / empty / whitespace-only as empty list', () => {
-    assert.deepEqual(parseIdList('X', undefined), [])
-    assert.deepEqual(parseIdList('X', ''), [])
-    assert.deepEqual(parseIdList('X', ' , , '), [])
-  })
-
-  test('throws on non-numeric segments', () => {
-    assert.throws(() => parseIdList('Y', '111,abc,222'), /Invalid id "abc" in env Y/)
-  })
-
-  test('throws on float-like segments (must be integer)', () => {
-    assert.throws(() => parseIdList('Z', '111.5'), /Invalid id "111\.5" in env Z/)
-  })
-
-  test('throws on non-positive or unsafe integer ids', () => {
-    for (const value of ['0', '-1', '9007199254740992']) {
-      assert.throws(
-        () => parseIdList('BOT_TARGET_GROUP_IDS', `111,${value}`),
-        /Invalid id/,
-      )
-    }
   })
 })

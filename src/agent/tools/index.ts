@@ -1,7 +1,7 @@
 import { createDeferredToolExecutor, type DeferredToolCapability, type Tool } from '../tool.js'
 import type { MessageSender } from '../../messaging/message-sender.js'
 import type { BackgroundTaskRegistry } from '../background-task-registry.js'
-import type { GroupCustomization } from '../../config/group-prompts.js'
+import type { GroupPolicy } from '../../config/group-policies.js'
 import type { TargetMetadataMaps } from '../resolve-target-meta.js'
 import { createPauseTool } from './pause.js'
 import { createSendMessageTool } from './send-message.js'
@@ -55,7 +55,7 @@ export interface BotToolDeps {
   groupIds: readonly number[]
   selfNumber: number
   metadata: TargetMetadataMaps
-  groupCustomizations: readonly GroupCustomization[]
+  groupPolicies: readonly GroupPolicy[]
   qqDirectory: QqDirectoryDeps
   optionalTools?: BotOptionalTools
   taskScheduler?: TaskScheduler
@@ -115,7 +115,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   const chatStyle = createChatStyleTool({
     groupIds: deps.groupIds,
     metadata: deps.metadata,
-    groupCustomizations: deps.groupCustomizations,
+    groupPolicies: deps.groupPolicies,
   })
   const aiTone = createAiToneTool()
   const pause = createPauseTool()
@@ -133,7 +133,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     groupIdWhitelist: deps.groupIds,
     groupIds: deps.groupIds,
     metadata: deps.metadata,
-    groupCustomizations: deps.groupCustomizations,
+    groupPolicies: deps.groupPolicies,
   })
   const delegate = deps.llm ? createDelegateTool({
     llm: deps.llm,

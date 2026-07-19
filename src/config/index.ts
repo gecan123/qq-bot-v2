@@ -1,5 +1,6 @@
 import 'dotenv/config'
 import { isAbsolute } from 'node:path'
+import { loadGroupPolicies, type GroupPolicy } from './group-policies.js'
 
 type EnvSource = Record<string, string | undefined>
 
@@ -239,30 +240,6 @@ function parseClaudeThinking(env: EnvSource): ClaudeThinkingConfig {
 }
 
 /**
- * Parse a comma-separated ID list (`123,456` 之类) used for whitelist envs like
- * `BOT_TARGET_GROUP_IDS`.
- *
- * Rules (deterministic — affects system prompt byte stability):
- *  1. split on `,`
- *  2. trim each segment
- *  3. drop empty segments
- *  4. parse each as a number; non-numeric segments throw
- *  5. dedupe + ascending sort (same whitelist always produces same prompt text)
- *  6. empty after parsing → []  (caller decides if that's an error)
- */
-export function parseIdList(name: string, raw: string | undefined): number[] {
-  if (raw == null) return []
-  const segments = raw.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
-  const ids: number[] = []
-  for (const seg of segments) {
-    ids.push(parsePositiveSafeInteger(`id "${seg}" in env ${name}`, seg))
-  }
-  const unique = Array.from(new Set(ids))
-  unique.sort((a, b) => a - b)
-  return unique
-}
-
-/**
  * Owner = 把 bot 做出来的那个人. 出现在 system prompt 的 [关系基线] 段里, 让 Luna
  * 知道 QQ:xxx 这个号是谁. 两个 env (QQ + 名字) 必须同时给, 单给一个 throw —— 避免
  * "知道 QQ 不知道叫什么" 或 "知道叫什么但不知道哪个号" 这种半调子状态. 都不给则
@@ -473,8 +450,12 @@ function parseLlmConfig(env: EnvSource) {
   }
 }
 
-export function parseConfig(env: EnvSource) {
-  const groupIds = parseIdList('BOT_TARGET_GROUP_IDS', env.BOT_TARGET_GROUP_IDS)
+export function parseConfig(
+  env: EnvSource,
+  groupPoliciesInput: readonly GroupPolicy[] = [],
+) {
+  const groupPolicies = [...groupPoliciesInput].sort((left, right) => left.id - right.id)
+  const groupIds = groupPolicies.map((policy) => policy.id)
   const compaction = parseCompactionConfig(env)
   const llm = parseLlmConfig(env)
   for (const model of [llm.defaultModel, llm.fallbackModel].filter((value): value is string => Boolean(value))) {
@@ -527,15 +508,10 @@ export function parseConfig(env: EnvSource) {
     && env.BOT_MCP_SCHEMA_SNAPSHOT_DIR.trim().length > 0
     ? env.BOT_MCP_SCHEMA_SNAPSHOT_DIR.trim()
     : 'data/agent-workspace/runtime/mcp-schemas'
-  const groupAmbientSendIds = new Set(parseIdList('BOT_GROUP_AMBIENT_SEND_IDS', env.BOT_GROUP_AMBIENT_SEND_IDS))
-
   const outboundCacheMaxEntries = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_MAX_ENTRIES, 32)
   const outboundCacheMaxBytes = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_MAX_BYTES, 100 * 1024 * 1024)
   const outboundCacheTtlMs = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_TTL_MS, 60 * 60 * 1000)
   const eventDebounceMs = parsePositiveInteger(env.BOT_EVENT_DEBOUNCE_MS, 3_000)
-  const groupPromptsPath = env.BOT_GROUP_PROMPTS_PATH && env.BOT_GROUP_PROMPTS_PATH.trim().length > 0
-    ? env.BOT_GROUP_PROMPTS_PATH.trim()
-    : './prompts/groups.yaml'
   const browserEnabled = parseBoolean(env.BOT_BROWSER_ENABLED, false)
   const browserControllerUrl = env.BOT_BROWSER_CONTROLLER_URL && env.BOT_BROWSER_CONTROLLER_URL.trim().length > 0
     ? env.BOT_BROWSER_CONTROLLER_URL.trim()
@@ -557,7 +533,9 @@ export function parseConfig(env: EnvSource) {
       wsUrl: requireEnv(env, 'NAPCAT_WS_URL'),
       accessToken: requireEnv(env, 'NAPCAT_ACCESS_TOKEN'),
     },
-    /** Group whitelist. Bot listens + replies only within these IDs. 私聊不走白名单, 由 ingress 层 sub_type='friend' 过滤. */
+    /** 单一群策略；群号、主动发送授权、参与节奏和固定提示均来自 prompts/groups.md。 */
+    groupPolicies,
+    /** Derived group whitelist. 私聊不走白名单, 由 ingress 层 sub_type='friend' 过滤. */
     botTargetGroupIds: groupIds,
     selfNumber: parsePositiveSafeInteger('SELF_NUMBER', requireEnv(env, 'SELF_NUMBER')),
     /** Owner (创造者) — 渲染 [关系基线] 用. null = 未配置 → 那段不渲染. */
@@ -584,20 +562,6 @@ export function parseConfig(env: EnvSource) {
     approvalMode,
     mcpConfigPath,
     mcpSchemaSnapshotDir,
-    /**
-     * 主动发言（group-ambient）白名单. 只有在此集合内的群才真发 ambient 消息,
-     * 不在集合内的群 ambient 会被明确拒绝，reply 也只允许引用结构化 at bot 的入站消息；
-     * private 发送要求目标属于 NapCat 当前好友。空集合 = 拒绝全部群 ambient.
-     * env: `BOT_GROUP_AMBIENT_SEND_IDS=111,222`
-     */
-    groupAmbientSendIds,
-    /**
-     * Per-group prompt customization yaml 路径. 启动时一次 load, 通过
-     * chat_style 工具按需披露, 不拼进 system prompt.
-     * 默认 `./prompts/groups.yaml`. 文件不存在 → loader 返空数组 = 所有群走默认人设
-     * (groups.yaml 含真实群号, 不入 git; 模板见 prompts/groups.yaml.example).
-     */
-    botGroupPromptsPath: groupPromptsPath,
     /**
      * 队列有事件时, drainEvents 前等更多事件堆积的毫秒数. 合并连续消息进同一轮 LLM
      * 调用. 默认 3s 覆盖常见连续输入; 媒体 readiness 在事件入队前单独处理. 非正值或
@@ -634,4 +598,4 @@ export function parseConfig(env: EnvSource) {
   } as const
 }
 
-export const config = parseConfig(process.env)
+export const config = parseConfig(process.env, loadGroupPolicies())

@@ -303,9 +303,6 @@ qq-bot `.env` 使用同一个 API key，并启用 deferred capability：
 ```bash
 VIBE_TRADING_ENABLED=true
 VIBE_TRADING_BASE_URL=http://127.0.0.1:8899
-VIBE_TRADING_MODEL=gpt-5.5
-# 可选；仅在当前中继与模型已验证支持时设置：low / medium / high / xhigh
-VIBE_TRADING_REASONING_EFFORT=
 # 仅当 Vibe 服务端设置了 API_AUTH_KEY 时配置：
 # VIBE_TRADING_API_KEY=<同一个本机随机密钥>
 VIBE_TRADING_REQUEST_TIMEOUT_MS=15000

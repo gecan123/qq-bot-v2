@@ -152,7 +152,7 @@ export async function executeDbRead(params: ExecuteDbReadParams): Promise<DbRead
     const num = value == null ? null : asNumber(value as SqlParamValue)
     if (num == null || !params.groupIdWhitelist.includes(num)) {
       throw new Error(
-        `params.group_id (${String(value)}) is not in BOT_TARGET_GROUP_IDS whitelist`,
+        `params.group_id (${String(value)}) is not in configured group policies`,
       )
     }
   }

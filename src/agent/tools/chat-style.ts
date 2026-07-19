@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { loadPromptSection } from '../../config/prompt-loader.js'
-import type { GroupCustomization } from '../../config/group-prompts.js'
+import type { GroupPolicy } from '../../config/group-policies.js'
 import type { TargetMetadataMaps } from '../resolve-target-meta.js'
 import type { Tool } from '../tool.js'
 
@@ -33,19 +33,19 @@ type Args = z.infer<typeof argsSchema>
 export interface ChatStyleDeps {
   groupIds: readonly number[]
   metadata: TargetMetadataMaps
-  groupCustomizations: readonly GroupCustomization[]
+  groupPolicies: readonly GroupPolicy[]
 }
 
 export function createChatStyleTool(deps: ChatStyleDeps): Tool<Args> {
   const monitoredGroupIds = new Set(deps.groupIds)
-  const customById = new Map(deps.groupCustomizations.map((custom) => [custom.id, custom]))
+  const policyById = new Map(deps.groupPolicies.map((policy) => [policy.id, policy]))
 
   return {
     name: 'chat_style',
     description: [
       '按需读取聊天风格信息, 一个入口用 scope 决定范围.',
       'scope=global: 读取 Luna 的全局说话风格指南; 不传 section 只返回索引.',
-      'scope=group: 读取某个监听群的在场风格、活跃度和 groups.yaml 群口味正文.',
+      'scope=group: 读取监听群的 participation 与固定提示.',
       '日常短回复按 system prompt 的核心语气即可, 不要每轮都调用.',
     ].join(' '),
     schema: argsSchema,
@@ -67,14 +67,14 @@ export function createChatStyleTool(deps: ChatStyleDeps): Tool<Args> {
         }
       }
 
-      const custom = customById.get(args.groupId)
+      const policy = policyById.get(args.groupId)
       return {
         content: JSON.stringify({
           ok: true,
           groupId: args.groupId,
           groupName: deps.metadata.groupNames.get(args.groupId) ?? null,
-          frequencyHint: custom?.frequencyHint ?? 'normal',
-          body: custom?.body ?? '',
+          participation: policy?.participation ?? 'mentions',
+          guidance: policy?.guidance ?? '',
         }),
       }
     },

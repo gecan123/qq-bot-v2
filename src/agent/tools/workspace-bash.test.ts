@@ -325,7 +325,7 @@ describe('workspace_bash command parser', () => {
       'cat .env',
       'cat .env.production',
       'cat logs/tool-calls.ndjson',
-      'cat prompts/groups.yaml',
+      'cat prompts/groups.md',
       'cat data/agent-workspace/journal.md',
       'cat node_modules/.bin/tsx',
       'cat .git/config',
@@ -591,7 +591,7 @@ describe('workspace_bash tool', () => {
       repoDir: '/repo',
       groupIds: [222],
       metadata: { groupNames: new Map([[222, '测试群']]) },
-      groupCustomizations: [{ id: 222, frequencyHint: 'chatty', body: '这个群喜欢短句接梗。' }],
+      groupPolicies: [{ id: 222, participation: 'active', guidance: '这个群喜欢短句接梗。' }],
       runner: async () => {
         runnerCalled = true
         return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
@@ -608,11 +608,13 @@ describe('workspace_bash tool', () => {
     const group = JSON.parse((await tool.execute({ command: 'style group 222' }, makeCtx())).content as string) as {
       ok: boolean
       groupName: string
-      body: string
+      participation: string
+      guidance: string
     }
     assert.equal(group.ok, true)
     assert.equal(group.groupName, '测试群')
-    assert.equal(group.body, '这个群喜欢短句接梗。')
+    assert.equal(group.participation, 'active')
+    assert.equal(group.guidance, '这个群喜欢短句接梗。')
     assert.equal(runnerCalled, false)
   })
 

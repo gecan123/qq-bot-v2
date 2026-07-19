@@ -7,7 +7,7 @@ describe('chat_style tool', () => {
     const tool = createChatStyleTool({
       groupIds: [],
       metadata: { groupNames: new Map() },
-      groupCustomizations: [],
+      groupPolicies: [],
     })
 
     assert.equal(tool.name, 'chat_style')
@@ -29,11 +29,11 @@ describe('chat_style tool', () => {
     assert.match(antiPatterns.content as string, /复读、接龙或玩固定格式/)
   })
 
-  test('group scope returns group frequency and body', async () => {
+  test('group scope returns the operator participation policy', async () => {
     const tool = createChatStyleTool({
       groupIds: [222],
       metadata: { groupNames: new Map([[222, '测试群']]) },
-      groupCustomizations: [{ id: 222, frequencyHint: 'chatty', body: '这个群喜欢短句接梗。' }],
+      groupPolicies: [{ id: 222, participation: 'active', guidance: '这个群喜欢短句接梗。' }],
     })
 
     const result = await tool.execute({ scope: 'group', groupId: 222 }, undefined as never)
@@ -42,15 +42,15 @@ describe('chat_style tool', () => {
     assert.equal(payload.ok, true)
     assert.equal(payload.groupId, 222)
     assert.equal(payload.groupName, '测试群')
-    assert.equal(payload.frequencyHint, 'chatty')
-    assert.equal(payload.body, '这个群喜欢短句接梗。')
+    assert.equal(payload.participation, 'active')
+    assert.equal(payload.guidance, '这个群喜欢短句接梗。')
   })
 
   test('group scope rejects unmonitored groups', async () => {
     const tool = createChatStyleTool({
       groupIds: [111],
       metadata: { groupNames: new Map() },
-      groupCustomizations: [],
+      groupPolicies: [],
     })
 
     const result = await tool.execute({ scope: 'group', groupId: 999 }, undefined as never)

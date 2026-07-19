@@ -28,6 +28,7 @@ const REQUIRED_FILES = [
   'package.json',
   'prisma/schema.prisma',
   '.env.example',
+  'prompts/groups.md',
   'src/index.ts',
   'src/agent/tools/index.ts',
 ] as const
@@ -83,10 +84,6 @@ export function runAgentDoctor(input: AgentDoctorInput): AgentDoctorResult {
     requireProviderEnv(input.env, 'CLAUDE', errors)
   } else if (provider) {
     errors.push(`unsupported LLM_DEFAULT_PROVIDER ${provider}`)
-  }
-
-  if (!hasEnv(input.env, 'BOT_TARGET_GROUP_IDS')) {
-    warnings.push('BOT_TARGET_GROUP_IDS is empty; bot will only accept private friend messages')
   }
 
   return {

@@ -151,17 +151,17 @@ describe('mailbox disclosure planning', () => {
     assert.doesNotMatch(rendered, /mentioned|rowIds/)
   })
 
-  test('discloses configured group frequency hint without exposing message bodies', () => {
+  test('discloses configured group participation without exposing message bodies', () => {
     const events = [
       groupEvent({ rowId: 15, groupId: 111, text: 'DO_NOT_DISCLOSE_CHATTY_BODY' }),
     ]
 
     const rendered = renderMailboxNotification('qq_group:111', events, {
-      frequencyHint: 'chatty',
+      participation: 'active',
     })
     const payload = JSON.parse(rendered)
 
-    assert.equal(payload.frequencyHint, 'chatty')
+    assert.equal(payload.participation, 'active')
     assert.doesNotMatch(rendered, /DO_NOT_DISCLOSE_CHATTY_BODY/)
   })
 
@@ -246,7 +246,7 @@ describe('mailbox disclosure planning', () => {
     assert.doesNotMatch(rendered, /Alice.+SECRET|SECRET/)
   })
 
-  test('discloses configured group frequency hint for replay backlog notifications', () => {
+  test('discloses configured group participation for replay backlog notifications', () => {
     const rendered = renderMailboxBacklogNotification({
       type: 'mailbox_backlog',
       mailboxKey: 'qq_group:111',
@@ -261,9 +261,9 @@ describe('mailbox disclosure planning', () => {
         from: new Date('2026-07-03T01:00:00Z'),
         to: new Date('2026-07-03T02:00:00Z'),
       },
-    }, { frequencyHint: 'lurker' })
+    }, { participation: 'mentions' })
 
-    assert.equal(JSON.parse(rendered).frequencyHint, 'lurker')
+    assert.equal(JSON.parse(rendered).participation, 'mentions')
   })
 
   test('renders a bounded private notification without message bodies', () => {

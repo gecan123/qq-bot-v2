@@ -12,7 +12,6 @@ import {
   config,
 } from './config/index.js'
 import { buildMediaProvider } from './llm/media-provider.js'
-import { loadGroupCustomizations } from './config/group-prompts.js'
 import { messageSender } from './messaging/message-sender.js'
 
 import { purgeOldData } from './database/retention.js'
@@ -70,6 +69,7 @@ async function main() {
   log.info(
     {
       groupIds: config.botTargetGroupIds,
+      groupPolicies: config.groupPolicies,
     },
     'qq-bot-v2 single-context MVP-2 启动',
   )
@@ -79,17 +79,6 @@ async function main() {
 
   // 0. 启动期清理 7 天前的 Message + Media
   await purgeOldData()
-
-  // ambient 白名单 sanity: 配了群但白名单空时，所有群 ambient 发送都会被明确拒绝。
-  if (config.groupAmbientSendIds.size === 0 && config.botTargetGroupIds.length > 0) {
-    log.warn(
-      {
-        botTargetGroupIds: config.botTargetGroupIds,
-        groupAmbientSendIds: [],
-      },
-      'BOT_GROUP_AMBIENT_SEND_IDS 未配置 — 所有群 ambient 发言都会被拒绝',
-    )
-  }
 
   // 1. 媒体描述用的 LLM provider routing (与 agent 自身的 LLM 客户端独立)
   const mediaProvider = buildMediaProvider(config.llm)
@@ -347,17 +336,6 @@ async function main() {
   }
 
   // 10. 工具集 + bot system prompt (启动后定型, 进程内不变)
-  // Per-group customization 启动期一次 load + freeze, 但不拼进 system prompt;
-  // 通过 chat_style 按需披露, 避免群口味正文污染常驻 cache 前缀.
-  const groupCustomizations = loadGroupCustomizations(config.botGroupPromptsPath)
-  log.info(
-    {
-      path: config.botGroupPromptsPath,
-      configured: groupCustomizations.length,
-      ids: groupCustomizations.map((c) => c.id),
-    },
-    'group customizations loaded',
-  )
   const runtime = createAgentRuntime({
     context,
     eventQueue,
@@ -378,11 +356,9 @@ async function main() {
       memberCount: group.member_count,
       maxMemberCount: group.max_member_count,
     })),
-    groupIds: config.botTargetGroupIds,
-    groupAmbientSendIds: config.groupAmbientSendIds,
     selfNumber: config.selfNumber,
     metadata: targetMetadata,
-    groupCustomizations,
+    groupPolicies: config.groupPolicies,
     toolCallLogPath: config.toolCallLogPath,
     toolAuditMode: config.toolAuditMode,
     toolAuditDbEnabled: config.toolAuditDbEnabled,

@@ -56,7 +56,7 @@ import type {
 } from './agent-ledger.types.js'
 import { runAfterCompactHook } from './compaction-hooks.js'
 import { config } from '../config/index.js'
-import type { FrequencyHint } from '../config/group-prompts.js'
+import type { GroupParticipation } from '../config/group-policies.js'
 import { estimateLedgerContextTokens } from './compaction-token-estimator.js'
 import { buildWorkingContextProjection } from './working-context.js'
 
@@ -106,7 +106,7 @@ export interface BotLoopAgentDeps {
   /** 运行时自主循环保护；不进入 ledger 或 runtime singleton。 */
   autonomy?: BotLoopAutonomyOptions
   /** 启动期冻结的群参与节奏；只作为 inbox_update 的软提示，不改变发送授权。 */
-  groupFrequencyHints?: ReadonlyMap<number, FrequencyHint>
+  groupParticipations?: ReadonlyMap<number, GroupParticipation>
   /** 可选的 Life Journal 自省 hook；输出不进入 AgentContext。 */
   lifeJournal?: BotLoopLifeJournal
 }
@@ -498,14 +498,14 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     let disclosed = 0
     for (const disclosure of disclosures) {
       if (disclosure.kind === 'backlog') {
-        const frequencyHint = disclosure.event.source.type === 'group'
-          ? deps.groupFrequencyHints?.get(disclosure.event.source.groupId)
+        const participation = disclosure.event.source.type === 'group'
+          ? deps.groupParticipations?.get(disclosure.event.source.groupId)
           : undefined
         messages.push({
           role: 'user',
           content: renderMailboxBacklogNotification(
             disclosure.event,
-            frequencyHint ? { frequencyHint } : {},
+            participation ? { participation } : {},
           ),
         })
         recordMailboxDisclosure(
@@ -521,8 +521,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       if (disclosure.kind === 'mailbox') {
         const latestMessageAtMs = disclosure.events.at(-1)!.sentAt.getTime()
         const firstEvent = disclosure.events[0]!
-        const frequencyHint = firstEvent.type === 'napcat_message'
-          ? deps.groupFrequencyHints?.get(firstEvent.groupId)
+        const participation = firstEvent.type === 'napcat_message'
+          ? deps.groupParticipations?.get(firstEvent.groupId)
           : undefined
         const compensation = decideMailboxCompensation(
           continuity,
@@ -535,7 +535,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
             ...(compensation.contextBefore > 0
               ? { contextBefore: compensation.contextBefore }
               : {}),
-            ...(frequencyHint ? { frequencyHint } : {}),
+            ...(participation ? { participation } : {}),
           }),
         })
         recordMailboxDisclosure(continuity, disclosure.mailboxKey, latestMessageAtMs)

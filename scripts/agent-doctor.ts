@@ -13,6 +13,7 @@ const paths = [
   'package.json',
   'prisma/schema.prisma',
   '.env.example',
+  'prompts/groups.md',
   'src/index.ts',
   'src/agent/tools/index.ts',
 ] as const

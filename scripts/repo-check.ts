@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { runRepoChecks, type RepoCheckFiles } from '../src/ops/repo-check.js'
 
 const files: RepoCheckFiles = {
@@ -7,9 +7,7 @@ const files: RepoCheckFiles = {
   'README.md': readFileSync('README.md', 'utf8'),
   'package.json': readFileSync('package.json', 'utf8'),
   '.env.example': readFileSync('.env.example', 'utf8'),
-  'prompts/groups.yaml.example': existsSync('prompts/groups.yaml.example')
-    ? readFileSync('prompts/groups.yaml.example', 'utf8')
-    : undefined,
+  'prompts/groups.md': readFileSync('prompts/groups.md', 'utf8'),
   'src/agent/tools/index.ts': readFileSync('src/agent/tools/index.ts', 'utf8'),
   'src/agent/tools/workspace-bash.ts': readFileSync('src/agent/tools/workspace-bash.ts', 'utf8'),
   'prompts/bot-system.md': readFileSync('prompts/bot-system.md', 'utf8'),

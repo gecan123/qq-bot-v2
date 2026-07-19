@@ -4,7 +4,7 @@ export interface RepoCheckFiles {
   'README.md': string
   'package.json': string
   '.env.example': string
-  'prompts/groups.yaml.example'?: string
+  'prompts/groups.md': string
   'src/agent/tools/index.ts': string
   'src/agent/tools/workspace-bash.ts': string
   'prompts/bot-system.md': string
@@ -104,7 +104,7 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   }
 
   if (/(^|[^A-Z0-9_])GROUP_IDS([^A-Z0-9_]|$)/.test(files['README.md'])) {
-    errors.push('README.md references stale env var "GROUP_IDS"; use "BOT_TARGET_GROUP_IDS"')
+    errors.push('README.md references stale env var "GROUP_IDS"; use prompts/groups.md')
   }
 
   if (!files['README.md'].includes('bot_agent_ledger_entries')) {
@@ -204,22 +204,18 @@ function checkEnvExample(files: RepoCheckFiles, errors: string[]): void {
     }
   }
 
-  if (
-    envExample.includes('prompts/groups.yaml.example') &&
-    !files['prompts/groups.yaml.example']?.trim()
-  ) {
-    errors.push('prompts/groups.yaml.example is referenced but missing')
-  }
-
-  const groupConfigLine = envExample
-    .split('\n')
-    .find((line) => line.includes('BOT_GROUP_PROMPTS_PATH')) ?? ''
-  if (/fail-fast|file must exist|文件必须存在/i.test(groupConfigLine) || envExample.includes('loader fail-fast')) {
-    errors.push('group customization file must document missing-file fallback')
+  for (const stale of ['BOT_TARGET_GROUP_IDS', 'BOT_GROUP_AMBIENT_SEND_IDS', 'BOT_GROUP_PROMPTS_PATH']) {
+    if (envExample.includes(stale)) {
+      errors.push(`.env.example must not mention stale group config ${stale}`)
+    }
   }
 }
 
 function checkPromptSplit(files: RepoCheckFiles, errors: string[]): void {
+  const groups = files['prompts/groups.md']
+  if (!groups.includes('# 群聊配置') || !groups.includes('- participation:')) {
+    errors.push('prompts/groups.md must define readable group participation policies')
+  }
   if (!files['prompts/bot-system.md'].includes('style global [constraints|base|anti_patterns|special_cases]')) {
     errors.push('prompts/bot-system.md must point to style global constraints/base/anti_patterns/special_cases')
   }

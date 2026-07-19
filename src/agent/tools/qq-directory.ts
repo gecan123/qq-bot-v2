@@ -67,7 +67,7 @@ export function createQqDirectoryTool(deps: QqDirectoryDeps): Tool<Args> {
     description: [
       '只读查看当前 QQ 可聊天对象.',
       'list_friends 分页列出全部当前好友; search_friends 按 QQ 号、昵称或备注搜索好友.',
-      'list_groups 只返回 BOT_TARGET_GROUP_IDS 已配置且当前账号确实加入的群; 未配置群不会披露也不能聊天.',
+      'list_groups 只返回 prompts/groups.md 已配置且当前账号确实加入的群; 未配置群不会披露也不能聊天.',
       'profile 按 QQ 号合并当前好友资料和 messages 事实账本里的历史昵称/群昵称；用它核对“这个昵称是谁”，不要靠语义记忆猜身份.',
       '目录结果中的 userId/groupId 可作为 send_message 的明确 target.',
       '本工具不能添加或删除好友, 也不能加入、退出或管理群聊.',

@@ -1,6 +1,6 @@
 import type { BotEvent } from './event.js'
 import { formatBeijingIso } from '../utils/beijing-time.js'
-import type { FrequencyHint } from '../config/group-prompts.js'
+import type { GroupParticipation } from '../config/group-policies.js'
 
 export type MailboxCursors = Record<string, number>
 export const MAILBOX_BACKLOG_THRESHOLD = 100
@@ -22,7 +22,7 @@ export interface MailboxDisclosurePlan {
 
 export interface MailboxNotificationOptions {
   contextBefore?: number
-  frequencyHint?: FrequencyHint
+  participation?: GroupParticipation
 }
 
 export function mailboxKeyForEvent(event: BotEvent): string | null {
@@ -114,8 +114,8 @@ export function renderMailboxNotification(
     mailbox: mailboxKey,
     priority,
     source: source.value,
-    ...(first.type === 'napcat_message' && options.frequencyHint
-      ? { frequencyHint: options.frequencyHint }
+    ...(first.type === 'napcat_message' && options.participation
+      ? { participation: options.participation }
       : {}),
     count: events.length,
     firstRowId: first.messageRowId,
@@ -139,7 +139,7 @@ export function renderMailboxNotification(
 
 export function renderMailboxBacklogNotification(
   event: MailboxBacklogEvent,
-  options: Pick<MailboxNotificationOptions, 'frequencyHint'> = {},
+  options: Pick<MailboxNotificationOptions, 'participation'> = {},
 ): string {
   return JSON.stringify({
     event: 'inbox_update',
@@ -147,8 +147,8 @@ export function renderMailboxBacklogNotification(
     mailbox: event.mailboxKey,
     priority: event.priority,
     source: event.source,
-    ...(event.source.type === 'group' && options.frequencyHint
-      ? { frequencyHint: options.frequencyHint }
+    ...(event.source.type === 'group' && options.participation
+      ? { participation: options.participation }
       : {}),
     count: event.count,
     firstRowId: event.firstRowId,

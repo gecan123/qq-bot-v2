@@ -4,7 +4,7 @@ import { isAbsolute, normalize, resolve } from 'node:path'
 import { z } from 'zod'
 import type { Tool } from '../tool.js'
 import type { DbReadResult, ExecuteDbReadParams } from '../../database/agent-sql.js'
-import type { GroupCustomization } from '../../config/group-prompts.js'
+import type { GroupPolicy } from '../../config/group-policies.js'
 import type { TargetMetadataMaps } from '../resolve-target-meta.js'
 import { createDbTool } from './db.js'
 import { createChatStyleTool } from './chat-style.js'
@@ -48,7 +48,7 @@ const REPO_BLOCKED_PATH_PREFIXES = [
   'data',
   'logs',
   'node_modules',
-  'prompts/groups.yaml',
+  'prompts/groups.md',
 ]
 
 const argsSchema = z.object({
@@ -189,7 +189,7 @@ export interface WorkspaceBashDeps {
   executeDbRead?: (params: ExecuteDbReadParams) => Promise<DbReadResult | unknown>
   groupIds?: readonly number[]
   metadata?: TargetMetadataMaps
-  groupCustomizations?: readonly GroupCustomization[]
+  groupPolicies?: readonly GroupPolicy[]
   openbbTool?: Tool | null
   moomooTool?: Tool | null
   fetchTool?: Tool | null
@@ -1004,7 +1004,7 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
   const styleTool = createChatStyleTool({
     groupIds: deps.groupIds ?? [],
     metadata: deps.metadata ?? { groupNames: new Map() },
-    groupCustomizations: deps.groupCustomizations ?? [],
+    groupPolicies: deps.groupPolicies ?? [],
   })
   const openbbTool = deps.openbbTool === undefined ? maybeCreateOpenbbCliTool() : deps.openbbTool
   const moomooTool = deps.moomooTool === undefined ? maybeCreateMoomooSkillTool() : deps.moomooTool
@@ -1020,7 +1020,7 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
     description: [
       '受限 Bash. 默认 cwd=workspace, 用来只读查看私有工作文件; 也可 cwd=repo 只读查看自己的仓库代码.',
       'workspace 允许少量只读文件命令: pwd/ls/rg/cat/head/tail/wc; 普通文件写入、替换、删除和移动使用 deferred workspace_file.',
-      'repo 只允许读命令: pwd/ls/rg/cat/head/tail/wc; rg 支持普通搜索和 --files, 不能写, 也不能读 .env/logs/node_modules/.git/data/prompts/groups.yaml.',
+      'repo 只允许读命令: pwd/ls/rg/cat/head/tail/wc; rg 支持普通搜索和 --files, 不能写, 也不能读 .env/logs/node_modules/.git/data/prompts/groups.md.',
       '常用路由不用先 help: 看 repo 传 cwd=repo 后用 `rg --files src` / `rg <pattern> src` / `cat <path>`; 查历史先 `db schema` 再用 `db query {"sql":"SELECT 1","params":{}}`; 查每日工具/token 用 `metrics today|yesterday|YYYY-MM-DD`; 抓网页用 `fetch url <url> [hint]`; 看 reddit 用 `fetch reddit list technology hot 5`.',
       '不确定语法时先用 `help` 或 `help <topic>`; Moomoo 行情、账户查询和证券模拟交易用 `moomoo <allowed command>`, 交易必须显式 SIMULATE; 聊天约束/风格用 `style global constraints|base|anti_patterns|special_cases` 或 `style group`; AI 腔调检测用 `ai_tone <json>`.',
       '数据库仍只读; ai_tone 只走内置模型; 不允许 psql/curl/node/cat .env/路径逃逸/任意 shell 组合.',

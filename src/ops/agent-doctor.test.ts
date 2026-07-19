@@ -11,7 +11,8 @@ const healthyFiles = {
     '@@map("bot_agent_runtime_state")',
     '@@map("bot_agent_checkpoint")',
   ].join('\n'),
-  '.env.example': 'BOT_TARGET_GROUP_IDS=\nLLM_DEFAULT_PROVIDER=openai-agent\n',
+  '.env.example': 'LLM_DEFAULT_PROVIDER=openai-agent\n',
+  'prompts/groups.md': '# 群聊配置\n',
   'src/index.ts': 'createAgentRuntime()\n',
   'src/agent/tools/index.ts': 'buildBotToolManifest\n',
 }

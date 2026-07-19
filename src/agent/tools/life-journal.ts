@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { Tool } from '../tool.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
+import { CHINESE_NARRATIVE_ERROR, hasChineseNarrative } from '../long-term-language.js'
 import {
   appendLifeJournalEntry,
   compactLifeJournalEntries,
@@ -21,12 +22,14 @@ const DEFAULT_REFLECTION_WRITE_MIN_INTERVAL_MS = 15 * 60_000
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('read_recent 返回的日期, 格式 YYYY-MM-DD.')
 const entryIdSchema = z.string().trim().min(1).max(160).describe('read_recent 返回的 entryId.')
 const revisionSchema = z.string().regex(/^[a-f0-9]{64}$/).describe('read_recent 返回的 revision; 防止覆盖更新后的文件.')
+const chineseLifeMarkdownSchema = (max: number) => z.string().trim().min(1).max(max)
+  .refine(hasChineseNarrative, CHINESE_NARRATIVE_ERROR)
 
 const argsSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('write').describe('主动写入一条 Life Journal 笔记.'),
     kind: z.enum(['reflection', 'dream']).optional().describe('内容类型: reflection=经历/感受, dream=梦境; 默认 reflection.'),
-    markdown: z.string().trim().min(1).max(3000).describe('Markdown 内容, 上限 3000 字符.'),
+    markdown: chineseLifeMarkdownSchema(3000).describe('以中文为叙述载体的 Markdown 内容；命令、路径、URL、API 名和专有名词保留原文。上限 3000 字符.'),
   }),
   z.object({
     action: z.literal('read_recent').describe('读取最近的 Life Journal 日文件.'),
@@ -52,7 +55,7 @@ const argsSchema = z.discriminatedUnion('action', [
     date: dateSchema,
     entryId: entryIdSchema,
     expectedRevision: revisionSchema,
-    markdown: z.string().trim().min(1).max(3000).describe('替换后的完整条目正文, 上限 3000 字符.'),
+    markdown: chineseLifeMarkdownSchema(3000).describe('以中文为叙述载体的完整条目正文, 上限 3000 字符.'),
   }),
   z.object({
     action: z.literal('delete').describe('按 entryId 永久删除一条错误或重复的 Life Journal 记录.'),
@@ -65,12 +68,12 @@ const argsSchema = z.discriminatedUnion('action', [
     date: dateSchema,
     entryIds: z.array(entryIdSchema).min(2).max(50).describe('要被摘要替代的 2-50 个 entryId.'),
     expectedRevision: revisionSchema,
-    markdown: z.string().trim().min(1).max(12000).describe('合并后的完整摘要正文, 上限 12000 字符.'),
+    markdown: chineseLifeMarkdownSchema(12000).describe('以中文为叙述载体的完整摘要正文, 上限 12000 字符.'),
   }),
   z.object({
     action: z.literal('write_agenda').describe('覆盖写入完整 Life Agenda 文件.'),
     expectedRevision: revisionSchema,
-    markdown: z.string().trim().min(1).max(5000).describe('完整 agenda Markdown, 上限 5000 字符.'),
+    markdown: chineseLifeMarkdownSchema(5000).describe('完整 agenda Markdown；Active/Waiting/Someday/Done 等结构标题保持不变，事项正文以中文为叙述载体。上限 5000 字符.'),
   }),
 ])
 
@@ -111,8 +114,10 @@ export function createLifeJournalTool(deps: LifeJournalToolDeps = {}): Tool<Args
       'action=write 写一条 reflection|dream 主观笔记; action=read_recent 回看最近笔记并取得 entryId/revision.',
       '需要完整原文时用 action=read_entry 或分页 action=read_day, 不要只依据 preview 做 compact.',
       'action=update/delete 修正或删除单条记录; action=compact 合并同一天的多条记录; 修改前必须使用最新 revision.',
+      '只有已经看见明确空白、重复或结构污染时才做一次有界整理; 不要把整理 journal 当空闲打卡，也不要另写一条 reflection 记录整理本身.',
       'action=read_agenda/write_agenda 读取或更新 agenda.',
       '读取结果有界; 写入应短而有选择性. reflection 成功写入后至少间隔 15 分钟，dream 不受此限制.',
+      'Journal 正文和 Agenda 事项必须以中文为叙述载体；命令、路径、URL、API 名和专有名词可保留原文，但要用中文说明.',
     ].join(' '),
     schema: argsSchema,
     async execute(args) {

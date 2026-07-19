@@ -101,6 +101,7 @@ describe('pause tool', () => {
     assert.match(tool.description, /没有未处理义务或牵引力就结束当前活动轮/)
     assert.match(tool.description, /立即进入计时/)
     assert.match(tool.description, /不再同步请求额外的 LLM 判断/)
+    assert.match(tool.description, /精力允许.*primaryDirection.*直接执行/)
   })
 
   test('description frames intention as two concrete directions', () => {
@@ -150,7 +151,12 @@ describe('pause tool', () => {
     assert.equal(Number.isInteger(content.elapsedMs), true)
     assert.equal(content.elapsedMs >= 0, true)
     assert.equal(content.elapsedMs < 100, true)
-    assert.deepEqual(result.outcome, { ok: true, code: 'interrupted' })
+    assert.deepEqual(result.outcome, {
+      ok: true,
+      code: 'interrupted',
+      progress: false,
+      continuation: 'wait_attention',
+    })
     assert.deepEqual(result.effects, [{ type: 'pause', status: 'interrupted' }])
     assert.equal(queue.size(), 1)
   })

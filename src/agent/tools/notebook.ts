@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { Tool } from '../tool.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
+import { CHINESE_NARRATIVE_ERROR, hasChineseNarrative } from '../long-term-language.js'
 import {
   appendNotebookRecord,
   compactNotebookRecords,
@@ -20,15 +21,18 @@ const kindSchema = z.enum(['research', 'reading', 'market', 'project', 'general'
 const topicSchema = z.string().trim().min(1).max(120).refine(
   (topic) => !/[\r\n]/.test(topic),
   'topic 必须是单行稳定主题',
-).describe('稳定的单行主题名；action=write 时必填，后续用于跨天检索和延续同一条主线.')
+).refine(hasChineseNarrative, CHINESE_NARRATIVE_ERROR)
+  .describe('稳定的单行中文主题名；专有名词可保留原文，但要用中文说明。action=write 时必填，后续用于跨天检索和延续同一条主线.')
 const revisionSchema = z.string().regex(/^[a-f0-9]{64}$/).describe('action=read 返回的 revision；action=update 或 action=delete 或 action=compact 时必填.')
+const chineseNotebookContentSchema = (max: number) => z.string().trim().min(1).max(max)
+  .refine(hasChineseNarrative, CHINESE_NARRATIVE_ERROR)
 
 const argsSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('write').describe('写入一条过程笔记；必须提供 kind, topic, content.'),
     kind: kindSchema,
     topic: topicSchema,
-    content: z.string().trim().min(1).max(4_000).describe('过程、证据、判断变化或下一步，上限 4000 字符.'),
+    content: chineseNotebookContentSchema(4_000).describe('用中文叙述过程、证据、判断变化或下一步；命令、路径、URL、API 名和专有名词保留原文。上限 4000 字符.'),
   }),
   z.object({
     action: z.literal('list').describe('列出最近笔记，可按 kind/topic 过滤.'),
@@ -52,7 +56,7 @@ const argsSchema = z.discriminatedUnion('action', [
     id: z.string().trim().min(1).max(160),
     expectedRevision: revisionSchema,
     topic: topicSchema.optional(),
-    content: z.string().trim().min(1).max(4_000),
+    content: chineseNotebookContentSchema(4_000),
   }),
   z.object({
     action: z.literal('delete').describe('永久删除一条错误或重复笔记；必须提供 id, expectedRevision.'),
@@ -63,7 +67,7 @@ const argsSchema = z.discriminatedUnion('action', [
     action: z.literal('compact').describe('合并同 kind、同月、同 topic 的笔记；必须提供 ids, expectedRevision, content.'),
     ids: z.array(z.string().trim().min(1).max(160)).min(2).max(50),
     expectedRevision: revisionSchema,
-    content: z.string().trim().min(1).max(12_000),
+    content: chineseNotebookContentSchema(12_000),
   }),
 ])
 
@@ -105,6 +109,7 @@ export function createNotebookTool(deps: NotebookToolDeps = {}): Tool<Args> {
       'write 需要 kind、topic 和过程内容；list/search/read 用于跨天继续同一主题.',
       'update/delete/compact 前先 read 取得最新 revision；compact 只允许同 kind、同月、同 topic.',
       '已经足够稳定、以后可直接依赖的结论应另写 memory；经历、感受和梦写 life_journal.',
+      'topic/content 必须以中文为叙述载体；命令、路径、URL、API 名和专有名词可保留原文，但要用中文说明.',
     ].join(' '),
     schema: argsSchema,
     async execute(args) {

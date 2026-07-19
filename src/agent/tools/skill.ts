@@ -1,4 +1,5 @@
 import { readdir, readFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
@@ -43,6 +44,7 @@ export function createSkillTool(deps: SkillToolDeps = {}): Tool<Args> {
       'action=list: 查看有哪些 skill.',
       'action=load: 按精确 name 读取正文, 输出有长度上限; 已知 name 时直接 load, 不知道候选时才 list.',
       '遇到不熟悉的专项规则、安全边界或标准工作流时加载匹配 skill; 执行步骤和状态改用 todo.',
+      '当前方向耗尽、连续静默或准备因为“没事做”而休息时直接 load autonomous_life; 已有明确方向时不要加载.',
       '简单日常回复、已知单步操作或只是步骤多但规则已清楚的任务不要调用; 不要把长手册塞进常驻上下文.',
     ].join(' '),
     schema: argsSchema,
@@ -51,11 +53,20 @@ export function createSkillTool(deps: SkillToolDeps = {}): Tool<Args> {
       const catalog = await readCatalog(skillsDir)
 
       if (args.action === 'list') {
+        const noveltyKey = `skill_catalog:${stableHash(JSON.stringify(
+          catalog.map(({ name, description }) => ({ name, description })),
+        ))}`
         return {
           content: JSON.stringify({
             ok: true,
             skills: catalog.map(({ name, description }) => ({ name, description })),
           }),
+          outcome: {
+            ok: true,
+            progress: false,
+            continuation: 'immediate',
+            noveltyKey,
+          },
         }
       }
 
@@ -79,9 +90,19 @@ export function createSkillTool(deps: SkillToolDeps = {}): Tool<Args> {
           content: truncated ? entry.body.slice(0, maxContentChars) : entry.body,
           truncated,
         }),
+        outcome: {
+          ok: true,
+          progress: true,
+          continuation: 'immediate',
+          noveltyKey: `skill:${entry.name}:${stableHash(entry.body)}`,
+        },
       }
     },
   }
+}
+
+function stableHash(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 16)
 }
 
 async function readCatalog(skillsDir: string): Promise<SkillEntry[]> {

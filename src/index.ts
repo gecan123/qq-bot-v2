@@ -16,7 +16,7 @@ import { loadGroupCustomizations } from './config/group-prompts.js'
 import { messageSender } from './messaging/message-sender.js'
 
 import { purgeOldData } from './database/retention.js'
-import { findValidMemoryEvidenceRowIds } from './database/messages.js'
+import { findMemoryEvidenceRows } from './database/messages.js'
 import { createAgentContext } from './agent/agent-context.js'
 import { InMemoryEventQueue } from './agent/event-queue.js'
 import type { BotEvent } from './agent/event.js'
@@ -122,7 +122,8 @@ async function main() {
     taskScheduler,
     workspaceStateCoordinator,
     memoryMaintenance,
-    validateSourceMessageIds: findValidMemoryEvidenceRowIds,
+    loadSourceEvidence: findMemoryEvidenceRows,
+    ownerId: config.owner == null ? undefined : String(config.owner.qq),
   })
 
   // 3.5 启动期 persona-spoof 自检 (claude-code 路径专用): 若 cliproxy mode=auto

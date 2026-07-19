@@ -19,6 +19,19 @@ import {
 import type { TokenUsageEntry } from './token-stats.js'
 import { createTaskScheduler } from './task-scheduler.js'
 import { createWorkspaceStateCoordinator } from './workspace-state-coordinator.js'
+import type { MemoryEvidenceRow } from './memory-evidence.js'
+
+function groupEvidence(rowId: number, senderId: string, groupId = 20001): MemoryEvidenceRow {
+  return {
+    rowId,
+    sceneKind: 'qq_group',
+    sceneExternalId: '',
+    groupId,
+    messageId: String(rowId * 10),
+    senderId,
+    sentAt: '2026-07-07T23:00:00.000+08:00',
+  }
+}
 
 async function recordAndDrain(
   runtime: LifeJournalRuntime,
@@ -49,6 +62,12 @@ describe('life journal runtime', () => {
         captured = input
         assert.equal(input.tools.length, 1)
         assert.equal(input.tools[0]!.name, 'life_journal_review_result')
+        assert.equal(input.tools[0]!.schema.safeParse({
+          shouldWrite: true,
+          memoryCandidates: [],
+          journalMarkdown: 'A fully English journal entry.',
+          agendaMarkdown: '',
+        }).success, false)
         assert.match(input.systemPrompt, /Life Journal/)
         return {
           content: JSON.stringify({
@@ -85,12 +104,12 @@ describe('life journal runtime', () => {
     assert.match(capturedInput.messages[0]!.content as string, /## Current Agenda/)
     assert.match(capturedInput.messages[0]!.content as string, /这一轮确认让我自己写 journal/)
     assert.match(capturedInput.messages[1]!.content as string, /Life Journal review/)
-    assert.match(capturedInput.systemPrompt, /completing a nap is not a lived achievement/)
+    assert.match(capturedInput.systemPrompt, /小憩都不算生活成就/)
   })
 
   test('recordRound writes and deduplicates recent memory from the same review', async () => {
     const enqueued: string[] = []
-    const validatedEvidence: Array<{ sourceMessageIds: readonly number[]; scope?: string; id?: string }> = []
+    const loadedEvidence: number[][] = []
     const llm: LlmClient = {
       async chat() {
         return {
@@ -101,6 +120,7 @@ describe('life journal runtime', () => {
               id: '10001',
               content: '偏好 TypeScript 代码示例，不希望默认使用 Python',
               sourceMessageIds: [101],
+              memoryKind: 'person_preference',
             }],
             journalMarkdown: '### Saw\n- zzz 明确说了长期代码示例偏好。\n',
             agendaMarkdown: '# Agenda\n\n## Active\n- [ ] 后续示例优先使用 TypeScript\n',
@@ -117,9 +137,9 @@ describe('life journal runtime', () => {
       llm,
       now: () => new Date('2026-07-07T15:18:00.000Z'),
       minWriteIntervalMs: 0,
-      async validateSourceMessageIds(query) {
-        validatedEvidence.push(query)
-        return query.sourceMessageIds
+      async loadSourceEvidence(ids) {
+        loadedEvidence.push([...ids])
+        return ids.map((id) => groupEvidence(id, '10001'))
       },
       memoryMaintenance: {
         enqueue(file) {
@@ -133,20 +153,18 @@ describe('life journal runtime', () => {
     const input: LifeJournalReviewInput = {
       roundIndex: 7,
       messages: [{ role: 'user', content: '以后代码示例优先 TypeScript，不要默认用 Python。' }],
+      evidenceMessageRowIds: [101],
     }
     await recordAndDrain(runtime, input)
     await recordAndDrain(runtime, { ...input, roundIndex: 8 })
 
-    const memory = await readFile(join(rootDir, 'memory', 'people', '10001.md'), 'utf8')
+    const memory = await readFile(join(rootDir, 'memory', 'people', '10001', 'groups', '20001.md'), 'utf8')
     assert.match(memory, /偏好 TypeScript 代码示例，不希望默认使用 Python/)
     assert.match(memory, /tier: recent/)
     assert.match(memory, /sourceMessageIds: 101/)
     assert.equal(memory.match(/<!-- memory-entry/g)?.length, 1)
-    assert.deepEqual(enqueued, ['people/10001.md'])
-    assert.deepEqual(validatedEvidence, [
-      { sourceMessageIds: [101], scope: 'person', id: '10001' },
-      { sourceMessageIds: [101], scope: 'person', id: '10001' },
-    ])
+    assert.deepEqual(enqueued, ['people/10001/groups/20001.md'])
+    assert.deepEqual(loadedEvidence, [[101], [101]])
     assert.match(await readFile(join(rootDir, 'life', 'journal', '2026-07-07.md'), 'utf8'), /长期代码示例偏好/)
     assert.match(await readFile(join(rootDir, 'life', 'agenda.md'), 'utf8'), /优先使用 TypeScript/)
   })
@@ -164,6 +182,7 @@ describe('life journal runtime', () => {
                 id: '10001',
                 content: '这个长期偏好没有可验证的消息来源',
                 sourceMessageIds: [404],
+                memoryKind: 'person_preference',
               }],
               journalMarkdown: '',
               agendaMarkdown: '',
@@ -176,7 +195,7 @@ describe('life journal runtime', () => {
         },
       },
       minWriteIntervalMs: 0,
-      async validateSourceMessageIds() {
+      async loadSourceEvidence() {
         return []
       },
     })
@@ -184,10 +203,11 @@ describe('life journal runtime', () => {
     const result = await recordAndDrain(runtime, {
       roundIndex: 9,
       messages: [{ role: 'user', content: '没有 row 404' }],
+      evidenceMessageRowIds: [404],
     })
 
     assert.deepEqual(result, { ok: true, wroteJournal: false, updatedAgenda: false })
-    await assert.rejects(readFile(join(rootDir, 'memory', 'people', '10001.md')), /ENOENT/)
+    await assert.rejects(readFile(join(rootDir, 'memory', 'people', '10001', 'groups', '20001.md')), /ENOENT/)
   })
 
   test('wraps round transcript as untrusted data before calling the reviewer', async () => {
@@ -387,7 +407,7 @@ describe('life journal runtime', () => {
     const state = (captured as LlmCallInput).messages[0]!.content as string
     assert.match(state, /修复 journal reviewer/)
     assert.match(state, /我答应继续修 reviewer/)
-    assert.match((captured as LlmCallInput).systemPrompt, /Preserve unrelated items/)
+    assert.match((captured as LlmCallInput).systemPrompt, /保留无关事项/)
   })
 
   test('recordRound updates agenda only when agenda markdown is non-empty', async () => {
@@ -521,7 +541,7 @@ describe('life journal runtime', () => {
             contextWindowTokens: 200_000,
           }
         }
-        assert.match(input.systemPrompt, /follow the SKIP\/RECORD fallback protocol exactly/)
+        assert.match(input.systemPrompt, /严格使用 SKIP\/RECORD 回退协议/)
         return {
           content: JSON.stringify({
             shouldWrite: true,
@@ -549,6 +569,47 @@ describe('life journal runtime', () => {
     assert.deepEqual(result, { ok: true, wroteJournal: true, updatedAgenda: false })
     assert.equal(calls, 2)
     assert.match(await readFile(join(rootDir, 'life', 'journal', '2026-07-07.md'), 'utf8'), /第二次返回了 JSON/)
+  })
+
+  test('recordRound rejects heading-only and embedded entry wrappers instead of creating empty rounds', async () => {
+    let calls = 0
+    const llm: LlmClient = {
+      async chat() {
+        calls += 1
+        return {
+          content: JSON.stringify({
+            shouldWrite: true,
+            journalMarkdown: [
+              '# 生活日志 2026-07-07',
+              '<!-- life-journal-entry',
+              'roundIndex: 15',
+              '-->',
+              '## 02:46 Round 15',
+              '<!-- /life-journal-entry -->',
+            ].join('\n'),
+            agendaMarkdown: '',
+          }),
+          toolCalls: [],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+          contextWindowTokens: 200_000,
+        }
+      },
+    }
+    const runtime = createLifeJournalRuntime({
+      rootDir,
+      llm,
+      now: () => new Date('2026-07-07T15:18:00.000Z'),
+    })
+
+    const result = await recordAndDrain(runtime, {
+      roundIndex: 15,
+      messages: [{ role: 'user', content: '这一轮没有新的经历。' }],
+    })
+
+    assert.deepEqual(result, { ok: true, wroteJournal: false, updatedAgenda: false })
+    assert.equal(calls, 2)
+    await assert.rejects(readFile(join(rootDir, 'life', 'journal', '2026-07-07.md'), 'utf8'))
   })
 
   test('recordRound reads structured review from tool call args instead of prose content', async () => {
@@ -860,6 +921,49 @@ describe('life journal runtime', () => {
     assert.equal(serialized.includes('old AgentContext history'), false)
     assert.match((capturedInput.messages[0]!.content as string), /\[truncated\]/)
     assert.ok((capturedInput.messages[0]!.content as string).length < 2_000)
+  })
+
+  test('recordRound gives the reviewer newest journal entries before older same-day content', async () => {
+    let nowMs = Date.parse('2026-07-07T12:00:00.000Z')
+    const now = () => new Date(nowMs)
+    await appendLifeJournalEntry({
+      rootDir,
+      now,
+      id: () => 'old-entry',
+      markdown: `### 看到\n- 很早以前的内容${'旧'.repeat(2_000)}。`,
+    })
+    nowMs += 60_000
+    await appendLifeJournalEntry({
+      rootDir,
+      now,
+      id: () => 'new-entry',
+      markdown: '### 看到\n- 最新不可重复线索。',
+    })
+
+    let captured: LlmCallInput | null = null
+    const llm: LlmClient = {
+      async chat(input) {
+        captured = input
+        return {
+          content: 'SKIP',
+          toolCalls: [],
+          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+          contextWindowTokens: 200_000,
+        }
+      },
+    }
+    const runtime = createLifeJournalRuntime({ rootDir, llm, now, maxStateChars: 900 })
+
+    await recordAndDrain(runtime, {
+      roundIndex: 16,
+      messages: [{ role: 'user', content: '检查是否值得再写。' }],
+    })
+
+    assert.ok(captured)
+    const state = (captured as LlmCallInput).messages[0]!.content as string
+    assert.match(state, /最新不可重复线索/)
+    assert.doesNotMatch(state, /很早以前的内容/)
   })
 
   test('recordRound replaces non-text tool result blocks with bounded placeholders', async () => {

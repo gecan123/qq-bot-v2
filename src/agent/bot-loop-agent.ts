@@ -1,7 +1,7 @@
 import type { AgentContext } from './agent-context.js'
 import type { AgentMessage, QqConversationFocus } from './agent-context.types.js'
 import { isLlmContextOverflowError, isLlmUsageLimitError, type LlmClient } from './llm-client.js'
-import type { MessageSentTarget, ToolExecutor } from './tool.js'
+import type { MessageSentTarget, ToolContinuation, ToolExecutor } from './tool.js'
 import type { EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { AgentLedgerLoader } from './agent-ledger-loader.js'
@@ -17,7 +17,7 @@ import {
   summarizeCompactionCandidate,
   type MaybeCompactOptions,
 } from './compaction.js'
-import { LlmOutputTruncatedError, runReactRound } from './react-kernel.js'
+import { LlmOutputTruncatedError, runReactRound, type ReactToolOutcome } from './react-kernel.js'
 import { interpretToolEffects } from './effect-interpreter.js'
 import {
   renderInterruptedRestAttentionReminder,
@@ -56,6 +56,7 @@ import type {
 } from './agent-ledger.types.js'
 import { runAfterCompactHook } from './compaction-hooks.js'
 import { config } from '../config/index.js'
+import type { FrequencyHint } from '../config/group-prompts.js'
 import { estimateLedgerContextTokens } from './compaction-token-estimator.js'
 import { buildWorkingContextProjection } from './working-context.js'
 
@@ -104,12 +105,18 @@ export interface BotLoopAgentDeps {
   }
   /** 运行时自主循环保护；不进入 ledger 或 runtime singleton。 */
   autonomy?: BotLoopAutonomyOptions
+  /** 启动期冻结的群参与节奏；只作为 inbox_update 的软提示，不改变发送授权。 */
+  groupFrequencyHints?: ReadonlyMap<number, FrequencyHint>
   /** 可选的 Life Journal 自省 hook；输出不进入 AgentContext。 */
   lifeJournal?: BotLoopLifeJournal
 }
 
 export interface BotLoopLifeJournal {
-  recordRound(input: { roundIndex: number; messages: AgentMessage[] }): Promise<unknown>
+  recordRound(input: {
+    roundIndex: number
+    messages: AgentMessage[]
+    evidenceMessageRowIds?: number[]
+  }): Promise<unknown>
 }
 
 export interface BotLoopAutonomyOptions {
@@ -136,6 +143,7 @@ const DEFAULT_ACTION_RETRY_WAIT_MS = 60_000
 const DEFAULT_COMPACTION_FAILURE_BACKOFF_MS = 10 * 60_000
 const MAX_OUTPUT_CONTINUATIONS_PER_ROUND = 2
 const MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS = 3
+const MAX_RECENT_TOOL_NOVELTY_KEYS = 256
 const RECOVERABLE_TOOL_ERROR_CODES = new Set(['capability_inactive', 'invalid_arguments'])
 const OUTPUT_CONTINUATION_PROMPT =
   '[runtime recovery] 上一段 assistant 输出达到长度上限。请从中断处继续，不要重复已完成内容，并用一个完整的工具调用结束本轮。'
@@ -182,6 +190,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let noToolActionRetryPending = false
   let recoverableToolCorrectionRounds = 0
   let idleBackoffLevel = 0
+  const recentToolNoveltyKeys = new Map<string, number>()
   let nextCompactionAttemptAt = 0
   let compactionAbortController = new AbortController()
   let lastContextWindowTokens =
@@ -489,7 +498,16 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     let disclosed = 0
     for (const disclosure of disclosures) {
       if (disclosure.kind === 'backlog') {
-        messages.push({ role: 'user', content: renderMailboxBacklogNotification(disclosure.event) })
+        const frequencyHint = disclosure.event.source.type === 'group'
+          ? deps.groupFrequencyHints?.get(disclosure.event.source.groupId)
+          : undefined
+        messages.push({
+          role: 'user',
+          content: renderMailboxBacklogNotification(
+            disclosure.event,
+            frequencyHint ? { frequencyHint } : {},
+          ),
+        })
         recordMailboxDisclosure(
           continuity,
           disclosure.event.mailboxKey,
@@ -502,6 +520,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
 
       if (disclosure.kind === 'mailbox') {
         const latestMessageAtMs = disclosure.events.at(-1)!.sentAt.getTime()
+        const firstEvent = disclosure.events[0]!
+        const frequencyHint = firstEvent.type === 'napcat_message'
+          ? deps.groupFrequencyHints?.get(firstEvent.groupId)
+          : undefined
         const compensation = decideMailboxCompensation(
           continuity,
           disclosure.mailboxKey,
@@ -513,6 +535,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
             ...(compensation.contextBefore > 0
               ? { contextBefore: compensation.contextBefore }
               : {}),
+            ...(frequencyHint ? { frequencyHint } : {}),
           }),
         })
         recordMailboxDisclosure(continuity, disclosure.mailboxKey, latestMessageAtMs)
@@ -559,6 +582,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     recoverableToolFailure: boolean
     onlyHelpToolCalls: boolean
     madeToolProgress: boolean
+    evidenceMessageRowIds: number[]
+    toolContinuation?: ToolContinuation
   }> {
     roundIndex++
     let recoveredContextOverflow = false
@@ -646,6 +671,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
           : {}),
       },
     })
+    const toolControl = resolveToolControl(result.toolOutcomes)
     return {
       inputTokens: result.inputTokens,
       contextWindowTokens: result.contextWindowTokens,
@@ -663,8 +689,59 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       )),
       onlyHelpToolCalls: result.toolOutcomes.length > 0
         && result.toolOutcomes.every((outcome) => outcome.requestedToolName === 'help'),
-      madeToolProgress: result.toolOutcomes.some((outcome) => outcome.progress),
+      madeToolProgress: toolControl.madeProgress,
+      evidenceMessageRowIds: [...new Set(result.toolOutcomes.flatMap(
+        (outcome) => outcome.evidenceMessageRowIds ?? [],
+      ))],
+      ...(toolControl.continuation ? { toolContinuation: toolControl.continuation } : {}),
     }
+  }
+
+  function resolveToolControl(outcomes: readonly ReactToolOutcome[]): {
+    madeProgress: boolean
+    continuation?: ToolContinuation
+  } {
+    let madeProgress = false
+    const continuations: ToolContinuation[] = []
+    for (const outcome of outcomes) {
+      const duplicateNovelty = outcome.noveltyKey != null && recentToolNoveltyKeys.has(outcome.noveltyKey)
+      if (outcome.noveltyKey != null) rememberToolNovelty(outcome.noveltyKey)
+      if (duplicateNovelty) {
+        log.info({
+          toolName: outcome.toolName,
+          noveltyKey: outcome.noveltyKey,
+        }, 'tool_novelty_repeated_wait')
+      } else if (outcome.progress) {
+        madeProgress = true
+      }
+      if (outcome.continuation) {
+        continuations.push(
+          duplicateNovelty && outcome.continuation === 'immediate'
+            ? 'wait_attention'
+            : outcome.continuation,
+        )
+      }
+    }
+    return {
+      madeProgress,
+      ...(continuations.includes('stop')
+        ? { continuation: 'stop' as const }
+        : continuations.includes('immediate')
+          ? { continuation: 'immediate' as const }
+          : continuations.includes('backoff')
+            ? { continuation: 'backoff' as const }
+            : continuations.includes('wait_attention')
+              ? { continuation: 'wait_attention' as const }
+              : {}),
+    }
+  }
+
+  function rememberToolNovelty(key: string): void {
+    recentToolNoveltyKeys.delete(key)
+    recentToolNoveltyKeys.set(key, roundIndex)
+    if (recentToolNoveltyKeys.size <= MAX_RECENT_TOOL_NOVELTY_KEYS) return
+    const oldest = recentToolNoveltyKeys.keys().next().value as string | undefined
+    if (oldest != null) recentToolNoveltyKeys.delete(oldest)
   }
 
   function collectHandledMailboxMarkers(sentTargets: readonly MessageSentTarget[]): AgentMessage[] {
@@ -726,6 +803,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     recoverableToolFailure?: boolean
     onlyHelpToolCalls?: boolean
     madeToolProgress?: boolean
+    toolContinuation?: ToolContinuation
   }> {
     const beforeStepCount = deps.context.getSnapshot().messages.length
     const goalAtRoundStart = await deps.goalStore?.get() ?? null
@@ -836,6 +914,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       recoverableToolFailure,
       onlyHelpToolCalls,
       madeToolProgress,
+      evidenceMessageRowIds,
+      toolContinuation,
     } = roundResult
     const handledMailboxMarkers = collectHandledMailboxMarkers(sentTargets)
     await commitChanges({ messages: handledMailboxMarkers })
@@ -849,7 +929,17 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     }
     try {
       const roundMessages = deps.context.getSnapshot().messages.slice(beforeStepCount)
-      await deps.lifeJournal?.recordRound({ roundIndex, messages: roundMessages })
+      const directEvidenceIds = drained.events.flatMap((event) => (
+        event.type === 'napcat_message' || event.type === 'napcat_private_message'
+          ? [event.messageRowId]
+          : []
+      ))
+      const allEvidenceIds = [...new Set([...directEvidenceIds, ...evidenceMessageRowIds])]
+      await deps.lifeJournal?.recordRound({
+        roundIndex,
+        messages: roundMessages,
+        ...(allEvidenceIds.length > 0 ? { evidenceMessageRowIds: allEvidenceIds } : {}),
+      })
     } catch (err) {
       log.warn({ err, roundIndex }, 'life_journal_record_failed_skipped')
     }
@@ -879,6 +969,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       recoverableToolFailure,
       onlyHelpToolCalls,
       madeToolProgress,
+      ...(toolContinuation ? { toolContinuation } : {}),
       actionRequired: goalAtRoundStart?.status === 'active' || (drained.hadAttention && disclosed > 0),
     }
   }
@@ -892,6 +983,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       recoverableToolFailure = false,
       onlyHelpToolCalls = false,
       madeToolProgress = false,
+      toolContinuation,
     } = await step()
     if (!ranRound && !stopRequested) {
       await waitForExternalEvent()
@@ -955,6 +1047,31 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         return
       }
       if (!recoverableToolFailure && !onlyHelpToolCalls) recoverableToolCorrectionRounds = 0
+      if (toolContinuation === 'immediate') {
+        idleBackoffLevel = 0
+        return
+      }
+      if (toolContinuation === 'stop') {
+        const waitMs = currentIdleWaitMs()
+        log.info({ consecutiveRounds, waitMs }, 'tool_requested_stop_wait')
+        const wake = await autonomy.waitForAttentionOrTimeout(deps.eventQueue, waitMs)
+        updateIdleBackoff(wake, true)
+        return
+      }
+      if (toolContinuation === 'backoff' || toolContinuation === 'wait_attention') {
+        if (actionRequired) idleBackoffLevel = 0
+        const waitMs = actionRequired ? autonomy.actionRetryWaitMs : currentIdleWaitMs()
+        log.info({
+          consecutiveRounds,
+          waitMs,
+          actionRequired,
+          toolContinuation,
+          idleBackoffLevel,
+        }, 'tool_continuation_wait')
+        const wake = await autonomy.waitForAttentionOrTimeout(deps.eventQueue, waitMs)
+        updateIdleBackoff(wake, !actionRequired)
+        return
+      }
       if (madeToolProgress) {
         idleBackoffLevel = 0
         return

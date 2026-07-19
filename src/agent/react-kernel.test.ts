@@ -96,7 +96,16 @@ describe('runReactRound', () => {
       classify: classifyExclusive,
       async execute(call, ctx): Promise<ToolExecutionResult> {
         executionOrder.push(`${ctx.roundIndex}:${call.name}`)
-        return { content: '{"ok":true}' }
+        return {
+          content: '{"ok":true}',
+          outcome: {
+            ok: true,
+            progress: false,
+            continuation: 'immediate',
+            noveltyKey: 'lookup:hello:v1',
+            evidenceMessageRowIds: [41, 42],
+          },
+        }
       },
     }
 
@@ -117,7 +126,10 @@ describe('runReactRound', () => {
       requestedToolName: 'lookup',
       toolName: 'lookup',
       ok: true,
-      progress: true,
+      progress: false,
+      continuation: 'immediate',
+      noveltyKey: 'lookup:hello:v1',
+      evidenceMessageRowIds: [41, 42],
     }])
     assert.deepEqual(context.getSnapshot().messages, [
       { role: 'user', content: 'hello' },

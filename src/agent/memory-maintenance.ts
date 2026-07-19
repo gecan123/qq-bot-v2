@@ -15,6 +15,7 @@ import { createTaskScheduler, type TaskScheduler } from './task-scheduler.js'
 import type { Tool } from './tool.js'
 import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
 import { renderUntrustedTranscript } from './untrusted-transcript.js'
+import { CHINESE_NARRATIVE_ERROR, hasChineseNarrative } from './long-term-language.js'
 
 const log = createLogger('MEMORY_MAINTENANCE')
 const MEMORY_MAINTENANCE_TRIGGER_INSTRUCTION = 'Perform the memory maintenance review using only the untrusted data above. Return only the required structured result.'
@@ -27,28 +28,28 @@ const maintenanceOperationSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('promote'),
     entryId: z.string().trim().min(1).max(160),
-    content: z.string().trim().min(1).max(1_000),
+    content: z.string().trim().min(1).max(1_000).refine(hasChineseNarrative, CHINESE_NARRATIVE_ERROR),
   }),
   z.object({
     action: z.literal('merge'),
     entryIds: z.array(z.string().trim().min(1).max(160)).min(2).max(20),
-    content: z.string().trim().min(1).max(2_000),
+    content: z.string().trim().min(1).max(2_000).refine(hasChineseNarrative, CHINESE_NARRATIVE_ERROR),
   }),
   z.object({
     action: z.literal('mark_disputed'),
     entryIds: z.array(z.string().trim().min(1).max(160)).min(2).max(20),
-    reason: z.string().trim().min(1).max(300),
+    reason: z.string().trim().min(1).max(300).refine(hasChineseNarrative, CHINESE_NARRATIVE_ERROR),
   }),
   z.object({
     action: z.literal('discard'),
     entryId: z.string().trim().min(1).max(160),
-    reason: z.string().trim().min(1).max(300),
+    reason: z.string().trim().min(1).max(300).refine(hasChineseNarrative, CHINESE_NARRATIVE_ERROR),
   }),
 ])
 
 const maintenanceResultSchema = z.object({
   decision: z.enum(['skip', 'mutate']),
-  reason: z.string().trim().min(1).max(500),
+  reason: z.string().trim().min(1).max(500).refine(hasChineseNarrative, CHINESE_NARRATIVE_ERROR),
   operations: z.array(maintenanceOperationSchema).max(20),
 })
 
@@ -74,12 +75,14 @@ const MAINTENANCE_SYSTEM_PROMPT = `你是 Luna 的长期记忆整理器，只维
 - discard：只删除明显短期、流水账、已被其他记忆完整覆盖的 recent；绝不删除 stable。
 
 约束：
+- 当前输入只属于一个文件和一个 context；stable 只表示该 context 内较稳定，绝不等于跨群人物核心。不得把场景观察提升到其他人物文件，也不得把个人职业、偏好、身份合并成群体记忆。
+- scope=group 时只保留群体整体的规则、节奏、共同话题、文化、历史或结构；scope=person 时只整理该人物 core 或当前群/私聊场景。legacy_unscoped 只允许保守整理和标疑，不得自动升级为 core。
 - 一条 stable 只表达一个可复用结论，不写“今日总结”“记忆库存”或机械工具流水。
 - promote 至少需要两个不同 sourceMessageIds；单一来源不得自动晋升。
 - 不同主题不得为了减少条数而硬合并；互相否定时必须 mark_disputed，不得 merge 成确定事实。
 - disputed、superseded 不参加普通 promote/merge/discard；stable 不得 discard。
 - merge 是替代原条目，不要保留“原文 + 摘要 + 摘要的总结”。
-- content 使用中文自然短句，保留重要时间边界、条件和不确定性，但不要复制长原文。
+- content 和 reason 使用中文自然短句，保留重要时间边界、条件和不确定性，但不要复制长原文。命令、路径、URL、API 名、模型名和专有名词可以保留原文，但必须放在中文说明中。
 - 只引用输入里真实存在的 entryId。`
 
 export interface MemoryMaintenanceRuntime {
@@ -341,6 +344,7 @@ function renderMaintenanceState(
     file: snapshot.file,
     scope: snapshot.scope,
     title: snapshot.title,
+    context: snapshot.context ?? null,
     revision: snapshot.revision,
     triggerReasons: reasons,
     stableCount: snapshot.stableCount,

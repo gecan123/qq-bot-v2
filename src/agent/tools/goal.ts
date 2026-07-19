@@ -8,6 +8,14 @@ import {
 } from '../goal-store.js'
 
 const evidenceSchema = z.string().trim().min(1).max(500)
+const commitmentSchema = z.object({
+  action: z.string().trim().min(1).max(500)
+    .describe('现在承诺执行的一个具体动作；写清对象和第一步，不写抽象方向。'),
+  reason: z.string().trim().min(1).max(800)
+    .describe('为什么当前选择这一步，而不是其他候选。'),
+  expectedEvidence: z.string().trim().min(1).max(500)
+    .describe('完成这一步后应出现的可检查结果或新证据。'),
+})
 
 const argsSchema = z.discriminatedUnion('action', [
   z.object({
@@ -21,8 +29,15 @@ const argsSchema = z.discriminatedUnion('action', [
       .describe('为什么你自己现在想长期推进它，不要伪装成 owner 要求。'),
     completionCriteria: z.array(z.string().trim().min(1).max(500)).min(1).max(20)
       .describe('可逐项核验的完成标准。'),
+    currentCommitment: commitmentSchema
+      .describe('创建目标后立即执行的当前承诺；Goal 不是只保存愿望。'),
     tokenBudget: z.number().int().positive().max(MAX_GOAL_TOKEN_BUDGET).optional()
       .describe(`可选预算；默认 ${DEFAULT_SELF_GOAL_TOKEN_BUDGET}，上限 ${MAX_GOAL_TOKEN_BUDGET}。`),
+  }),
+  z.object({
+    action: z.literal('replan').describe('完成当前步骤或证据使路线失效时，更新下一项持久承诺。'),
+    goalId: z.string().uuid().describe('当前 goalId。'),
+    currentCommitment: commitmentSchema,
   }),
   z.object({
     action: z.literal('complete').describe('目标已逐项完成并验证后，提交完成证据。'),
@@ -55,6 +70,8 @@ export function createGoalTool(goalStore: GoalStore): Tool<Args> {
       '单一持久目标工具。你可以在没有未完成 goal 时用 create_self 给自己建立长期主线；owner 私聊 /goal 始终优先并可抢占 self goal。',
       'action=get: 读取当前 goal。',
       `action=create_self: 自主创建 self goal，默认 ${DEFAULT_SELF_GOAL_TOKEN_BUDGET} tokens、上限 ${MAX_GOAL_TOKEN_BUDGET}；runtime 另有宽松的 60 秒/64 次每 24 小时保险丝。`,
+      'create_self 必须同时提交 currentCommitment；token 是调查、试错和验证的行动预算，不是必须消耗的指标。',
+      'action=replan: 当前步骤完成或路线失效后，自己选择并持久化下一项具体承诺；active owner goal 也允许规划执行步骤。',
       'action=complete: 只有 objective 的全部要求都被当前真实证据证明、没有剩余工作时才调用。',
       'action=report_blocker: 同一 blocker 连续三个 goal round 都成立时才会把状态转成 blocked；前两次保持 active 并要求继续寻找可行路径。',
       'action=abandon_self: 只允许放弃自己创建的 goal；不能放弃 owner goal。',
@@ -67,7 +84,13 @@ export function createGoalTool(goalStore: GoalStore): Tool<Args> {
         const goal = await goalStore.get()
         return {
           content: JSON.stringify({ ok: true, goal: goal ? publicGoal(goal) : null }),
-          outcome: { ok: true, code: goal ? goal.status : 'no_goal' },
+          outcome: {
+            ok: true,
+            code: goal ? goal.status : 'no_goal',
+            progress: false,
+            continuation: 'immediate',
+            noveltyKey: goalNoveltyKey(goal),
+          },
         }
       }
       const mutation = args.action === 'create_self'
@@ -75,8 +98,14 @@ export function createGoalTool(goalStore: GoalStore): Tool<Args> {
             objective: args.objective,
             motivation: args.motivation,
             completionCriteria: args.completionCriteria,
+            currentCommitment: args.currentCommitment,
             tokenBudget: args.tokenBudget,
           })
+        : args.action === 'replan'
+          ? await goalStore.replan({
+              goalId: args.goalId,
+              currentCommitment: args.currentCommitment,
+            })
         : args.action === 'complete'
           ? await goalStore.complete({ goalId: args.goalId, evidence: args.evidence })
           : args.action === 'abandon_self'
@@ -95,11 +124,20 @@ export function createGoalTool(goalStore: GoalStore): Tool<Args> {
           ...(mutation.error ? { error: mutation.error } : {}),
           ...(mutation.code === 'blocker_recorded' ? {
             next: 'goal 仍为 active。继续寻找替代路径；只有同一 blocker 在下一 goal round 仍成立时才再次报告。',
+          } : mutation.code === 'created' || mutation.code === 'replanned' ? {
+            next: '立即执行 currentCommitment.action；得到 expectedEvidence 后继续推进或 replan。',
+          } : mutation.goal?.status === 'complete' ? {
+            next: '当前 goal 已完成，注意力重新自由。进行一次有界方向检查；有真实后续就自行选择并行动。',
           } : {}),
         }),
         outcome: {
           ok: mutation.ok,
           code: mutation.code,
+          progress: mutation.ok && !['unchanged', 'duplicate'].includes(mutation.code),
+          continuation: mutation.ok && mutation.goal?.status !== 'blocked'
+            ? 'immediate'
+            : 'wait_attention',
+          noveltyKey: goalNoveltyKey(mutation.goal),
           ...(mutation.error ? { error: mutation.error } : {}),
         },
       }
@@ -114,6 +152,7 @@ function publicGoal(goal: AgentGoal) {
     origin: goal.origin,
     motivation: goal.motivation,
     completionCriteria: goal.completionCriteria,
+    currentCommitment: goal.currentCommitment,
     status: goal.status,
     tokenBudget: goal.tokenBudget,
     tokensUsed: goal.tokensUsed,
@@ -127,4 +166,16 @@ function publicGoal(goal: AgentGoal) {
     selfGoalWindowCount: goal.selfGoalWindowCount,
     lastSelfGoalCreatedAt: goal.lastSelfGoalCreatedAt?.toISOString() ?? null,
   }
+}
+
+function goalNoveltyKey(goal: AgentGoal | null): string {
+  if (!goal) return 'goal:none'
+  return [
+    'goal',
+    goal.goalId,
+    goal.revision,
+    goal.roundsUsed,
+    goal.blockerTurns,
+    goal.updatedAt.getTime(),
+  ].join(':')
 }

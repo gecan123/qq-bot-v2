@@ -7,6 +7,32 @@ import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js
 export type MemoryScope = 'self' | 'person' | 'group' | 'topic'
 export type MemoryTier = 'recent' | 'stable'
 export type MemoryStatus = 'active' | 'disputed' | 'superseded'
+export type MemoryContext =
+  | { kind: 'core' }
+  | { kind: 'qq_group'; id: string }
+  | { kind: 'qq_private'; id: string }
+  | { kind: 'legacy_unscoped' }
+export type ConversationMemoryContext =
+  | { kind: 'qq_group'; id: string }
+  | { kind: 'qq_private'; id: string }
+export type MemoryEvidenceKind =
+  | 'self_report'
+  | 'owner_assertion'
+  | 'third_party_report'
+  | 'observed_pattern'
+  | 'explicit_rule'
+  | 'legacy_unverified'
+export type MemoryKind =
+  | 'person_identity'
+  | 'person_preference'
+  | 'person_behavior'
+  | 'person_relationship'
+  | 'group_rule'
+  | 'group_rhythm'
+  | 'group_topic'
+  | 'group_culture'
+  | 'group_history'
+  | 'group_structure'
 
 export interface MemoryStoreOptions {
   rootDir: string
@@ -20,9 +46,13 @@ export interface MemoryStoreOptions {
 export interface WriteMemoryInput {
   scope: MemoryScope
   id?: string
+  context?: MemoryContext
   title?: string
   content: string
   sourceMessageIds?: number[]
+  assertedByIds?: string[]
+  evidenceKind?: MemoryEvidenceKind
+  memoryKind?: MemoryKind
 }
 
 export interface SearchMemoryInput {
@@ -35,6 +65,7 @@ export interface RecallMemoryInput {
   query: string
   scope?: MemoryScope
   id?: string
+  context?: ConversationMemoryContext
   limit?: number
 }
 
@@ -64,6 +95,7 @@ export interface MemoryWriteResult {
   file: string
   scope: MemoryScope
   title: string
+  context?: MemoryContext
   entryId: string
   tier: MemoryTier
   created: boolean
@@ -78,6 +110,9 @@ export interface MemoryEntry {
   updatedAt: string
   content: string
   sourceMessageIds: number[]
+  assertedByIds: string[]
+  evidenceKind?: MemoryEvidenceKind
+  memoryKind?: MemoryKind
   tier: MemoryTier
   status: MemoryStatus
   aliases: string[]
@@ -96,6 +131,7 @@ export interface MemoryMaintenanceSnapshot {
   file: string
   scope: MemoryScope
   title: string
+  context?: MemoryContext
   revision: string
   sizeBytes: number
   entries: MemoryEntry[]
@@ -109,6 +145,7 @@ export interface MemorySearchMatch {
   file: string
   scope: MemoryScope
   title: string
+  context?: MemoryContext
   updatedAt: string | null
   snippet: string
 }
@@ -130,6 +167,10 @@ export interface MemoryRecallResult {
     createdAt: string
     content: string
     sourceMessageIds: number[]
+    assertedByIds: string[]
+    evidenceKind?: MemoryEvidenceKind
+    memoryKind?: MemoryKind
+    context?: MemoryContext
     tier: MemoryTier
     status: MemoryStatus
     aliases: string[]
@@ -179,6 +220,7 @@ export interface MemoryListResult {
     file: string
     scope: MemoryScope
     title: string
+    context?: MemoryContext
     updatedAt: string | null
     sizeBytes: number
   }>
@@ -247,7 +289,7 @@ export async function writeMemoryEntry(
     if (existing && parseMarkdownMemory(existing)) parseMemoryEntries(existing)
     const base = existing && parseMarkdownMemory(existing)
       ? existing
-      : renderNewFile(input.scope, title, nowIso)
+      : renderNewFile(input, title, nowIso)
     const entries = parseMemoryEntries(base)
     const normalizedContent = normalizeSearchText(input.content)
     const duplicate = entries.find((entry) => normalizeSearchText(entry.content) === normalizedContent)
@@ -256,10 +298,24 @@ export async function writeMemoryEntry(
         ...duplicate.sourceMessageIds,
         ...(input.sourceMessageIds ?? []),
       ])]
+      const assertedByIds = [...new Set([
+        ...duplicate.assertedByIds,
+        ...(input.assertedByIds ?? []),
+      ])]
       const duplicateEntries = entries.map((entry) => entry.id === duplicate.id
-        ? { ...entry, updatedAt: nowIso, sourceMessageIds }
+        ? {
+            ...entry,
+            updatedAt: nowIso,
+            sourceMessageIds,
+            assertedByIds,
+            evidenceKind: entry.evidenceKind ?? input.evidenceKind,
+            memoryKind: entry.memoryKind ?? input.memoryKind,
+          }
         : entry)
       const deduplicatedRaw = sourceMessageIds.length === duplicate.sourceMessageIds.length
+        && assertedByIds.length === duplicate.assertedByIds.length
+        && (duplicate.evidenceKind != null || input.evidenceKind == null)
+        && (duplicate.memoryKind != null || input.memoryKind == null)
         ? base
         : renderManagedMemory(base, duplicateEntries, nowIso)
       if (deduplicatedRaw !== base) await atomicWrite(absoluteFile, deduplicatedRaw)
@@ -268,6 +324,7 @@ export async function writeMemoryEntry(
         file: relativeFile,
         scope: input.scope,
         title,
+        ...(input.context ? { context: input.context } : {}),
         entryId: duplicate.id,
         tier: duplicate.tier,
         created: false,
@@ -284,6 +341,9 @@ export async function writeMemoryEntry(
       updatedAt: nowIso,
       content: input.content.trim(),
       sourceMessageIds: input.sourceMessageIds ?? [],
+      assertedByIds: input.assertedByIds ?? [],
+      ...(input.evidenceKind ? { evidenceKind: input.evidenceKind } : {}),
+      ...(input.memoryKind ? { memoryKind: input.memoryKind } : {}),
       tier: 'recent',
       status: 'active',
       aliases: [],
@@ -298,6 +358,7 @@ export async function writeMemoryEntry(
       file: relativeFile,
       scope: input.scope,
       title,
+      ...(input.context ? { context: input.context } : {}),
       entryId,
       tier: 'recent',
       created: true,
@@ -335,6 +396,7 @@ export async function searchMemoryEntries(
       file,
       scope: parsed.scope,
       title: parsed.title,
+      ...(parsed.context ? { context: parsed.context } : {}),
       updatedAt: parsed.updatedAt,
       snippet: snippetFor(raw, needle ?? '', options.maxSnippetChars ?? DEFAULT_MAX_SNIPPET_CHARS),
     })
@@ -348,13 +410,13 @@ export async function recallMemoryEntries(
   options: MemoryStoreOptions,
   input: RecallMemoryInput,
 ): Promise<MemoryRecallResult> {
-  const targetedFile = fileForRecall(input)
+  const targetedFiles = filesForRecall(input)
   const query = normalizeSearchText(input.query)
   const queryTerms = recallQueryTerms(input.query)
   const limit = Math.min(Math.max(1, input.limit ?? DEFAULT_SEARCH_LIMIT), MAX_SEARCH_LIMIT)
   const nowMs = (options.now?.() ?? new Date()).getTime()
   const root = memoryRoot(options.rootDir)
-  const files = targetedFile ? [targetedFile] : await listMarkdownFiles(root)
+  const files = targetedFiles ?? await listMarkdownFiles(root)
   const matches: MemoryRecallResult['matches'] = []
   let skippedCorrupt = 0
 
@@ -446,6 +508,10 @@ export async function recallMemoryEntries(
         createdAt: entry.createdAt,
         content: entry.content,
         sourceMessageIds: entry.sourceMessageIds,
+        assertedByIds: entry.assertedByIds,
+        ...(entry.evidenceKind ? { evidenceKind: entry.evidenceKind } : {}),
+        ...(entry.memoryKind ? { memoryKind: entry.memoryKind } : {}),
+        ...(parsed.context ? { context: parsed.context } : {}),
         tier: entry.tier,
         status: entry.status,
         aliases: entry.aliases,
@@ -601,7 +667,16 @@ export async function readMemoryFile(
 
 export async function updateMemoryEntry(
   options: MemoryStoreOptions,
-  input: { file: string; entryId: string; expectedRevision: string; content: string; sourceMessageIds?: number[] },
+  input: {
+    file: string
+    entryId: string
+    expectedRevision: string
+    content: string
+    sourceMessageIds?: number[]
+    assertedByIds?: string[]
+    evidenceKind?: MemoryEvidenceKind
+    memoryKind?: MemoryKind
+  },
 ): Promise<{ ok: true; file: string; entryId: string; revision: string }> {
   return mutateMemoryFile(options, input.file, input.expectedRevision, (entries, updatedAt) => {
     const target = entries.find((entry) => entry.id === input.entryId)
@@ -612,6 +687,9 @@ export async function updateMemoryEntry(
           updatedAt,
           content: input.content.trim(),
           sourceMessageIds: [...new Set([...entry.sourceMessageIds, ...(input.sourceMessageIds ?? [])])],
+          assertedByIds: [...new Set([...entry.assertedByIds, ...(input.assertedByIds ?? [])])],
+          evidenceKind: input.evidenceKind ?? entry.evidenceKind,
+          memoryKind: input.memoryKind ?? entry.memoryKind,
         }
       : entry)
   }, input.entryId)
@@ -625,6 +703,9 @@ export async function correctMemoryEntry(
     expectedRevision: string
     content: string
     sourceMessageIds?: number[]
+    assertedByIds?: string[]
+    evidenceKind?: MemoryEvidenceKind
+    memoryKind?: MemoryKind
   },
 ): Promise<{
   ok: true
@@ -652,6 +733,9 @@ export async function correctMemoryEntry(
       updatedAt: nowIso,
       content: input.content.trim(),
       sourceMessageIds: [...new Set(input.sourceMessageIds ?? [])],
+      assertedByIds: [...new Set(input.assertedByIds ?? [])],
+      ...(input.evidenceKind ? { evidenceKind: input.evidenceKind } : {}),
+      ...(input.memoryKind ? { memoryKind: input.memoryKind } : {}),
       tier: 'recent',
       status: 'active',
       aliases: [...target.aliases],
@@ -770,6 +854,9 @@ export async function compactMemoryEntries(
       updatedAt: nowIso,
       content: input.content.trim(),
       sourceMessageIds: [...new Set(selected.flatMap((entry) => entry.sourceMessageIds))],
+      assertedByIds: [...new Set(selected.flatMap((entry) => entry.assertedByIds))],
+      evidenceKind: commonEvidenceKind(selected),
+      memoryKind: commonMemoryKind(selected),
       tier: 'stable',
       status: 'active',
       aliases: [],
@@ -811,6 +898,7 @@ export async function inspectMemoryFileForMaintenance(
     file,
     scope: parsed.scope,
     title: parsed.title,
+    ...(parsed.context ? { context: parsed.context } : {}),
     revision: revisionOf(raw),
     sizeBytes: Buffer.byteLength(raw, 'utf8'),
     entries,
@@ -962,6 +1050,9 @@ async function applyMemoryMaintenanceUnlocked(
       updatedAt: nowIso,
       content: operation.content.trim(),
       sourceMessageIds: [...new Set(selected.flatMap((entry) => entry.sourceMessageIds))],
+      assertedByIds: [...new Set(selected.flatMap((entry) => entry.assertedByIds))],
+      evidenceKind: commonEvidenceKind(selected),
+      memoryKind: commonMemoryKind(selected),
       tier: 'stable',
       status: 'active',
       aliases: [...new Set(selected.flatMap((entry) => entry.aliases))],
@@ -1018,6 +1109,7 @@ export async function listMemoryFiles(
       file,
       scope: parsed.scope,
       title: parsed.title,
+      ...(parsed.context ? { context: parsed.context } : {}),
       updatedAt: parsed.updatedAt,
       sizeBytes: metadata.size,
     })
@@ -1084,7 +1176,7 @@ function slug(value: string): string {
 function titleForInput(input: WriteMemoryInput): string {
   if (input.title?.trim()) return input.title.trim()
   if (input.id?.trim()) return input.id.trim()
-  if (input.scope === 'self') return 'working-notes'
+  if (input.scope === 'self') return '工作笔记'
   if (input.scope === 'topic') {
     throw new MemoryStoreError(
       'invalid_input',
@@ -1095,10 +1187,28 @@ function titleForInput(input: WriteMemoryInput): string {
 }
 
 function fileForInput(input: WriteMemoryInput): string {
-  if (input.scope === 'person') return `people/${requiredId(input)}.md`
+  if (input.scope === 'person') {
+    const personId = requiredId(input)
+    const context = input.context
+    if (!context) throw new MemoryStoreError('invalid_input', 'person memory requires context')
+    if (context.kind === 'core') return `people/${personId}/core.md`
+    if (context.kind === 'legacy_unscoped') return `people/${personId}/unscoped.md`
+    const contextId = requiredContextId(context)
+    return context.kind === 'qq_group'
+      ? `people/${personId}/groups/${contextId}.md`
+      : `people/${personId}/private/${contextId}.md`
+  }
   if (input.scope === 'group') return `groups/${requiredId(input)}.md`
   if (input.scope === 'topic') return `topics/${slug(titleForInput(input))}.md`
   return `self/${slug(titleForInput(input))}.md`
+}
+
+function requiredContextId(context: ConversationMemoryContext): string {
+  const value = context.id.trim()
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) {
+    throw new MemoryStoreError('invalid_input', `memory context id is invalid: ${context.id}`)
+  }
+  return value
 }
 
 function requiredId(input: WriteMemoryInput): string {
@@ -1108,20 +1218,31 @@ function requiredId(input: WriteMemoryInput): string {
   return value
 }
 
-function fileForRecall(input: RecallMemoryInput): string | null {
+function filesForRecall(input: RecallMemoryInput): string[] | null {
   if (input.scope === 'person' || input.scope === 'group') {
     const id = input.id?.trim()
     if (!id) throw new MemoryStoreError('invalid_input', `${input.scope} recall requires id`)
     if (!/^[A-Za-z0-9_-]+$/.test(id)) {
       throw new MemoryStoreError('invalid_input', `${input.scope} recall id is invalid`)
     }
-    return input.scope === 'person' ? `people/${id}.md` : `groups/${id}.md`
+    if (input.scope === 'group') {
+      if (input.context != null) throw new MemoryStoreError('invalid_input', 'group recall does not accept context')
+      return [`groups/${id}.md`]
+    }
+    if (!input.context) throw new MemoryStoreError('invalid_input', 'person recall requires context')
+    const contextId = requiredContextId(input.context)
+    return [
+      `people/${id}/core.md`,
+      input.context.kind === 'qq_group'
+        ? `people/${id}/groups/${contextId}.md`
+        : `people/${id}/private/${contextId}.md`,
+    ]
   }
-  if ((input.scope === 'self' || input.scope === 'topic') && input.id != null) {
-    throw new MemoryStoreError('invalid_input', `${input.scope} recall does not accept id`)
+  if ((input.scope === 'self' || input.scope === 'topic') && (input.id != null || input.context != null)) {
+    throw new MemoryStoreError('invalid_input', `${input.scope} recall does not accept id or context`)
   }
-  if (input.scope == null && input.id != null) {
-    throw new MemoryStoreError('invalid_input', 'unscoped recall does not accept id')
+  if (input.scope == null && (input.id != null || input.context != null)) {
+    throw new MemoryStoreError('invalid_input', 'unscoped recall does not accept id or context')
   }
   return null
 }
@@ -1148,11 +1269,16 @@ async function readOptional(path: string): Promise<string | null> {
   }
 }
 
-function renderNewFile(scope: MemoryScope, title: string, updatedAt: string): string {
+function renderNewFile(input: WriteMemoryInput, title: string, updatedAt: string): string {
   return [
     '---',
-    'formatVersion: 1',
-    `scope: ${scope}`,
+    'formatVersion: 2',
+    `scope: ${input.scope}`,
+    ...(input.id?.trim() ? [`entityId: ${input.id.trim()}`] : []),
+    ...(input.context ? [`contextKind: ${input.context.kind}`] : []),
+    ...(input.context && (input.context.kind === 'qq_group' || input.context.kind === 'qq_private')
+      ? [`contextId: ${input.context.id}`]
+      : []),
     `title: ${title}`,
     `updatedAt: ${updatedAt}`,
     'aliases: []',
@@ -1197,6 +1323,9 @@ function renderMemoryEntry(entry: MemoryEntry): string {
     ...(entry.validUntil ? [`validUntil: ${entry.validUntil}`] : []),
     `supersedes: ${JSON.stringify(entry.supersedes)}`,
     ...(entry.sourceMessageIds.length > 0 ? [`sourceMessageIds: ${entry.sourceMessageIds.join(',')}`] : []),
+    ...(entry.assertedByIds.length > 0 ? [`assertedByIds: ${entry.assertedByIds.join(',')}`] : []),
+    ...(entry.evidenceKind ? [`evidenceKind: ${entry.evidenceKind}`] : []),
+    ...(entry.memoryKind ? [`memoryKind: ${entry.memoryKind}`] : []),
     '-->',
     `- ${entry.content}`,
     ENTRY_END,
@@ -1249,6 +1378,13 @@ function parseMemoryEntries(raw: string): MemorySegment[] {
       updatedAt,
       content: body.slice(2).trim(),
       sourceMessageIds: parseSourceIds(fields.get('sourceMessageIds')),
+      assertedByIds: parseIdList(fields.get('assertedByIds')),
+      ...(isMemoryEvidenceKind(fields.get('evidenceKind'))
+        ? { evidenceKind: fields.get('evidenceKind') as MemoryEvidenceKind }
+        : {}),
+      ...(isMemoryKind(fields.get('memoryKind'))
+        ? { memoryKind: fields.get('memoryKind') as MemoryKind }
+        : {}),
       tier,
       status,
       aliases,
@@ -1292,6 +1428,11 @@ function parseStringArrayField(raw: string | undefined, field: string): string[]
 function parseSourceIds(raw: string | undefined): number[] {
   if (!raw) return []
   return raw.split(',').map((value) => Number(value.trim())).filter((value) => Number.isInteger(value))
+}
+
+function parseIdList(raw: string | undefined): string[] {
+  if (!raw) return []
+  return raw.split(',').map((value) => value.trim()).filter(Boolean)
 }
 
 function searchableMemoryText(entries: readonly MemoryEntry[]): string {
@@ -1366,6 +1507,7 @@ function renderManagedMemory(raw: string, entries: readonly MemoryEntry[], updat
 function parseMemoryDocument(raw: string): {
   scope: MemoryScope
   title: string
+  context?: MemoryContext
   updatedAt: string | null
   entries: MemorySegment[]
 } | null {
@@ -1379,7 +1521,12 @@ function parseMemoryDocument(raw: string): {
   }
 }
 
-function parseMarkdownMemory(raw: string): { scope: MemoryScope; title: string; updatedAt: string | null } | null {
+function parseMarkdownMemory(raw: string): {
+  scope: MemoryScope
+  title: string
+  context?: MemoryContext
+  updatedAt: string | null
+} | null {
   if (!raw.startsWith('---\n')) return null
   const end = raw.indexOf('\n---\n', 4)
   if (end < 0) return null
@@ -1391,16 +1538,61 @@ function parseMarkdownMemory(raw: string): { scope: MemoryScope; title: string; 
     if (!match) return null
     record[match[1]!] = match[2]!
   }
-  if (record.formatVersion !== '1' || !isMemoryScope(record.scope)) return null
+  if ((record.formatVersion !== '1' && record.formatVersion !== '2') || !isMemoryScope(record.scope)) return null
+  let context: MemoryContext | undefined
+  if (record.formatVersion === '2' && record.scope === 'person') {
+    if (record.contextKind === 'core') context = { kind: 'core' }
+    else if (record.contextKind === 'legacy_unscoped') context = { kind: 'legacy_unscoped' }
+    else if ((record.contextKind === 'qq_group' || record.contextKind === 'qq_private') && record.contextId) {
+      context = { kind: record.contextKind, id: record.contextId }
+    } else return null
+  }
   return {
     scope: record.scope,
     title: record.title || 'untitled',
+    ...(context ? { context } : {}),
     updatedAt: record.updatedAt || null,
   }
 }
 
 function isMemoryScope(value: string | undefined): value is MemoryScope {
   return value === 'self' || value === 'person' || value === 'group' || value === 'topic'
+}
+
+function isMemoryEvidenceKind(value: string | undefined): value is MemoryEvidenceKind {
+  return value === 'self_report'
+    || value === 'owner_assertion'
+    || value === 'third_party_report'
+    || value === 'observed_pattern'
+    || value === 'explicit_rule'
+    || value === 'legacy_unverified'
+}
+
+function commonEvidenceKind(entries: readonly MemoryEntry[]): MemoryEvidenceKind | undefined {
+  const kinds = new Set(entries.map((entry) => entry.evidenceKind).filter(isDefined))
+  return kinds.size === 1 ? [...kinds][0] : undefined
+}
+
+function commonMemoryKind(entries: readonly MemoryEntry[]): MemoryKind | undefined {
+  const kinds = new Set(entries.map((entry) => entry.memoryKind).filter(isDefined))
+  return kinds.size === 1 ? [...kinds][0] : undefined
+}
+
+function isMemoryKind(value: string | undefined): value is MemoryKind {
+  return value === 'person_identity'
+    || value === 'person_preference'
+    || value === 'person_behavior'
+    || value === 'person_relationship'
+    || value === 'group_rule'
+    || value === 'group_rhythm'
+    || value === 'group_topic'
+    || value === 'group_culture'
+    || value === 'group_history'
+    || value === 'group_structure'
+}
+
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined
 }
 
 async function listMarkdownFiles(root: string): Promise<string[]> {
@@ -1462,7 +1654,7 @@ function recallQueryTerms(value: string): Array<{ value: string; weight: number 
 
 function identityFromMemoryFile(scope: MemoryScope, file: string): string {
   const pattern = scope === 'person'
-    ? /^people\/([^/]+)\.md$/
+    ? /^people\/([^/]+)(?:\.md|\/)/
     : scope === 'group'
       ? /^groups\/([^/]+)\.md$/
       : null

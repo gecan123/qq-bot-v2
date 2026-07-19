@@ -165,9 +165,25 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
       const changed = progress.observe(key, content)
       return {
         content,
-        outcome: { ok: true, code: changed ? 'observed' : 'unchanged', progress: changed },
+        outcome: {
+          ok: true,
+          code: changed ? 'observed' : 'unchanged',
+          progress: changed,
+          evidenceMessageRowIds: evidenceRowIdsFromReadPayload(content),
+        },
       }
     },
+  }
+}
+
+function evidenceRowIdsFromReadPayload(content: string): number[] {
+  try {
+    const parsed = JSON.parse(content) as { messages?: unknown[]; previousMessages?: unknown[] }
+    return [...(parsed.previousMessages ?? []), ...(parsed.messages ?? [])]
+      .map((value) => value && typeof value === 'object' ? (value as { rowId?: unknown }).rowId : undefined)
+      .filter((value): value is number => Number.isInteger(value) && Number(value) > 0)
+  } catch {
+    return []
   }
 }
 

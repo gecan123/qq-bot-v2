@@ -22,12 +22,19 @@ export type AgentGoalStatus =
   | 'cancelled'
   | 'abandoned'
 
+export interface GoalCommitment {
+  action: string
+  reason: string
+  expectedEvidence: string
+}
+
 export interface AgentGoal {
   goalId: string
   objective: string
   origin: AgentGoalOrigin
   motivation: string | null
   completionCriteria: string[]
+  currentCommitment: GoalCommitment | null
   status: AgentGoalStatus
   tokenBudget: number | null
   tokensUsed: number
@@ -69,6 +76,7 @@ export interface GoalMutationResult {
     | 'stale_goal'
     | 'blocker_recorded'
     | 'blocked'
+    | 'replanned'
     | 'self_goal_cooldown'
     | 'self_goal_daily_limit'
     | 'owner_goal_active'
@@ -99,7 +107,12 @@ export interface GoalStore {
     objective: string
     motivation: string
     completionCriteria: string[]
+    currentCommitment: GoalCommitment
     tokenBudget?: number
+  }): Promise<GoalMutationResult>
+  replan(input: {
+    goalId: string
+    currentCommitment: GoalCommitment
   }): Promise<GoalMutationResult>
   abandonSelf(input: { goalId: string; reason: string }): Promise<GoalMutationResult>
 }
@@ -146,6 +159,9 @@ export function createBotGoalStore(): GoalStore {
     createSelf(input) {
       return mutate((current, now) => createSelfMutation(current, input, now))
     },
+    replan(input) {
+      return mutate((current, now) => replanMutation(current, input, now))
+    },
     abandonSelf(input) {
       return mutate((current, now) => abandonSelfMutation(current, input, now))
     },
@@ -184,6 +200,9 @@ export function createInMemoryGoalStore(
     createSelf(input) {
       return mutate((goal, now) => createSelfMutation(goal, input, now))
     },
+    replan(input) {
+      return mutate((goal, now) => replanMutation(goal, input, now))
+    },
     abandonSelf(input) {
       return mutate((goal, now) => abandonSelfMutation(goal, input, now))
     },
@@ -211,6 +230,7 @@ function applyControlMutation(
       origin: 'owner',
       motivation: null,
       completionCriteria: [],
+      currentCommitment: null,
       tokenBudget: input.command.tokenBudget,
       sourceMessageRowId: input.messageRowId,
       lastControlMessageRowId: input.messageRowId,
@@ -265,6 +285,7 @@ function applyControlMutation(
     ...base,
     status: 'cancelled',
     revision: current.revision + 1,
+    currentCommitment: null,
   })
 }
 
@@ -284,6 +305,7 @@ function completeMutation(
     status: 'complete',
     revision: current.revision + 1,
     completionEvidence: [...input.evidence],
+    currentCommitment: null,
     blockerKey: null,
     blockerTurns: 0,
     lastBlockerRound: null,
@@ -372,6 +394,7 @@ function createSelfMutation(
     objective: string
     motivation: string
     completionCriteria: string[]
+    currentCommitment: GoalCommitment
     tokenBudget?: number
   },
   now: Date,
@@ -404,6 +427,7 @@ function createSelfMutation(
     origin: 'self',
     motivation: input.motivation,
     completionCriteria: input.completionCriteria,
+    currentCommitment: input.currentCommitment,
     tokenBudget: input.tokenBudget ?? DEFAULT_SELF_GOAL_TOKEN_BUDGET,
     sourceMessageRowId: null,
     lastControlMessageRowId: current?.lastControlMessageRowId ?? null,
@@ -412,6 +436,32 @@ function createSelfMutation(
     selfGoalWindowCount: governor.count + 1,
     lastSelfGoalCreatedAt: now,
   }))
+}
+
+function replanMutation(
+  current: AgentGoal | null,
+  input: { goalId: string; currentCommitment: GoalCommitment },
+  now: Date,
+): GoalMutationResult {
+  if (!current || current.goalId !== input.goalId) {
+    return result(false, 'stale_goal', current, 'goalId 已过期或当前没有 goal。')
+  }
+  if (current.status !== 'active') {
+    return result(false, 'invalid_transition', current, `goal 状态 ${current.status} 不能 replan。`)
+  }
+  if (equalCommitment(current.currentCommitment, input.currentCommitment)) {
+    return result(true, 'unchanged', current)
+  }
+  return result(true, 'replanned', {
+    ...current,
+    currentCommitment: cloneCommitment(input.currentCommitment),
+    revision: current.revision + 1,
+    blockerKey: null,
+    blockerTurns: 0,
+    lastBlockerRound: null,
+    blockedReason: null,
+    updatedAt: now,
+  })
 }
 
 function abandonSelfMutation(
@@ -432,6 +482,7 @@ function abandonSelfMutation(
     ...current,
     status: 'abandoned',
     revision: current.revision + 1,
+    currentCommitment: null,
     blockedReason: input.reason,
     updatedAt: now,
   })
@@ -443,6 +494,7 @@ function createGoal(input: {
   origin: AgentGoalOrigin
   motivation: string | null
   completionCriteria: string[]
+  currentCommitment: GoalCommitment | null
   tokenBudget: number | null
   sourceMessageRowId: number | null
   lastControlMessageRowId: number | null
@@ -457,6 +509,7 @@ function createGoal(input: {
     origin: input.origin,
     motivation: input.motivation,
     completionCriteria: [...input.completionCriteria],
+    currentCommitment: input.currentCommitment ? cloneCommitment(input.currentCommitment) : null,
     status: 'active',
     tokenBudget: input.tokenBudget,
     tokensUsed: 0,
@@ -520,6 +573,7 @@ function cloneGoal(goal: AgentGoal): AgentGoal {
   return {
     ...goal,
     completionCriteria: [...goal.completionCriteria],
+    currentCommitment: goal.currentCommitment ? cloneCommitment(goal.currentCommitment) : null,
     completionEvidence: goal.completionEvidence ? [...goal.completionEvidence] : null,
     selfGoalWindowStartedAt: goal.selfGoalWindowStartedAt
       ? new Date(goal.selfGoalWindowStartedAt)
@@ -539,6 +593,7 @@ function cloneResult(value: GoalMutationResult): GoalMutationResult {
 function fromRow(row: BotAgentGoalRow): AgentGoal {
   const rawEvidence = row.completionEvidence
   const rawCriteria = row.completionCriteria
+  const rawCommitment = row.currentCommitment
   return {
     goalId: row.goalId,
     objective: row.objective,
@@ -547,6 +602,7 @@ function fromRow(row: BotAgentGoalRow): AgentGoal {
     completionCriteria: Array.isArray(rawCriteria)
       ? rawCriteria.filter((item): item is string => typeof item === 'string')
       : [],
+    currentCommitment: parseCommitment(rawCommitment),
     status: row.status as AgentGoalStatus,
     tokenBudget: row.tokenBudget,
     tokensUsed: row.tokensUsed,
@@ -582,6 +638,9 @@ async function persistGoal(
     completionCriteria: goal.completionCriteria.length > 0
       ? goal.completionCriteria
       : Prisma.JsonNull,
+    currentCommitment: goal.currentCommitment
+      ? { ...goal.currentCommitment }
+      : Prisma.JsonNull,
     status: goal.status,
     tokenBudget: goal.tokenBudget,
     tokensUsed: goal.tokensUsed,
@@ -605,4 +664,30 @@ async function persistGoal(
     create: { id: 1, ...data },
     update: data,
   })
+}
+
+function parseCommitment(value: unknown): GoalCommitment | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (
+    typeof record.action !== 'string'
+    || typeof record.reason !== 'string'
+    || typeof record.expectedEvidence !== 'string'
+  ) return null
+  return {
+    action: record.action,
+    reason: record.reason,
+    expectedEvidence: record.expectedEvidence,
+  }
+}
+
+function cloneCommitment(value: GoalCommitment): GoalCommitment {
+  return { ...value }
+}
+
+function equalCommitment(left: GoalCommitment | null, right: GoalCommitment): boolean {
+  return left != null
+    && left.action === right.action
+    && left.reason === right.reason
+    && left.expectedEvidence === right.expectedEvidence
 }

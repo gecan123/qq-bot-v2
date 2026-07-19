@@ -64,6 +64,12 @@ function makeScheduledWake(): Extract<BotEvent, { type: 'scheduled_wake' }> {
   }
 }
 
+const TEST_GOAL_COMMITMENT = {
+  action: '读取第一份证据',
+  reason: '先建立可验证的证据基线',
+  expectedEvidence: '一条带来源的事实记录',
+}
+
 function makeMockTools(impl: Record<string, () => Promise<ToolExecutionResult>> = {}): ToolExecutor {
   const noop = async () => ({ content: 'ok' })
   return {
@@ -880,6 +886,11 @@ describe('BotLoopAgent.runOnceForTest', () => {
       objective: '完成当前回复',
       motivation: '处理 owner 的新消息',
       completionCriteria: ['成功回复并保存处理状态'],
+      currentCommitment: {
+        action: '回复当前注意消息',
+        reason: '这是当前目标的立即步骤',
+        expectedEvidence: '发送成功并保存 handled marker',
+      },
     })
     assert.ok(created.goal)
     const goalStore = {
@@ -1275,6 +1286,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       renderedText: 'hello',
     })
     const received: PersistedAgentSnapshot['messages'][] = []
+    const receivedEvidence: number[][] = []
     const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: 'you are a bot',
@@ -1295,8 +1307,9 @@ describe('BotLoopAgent.runOnceForTest', () => {
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       lifeJournal: {
-        async recordRound({ messages }) {
+        async recordRound({ messages, evidenceMessageRowIds }) {
           received.push(messages)
+          receivedEvidence.push(evidenceMessageRowIds ?? [])
           return { ok: true, wroteJournal: true, updatedAgenda: false }
         },
       },
@@ -1311,6 +1324,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       false,
     )
     assert.equal(received[0]!.some((message) => message.role === 'tool'), true)
+    assert.deepEqual(receivedEvidence, [[1]])
   })
 
   test('life journal failure does not throw and does not prevent compaction', async () => {
@@ -2422,6 +2436,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       objective: '完成当前研究',
       motivation: '把已有主线做完',
       completionCriteria: ['得到可验证的结论'],
+      currentCommitment: TEST_GOAL_COMMITMENT,
     })
     assert.ok(created.goal)
     const ctx = createAgentContext()
@@ -2623,6 +2638,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       objective: '完成当前研究',
       motivation: '把已有主线做完',
       completionCriteria: ['得到可验证的结论'],
+      currentCommitment: TEST_GOAL_COMMITMENT,
     })
     assert.ok(created.goal)
     const ctx = createAgentContext()
@@ -2662,6 +2678,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       objective: '完成当前研究',
       motivation: '把已有主线做完',
       completionCriteria: ['得到可验证的结论'],
+      currentCommitment: TEST_GOAL_COMMITMENT,
     })
     assert.ok(created.goal)
     const ctx = createAgentContext()
@@ -3190,6 +3207,119 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     assert.equal(llmCallCount, 1)
     assert.equal(toolCallCount, 1)
+  })
+
+  test('successful meta lookup can request one immediate decision round without claiming progress', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('已有上下文')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    let llmCallCount = 0
+    let waits = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat() {
+          llmCallCount++
+          return {
+            content: '',
+            toolCalls: llmCallCount === 1
+              ? [{ id: 'goal-get-1', name: 'goal', args: { action: 'get' } }]
+              : [],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools({
+        goal: async () => ({
+          content: '{"ok":true,"goal":null}',
+          outcome: {
+            ok: true,
+            progress: false,
+            continuation: 'immediate',
+            noveltyKey: 'goal:none',
+          },
+        }),
+      }),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        async waitForAttentionOrTimeout() {
+          waits++
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 2)
+    assert.equal(waits, 1)
+  })
+
+  test('repeated novelty key suppresses immediate continuation and enters bounded wait', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('已有上下文')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    let llmCallCount = 0
+    let waits = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat() {
+          llmCallCount++
+          if (llmCallCount === 3) await agent.stop()
+          return {
+            content: '',
+            toolCalls: [{ id: `skill-list-${llmCallCount}`, name: 'skill', args: { action: 'list' } }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools({
+        skill: async () => ({
+          content: '{"ok":true,"skills":[]}',
+          outcome: {
+            ok: true,
+            progress: false,
+            continuation: 'immediate',
+            noveltyKey: 'skill_catalog:empty',
+          },
+        }),
+      }),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        async waitForAttentionOrTimeout() {
+          waits++
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 2)
+    assert.equal(waits, 1)
   })
 
   test('attention with no tool retries immediately once, then waits 60 seconds', async () => {

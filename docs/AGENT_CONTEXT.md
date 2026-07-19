@@ -14,7 +14,7 @@
 
 - 新的 LLM 可见事实只能通过 Runtime Host 的受控 append 或 compaction projection 进入。
 - assistant tool call 和对应 tool result 是不可拆的原子组。结果按 assistant 中的 tool-call 顺序持久化；并行完成时序不进入 ledger。
-- `ToolExecutionResult.content` 是唯一持久化工具结果。`outcome` 和 `effects` 只服务当前轮控制流；只有 Runtime Host 验证后的稳定 marker（例如 `mailbox_handled`）可以另外 append。
+- `ToolExecutionResult.content` 是唯一持久化工具结果。`outcome` 和 `effects` 只服务当前轮控制流；`progress`、`continuation` 和 `noveltyKey` 都不进入 replay，重复新颖性只作为有界进程内防空转状态。只有 Runtime Host 验证后的稳定 marker（例如 `mailbox_handled`）可以另外 append。
 - 可见消息与 mailbox cursor、continuity、Goal revision、capability 或 QQ focus 变化必须在同一事务提交。持久化成功前不得推进内存 projection；提交失败时 runtime-local focus 必须回滚到 canonical projection。
 - late media、side table 或日志变化不得回写已 append entry。
 

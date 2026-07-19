@@ -10,7 +10,7 @@ const NOW = new Date('2026-07-13T00:00:00.000Z')
 async function withRecallFixture(run: (rootDir: string) => Promise<void>): Promise<void> {
   const rootDir = await mkdtemp(join(tmpdir(), 'memory-recall-eval-'))
   try {
-    await writeMemoryFile(rootDir, 'people/10001.md', 'person', '王老师', [
+    await writeMemoryFile(rootDir, 'people/10001/core.md', 'person', '王老师', [
       entry('person-coffee', '老王每天早上喜欢自己磨豆制作手冲咖啡。', {
         tier: 'stable',
         aliases: ['老王', '王老师'],
@@ -53,6 +53,7 @@ function entry(
     updatedAt: '2026-07-01T08:00:00.000+08:00',
     content,
     sourceMessageIds: [],
+    assertedByIds: [],
     tier: 'recent',
     status: 'active',
     aliases: [],
@@ -127,6 +128,7 @@ describe('markdown memory lexical recall evaluation', () => {
         query: '手冲、咖啡',
         scope: 'person',
         id: '10001',
+        context: { kind: 'qq_group', id: '20001' },
       })
       assert.equal(phrase.matches[0]?.entryId, 'person-coffee')
       assert.equal(phrase.matches[0]?.scoreReasons.includes('content_phrase'), true)
@@ -162,6 +164,7 @@ describe('markdown memory lexical recall evaluation', () => {
         query: '手冲咖啡',
         scope: 'person',
         id: '10001',
+        context: { kind: 'qq_group', id: '20001' },
       })
       assert.equal(person.matches.length > 0, true)
       assert.equal(person.matches.every((match) => match.scope === 'person'), true)

@@ -1,7 +1,13 @@
 import type { AgentContext } from './agent-context.js'
 import type { DurableAgentMessage } from './agent-context.types.js'
 import type { LlmCallOutput, LlmClient } from './llm-client.js'
-import type { ToolContext, ToolEffect, ToolExecutionResult, ToolExecutor } from './tool.js'
+import type {
+  ToolContext,
+  ToolContinuation,
+  ToolEffect,
+  ToolExecutionResult,
+  ToolExecutor,
+} from './tool.js'
 import { recordTokenUsage } from './token-stats.js'
 import { createLogger } from '../logger.js'
 import {
@@ -44,6 +50,9 @@ export interface ReactToolOutcome {
   code?: string
   progress: boolean
   retryClass?: 'immediate' | 'after_event' | 'backoff' | 'terminal'
+  continuation?: ToolContinuation
+  noveltyKey?: string
+  evidenceMessageRowIds?: number[]
 }
 
 export interface ReactRoundResult {
@@ -228,6 +237,11 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
         ok: result.outcome?.ok ?? true,
         progress: result.outcome?.progress ?? true,
         ...(result.outcome?.retryClass ? { retryClass: result.outcome.retryClass } : {}),
+        ...(result.outcome?.continuation ? { continuation: result.outcome.continuation } : {}),
+        ...(result.outcome?.noveltyKey ? { noveltyKey: result.outcome.noveltyKey } : {}),
+        ...(result.outcome?.evidenceMessageRowIds?.length
+          ? { evidenceMessageRowIds: result.outcome.evidenceMessageRowIds }
+          : {}),
         ...(result.outcome?.code ? { code: result.outcome.code } : {}),
       })
       log.info({
@@ -238,6 +252,8 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
         code: result.outcome?.code,
         progress: result.outcome?.progress ?? true,
         retryClass: result.outcome?.retryClass,
+        continuation: result.outcome?.continuation,
+        noveltyKey: result.outcome?.noveltyKey,
       }, 'round_tool_done')
       messagesToAppend.push(await toDurableAgentMessage({
         role: 'tool',

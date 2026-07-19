@@ -1,5 +1,6 @@
 import type { BotEvent } from './event.js'
 import { formatBeijingIso } from '../utils/beijing-time.js'
+import type { FrequencyHint } from '../config/group-prompts.js'
 
 export type MailboxCursors = Record<string, number>
 export const MAILBOX_BACKLOG_THRESHOLD = 100
@@ -21,6 +22,7 @@ export interface MailboxDisclosurePlan {
 
 export interface MailboxNotificationOptions {
   contextBefore?: number
+  frequencyHint?: FrequencyHint
 }
 
 export function mailboxKeyForEvent(event: BotEvent): string | null {
@@ -112,6 +114,9 @@ export function renderMailboxNotification(
     mailbox: mailboxKey,
     priority,
     source: source.value,
+    ...(first.type === 'napcat_message' && options.frequencyHint
+      ? { frequencyHint: options.frequencyHint }
+      : {}),
     count: events.length,
     firstRowId: first.messageRowId,
     throughRowId,
@@ -132,13 +137,19 @@ export function renderMailboxNotification(
   })
 }
 
-export function renderMailboxBacklogNotification(event: MailboxBacklogEvent): string {
+export function renderMailboxBacklogNotification(
+  event: MailboxBacklogEvent,
+  options: Pick<MailboxNotificationOptions, 'frequencyHint'> = {},
+): string {
   return JSON.stringify({
     event: 'inbox_update',
     mode: 'backlog',
     mailbox: event.mailboxKey,
     priority: event.priority,
     source: event.source,
+    ...(event.source.type === 'group' && options.frequencyHint
+      ? { frequencyHint: options.frequencyHint }
+      : {}),
     count: event.count,
     firstRowId: event.firstRowId,
     throughRowId: event.throughRowId,

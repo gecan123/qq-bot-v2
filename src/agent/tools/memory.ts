@@ -16,24 +16,41 @@ import {
   writeMemoryEntry,
   updateMemoryEntry,
   MemoryStoreError,
+  type ConversationMemoryContext,
+  type MemoryEvidenceKind,
+  type MemoryKind,
   type MemoryScope,
 } from '../memory-store.js'
 import { createLogger } from '../../logger.js'
 import type { MemoryMaintenanceRuntime } from '../memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
+import { CHINESE_NARRATIVE_ERROR, hasChineseNarrative } from '../long-term-language.js'
 import { createToolResultProgressTracker } from '../tool-progress.js'
-import type { MemorySourceEvidenceQuery, ValidateMemorySourceEvidence } from '../memory-evidence.js'
+import { deriveMemoryEvidence, type LoadMemorySourceEvidence } from '../memory-evidence.js'
 
 const log = createLogger('TOOL_MEMORY')
 
 const DEFAULT_WORKSPACE_DIR = 'data/agent-workspace'
 
 const scopeSchema = z.enum(['self', 'person', 'group', 'topic'])
+const evidenceKindSchema = z.enum([
+  'self_report', 'owner_assertion', 'third_party_report', 'observed_pattern', 'explicit_rule',
+])
+const personMemoryKindSchema = z.enum([
+  'person_identity', 'person_preference', 'person_behavior', 'person_relationship',
+])
+const groupMemoryKindSchema = z.enum([
+  'group_rule', 'group_rhythm', 'group_topic', 'group_culture', 'group_history', 'group_structure',
+])
 const idSchema = z.union([z.string(), z.number()])
 const recallIdSchema = z.union([
   z.string().trim().min(1).regex(/^[A-Za-z0-9_-]+$/),
   z.number().int().positive().safe(),
 ])
+const recallContextSchema = z.object({
+  type: z.enum(['group', 'private']),
+  id: recallIdSchema,
+})
 const memoryFileSchema = z.string().trim().min(1).max(200).refine(
   (file) => file.endsWith('.md')
     && !file.startsWith('/')
@@ -41,6 +58,11 @@ const memoryFileSchema = z.string().trim().min(1).max(200).refine(
     && !file.split('/').includes('..'),
   '必须是 memory 内的 .md 相对路径',
 ).describe('memory 内的 .md 相对路径, 必须来自 memory list/search/read 结果; 不允许绝对路径、反斜杠或 .. 路径段.')
+const chineseMemoryContentSchema = (max: number) => z.string().trim().min(1).max(max)
+  .refine(hasChineseNarrative, CHINESE_NARRATIVE_ERROR)
+const chineseMemoryTitleSchema = z.string().trim().min(1).max(80)
+  .refine(hasChineseNarrative, CHINESE_NARRATIVE_ERROR)
+
 function requireEvidenceForEntityFile(
   value: { file: string; sourceMessageIds?: number[] },
   ctx: z.RefinementCtx,
@@ -59,10 +81,13 @@ const argsSchema = z.discriminatedUnion('action', [
     action: z.literal('write').describe('写入一条长期记忆.'),
     scope: scopeSchema.describe('记忆范围: self=自己做事/经验, person=某个 QQ 用户, group=某个群, topic=某个主题.'),
     id: idSchema.optional().describe('person/group 需要: QQ 号或群号. topic/self 通常不需要.'),
-    title: z.string().trim().min(1).max(80).optional().describe('topic 必填稳定主题标题; self 可选. 不要用“今日速记”这类日期流水账标题.'),
-    content: z.string().trim().min(1).max(500).describe('要记下来的内容. ≤500 字, 用自己的话写, 一条记一件事.'),
+    title: chineseMemoryTitleSchema.optional().describe('topic 必填稳定中文主题标题; self 可选. 专有名词可保留原文，但要用中文说明；不要用“今日速记”这类日期流水账标题.'),
+    content: chineseMemoryContentSchema(500).describe('要记下来的内容. ≤500 字, 以中文为叙述载体，用自己的话写，一条记一件事；命令、路径、API 名和专有名词保留原文.'),
     sourceMessageIds: z.array(z.number().int().positive()).min(1).max(20).optional()
       .describe('person/group 必填: 支撑这条事实的真实 messages.id；self/topic 可选.'),
+    memoryKind: z.union([personMemoryKindSchema, groupMemoryKindSchema]).optional()
+      .describe('person/group 必填：人物属性或群体级规则、节奏、话题、文化、历史、结构。'),
+    evidenceKind: evidenceKindSchema.optional().describe('可选证据语义；runtime 会按真实消息发送者校验。'),
   }).superRefine((value, ctx) => {
     if ((value.scope === 'person' || value.scope === 'group') && !value.sourceMessageIds?.length) {
       ctx.addIssue({
@@ -70,6 +95,12 @@ const argsSchema = z.discriminatedUnion('action', [
         path: ['sourceMessageIds'],
         message: `scope=${value.scope} write 必须提供 sourceMessageIds`,
       })
+    }
+    if (value.scope === 'person' && !personMemoryKindSchema.safeParse(value.memoryKind).success) {
+      ctx.addIssue({ code: 'custom', path: ['memoryKind'], message: 'person write 必须提供 person_* memoryKind' })
+    }
+    if (value.scope === 'group' && !groupMemoryKindSchema.safeParse(value.memoryKind).success) {
+      ctx.addIssue({ code: 'custom', path: ['memoryKind'], message: 'group write 必须提供 group_* memoryKind' })
     }
   }),
   z.object({
@@ -83,6 +114,7 @@ const argsSchema = z.discriminatedUnion('action', [
     query: z.string().trim().min(1).max(300).describe('描述要回忆的旧事、偏好、事实或经验.'),
     scope: scopeSchema.optional().describe('person/group 定向召回时必填；不传则跨 scope 宽泛探索.'),
     id: recallIdSchema.optional().describe('scope=person 时传具体 QQ 号；scope=group 时传具体群号.'),
+    context: recallContextSchema.optional().describe('scope=person 必填：当前群或私聊场景；只召回人物 core 与该场景观察。'),
     limit: z.number().int().min(1).max(20).optional(),
   }).superRefine((value, ctx) => {
     if ((value.scope === 'person' || value.scope === 'group') && value.id == null) {
@@ -91,6 +123,12 @@ const argsSchema = z.discriminatedUnion('action', [
         path: ['id'],
         message: `scope=${value.scope} recall 必须提供 id`,
       })
+    }
+    if (value.scope === 'person' && value.context == null) {
+      ctx.addIssue({ code: 'custom', path: ['context'], message: 'scope=person recall 必须提供当前 context' })
+    }
+    if (value.scope !== 'person' && value.context != null) {
+      ctx.addIssue({ code: 'custom', path: ['context'], message: '只有 scope=person recall 可以提供 context' })
     }
     if ((value.scope === 'self' || value.scope === 'topic') && value.id != null) {
       ctx.addIssue({
@@ -133,7 +171,7 @@ const argsSchema = z.discriminatedUnion('action', [
     file: memoryFileSchema,
     entryId: z.string().trim().min(1).max(160),
     expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
-    content: z.string().trim().min(1).max(500),
+    content: chineseMemoryContentSchema(500),
     sourceMessageIds: z.array(z.number().int().positive()).min(1).max(20).optional(),
   }).superRefine(requireEvidenceForEntityFile),
   z.object({
@@ -141,7 +179,7 @@ const argsSchema = z.discriminatedUnion('action', [
     file: memoryFileSchema,
     entryId: z.string().trim().min(1).max(160),
     expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
-    content: z.string().trim().min(1).max(500),
+    content: chineseMemoryContentSchema(500),
     sourceMessageIds: z.array(z.number().int().positive()).min(1).max(20).optional(),
   }).superRefine(requireEvidenceForEntityFile),
   z.object({
@@ -155,7 +193,7 @@ const argsSchema = z.discriminatedUnion('action', [
     file: memoryFileSchema,
     entryId: z.string().trim().min(1).max(160),
     expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
-    content: z.string().trim().min(1).max(1000).optional(),
+    content: chineseMemoryContentSchema(1000).optional(),
   }),
   z.object({
     action: z.literal('mark_disputed').describe('把一条需要核实或存在冲突的记忆标为 disputed.'),
@@ -176,7 +214,7 @@ const argsSchema = z.discriminatedUnion('action', [
     file: memoryFileSchema,
     entryIds: z.array(z.string().trim().min(1).max(160)).min(2).max(50),
     expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
-    content: z.string().trim().min(1).max(2000),
+    content: chineseMemoryContentSchema(2000),
   }),
 ])
 
@@ -188,7 +226,8 @@ export interface MemoryToolDeps {
   id?: () => string
   maintenance?: MemoryMaintenanceRuntime
   workspaceStateCoordinator?: WorkspaceStateCoordinator
-  validateSourceMessageIds?: ValidateMemorySourceEvidence
+  loadSourceEvidence?: LoadMemorySourceEvidence
+  ownerId?: string
 }
 
 export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
@@ -207,24 +246,26 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
       '本地 Markdown 长期记忆库, 一个入口用 action 决定动作.',
       'action=write: 写入以后可能用得上的真实信息或经验; 写前先 recall，已有事实优先 update_entry/compact，避免重复追加.',
       'action=recall: 当前聊天上下文不足，且涉及旧事、偏好、稳定事实或经验时优先使用；上下文已有足够且未冲突信息时不要重复 recall.',
-      'person/group recall 必须传具体 QQ 号/群 id，只召回对应人物或群；scope 和 id 都不传才用于跨范围探索.',
+      'person recall 必须传具体 QQ 号与当前 group/private context，只召回人物 core 和当前场景；group recall 只传群 id，只召回群体整体；scope 和 id 都不传才用于跨范围探索.',
       'action=search: 只用于宽泛的文件发现；要取得可直接用于回答的 entry 内容时使用 recall.',
       'action=review: 只读提出重复/近重复/可能冲突候选；不会自动删除或合并，确认后仍需 read + revision mutation.',
       'action=read: 读取 search/write 返回的某个记忆文件; 只在需要深读时使用.',
       'action=list: 按 scope 列出有界文件元数据, 用于发现重复或过时记忆.',
       'action=delete: 永久删除明确指定的记忆文件; 先确认有价值内容已写入保留版本.',
       'action=update_entry/delete_entry/promote_entry/mark_disputed/supersede_entry/compact: 修改文件内记录; 先 read 取得 entryId 和最新 revision. compact 会生成 stable 记忆.',
-      'person/group 写入和修正必须引用真实 sourceMessageIds；事实错误时优先用 correct_entry 原子保留旧条目并写 replacement.',
+      'person/group 写入和修正必须引用真实 sourceMessageIds。人物事实写 person，由 runtime 绑定来源场景；group 只写群体整体的规则、节奏、共同话题、文化、历史或结构，禁止放单个人的职业、偏好或身份。事实错误时优先用 correct_entry 原子保留旧条目并写 replacement.',
       '可信度不接受 trust=high 这类模型自报字段; 对冲突事实用 mark_disputed，对已有替代事实用 supersede_entry 保留演化链.',
       'person/group 写入需要 id; topic 写入必须提供稳定 title，禁止落入无主题 topic.md; self 可用 title 分主题.',
+      '所有人类可读的 title/content 都以中文为叙述载体；命令、路径、URL、API 名和专有名词可保留原文，但要用中文说明.',
       '写入要用自己的话, 不要照搬原话; 查询结果用于自然说话, 不要像报数据库.',
     ].join(' '),
     schema: argsSchema,
     async execute(args) {
       try {
-        if ('sourceMessageIds' in args && args.sourceMessageIds?.length && deps.validateSourceMessageIds) {
-          const evidenceQuery = memoryEvidenceQuery(args, args.sourceMessageIds)
-          const existing = new Set(await deps.validateSourceMessageIds(evidenceQuery))
+        let derivedEvidence: ReturnType<typeof deriveMemoryEvidence> | undefined
+        if ('sourceMessageIds' in args && args.sourceMessageIds?.length && deps.loadSourceEvidence) {
+          const rows = await deps.loadSourceEvidence(args.sourceMessageIds)
+          const existing = new Set(rows.map((row) => row.rowId))
           const missing = args.sourceMessageIds.filter((id) => !existing.has(id))
           if (missing.length > 0) {
             const error = `sourceMessageIds contain unknown message rows: ${missing.join(',')}`
@@ -239,6 +280,14 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
               },
             }
           }
+          const subjectId = memorySubjectId(args)
+          derivedEvidence = deriveMemoryEvidence({
+            rows,
+            ...(subjectId ? { subjectId } : {}),
+            ...(deps.ownerId ? { ownerId: deps.ownerId } : {}),
+            ...('evidenceKind' in args && args.evidenceKind ? { requestedKind: args.evidenceKind } : {}),
+          })
+          assertEvidenceContextMatchesTarget(args, derivedEvidence.context)
         }
 
         if (args.action === 'write') {
@@ -247,9 +296,13 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             {
               scope: args.scope as MemoryScope,
               id: args.id == null ? undefined : String(args.id),
+              ...(args.scope === 'person' && derivedEvidence ? { context: derivedEvidence.context } : {}),
               title: args.title,
               content: args.content,
               sourceMessageIds: args.sourceMessageIds,
+              assertedByIds: derivedEvidence?.assertedByIds,
+              evidenceKind: derivedEvidence?.evidenceKind,
+              memoryKind: args.memoryKind as MemoryKind | undefined,
             },
           )
           log.info({
@@ -294,6 +347,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
               query: args.query,
               scope: args.scope,
               id: args.id == null ? undefined : String(args.id),
+              ...(args.context ? { context: toMemoryContext(args.context) } : {}),
               limit: args.limit,
             },
           )
@@ -375,6 +429,8 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
               expectedRevision: args.expectedRevision,
               content: args.content,
               sourceMessageIds: args.sourceMessageIds,
+              assertedByIds: derivedEvidence?.assertedByIds,
+              evidenceKind: derivedEvidence?.evidenceKind,
             },
           )
           log.info({ file: args.file, entryId: args.entryId }, 'memory_entry_updated')
@@ -390,6 +446,8 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
               expectedRevision: args.expectedRevision,
               content: args.content,
               sourceMessageIds: args.sourceMessageIds,
+              assertedByIds: derivedEvidence?.assertedByIds,
+              evidenceKind: derivedEvidence?.evidenceKind,
             },
           )
           log.info({
@@ -516,21 +574,43 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
   }
 }
 
-function memoryEvidenceQuery(args: Args, sourceMessageIds: number[]): MemorySourceEvidenceQuery {
-  if (args.action === 'write' && (args.scope === 'person' || args.scope === 'group')) {
-    return { sourceMessageIds, scope: args.scope, id: String(args.id ?? '') }
-  }
+function memorySubjectId(args: Args): string | undefined {
+  if (args.action === 'write' && args.scope === 'person') return String(args.id ?? '')
   if (args.action === 'update_entry' || args.action === 'correct_entry') {
-    const match = /^(people|groups)\/([^/]+)\.md$/.exec(args.file)
-    if (match) {
-      return {
-        sourceMessageIds,
-        scope: match[1] === 'people' ? 'person' : 'group',
-        id: match[2]!,
-      }
-    }
+    return /^people\/([^/]+)\//.exec(args.file)?.[1]
   }
-  return { sourceMessageIds }
+  return undefined
+}
+
+function toMemoryContext(value: { type: 'group' | 'private'; id: string | number }): ConversationMemoryContext {
+  return value.type === 'group'
+    ? { kind: 'qq_group', id: String(value.id) }
+    : { kind: 'qq_private', id: String(value.id) }
+}
+
+function assertEvidenceContextMatchesTarget(
+  args: Args,
+  context: ConversationMemoryContext,
+): void {
+  if (args.action === 'write' && args.scope === 'group') {
+    if (context.kind !== 'qq_group' || context.id !== String(args.id ?? '')) {
+      throw new MemoryStoreError('invalid_input', 'group memory evidence must come from the same group')
+    }
+    return
+  }
+  if (args.action !== 'update_entry' && args.action !== 'correct_entry') return
+  const group = /^people\/[^/]+\/groups\/([^/]+)\.md$/.exec(args.file)
+  const privatePeer = /^people\/[^/]+\/private\/([^/]+)\.md$/.exec(args.file)
+  const groupFile = /^groups\/([^/]+)\.md$/.exec(args.file)
+  if (group && (context.kind !== 'qq_group' || context.id !== group[1])) {
+    throw new MemoryStoreError('invalid_input', 'person memory evidence context does not match the target group file')
+  }
+  if (privatePeer && (context.kind !== 'qq_private' || context.id !== privatePeer[1])) {
+    throw new MemoryStoreError('invalid_input', 'person memory evidence context does not match the target private file')
+  }
+  if (groupFile && (context.kind !== 'qq_group' || context.id !== groupFile[1])) {
+    throw new MemoryStoreError('invalid_input', 'group memory evidence must come from the same group')
+  }
 }
 
 function observedMemoryResult(

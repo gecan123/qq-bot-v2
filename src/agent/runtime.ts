@@ -32,7 +32,7 @@ import type { BotOwner } from '../config/index.js'
 import type { MessageSender } from '../messaging/message-sender.js'
 import {
   findApprovalEvidenceMessage,
-  findValidMemoryEvidenceRowIds,
+  findMemoryEvidenceRows,
   findObservedQqIdentityRows,
   isGroupMessageMentioningUser,
 } from '../database/messages.js'
@@ -133,6 +133,9 @@ export interface AgentRuntime {
 export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
   let activeToolCapabilities = [...input.context.getSnapshot().activeToolCapabilities]
   let qqConversationFocus = input.context.getSnapshot().qqConversationFocus
+  const groupFrequencyHints = new Map(
+    input.groupCustomizations.map((customization) => [customization.id, customization.frequencyHint]),
+  )
   const taskRegistry = input.taskRegistry ?? createInMemoryTaskRegistry()
   const scheduleRuntime = input.scheduleRuntime ?? createScheduleRuntime({
     store: input.scheduleStatePath
@@ -211,7 +214,8 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
         loadGroups: input.loadGroups,
         loadObservedIdentity: findObservedQqIdentityRows,
       },
-      validateMemorySourceMessageIds: findValidMemoryEvidenceRowIds,
+      loadMemorySourceEvidence: findMemoryEvidenceRows,
+      ownerId: input.owner == null ? undefined : String(input.owner.qq),
     }),
     activeCapabilities: {
       list: () => [...activeToolCapabilities],
@@ -270,6 +274,7 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     goalStore: input.goalStore,
     renderEvent: renderBotEvent,
     eventDebounceMs: input.eventDebounceMs,
+    groupFrequencyHints,
     lifeJournal: input.lifeJournal,
   })
 

@@ -58,6 +58,11 @@ describe('BotLoop goal integration', () => {
                   objective: '把一个兴趣发展成可验证结论',
                   motivation: '我想持续追踪新证据',
                   completionCriteria: ['形成结论', '记录反例'],
+                  currentCommitment: {
+                    action: '读取第一份证据并记录来源',
+                    reason: '先建立可验证的证据基线',
+                    expectedEvidence: '一条带来源的事实记录',
+                  },
                 },
               }],
               usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 2 },
@@ -97,6 +102,7 @@ describe('BotLoop goal integration', () => {
     const continuation = users.find((message) => message.content.includes('goal_continuation'))
     assert.match(continuation?.content ?? '', /"origin":"self"/)
     assert.match(continuation?.content ?? '', /"completionCriteria":\["形成结论","记录反例"\]/)
+    assert.match(continuation?.content ?? '', /"currentCommitment":\{"action":"读取第一份证据并记录来源"/)
   })
 
   test('active goal is disclosed, continued, completed and accounted in one serial foreground round', async () => {

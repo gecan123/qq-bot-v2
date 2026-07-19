@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, describe, test } from 'node:test'
 import { prisma } from './client.js'
-import { findValidMemoryEvidenceRowIds } from './messages.js'
+import { findMemoryEvidenceRows } from './messages.js'
 
 const originalFindMany = prisma.message.findMany
 
@@ -10,47 +10,53 @@ afterEach(() => {
 })
 
 describe('memory evidence lookup', () => {
-  test('binds person evidence to the target senderId', async () => {
+  test('returns claimant and scene metadata without binding evidence to the person subject', async () => {
     let captured: unknown
-    ;(prisma.message as unknown as { findMany: (args: unknown) => Promise<Array<{ id: number }>> }).findMany = async (args) => {
+    ;(prisma.message as unknown as { findMany: (args: unknown) => Promise<unknown[]> }).findMany = async (args) => {
       captured = args
-      return [{ id: 10 }]
+      return [{
+        id: 10,
+        sceneKind: 'qq_group',
+        sceneExternalId: '',
+        groupId: 20001n,
+        messageId: 900n,
+        senderId: 99999n,
+        sentAt: new Date('2026-07-01T00:00:00.000Z'),
+        createdAt: new Date('2026-07-01T00:00:01.000Z'),
+      }]
     }
 
-    const result = await findValidMemoryEvidenceRowIds({
-      sourceMessageIds: [10, 11],
-      scope: 'person',
-      id: '10001',
-    })
+    const result = await findMemoryEvidenceRows([10, 11])
 
-    assert.deepEqual(result, [10])
+    assert.deepEqual(result, [{
+      rowId: 10,
+      sceneKind: 'qq_group',
+      sceneExternalId: '',
+      groupId: 20001,
+      messageId: '900',
+      senderId: '99999',
+      sentAt: '2026-07-01T08:00:00.000+08:00',
+    }])
     assert.deepEqual(captured, {
-      where: { id: { in: [10, 11] }, senderId: 10001n },
-      select: { id: true },
+      where: { id: { in: [10, 11] } },
+      orderBy: { id: 'asc' },
+      select: {
+        id: true,
+        sceneKind: true,
+        sceneExternalId: true,
+        groupId: true,
+        messageId: true,
+        senderId: true,
+        sentAt: true,
+        createdAt: true,
+      },
     })
   })
 
-  test('binds group evidence to a QQ group row and rejects non-numeric entity ids', async () => {
-    let calls = 0
-    ;(prisma.message as unknown as { findMany: (args: unknown) => Promise<Array<{ id: number }>> }).findMany = async (args) => {
-      calls++
-      assert.deepEqual(args, {
-        where: { id: { in: [20] }, sceneKind: 'qq_group', groupId: 20001n },
-        select: { id: true },
-      })
-      return [{ id: 20 }]
+  test('does not query when no source rows are requested', async () => {
+    ;(prisma.message as unknown as { findMany: () => Promise<unknown[]> }).findMany = async () => {
+      assert.fail('findMany should not be called')
     }
-
-    assert.deepEqual(await findValidMemoryEvidenceRowIds({
-      sourceMessageIds: [20],
-      scope: 'group',
-      id: '20001',
-    }), [20])
-    assert.deepEqual(await findValidMemoryEvidenceRowIds({
-      sourceMessageIds: [20],
-      scope: 'group',
-      id: 'not-a-group-id',
-    }), [])
-    assert.equal(calls, 1)
+    assert.deepEqual(await findMemoryEvidenceRows([]), [])
   })
 })

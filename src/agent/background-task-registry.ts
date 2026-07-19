@@ -21,7 +21,7 @@ export interface BackgroundTask {
   resultSummary?: string
   resultData?: JsonValue
   error?: string
-  /** 未来可恢复 job 的稳定类型和 JSON payload；不能存函数或闭包。 */
+  /** 只为读取旧持久状态保留；当前 runner 不根据它恢复任务。 */
   recovery?: { kind: string; payload: JsonValue }
   /** 仅运行时标记：任务来自磁盘，未随进程持久化的 ephemeral handles 不能假定仍有效。 */
   restoredFromDisk?: boolean
@@ -31,7 +31,6 @@ export interface BackgroundTaskRegistry {
   register(opts: {
     toolName: string
     description: string
-    recovery?: { kind: string; payload: JsonValue }
   }): BackgroundTask
   complete(id: string, result: { summary: string; data?: JsonValue }): void
   fail(id: string, error: string): void
@@ -45,8 +44,6 @@ export interface PersistentTaskRegistryResult {
   registry: BackgroundTaskRegistry
   /** 本次启动把旧 running 任务转成 interrupted 的任务，用于发布可见恢复事件。 */
   interruptedAtStartup: BackgroundTask[]
-  /** 带稳定 recovery descriptor 的 running 任务，由对应 durable runner 接管。 */
-  recoverableAtStartup: BackgroundTask[]
 }
 
 interface StoredBackgroundTask extends Omit<
@@ -93,15 +90,10 @@ export function createPersistentTaskRegistry(
   const now = options.now ?? (() => new Date())
   const initialTasks = loadTasks(options.path)
   const interruptedAtStartup: BackgroundTask[] = []
-  const recoverableAtStartup: BackgroundTask[] = []
   const interruptedAt = now()
 
   for (const task of initialTasks) {
     if (task.status !== 'running') continue
-    if (task.recovery) {
-      recoverableAtStartup.push(cloneTask(task))
-      continue
-    }
     task.status = 'interrupted'
     task.updatedAt = interruptedAt
     task.completedAt = interruptedAt
@@ -124,7 +116,7 @@ export function createPersistentTaskRegistry(
     )
   }
 
-  return { registry: result.registry, interruptedAtStartup, recoverableAtStartup }
+  return { registry: result.registry, interruptedAtStartup }
 }
 
 function createTaskRegistry(options: RegistryOptions & {
@@ -189,7 +181,6 @@ function createTaskRegistry(options: RegistryOptions & {
         updatedAt: registeredAt,
         status: 'running',
         attempt: 1,
-        ...(opts.recovery ? { recovery: structuredClone(opts.recovery) } : {}),
       }
       tasks.set(id, task)
       persistNow()

@@ -270,8 +270,12 @@ describe('memory maintenance runtime', () => {
   test('accepts mark_disputed and preserves contradictory source entries', async () => {
     let nextId = 0
     const options = { rootDir, id: () => `conflict-${++nextId}` }
-    await writeMemoryEntry(options, { scope: 'person', id: '10001', content: '主人喜欢喝咖啡' })
-    await writeMemoryEntry(options, { scope: 'person', id: '10001', content: '主人不喜欢喝咖啡' })
+    await writeMemoryEntry(options, {
+      scope: 'person', id: '10001', context: { kind: 'qq_group', id: '20001' }, content: '主人喜欢喝咖啡',
+    })
+    await writeMemoryEntry(options, {
+      scope: 'person', id: '10001', context: { kind: 'qq_group', id: '20001' }, content: '主人不喜欢喝咖啡',
+    })
     let calls = 0
     const llm: LlmClient = {
       async chat() {
@@ -301,9 +305,9 @@ describe('memory maintenance runtime', () => {
       recordUsage() {},
     })
 
-    runtime.enqueue('people/10001.md')
+    runtime.enqueue('people/10001/groups/20001.md')
     await runtime.drain()
-    const after = await inspectMemoryFileForMaintenance({ rootDir }, 'people/10001.md')
+    const after = await inspectMemoryFileForMaintenance({ rootDir }, 'people/10001/groups/20001.md')
 
     assert.equal(calls, 1)
     assert.deepEqual(after.entries.map((entry) => entry.id), ['conflict-1', 'conflict-2'])

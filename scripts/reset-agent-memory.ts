@@ -8,7 +8,7 @@ const PID_FILE = '.bot.pid'
 function assertExplicitConfirmation(): void {
   if (process.argv.includes('--confirm')) return
   throw new Error(
-    'agent memory reset is destructive; rerun with `pnpm agent:reset-memory -- --confirm`',
+    'agent memory reset is destructive; use the standard `pnpm agent:reset-memory` command',
   )
 }
 

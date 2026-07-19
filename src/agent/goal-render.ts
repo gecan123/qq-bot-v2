@@ -24,7 +24,9 @@ export function renderGoalContinuation(
       unrelatedWork: 'goal 有立即可执行步骤时不要主动开启无关自由活动；等待后台、外部输入或冷却时才可利用空档。',
     },
     completion: {
-      instruction: '逐项核对 objective 与当前真实状态。全部完成且有证据时调用 goal action=complete；否则继续推进。',
+      instruction: goal.currentCommitment
+        ? '先执行 currentCommitment.action 并取得 expectedEvidence；步骤完成或路线失效时调用 goal action=replan。逐项核对 objective 与当前真实状态，全部完成且有证据时才 action=complete。'
+        : '当前还没有 currentCommitment；先调用 goal action=replan 自主选择一个具体、可立即开始且有 expectedEvidence 的步骤，再推进 objective。',
       blocked: '每个仍被同一 blocker 卡住的 goal round 都用相同 blockerKey 调 goal action=report_blocker；前两次保持 active，连续第三次才转 blocked。',
     },
   })
@@ -37,6 +39,7 @@ function publicGoalState(goal: AgentGoal) {
     origin: goal.origin,
     motivation: goal.motivation,
     completionCriteria: goal.completionCriteria,
+    currentCommitment: goal.currentCommitment,
     status: goal.status,
     tokenBudget: goal.tokenBudget,
     tokensUsed: goal.tokensUsed,
@@ -77,7 +80,7 @@ function goalStateInstruction(goal: AgentGoal): string {
         ? 'self goal 因 provider usage limit 停止。不要自动重试；等待额度恢复或 action=abandon_self。'
         : 'owner goal 因 provider usage limit 停止。不要自动重试，等待 owner resume。'
     case 'complete':
-      return 'goal 已完成。不要继续 goal continuation，恢复普通自主生活。'
+      return 'goal 已完成。不要继续 goal continuation；注意力已经重新自由，进行一次有界方向检查，有真实后续就自行选择并行动。'
     case 'cancelled':
       return 'goal 已被 owner 取消。停止相关续轮；迟到后台结果不得自动产生新副作用。'
     case 'abandoned':

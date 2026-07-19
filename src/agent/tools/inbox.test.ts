@@ -61,6 +61,7 @@ describe('inbox tool', () => {
     assert.equal(payload.messages[0]!.text, 'message-11')
     assert.equal(payload.messages[0]!.replyable, true)
     assert.equal(result.outcome?.progress, true)
+    assert.deepEqual(result.outcome?.evidenceMessageRowIds, [11, 12])
 
     const repeated = await tool.execute({
       action: 'read',
@@ -69,7 +70,12 @@ describe('inbox tool', () => {
       afterRowId: 10,
       limit: 2,
     }, undefined as never)
-    assert.deepEqual(repeated.outcome, { ok: true, code: 'unchanged', progress: false })
+    assert.deepEqual(repeated.outcome, {
+      ok: true,
+      code: 'unchanged',
+      progress: false,
+      evidenceMessageRowIds: [11, 12],
+    })
   })
 
   test('empty mailbox read is an explicit no-progress result', async () => {

@@ -58,6 +58,14 @@ describe('life_journal tool', () => {
       })
 
       assert.equal(tool.name, 'life_journal')
+      assert.equal(tool.schema.safeParse({
+        action: 'write',
+        markdown: 'A quiet night with familiar groups.',
+      }).success, false)
+      assert.equal(tool.schema.safeParse({
+        action: 'write',
+        markdown: '熟悉的群聊让这个夜晚很安静。',
+      }).success, true)
 
       const written = JSON.parse((await tool.execute({
         action: 'write',
@@ -126,7 +134,7 @@ describe('life_journal tool', () => {
         id: () => `entry-${++nextId}`,
         reflectionWriteMinIntervalMs: 0,
       })
-      for (const markdown of ['wrong', 'duplicate', 'keep']) {
+      for (const markdown of ['错误内容', '重复内容', '保留内容']) {
         await tool.execute({ action: 'write', markdown }, undefined as never)
       }
       const read = async () => JSON.parse((await tool.execute({
@@ -142,7 +150,7 @@ describe('life_journal tool', () => {
         date: file.date,
         entryId: 'entry-1',
         expectedRevision: file.revision,
-        markdown: 'corrected',
+        markdown: '已修正内容',
       }, undefined as never)).content as string) as { ok: boolean; revision: string }
       assert.equal(updated.ok, true)
 
@@ -160,7 +168,7 @@ describe('life_journal tool', () => {
         date: file.date,
         entryIds: ['entry-1', 'entry-2'],
         expectedRevision: file.revision,
-        markdown: 'one compact note',
+        markdown: '一条合并记录',
       }, undefined as never)).content as string) as { ok: boolean; entryId: string }
       assert.equal(compacted.ok, true)
       assert.equal(compacted.entryId, 'entry-4')
@@ -174,8 +182,8 @@ describe('life_journal tool', () => {
       }, undefined as never)).content as string) as { ok: boolean }
       assert.equal(deleted.ok, true)
       const raw = await readFile(join(rootDir, 'life', 'journal', '2026-07-07.md'), 'utf8')
-      assert.match(raw, /one compact note/)
-      assert.doesNotMatch(raw, /wrong|duplicate|keep/)
+      assert.match(raw, /一条合并记录/)
+      assert.doesNotMatch(raw, /错误内容|重复内容|保留内容/)
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }

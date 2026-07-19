@@ -22,6 +22,18 @@ test('notebook tool writes and recalls topic-oriented process notes', async () =
     }, {} as never)).content))
     assert.equal(written.ok, true)
     assert.equal(written.entry.topic, '三体')
+    assert.equal(tool.schema.safeParse({
+      action: 'write',
+      kind: 'project',
+      topic: 'OpenAI migration',
+      content: 'Translate old notes to Chinese.',
+    }).success, false)
+    assert.equal(tool.schema.safeParse({
+      action: 'write',
+      kind: 'project',
+      topic: 'OpenAI 迁移',
+      content: '把旧记录迁移为中文，保留 API 名称。',
+    }).success, true)
 
     const searched = JSON.parse(String((await tool.execute({
       action: 'search', query: '黑暗森林', limit: 5,

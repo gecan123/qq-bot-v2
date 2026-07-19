@@ -63,6 +63,8 @@ export interface ToolExecutionResult {
   effects?: ToolEffect[]
 }
 
+export type ToolContinuation = 'immediate' | 'wait_attention' | 'backoff' | 'stop'
+
 export interface ToolExecutionOutcome {
   ok: boolean
   code?: string
@@ -71,6 +73,12 @@ export interface ToolExecutionOutcome {
   progress?: boolean
   /** runtime 应如何安排下一次尝试；不进入 durable ledger。 */
   retryClass?: 'immediate' | 'after_event' | 'backoff' | 'terminal'
+  /** 与 progress 解耦的续轮建议；元信息读取可以不算进展但仍请求一次立即决策。 */
+  continuation?: ToolContinuation
+  /** 本次披露的新颖性标识；同一进程内重复 key 会被 runtime 降级为无进展等待。 */
+  noveltyKey?: string
+  /** 本轮工具实际披露的 messages.id，供旁路 reviewer 构造受控证据 allowlist；不进入 ledger。 */
+  evidenceMessageRowIds?: number[]
 }
 
 export type MessageSentTarget =

@@ -48,6 +48,7 @@ function equalItems(left: readonly TodoItem[], right: readonly TodoItem[]): bool
 
 export function createTodoTool(): Tool<Args> {
   let items: TodoItem[] = []
+  let revision = 0
 
   return {
     name: 'todo',
@@ -62,7 +63,15 @@ export function createTodoTool(): Tool<Args> {
     async execute(rawArgs) {
       const args = argsSchema.parse(rawArgs)
       if (args.action === 'list') {
-        return { content: JSON.stringify(renderState(items)) }
+        return {
+          content: JSON.stringify({ ...renderState(items), revision }),
+          outcome: {
+            ok: true,
+            progress: false,
+            continuation: 'immediate',
+            noveltyKey: `todo:${revision}`,
+          },
+        }
       }
 
       const activeCount = args.items.filter((item) => item.status === 'in_progress').length
@@ -73,12 +82,20 @@ export function createTodoTool(): Tool<Args> {
             error: 'Only one todo item can be in_progress',
             items,
           }),
+          outcome: {
+            ok: false,
+            code: 'invalid_arguments',
+            progress: false,
+            retryClass: 'immediate',
+            continuation: 'immediate',
+          },
         }
       }
 
       const nextItems = args.items.map((item) => ({ ...item }))
       const changed = !equalItems(items, nextItems)
       items = nextItems
+      if (changed) revision++
       const status = changed
         ? items.length === 0 ? 'cleared' : 'updated'
         : 'unchanged'
@@ -87,11 +104,14 @@ export function createTodoTool(): Tool<Args> {
           ...renderState(items),
           status,
           changed,
+          revision,
         }),
         outcome: {
           ok: true,
           code: status,
           progress: changed,
+          continuation: changed ? 'immediate' : 'wait_attention',
+          noveltyKey: `todo:${revision}`,
         },
       }
     },

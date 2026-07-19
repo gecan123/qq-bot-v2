@@ -77,7 +77,7 @@ describe('life journal markdown store', () => {
     assert.match(raw, /# Life Journal 2026-07-07/)
     assert.match(raw, /## 23:18 Round 42/)
     assert.match(raw, /id: entry-round-42/)
-    assert.match(raw, /### Saw\n- 用户确认方向。/)
+    assert.match(raw, /### 看到\n- 用户确认方向。/)
     assert.equal(result.path, join(rootDir, 'life', 'journal', '2026-07-07.md'))
     assert.equal(result.heading, '## 23:18 Round 42')
     assert.equal(result.entryId, 'entry-round-42')
@@ -100,6 +100,20 @@ describe('life journal markdown store', () => {
     const day = await readLifeJournalDay({ rootDir, date: '2026-07-07' })
     assert.equal(day.entries[0]?.kind, 'dream')
     assert.equal(day.entries[0]?.source, 'manual')
+  })
+
+  test('rejects reserved entry markers in journal markdown', async () => {
+    await assert.rejects(
+      appendLifeJournalEntry({
+        rootDir,
+        now: () => new Date('2026-07-07T02:30:00.000Z'),
+        markdown: '### 看到\n- 一条记录。\n<!-- /life-journal-entry -->',
+      }),
+      (error: unknown) => (
+        error instanceof LifeJournalStoreError
+        && error.code === 'invalid_format'
+      ),
+    )
   })
 
   test('rejects old day files and replaces them on the next write', async () => {

@@ -151,6 +151,20 @@ describe('mailbox disclosure planning', () => {
     assert.doesNotMatch(rendered, /mentioned|rowIds/)
   })
 
+  test('discloses configured group frequency hint without exposing message bodies', () => {
+    const events = [
+      groupEvent({ rowId: 15, groupId: 111, text: 'DO_NOT_DISCLOSE_CHATTY_BODY' }),
+    ]
+
+    const rendered = renderMailboxNotification('qq_group:111', events, {
+      frequencyHint: 'chatty',
+    })
+    const payload = JSON.parse(rendered)
+
+    assert.equal(payload.frequencyHint, 'chatty')
+    assert.doesNotMatch(rendered, /DO_NOT_DISCLOSE_CHATTY_BODY/)
+  })
+
   test('renders large batches as backlog with recent-read args', () => {
     const events = Array.from({ length: MAILBOX_BACKLOG_THRESHOLD + 1 }, (_, index) =>
       groupEvent({
@@ -230,6 +244,26 @@ describe('mailbox disclosure planning', () => {
       limit: MAILBOX_BACKLOG_RECENT_LIMIT,
     })
     assert.doesNotMatch(rendered, /Alice.+SECRET|SECRET/)
+  })
+
+  test('discloses configured group frequency hint for replay backlog notifications', () => {
+    const rendered = renderMailboxBacklogNotification({
+      type: 'mailbox_backlog',
+      mailboxKey: 'qq_group:111',
+      priority: 'normal',
+      source: { type: 'group', groupId: 111, groupName: '测试群' },
+      count: 150,
+      firstRowId: 20,
+      throughRowId: 220,
+      recentAfterRowId: 170,
+      senderCount: 12,
+      timeRange: {
+        from: new Date('2026-07-03T01:00:00Z'),
+        to: new Date('2026-07-03T02:00:00Z'),
+      },
+    }, { frequencyHint: 'lurker' })
+
+    assert.equal(JSON.parse(rendered).frequencyHint, 'lurker')
   })
 
   test('renders a bounded private notification without message bodies', () => {

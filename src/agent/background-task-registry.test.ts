@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, test } from 'node:test'
@@ -32,7 +32,6 @@ describe('background task registry', () => {
     const task = first.register({
       toolName: 'fetch_content',
       description: 'fetch example',
-      recovery: { kind: 'fetch_url', payload: { url: 'https://example.com' } },
     })
     now = new Date('2026-07-12T00:00:05.000Z')
     first.complete(task.id, { summary: 'done', data: { result: 'ok' } })
@@ -41,15 +40,10 @@ describe('background task registry', () => {
     const stored = reloaded.registry.get(task.id)
 
     assert.equal(reloaded.interruptedAtStartup.length, 0)
-    assert.equal(reloaded.recoverableAtStartup.length, 0)
     assert.equal(stored?.status, 'completed')
     assert.equal(stored?.startedAt.toISOString(), '2026-07-12T00:00:00.000Z')
     assert.equal(stored?.completedAt?.toISOString(), '2026-07-12T00:00:05.000Z')
     assert.deepEqual(stored?.resultData, { result: 'ok' })
-    assert.deepEqual(stored?.recovery, {
-      kind: 'fetch_url',
-      payload: { url: 'https://example.com' },
-    })
     assert.equal((JSON.parse(readFileSync(path, 'utf8')) as { schemaVersion: number }).schemaVersion, 1)
   })
 
@@ -78,7 +72,7 @@ describe('background task registry', () => {
     assert.equal(restartedAgain.registry.get('bg_running')?.status, 'interrupted')
   })
 
-  test('keeps running tasks with recovery descriptors available to a durable runner', () => {
+  test('marks legacy running tasks with recovery descriptors interrupted', () => {
     const path = tempStatePath()
     const first = createPersistentTaskRegistry({
       path,
@@ -88,20 +82,27 @@ describe('background task registry', () => {
     first.register({
       toolName: 'future_durable_task',
       description: 'resume durable work',
-      recovery: {
-        kind: 'future_job.v1',
-        payload: { jobId: 'future-1' },
-      },
     })
+    const legacyState = JSON.parse(readFileSync(path, 'utf8')) as {
+      tasks: Array<{ recovery?: { kind: string; payload: { jobId: string } } }>
+    }
+    legacyState.tasks[0]!.recovery = {
+      kind: 'future_job.v1',
+      payload: { jobId: 'future-1' },
+    }
+    writeFileSync(path, JSON.stringify(legacyState), 'utf8')
 
     const restarted = createPersistentTaskRegistry({
       path,
       now: () => new Date('2026-07-12T00:01:00.000Z'),
     })
 
-    assert.equal(restarted.interruptedAtStartup.length, 0)
-    assert.equal(restarted.recoverableAtStartup.length, 1)
-    assert.equal(restarted.registry.get('durable-running')?.status, 'running')
+    assert.equal(restarted.interruptedAtStartup.length, 1)
+    assert.equal(restarted.registry.get('durable-running')?.status, 'interrupted')
+    assert.equal(
+      restarted.registry.get('durable-running')?.error,
+      'process_restarted_before_completion',
+    )
   })
 
   test('terminal transitions are idempotent and cannot overwrite the first result', () => {

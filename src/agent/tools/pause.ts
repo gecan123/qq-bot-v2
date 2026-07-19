@@ -43,6 +43,7 @@ export function createPauseTool(deps: PauseToolDeps = {}): Tool<Args> {
       'intention 只写一个具体 primaryDirection 和一个不同的 alternativeDirection, 都必须写明对象和第一步; 不要制造六项菜单.',
       '等消息、轮询群聊、机械盯行情、泛泛浏览站点或整理 memory/journal 都不是行动方向; 未来时点再看行情用 schedule.',
       '一个任务做完后重新评估: 有真实后续就继续, 没有未处理义务或牵引力就结束当前活动轮; 不要用发消息、写 Journal 或再次休息表演收尾.',
+      '如果当前精力允许且 primaryDirection 可以立即执行, 就现在直接执行; reason 要说明为什么此刻休息比立即行动更合适.',
       '休息期间普通群消息不会打断, 被 @、私聊、后台任务完成或停止信号会立刻唤醒.',
     ].join(' '),
     schema: argsSchema,

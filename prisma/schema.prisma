@@ -103,6 +103,7 @@ model BotAgentGoal {
   origin                  String   @default("owner") @db.VarChar(16)
   motivation              String?  @db.Text
   completionCriteria      Json?    @map("completion_criteria")
+  currentCommitment       Json?    @map("current_commitment")
   status                  String   @db.VarChar(32)
   tokenBudget             Int?     @map("token_budget")
   tokensUsed              Int      @default(0) @map("tokens_used")

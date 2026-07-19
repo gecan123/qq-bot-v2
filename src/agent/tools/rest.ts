@@ -98,7 +98,12 @@ function restResult(
         instruction: `醒来后重新评估: primaryDirection 仍有吸引力就执行第一步: ${intention.primaryDirection}; 若它已失效, 再看 alternativeDirection: ${intention.alternativeDirection}. 两者都失效且没有未处理义务时可以自然结束当前活动轮, 不要用写 Journal、发消息或再次休息表演收尾.`,
       },
     }),
-    outcome: { ok: true, code: status },
+    outcome: {
+      ok: true,
+      code: status,
+      progress: false,
+      continuation: 'wait_attention',
+    },
     effects: [{ type: 'pause', status }],
   }
 }
@@ -116,6 +121,7 @@ export function createRestTool(deps: RestToolDeps = {}): Tool<RestArgs> {
       'intention 只保留一个 primaryDirection 和一个不同的 alternativeDirection, 都要写明具体对象和第一步动作。不要为了填菜单制造六个占位方向。',
       '等人、等消息、轮询群聊、机械检查行情、泛泛浏览 HN/Reddit、整理 memory/journal 都不是休息后的真实方向。价格或行情需要未来某个时点再看时用 schedule, 不要靠反复休息轮询。',
       '一个任务做完后重新评估: 有真实后续就继续, 没有未处理义务或牵引力就结束当前活动轮; 不要为证明自主而制造方向。',
+      '如果当前精力允许且 primaryDirection 可以立即执行, 就现在直接执行; reason 要说明为什么此刻休息比立即行动更合适。',
       '休息期间普通群消息不会打断; 被 @、私聊、后台任务完成或停止信号会立刻唤醒。',
       '事件只用于唤醒, 不会被这个工具消费; 下一轮会正常进入上下文。',
     ].join(' '),

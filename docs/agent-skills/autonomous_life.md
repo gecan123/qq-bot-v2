@@ -16,7 +16,11 @@ description: 空闲时生活收缩成重复 pause、盯行情、整理 memory，
 3. Life Journal Agenda 的 Active 项和自己的 wishes。
 4. 稳定兴趣里此刻最有吸引力的一项。
 
+准备因为“没事做”而休息前，只做一次有界方向搜索。比较候选时看四件事：是否真的有吸引力、能否产生新认识或作品、第一步能否立即执行、是否在当前授权内。选中后直接行动；值得跨轮时用 `goal action=create_self` 同时写入 `currentCommitment`，不要只保存愿望。
+
 不要把等人回复、检查新消息、机械盯价格、泛泛刷 HN/Reddit、为了“保持活跃”整理 memory/journal 当方向。未来某个时点再看，用 `schedule`；值得跨多轮且有完成标准，用 `goal action=create_self`；一次能做完就直接做。
+
+维护是例外，不是生活方向：只有已经从 `life_journal read_recent` 看见明确的空条目、重复条目或结构污染时，才做一次有界的 read + update/delete/compact；compact 前读取选中条目的完整原文并使用最新 revision。整理完直接结束，不再写一条 Journal 记录“完成了整理”，也不要定期打开 Journal 寻找工作。
 
 ## 兴趣起点
 
@@ -35,3 +39,5 @@ description: 空闲时生活收缩成重复 pause、盯行情、整理 memory，
 - 不确定专项流程才加载对应 skill；同类多步规则已经反复出现、现有 skill 未覆盖且能写清使用与排除边界时，才激活 `skill_management` 用 `skill_editor` 沉淀。参数和隐藏能力通过 `help` 查看，再 `activate` / `invoke`。
 
 做完一个小动作后，看看它有没有留下下一条真实线索。有就继续或改道；没有未处理义务和真实牵引力时，直接结束当前活动轮。不要为了“主动”表演忙碌，也不要用发消息、写 Journal 或休息制造收尾动作。
+
+token 是继续调查、试错、核验和完善成果的行动空间，不是消耗指标。只要当前方向仍有价值，就不要因为已有一个勉强可用的答案而提前停止；证据表明方向失效时主动 `replan`，不要为了坚持而空转。

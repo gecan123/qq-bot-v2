@@ -41,8 +41,8 @@ async function makeSkillDir(): Promise<string> {
 describe('skill tool', () => {
   test('list returns the curated skill catalog sorted by name', async () => {
     const tool = createSkillTool({ skillsDir: await makeSkillDir() })
-
-    const listed = JSON.parse((await tool.execute({ action: 'list' }, makeCtx())).content as string) as {
+    const result = await tool.execute({ action: 'list' }, makeCtx())
+    const listed = JSON.parse(result.content as string) as {
       ok: boolean
       skills: { name: string; description: string }[]
     }
@@ -50,6 +50,13 @@ describe('skill tool', () => {
     assert.equal(listed.ok, true)
     assert.deepEqual(listed.skills.map((skill) => skill.name), ['repo_map', 'tool_help'])
     assert.equal(listed.skills[0]?.description, '仓库知识地图')
+    assert.deepEqual(result.outcome, {
+      ok: true,
+      progress: false,
+      continuation: 'immediate',
+      noveltyKey: result.outcome?.noveltyKey,
+    })
+    assert.match(result.outcome?.noveltyKey ?? '', /^skill_catalog:/)
   })
 
   test('load returns bounded content by skill name and rejects unknown names', async () => {
@@ -57,8 +64,10 @@ describe('skill tool', () => {
 
     assert.match(tool.description, /已知 name 时直接 load.*不知道候选时才 list/)
     assert.match(tool.description, /执行步骤和状态改用 todo/)
+    assert.match(tool.description, /准备因.*没事做.*休息.*autonomous_life/)
 
-    const loaded = JSON.parse((await tool.execute({ action: 'load', name: 'tool_help' }, makeCtx())).content as string) as {
+    const loadResult = await tool.execute({ action: 'load', name: 'tool_help' }, makeCtx())
+    const loaded = JSON.parse(loadResult.content as string) as {
       ok: boolean
       name: string
       content: string
@@ -73,6 +82,9 @@ describe('skill tool', () => {
     assert.equal(loaded.name, 'tool_help')
     assert.ok(loaded.content.length <= 20)
     assert.equal(loaded.truncated, true)
+    assert.equal(loadResult.outcome?.progress, true)
+    assert.equal(loadResult.outcome?.continuation, 'immediate')
+    assert.match(loadResult.outcome?.noveltyKey ?? '', /^skill:tool_help:/)
     assert.equal(rejected.ok, false)
     assert.match(rejected.error ?? '', /Unknown skill/)
   })

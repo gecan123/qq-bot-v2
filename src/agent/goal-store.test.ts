@@ -18,6 +18,12 @@ import type { BotEvent } from './event.js'
 import { prisma } from '../database/client.js'
 
 describe('goal control and store', () => {
+  const firstCommitment = {
+    action: '读取第一份资料并记录一个可验证事实',
+    reason: '先建立最小证据基线，再决定后续路线',
+    expectedEvidence: '资料 URL 与一条带来源的事实记录',
+  }
+
   test('parses owner control syntax and validates token budgets', () => {
     assert.deepEqual(parseGoalControlCommand('/goal'), { action: 'status' })
     assert.deepEqual(parseGoalControlCommand('/goal --tokens 50000 完成网站验收'), {
@@ -81,12 +87,14 @@ describe('goal control and store', () => {
       objective: '持续研究一个真正感兴趣的问题',
       motivation: '我想把零散观察发展成可验证判断',
       completionCriteria: ['形成有来源的结论', '记录反例和失效条件'],
+      currentCommitment: firstCommitment,
     })
 
     assert.equal(created.code, 'created')
     assert.equal(created.goal?.origin, 'self')
     assert.equal(created.goal?.tokenBudget, DEFAULT_SELF_GOAL_TOKEN_BUDGET)
     assert.deepEqual(created.goal?.completionCriteria, ['形成有来源的结论', '记录反例和失效条件'])
+    assert.deepEqual(created.goal?.currentCommitment, firstCommitment)
     assert.equal(created.goal?.selfGoalWindowCount, 1)
 
     const abandoned = await store.abandonSelf({
@@ -102,6 +110,7 @@ describe('goal control and store', () => {
       objective: 'self goal',
       motivation: '想做',
       completionCriteria: ['完成'],
+      currentCommitment: firstCommitment,
     })
     const ownerGoal = await store.applyControl({
       messageRowId: 20,
@@ -127,7 +136,7 @@ describe('goal control and store', () => {
     })
     const owner = (await store.get())!
     const create = await store.createSelf({
-      objective: 'self goal', motivation: '想做', completionCriteria: ['完成'],
+      objective: 'self goal', motivation: '想做', completionCriteria: ['完成'], currentCommitment: firstCommitment,
     })
     const abandon = await store.abandonSelf({ goalId: owner.goalId, reason: '不想做' })
 
@@ -140,25 +149,25 @@ describe('goal control and store', () => {
     let nowMs = Date.parse('2026-07-12T00:00:00Z')
     const store = createInMemoryGoalStore(null, { now: () => new Date(nowMs) })
     const first = await store.createSelf({
-      objective: 'first', motivation: 'test', completionCriteria: ['done'],
+      objective: 'first', motivation: 'test', completionCriteria: ['done'], currentCommitment: firstCommitment,
     })
     await store.abandonSelf({ goalId: first.goal!.goalId, reason: 'test' })
     const cooldown = await store.createSelf({
-      objective: 'too soon', motivation: 'test', completionCriteria: ['done'],
+      objective: 'too soon', motivation: 'test', completionCriteria: ['done'], currentCommitment: firstCommitment,
     })
     assert.equal(cooldown.code, 'self_goal_cooldown')
 
     for (let count = 1; count < MAX_SELF_GOALS_PER_WINDOW; count++) {
       nowMs += SELF_GOAL_CREATE_COOLDOWN_MS + 1
       const created = await store.createSelf({
-        objective: `goal-${count}`, motivation: 'test', completionCriteria: ['done'],
+        objective: `goal-${count}`, motivation: 'test', completionCriteria: ['done'], currentCommitment: firstCommitment,
       })
       assert.equal(created.code, 'created')
       await store.abandonSelf({ goalId: created.goal!.goalId, reason: 'test' })
     }
     nowMs += SELF_GOAL_CREATE_COOLDOWN_MS + 1
     const limited = await store.createSelf({
-      objective: 'one too many', motivation: 'test', completionCriteria: ['done'],
+      objective: 'one too many', motivation: 'test', completionCriteria: ['done'], currentCommitment: firstCommitment,
     })
     assert.equal(limited.code, 'self_goal_daily_limit')
   })
@@ -275,6 +284,17 @@ describe('goal control and store', () => {
     const context = { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 8 }
     const getResult = await tool.execute({ action: 'get' }, context)
     assert.match(String(getResult.content), new RegExp(goal.goalId))
+    assert.equal(getResult.outcome?.progress, false)
+    assert.equal(getResult.outcome?.continuation, 'immediate')
+    assert.match(getResult.outcome?.noveltyKey ?? '', new RegExp(`^goal:${goal.goalId}:`))
+
+    const replanned = await tool.execute({
+      action: 'replan',
+      goalId: goal.goalId,
+      currentCommitment: firstCommitment,
+    }, context)
+    assert.equal(replanned.outcome?.ok, true)
+    assert.deepEqual((await store.get())?.currentCommitment, firstCommitment)
 
     const completed = await tool.execute({
       action: 'complete',
@@ -282,7 +302,9 @@ describe('goal control and store', () => {
       evidence: ['pnpm build exit 0', '目标文件已检查'],
     }, context)
     assert.equal(completed.outcome?.ok, true)
+    assert.match(String(completed.content), /注意力重新自由/)
     assert.equal((await store.get())?.status, 'complete')
+    assert.equal((await store.get())?.currentCommitment, null)
     assert.deepEqual((await store.get())?.completionEvidence, ['pnpm build exit 0', '目标文件已检查'])
   })
 
@@ -290,17 +312,40 @@ describe('goal control and store', () => {
     const store = createInMemoryGoalStore()
     const tool = createGoalTool(store)
     const context = { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 1 }
+    assert.equal(tool.schema.safeParse({
+      action: 'create_self',
+      objective: '缺少当前承诺的目标',
+      motivation: '验证 schema',
+      completionCriteria: ['完成'],
+    }).success, false)
     const created = await tool.execute({
       action: 'create_self',
       objective: '自己维护一个长期研究方向',
       motivation: '这个问题会跨多轮产生新证据',
       completionCriteria: ['完成初始结论', '记录失效条件'],
+      currentCommitment: firstCommitment,
       tokenBudget: 2_000_000,
     }, context)
     assert.equal(created.outcome?.ok, true)
     const goal = (await store.get())!
     assert.equal(goal.origin, 'self')
     assert.equal(goal.tokenBudget, 2_000_000)
+    assert.deepEqual(goal.currentCommitment, firstCommitment)
+
+    const replannedCommitment = {
+      action: '寻找一条反证并核对原始出处',
+      reason: '初始结论已经形成，下一步需要主动证伪',
+      expectedEvidence: '一条反证及其原始来源',
+    }
+    const replanned = await tool.execute({
+      action: 'replan',
+      goalId: goal.goalId,
+      currentCommitment: replannedCommitment,
+    }, context)
+    assert.equal(replanned.outcome?.ok, true)
+    assert.equal(replanned.outcome?.progress, true)
+    assert.equal(replanned.outcome?.continuation, 'immediate')
+    assert.deepEqual((await store.get())?.currentCommitment, replannedCommitment)
 
     const abandoned = await tool.execute({
       action: 'abandon_self',

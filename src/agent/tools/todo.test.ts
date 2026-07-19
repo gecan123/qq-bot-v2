@@ -60,7 +60,7 @@ describe('todo tool', () => {
     assert.deepEqual(listed.items.map((item) => item.id), ['one'])
   })
 
-  test('repeated empty update is an explicit no-progress terminal state', async () => {
+  test('repeated empty update is an explicit no-progress wait state', async () => {
     const tool = createTodoTool()
 
     const first = await tool.execute({ action: 'update', items: [] }, makeCtx())
@@ -73,7 +73,13 @@ describe('todo tool', () => {
     assert.equal(result.status, 'unchanged')
     assert.equal(result.changed, false)
     assert.match(result.next, /without calling todo again/)
-    assert.deepEqual(first.outcome, { ok: true, code: 'unchanged', progress: false })
+    assert.deepEqual(first.outcome, {
+      ok: true,
+      code: 'unchanged',
+      progress: false,
+      continuation: 'wait_attention',
+      noveltyKey: 'todo:0',
+    })
   })
 
   test('clearing a non-empty list reports progress once', async () => {
@@ -88,6 +94,12 @@ describe('todo tool', () => {
 
     assert.equal(result.status, 'cleared')
     assert.equal(result.changed, true)
-    assert.deepEqual(cleared.outcome, { ok: true, code: 'cleared', progress: true })
+    assert.deepEqual(cleared.outcome, {
+      ok: true,
+      code: 'cleared',
+      progress: true,
+      continuation: 'immediate',
+      noveltyKey: 'todo:2',
+    })
   })
 })

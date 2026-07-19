@@ -51,7 +51,6 @@ interface ParsedEntry extends LifeJournalEntry {
 const AGENDA_TEMPLATE = `# Agenda
 
 ## Active
-- [ ] Keep noticing what matters now.
 
 ## Waiting
 
@@ -261,6 +260,23 @@ function normalizedFile(content: string): string {
   return `${content.trimEnd()}\n`
 }
 
+export function normalizeLifeJournalMarkdown(markdown: string): string {
+  if (markdown.includes(ENTRY_START) || markdown.includes(ENTRY_END) || markdown.includes(FORMAT_MARKER)) {
+    throw new LifeJournalStoreError('invalid_format', 'life journal markdown contains a reserved format marker')
+  }
+  const headings: Record<string, string> = {
+    Saw: '看到',
+    Did: '做了',
+    Promised: '承诺',
+    'I care about': '我在意',
+    Next: '下一步',
+    Mood: '心情',
+  }
+  return markdown.replace(/^###\s+(Saw|Did|Promised|I care about|Next|Mood)\s*$/gm, (_match, heading: string) => (
+    `### ${headings[heading]}`
+  ))
+}
+
 export async function appendLifeJournalEntry(
   options: LifeJournalStoreOptions & {
     roundIndex?: number
@@ -291,7 +307,7 @@ export async function appendLifeJournalEntry(
       id: entryId,
       date,
       heading,
-      markdown: options.markdown,
+      markdown: normalizeLifeJournalMarkdown(options.markdown),
       kind: options.kind ?? 'reflection',
       source: options.roundIndex == null ? 'manual' : 'round',
       createdAt: formatBeijingIso(now),
@@ -318,7 +334,7 @@ export async function updateLifeJournalEntry(
       id: target.id,
       date: target.date,
       heading: target.heading,
-      markdown: options.markdown,
+      markdown: normalizeLifeJournalMarkdown(options.markdown),
       kind: target.kind,
       source: target.source,
       createdAt: target.createdAt,
@@ -371,7 +387,7 @@ export async function compactLifeJournalEntries(
       id: createEntryId(options, now),
       date: options.date,
       heading: `## ${time} Compact`,
-      markdown: options.markdown,
+      markdown: normalizeLifeJournalMarkdown(options.markdown),
       kind: selected.every((entry) => entry.kind === 'dream') ? 'dream' : 'reflection',
       source: 'compact',
       createdAt: formatBeijingIso(now),

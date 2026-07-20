@@ -338,6 +338,30 @@ describe('runRepoChecks', () => {
     assert.match(result.errors.join('\n'), /must not enumerate all style topics/)
   })
 
+  test('rejects a reordered complete style topic enum in the resident system prompt', () => {
+    const result = runRepoChecks({
+      ...validFiles,
+      'prompts/system/system.md': validFiles['prompts/system/system.md'].replace(
+        '`style global`',
+        '`style global roleplay|constraints|base|anti_patterns|nsfw`',
+      ),
+    })
+
+    assert.match(result.errors.join('\n'), /must not enumerate all style topics/)
+  })
+
+  test('allows partial style topic hints on the style global route', () => {
+    const result = runRepoChecks({
+      ...validFiles,
+      'prompts/system/system.md': validFiles['prompts/system/system.md'].replace(
+        '`style global`',
+        '`style global constraints|base`',
+      ),
+    })
+
+    assert.deepEqual(result.errors, [])
+  })
+
   test('rejects missing test and observability env markers', () => {
     const result = runRepoChecks({
       ...validFiles,

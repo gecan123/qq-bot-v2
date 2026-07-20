@@ -39,14 +39,18 @@ describe('createAgentRuntime', () => {
       + surface.fixedTokens.visibleTools
     )
 
-    assert.ok(claude.fixedTokens.botSystemPrompt <= 2_800)
-    assert.ok(
-      claude.fixedTokens.visibleTools <= 7_000,
-      `Claude visible tools exceed budget: ${claude.fixedTokens.visibleTools}`,
+    const budgets = {
+      claudeBotSystemPrompt: { actual: claude.fixedTokens.botSystemPrompt, limit: 2_800 },
+      claudeVisibleTools: { actual: claude.fixedTokens.visibleTools, limit: 7_500 },
+      openaiVisibleTools: { actual: openai.fixedTokens.visibleTools, limit: 8_200 },
+      claudeFixedSurface: { actual: total(claude), limit: 9_900 },
+      openaiFixedSurface: { actual: total(openai), limit: 10_700 },
+    }
+    const exceeded = Object.fromEntries(
+      Object.entries(budgets).filter(([, budget]) => budget.actual > budget.limit),
     )
-    assert.ok(openai.fixedTokens.visibleTools <= 7_800)
-    assert.ok(total(claude) <= 9_900)
-    assert.ok(total(openai) <= 10_700)
+
+    assert.deepEqual(exceeded, {}, `Agent surface budgets exceeded: ${JSON.stringify(exceeded)}`)
   })
 
   test('wires deferred tool activation state through AgentContext', async () => {

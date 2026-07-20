@@ -179,6 +179,19 @@ function parseStrictPositiveInteger(name: string, value: string | undefined, def
   return parsed
 }
 
+function parseStrictNonNegativeInteger(
+  name: string,
+  value: string | undefined,
+  defaultValue: number,
+): number {
+  if (value == null || value.trim() === '') return defaultValue
+  const parsed = Number(value.trim())
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`Invalid ${name} "${value}" (must be a non-negative safe integer)`)
+  }
+  return parsed
+}
+
 function parsePositiveSafeInteger(name: string, value: string): number {
   const parsed = Number(value.trim())
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
@@ -477,6 +490,11 @@ export function parseConfig(
   const toolCallLogPath = env.BOT_TOOL_CALL_LOG_PATH && env.BOT_TOOL_CALL_LOG_PATH.trim().length > 0
     ? env.BOT_TOOL_CALL_LOG_PATH.trim()
     : 'logs/tool-calls.ndjson'
+  const observabilityRetentionDays = parseStrictNonNegativeInteger(
+    'BOT_OBSERVABILITY_RETENTION_DAYS',
+    env.BOT_OBSERVABILITY_RETENTION_DAYS,
+    30,
+  )
   const toolAuditMode = parseEnumValue(
     'BOT_TOOL_AUDIT_MODE',
     env.BOT_TOOL_AUDIT_MODE,
@@ -554,6 +572,8 @@ export function parseConfig(
     tokenUsageLogPath,
     /** Unified tool-call NDJSON sidecar log path. Override via BOT_TOOL_CALL_LOG_PATH env. */
     toolCallLogPath,
+    /** Observability DB/NDJSON retention in days. Zero disables automatic cleanup. */
+    observabilityRetentionDays,
     toolAuditMode,
     toolAuditDbEnabled,
     backgroundTaskStatePath,

@@ -46,6 +46,19 @@ if (!configModule) throw new Error('Failed to import config module')
 const { parseConfig } = configModule
 
 describe('config', () => {
+  test('parses observability retention days with zero as an explicit disable', () => {
+    assert.equal(parseConfig(createBaseEnv()).observabilityRetentionDays, 30)
+    assert.equal(parseConfig(createBaseEnv({ BOT_OBSERVABILITY_RETENTION_DAYS: '90' })).observabilityRetentionDays, 90)
+    assert.equal(parseConfig(createBaseEnv({ BOT_OBSERVABILITY_RETENTION_DAYS: '0' })).observabilityRetentionDays, 0)
+
+    for (const value of ['-1', '1.5', 'abc']) {
+      assert.throws(
+        () => parseConfig(createBaseEnv({ BOT_OBSERVABILITY_RETENTION_DAYS: value })),
+        /Invalid BOT_OBSERVABILITY_RETENTION_DAYS/,
+      )
+    }
+  })
+
   test('parses provider registry and scenario provider/model routing', () => {
     const config = parseConfig(createBaseEnv({
       LLM_PROVIDER_GEMINI_URL: 'https://generativelanguage.googleapis.com/v1beta/openai/',

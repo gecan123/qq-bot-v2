@@ -87,6 +87,24 @@ describe('workspace_bash command parser', () => {
       section: 'constraints',
     })
 
+    assert.deepEqual(parseWorkspaceBashCommand('style global roleplay'), {
+      ok: true,
+      kind: 'style',
+      cwd: 'workspace',
+      scope: 'global',
+      section: 'roleplay',
+    })
+
+    assert.deepEqual(parseWorkspaceBashCommand('style global nsfw'), {
+      ok: true,
+      kind: 'style',
+      cwd: 'workspace',
+      scope: 'global',
+      section: 'nsfw',
+    })
+
+    assert.equal(parseWorkspaceBashCommand('style global special_cases').ok, false)
+
     assert.deepEqual(parseWorkspaceBashCommand('style group 222'), {
       ok: true,
       kind: 'style',
@@ -525,7 +543,20 @@ describe('workspace_bash tool', () => {
     assert.match(tool.description, /cwd=repo/)
     assert.match(tool.description, /db schema/)
     assert.match(tool.description, /metrics today\|yesterday\|YYYY-MM-DD/)
+    assert.match(tool.description, /style global \[constraints\|base\|anti_patterns\|roleplay\|nsfw\]/)
+    assert.doesNotMatch(tool.description, /special_cases/)
     assert.doesNotMatch(tool.description, /journal write\|list\|search\|read/)
+  })
+
+  test('style help exposes roleplay and nsfw without the removed special_cases section', async () => {
+    const tool = createWorkspaceBashTool()
+
+    const help = unwrapCommandJson((await tool.execute({ command: 'help style' }, makeCtx())).content) as unknown as {
+      commands: string[]
+    }
+
+    assert.ok(help.commands.includes('style global [constraints|base|anti_patterns|roleplay|nsfw]'))
+    assert.doesNotMatch(JSON.stringify(help), /special_cases/)
   })
 
   test('runs metrics through the internal loader without shelling out', async () => {
@@ -604,6 +635,14 @@ describe('workspace_bash tool', () => {
 
     const constraints = await tool.execute({ command: 'style global constraints' }, makeCtx())
     assert.match(constraints.content as string, /聊天约束/)
+
+    const roleplay = await tool.execute({ command: 'style global roleplay' }, makeCtx())
+    assert.match(roleplay.content as string, /角色扮演、cosplay/)
+    assert.doesNotMatch(roleplay.content as string, /NSFW/)
+
+    const nsfw = await tool.execute({ command: 'style global nsfw' }, makeCtx())
+    assert.match(nsfw.content as string, /NSFW/)
+    assert.doesNotMatch(nsfw.content as string, /角色扮演、cosplay/)
 
     const group = JSON.parse((await tool.execute({ command: 'style group 222' }, makeCtx())).content as string) as {
       ok: boolean

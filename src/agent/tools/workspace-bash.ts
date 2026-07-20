@@ -91,7 +91,7 @@ export interface ParsedStyleCommand {
   kind: 'style'
   cwd: 'workspace'
   scope: 'global' | 'group'
-  section?: 'constraints' | 'base' | 'anti_patterns' | 'special_cases'
+  section?: 'constraints' | 'base' | 'anti_patterns' | 'roleplay' | 'nsfw'
   groupId?: number
 }
 
@@ -425,8 +425,8 @@ function parseStyleCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedS
     if (tokens.length > 3) return { ok: false, error: 'style global accepts at most one section' }
     const section = tokens[2]
     if (section == null) return { ok: true, kind: 'style', cwd: 'workspace', scope: 'global' }
-    if (section !== 'constraints' && section !== 'base' && section !== 'anti_patterns' && section !== 'special_cases') {
-      return { ok: false, error: 'style global section must be constraints, base, anti_patterns, or special_cases' }
+    if (section !== 'constraints' && section !== 'base' && section !== 'anti_patterns' && section !== 'roleplay' && section !== 'nsfw') {
+      return { ok: false, error: 'style global section must match `style global [constraints|base|anti_patterns|roleplay|nsfw]`' }
     }
     return { ok: true, kind: 'style', cwd: 'workspace', scope: 'global', section }
   }
@@ -742,7 +742,7 @@ function renderHelpCommand(parsed: ParsedHelpCommand): WorkspaceBashRunResult {
     style: {
       purpose: '按需读取全局或群风格说明.',
       commands: [
-        'style global [constraints|base|anti_patterns|special_cases]',
+        'style global [constraints|base|anti_patterns|roleplay|nsfw]',
         'style group <groupId>',
       ],
     },
@@ -1022,7 +1022,7 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
       'workspace 允许少量只读文件命令: pwd/ls/rg/cat/head/tail/wc; 普通文件写入、替换、删除和移动使用 deferred workspace_file.',
       'repo 只允许读命令: pwd/ls/rg/cat/head/tail/wc; rg 支持普通搜索和 --files, 不能写, 也不能读 .env/logs/node_modules/.git/data/prompts/groups.md.',
       '常用路由不用先 help: 看 repo 传 cwd=repo 后用 `rg --files src` / `rg <pattern> src` / `cat <path>`; 查历史先 `db schema` 再用 `db query {"sql":"SELECT 1","params":{}}`; 查每日工具/token 用 `metrics today|yesterday|YYYY-MM-DD`; 抓网页用 `fetch url <url> [hint]`; 看 reddit 用 `fetch reddit list technology hot 5`.',
-      '不确定语法时先用 `help` 或 `help <topic>`; Moomoo 行情、账户查询和证券模拟交易用 `moomoo <allowed command>`, 交易必须显式 SIMULATE; 聊天约束/风格用 `style global constraints|base|anti_patterns|special_cases` 或 `style group`; AI 腔调检测用 `ai_tone <json>`.',
+      '不确定语法时先用 `help` 或 `help <topic>`; Moomoo 行情、账户查询和证券模拟交易用 `moomoo <allowed command>`, 交易必须显式 SIMULATE; 聊天约束/风格用 `style global [constraints|base|anti_patterns|roleplay|nsfw]` 或 `style group`; AI 腔调检测用 `ai_tone <json>`.',
       '数据库仍只读; ai_tone 只走内置模型; 不允许 psql/curl/node/cat .env/路径逃逸/任意 shell 组合.',
     ].join(' '),
     schema: argsSchema,

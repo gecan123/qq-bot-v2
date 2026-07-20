@@ -4,6 +4,8 @@
 
 它接收 QQ 群聊和私聊消息，把入站事实写入 Postgres，并在单一持久化 `AgentContext` 上运行 `BotLoopAgent`。所有 QQ 消息都按群或联系人形成 mailbox，默认只披露带优先级的有界通知，正文由 Agent 按需读取。
 
+仓库还包含 `apps/admin-web`：一个独立的只读 WebAdmin 运维面。它目前只提供 Overview，不改变 bot/backend 主线，也不是新的事实或 replay 来源。
+
 ## 核心契约
 
 项目的核心产品契约是稳定、可 replay、低成本扩展的 LLM 历史。
@@ -70,6 +72,10 @@ pnpm typecheck     # 只做 TypeScript 检查
 pnpm test          # 在隔离的测试环境中运行 src/**/*.test.ts，不读取本机 .env
 pnpm repo-check    # 检查仓库指令和文档漂移
 pnpm lint          # typecheck + repo-check
+pnpm web:dev       # 在 127.0.0.1:20030 启动只读 WebAdmin
+pnpm web:test      # 运行 WebAdmin Vitest 测试
+pnpm web:typecheck # 检查 WebAdmin TypeScript
+pnpm web:build     # 构建 WebAdmin client 和 server bundle
 pnpm db:generate   # 重新生成 Prisma client
 pnpm db:migrate    # 执行 Prisma migrations
 pnpm db:push       # 本地开发时同步 schema
@@ -77,6 +83,18 @@ pnpm tick          # 通过 SIGUSR1 注入人工调试用 curiosity tick
 pnpm toollog       # 查看最近 tool-call 审计日志
 pnpm toollogf      # follow tool-call 审计日志
 ```
+
+## 只读 WebAdmin
+
+WebAdmin 使用 TanStack Start、React、TanStack Router/Query、Tailwind CSS 4 和 Zod。浏览器只调用同源 Server Function；服务端再通过只读 query service 查询 Postgres，并返回已校验、已序列化的 DTO：
+
+```text
+Browser → TanStack Start Server Function → read service → PostgreSQL
+```
+
+运行前把 `apps/admin-web/.env.example` 复制为不提交的 `apps/admin-web/.env.local`，配置 `DATABASE_URL`，并先运行 `pnpm db:generate`。默认只绑定 `127.0.0.1:20030`。当前没有管理员鉴权，不得改为非可信网络监听或直接公开部署。
+
+WebAdmin 当前只展示 ledger/runtime/Goal/token/tool-call 汇总。它不能更新或删除 ledger、runtime state、checkpoint、Goal、消息、媒体或 workspace side-data，也不能用页面缓存或查询结果重建 `AgentContext`。
 
 ## 运行形态
 
@@ -100,6 +118,7 @@ pnpm toollogf      # follow tool-call 审计日志
 - `src/messaging/**`：出站发送路径。
 - `src/browser/**`：browser sidecar protocol 和 action logs。
 - `src/ops/**`：运维日志和仓库检查。
+- `apps/admin-web/**`：独立只读 WebAdmin；数据库访问仅位于 server-only 边界。
 
 ## 开发注意事项
 

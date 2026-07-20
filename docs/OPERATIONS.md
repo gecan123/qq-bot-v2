@@ -51,6 +51,10 @@ pnpm typecheck
 pnpm test
 pnpm lint
 pnpm repo-check
+pnpm web:dev
+pnpm web:test
+pnpm web:typecheck
+pnpm web:build
 pnpm agent:doctor
 pnpm agent:metrics
 pnpm agent:daily-metrics
@@ -68,6 +72,35 @@ pnpm browser:controller
 pnpm toollog
 pnpm toollogf
 ```
+
+### WebAdmin（只读）
+
+`apps/admin-web` 当前只提供 Overview，展示 ledger/runtime/Goal/token/tool-call 汇总。它使用 TanStack Start、React、TanStack Router/Query、Tailwind CSS 4 和 Zod；浏览器到数据库的数据流是：
+
+```text
+Browser → TanStack Start Server Function → read service → PostgreSQL
+```
+
+首次运行先生成根 Prisma client，并创建 app 私有环境文件：
+
+```bash
+pnpm db:generate
+cp apps/admin-web/.env.example apps/admin-web/.env.local
+pnpm web:dev
+```
+
+`apps/admin-web/.env.local` 只需提供 `DATABASE_URL`，不得提交。开发服务器默认绑定 `127.0.0.1:20030`。当前没有管理员鉴权，禁止改为非可信接口监听、直接公开部署或经未受控反向代理暴露。
+
+常用静态验证：
+
+```bash
+pnpm web:test
+pnpm web:typecheck
+pnpm web:build
+pnpm repo-check
+```
+
+构建不连接数据库；真实页面加载才通过 Server Function 使用 `DATABASE_URL`。第一阶段所有管理接口只读，不允许更新 ledger、runtime state、checkpoint、Goal、消息、媒体或 workspace side-data。WebAdmin、页面 cache 和查询 DTO 都不是 replay source，不能重建或改写 `AgentContext`。
 
 ### Agent Context 占用分析
 

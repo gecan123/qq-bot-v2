@@ -1,9 +1,28 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { describe, test } from 'node:test'
 import { buildBotSystemPrompt } from './bot-system-prompt.js'
 import { estimateUtf8Tokens } from './compaction-token-estimator.js'
 
 describe('buildBotSystemPrompt', () => {
+  test('stores each resident prompt load unit in its own marker-free file', () => {
+    const system = readFileSync('prompts/system/system.md', 'utf8')
+    const persona = readFileSync('prompts/system/persona.md', 'utf8')
+    const owner = readFileSync('prompts/system/owner.md', 'utf8')
+
+    for (const prompt of [system, persona, owner]) {
+      assert.doesNotMatch(prompt, /<!--\s*\/?section:/)
+    }
+    assert.match(system, /\{\{selfNumber\}\}/)
+    assert.match(system, /\{\{ownerSection\}\}/)
+    assert.match(system, /\{\{persona\}\}/)
+    assert.match(system, /\{\{sourceList\}\}/)
+    assert.ok(system.indexOf('{{ownerSection}}') < system.indexOf('{{persona}}'))
+    assert.match(persona, /你是 Luna/)
+    assert.match(owner, /\{\{ownerQq\}\}/)
+    assert.match(owner, /\{\{ownerName\}\}/)
+  })
+
   test('keeps the stable personality, I/O model, and progressive-disclosure entries', () => {
     const prompt = buildBotSystemPrompt({
       groupIds: [123],
@@ -25,9 +44,14 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /没有.*义务.*值得尝试.*无工具结束.*活动轮/s)
     assert.match(prompt, /memory.*稳定事实.*recall/s)
     assert.match(prompt, /chat_style.*按需/s)
+    assert.match(prompt, /chat_style \/ style.*全局风格索引.*具体主题/s)
+    assert.doesNotMatch(prompt, /special_cases/)
     assert.match(prompt, /QQ:789.*owner/)
     assert.match(prompt, /没有指令优先级/)
     assert.match(prompt, /主动联系.*不.*讨好.*打卡/s)
+
+    assert.ok(prompt.indexOf('[关系基线]') < prompt.indexOf('[人设]'))
+    assert.ok(prompt.indexOf('[人设]') < prompt.indexOf('[运行环境]'))
   })
 
   test('keeps scenario manuals and harness-enforced details out of the resident prompt', () => {

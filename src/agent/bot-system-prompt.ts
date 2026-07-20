@@ -1,8 +1,10 @@
 import type { BotOwner } from '../config/index.js'
-import { loadPromptSection } from '../config/prompt-loader.js'
+import { loadPrompt } from '../config/prompt-loader.js'
 import type { TargetMetadataMaps } from './resolve-target-meta.js'
 
-const BOT_SYSTEM_PROMPT_PATH = './prompts/bot-system.md'
+const BOT_SYSTEM_PROMPT_PATH = './prompts/system/system.md'
+const BOT_PERSONA_PROMPT_PATH = './prompts/system/persona.md'
+const BOT_OWNER_PROMPT_PATH = './prompts/system/owner.md'
 
 /**
  * 启动时构建一次 system prompt, 之后整个进程生命周期不再变。
@@ -25,7 +27,7 @@ export interface BuildBotSystemPromptInput {
 
 function renderOwnerSection(owner: BotOwner | null): string | null {
   if (owner == null) return null
-  return renderPromptTemplate(loadPromptSection(BOT_SYSTEM_PROMPT_PATH, 'owner'), {
+  return renderPromptTemplate(loadPrompt(BOT_OWNER_PROMPT_PATH), {
     ownerQq: String(owner.qq),
     ownerName: owner.name,
   })
@@ -48,10 +50,10 @@ function renderSourceList(input: BuildBotSystemPromptInput): string {
 }
 
 export function buildBotSystemPrompt(input: BuildBotSystemPromptInput): string {
-  const persona = loadPromptSection(BOT_SYSTEM_PROMPT_PATH, 'core').trim()
+  const persona = loadPrompt(BOT_PERSONA_PROMPT_PATH).trim()
   const ownerSection = renderOwnerSection(input.owner)
 
-  return renderPromptTemplate(loadPromptSection(BOT_SYSTEM_PROMPT_PATH, 'system'), {
+  return renderPromptTemplate(loadPrompt(BOT_SYSTEM_PROMPT_PATH), {
     selfNumber: String(input.selfNumber),
     ownerSection: ownerSection ? `${ownerSection}\n\n` : '',
     persona,

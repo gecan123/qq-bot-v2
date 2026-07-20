@@ -362,6 +362,18 @@ describe('runRepoChecks', () => {
     assert.deepEqual(result.errors, [])
   })
 
+  test('rejects a complete style topic enum split across resident system prompt lines', () => {
+    const result = runRepoChecks({
+      ...validFiles,
+      'prompts/system/system.md': validFiles['prompts/system/system.md'].replace(
+        '`style global` / `style group <groupId>`',
+        '`style global` 或 `style group <groupId>`\n可选主题：constraints | base | anti_patterns | roleplay | nsfw',
+      ),
+    })
+
+    assert.match(result.errors.join('\n'), /must not enumerate all style topics/)
+  })
+
   test('rejects missing test and observability env markers', () => {
     const result = runRepoChecks({
       ...validFiles,

@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { extname, join } from 'node:path'
+import { hasPathEntry } from '../src/ops/repo-path-entry.js'
 import { runRepoChecks, type RepoCheckFiles } from '../src/ops/repo-check.js'
 
 function readOptionalFile(path: string): string | undefined {
@@ -44,14 +45,14 @@ const files: RepoCheckFiles = {
   'prompts/chat-style/anti-patterns.md': readFileSync('prompts/chat-style/anti-patterns.md', 'utf8'),
   'prompts/chat-style/roleplay.md': readFileSync('prompts/chat-style/roleplay.md', 'utf8'),
   'prompts/chat-style/nsfw.md': readFileSync('prompts/chat-style/nsfw.md', 'utf8'),
-  ...(existsSync('prompts/bot-system.md')
-    ? { 'prompts/bot-system.md': readFileSync('prompts/bot-system.md', 'utf8') }
+  ...(hasPathEntry('prompts/bot-system.md')
+    ? { 'prompts/bot-system.md': 'present' }
     : {}),
-  ...(existsSync('prompts/bot-chat-constraints.md')
-    ? { 'prompts/bot-chat-constraints.md': readFileSync('prompts/bot-chat-constraints.md', 'utf8') }
+  ...(hasPathEntry('prompts/bot-chat-constraints.md')
+    ? { 'prompts/bot-chat-constraints.md': 'present' }
     : {}),
-  ...(existsSync('prompts/bot-style.md')
-    ? { 'prompts/bot-style.md': readFileSync('prompts/bot-style.md', 'utf8') }
+  ...(hasPathEntry('prompts/bot-style.md')
+    ? { 'prompts/bot-style.md': 'present' }
     : {}),
   'prisma/schema.prisma': readFileSync('prisma/schema.prisma', 'utf8'),
   'docs/README.md': readFileSync('docs/README.md', 'utf8'),

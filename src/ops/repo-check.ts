@@ -342,11 +342,8 @@ function checkPromptLayout(files: RepoCheckFiles, errors: string[]): void {
   if (!/(?:全局)?风格索引/.test(systemPrompt)) {
     errors.push('prompts/system/system.md must point to the style index')
   }
-  const styleGlobalLines = systemPrompt
-    .split('\n')
-    .filter(line => line.includes('style global'))
-  const enumeratesAllStyleTopics = styleGlobalLines.some(
-    line => PUBLIC_STYLE_THEMES.every(theme => mentionsToken(line, theme)),
+  const enumeratesAllStyleTopics = PUBLIC_STYLE_THEMES.every(
+    theme => mentionsToken(systemPrompt, theme),
   )
   if (enumeratesAllStyleTopics) {
     errors.push('prompts/system/system.md must not enumerate all style topics')

@@ -20,7 +20,7 @@
     "agent:memory-check": "tsx scripts/agent-memory-check.ts",
     "agent:ledger-check": "tsx scripts/agent-ledger-check.ts",
     "agent:context": "tsx scripts/agent-context.ts",
-    "agent:reset-memory": "tsx scripts/reset-agent-memory.ts --confirm",
+    "agent:reset-state": "tsx scripts/reset-agent-state.ts --confirm",
     "agent:migrate-state-language": "tsx scripts/migrate-long-term-state-language.ts --apply",
     "agent:migrate-memory-v2": "tsx scripts/migrate-memory-v2.ts --apply",
     "agent:canonicalize-memory": "tsx scripts/canonicalize-memory-files.ts --apply",

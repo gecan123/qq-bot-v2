@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { access, cp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import {
+  inspectMemoryFileForMaintenance,
   listMemoryFiles,
   readMemoryFile,
   updateMemoryEntry,
@@ -51,7 +52,13 @@ interface MemoryPlan {
   scope: MemoryScope
   title: string
   titleKey?: string
-  entries: Array<{ id: string; content: string; key?: string }>
+  entries: Array<{
+    id: string
+    content: string
+    key?: string
+    aliases: string[]
+    aliasKeys: Array<string | undefined>
+  }>
 }
 
 interface NotebookPlan {
@@ -115,17 +122,26 @@ export async function migrateLongTermStateToChinese(input: {
     if (!initial.ok) throw new Error(`memory migration read failed: ${currentFile}: ${initial.error}`)
     let revision = initial.revision
     for (const entry of plan.entries) {
-      if (!entry.key) continue
-      const content = translated.get(entry.key)!
-      assertBoundedChinese(content, MEMORY_ENTRY_MAX, entry.key)
+      if (!entry.key && entry.aliasKeys.every((key) => key == null)) continue
+      const content = entry.key ? translated.get(entry.key)! : entry.content
+      assertBoundedChinese(content, MEMORY_ENTRY_MAX, entry.key ?? `${entry.id}:content`)
+      const aliases = entry.aliases.map((alias, index) => {
+        const key = entry.aliasKeys[index]
+        if (!key) return alias
+        const value = translated.get(key)!
+        assertBoundedChinese(value, MEMORY_TITLE_MAX, key)
+        counts.memoryTitles += 1
+        return value
+      })
       const result = await updateMemoryEntry({ rootDir }, {
         file: currentFile,
         entryId: entry.id,
         expectedRevision: revision,
         content,
+        aliases,
       })
       revision = result.revision
-      counts.memoryEntries += 1
+      if (entry.key) counts.memoryEntries += 1
     }
 
     if (plan.titleKey) {
@@ -222,16 +238,21 @@ async function collectMemoryPlans(
   if (listed.truncated) throw new Error('memory migration supports at most 100 files per run')
   const plans: MemoryPlan[] = []
   for (const file of listed.files) {
-    const read = await readMemoryFile({ rootDir }, { file: file.file, maxChars: 12_000 })
-    if (!read.ok) throw new Error(`memory migration read failed: ${file.file}: ${read.error}`)
-    if (read.entriesTruncated) throw new Error(`memory migration entry list truncated: ${file.file}`)
+    const snapshot = await inspectMemoryFileForMaintenance({ rootDir }, file.file)
+    if (snapshot.entriesTruncated) throw new Error(`memory migration entry list truncated: ${file.file}`)
     const titleNeedsTranslation = shouldTranslateMemoryTitle(file.scope, file.title) && needsTranslation(file.title)
     const titleKey = titleNeedsTranslation ? `memory:${file.file}:title` : undefined
     if (titleKey) requests.push({ key: titleKey, text: file.title, kind: 'title' })
-    const entries = read.entries.map((entry) => {
+    const entries = snapshot.entries.map((entry) => {
       const key = needsTranslation(entry.content) ? `memory:${file.file}:entry:${entry.id}` : undefined
       if (key) requests.push({ key, text: entry.content, kind: 'content' })
-      return { id: entry.id, content: entry.content, key }
+      const aliasKeys = entry.aliases.map((alias, index) => {
+        if ((file.scope !== 'self' && file.scope !== 'topic') || !needsTranslation(alias)) return undefined
+        const aliasKey = `memory:${file.file}:entry:${entry.id}:alias:${index}`
+        requests.push({ key: aliasKey, text: alias, kind: 'title' })
+        return aliasKey
+      })
+      return { id: entry.id, content: entry.content, key, aliases: entry.aliases, aliasKeys }
     })
     plans.push({ file: file.file, scope: file.scope, title: file.title, titleKey, entries })
   }
@@ -449,13 +470,15 @@ export async function assertLongTermStateUsesChinese(rootDir: string): Promise<v
     if ((file.scope === 'self' || file.scope === 'topic') && !hasChineseNarrative(file.title)) {
       failures.push(`memory title: ${file.file}`)
     }
-    const read = await readMemoryFile({ rootDir }, { file: file.file, maxChars: 12_000 })
-    if (!read.ok) {
-      failures.push(`memory unreadable: ${file.file}`)
-      continue
-    }
-    for (const entry of read.entries) {
+    const snapshot = await inspectMemoryFileForMaintenance({ rootDir }, file.file)
+    if (snapshot.entriesTruncated) failures.push(`memory entries truncated: ${file.file}`)
+    for (const entry of snapshot.entries) {
       if (!hasChineseNarrative(entry.content)) failures.push(`memory entry: ${file.file}#${entry.id}`)
+      if (file.scope === 'self' || file.scope === 'topic') {
+        for (const alias of entry.aliases) {
+          if (!hasChineseNarrative(alias)) failures.push(`memory alias: ${file.file}#${entry.id}`)
+        }
+      }
     }
   }
   const notebooks = await listNotebookRecords({ rootDir })

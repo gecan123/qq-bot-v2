@@ -252,7 +252,7 @@ describe('merged main-agent tools', () => {
         markdown: '共享 coordinator',
       } as never, makeCtx())
 
-      assert.equal(resourceKeys.some((key) => key === 'memory:self/runtime-wiring.md'), true)
+      assert.equal(resourceKeys.some((key) => key === 'memory:self/self.md'), true)
       assert.equal(resourceKeys.some((key) => key.startsWith('notebook:research/')), true)
       assert.equal(resourceKeys.some((key) => key.startsWith('life-journal:')), true)
     } finally {
@@ -525,7 +525,7 @@ describe('merged main-agent tools', () => {
       }, makeCtx())).content as string) as { ok: boolean; content: string }
 
       assert.equal(written.ok, true)
-      assert.equal(recalled.matches[0]!.file, 'self/working-notes.md')
+      assert.equal(recalled.matches[0]!.file, 'self/self.md')
       assert.match(read.content, /喜欢冷笑话/)
       assert.doesNotThrow(() => zod.toJSONSchema(memoryTool.schema))
     } finally {

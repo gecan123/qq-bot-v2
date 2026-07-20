@@ -60,7 +60,7 @@ describe('agent memory check', () => {
     await writeMemoryEntry({ rootDir, now, id: () => ['duplicate-id', 'superseded-id', 'active-id'][memoryId++]! }, {
       scope: 'self', title: 'facts', content: '第三条事实',
     })
-    const factsPath = join(rootDir, 'memory', 'self', 'facts.md')
+    const factsPath = join(rootDir, 'memory', 'self', 'self.md')
     let facts = await readFile(factsPath, 'utf8')
     facts = facts
       .replace('tier: recent', 'tier: stable')
@@ -72,7 +72,7 @@ describe('agent memory check', () => {
     await writeMemoryEntry({ rootDir, now, id: () => 'self-ref-id' }, {
       scope: 'topic', title: 'self-reference', content: '自引用条目',
     })
-    const selfRefPath = join(rootDir, 'memory', 'topics', 'self-reference.md')
+    const selfRefPath = join(rootDir, 'memory', 'topics', 'topics.md')
     await writeFile(
       selfRefPath,
       (await readFile(selfRefPath, 'utf8')).replace('supersedes: []', 'supersedes: ["self-ref-id"]'),
@@ -137,7 +137,7 @@ describe('agent memory check', () => {
     await writeMemoryEntry(options, { scope: 'self', title: 'compact', content: '线索一' })
     const second = await writeMemoryEntry(options, { scope: 'self', title: 'compact', content: '线索二' })
     await compactMemoryEntries(options, {
-      file: 'self/compact.md',
+      file: 'self/self.md',
       entryIds: ['entry-1', 'entry-2'],
       expectedRevision: second.revision,
       content: '合并后的稳定结论',
@@ -145,9 +145,9 @@ describe('agent memory check', () => {
 
     await writeMemoryEntry(options, { scope: 'self', title: 'maintenance', content: '维护线索一' })
     await writeMemoryEntry(options, { scope: 'self', title: 'maintenance', content: '维护线索二' })
-    const maintenance = await inspectMemoryFileForMaintenance({ rootDir }, 'self/maintenance.md')
+    const maintenance = await inspectMemoryFileForMaintenance({ rootDir }, 'self/self.md')
     await applyMemoryMaintenance(options, {
-      file: 'self/maintenance.md',
+      file: 'self/self.md',
       expectedRevision: maintenance.revision,
       operations: [{
         action: 'merge',
@@ -157,13 +157,13 @@ describe('agent memory check', () => {
     })
 
     const report = await checkAgentMemory({ rootDir })
-    const compacted = await readMemoryFile({ rootDir }, { file: 'self/compact.md' })
-    const maintained = await readMemoryFile({ rootDir }, { file: 'self/maintenance.md' })
+    const compacted = await readMemoryFile({ rootDir }, { file: 'self/self.md' })
+    const maintained = compacted
 
     assert.equal(report.ok, true)
     assert.deepEqual(report.issues.unknownSupersedes, [])
     assert.equal(report.lifecycle.superseded, 4)
-    assert.equal(compacted.ok && compacted.entries.filter((entry) => entry.status === 'superseded').length, 2)
-    assert.equal(maintained.ok && maintained.entries.filter((entry) => entry.status === 'superseded').length, 2)
+    assert.equal(compacted.ok && compacted.entries.filter((entry) => entry.status === 'superseded').length, 4)
+    assert.equal(maintained.ok && maintained.entries.filter((entry) => entry.status === 'superseded').length, 4)
   })
 })

@@ -236,7 +236,7 @@ describe('memory tool schema', () => {
       await tool.execute(input, makeCtx())
       await tool.execute(input, makeCtx())
 
-      assert.deepEqual(queued, ['self/排障方法.md'])
+      assert.deepEqual(queued, ['self/self.md'])
     })
   })
 
@@ -298,7 +298,7 @@ describe('memory tool execute', () => {
         content: 'Markdown memory 要让 replay 保持确定性',
       }, makeCtx())).content as string) as { ok: boolean; file: string }
       assert.equal(written.ok, true)
-      assert.equal(written.file, 'self/工作笔记.md')
+      assert.equal(written.file, 'self/self.md')
 
       const searched = JSON.parse((await tool.execute({
         action: 'search',
@@ -306,12 +306,12 @@ describe('memory tool execute', () => {
         limit: 5,
       }, makeCtx())).content as string) as { ok: boolean; matches: { file: string; snippet: string }[] }
       assert.equal(searched.ok, true)
-      assert.equal(searched.matches[0]!.file, 'self/工作笔记.md')
+      assert.equal(searched.matches[0]!.file, 'self/self.md')
       assert.match(searched.matches[0]!.snippet, /replay/)
 
       const read = JSON.parse((await tool.execute({
         action: 'read',
-        file: 'self/工作笔记.md',
+        file: 'self/self.md',
       }, makeCtx())).content as string) as { ok: boolean; content: string }
       assert.equal(read.ok, true)
       assert.match(read.content, /replay 保持确定性/)
@@ -429,18 +429,18 @@ describe('memory tool execute', () => {
         limit: 50,
       }, makeCtx())).content as string) as { ok: boolean; files: { file: string }[] }
       assert.equal(listed.ok, true)
-      assert.deepEqual(listed.files.map((entry) => entry.file), ['self/旧记录.md'])
+      assert.deepEqual(listed.files.map((entry) => entry.file), ['self/self.md'])
 
       const deleted = JSON.parse((await tool.execute({
         action: 'delete',
-        files: ['self/旧记录.md'],
+        files: ['self/self.md'],
       }, makeCtx())).content as string) as { ok: boolean; deleted: string[] }
       assert.equal(deleted.ok, true)
-      assert.deepEqual(deleted.deleted, ['self/旧记录.md'])
+      assert.deepEqual(deleted.deleted, ['self/self.md'])
 
       const read = JSON.parse((await tool.execute({
         action: 'read',
-        file: 'self/旧记录.md',
+        file: 'self/self.md',
       }, makeCtx())).content as string) as { ok: boolean; error: string }
       assert.equal(read.ok, false)
       assert.match(read.error, /not found/)
@@ -460,13 +460,13 @@ describe('memory tool execute', () => {
       }
       const read = async () => JSON.parse((await tool.execute({
         action: 'read',
-        file: 'self/测试记录.md',
+        file: 'self/self.md',
       }, makeCtx())).content as string) as { revision: string; entries: Array<{ id: string }> }
 
       let snapshot = await read()
       const updated = JSON.parse((await tool.execute({
         action: 'update_entry',
-        file: 'self/测试记录.md',
+        file: 'self/self.md',
         entryId: 'memory-1',
         expectedRevision: snapshot.revision,
         content: '已修正内容',
@@ -476,7 +476,7 @@ describe('memory tool execute', () => {
       snapshot = await read()
       const promoted = JSON.parse((await tool.execute({
         action: 'promote_entry',
-        file: 'self/测试记录.md',
+        file: 'self/self.md',
         entryId: 'memory-3',
         expectedRevision: snapshot.revision,
         content: '稳定保留内容',
@@ -486,7 +486,7 @@ describe('memory tool execute', () => {
       snapshot = await read()
       const compacted = JSON.parse((await tool.execute({
         action: 'compact',
-        file: 'self/测试记录.md',
+        file: 'self/self.md',
         entryIds: ['memory-1', 'memory-2'],
         expectedRevision: snapshot.revision,
         content: '合并后的内容',
@@ -497,7 +497,7 @@ describe('memory tool execute', () => {
       snapshot = await read()
       const deleted = JSON.parse((await tool.execute({
         action: 'delete_entry',
-        file: 'self/测试记录.md',
+        file: 'self/self.md',
         entryId: 'memory-3',
         expectedRevision: snapshot.revision,
       }, makeCtx())).content as string) as { ok: boolean }
@@ -517,7 +517,7 @@ describe('memory tool execute', () => {
       await tool.execute({ action: 'write', scope: 'self', title: '事实', content: '新事实' }, makeCtx())
       const read = async () => JSON.parse((await tool.execute({
         action: 'read',
-        file: 'self/事实.md',
+        file: 'self/self.md',
       }, makeCtx())).content as string) as {
         revision: string
         entries: Array<{ id: string; status: string; supersedes: string[] }>
@@ -526,7 +526,7 @@ describe('memory tool execute', () => {
       let snapshot = await read()
       const disputed = JSON.parse((await tool.execute({
         action: 'mark_disputed',
-        file: 'self/事实.md',
+        file: 'self/self.md',
         entryId: 'memory-1',
         expectedRevision: snapshot.revision,
       }, makeCtx())).content as string) as { ok: boolean }
@@ -535,7 +535,7 @@ describe('memory tool execute', () => {
       snapshot = await read()
       const superseded = JSON.parse((await tool.execute({
         action: 'supersede_entry',
-        file: 'self/事实.md',
+        file: 'self/self.md',
         entryId: 'memory-1',
         replacementEntryId: 'memory-2',
         expectedRevision: snapshot.revision,

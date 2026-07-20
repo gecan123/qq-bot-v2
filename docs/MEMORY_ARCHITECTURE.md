@@ -84,7 +84,7 @@ flowchart LR
 
 ### Memory
 
-- scope 为 `self|person|group|topic`。Memory v2 把人物主体与观察场景正交建模：跨场景人物核心位于 `people/<qq>/core.md`，群内观察位于 `people/<qq>/groups/<group>.md`，私聊观察位于 `people/<qq>/private/<peer>.md`；`groups/<group>.md` 只保存群体整体。无法还原场景的旧人物事实进入 `people/<qq>/unscoped.md` 隔离区，不参与普通人物 recall。
+- scope 为 `self|person|group|topic`。`self` 与 `topic` 分别只有 `self/self.md`、`topics/topics.md` 两个 canonical 文件；write 的 title 作为 entry alias 参与 recall，不决定文件路径。Memory v2 把人物主体与观察场景正交建模：跨场景人物核心位于 `people/<qq>/core.md`，群内观察位于 `people/<qq>/groups/<group>.md`，私聊观察位于 `people/<qq>/private/<peer>.md`；`groups/<group>.md` 只保存群体整体。无法还原场景的旧人物事实进入 `people/<qq>/unscoped.md` 隔离区，不参与普通人物 recall。
 - 每个 entry 带稳定 ID、北京时间、`sourceMessageIds`、`assertedByIds`、`evidenceKind`、语义 `memoryKind` 和 `tier=recent|stable`。人物与群文件都保留“谁说的、在哪个场景说的”，subject 不再与 claimant 混为一谈。
 - 普通 write 先生成 recent；完全相同内容在同文件内去重。
 - person/group 的 write、update 和 correction 必须引用真实存在的 `Message.id`；runtime 从消息行推导 context、claimant 和 `self_report|owner_assertion|third_party_report`，不会要求“关于某人的证据必须由本人发送”。普通人物写入总是先落来源场景，不会直接升级成 core。群写入只接受同群来源，并只允许 `group_*` 语义；个人职业、偏好、身份仍归 person。`correct_entry` 用一次 revision-checked 原子写 supersede 旧 entry 并创建 replacement。
@@ -146,7 +146,7 @@ compaction、Memory maintenance 和 Life review 都会把历史正文或 side-da
 
 ### Memory maintenance
 
-一次成功创建 recent entry 后，只把对应文件排入检查。recent 数量、recent 正文长度或 lexical review 达到条件时，关闭 thinking 的专用 reviewer 才会提出 `promote|merge|discard`：
+一次成功创建 recent entry 后，只把对应文件排入检查。`self/topic` 的连续写入会聚合到各自 canonical 文件，因此跨 title 的重复或流水线索也能进入同一次检查；recent 数量、recent 正文长度或 lexical review 达到条件时，关闭 thinking 的专用 reviewer 才会提出 `promote|merge|discard`：
 
 - 操作受 schema、entry ID、tier 和 revision 校验。
 - 自动流程不能删除 stable，不能把文件清空。

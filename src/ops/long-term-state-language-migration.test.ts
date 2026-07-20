@@ -40,7 +40,7 @@ test('migrates human-readable long-term state to Chinese while preserving machin
       async translate(items) {
         return items.map((item) => ({
           key: item.key,
-          text: item.key.endsWith(':title')
+          text: item.key.endsWith(':title') || item.key.includes(':alias:')
             ? 'OpenAI 中文迁移记录'
             : item.key.endsWith(':topic')
               ? '长期状态语言迁移'
@@ -66,11 +66,14 @@ test('migrates human-readable long-term state to Chinese while preserving machin
     assert.match(await readFile(join(result.backupDir, 'memory', memory.file), 'utf8'), /OpenAI migration notes/)
 
     const migratedMemory = await readMemoryFile({ rootDir }, {
-      file: 'self/openai-中文迁移记录.md',
+      file: 'self/self.md',
       maxChars: 12_000,
     })
     assert.equal(migratedMemory.ok, true)
-    if (migratedMemory.ok) assert.match(migratedMemory.entries[0]!.content, /保留 API 名称/)
+    if (migratedMemory.ok) {
+      assert.match(migratedMemory.entries[0]!.content, /保留 API 名称/)
+      assert.deepEqual(migratedMemory.entries[0]!.aliases, ['OpenAI 中文迁移记录'])
+    }
 
     const notebooks = await listNotebookRecords({ rootDir })
     assert.equal(notebooks.entries[0]!.topic, '长期状态语言迁移')

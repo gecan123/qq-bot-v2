@@ -34,6 +34,9 @@ export type MemoryKind =
   | 'group_history'
   | 'group_structure'
 
+export const SELF_MEMORY_FILE = 'self/self.md'
+export const TOPIC_MEMORY_FILE = 'topics/topics.md'
+
 export interface MemoryStoreOptions {
   rootDir: string
   now?: () => Date
@@ -277,6 +280,7 @@ export async function writeMemoryEntry(
   options: MemoryStoreOptions,
   input: WriteMemoryInput,
 ): Promise<MemoryWriteResult> {
+  const title = titleForInput(input)
   const relativeFile = fileForInput(input)
   const write = async (): Promise<MemoryWriteResult> => {
     const now = options.now?.() ?? new Date()
@@ -284,14 +288,14 @@ export async function writeMemoryEntry(
     const absoluteFile = safeMemoryFile(options.rootDir, relativeFile)
     await mkdir(dirname(absoluteFile), { recursive: true })
 
-    const title = titleForInput(input)
     const existing = await readOptional(absoluteFile)
     if (existing && parseMarkdownMemory(existing)) parseMemoryEntries(existing)
     const base = existing && parseMarkdownMemory(existing)
       ? existing
-      : renderNewFile(input, title, nowIso)
+      : renderNewFile(input, documentTitleForInput(input), nowIso)
     const entries = parseMemoryEntries(base)
     const normalizedContent = normalizeSearchText(input.content)
+    const inputAliases = aliasesForInput(input, title)
     const duplicate = entries.find((entry) => normalizeSearchText(entry.content) === normalizedContent)
     if (duplicate) {
       const sourceMessageIds = [...new Set([
@@ -302,18 +306,21 @@ export async function writeMemoryEntry(
         ...duplicate.assertedByIds,
         ...(input.assertedByIds ?? []),
       ])]
+      const aliases = [...new Set([...duplicate.aliases, ...inputAliases])]
       const duplicateEntries = entries.map((entry) => entry.id === duplicate.id
         ? {
             ...entry,
             updatedAt: nowIso,
             sourceMessageIds,
             assertedByIds,
+            aliases,
             evidenceKind: entry.evidenceKind ?? input.evidenceKind,
             memoryKind: entry.memoryKind ?? input.memoryKind,
           }
         : entry)
       const deduplicatedRaw = sourceMessageIds.length === duplicate.sourceMessageIds.length
         && assertedByIds.length === duplicate.assertedByIds.length
+        && aliases.length === duplicate.aliases.length
         && (duplicate.evidenceKind != null || input.evidenceKind == null)
         && (duplicate.memoryKind != null || input.memoryKind == null)
         ? base
@@ -346,7 +353,7 @@ export async function writeMemoryEntry(
       ...(input.memoryKind ? { memoryKind: input.memoryKind } : {}),
       tier: 'recent',
       status: 'active',
-      aliases: [],
+      aliases: inputAliases,
       supersedes: [],
       start: 0,
       end: 0,
@@ -674,6 +681,7 @@ export async function updateMemoryEntry(
     content: string
     sourceMessageIds?: number[]
     assertedByIds?: string[]
+    aliases?: string[]
     evidenceKind?: MemoryEvidenceKind
     memoryKind?: MemoryKind
   },
@@ -688,6 +696,7 @@ export async function updateMemoryEntry(
           content: input.content.trim(),
           sourceMessageIds: [...new Set([...entry.sourceMessageIds, ...(input.sourceMessageIds ?? [])])],
           assertedByIds: [...new Set([...entry.assertedByIds, ...(input.assertedByIds ?? [])])],
+          aliases: input.aliases == null ? entry.aliases : [...new Set(input.aliases)],
           evidenceKind: input.evidenceKind ?? entry.evidenceKind,
           memoryKind: input.memoryKind ?? entry.memoryKind,
         }
@@ -1164,15 +1173,6 @@ function memoryRoot(rootDir: string): string {
   return join(rootDir, 'memory')
 }
 
-function slug(value: string): string {
-  return value
-    .trim()
-    .toLocaleLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80) || 'untitled'
-}
-
 function titleForInput(input: WriteMemoryInput): string {
   if (input.title?.trim()) return input.title.trim()
   if (input.id?.trim()) return input.id.trim()
@@ -1184,6 +1184,16 @@ function titleForInput(input: WriteMemoryInput): string {
     )
   }
   return input.scope
+}
+
+function documentTitleForInput(input: WriteMemoryInput): string {
+  if (input.scope === 'self') return '自我记忆'
+  if (input.scope === 'topic') return '主题记忆'
+  return titleForInput(input)
+}
+
+function aliasesForInput(input: WriteMemoryInput, title: string): string[] {
+  return input.scope === 'self' || input.scope === 'topic' ? [title] : []
 }
 
 function fileForInput(input: WriteMemoryInput): string {
@@ -1199,8 +1209,8 @@ function fileForInput(input: WriteMemoryInput): string {
       : `people/${personId}/private/${contextId}.md`
   }
   if (input.scope === 'group') return `groups/${requiredId(input)}.md`
-  if (input.scope === 'topic') return `topics/${slug(titleForInput(input))}.md`
-  return `self/${slug(titleForInput(input))}.md`
+  if (input.scope === 'topic') return TOPIC_MEMORY_FILE
+  return SELF_MEMORY_FILE
 }
 
 function requiredContextId(context: ConversationMemoryContext): string {

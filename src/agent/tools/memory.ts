@@ -81,7 +81,7 @@ const argsSchema = z.discriminatedUnion('action', [
     action: z.literal('write').describe('写入一条长期记忆.'),
     scope: scopeSchema.describe('记忆范围: self=自己做事/经验, person=某个 QQ 用户, group=某个群, topic=某个主题.'),
     id: idSchema.optional().describe('person/group 需要: QQ 号或群号. topic/self 通常不需要.'),
-    title: chineseMemoryTitleSchema.optional().describe('topic 必填稳定中文主题标题; self 可选. 专有名词可保留原文，但要用中文说明；不要用“今日速记”这类日期流水账标题.'),
+    title: chineseMemoryTitleSchema.optional().describe('topic 必填稳定中文主题标签; self 可选. 标签保存在 entry aliases 中用于召回，不会新建文件；专有名词可保留原文，但要用中文说明.'),
     content: chineseMemoryContentSchema(500).describe('要记下来的内容. ≤500 字, 以中文为叙述载体，用自己的话写，一条记一件事；命令、路径、API 名和专有名词保留原文.'),
     sourceMessageIds: z.array(z.number().int().positive()).min(1).max(20).optional()
       .describe('person/group 必填: 支撑这条事实的真实 messages.id；self/topic 可选.'),
@@ -255,7 +255,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
       'action=update_entry/delete_entry/promote_entry/mark_disputed/supersede_entry/compact: 修改文件内记录; 先 read 取得 entryId 和最新 revision. compact 会生成 stable 记忆.',
       'person/group 写入和修正必须引用真实 sourceMessageIds。人物事实写 person，由 runtime 绑定来源场景；group 只写群体整体的规则、节奏、共同话题、文化、历史或结构，禁止放单个人的职业、偏好或身份。事实错误时优先用 correct_entry 原子保留旧条目并写 replacement.',
       '可信度不接受 trust=high 这类模型自报字段; 对冲突事实用 mark_disputed，对已有替代事实用 supersede_entry 保留演化链.',
-      'person/group 写入需要 id; topic 写入必须提供稳定 title，禁止落入无主题 topic.md; self 可用 title 分主题.',
+      'person/group 写入需要 id; topic 写入必须提供稳定 title 作为 entry 检索标签；self/topic 分别持续写入一个 canonical 文件.',
       '所有人类可读的 title/content 都以中文为叙述载体；命令、路径、URL、API 名和专有名词可保留原文，但要用中文说明.',
       '写入要用自己的话, 不要照搬原话; 查询结果用于自然说话, 不要像报数据库.',
     ].join(' '),

@@ -65,7 +65,7 @@ async function withTempMemory<T>(fn: (rootDir: string) => Promise<T>): Promise<T
 }
 
 describe('memory-store', () => {
-  test('writes self memory to a markdown file with frontmatter', async () => {
+  test('writes all self memory to one canonical markdown file and keeps the supplied title as an entry alias', async () => {
     await withTempMemory(async (rootDir) => {
       const result = await writeMemoryEntry({
         rootDir,
@@ -77,11 +77,12 @@ describe('memory-store', () => {
       })
 
       assert.equal(result.ok, true)
-      assert.equal(result.file, 'self/working-notes.md')
+      assert.equal(result.file, 'self/self.md')
 
-      const raw = await readFile(join(rootDir, 'memory', 'self', 'working-notes.md'), 'utf8')
+      const raw = await readFile(join(rootDir, 'memory', 'self', 'self.md'), 'utf8')
       assert.match(raw, /scope: self/)
-      assert.match(raw, /title: working-notes/)
+      assert.match(raw, /title: 自我记忆/)
+      assert.match(raw, /aliases: \["working-notes"\]/)
       assert.match(raw, /updatedAt: 2026-06-27T08:00:00.000\+08:00/)
       assert.match(raw, /<!-- memory-entry/)
       assert.match(raw, /- 以后做本地记忆优先保持 tool result 有上限/)
@@ -237,27 +238,27 @@ describe('memory-store', () => {
       }
       await writeMemoryEntry(options, { scope: 'self', title: 'facts', content: '旧事实' })
       await writeMemoryEntry(options, { scope: 'self', title: 'facts', content: '新事实' })
-      let snapshot = await readMemoryFile({ rootDir }, { file: 'self/facts.md' })
+      let snapshot = await readMemoryFile({ rootDir }, { file: 'self/self.md' })
       assert.equal(snapshot.ok, true)
       if (!snapshot.ok) return
 
       await markMemoryEntryDisputed(options, {
-        file: 'self/facts.md',
+        file: 'self/self.md',
         entryId: 'status-1',
         expectedRevision: snapshot.revision,
       })
-      snapshot = await readMemoryFile({ rootDir }, { file: 'self/facts.md' })
+      snapshot = await readMemoryFile({ rootDir }, { file: 'self/self.md' })
       assert.equal(snapshot.ok, true)
       if (!snapshot.ok) return
       assert.equal(snapshot.entries[0]?.status, 'disputed')
 
       await supersedeMemoryEntry(options, {
-        file: 'self/facts.md',
+        file: 'self/self.md',
         entryId: 'status-1',
         replacementEntryId: 'status-2',
         expectedRevision: snapshot.revision,
       })
-      snapshot = await readMemoryFile({ rootDir }, { file: 'self/facts.md' })
+      snapshot = await readMemoryFile({ rootDir }, { file: 'self/self.md' })
       assert.equal(snapshot.ok, true)
       if (!snapshot.ok) return
       assert.equal(snapshot.entries.find((entry) => entry.id === 'status-1')?.status, 'superseded')
@@ -265,7 +266,7 @@ describe('memory-store', () => {
 
       await assert.rejects(
         supersedeMemoryEntry(options, {
-          file: 'self/facts.md',
+          file: 'self/self.md',
           entryId: 'status-2',
           replacementEntryId: 'status-2',
           expectedRevision: snapshot.revision,
@@ -275,7 +276,7 @@ describe('memory-store', () => {
     })
   })
 
-  test('writes person, group, and topic memories to scoped files', async () => {
+  test('writes person and group memories to scoped files and all topic memories to one canonical file', async () => {
     await withTempMemory(async (rootDir) => {
       const now = () => new Date('2026-06-27T00:00:00.000Z')
       const person = await writeMemoryEntry({ rootDir, now }, {
@@ -297,7 +298,35 @@ describe('memory-store', () => {
 
       assert.equal(person.file, 'people/12345/groups/98765.md')
       assert.equal(group.file, 'groups/98765.md')
-      assert.equal(topic.file, 'topics/qq-bot-v2.md')
+      assert.equal(topic.file, 'topics/topics.md')
+      const topicRead = await readMemoryFile({ rootDir }, { file: 'topics/topics.md' })
+      assert.equal(topicRead.ok, true)
+      assert.deepEqual(topicRead.ok && topicRead.entries[0]?.aliases, ['qq-bot-v2'])
+    })
+  })
+
+  test('routes changing self/topic titles into canonical files without losing title-based recall', async () => {
+    await withTempMemory(async (rootDir) => {
+      await writeMemoryEntry({ rootDir }, {
+        scope: 'self', title: '深夜节奏 20260718', content: '深夜时更适合低频观察',
+      })
+      await writeMemoryEntry({ rootDir }, {
+        scope: 'self', title: '深夜节奏 20260719', content: '不要重复轮询同一群聊',
+      })
+      await writeMemoryEntry({ rootDir }, {
+        scope: 'topic', title: 'lit-window 夜间模式', content: '群聊在夜间保持低频活跃',
+      })
+      await writeMemoryEntry({ rootDir }, {
+        scope: 'topic', title: 'lit-window 跨日模式', content: '活跃时段延伸到了清晨',
+      })
+
+      const listed = await listMemoryFiles({ rootDir }, {})
+      assert.deepEqual(listed.files.map((file) => file.file).sort(), ['self/self.md', 'topics/topics.md'])
+      const recalled = await recallMemoryEntries({ rootDir }, {
+        scope: 'topic', query: 'lit-window 跨日模式',
+      })
+      assert.deepEqual(recalled.matches.map((match) => match.content), ['活跃时段延伸到了清晨'])
+      assert.equal(recalled.matches[0]?.scoreReasons.includes('alias_exact'), true)
     })
   })
 
@@ -380,7 +409,7 @@ describe('memory-store', () => {
         rootDir,
         workspaceStateCoordinator: gated.coordinator,
       }, {
-        file: 'self/atomic.md',
+        file: 'self/self.md',
         entryId: initial.entryId,
         expectedRevision: initial.revision,
         content: 'stale update',
@@ -391,7 +420,7 @@ describe('memory-store', () => {
       await append
       const updateError = await update
 
-      assert.deepEqual(requestedKeys, ['memory:self/atomic.md', 'memory:self/atomic.md'])
+      assert.deepEqual(requestedKeys, ['memory:self/self.md', 'memory:self/self.md'])
       assert.equal(updateError instanceof MemoryStoreError && updateError.code === 'revision_conflict', true)
     })
   })
@@ -417,9 +446,9 @@ describe('memory-store', () => {
 
       assert.equal(result.ok, true)
       assert.equal(result.matches.length, 1)
-      assert.equal(result.matches[0]!.file, 'self/working-notes.md')
+      assert.equal(result.matches[0]!.file, 'self/self.md')
       assert.equal(result.matches[0]!.scope, 'self')
-      assert.match(result.matches[0]!.snippet, /Markdown memory/)
+      assert.match(result.matches[0]!.snippet, /Markdown memo/)
       assert.equal(result.skippedCorrupt, 0)
     })
   })
@@ -527,7 +556,7 @@ describe('memory-store', () => {
       )
 
       const discovered = await recallMemoryEntries({ rootDir }, { query: '偏好' })
-      assert.deepEqual(discovered.matches.map((match) => match.file), ['self/habits.md'])
+      assert.deepEqual(discovered.matches.map((match) => match.file), ['self/self.md'])
     })
   })
 
@@ -572,7 +601,7 @@ describe('memory-store', () => {
       })
 
       const result = await readMemoryFile({ rootDir, maxReadChars: 80 }, {
-        file: 'self/working-notes.md',
+        file: 'self/self.md',
       })
 
       assert.equal(result.ok, true)
@@ -597,7 +626,7 @@ describe('memory-store', () => {
 
       assert.equal(result.ok, true)
       assert.equal(result.skippedCorrupt, 1)
-      assert.deepEqual(result.matches.map((match) => match.file), ['self/good.md'])
+      assert.deepEqual(result.matches.map((match) => match.file), ['self/self.md'])
     })
   })
 
@@ -637,10 +666,10 @@ describe('memory-store', () => {
       const result = await listMemoryFiles({ rootDir }, { scope: 'self', limit: 1 })
 
       assert.equal(result.ok, true)
-      assert.equal(result.total, 2)
-      assert.equal(result.truncated, true)
+      assert.equal(result.total, 1)
+      assert.equal(result.truncated, false)
       assert.equal(result.files.length, 1)
-      assert.equal(result.files[0]!.file, 'self/new.md')
+      assert.equal(result.files[0]!.file, 'self/self.md')
       assert.equal(result.files[0]!.scope, 'self')
       assert.equal(result.files[0]!.updatedAt, '2026-07-06T08:00:00.000+08:00')
       assert.ok(result.files[0]!.sizeBytes > 0)
@@ -658,14 +687,14 @@ describe('memory-store', () => {
       await writeFile(outside, 'keep', 'utf8')
 
       const result = await deleteMemoryFiles({ rootDir }, {
-        files: ['self/old.md', 'self/missing.md', '../outside.md'],
+        files: ['self/self.md', 'self/missing.md', '../outside.md'],
       })
 
-      assert.deepEqual(result.deleted, ['self/old.md'])
+      assert.deepEqual(result.deleted, ['self/self.md'])
       assert.deepEqual(result.missing, ['self/missing.md'])
       assert.equal(result.failed.length, 1)
       assert.equal(result.failed[0]!.file, '../outside.md')
-      await assert.rejects(access(join(rootDir, 'memory', 'self', 'old.md')))
+      await assert.rejects(access(join(rootDir, 'memory', 'self', 'self.md')))
       assert.equal(await readFile(outside, 'utf8'), 'keep')
     })
   })
@@ -674,11 +703,11 @@ describe('memory-store', () => {
     await withTempMemory(async (rootDir) => {
       await mkdir(join(rootDir, 'memory', 'self'), { recursive: true })
       await writeFile(
-        join(rootDir, 'memory', 'self', 'legacy.md'),
+        join(rootDir, 'memory', 'self', 'self.md'),
         '---\nscope: self\ntitle: legacy\nupdatedAt: 2026-07-01T00:00:00.000Z\naliases: []\n---\n\n## 最近线索\n\n- 2026-07-01T00:00:00.000Z: wrong\n',
         'utf8',
       )
-      const before = await readMemoryFile({ rootDir }, { file: 'self/legacy.md' })
+      const before = await readMemoryFile({ rootDir }, { file: 'self/self.md' })
       assert.deepEqual(before, { ok: false, error: 'memory file format is not supported' })
       assert.equal((await searchMemoryEntries({ rootDir }, { keyword: 'wrong' })).matches.length, 0)
       assert.equal((await listMemoryFiles({ rootDir })).skippedCorrupt, 1)
@@ -691,7 +720,7 @@ describe('memory-store', () => {
         },
         { scope: 'self', title: 'legacy', content: 'new format only' },
       )
-      const after = await readMemoryFile({ rootDir }, { file: 'self/legacy.md' })
+      const after = await readMemoryFile({ rootDir }, { file: 'self/self.md' })
       assert.equal(after.ok, true)
       if (!after.ok) return
       assert.equal(after.entries[0]?.id, 'new-entry')
@@ -712,17 +741,17 @@ describe('memory-store', () => {
       await writeMemoryEntry(options, { scope: 'self', title: 'notes', content: 'detail a' })
       await writeMemoryEntry(options, { scope: 'self', title: 'notes', content: 'detail b' })
       await writeMemoryEntry(options, { scope: 'self', title: 'notes', content: 'keep c' })
-      const before = await readMemoryFile({ rootDir }, { file: 'self/notes.md' })
+      const before = await readMemoryFile({ rootDir }, { file: 'self/self.md' })
       assert.equal(before.ok, true)
       if (!before.ok) return
 
       const compacted = await compactMemoryEntries(options, {
-        file: 'self/notes.md',
+        file: 'self/self.md',
         entryIds: ['memory-1', 'memory-2'],
         expectedRevision: before.revision,
         content: 'combined',
       })
-      const after = await readMemoryFile({ rootDir }, { file: 'self/notes.md' })
+      const after = await readMemoryFile({ rootDir }, { file: 'self/self.md' })
       assert.equal(after.ok, true)
       if (!after.ok) return
       assert.equal(compacted.entryId, 'memory-4')
@@ -735,7 +764,7 @@ describe('memory-store', () => {
 
       await assert.rejects(
         deleteMemoryEntry(options, {
-          file: 'self/notes.md',
+          file: 'self/self.md',
           entryId: 'memory-1',
           expectedRevision: after.revision,
         }),
@@ -757,17 +786,17 @@ describe('memory-store', () => {
       await writeMemoryEntry(options, { scope: 'self', title: 'methods', content: '先看代码' })
       await writeMemoryEntry(options, { scope: 'self', title: 'methods', content: '先看日志' })
       await writeMemoryEntry(options, { scope: 'self', title: 'methods', content: '一次性闲聊' })
-      const before = await inspectMemoryFileForMaintenance({ rootDir }, 'self/methods.md')
+      const before = await inspectMemoryFileForMaintenance({ rootDir }, 'self/self.md')
 
       const applied = await applyMemoryMaintenance(options, {
-        file: 'self/methods.md',
+        file: 'self/self.md',
         expectedRevision: before.revision,
         operations: [
           { action: 'merge', entryIds: ['maint-1', 'maint-2'], content: '判断问题时先看代码和实际日志' },
           { action: 'discard', entryId: 'maint-3', reason: '一次性内容' },
         ],
       })
-      const after = await inspectMemoryFileForMaintenance({ rootDir }, 'self/methods.md')
+      const after = await inspectMemoryFileForMaintenance({ rootDir }, 'self/self.md')
 
       assert.equal(applied.merged, 1)
       assert.equal(applied.discarded, 1)
@@ -776,7 +805,7 @@ describe('memory-store', () => {
       assert.equal(after.entries[0]?.content, '判断问题时先看代码和实际日志')
       await assert.rejects(
         applyMemoryMaintenance(options, {
-          file: 'self/methods.md',
+          file: 'self/self.md',
           expectedRevision: after.revision,
           operations: [{ action: 'discard', entryId: after.entries[0]!.id, reason: '不允许' }],
         }),
@@ -784,18 +813,18 @@ describe('memory-store', () => {
       )
       await assert.rejects(
         applyMemoryMaintenance(options, {
-          file: 'self/methods.md',
+          file: 'self/self.md',
           expectedRevision: after.revision,
           operations: [{ action: 'promote', entryId: after.entries[0]!.id, content: '重复总结' }],
         }),
         /cannot re-promote stable entry/,
       )
 
-      await writeMemoryEntry(options, { scope: 'self', title: 'ephemeral', content: '唯一线索' })
-      const ephemeral = await inspectMemoryFileForMaintenance({ rootDir }, 'self/ephemeral.md')
+      await writeMemoryEntry(options, { scope: 'topic', title: '短期线索', content: '唯一线索' })
+      const ephemeral = await inspectMemoryFileForMaintenance({ rootDir }, 'topics/topics.md')
       await assert.rejects(
         applyMemoryMaintenance(options, {
-          file: 'self/ephemeral.md',
+          file: 'topics/topics.md',
           expectedRevision: ephemeral.revision,
           operations: [{ action: 'discard', entryId: ephemeral.entries[0]!.id, reason: '不能清空文件' }],
         }),
@@ -814,10 +843,10 @@ describe('memory-store', () => {
       await writeMemoryEntry(options, {
         scope: 'self', title: 'evidence', content: '跨天仍然有用的方法', sourceMessageIds: [101],
       })
-      let snapshot = await inspectMemoryFileForMaintenance({ rootDir }, 'self/evidence.md')
+      let snapshot = await inspectMemoryFileForMaintenance({ rootDir }, 'self/self.md')
       await assert.rejects(
         applyMemoryMaintenance(options, {
-          file: 'self/evidence.md',
+          file: 'self/self.md',
           expectedRevision: snapshot.revision,
           operations: [{ action: 'promote', entryId: 'evidence-1', content: '稳定方法' }],
         }),
@@ -827,13 +856,13 @@ describe('memory-store', () => {
       await writeMemoryEntry(options, {
         scope: 'self', title: 'evidence', content: '跨天仍然有用的方法', sourceMessageIds: [102],
       })
-      snapshot = await inspectMemoryFileForMaintenance({ rootDir }, 'self/evidence.md')
+      snapshot = await inspectMemoryFileForMaintenance({ rootDir }, 'self/self.md')
       await applyMemoryMaintenance(options, {
-        file: 'self/evidence.md',
+        file: 'self/self.md',
         expectedRevision: snapshot.revision,
         operations: [{ action: 'promote', entryId: 'evidence-1', content: '稳定方法' }],
       })
-      const after = await inspectMemoryFileForMaintenance({ rootDir }, 'self/evidence.md')
+      const after = await inspectMemoryFileForMaintenance({ rootDir }, 'self/self.md')
       assert.equal(after.entries[0]?.tier, 'stable')
     })
   })
@@ -878,26 +907,26 @@ describe('memory-store', () => {
       }
       await writeMemoryEntry(options, { scope: 'self', title: 'lifecycle', content: '待核实事实' })
       await writeMemoryEntry(options, { scope: 'self', title: 'lifecycle', content: '替代事实' })
-      let snapshot = await readMemoryFile({ rootDir }, { file: 'self/lifecycle.md' })
+      let snapshot = await readMemoryFile({ rootDir }, { file: 'self/self.md' })
       assert.equal(snapshot.ok, true)
       if (!snapshot.ok) return
       await markMemoryEntryDisputed(options, {
-        file: 'self/lifecycle.md', entryId: 'lifecycle-2', expectedRevision: snapshot.revision,
+        file: 'self/self.md', entryId: 'lifecycle-2', expectedRevision: snapshot.revision,
       })
-      snapshot = await readMemoryFile({ rootDir }, { file: 'self/lifecycle.md' })
+      snapshot = await readMemoryFile({ rootDir }, { file: 'self/self.md' })
       assert.equal(snapshot.ok, true)
       if (!snapshot.ok) return
       await supersedeMemoryEntry(options, {
-        file: 'self/lifecycle.md',
+        file: 'self/self.md',
         entryId: 'lifecycle-1',
         replacementEntryId: 'lifecycle-2',
         expectedRevision: snapshot.revision,
       })
-      const before = await inspectMemoryFileForMaintenance({ rootDir }, 'self/lifecycle.md')
+      const before = await inspectMemoryFileForMaintenance({ rootDir }, 'self/self.md')
 
       await assert.rejects(
         applyMemoryMaintenance(options, {
-          file: 'self/lifecycle.md',
+          file: 'self/self.md',
           expectedRevision: before.revision,
           operations: [{ action: 'promote', entryId: 'lifecycle-1', content: '不应晋升' }],
         }),
@@ -905,7 +934,7 @@ describe('memory-store', () => {
       )
       await assert.rejects(
         applyMemoryMaintenance(options, {
-          file: 'self/lifecycle.md',
+          file: 'self/self.md',
           expectedRevision: before.revision,
           operations: [{ action: 'discard', entryId: 'lifecycle-2', reason: '不应删除 disputed' }],
         }),
@@ -913,7 +942,7 @@ describe('memory-store', () => {
       )
       await assert.rejects(
         applyMemoryMaintenance(options, {
-          file: 'self/lifecycle.md',
+          file: 'self/self.md',
           expectedRevision: before.revision,
           operations: [{
             action: 'merge',

@@ -19,6 +19,7 @@
     "agent:reset-memory": "tsx scripts/reset-agent-memory.ts --confirm",
     "agent:migrate-state-language": "tsx scripts/migrate-long-term-state-language.ts --apply",
     "agent:migrate-memory-v2": "tsx scripts/migrate-memory-v2.ts --apply",
+    "agent:canonicalize-memory": "tsx scripts/canonicalize-memory-files.ts --apply",
     "start": "node dist/index.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

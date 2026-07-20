@@ -39,7 +39,7 @@ describe('memory maintenance runtime', () => {
       recordUsage() {},
     })
 
-    runtime.enqueue('self/methods.md')
+    runtime.enqueue('self/self.md')
     await runtime.drain()
 
     assert.equal(calls, 0)
@@ -72,7 +72,7 @@ describe('memory maintenance runtime', () => {
       recordUsage() {},
     })
 
-    runtime.enqueue('self/methods.md')
+    runtime.enqueue('self/self.md')
     await runtime.drain()
 
     assert.equal(capturedMessages.length, 2)
@@ -124,9 +124,9 @@ describe('memory maintenance runtime', () => {
       recordUsage() {},
     })
 
-    runtime.enqueue('self/methods.md')
+    runtime.enqueue('self/self.md')
     await runtime.drain()
-    const after = await inspectMemoryFileForMaintenance({ rootDir }, 'self/methods.md')
+    const after = await inspectMemoryFileForMaintenance({ rootDir }, 'self/self.md')
 
     assert.equal(calls, 1)
     assert.equal(after.recentCount, 0)
@@ -175,12 +175,12 @@ describe('memory maintenance runtime', () => {
       workspaceStateCoordinator,
     })
 
-    const first = runtime.enqueue('self/methods.md')
-    const second = runtime.enqueue('self/methods.md')
+    const first = runtime.enqueue('self/self.md')
+    const second = runtime.enqueue('self/self.md')
     assert.equal(first.coalesced, false)
     assert.equal(second.coalesced, true)
     await runtime.drain()
-    const after = await inspectMemoryFileForMaintenance({ rootDir }, 'self/methods.md')
+    const after = await inspectMemoryFileForMaintenance({ rootDir }, 'self/self.md')
 
     assert.equal(calls, 2)
     assert.equal(after.stableCount, 1)
@@ -195,7 +195,7 @@ describe('memory maintenance runtime', () => {
     await writeMemoryEntry({ rootDir, id: () => 'entry-2' }, {
       scope: 'self', title: 'methods', content: '线索二',
     })
-    const before = await inspectMemoryFileForMaintenance({ rootDir }, 'self/methods.md')
+    const before = await inspectMemoryFileForMaintenance({ rootDir }, 'self/self.md')
     const llm: LlmClient = {
       async chat() {
         calls++
@@ -215,9 +215,9 @@ describe('memory maintenance runtime', () => {
       recordUsage() {},
     })
 
-    runtime.enqueue('self/methods.md')
+    runtime.enqueue('self/self.md')
     await runtime.drain()
-    const after = await inspectMemoryFileForMaintenance({ rootDir }, 'self/methods.md')
+    const after = await inspectMemoryFileForMaintenance({ rootDir }, 'self/self.md')
 
     assert.equal(calls, 2)
     assert.equal(after.revision, before.revision)
@@ -260,9 +260,9 @@ describe('memory maintenance runtime', () => {
       recordUsage() {},
     })
 
-    runtime.enqueue('self/evidence.md')
+    runtime.enqueue('self/self.md')
     await runtime.drain()
-    const after = await inspectMemoryFileForMaintenance({ rootDir }, 'self/evidence.md')
+    const after = await inspectMemoryFileForMaintenance({ rootDir }, 'self/self.md')
 
     assert.equal(after.entries.find((entry) => entry.id === 'single-source')?.tier, 'recent')
   })

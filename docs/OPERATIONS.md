@@ -39,6 +39,10 @@ pnpm agent:migrate-state-language
 
 先用 `tsx scripts/migrate-memory-v2.ts` 只读预览；确认后停止 bot，再运行 `pnpm agent:migrate-memory-v2`。迁移会先备份到 `data/agent-workspace/db-backups/memory-v2-*`，再原子替换 memory 目录：群文件中的显式个人事实移动到该人物的来源群场景；旧人物文件中无法还原来源场景的条目进入 `unscoped.md`，并以 `legacy_unverified/disputed` 隔离；其余文件升级为 v2 并保留 entry ID、时间、tier/status、source 和 supersedes。迁移后运行 `pnpm agent:memory-check`。
 
+### 归并 Self / Topic Memory 文件
+
+先用 `pnpm exec tsx scripts/canonicalize-memory-files.ts` 只读预览；确认后停止 bot，再运行 `pnpm agent:canonicalize-memory`。命令把所有 `self/*.md` 无损归并到 `self/self.md`，把所有 `topics/*.md` 无损归并到 `topics/topics.md`；旧文件 title 会进入对应 entry aliases，继续参与 recall。应用前会备份到 `data/agent-workspace/db-backups/memory-canonical-*`，并在临时目录验证全部 Memory 文件后原子替换。迁移后运行 `pnpm agent:memory-check`。
+
 ```bash
 pnpm dev
 pnpm dev:once
@@ -54,6 +58,7 @@ pnpm agent:memory-check
 pnpm agent:ledger-check
 pnpm agent:context
 pnpm agent:migrate-state-language
+pnpm agent:canonicalize-memory
 pnpm --silent agent:context -- --json
 pnpm db:generate
 pnpm db:migrate

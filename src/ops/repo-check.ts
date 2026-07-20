@@ -342,9 +342,13 @@ function checkPromptLayout(files: RepoCheckFiles, errors: string[]): void {
   if (!/(?:全局)?风格索引/.test(systemPrompt)) {
     errors.push('prompts/system/system.md must point to the style index')
   }
-  const completeThemeEnum = `style global [${PUBLIC_STYLE_THEMES.join('|')}]`
-  if (systemPrompt.includes(completeThemeEnum)) {
-    errors.push('prompts/system/system.md must not hard-code the complete style theme enum')
+  const styleThemeSeparator = String.raw`(?:\s*(?:\||/|,|，)\s*|\s+)`
+  const completeThemeEnumPattern = new RegExp(
+    String.raw`style\s+global\s*\[?\s*${PUBLIC_STYLE_THEMES.join(styleThemeSeparator)}\s*\]?`,
+    'i',
+  )
+  if (completeThemeEnumPattern.test(systemPrompt)) {
+    errors.push('prompts/system/system.md must not enumerate all style topics')
   }
 
   for (const path of STANDALONE_PROMPT_PATHS) {

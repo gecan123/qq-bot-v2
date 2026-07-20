@@ -326,6 +326,18 @@ describe('runRepoChecks', () => {
     assert.match(result.errors.join('\n'), /standalone prompt files must not contain section markers/)
   })
 
+  test('rejects an unbracketed complete style topic enum in the resident system prompt', () => {
+    const result = runRepoChecks({
+      ...validFiles,
+      'prompts/system/system.md': validFiles['prompts/system/system.md'].replace(
+        '`style global`',
+        '`style global constraints|base|anti_patterns|roleplay|nsfw`',
+      ),
+    })
+
+    assert.match(result.errors.join('\n'), /must not enumerate all style topics/)
+  })
+
   test('rejects missing test and observability env markers', () => {
     const result = runRepoChecks({
       ...validFiles,

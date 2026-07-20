@@ -60,15 +60,22 @@ const validFiles = {
     "topic?: 'workspace' | 'repo' | 'db' | 'style' | 'openbb' | 'fetch' | 'metrics'",
     "if (tokens[0] === 'help')",
   ].join('\n'),
-  'prompts/bot-system.md': [
+  'prompts/system/system.md': [
     '- help: 需要浏览器、金融数据、外部研究、图片生成/抓取时, 先 action=list/describe 查看 capability 和内部工具 schema, 再 action=activate 激活对应 capability.',
     '- invoke: 调用已激活 capability 内部工具时使用, 例如 tool=browser / web_search / fetch_content / generate_image / openbb_cli.',
-    '- workspace_bash: 不确定语法先用 `help`; 数据库用 `db schema` / `db query <json>`; 每日统计用 `metrics today`; 风格用 `style global [constraints|base|anti_patterns|special_cases]` / `style group <groupId>`; 只读查看自己仓库代码、做自审时用 cwd=repo.',
+    '- workspace_bash: 不确定语法先用 `help`; 数据库用 `db schema` / `db query <json>`; 每日统计用 `metrics today`; 风格用 `style global` / `style group <groupId>`; 只读查看自己仓库代码、做自审时用 cwd=repo.',
     '- memory: 涉及具体人/群、关系、偏好、旧话题时先 action=search 翻私人笔记; 需要记下长期有用事实时 action=write.',
+    '- chat_style / style: 先读取全局风格索引，再按具体主题读取。',
     '异步工具返回 taskId 后统一用 background_task action=list/get 查状态和结果',
   ].join('\n'),
-  'prompts/bot-chat-constraints.md': '<!-- section:chat_constraints -->\n聊天约束\n单条消息 ≤ 500 字.\n<!-- /section:chat_constraints -->\n',
-  'prompts/bot-style.md': '<!-- section:style_index -->\nLuna 按需风格指南\nconstraints\n<!-- /section:style_index -->\n',
+  'prompts/system/persona.md': '你是 Luna。\n',
+  'prompts/system/owner.md': '[关系基线]\n',
+  'prompts/chat-style/index.md': 'constraints\nbase\nanti_patterns\nroleplay\nnsfw\n',
+  'prompts/chat-style/constraints.md': '聊天约束\n单条消息 ≤ 500 字.\n',
+  'prompts/chat-style/base.md': '全局说话风格。\n',
+  'prompts/chat-style/anti-patterns.md': '常见反例。\n',
+  'prompts/chat-style/roleplay.md': '角色扮演。\n',
+  'prompts/chat-style/nsfw.md': '成人话题。\n',
   'prisma/schema.prisma': [
     'model BotAgentLedgerEntry {',
     '  @@map("bot_agent_ledger_entries")',
@@ -293,12 +300,30 @@ describe('runRepoChecks', () => {
     const result = runRepoChecks({
       ...validFiles,
       'docs/TOOLS.md': '# Agent Tools\n`pause` `send_message` `workspace_bash`\n`journal` `db`\n',
-      'prompts/bot-system.md': '- workspace_bash: 日记/梦境用 `journal write|list|search|read`.\n',
+      'prompts/system/system.md': '- workspace_bash: 日记/梦境用 `journal write|list|search|read`.\n',
     })
 
     assert.match(result.errors.join('\n'), /docs\/TOOLS\.md must mention registered tool "generate_image"/)
     assert.match(result.errors.join('\n'), /docs\/TOOLS\.md must mention workspace_bash subcommand "help"/)
-    assert.match(result.errors.join('\n'), /prompts\/bot-system\.md must mention workspace_bash subcommand "help"/)
+    assert.match(result.errors.join('\n'), /prompts\/system\/system\.md must mention workspace_bash subcommand "help"/)
+  })
+
+  test('rejects legacy prompt files left behind after directory migration', () => {
+    const result = runRepoChecks({
+      ...validFiles,
+      'prompts/bot-style.md': 'legacy',
+    })
+
+    assert.match(result.errors.join('\n'), /must not keep legacy prompt file/)
+  })
+
+  test('rejects section markers in standalone prompt files', () => {
+    const result = runRepoChecks({
+      ...validFiles,
+      'prompts/chat-style/base.md': '<!-- section:style_base -->\n全局说话风格。\n',
+    })
+
+    assert.match(result.errors.join('\n'), /standalone prompt files must not contain section markers/)
   })
 
   test('rejects missing test and observability env markers', () => {

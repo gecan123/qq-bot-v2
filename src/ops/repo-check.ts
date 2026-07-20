@@ -10,9 +10,18 @@ export interface RepoCheckFiles {
   'prompts/groups.md': string
   'src/agent/tools/index.ts': string
   'src/agent/tools/workspace-bash.ts': string
-  'prompts/bot-system.md': string
-  'prompts/bot-chat-constraints.md': string
-  'prompts/bot-style.md': string
+  'prompts/system/system.md': string
+  'prompts/system/persona.md': string
+  'prompts/system/owner.md': string
+  'prompts/chat-style/index.md': string
+  'prompts/chat-style/constraints.md': string
+  'prompts/chat-style/base.md': string
+  'prompts/chat-style/anti-patterns.md': string
+  'prompts/chat-style/roleplay.md': string
+  'prompts/chat-style/nsfw.md': string
+  'prompts/bot-system.md'?: string
+  'prompts/bot-chat-constraints.md'?: string
+  'prompts/bot-style.md'?: string
   'prisma/schema.prisma': string
   'docs/README.md': string
   'docs/ARCHITECTURE.md': string
@@ -102,6 +111,26 @@ const ADMIN_WEB_MUTATION_MARKERS = [
   '.$executeRaw(',
 ] as const
 
+const PUBLIC_STYLE_THEMES = ['constraints', 'base', 'anti_patterns', 'roleplay', 'nsfw'] as const
+
+const STANDALONE_PROMPT_PATHS = [
+  'prompts/system/system.md',
+  'prompts/system/persona.md',
+  'prompts/system/owner.md',
+  'prompts/chat-style/index.md',
+  'prompts/chat-style/constraints.md',
+  'prompts/chat-style/base.md',
+  'prompts/chat-style/anti-patterns.md',
+  'prompts/chat-style/roleplay.md',
+  'prompts/chat-style/nsfw.md',
+] as const
+
+const LEGACY_PROMPT_PATHS = [
+  'prompts/bot-system.md',
+  'prompts/bot-chat-constraints.md',
+  'prompts/bot-style.md',
+] as const
+
 export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   const errors: string[] = []
 
@@ -120,7 +149,7 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   checkDocsMap(files, errors)
   checkToolIndexes(files, errors)
   checkToolBoundaryDocs(files, errors)
-  checkPromptSplit(files, errors)
+  checkPromptLayout(files, errors)
   checkEnvExample(files, errors)
   checkMemoryArchitecture(files, errors)
   checkAdminWebSources(files.adminWebSources ?? {}, errors)
@@ -286,22 +315,48 @@ function checkEnvExample(files: RepoCheckFiles, errors: string[]): void {
   }
 }
 
-function checkPromptSplit(files: RepoCheckFiles, errors: string[]): void {
+function checkPromptLayout(files: RepoCheckFiles, errors: string[]): void {
   const groups = files['prompts/groups.md']
   if (!groups.includes('# 群聊配置') || !groups.includes('- participation:')) {
     errors.push('prompts/groups.md must define readable group participation policies')
   }
-  if (!files['prompts/bot-system.md'].includes('style global [constraints|base|anti_patterns|special_cases]')) {
-    errors.push('prompts/bot-system.md must point to style global constraints/base/anti_patterns/special_cases')
+
+  const styleIndex = files['prompts/chat-style/index.md']
+  for (const theme of PUBLIC_STYLE_THEMES) {
+    if (!mentionsToken(styleIndex, theme)) {
+      errors.push(`prompts/chat-style/index.md must mention public theme "${theme}"`)
+    }
   }
-  if (!files['prompts/bot-chat-constraints.md'].includes('<!-- section:chat_constraints -->')) {
-    errors.push('prompts/bot-chat-constraints.md must define section "chat_constraints"')
+
+  if (!files['prompts/chat-style/constraints.md'].includes('单条消息 ≤ 500 字')) {
+    errors.push('prompts/chat-style/constraints.md must define the 500-character message limit')
   }
-  if (!files['prompts/bot-style.md'].includes('<!-- section:style_index -->')) {
-    errors.push('prompts/bot-style.md must define section "style_index"')
+
+  const systemPrompt = files['prompts/system/system.md']
+  if (!systemPrompt.includes('style global')) {
+    errors.push('prompts/system/system.md must mention the style global route')
   }
-  if (!files['prompts/bot-style.md'].includes('constraints')) {
-    errors.push('prompts/bot-style.md index must mention constraints')
+  if (!systemPrompt.includes('style group')) {
+    errors.push('prompts/system/system.md must mention the style group route')
+  }
+  if (!/(?:全局)?风格索引/.test(systemPrompt)) {
+    errors.push('prompts/system/system.md must point to the style index')
+  }
+  const completeThemeEnum = `style global [${PUBLIC_STYLE_THEMES.join('|')}]`
+  if (systemPrompt.includes(completeThemeEnum)) {
+    errors.push('prompts/system/system.md must not hard-code the complete style theme enum')
+  }
+
+  for (const path of STANDALONE_PROMPT_PATHS) {
+    if (/<!--\s*\/?section:/i.test(files[path])) {
+      errors.push(`${path}: standalone prompt files must not contain section markers`)
+    }
+  }
+
+  for (const path of LEGACY_PROMPT_PATHS) {
+    if (files[path] !== undefined) {
+      errors.push(`${path}: must not keep legacy prompt file`)
+    }
   }
 }
 
@@ -309,7 +364,7 @@ function checkToolIndexes(files: RepoCheckFiles, errors: string[]): void {
   const toolIndex = files['src/agent/tools/index.ts']
   const workspaceBash = files['src/agent/tools/workspace-bash.ts']
   const toolsDoc = files['docs/TOOLS.md']
-  const systemPrompt = files['prompts/bot-system.md']
+  const systemPrompt = files['prompts/system/system.md']
 
   for (const [marker, toolName] of TOOL_REGISTRY_MARKERS) {
     if (!toolIndex.includes(marker)) continue
@@ -324,7 +379,7 @@ function checkToolIndexes(files: RepoCheckFiles, errors: string[]): void {
       errors.push(`docs/TOOLS.md must mention workspace_bash subcommand "${subcommand}"`)
     }
     if (!SYSTEM_PROMPT_EXEMPT_WORKSPACE_BASH_SUBCOMMANDS.has(subcommand) && !mentionsToken(systemPrompt, subcommand)) {
-      errors.push(`prompts/bot-system.md must mention workspace_bash subcommand "${subcommand}"`)
+      errors.push(`prompts/system/system.md must mention workspace_bash subcommand "${subcommand}"`)
     }
   }
 }

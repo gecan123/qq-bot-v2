@@ -35,9 +35,24 @@ const files: RepoCheckFiles = {
   'prompts/groups.md': readFileSync('prompts/groups.md', 'utf8'),
   'src/agent/tools/index.ts': readFileSync('src/agent/tools/index.ts', 'utf8'),
   'src/agent/tools/workspace-bash.ts': readFileSync('src/agent/tools/workspace-bash.ts', 'utf8'),
-  'prompts/bot-system.md': readFileSync('prompts/bot-system.md', 'utf8'),
-  'prompts/bot-chat-constraints.md': readFileSync('prompts/bot-chat-constraints.md', 'utf8'),
-  'prompts/bot-style.md': readFileSync('prompts/bot-style.md', 'utf8'),
+  'prompts/system/system.md': readFileSync('prompts/system/system.md', 'utf8'),
+  'prompts/system/persona.md': readFileSync('prompts/system/persona.md', 'utf8'),
+  'prompts/system/owner.md': readFileSync('prompts/system/owner.md', 'utf8'),
+  'prompts/chat-style/index.md': readFileSync('prompts/chat-style/index.md', 'utf8'),
+  'prompts/chat-style/constraints.md': readFileSync('prompts/chat-style/constraints.md', 'utf8'),
+  'prompts/chat-style/base.md': readFileSync('prompts/chat-style/base.md', 'utf8'),
+  'prompts/chat-style/anti-patterns.md': readFileSync('prompts/chat-style/anti-patterns.md', 'utf8'),
+  'prompts/chat-style/roleplay.md': readFileSync('prompts/chat-style/roleplay.md', 'utf8'),
+  'prompts/chat-style/nsfw.md': readFileSync('prompts/chat-style/nsfw.md', 'utf8'),
+  ...(existsSync('prompts/bot-system.md')
+    ? { 'prompts/bot-system.md': readFileSync('prompts/bot-system.md', 'utf8') }
+    : {}),
+  ...(existsSync('prompts/bot-chat-constraints.md')
+    ? { 'prompts/bot-chat-constraints.md': readFileSync('prompts/bot-chat-constraints.md', 'utf8') }
+    : {}),
+  ...(existsSync('prompts/bot-style.md')
+    ? { 'prompts/bot-style.md': readFileSync('prompts/bot-style.md', 'utf8') }
+    : {}),
   'prisma/schema.prisma': readFileSync('prisma/schema.prisma', 'utf8'),
   'docs/README.md': readFileSync('docs/README.md', 'utf8'),
   'docs/ARCHITECTURE.md': readFileSync('docs/ARCHITECTURE.md', 'utf8'),

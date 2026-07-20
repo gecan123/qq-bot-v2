@@ -7,7 +7,11 @@ import type { DbReadResult, ExecuteDbReadParams } from '../../database/agent-sql
 import type { GroupPolicy } from '../../config/group-policies.js'
 import type { TargetMetadataMaps } from '../resolve-target-meta.js'
 import { createDbTool } from './db.js'
-import { createChatStyleTool } from './chat-style.js'
+import {
+  createChatStyleTool,
+  GLOBAL_STYLE_SECTIONS,
+  type GlobalStyleSection,
+} from './chat-style.js'
 import { isAllowedOpenbbCommand, maybeCreateOpenbbCliTool } from './openbb-cli.js'
 import { isAllowedMoomooSkillCommand, maybeCreateMoomooSkillTool } from './moomoo-skill.js'
 import { createFetchContentTool } from './fetch-content.js'
@@ -21,6 +25,8 @@ const FETCH_ALLOWED_SUBREDDITS = ['technology', 'ClaudeAI', 'OpenAI', 'wallstree
 const FETCH_ALLOWED_SUBREDDIT_SET = new Set<string>(FETCH_ALLOWED_SUBREDDITS)
 const FETCH_REDDIT_POST_REGEX =
   /^https?:\/\/(?:www\.|old\.)?reddit\.com\/r\/[A-Za-z0-9_]+\/comments\/[A-Za-z0-9]+(?:\/[^?#]*)?\/?(?:[?#].*)?$/
+const GLOBAL_STYLE_SECTION_SET = new Set<string>(GLOBAL_STYLE_SECTIONS)
+const GLOBAL_STYLE_USAGE = `style global [${GLOBAL_STYLE_SECTIONS.join('|')}]`
 
 const WORKSPACE_COMMANDS = new Set([
   'pwd',
@@ -91,8 +97,12 @@ export interface ParsedStyleCommand {
   kind: 'style'
   cwd: 'workspace'
   scope: 'global' | 'group'
-  section?: 'constraints' | 'base' | 'anti_patterns' | 'roleplay' | 'nsfw'
+  section?: GlobalStyleSection
   groupId?: number
+}
+
+function isGlobalStyleSection(value: string): value is GlobalStyleSection {
+  return GLOBAL_STYLE_SECTION_SET.has(value)
 }
 
 export interface ParsedOpenbbCommand {
@@ -422,11 +432,13 @@ function parseDbToolCommand(
 function parseStyleCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedStyleCommand | { ok: false; error: string } {
   if (cwd !== 'workspace') return { ok: false, error: 'style is only available in workspace mode' }
   if (tokens[1] === 'global') {
-    if (tokens.length > 3) return { ok: false, error: 'style global accepts at most one section' }
+    if (tokens.length > 3) {
+      return { ok: false, error: `style global accepts at most one section; usage: \`${GLOBAL_STYLE_USAGE}\`` }
+    }
     const section = tokens[2]
     if (section == null) return { ok: true, kind: 'style', cwd: 'workspace', scope: 'global' }
-    if (section !== 'constraints' && section !== 'base' && section !== 'anti_patterns' && section !== 'roleplay' && section !== 'nsfw') {
-      return { ok: false, error: 'style global section must match `style global [constraints|base|anti_patterns|roleplay|nsfw]`' }
+    if (!isGlobalStyleSection(section)) {
+      return { ok: false, error: `style global section must match \`${GLOBAL_STYLE_USAGE}\`` }
     }
     return { ok: true, kind: 'style', cwd: 'workspace', scope: 'global', section }
   }
@@ -436,7 +448,7 @@ function parseStyleCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedS
     }
     return { ok: true, kind: 'style', cwd: 'workspace', scope: 'group', groupId: Number(tokens[2]) }
   }
-  return { ok: false, error: 'style command must be `style global [section]` or `style group <groupId>`' }
+  return { ok: false, error: `style command must be \`${GLOBAL_STYLE_USAGE}\` or \`style group <groupId>\`` }
 }
 
 function parseOpenbbCommand(tokens: string[], cwd: 'workspace' | 'repo'): ParsedOpenbbCommand | { ok: false; error: string } {
@@ -742,7 +754,7 @@ function renderHelpCommand(parsed: ParsedHelpCommand): WorkspaceBashRunResult {
     style: {
       purpose: '按需读取全局或群风格说明.',
       commands: [
-        'style global [constraints|base|anti_patterns|roleplay|nsfw]',
+        GLOBAL_STYLE_USAGE,
         'style group <groupId>',
       ],
     },
@@ -1022,7 +1034,7 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
       'workspace 允许少量只读文件命令: pwd/ls/rg/cat/head/tail/wc; 普通文件写入、替换、删除和移动使用 deferred workspace_file.',
       'repo 只允许读命令: pwd/ls/rg/cat/head/tail/wc; rg 支持普通搜索和 --files, 不能写, 也不能读 .env/logs/node_modules/.git/data/prompts/groups.md.',
       '常用路由不用先 help: 看 repo 传 cwd=repo 后用 `rg --files src` / `rg <pattern> src` / `cat <path>`; 查历史先 `db schema` 再用 `db query {"sql":"SELECT 1","params":{}}`; 查每日工具/token 用 `metrics today|yesterday|YYYY-MM-DD`; 抓网页用 `fetch url <url> [hint]`; 看 reddit 用 `fetch reddit list technology hot 5`.',
-      '不确定语法时先用 `help` 或 `help <topic>`; Moomoo 行情、账户查询和证券模拟交易用 `moomoo <allowed command>`, 交易必须显式 SIMULATE; 聊天约束/风格用 `style global [constraints|base|anti_patterns|roleplay|nsfw]` 或 `style group`; AI 腔调检测用 `ai_tone <json>`.',
+      `不确定语法时先用 \`help\` 或 \`help <topic>\`; Moomoo 行情、账户查询和证券模拟交易用 \`moomoo <allowed command>\`, 交易必须显式 SIMULATE; 聊天约束/风格用 \`${GLOBAL_STYLE_USAGE}\` 或 \`style group\`; AI 腔调检测用 \`ai_tone <json>\`.`,
       '数据库仍只读; ai_tone 只走内置模型; 不允许 psql/curl/node/cat .env/路径逃逸/任意 shell 组合.',
     ].join(' '),
     schema: argsSchema,

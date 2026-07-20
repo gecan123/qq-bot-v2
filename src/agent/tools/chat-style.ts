@@ -6,15 +6,17 @@ import type { Tool } from '../tool.js'
 
 const STYLE_INDEX_PROMPT_PATH = './prompts/chat-style/index.md'
 
+export const GLOBAL_STYLE_SECTIONS = ['constraints', 'base', 'anti_patterns', 'roleplay', 'nsfw'] as const
+
+export type GlobalStyleSection = (typeof GLOBAL_STYLE_SECTIONS)[number]
+
 const STYLE_PROMPT_PATHS = {
   constraints: './prompts/chat-style/constraints.md',
   base: './prompts/chat-style/base.md',
   anti_patterns: './prompts/chat-style/anti-patterns.md',
   roleplay: './prompts/chat-style/roleplay.md',
   nsfw: './prompts/chat-style/nsfw.md',
-} as const
-
-const GLOBAL_STYLE_SECTIONS = ['constraints', 'base', 'anti_patterns', 'roleplay', 'nsfw'] as const
+} as const satisfies Record<GlobalStyleSection, string>
 
 const argsSchema = z.discriminatedUnion('scope', [
   z.object({
@@ -23,7 +25,7 @@ const argsSchema = z.discriminatedUnion('scope', [
       .enum(GLOBAL_STYLE_SECTIONS)
       .optional()
       .describe(
-        '可选. 不传只返回索引; 传 constraints / base / anti_patterns / roleplay / nsfw 获取具体内容.',
+        `可选. 不传只返回索引; 传 ${GLOBAL_STYLE_SECTIONS.join(' / ')} 获取具体内容.`,
       ),
   }),
   z.object({

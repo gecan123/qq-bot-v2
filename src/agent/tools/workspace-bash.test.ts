@@ -13,6 +13,7 @@ import {
   type WorkspaceBashRunner,
 } from './workspace-bash.js'
 import type { Tool } from '../tool.js'
+import { GLOBAL_STYLE_SECTIONS } from './chat-style.js'
 
 function makeCtx(): ToolContext {
   return { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 0 }
@@ -543,7 +544,8 @@ describe('workspace_bash tool', () => {
     assert.match(tool.description, /cwd=repo/)
     assert.match(tool.description, /db schema/)
     assert.match(tool.description, /metrics today\|yesterday\|YYYY-MM-DD/)
-    assert.match(tool.description, /style global \[constraints\|base\|anti_patterns\|roleplay\|nsfw\]/)
+    assert.match(tool.description, /roleplay/)
+    assert.match(tool.description, /nsfw/)
     assert.doesNotMatch(tool.description, /special_cases/)
     assert.doesNotMatch(tool.description, /journal write\|list\|search\|read/)
   })
@@ -555,8 +557,34 @@ describe('workspace_bash tool', () => {
       commands: string[]
     }
 
-    assert.ok(help.commands.includes('style global [constraints|base|anti_patterns|roleplay|nsfw]'))
+    assert.match(JSON.stringify(help), /roleplay/)
+    assert.match(JSON.stringify(help), /nsfw/)
     assert.doesNotMatch(JSON.stringify(help), /special_cases/)
+  })
+
+  test('keeps every canonical global style section aligned across parser, help, and description', async () => {
+    const usage = `style global [${GLOBAL_STYLE_SECTIONS.join('|')}]`
+    const tool = createWorkspaceBashTool()
+    const help = unwrapCommandJson((await tool.execute({ command: 'help style' }, makeCtx())).content) as unknown as {
+      commands: string[]
+    }
+
+    for (const section of GLOBAL_STYLE_SECTIONS) {
+      assert.deepEqual(parseWorkspaceBashCommand(`style global ${section}`), {
+        ok: true,
+        kind: 'style',
+        cwd: 'workspace',
+        scope: 'global',
+        section,
+      })
+      assert.ok(help.commands.some((command) => command.includes(section)))
+      assert.ok(tool.description.includes(section))
+    }
+    assert.ok(help.commands.includes(usage))
+    assert.ok(tool.description.includes(usage))
+    assert.equal(parseWorkspaceBashCommand('style global special_cases').ok, false)
+    assert.doesNotMatch(JSON.stringify(help), /special_cases/)
+    assert.doesNotMatch(tool.description, /special_cases/)
   })
 
   test('runs metrics through the internal loader without shelling out', async () => {

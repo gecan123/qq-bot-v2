@@ -3,6 +3,7 @@ export interface RepoCheckFiles {
   'CLAUDE.md': string
   'apps/admin-web/AGENTS.md'?: string
   'apps/admin-web/CLAUDE.md'?: string
+  adminWebSources?: Readonly<Record<string, string>>
   'README.md': string
   'package.json': string
   '.env.example': string
@@ -82,6 +83,25 @@ const WORKSPACE_BASH_SUBCOMMAND_MARKERS = [
 
 const SYSTEM_PROMPT_EXEMPT_WORKSPACE_BASH_SUBCOMMANDS = new Set(['openbb', 'fetch'])
 
+const ADMIN_WEB_SERVER_ONLY_MARKERS = [
+  '@prisma/',
+  'node:',
+  '../../../../src/generated/prisma/',
+  'src/database/',
+  'process.env',
+] as const
+
+const ADMIN_WEB_MUTATION_MARKERS = [
+  '.create(',
+  '.createMany(',
+  '.update(',
+  '.updateMany(',
+  '.upsert(',
+  '.delete(',
+  '.deleteMany(',
+  '.$executeRaw(',
+] as const
+
 export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   const errors: string[] = []
 
@@ -103,6 +123,7 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   checkPromptSplit(files, errors)
   checkEnvExample(files, errors)
   checkMemoryArchitecture(files, errors)
+  checkAdminWebSources(files.adminWebSources ?? {}, errors)
 
   for (const surface of README_REMOVED_SURFACES) {
     if (files['README.md'].includes(surface)) {
@@ -166,6 +187,53 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   }
 
   return { errors }
+}
+
+function checkAdminWebSources(
+  sources: Readonly<Record<string, string>>,
+  errors: string[],
+): void {
+  for (const [path, source] of Object.entries(sources).sort(([left], [right]) => left.localeCompare(right))) {
+    const normalizedPath = path.replaceAll('\\', '/')
+    if (!normalizedPath.startsWith('apps/admin-web/src/')) continue
+
+    if (isAdminWebBrowserProductionSource(normalizedPath)) {
+      for (const marker of ADMIN_WEB_SERVER_ONLY_MARKERS) {
+        if (source.includes(marker)) {
+          const reference = describeAdminWebServerOnlyReference(source, marker)
+          errors.push(`${normalizedPath} must not reference server-only API "${reference}"`)
+        }
+      }
+    }
+
+    if (
+      normalizedPath.includes('/src/features/')
+      && /\.(?:server|functions)\.tsx?$/.test(normalizedPath)
+    ) {
+      for (const marker of ADMIN_WEB_MUTATION_MARKERS) {
+        if (source.includes(marker)) {
+          errors.push(`${normalizedPath} must stay read-only; found Prisma mutation "${marker}"`)
+        }
+      }
+    }
+  }
+}
+
+function describeAdminWebServerOnlyReference(
+  source: string,
+  marker: (typeof ADMIN_WEB_SERVER_ONLY_MARKERS)[number],
+): string {
+  if (marker === '@prisma/') return source.match(/@prisma\/[A-Za-z0-9_.-]+/)?.[0] ?? marker
+  if (marker === 'node:') return source.match(/node:[A-Za-z0-9_./-]+/)?.[0] ?? marker
+  return marker
+}
+
+function isAdminWebBrowserProductionSource(path: string): boolean {
+  return !(
+    /\.server\.tsx?$/.test(path)
+    || /\.test\.tsx?$/.test(path)
+    || path.endsWith('/routeTree.gen.ts')
+  )
 }
 
 function checkAgentPersistenceSchema(schema: string, errors: string[]): void {

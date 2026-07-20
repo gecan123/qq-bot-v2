@@ -1,8 +1,26 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { extname, join } from 'node:path'
 import { runRepoChecks, type RepoCheckFiles } from '../src/ops/repo-check.js'
 
 function readOptionalFile(path: string): string | undefined {
   return existsSync(path) ? readFileSync(path, 'utf8') : undefined
+}
+
+function readAdminWebSources(directory: string): Record<string, string> {
+  if (!existsSync(directory)) return {}
+  return Object.fromEntries(
+    listTypeScriptFiles(directory).map(path => [path, readFileSync(path, 'utf8')]),
+  )
+}
+
+function listTypeScriptFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true })
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .flatMap(entry => {
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) return listTypeScriptFiles(path)
+      return ['.ts', '.tsx'].includes(extname(entry.name)) ? [path] : []
+    })
 }
 
 const files: RepoCheckFiles = {
@@ -10,6 +28,7 @@ const files: RepoCheckFiles = {
   'CLAUDE.md': readFileSync('CLAUDE.md', 'utf8'),
   'apps/admin-web/AGENTS.md': readOptionalFile('apps/admin-web/AGENTS.md'),
   'apps/admin-web/CLAUDE.md': readOptionalFile('apps/admin-web/CLAUDE.md'),
+  adminWebSources: readAdminWebSources('apps/admin-web/src'),
   'README.md': readFileSync('README.md', 'utf8'),
   'package.json': readFileSync('package.json', 'utf8'),
   '.env.example': readFileSync('.env.example', 'utf8'),

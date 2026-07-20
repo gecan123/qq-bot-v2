@@ -132,6 +132,29 @@ describe('runRepoChecks', () => {
     assert.deepEqual(result.errors, [])
   })
 
+  test('rejects server-only imports and mutations in Admin Web source', () => {
+    const result = runRepoChecks({
+      ...validFiles,
+      adminWebSources: {
+        'apps/admin-web/src/components/Leak.tsx': [
+          "import { PrismaClient } from '@prisma/client'",
+          'export function Leak() { return null }',
+        ].join('\n'),
+        'apps/admin-web/src/features/overview/overview.functions.ts': [
+          "import { createServerFn } from '@tanstack/react-start'",
+          'export const mutate = createServerFn().handler(() => prisma.botAgentGoal.update({}))',
+        ].join('\n'),
+      },
+    } as Parameters<typeof runRepoChecks>[0] & {
+      adminWebSources: Record<string, string>
+    })
+
+    assert.match(result.errors.join('\n'), /apps\/admin-web\/src\/components\/Leak\.tsx/)
+    assert.match(result.errors.join('\n'), /@prisma\/client/)
+    assert.match(result.errors.join('\n'), /apps\/admin-web\/src\/features\/overview\/overview\.functions\.ts/)
+    assert.match(result.errors.join('\n'), /\.update\(/)
+  })
+
   test('requires append-only agent ledger models and rejects legacy snapshot models', () => {
     const result = runRepoChecks({
       ...validFiles,

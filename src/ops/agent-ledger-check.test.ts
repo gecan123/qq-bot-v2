@@ -63,6 +63,7 @@ function state(entries: AgentLedgerEntry[]): CanonicalAgentState {
   const runtimeState: AgentRuntimeState = {
     schemaVersion: AGENT_RUNTIME_STATE_SCHEMA_VERSION,
     mailboxCursors: {},
+    inboxReadCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
     activeToolCapabilities: [],

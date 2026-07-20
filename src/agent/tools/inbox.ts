@@ -4,6 +4,7 @@ import { createLogger } from '../../logger.js'
 import { formatBeijingIso } from '../../utils/beijing-time.js'
 import type { Tool } from '../tool.js'
 import { createToolResultProgressTracker } from '../tool-progress.js'
+import type { InboxReadCursors } from '../inbox-read-cursors.js'
 
 const log = createLogger('INBOX')
 
@@ -59,6 +60,7 @@ interface InboxFindManyArgs {
 export interface InboxToolDeps {
   groupIds: readonly number[]
   selfNumber: number
+  getReadCursors?: () => Readonly<InboxReadCursors>
   findMessages?: (args: InboxFindManyArgs) => Promise<InboxMessageRow[]>
 }
 
@@ -66,6 +68,7 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
   const monitoredGroups = new Set(deps.groupIds)
   const selfNumber = String(deps.selfNumber)
   const findMessages = deps.findMessages ?? defaultFindMessages
+  const getReadCursors: () => Readonly<InboxReadCursors> = deps.getReadCursors ?? (() => ({}))
   const progress = createToolResultProgressTracker()
 
   return {
@@ -93,20 +96,34 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
           take: LIST_SCAN_LIMIT,
         })
         const seen = new Set<string>()
-        const mailboxes: Array<{ mailbox: string; label: string; latestRowId: number }> = []
+        const readCursors = getReadCursors()
+        const mailboxes: Array<{
+          mailbox: string
+          label: string
+          latestRowId: number
+          lastReadRowId: number
+        }> = []
         for (const row of rows) {
           const mailbox = mailboxKeyForRow(row)
           if (seen.has(mailbox)) continue
           seen.add(mailbox)
+          const lastReadRowId = readCursors[mailbox] ?? 0
+          if (row.id <= lastReadRowId) continue
           mailboxes.push({
             mailbox,
             label: row.sceneKind === 'qq_group'
               ? row.groupName ?? String(row.groupId)
               : row.senderNickname ?? row.sceneExternalId,
             latestRowId: row.id,
+            lastReadRowId,
           })
         }
-        const content = JSON.stringify({ ok: true, mailboxes }, null, 2)
+        const content = JSON.stringify({
+          ok: true,
+          pendingOnly: true,
+          recentScanTruncated: rows.length === LIST_SCAN_LIMIT,
+          mailboxes,
+        }, null, 2)
         const changed = progress.observe('list', content)
         return {
           content,
@@ -114,7 +131,6 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
         }
       }
 
-      const afterRowId = args.afterRowId ?? 0
       const contextBefore = args.contextBefore ?? 0
       const limit = args.limit ?? DEFAULT_READ_LIMIT
       let mailbox: string
@@ -137,6 +153,8 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
           sceneExternalId: String(args.peerId),
         }
       }
+
+      const afterRowId = args.afterRowId ?? getReadCursors()[mailbox] ?? 0
 
       const where = { ...sourceWhere, id: { gt: afterRowId } }
       const rows = await findMessages({ where, orderBy: { id: 'asc' }, take: limit })
@@ -163,8 +181,13 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
       }
       const key = JSON.stringify({ mailbox, afterRowId, contextBefore, limit })
       const changed = progress.observe(key, content)
+      const renderedMessageRowIds = currentMessageRowIdsFromReadPayload(content)
+      const throughRowId = renderedMessageRowIds.at(-1)
       return {
         content,
+        ...(throughRowId == null ? {} : {
+          effects: [{ type: 'inbox_read' as const, mailbox, throughRowId }],
+        }),
         outcome: {
           ok: true,
           code: changed ? 'observed' : 'unchanged',
@@ -173,6 +196,17 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
         },
       }
     },
+  }
+}
+
+function currentMessageRowIdsFromReadPayload(content: string): number[] {
+  try {
+    const parsed = JSON.parse(content) as { messages?: unknown[] }
+    return (parsed.messages ?? [])
+      .map((value) => value && typeof value === 'object' ? (value as { rowId?: unknown }).rowId : undefined)
+      .filter((value): value is number => Number.isInteger(value) && Number(value) > 0)
+  } catch {
+    return []
   }
 }
 

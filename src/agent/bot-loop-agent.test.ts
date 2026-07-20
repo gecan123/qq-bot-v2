@@ -104,6 +104,7 @@ function makeMockLedgerHarness(
   let runtimeState: AgentRuntimeState = {
     schemaVersion: AGENT_RUNTIME_STATE_SCHEMA_VERSION,
     mailboxCursors: {},
+    inboxReadCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
     activeToolCapabilities: [],
@@ -210,6 +211,7 @@ function makeCanonicalCompactionHarness(
   let runtimeState: AgentRuntimeState = {
     schemaVersion: AGENT_RUNTIME_STATE_SCHEMA_VERSION,
     mailboxCursors: {},
+    inboxReadCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
     activeToolCapabilities: [],
@@ -838,6 +840,9 @@ describe('BotLoopAgent.runOnceForTest', () => {
       /"mailbox":"qq_private:9001"/,
     )
     assert.deepEqual(ledger.appendCalls[0]?.runtimePatch?.mailboxCursors, {
+      'qq_private:9001': 31,
+    })
+    assert.deepEqual(ledger.appendCalls[0]?.runtimePatch?.inboxReadCursors, {
       'qq_private:9001': 31,
     })
     assert.deepEqual(ctx.getSnapshot().messages, [])
@@ -2822,6 +2827,42 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     assert.equal(llmCallCount, 2)
     assert.equal(cooldownWaits, 1)
+  })
+
+  test('persists inbox read effects atomically with the visible tool result', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'curiosity_tick' })
+    const ledger = makeMockLedgerHarness(ctx.getSnapshot().messages)
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [{ id: 'inbox-1', name: 'inbox', args: { action: 'read' } }],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+        model: 'mock',
+        contextWindowTokens: 200_000,
+      }]),
+      tools: makeMockTools({
+        inbox: async () => ({
+          content: '{"ok":true,"messages":[{"rowId":42}]}',
+          effects: [{ type: 'inbox_read', mailbox: 'qq_group:123', throughRowId: 42 }],
+        }),
+      }),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+    })
+
+    await agent.runOnceForTest()
+
+    assert.deepEqual(ledger.appendCalls.at(-1)?.runtimePatch?.inboxReadCursors, {
+      'qq_group:123': 42,
+    })
+    assert.equal(ctx.getSnapshot().messages.at(-1)?.role, 'tool')
   })
 
   test('send_message 非 sent 状态即使 ok=true 也立即跑下一轮让 LLM 修正', async () => {

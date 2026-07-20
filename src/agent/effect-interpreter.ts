@@ -1,5 +1,5 @@
 import type { ReactToolEffect } from './react-kernel.js'
-import type { MessageSentTarget } from './tool.js'
+import type { InboxReadEffect, MessageSentTarget } from './tool.js'
 import { createLogger } from '../logger.js'
 
 const log = createLogger('EFFECT_INTERPRETER')
@@ -10,6 +10,7 @@ export interface EffectInterpretation {
   didPause: boolean
   didCompleteRest: boolean
   sentTargets: MessageSentTarget[]
+  inboxReads?: InboxReadEffect[]
 }
 
 export function interpretToolEffects(effects: ReactToolEffect[]): EffectInterpretation {
@@ -17,6 +18,7 @@ export function interpretToolEffects(effects: ReactToolEffect[]): EffectInterpre
   let didCompleteRest = false
   const sentTargets: MessageSentTarget[] = []
   const seenSentTargets = new Set<string>()
+  const inboxReads = new Map<string, InboxReadEffect>()
 
   for (const item of effects) {
     switch (item.effect.type) {
@@ -50,10 +52,36 @@ export function interpretToolEffects(effects: ReactToolEffect[]): EffectInterpre
         sentTargets.push(target)
         break
       }
+      case 'inbox_read': {
+        if (item.toolName !== 'inbox') {
+          logRejectedEffect(item, 'untrusted_tool')
+          break
+        }
+        if (
+          !/^qq_(?:group|private):\d+$/.test(item.effect.mailbox)
+          || !isPositiveSafeInteger(item.effect.throughRowId)
+        ) {
+          logRejectedEffect(item, 'invalid_inbox_cursor')
+          break
+        }
+        const current = inboxReads.get(item.effect.mailbox)
+        if (!current || item.effect.throughRowId > current.throughRowId) {
+          inboxReads.set(item.effect.mailbox, {
+            mailbox: item.effect.mailbox,
+            throughRowId: item.effect.throughRowId,
+          })
+        }
+        break
+      }
     }
   }
 
-  return { didPause, didCompleteRest, sentTargets }
+  return {
+    didPause,
+    didCompleteRest,
+    sentTargets,
+    ...(inboxReads.size > 0 ? { inboxReads: [...inboxReads.values()] } : {}),
+  }
 }
 
 function parseMessageSentTarget(value: unknown): MessageSentTarget | null {

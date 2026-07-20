@@ -6,7 +6,7 @@
 
 - Postgres `bot_agent_ledger_entries` 是唯一持久 LLM history source。普通事实写成 `message` entry；压缩写成 `compaction` entry。运行时没有更新或删除旧 entry 的接口。
 - `AgentContext` 是当前 canonical ledger 的内存 projection，不是另一份事实源。`messages` / `media` 是 QQ 入站事实账本，只用于 missed replay、搜索、审计和按需读取，不能重建 prompt transcript。
-- `bot_agent_runtime_state` 只保存 mailbox cursors、continuity、Goal revision、active tool capabilities、QQ 当前会话 focus、last wake 和 ledger head。它不保存 LLM history；focus 只能由 `qq_conversation open/close` 改变，不能从消息、memory、日志或其他 side state 推断。
+- `bot_agent_runtime_state` 只保存通知披露 cursors、inbox 已读 cursors、continuity、Goal revision、active tool capabilities、QQ 当前会话 focus、last wake 和 ledger head。它不保存 LLM history；focus 只能由 `qq_conversation open/close` 改变，不能从消息、memory、日志或其他 side state 推断。
 - `bot_agent_checkpoint` 是可丢弃的 projection cache。启动始终先验证 canonical ledger；checkpoint 只有 schema、head、fingerprint 和 projection 都匹配时才命中。missing、stale、corrupt 都从 canonical ledger 重建，checkpoint 写失败不影响已提交历史。
 - `bot_agent_goal`、workspace Markdown、调度文件和 `logs/*` 都是 side state，永远不能作为 transcript replay 来源。
 
@@ -15,7 +15,7 @@
 - 新的 LLM 可见事实只能通过 Runtime Host 的受控 append 或 compaction projection 进入。
 - assistant tool call 和对应 tool result 是不可拆的原子组。结果按 assistant 中的 tool-call 顺序持久化；并行完成时序不进入 ledger。
 - `ToolExecutionResult.content` 是唯一持久化工具结果。`outcome` 和 `effects` 只服务当前轮控制流；`progress`、`continuation` 和 `noveltyKey` 都不进入 replay，重复新颖性只作为有界进程内防空转状态。只有 Runtime Host 验证后的稳定 marker（例如 `mailbox_handled`）可以另外 append。
-- 可见消息与 mailbox cursor、continuity、Goal revision、capability 或 QQ focus 变化必须在同一事务提交。持久化成功前不得推进内存 projection；提交失败时 runtime-local focus 必须回滚到 canonical projection。
+- 可见消息与通知披露 cursor、inbox 已读 cursor、continuity、Goal revision、capability 或 QQ focus 变化必须在同一事务提交。`inbox` 只把实际呈现在有界 tool result 中的最新 row 标为已读，输出截断时不能跳过未展示行。持久化成功前不得推进内存 projection；提交失败时 runtime-local control state 必须回滚到 canonical projection。
 - late media、side table 或日志变化不得回写已 append entry。
 
 ## 确定性 replay
@@ -50,7 +50,7 @@
 
 ## Mailbox、Goal 与外部副作用
 
-- bot 在所有允许来源间共享一个串行 `AgentContext`。QQ 消息先写 `messages` / `media`，再以不含正文的 mailbox notification append；正文由 `inbox` 有界读取。
+- bot 在所有允许来源间共享一个串行 `AgentContext`。QQ 消息先写 `messages` / `media`；私聊和结构化 @bot 再以不含正文的高优先级 mailbox notification 唤醒主循环。普通群消息不进入 EventQueue 或 LLM ledger，只由 `inbox list/read` 被动、有界读取。
 - 新 mailbox 不会自动切换当前会话。发送前必须通过 `qq_conversation open` 显式选择允许的群或好友；`send_message` 只读取当前 focus，focus 变化和对应可见 tool result 同事务进入 runtime state。
 - 私聊发送是否属于“回应新入站”由同 target 的 durable pending mailbox 判断，不依赖 `reply_to`。`reply_to` 只控制 QQ 引用展示；进程内主动私聊冷却不得拦截 pending mailbox 的回复。
 - provider-confirmed `send_message` 仍与本地数据库不存在分布式事务。只有同 target 有 pending disclosure 时才 append `mailbox_handled`；这防止重复回应，但不承诺 QQ 外发 exactly-once。

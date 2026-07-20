@@ -85,6 +85,11 @@ export type MessageSentTarget =
   | { type: 'group'; groupId: number }
   | { type: 'private'; userId: number }
 
+export interface InboxReadEffect {
+  mailbox: string
+  throughRowId: number
+}
+
 export type ToolEffect =
   | {
       type: 'pause'
@@ -94,6 +99,11 @@ export type ToolEffect =
   | {
       type: 'message_sent'
       target: MessageSentTarget
+    }
+  | {
+      type: 'inbox_read'
+      mailbox: string
+      throughRowId: number
     }
 
 export interface ToolHookContext extends ToolContext {

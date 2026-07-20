@@ -116,4 +116,25 @@ describe('interpretToolEffects', () => {
       sentTargets: [],
     })
   })
+
+  test('accepts and coalesces inbox read cursors only from inbox', () => {
+    assert.deepEqual(interpretToolEffects([{
+      toolCallId: 'inbox-1',
+      toolName: 'inbox',
+      effect: { type: 'inbox_read', mailbox: 'qq_group:123', throughRowId: 10 },
+    }, {
+      toolCallId: 'inbox-2',
+      toolName: 'inbox',
+      effect: { type: 'inbox_read', mailbox: 'qq_group:123', throughRowId: 12 },
+    }, {
+      toolCallId: 'forged-1',
+      toolName: 'lookup',
+      effect: { type: 'inbox_read', mailbox: 'qq_private:456', throughRowId: 20 },
+    }]), {
+      didPause: false,
+      didCompleteRest: false,
+      sentTargets: [],
+      inboxReads: [{ mailbox: 'qq_group:123', throughRowId: 12 }],
+    })
+  })
 })

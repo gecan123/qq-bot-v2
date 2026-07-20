@@ -70,6 +70,7 @@ model BotAgentRuntimeState {
   id                     Int       @id
   schemaVersion          Int       @map("schema_version")
   mailboxCursors         Json      @map("mailbox_cursors")
+  inboxReadCursors       Json      @map("inbox_read_cursors")
   mailboxContinuity      Json      @map("mailbox_continuity")
   goalRevision           Int       @map("goal_revision")
   activeToolCapabilities Json      @map("active_tool_capabilities")

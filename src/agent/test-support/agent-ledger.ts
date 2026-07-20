@@ -43,6 +43,7 @@ export function createTestAgentLedger(input: {
     qqConversationFocus: null,
     lastWakeAt: null,
     ...structuredClone(input.runtimeState ?? {}),
+    inboxReadCursors: structuredClone(input.runtimeState?.inboxReadCursors ?? {}),
     ledgerHeadEntryId: entries.at(-1)?.id ?? null,
   }
   const snapshots: PersistedAgentSnapshot[] = []

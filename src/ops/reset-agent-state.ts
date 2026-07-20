@@ -70,6 +70,7 @@ export async function resetAgentState(options: {
           id: 1,
           schemaVersion: AGENT_RUNTIME_STATE_SCHEMA_VERSION,
           mailboxCursors: {},
+          inboxReadCursors: {},
           mailboxContinuity: createEmptyMailboxContinuityState(),
           goalRevision: 0,
           activeToolCapabilities: [],

@@ -62,6 +62,11 @@ describe('inbox tool', () => {
     assert.equal(payload.messages[0]!.replyable, true)
     assert.equal(result.outcome?.progress, true)
     assert.deepEqual(result.outcome?.evidenceMessageRowIds, [11, 12])
+    assert.deepEqual(result.effects, [{
+      type: 'inbox_read',
+      mailbox: 'qq_group:111',
+      throughRowId: 12,
+    }])
 
     const repeated = await tool.execute({
       action: 'read',
@@ -323,9 +328,42 @@ describe('inbox tool', () => {
     const payload = JSON.parse(result.content as string) as { mailboxes: Array<{ mailbox: string; latestRowId: number }> }
 
     assert.deepEqual(payload.mailboxes, [
-      { mailbox: 'qq_group:111', label: '测试群', latestRowId: 5 },
-      { mailbox: 'qq_private:9001', label: 'sender', latestRowId: 3 },
+      { mailbox: 'qq_group:111', label: '测试群', latestRowId: 5, lastReadRowId: 0 },
+      { mailbox: 'qq_private:9001', label: 'sender', latestRowId: 3, lastReadRowId: 0 },
     ])
+  })
+
+  test('lists only pending sources and reads from the persisted cursor by default', async () => {
+    const calls: unknown[] = []
+    const readCursors = { 'qq_group:111': 4, 'qq_private:9001': 3 }
+    const tool = createInboxTool({
+      groupIds: [111],
+      selfNumber: 999,
+      getReadCursors: () => readCursors,
+      async findMessages(args) {
+        calls.push(args)
+        if (args.orderBy.id === 'desc') {
+          return [
+            row({ id: 5, sourceId: '111' }),
+            row({ id: 3, kind: 'qq_private', sourceId: '9001' }),
+          ]
+        }
+        return [row({ id: 5, sourceId: '111' })]
+      },
+    })
+
+    const listed = await tool.execute({ action: 'list' }, undefined as never)
+    const listPayload = JSON.parse(listed.content as string) as {
+      mailboxes: Array<{ mailbox: string }>
+    }
+    assert.deepEqual(listPayload.mailboxes.map(({ mailbox }) => mailbox), ['qq_group:111'])
+
+    await tool.execute({ action: 'read', source: 'group', groupId: 111 }, undefined as never)
+    assert.deepEqual(calls.at(-1), {
+      where: { sceneKind: 'qq_group', groupId: 111n, id: { gt: 4 } },
+      orderBy: { id: 'asc' },
+      take: 20,
+    })
   })
 
   test('caps read output even when stored messages are large', async () => {
@@ -344,5 +382,12 @@ describe('inbox tool', () => {
 
     assert.ok((result.content as string).length <= INBOX_OUTPUT_CAP_CHARS)
     assert.match(result.content as string, /"truncated": true/)
+    const payload = JSON.parse(result.content as string) as { messages: Array<{ rowId: number }> }
+    assert.deepEqual(result.effects, [{
+      type: 'inbox_read',
+      mailbox: 'qq_group:111',
+      throughRowId: payload.messages.at(-1)!.rowId,
+    }])
+    assert.ok(payload.messages.at(-1)!.rowId < 20, '未展示的截断行不能被标成已读')
   })
 })

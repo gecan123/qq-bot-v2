@@ -101,6 +101,7 @@ export function fingerprintCanonicalAgentState(canonical: CanonicalAgentState): 
     runtimeState: {
       schemaVersion: canonical.runtimeState.schemaVersion,
       mailboxCursors: canonical.runtimeState.mailboxCursors,
+      inboxReadCursors: canonical.runtimeState.inboxReadCursors,
       mailboxContinuity: canonical.runtimeState.mailboxContinuity,
       goalRevision: canonical.runtimeState.goalRevision,
       activeToolCapabilities: canonical.runtimeState.activeToolCapabilities,

@@ -59,6 +59,10 @@ import { config } from '../config/index.js'
 import type { GroupParticipation } from '../config/group-policies.js'
 import { estimateLedgerContextTokens } from './compaction-token-estimator.js'
 import { buildWorkingContextProjection } from './working-context.js'
+import {
+  advanceInboxReadCursor,
+  type InboxReadCursors,
+} from './inbox-read-cursors.js'
 
 const log = createLogger('BOT_LOOP')
 
@@ -73,6 +77,9 @@ export interface BotLoopAgentDeps {
   ledgerLoader: AgentLedgerLoader
   /** 从 runtime singleton 恢复的 per-source 披露游标。 */
   initialMailboxCursors?: Readonly<MailboxCursors>
+  /** inbox 工具已读取到的 per-source row cursor；普通群消息只经此游标消费。 */
+  initialInboxReadCursors?: Readonly<InboxReadCursors>
+  syncInboxReadCursors?: (cursors: Readonly<InboxReadCursors>) => void
   /** 从 runtime singleton 恢复的 per-source 上下文新鲜度状态。 */
   initialMailboxContinuity?: MailboxContinuityState
   /** 新来源在尚无 cursor 时使用的旧式恢复边界。 */
@@ -182,6 +189,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let cancelDebounceSleep: (() => void) | null = null
   let lastWakeAt: Date | null = deps.initialLastWakeAt ?? null
   let mailboxCursors: MailboxCursors = { ...deps.initialMailboxCursors }
+  let inboxReadCursors: InboxReadCursors = { ...deps.initialInboxReadCursors }
   let mailboxContinuity = parseMailboxContinuityState(deps.initialMailboxContinuity)
   let goalRevision = Math.max(0, deps.initialGoalRevision ?? 0)
   let ledgerHeadEntryId = deps.initialLedgerHeadEntryId ?? null
@@ -198,6 +206,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
 
   function installRuntimeState(input: {
     mailboxCursors: MailboxCursors
+    inboxReadCursors: InboxReadCursors
     mailboxContinuity: MailboxContinuityState
     goalRevision: number
     activeToolCapabilities: readonly string[]
@@ -206,12 +215,14 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     ledgerHeadEntryId: bigint | null
   }): void {
     mailboxCursors = { ...input.mailboxCursors }
+    inboxReadCursors = { ...input.inboxReadCursors }
     mailboxContinuity = parseMailboxContinuityState(input.mailboxContinuity)
     goalRevision = input.goalRevision
     lastWakeAt = input.lastWakeAt == null ? null : new Date(input.lastWakeAt)
     ledgerHeadEntryId = input.ledgerHeadEntryId
     deps.syncActiveToolCapabilities?.(input.activeToolCapabilities)
     deps.syncQqConversationFocus?.(input.qqConversationFocus)
+    deps.syncInboxReadCursors?.(input.inboxReadCursors)
   }
 
   async function reloadProjectionFromCanonical(): Promise<void> {
@@ -245,6 +256,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       // when its paired visible tool result cannot be committed.
       deps.syncActiveToolCapabilities?.(deps.context.getSnapshot().activeToolCapabilities)
       deps.syncQqConversationFocus?.(deps.context.getSnapshot().qqConversationFocus)
+      deps.syncInboxReadCursors?.(inboxReadCursors)
       throw error
     }
   }
@@ -654,15 +666,29 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         log.warn({ roundIndex }, 'context_overflow_compacted_retrying_round')
       }
     }
-    const { didPause, didCompleteRest, sentTargets } = interpretToolEffects(result.effects)
+    const {
+      didPause,
+      didCompleteRest,
+      sentTargets,
+      inboxReads = [],
+    } = interpretToolEffects(result.effects)
 
     stagedMessages.push(...result.messagesToAppend)
     const nextContinuity = parseMailboxContinuityState(mailboxContinuity)
     recordMailboxRound(nextContinuity, result.inputTokens)
+    let nextInboxReadCursors = inboxReadCursors
+    for (const read of inboxReads) {
+      nextInboxReadCursors = advanceInboxReadCursor(
+        nextInboxReadCursors,
+        read.mailbox,
+        read.throughRowId,
+      )
+    }
     await commitChanges({
       messages: stagedMessages,
       runtimePatch: {
         mailboxContinuity: nextContinuity,
+        ...(inboxReads.length > 0 ? { inboxReadCursors: nextInboxReadCursors } : {}),
         ...(deps.getActiveToolCapabilities
           ? { activeToolCapabilities: [...deps.getActiveToolCapabilities()] }
           : {}),
@@ -861,12 +887,23 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     log.debug({ roundIndex: roundIndex + 1, eventsConsumed: drained.consumed, eventsDisclosed: disclosed }, 'round_start')
 
     const cursorsChanged = JSON.stringify(drained.cursors) !== JSON.stringify(mailboxCursors)
+    let disclosedInboxReadCursors = inboxReadCursors
+    for (const [mailbox, throughRowId] of Object.entries(drained.cursors)) {
+      if (throughRowId > (mailboxCursors[mailbox] ?? 0)) {
+        disclosedInboxReadCursors = advanceInboxReadCursor(
+          disclosedInboxReadCursors,
+          mailbox,
+          throughRowId,
+        )
+      }
+    }
     if (stagedMessages.length > 0 || cursorsChanged || nextGoalRevision !== goalRevision) {
       try {
         await commitChanges({
           messages: stagedMessages,
           runtimePatch: {
             mailboxCursors: drained.cursors,
+            ...(cursorsChanged ? { inboxReadCursors: disclosedInboxReadCursors } : {}),
             mailboxContinuity: stagedContinuity,
             goalRevision: nextGoalRevision,
             lastWakeAt: stagedWake.lastWakeAt,

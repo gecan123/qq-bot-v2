@@ -46,6 +46,7 @@ import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.j
 import type { LoadMemorySourceEvidence } from '../memory-evidence.js'
 import { createQqConversationTool, type QqConversationController } from './qq-conversation.js'
 import { applyBotToolPolicy } from './policies.js'
+import type { InboxReadCursors } from '../inbox-read-cursors.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -54,6 +55,7 @@ export interface BotToolDeps {
   taskRegistry: BackgroundTaskRegistry
   groupIds: readonly number[]
   selfNumber: number
+  getInboxReadCursors?: () => Readonly<InboxReadCursors>
   metadata: TargetMetadataMaps
   groupPolicies: readonly GroupPolicy[]
   qqDirectory: QqDirectoryDeps
@@ -111,7 +113,11 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     conversations: deps.conversations,
   })
   const backgroundTask = createBackgroundTaskTool({ taskRegistry: deps.taskRegistry })
-  const inbox = createInboxTool({ groupIds: deps.groupIds, selfNumber: deps.selfNumber })
+  const inbox = createInboxTool({
+    groupIds: deps.groupIds,
+    selfNumber: deps.selfNumber,
+    ...(deps.getInboxReadCursors ? { getReadCursors: deps.getInboxReadCursors } : {}),
+  })
   const chatStyle = createChatStyleTool({
     groupIds: deps.groupIds,
     metadata: deps.metadata,

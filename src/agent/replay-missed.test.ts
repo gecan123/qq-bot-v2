@@ -15,6 +15,7 @@ function makeGroupRow(input: {
   text: string
   createdAt: Date
   groupName?: string
+  mentionedSelf?: boolean
 }): Message {
   return {
     id: input.id,
@@ -27,7 +28,10 @@ function makeGroupRow(input: {
     senderId: BigInt(input.senderId),
     senderNickname: 'sender',
     senderGroupNickname: null,
-    content: [{ type: 'text', content: input.text }] as never,
+    content: [
+      ...(input.mentionedSelf ? [{ type: 'at', targetId: '999' }] : []),
+      { type: 'text', content: input.text },
+    ] as never,
     rawContent: null,
     rawMessage: null,
     searchText: input.text,
@@ -102,6 +106,14 @@ function matchesFlatWhere(
   if (filter.sceneKind !== undefined && message.sceneKind !== filter.sceneKind) return false
   if (filter.groupId !== undefined && message.groupId !== filter.groupId) return false
   if (filter.sceneExternalId !== undefined && message.sceneExternalId !== filter.sceneExternalId) return false
+  if (filter.content && typeof filter.content === 'object' && 'array_contains' in filter.content) {
+    const expected = (filter.content as { array_contains: Array<Record<string, unknown>> }).array_contains
+    const actual = Array.isArray(message.content) ? message.content as Array<Record<string, unknown>> : []
+    const containsAll = expected.every((expectedSegment) => actual.some((segment) => (
+      Object.entries(expectedSegment).every(([key, value]) => segment[key] === value)
+    )))
+    if (!containsAll) return false
+  }
   if (filter.id && typeof filter.id === 'object' && 'gt' in filter.id) {
     if (message.id <= Number((filter.id as { gt: number }).gt)) return false
   }
@@ -116,9 +128,11 @@ function matchesSender(message: Message, filter: unknown): boolean {
   return message.senderId !== (filter as { not: bigint }).not
 }
 
-function installFindManyRows(rows: Message[]): void {
+function installFindManyRows(rows: Message[]): FindManyStubArgs[] {
+  const calls: FindManyStubArgs[] = []
   originalFindMany = prisma.message.findMany
   ;(prisma.message as unknown as { findMany: (args: FindManyStubArgs) => Promise<unknown[]> }).findMany = (async (args: FindManyStubArgs) => {
+    calls.push(structuredClone(args))
     let matched = rows.filter((row) => messageMatchesWhere(row, args)).sort((a, b) => a.id - b.id)
     if (args.distinct?.includes('sceneExternalId')) {
       const seen = new Set<string>()
@@ -136,6 +150,7 @@ function installFindManyRows(rows: Message[]): void {
     }
     return limited
   }) as never
+  return calls
 }
 
 describe('replayMissedMessages — multi-source × live event dedup', () => {
@@ -177,6 +192,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
         senderId: 555,
         text: 'live arrived first',
         createdAt: new Date('2026-05-04T01:00:01Z'),
+        mentionedSelf: true,
       }),
       makeGroupRow({
         id: 101,
@@ -185,6 +201,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
         senderId: 555,
         text: 'only in replay',
         createdAt: new Date('2026-05-04T01:00:02Z'),
+        mentionedSelf: true,
       }),
       makeGroupRow({
         id: 102,
@@ -193,6 +210,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
         senderId: 555,
         text: 'also live first',
         createdAt: new Date('2026-05-04T01:00:03Z'),
+        mentionedSelf: true,
       }),
     ]
     installFindManyRows(rows)
@@ -208,7 +226,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
       messageId: 1,
       senderId: 555,
       senderNickname: 'live',
-      mentionedSelf: false,
+      mentionedSelf: true,
       sentAt: new Date(),
       renderedText: 'live arrived first',
     })
@@ -219,7 +237,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
       messageId: 3,
       senderId: 555,
       senderNickname: 'live',
-      mentionedSelf: false,
+      mentionedSelf: true,
       sentAt: new Date(),
       renderedText: 'also live first',
     })
@@ -250,7 +268,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
     assert.deepEqual(rowIds, [100, 101, 102])
   })
 
-  test('replay enqueues both group and private events from mixed-source DB rows', async () => {
+  test('replay enqueues only mentioned group rows plus private rows from mixed-source DB rows', async () => {
     const lastWake = new Date('2026-05-04T00:00:00Z')
     const rows: Message[] = [
       makeGroupRow({
@@ -260,6 +278,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
         senderId: 555,
         text: 'group msg',
         createdAt: new Date('2026-05-04T00:01:00Z'),
+        mentionedSelf: true,
       }),
       makePrivateRow({
         id: 2,
@@ -290,6 +309,37 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
     assert.deepEqual(types.sort(), ['napcat_message', 'napcat_private_message'])
   })
 
+  test('leaves unmentioned group rows passive during replay without preparing their bodies', async () => {
+    const rows = [makeGroupRow({
+      id: 5,
+      groupId: 672312932,
+      messageId: 5,
+      senderId: 555,
+      text: '普通群聊',
+      createdAt: new Date('2026-05-04T00:01:00Z'),
+    })]
+    installFindManyRows(rows)
+    let ensureReadyCalls = 0
+
+    const q = new InMemoryEventQueue<BotEvent>()
+    const result = await replayMissedMessages({
+      mailboxCursors: { 'qq_group:672312932': 4 },
+      legacyLastWakeAt: null,
+    }, {
+      enqueueMessageEvent: createDedupEnqueue(q),
+      selfNumber: 999,
+      groupIds: [672312932],
+      ensureReady: async (message) => {
+        ensureReadyCalls++
+        return stubEnsureReady(message)
+      },
+    })
+
+    assert.deepEqual(result, { enqueued: 0, skippedDuplicates: 0 })
+    assert.equal(ensureReadyCalls, 0)
+    assert.equal(q.size(), 0)
+  })
+
   test('filters each source by its own message-row cursor', async () => {
     const rows: Message[] = [
       makeGroupRow({
@@ -315,6 +365,7 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
         senderId: 555,
         text: 'new group',
         createdAt: new Date('2026-05-04T01:00:03Z'),
+        mentionedSelf: true,
       }),
       makePrivateRow({
         id: 13,
@@ -412,55 +463,18 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
     assert.deepEqual(rowIds, [20, 21, 22])
   })
 
-  test('large replay backlogs enqueue one metadata event without preparing every message body', async () => {
-    const first = makeGroupRow({
-      id: 1_000,
+  test('filters a large group backlog in the database and prepares only mentioned rows', async () => {
+    const rows = Array.from({ length: 501 }, (_, index) => makeGroupRow({
+      id: 1_000 + index,
       groupId: 672312932,
-      messageId: 10_000,
+      messageId: 10_000 + index,
       senderId: 555,
-      text: 'first old body',
+      text: `probe-${index}`,
       createdAt: new Date('2026-05-04T01:00:00Z'),
       groupName: '积压群',
-    })
-    const recentFirst = makeGroupRow({
-      id: 1_450,
-      groupId: 672312932,
-      messageId: 10_450,
-      senderId: 556,
-      text: 'recent first body',
-      createdAt: new Date('2026-05-04T02:00:00Z'),
-      groupName: '积压群',
-    })
-    const last = makeGroupRow({
-      id: 1_500,
-      groupId: 672312932,
-      messageId: 10_500,
-      senderId: 557,
-      text: 'last body',
-      createdAt: new Date('2026-05-04T03:00:00Z'),
-      groupName: '积压群',
-    })
-
-    originalCount = prisma.message.count
-    originalFindFirst = prisma.message.findFirst
-    originalFindMany = prisma.message.findMany
-    ;(prisma.message as unknown as { count: (args: unknown) => Promise<number> }).count = (async () => 230) as never
-    ;(prisma.message as unknown as { findFirst: (args: FindFirstStubArgs) => Promise<Message | null> }).findFirst = (async (args: FindFirstStubArgs) => {
-      if (args.skip === 180) return recentFirst
-      return args.orderBy?.id === 'desc' ? last : first
-    }) as never
-    ;(prisma.message as unknown as { findMany: (args: FindManyStubArgs) => Promise<Message[]> }).findMany = (async (args: FindManyStubArgs) => {
-      assert.equal(args.take, 101)
-      return Array.from({ length: 101 }, (_, index) => makeGroupRow({
-        id: 1_000 + index,
-        groupId: 672312932,
-        messageId: 10_000 + index,
-        senderId: 555,
-        text: `probe-${index}`,
-        createdAt: new Date(`2026-05-04T01:${String(index % 60).padStart(2, '0')}:00Z`),
-        groupName: '积压群',
-      }))
-    }) as never
+      mentionedSelf: index === 500,
+    }))
+    const findManyCalls = installFindManyRows(rows)
 
     let ensureReadyCalls = 0
     const q = new InMemoryEventQueue<BotEvent>()
@@ -478,22 +492,12 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
     })
 
     assert.deepEqual(result, { enqueued: 1, skippedDuplicates: 0 })
-    assert.equal(ensureReadyCalls, 0)
-    const event = q.dequeue()
-    assert.deepEqual(event, {
-      type: 'mailbox_backlog',
-      mailboxKey: 'qq_group:672312932',
-      priority: 'normal',
-      source: { type: 'group', groupId: 672312932, groupName: '积压群' },
-      count: 230,
-      firstRowId: 1_000,
-      throughRowId: 1_500,
-      recentAfterRowId: 1_449,
-      senderCount: null,
-      timeRange: {
-        from: new Date('2026-05-04T01:00:00Z'),
-        to: new Date('2026-05-04T03:00:00Z'),
-      },
+    assert.equal(ensureReadyCalls, 1)
+    assert.deepEqual(findManyCalls[0]?.where?.content, {
+      array_contains: [{ type: 'at', targetId: '999' }],
     })
+    const event = q.dequeue()
+    assert.equal(event?.type, 'napcat_message')
+    assert.equal(event && 'messageRowId' in event ? event.messageRowId : null, 1_500)
   })
 })

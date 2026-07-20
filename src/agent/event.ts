@@ -76,3 +76,13 @@ export type BotEvent =
       senderCount: number | null
       timeRange: { from: Date; to: Date }
     }
+
+export type ChatMessageEvent = Extract<
+  BotEvent,
+  { type: 'napcat_message' | 'napcat_private_message' }
+>
+
+/** 只有私聊或群内结构化 @ 才有资格进入会打断主循环的注意事件队列。 */
+export function isChatAttentionEvent(event: ChatMessageEvent): boolean {
+  return event.type === 'napcat_private_message' || event.mentionedSelf
+}

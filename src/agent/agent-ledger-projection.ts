@@ -17,6 +17,7 @@ import {
   type RestResumeCompactionState,
 } from './agent-ledger.types.js'
 import { renderMailboxAttentionStateEvent, type MailboxAttentionState } from './mailbox-handled.js'
+import { parseInboxReadCursors } from './inbox-read-cursors.js'
 import { validateBotSnapshotIntegrity } from './snapshot-integrity.js'
 
 const HISTORY_SUMMARY_PREFIX = '[历史摘要]\n'
@@ -186,6 +187,7 @@ export function parseAgentRuntimeState(value: unknown): AgentRuntimeState {
   requireExactKeys(state, [
     'schemaVersion',
     'mailboxCursors',
+    'inboxReadCursors',
     'mailboxContinuity',
     'goalRevision',
     'activeToolCapabilities',
@@ -222,9 +224,18 @@ export function parseAgentRuntimeState(value: unknown): AgentRuntimeState {
   )) {
     throw new AgentLedgerIntegrityError(`${path}.ledgerHeadEntryId must be a positive bigint or null`)
   }
+  let inboxReadCursors: AgentRuntimeState['inboxReadCursors']
+  try {
+    inboxReadCursors = parseInboxReadCursors(state.inboxReadCursors)
+  } catch (error) {
+    throw new AgentLedgerIntegrityError(
+      `${path}.inboxReadCursors is invalid: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
   return {
     schemaVersion: AGENT_RUNTIME_STATE_SCHEMA_VERSION,
     mailboxCursors: cloneJsonObject(state.mailboxCursors, `${path}.mailboxCursors`) as AgentRuntimeState['mailboxCursors'],
+    inboxReadCursors,
     mailboxContinuity: cloneJsonObject(
       state.mailboxContinuity,
       `${path}.mailboxContinuity`,

@@ -1,6 +1,6 @@
 # 架构
 
-`qq-bot-v2` 是一个接入 NapCat 的 QQ Agent。群聊和私聊入站消息先写入 Postgres 事实账本，再由单一串行 `BotLoopAgent` 按 mailbox 披露给持久 LLM ledger。正文默认由 Agent 通过 `inbox` 按需读取；私聊和包含 `@bot` 的群批次具有高优先级。
+`qq-bot-v2` 是一个接入 NapCat 的 QQ Agent。群聊和私聊入站消息先写入 Postgres 事实账本；只有私聊和包含 `@bot` 的群消息会唤醒或打断单一串行 `BotLoopAgent`，普通群消息留在被动 inbox，等待 Agent 自主读取。正文默认由 Agent 通过 `inbox` 按需读取。
 
 这是实验性新项目。除非任务明确要求历史兼容或迁移保留，否则优先选择干净的目标模型，不为旧 adapter、dual-write bridge 或旧 snapshot 增加长期兼容层。
 
@@ -58,9 +58,9 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 ## 持久边界
 
 - `messages` / `media` 是入站事实账本，只用于 missed replay、搜索、审计和按需读取，不是 prompt history。
-- `bot_agent_ledger_entries` 保存 append-only LLM history；`bot_agent_runtime_state` 保存 mailbox cursor、continuity、Goal revision、active capabilities、QQ 当前会话 focus、last wake 和 ledger head；`bot_agent_checkpoint` 只缓存已验证 projection。
+- `bot_agent_ledger_entries` 保存 append-only LLM history；`bot_agent_runtime_state` 保存通知披露 cursor、inbox 已读 cursor、continuity、Goal revision、active capabilities、QQ 当前会话 focus、last wake 和 ledger head；`bot_agent_checkpoint` 只缓存已验证 projection。
 - QQ 新消息不会隐式切换 focus。Agent 必须先通过 `qq_conversation open` 显式打开允许的群或好友，`send_message` 才能向当前 focus 发送；focus 不从 transcript、memory 或日志重建。
-- `prompts/groups.md` 是群监听范围、主动发送权限、参与档位和 operator 固定群提示的唯一配置源。启动时严格解析并冻结；`mentions` 只允许结构化 @ reply，`selective` / `active` 允许 ambient，档位随 `inbox_update` 披露。正文只由 `chat_style` 按需读取，不进入常驻 system prompt；会变化的群文化与历史写 group memory。
+- `prompts/groups.md` 是群监听范围、主动发送权限、参与档位和 operator 固定群提示的唯一配置源。启动时严格解析并冻结；`mentions` 只允许结构化 @ reply，`selective` / `active` 允许 Agent 主动读 inbox 后 ambient。普通群消息不生成 `inbox_update`，档位不改变唤醒规则。正文只由 `chat_style` 按需读取，不进入常驻 system prompt；会变化的群文化与历史写 group memory。
 - `bot_agent_goal`、Memory、Notebook、Life Journal、Agenda、调度文件和 `logs/*` 都是 side state，不能作为 transcript replay 来源。
 - QQ provider 已确认发送和本地数据库之间没有分布式事务，因此 `mailbox_handled` 是 durable 防重复边界，不承诺外部发送 exactly-once。
 - compaction、append 与 runtime 元数据使用数据库事务；checkpoint 刷新和 `afterCompact` 是 best-effort，不回滚已提交历史。

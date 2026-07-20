@@ -63,6 +63,7 @@ function runtimeState(
     lastWakeAt: null,
     ledgerHeadEntryId,
     ...overrides,
+    inboxReadCursors: overrides.inboxReadCursors ?? {},
   }
 }
 

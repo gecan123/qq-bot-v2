@@ -13,6 +13,7 @@ import {
 } from './agent-ledger-projection.js'
 import type { MailboxContinuityState } from './mailbox-continuity.js'
 import type { MailboxCursors } from './mailbox.js'
+import type { InboxReadCursors } from './inbox-read-cursors.js'
 
 const RUNTIME_SINGLETON_ID = 1
 const CHECKPOINT_SINGLETON_ID = 1
@@ -28,6 +29,7 @@ interface RuntimeStorageRow {
   id: number
   schemaVersion: number
   mailboxCursors: unknown
+  inboxReadCursors: unknown
   mailboxContinuity: unknown
   goalRevision: number
   activeToolCapabilities: unknown
@@ -74,6 +76,7 @@ export interface AgentLedgerPersistenceClient {
 
 export interface AgentRuntimePatch {
   mailboxCursors?: MailboxCursors
+  inboxReadCursors?: InboxReadCursors
   mailboxContinuity?: MailboxContinuityState
   goalRevision?: number
   activeToolCapabilities?: string[]
@@ -276,6 +279,7 @@ async function loadRuntimeState(client: AgentLedgerPersistenceClient): Promise<A
   return parseAgentRuntimeState({
     schemaVersion: row.schemaVersion,
     mailboxCursors: row.mailboxCursors,
+    inboxReadCursors: row.inboxReadCursors,
     mailboxContinuity: row.mailboxContinuity,
     goalRevision: row.goalRevision,
     activeToolCapabilities: row.activeToolCapabilities,
@@ -300,6 +304,7 @@ async function persistRuntimeState(
     ledgerHeadEntryId: next.ledgerHeadEntryId,
   }
   if (patch?.mailboxCursors !== undefined) data.mailboxCursors = next.mailboxCursors as never
+  if (patch?.inboxReadCursors !== undefined) data.inboxReadCursors = next.inboxReadCursors as never
   if (patch?.mailboxContinuity !== undefined) data.mailboxContinuity = next.mailboxContinuity as never
   if (patch?.goalRevision !== undefined) data.goalRevision = next.goalRevision
   if (patch?.activeToolCapabilities !== undefined) {
@@ -316,6 +321,7 @@ async function persistRuntimeState(
   return parseAgentRuntimeState({
     schemaVersion: row.schemaVersion,
     mailboxCursors: row.mailboxCursors,
+    inboxReadCursors: row.inboxReadCursors,
     mailboxContinuity: row.mailboxContinuity,
     goalRevision: row.goalRevision,
     activeToolCapabilities: row.activeToolCapabilities,
@@ -351,6 +357,7 @@ function definedRuntimePatch(patch: AgentRuntimePatch | undefined): AgentRuntime
   if (!patch) return {}
   const defined: AgentRuntimePatch = {}
   if (patch.mailboxCursors !== undefined) defined.mailboxCursors = patch.mailboxCursors
+  if (patch.inboxReadCursors !== undefined) defined.inboxReadCursors = patch.inboxReadCursors
   if (patch.mailboxContinuity !== undefined) defined.mailboxContinuity = patch.mailboxContinuity
   if (patch.goalRevision !== undefined) defined.goalRevision = patch.goalRevision
   if (patch.activeToolCapabilities !== undefined) {

@@ -25,6 +25,7 @@ interface FakeState {
     id: number
     schemaVersion: number
     mailboxCursors: unknown
+    inboxReadCursors: unknown
     mailboxContinuity: unknown
     goalRevision: number
     activeToolCapabilities: unknown
@@ -49,6 +50,7 @@ function initialRuntime(): AgentRuntimeState {
   return {
     schemaVersion: AGENT_RUNTIME_STATE_SCHEMA_VERSION,
     mailboxCursors: {},
+    inboxReadCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
     activeToolCapabilities: [],

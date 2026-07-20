@@ -6,9 +6,10 @@ import type {
 import type { MailboxAttentionState } from './mailbox-handled.js'
 import type { MailboxContinuityState } from './mailbox-continuity.js'
 import type { MailboxCursors } from './mailbox.js'
+import type { InboxReadCursors } from './inbox-read-cursors.js'
 
 export const AGENT_LEDGER_SCHEMA_VERSION = 1 as const
-export const AGENT_RUNTIME_STATE_SCHEMA_VERSION = 2 as const
+export const AGENT_RUNTIME_STATE_SCHEMA_VERSION = 3 as const
 
 export type CompactionReason = 'threshold' | 'overflow' | 'manual'
 
@@ -55,6 +56,7 @@ export type AgentLedgerEntry = MessageAgentLedgerEntry | CompactionAgentLedgerEn
 export interface AgentRuntimeState {
   schemaVersion: typeof AGENT_RUNTIME_STATE_SCHEMA_VERSION
   mailboxCursors: MailboxCursors
+  inboxReadCursors: InboxReadCursors
   mailboxContinuity: MailboxContinuityState
   goalRevision: number
   activeToolCapabilities: string[]

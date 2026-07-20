@@ -18,7 +18,7 @@ import { purgeOldData } from './database/retention.js'
 import { findMemoryEvidenceRows } from './database/messages.js'
 import { createAgentContext } from './agent/agent-context.js'
 import { InMemoryEventQueue } from './agent/event-queue.js'
-import type { BotEvent } from './agent/event.js'
+import { isChatAttentionEvent, type BotEvent } from './agent/event.js'
 import { createAgentLedgerRepo } from './agent/agent-ledger-repo.js'
 import { createAgentLedgerLoader } from './agent/agent-ledger-loader.js'
 import { createLlmClient } from './agent/llm-client.js'
@@ -232,6 +232,11 @@ async function main() {
   }
   const startupGoalControlGate = createStartupGoalControlGate(processOwnerGoalControl)
   const enqueueMessageEvent = async (event: BotEvent): Promise<boolean> => {
+    // 普通群消息只保存在 messages/inbox；只有明确 @ bot 才能打断或唤醒主循环。
+    if (
+      (event.type === 'napcat_message' || event.type === 'napcat_private_message')
+      && !isChatAttentionEvent(event)
+    ) return false
     if (event.type === 'napcat_private_message') {
       const compactionControl = await startupCompactionControlGate.submit({
         scene: 'friend_private',
@@ -374,6 +379,7 @@ async function main() {
     owner: config.owner,
     eventDebounceMs: config.eventDebounceMs,
     initialMailboxCursors: loadedLedger.runtimeState.mailboxCursors,
+    initialInboxReadCursors: loadedLedger.runtimeState.inboxReadCursors,
     initialMailboxContinuity: loadedLedger.runtimeState.mailboxContinuity,
     initialLastWakeAt: loadedLedger.runtimeState.lastWakeAt,
     initialGoalRevision: loadedLedger.runtimeState.goalRevision,

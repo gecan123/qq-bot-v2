@@ -41,6 +41,7 @@ export interface CanonicalAgentStatePrismaClient {
     findUnique(input: { where: { id: 1 } }): Promise<null | {
       schemaVersion: number
       mailboxCursors: unknown
+      inboxReadCursors: unknown
       mailboxContinuity: unknown
       goalRevision: number
       activeToolCapabilities: unknown
@@ -89,6 +90,7 @@ export async function loadCanonicalAgentState(
     runtimeState: {
       schemaVersion: runtime.schemaVersion,
       mailboxCursors: runtime.mailboxCursors,
+      inboxReadCursors: runtime.inboxReadCursors,
       mailboxContinuity: runtime.mailboxContinuity,
       goalRevision: runtime.goalRevision,
       activeToolCapabilities: runtime.activeToolCapabilities,

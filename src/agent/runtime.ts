@@ -25,6 +25,7 @@ import type { LlmClient } from './llm-client.js'
 import type { AgentLedgerLoader } from './agent-ledger-loader.js'
 import type { AgentLedgerRepo } from './agent-ledger-repo.js'
 import type { MailboxCursors } from './mailbox.js'
+import type { InboxReadCursors } from './inbox-read-cursors.js'
 import type { MailboxContinuityState } from './mailbox-continuity.js'
 import type { TargetMetadataMaps } from './resolve-target-meta.js'
 import { groupPolicyAllowsAmbient, type GroupPolicy } from '../config/group-policies.js'
@@ -97,6 +98,7 @@ export interface AgentRuntimeInput {
   owner: BotOwner | null
   eventDebounceMs?: number
   initialMailboxCursors?: Readonly<MailboxCursors>
+  initialInboxReadCursors?: Readonly<InboxReadCursors>
   initialMailboxContinuity?: MailboxContinuityState
   initialLastWakeAt?: Date | null
   initialGoalRevision?: number
@@ -131,6 +133,7 @@ export interface AgentRuntime {
 export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
   let activeToolCapabilities = [...input.context.getSnapshot().activeToolCapabilities]
   let qqConversationFocus = input.context.getSnapshot().qqConversationFocus
+  let inboxReadCursors: InboxReadCursors = { ...input.initialInboxReadCursors }
   const groupIds = input.groupPolicies.map((policy) => policy.id)
   const groupAmbientSendIds = new Set(
     input.groupPolicies
@@ -210,6 +213,7 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       optionalTools: input.optionalTools,
       groupIds,
       selfNumber: input.selfNumber,
+      getInboxReadCursors: () => inboxReadCursors,
       metadata: input.metadata,
       groupPolicies: input.groupPolicies,
       qqDirectory: {
@@ -272,6 +276,10 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       qqConversationFocus = focus
     },
     initialMailboxCursors: input.initialMailboxCursors ?? {},
+    initialInboxReadCursors: input.initialInboxReadCursors ?? {},
+    syncInboxReadCursors: (cursors) => {
+      inboxReadCursors = { ...cursors }
+    },
     initialMailboxContinuity: input.initialMailboxContinuity,
     initialLastWakeAt: input.initialLastWakeAt ?? null,
     initialGoalRevision: input.initialGoalRevision ?? 0,

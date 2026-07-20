@@ -29,12 +29,14 @@ const validFiles = {
       'agent:daily-metrics': 'tsx scripts/agent-daily-metrics.ts',
       'agent:memory-check': 'tsx scripts/agent-memory-check.ts',
       'agent:ledger-check': 'tsx scripts/agent-ledger-check.ts',
+      'agent:reset-state': 'tsx scripts/reset-agent-state.ts --confirm',
       lint: 'pnpm typecheck && pnpm repo-check',
     },
   }),
   '.env.example': [
     'BOT_EVENT_DEBOUNCE_MS=3000',
     'BOT_TOKEN_USAGE_LOG_PATH=logs/token-usage.ndjson',
+    'BOT_OBSERVABILITY_RETENTION_DAYS=30',
   ].join('\n'),
   'prompts/groups.md': '# 群聊配置\n\n## 群 111\n\n- participation: mentions\n',
   'src/agent/tools/index.ts': [
@@ -252,6 +254,20 @@ describe('runRepoChecks', () => {
     assert.match(result.errors.join('\n'), /package\.json must define scripts\["agent:memory-check"\]/)
   })
 
+  test('requires the scoped state reset command and rejects its destructive legacy name', () => {
+    const packageJson = JSON.parse(validFiles['package.json'])
+    delete packageJson.scripts['agent:reset-state']
+    packageJson.scripts['agent:reset-memory'] = 'tsx scripts/reset-agent-memory.ts --confirm'
+
+    const result = runRepoChecks({
+      ...validFiles,
+      'package.json': JSON.stringify(packageJson),
+    })
+
+    assert.match(result.errors.join('\n'), /scripts\["agent:reset-state"\]/)
+    assert.match(result.errors.join('\n'), /must not define legacy scripts\["agent:reset-memory"\]/)
+  })
+
   test('rejects missing memory architecture recovery and untrusted-data contracts', () => {
     const result = runRepoChecks({
       ...validFiles,
@@ -382,6 +398,7 @@ describe('runRepoChecks', () => {
 
     assert.match(result.errors.join('\n'), /.env\.example must mention BOT_EVENT_DEBOUNCE_MS/)
     assert.match(result.errors.join('\n'), /.env\.example must mention BOT_TOKEN_USAGE_LOG_PATH/)
+    assert.match(result.errors.join('\n'), /.env\.example must mention BOT_OBSERVABILITY_RETENTION_DAYS/)
   })
 
   test('rejects an invalid Markdown group policy document', () => {

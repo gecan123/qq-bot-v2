@@ -185,13 +185,11 @@ checkpoint 写失败不影响已提交的 ledger/runtime 事务；删除整张 c
 
 ## Reset 边界
 
-先停止 bot，再运行 `pnpm agent:reset-memory`。标准 package script 已内置破坏性确认参数；该命令当前会同时删除：
+先停止 bot，再运行 `pnpm agent:reset-state -- --scope all|context|knowledge`。标准 package script 已内置破坏性确认参数，但 scope 必须显式选择：
 
-- `bot_agent_ledger_entries`：append-only LLM ledger；
-- `bot_agent_checkpoint` 和 `bot_agent_runtime_state`：projection cache 和运行控制状态，随后重建空 runtime singleton；
-- `bot_agent_goal`：当前 Goal 控制状态；
-- workspace 下的 `memory/`、`notebook/`、`life/`；
-- 遗留 `journal/` 目录。
+- `context`：删除 append-only LLM ledger、checkpoint、runtime 和 Goal，随后重建空 runtime singleton；
+- `knowledge`：只删除 workspace 下的 `memory/`、`notebook/`、`life/` 和遗留 `journal/`，不连接数据库；
+- `all`：执行上述两类清理。
 
 它不会删除 `messages`、`media`、表情池、普通 workspace 文件、浏览器 profile/artifact 或运维日志。因此这个命令实际是“重置 Agent 持久状态”，不只是重置长期 memory。
 
@@ -205,11 +203,10 @@ checkpoint 写失败不影响已提交的 ledger/runtime 事务；删除整张 c
 
 ## 当前改进顺序
 
-1. **Reset 语义**：把 `agent:reset-memory` 改名为更准确的 state reset，或拆成 context、goal、knowledge scopes，减少误删范围。
-2. **跨层 provenance**：memory 目前只能结构化引用 Message.id。以后若稳定结论来自 Notebook 或 Life Journal，可增加受控 source ref，而不是把来源写进自由文本。
-3. **跨进程互斥**：当前协调器只覆盖单进程。只有确认存在多 writer 部署需求时，再增加进程锁或单 writer service，不提前引入分布式锁。
-4. **主动 recall 决策门**：先观察主 Agent 是否真的频繁漏掉必要的显式 recall；没有真实收益证据就保持当前工具调用方式。即使启用，也必须把结果写入 ledger，不能做隐藏动态注入。
-5. **可选检索索引决策门**：先用 `agent:memory-check` 和实际召回日志观察 Markdown 扫描的规模、延迟与相关性；只有出现可复现瓶颈后，才评估 SQLite FTS/BM25 或 embedding。派生索引必须可从 Markdown 重建。
+1. **跨层 provenance**：memory 目前只能结构化引用 Message.id。以后若稳定结论来自 Notebook 或 Life Journal，可增加受控 source ref，而不是把来源写进自由文本。
+2. **跨进程互斥**：当前协调器只覆盖单进程。只有确认存在多 writer 部署需求时，再增加进程锁或单 writer service，不提前引入分布式锁。
+3. **主动 recall 决策门**：先观察主 Agent 是否真的频繁漏掉必要的显式 recall；没有真实收益证据就保持当前工具调用方式。即使启用，也必须把结果写入 ledger，不能做隐藏动态注入。
+4. **可选检索索引决策门**：先用 `agent:memory-check` 和实际召回日志观察 Markdown 扫描的规模、延迟与相关性；只有出现可复现瓶颈后，才评估 SQLite FTS/BM25 或 embedding。派生索引必须可从 Markdown 重建。
 
 不建议增加“每轮自动召回全部长期记忆”、自动把 Notebook 晋升到 memory、或把 Agenda 合并回日志。这些做法会扩大 prompt、固化临时判断，并重新引入职责重叠。
 
@@ -225,6 +222,6 @@ checkpoint 写失败不影响已提交的 ledger/runtime 事务；删除整张 c
 - `src/agent/memory-store.ts`、`tools/memory.ts`、`memory-maintenance.ts`：长期语义记忆。
 - `src/agent/notebook-store.ts`、`tools/notebook.ts`：主题过程笔记。
 - `src/agent/life-journal-store.ts`、`tools/life-journal.ts`、`life-journal.ts`：Life Journal、Agenda 和异步 review。
-- `src/ops/reset-agent-memory.ts`：当前总量 reset 边界。
+- `src/ops/reset-agent-state.ts`：显式 `all|context|knowledge` reset 边界。
 - `src/ops/agent-memory-check.ts`、`scripts/agent-memory-check.ts`：只读 Markdown 完整性检查和 CLI。
 - `prisma/schema.prisma`：事实账本、append-only ledger、runtime/checkpoint、Goal 和观测表契约。

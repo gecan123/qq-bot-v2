@@ -63,6 +63,7 @@ const MAX_AGENT_ENTRY_LINES = 120
 const REQUIRED_ENV_MARKERS = [
   'BOT_EVENT_DEBOUNCE_MS',
   'BOT_TOKEN_USAGE_LOG_PATH',
+  'BOT_OBSERVABILITY_RETENTION_DAYS',
 ] as const
 
 const TOOL_REGISTRY_MARKERS = [
@@ -208,6 +209,14 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   const agentLedgerCheck = (scripts as Record<string, unknown>)['agent:ledger-check']
   if (agentLedgerCheck !== 'tsx scripts/agent-ledger-check.ts') {
     errors.push('package.json must define scripts["agent:ledger-check"] as "tsx scripts/agent-ledger-check.ts"')
+  }
+
+  const agentResetState = (scripts as Record<string, unknown>)['agent:reset-state']
+  if (agentResetState !== 'tsx scripts/reset-agent-state.ts --confirm') {
+    errors.push('package.json must define scripts["agent:reset-state"] as "tsx scripts/reset-agent-state.ts --confirm"')
+  }
+  if ('agent:reset-memory' in scripts) {
+    errors.push('package.json must not define legacy scripts["agent:reset-memory"]')
   }
 
   const lint = (scripts as Record<string, unknown>).lint

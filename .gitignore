@@ -17,6 +17,9 @@ agent-config.json
 *.tsbuildinfo
 
 .next/
+apps/admin-web/.output/
+apps/admin-web/.tanstack/
+apps/admin-web/coverage/
 .superpowers/
 .bot.pid
 

@@ -100,6 +100,38 @@ describe('runRepoChecks', () => {
     assert.deepEqual(result.errors, [])
   })
 
+  test('requires byte-identical Admin Web agent instructions when either file exists', () => {
+    const missingMirror = runRepoChecks({
+      ...validFiles,
+      'apps/admin-web/AGENTS.md': '# Admin Web Agent Instructions\n',
+    })
+    const differentMirror = runRepoChecks({
+      ...validFiles,
+      'apps/admin-web/AGENTS.md': '# Admin Web Agent Instructions\n',
+      'apps/admin-web/CLAUDE.md': '# Different Admin Web Instructions\n',
+    })
+
+    assert.match(
+      missingMirror.errors.join('\n'),
+      /apps\/admin-web\/AGENTS\.md and CLAUDE\.md must be byte-identical/,
+    )
+    assert.match(
+      differentMirror.errors.join('\n'),
+      /apps\/admin-web\/AGENTS\.md and CLAUDE\.md must be byte-identical/,
+    )
+  })
+
+  test('accepts byte-identical Admin Web agent instructions', () => {
+    const instructions = '# Admin Web Agent Instructions\n'
+    const result = runRepoChecks({
+      ...validFiles,
+      'apps/admin-web/AGENTS.md': instructions,
+      'apps/admin-web/CLAUDE.md': instructions,
+    })
+
+    assert.deepEqual(result.errors, [])
+  })
+
   test('requires append-only agent ledger models and rejects legacy snapshot models', () => {
     const result = runRepoChecks({
       ...validFiles,
@@ -128,7 +160,7 @@ describe('runRepoChecks', () => {
 
     assert.match(result.errors.join('\n'), /README\.md references removed surface "scene_agent_contexts"/)
     assert.match(result.errors.join('\n'), /README\.md references removed surface "reply_records"/)
-    assert.match(result.errors.join('\n'), /README\.md references removed surface "admin-web"/)
+    assert.doesNotMatch(result.errors.join('\n'), /README\.md references removed surface "admin-web"/)
   })
 
   test('rejects package scripts that do not expose repo-check through lint', () => {

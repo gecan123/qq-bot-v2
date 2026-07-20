@@ -1,6 +1,8 @@
 export interface RepoCheckFiles {
   'AGENTS.md': string
   'CLAUDE.md': string
+  'apps/admin-web/AGENTS.md'?: string
+  'apps/admin-web/CLAUDE.md'?: string
   'README.md': string
   'package.json': string
   '.env.example': string
@@ -31,7 +33,6 @@ const README_REMOVED_SURFACES = [
   'assistant_turns',
   'root_runtime_snapshots',
   'agent_runtime_snapshots',
-  'admin-web',
   'src/conversation/',
   'src/responder/',
   'src/runtime/',
@@ -86,6 +87,12 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
 
   if (files['AGENTS.md'] !== files['CLAUDE.md']) {
     errors.push('AGENTS.md and CLAUDE.md must stay byte-identical mirrors')
+  }
+
+  const adminAgents = files['apps/admin-web/AGENTS.md']
+  const adminClaude = files['apps/admin-web/CLAUDE.md']
+  if ((adminAgents !== undefined || adminClaude !== undefined) && adminAgents !== adminClaude) {
+    errors.push('apps/admin-web/AGENTS.md and CLAUDE.md must be byte-identical')
   }
 
   checkAgentEntry('AGENTS.md', files['AGENTS.md'], errors)

@@ -1,9 +1,15 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { runRepoChecks, type RepoCheckFiles } from '../src/ops/repo-check.js'
+
+function readOptionalFile(path: string): string | undefined {
+  return existsSync(path) ? readFileSync(path, 'utf8') : undefined
+}
 
 const files: RepoCheckFiles = {
   'AGENTS.md': readFileSync('AGENTS.md', 'utf8'),
   'CLAUDE.md': readFileSync('CLAUDE.md', 'utf8'),
+  'apps/admin-web/AGENTS.md': readOptionalFile('apps/admin-web/AGENTS.md'),
+  'apps/admin-web/CLAUDE.md': readOptionalFile('apps/admin-web/CLAUDE.md'),
   'README.md': readFileSync('README.md', 'utf8'),
   'package.json': readFileSync('package.json', 'utf8'),
   '.env.example': readFileSync('.env.example', 'utf8'),

@@ -4,15 +4,15 @@
 
 | 章节 | qq-bot-v2 状态 | 评价 |
 |---|---:|---|
-| s01 Agent Loop | 已满足 | 标准 LLM -> tool -> result -> loop，额外有事件队列、snapshot 和 Agent 自主 pause；send 成功后可继续下一轮。 |
+| s01 Agent Loop | 已满足 | 标准 LLM -> tool -> result -> loop，额外有事件队列、append-only ledger projection 和 Agent 自主 pause；send 成功后可继续下一轮。 |
 | s02 Tool Use | 已满足核心 | 工具集中注册，执行层有 schema 校验、错误隔离、结构化恢复提示和 tool-call 审计；同轮连续的显式只读调用可以并行，结果仍按原 tool-call 顺序 append，未知工具和副作用调用保持 exclusive barrier。 |
 | s03 Permission | 已满足核心，开发默认偏薄 | 有 `workspace_bash` allowlist、repo 只读、blocked paths、timeout/output cap，`send_message` 有 target/ambient 边界。默认 thin approval 只拦网站发布和非只读 MCP；本地删除与 skill 安装直接执行以支持快速迭代。可切 `strict` 恢复完整审批或 `off` 关闭统一 hook；审批仍绑定精确参数、真实 owner 私聊、TTL 和一次性消费。 |
-| s04 Hooks | 部分满足，方向正确 | 已有 executor 级 `beforeTool` / `afterTool` hook，可阻断、追踪、保留原结果；还没有 `UserPromptSubmit`、`Stop`、compact hooks、全生命周期 registry。 |
+| s04 Hooks | 部分满足，方向正确 | 已有 executor 级 `beforeTool` / `afterTool` hook，以及 compaction 的 `beforeCompact` / `afterCompact`；还没有 `UserPromptSubmit`、`Stop` 或统一的全生命周期 registry。 |
 | s05 TodoWrite | 已满足核心 | 有进程内 `todo` 工具，可 `list/update` 当前多步计划，并约束同一时间最多一个 `in_progress`。它只服务当前工作；持久任务图属于 s12，不由 `todo` 承担。 |
-| s06 Subagent | 已满足核心 | `delegate` 提供一次性 clean-context 子任务、固定只读工具 allowlist、轮数/超时预算、后台 lane 和结构化回传，内部 transcript 不进主 ledger；`trading_agent` 继续承接专用金融研究。没有持久多 Agent 私聊或 teammate 身份，这属于 s15/s16。 |
+| s06 Subagent | 部分满足，有已知缺陷 | `delegate` 已有一次性 clean-context、固定只读工具 allowlist、轮数/超时预算、后台 lane 和结构化回传，内部 transcript 不进主 ledger；但当前没有把每轮 `messagesToAppend` 安装回本地 context，多轮任务看不到前轮工具结果，修复项见 `docs/TECH_DEBT.md`。`trading_agent` 继续承接专用金融研究。 |
 | s07 Skill Loading | 已满足且有扩展 | 有有界的 `skill list/load`，目录面向 runtime Agent；deferred `skill_editor` 支持草稿、触发/排除边界校验、安全扫描和拒绝覆盖安装。仍没有多 skill root 或自动相关选择。 |
-| s08 Context Compact | 已满足核心 | 有 token 触发摘要 compaction、完整 prefix summarization、safe cut 和改写后即时 snapshot，避免切开 tool call/result；LLM 请求另有从 ledger 重建的 working-context 投影，旧图片只在视图中降级。仍缺 text/tool-result micro-compact、manual compact、完整 transcript 归档。 |
-| s09 Memory | 已满足核心 | `memory` 已有 Markdown v1、分页 read、revision、entry 更新/删除/compact；`recall` 做有界 entry 级相关召回并保留 provenance，`review` 只读提出重复/近重复/可能冲突，确认后再 mutation。Notebook 保存主题过程，Life Journal 保存经历/感受/梦，Agenda 保存当前承诺和下一步。没有无条件自动提取或自动破坏性整理，这是有意边界。 |
+| s08 Context Compact | 已满足核心 | 有 token/overflow/owner `/compact` 触发的摘要 compaction、完整 prefix summarization、safe cut、CAS append-only boundary 和 `beforeCompact` / `afterCompact` hooks，避免切开 tool call/result；完整 transcript 保留在 permanent ledger，LLM 请求另有 working-context 投影，旧图片只在视图中降级。仍可按真实指标评估 text/tool-result micro-compact。 |
+| s09 Memory | 已满足核心 | `memory` 已有 Markdown v2、分页 read、revision、entry 更新/删除/compact；`recall` 做有界 entry 级相关召回并保留 provenance，`review` 只读提出重复/近重复/可能冲突，确认后再 mutation。Notebook 保存主题过程，Life Journal 保存经历/感受/梦，Agenda 保存当前承诺和下一步。没有无条件自动提取或自动破坏性整理，这是有意边界。 |
 | s10 System Prompt | 部分满足，适合本项目 | prompt 分 section 组装，但启动后冻结；这不完全等同教程的运行时动态拼接，但更利于当前 prompt cache 稳定性。 |
 | s11 Error Recovery | 核心已满足 | 有工具错误隔离、provider-neutral stop reason、transport/429/5xx/529/SSE overload 有界退避、`retry-after`、prompt-too-long 强制 compaction、`max_tokens` 预算升级与有界 continuation、显式同 provider fallback、round backoff、replay barrier 和幂等 shutdown。仍可补 OpenAI 错误的更细分类与恢复指标汇总。 |
 | s12 Task System | 部分满足 | 单一持久 Goal 支持 `origin=owner|self`、状态流转、revision、token/time/round 使用量、完成证据和三轮 blocker 门槛，并能跨 replay/compaction/restart 续跑；Agent 可自主建/弃 self Goal，owner Goal 可抢占。仍没有多任务图、依赖、认领或 blockedBy DAG。进程内 `todo` 继续只管当前执行计划。 |
@@ -30,7 +30,7 @@
 1. LLM 恢复状态机：完成。覆盖 transient retry、`retry-after`、context overflow 强制 compact、`max_tokens` 预算升级/有界 continuation、同 provider fallback，并保证截断 tool call 不执行。
 2. 分层上下文：完成第一阶段。durable ledger 不变，working projection 只降级较旧图片字节并输出 hygiene 指标。
 3. 持久后台任务与调度：完成核心。后台状态原子持久化；不可恢复任务重启后明确 `interrupted`；独立 `schedule create/list/cancel` 支持 `at|every|cron`、3 天生命周期、重启恢复和合并漏触发。
-4. 受限委派：完成核心。clean context、只读 allowlist、轮数/时间预算、后台 lane、结构化 `delegate_return`，内部 transcript 不污染主 ledger。
+4. 受限委派：框架已接入，但多轮上下文延续存在已确认缺陷；修复前只把 clean context、只读 allowlist、轮数/时间预算、后台 lane、结构化 `delegate_return` 和主 ledger 隔离视为已完成。
 5. 记忆召回与整理：完成第一阶段。entry 级 lexical recall 可解释且带 provenance，review 只提出重复、近重复和可能冲突，不自动破坏性修改。
 6. 可调 owner approval：完成核心。默认 thin 只保护公开发布和未知 MCP 写调用；真实私聊证据、精确参数 hash、TTL、持久状态和一次性消费保持不变，必要时可切 strict/off。
 7. 安全并行：完成核心。只并行连续的显式只读调用，副作用和未知调用构成 barrier，tool result 仍按原 assistant call 顺序进入 ledger。

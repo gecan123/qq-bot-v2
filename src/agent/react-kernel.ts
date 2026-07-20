@@ -7,6 +7,7 @@ import type {
   ToolEffect,
   ToolExecutionResult,
   ToolExecutor,
+  ToolShareCandidate,
 } from './tool.js'
 import { recordTokenUsage } from './token-stats.js'
 import { createLogger } from '../logger.js'
@@ -52,6 +53,7 @@ export interface ReactToolOutcome {
   retryClass?: 'immediate' | 'after_event' | 'backoff' | 'terminal'
   continuation?: ToolContinuation
   noveltyKey?: string
+  shareCandidate?: ToolShareCandidate
   evidenceMessageRowIds?: number[]
 }
 
@@ -239,6 +241,9 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
         ...(result.outcome?.retryClass ? { retryClass: result.outcome.retryClass } : {}),
         ...(result.outcome?.continuation ? { continuation: result.outcome.continuation } : {}),
         ...(result.outcome?.noveltyKey ? { noveltyKey: result.outcome.noveltyKey } : {}),
+        ...(result.outcome?.shareCandidate
+          ? { shareCandidate: { ...result.outcome.shareCandidate } }
+          : {}),
         ...(result.outcome?.evidenceMessageRowIds?.length
           ? { evidenceMessageRowIds: result.outcome.evidenceMessageRowIds }
           : {}),
@@ -254,6 +259,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
         retryClass: result.outcome?.retryClass,
         continuation: result.outcome?.continuation,
         noveltyKey: result.outcome?.noveltyKey,
+        shareCandidateKey: result.outcome?.shareCandidate?.key,
       }, 'round_tool_done')
       messagesToAppend.push(await toDurableAgentMessage({
         role: 'tool',

@@ -5,7 +5,7 @@ export const overviewQueryOptions = queryOptions({
   queryKey: ['overview', 'snapshot'] as const,
   queryFn: () => getOverviewSnapshot(),
   staleTime: 0,
-  refetchInterval: 5_000,
+  refetchInterval: 2_000,
   refetchIntervalInBackground: false,
   retry: false,
 })

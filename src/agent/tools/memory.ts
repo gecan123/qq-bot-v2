@@ -30,6 +30,23 @@ import { deriveMemoryEvidence, type LoadMemorySourceEvidence } from '../memory-e
 
 const log = createLogger('TOOL_MEMORY')
 
+function topicMemoryShareCandidate(
+  file: string,
+  entryId: string,
+  revision: string,
+  summary: string,
+) {
+  return file === 'topics/topics.md'
+    ? {
+        shareCandidate: {
+          key: `memory:${file}:${entryId}:${revision}`,
+          cooldownKey: `memory:${file}:${entryId}`,
+          summary,
+        },
+      }
+    : {}
+}
+
 const DEFAULT_WORKSPACE_DIR = 'data/agent-workspace'
 
 const scopeSchema = z.enum(['self', 'person', 'group', 'topic'])
@@ -312,6 +329,13 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
               ok: true,
               code: result.changed ? 'written' : 'unchanged',
               progress: result.changed,
+              ...(result.changed && args.scope === 'topic' ? {
+                shareCandidate: {
+                  key: `memory:${result.file}:${result.entryId}:${result.revision}`,
+                  cooldownKey: `memory:${result.file}:${result.entryId}`,
+                  summary: `主题记忆“${result.title}”形成了一项新的稳定结论。`,
+                },
+              } : {}),
             },
           }
         }
@@ -425,7 +449,20 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             },
           )
           log.info({ file: args.file, entryId: args.entryId }, 'memory_entry_updated')
-          return { content: JSON.stringify(result), outcome: { ok: true, code: 'updated', progress: true } }
+          return {
+            content: JSON.stringify(result),
+            outcome: {
+              ok: true,
+              code: 'updated',
+              progress: true,
+              ...topicMemoryShareCandidate(
+                args.file,
+                result.entryId,
+                result.revision,
+                '主题记忆形成了一项更新后的稳定结论。',
+              ),
+            },
+          }
         }
 
         if (args.action === 'correct_entry') {
@@ -446,7 +483,20 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             oldEntryId: args.entryId,
             replacementEntryId: result.replacementEntryId,
           }, 'memory_entry_corrected')
-          return { content: JSON.stringify(result), outcome: { ok: true, code: 'corrected', progress: true } }
+          return {
+            content: JSON.stringify(result),
+            outcome: {
+              ok: true,
+              code: 'corrected',
+              progress: true,
+              ...topicMemoryShareCandidate(
+                args.file,
+                result.replacementEntryId,
+                result.revision,
+                '主题记忆纠正了一项旧结论。',
+              ),
+            },
+          }
         }
 
         if (args.action === 'delete_entry') {
@@ -469,7 +519,20 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             },
           )
           log.info({ file: args.file, entryId: args.entryId }, 'memory_entry_promoted')
-          return { content: JSON.stringify(result), outcome: { ok: true, code: 'promoted', progress: true } }
+          return {
+            content: JSON.stringify(result),
+            outcome: {
+              ok: true,
+              code: 'promoted',
+              progress: true,
+              ...topicMemoryShareCandidate(
+                args.file,
+                result.entryId,
+                result.revision,
+                '主题记忆沉淀了一项稳定结论。',
+              ),
+            },
+          }
         }
 
         if (args.action === 'mark_disputed') {
@@ -514,7 +577,20 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             entryId: result.entryId,
             compactedCount: args.entryIds.length,
           }, 'memory_entries_compacted')
-          return { content: JSON.stringify(result), outcome: { ok: true, code: 'compacted', progress: true } }
+          return {
+            content: JSON.stringify(result),
+            outcome: {
+              ok: true,
+              code: 'compacted',
+              progress: true,
+              ...topicMemoryShareCandidate(
+                args.file,
+                result.entryId,
+                result.revision,
+                '主题记忆完成了一次结论整合。',
+              ),
+            },
+          }
         }
 
         const result = await readMemoryFile(

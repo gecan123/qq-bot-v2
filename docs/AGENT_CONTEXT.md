@@ -8,13 +8,14 @@
 - `AgentContext` 是当前 canonical ledger 的内存 projection，不是另一份事实源。`messages` / `media` 是 QQ 入站事实账本，只用于 missed replay、搜索、审计和按需读取，不能重建 prompt transcript。
 - `bot_agent_runtime_state` 只保存通知披露 cursors、inbox 已读 cursors、continuity、Goal revision、active tool capabilities、QQ 当前会话 focus、last wake 和 ledger head。它不保存 LLM history；focus 只能由 `qq_conversation open/close` 改变，不能从消息、memory、日志或其他 side state 推断。
 - `bot_agent_checkpoint` 是可丢弃的 projection cache。启动始终先验证 canonical ledger；checkpoint 只有 schema、head、fingerprint 和 projection 都匹配时才命中。missing、stale、corrupt 都从 canonical ledger 重建，checkpoint 写失败不影响已提交历史。
-- `bot_agent_goal`、workspace Markdown、调度文件和 `logs/*` 都是 side state，永远不能作为 transcript replay 来源。
+- `bot_agent_goal`、workspace Markdown、调度文件和 `logs/*` 都是 side state，永远不能作为 transcript replay 来源。`logs/agent-activity.json` 仅供 WebAdmin 观察进程 phase、等待和并发工具，缺失或损坏不得影响 replay 或 Agent 行为。
 
 ## Append 与原子性
 
 - 新的 LLM 可见事实只能通过 Runtime Host 的受控 append 或 compaction projection 进入。
 - assistant tool call 和对应 tool result 是不可拆的原子组。结果按 assistant 中的 tool-call 顺序持久化；并行完成时序不进入 ledger。
 - `ToolExecutionResult.content` 是唯一持久化工具结果。`outcome` 和 `effects` 只服务当前轮控制流；`progress`、`continuation` 和 `noveltyKey` 都不进入 replay，重复新颖性只作为有界进程内防空转状态。只有 Runtime Host 验证后的稳定 marker（例如 `mailbox_handled`）可以另外 append。
+- 工具可在 `outcome.shareCandidate` 中标记稳定成果键、主题冷却键和短摘要。Runtime Host 只在存在 active 群、成果真实取得进展且本轮未外发时，追加一次 `share_checkpoint` user marker；追加前按完整 append-only canonical ledger 检查同一成果键和两小时主题冷却，因此 compaction 不会使旧 checkpoint 重新触发。它不代表发送授权，外发仍必须经过 QQ focus 与 `send_message`。
 - 可见消息与通知披露 cursor、inbox 已读 cursor、continuity、Goal revision、capability 或 QQ focus 变化必须在同一事务提交。`inbox` 只把实际呈现在有界 tool result 中的最新 row 标为已读，输出截断时不能跳过未展示行。持久化成功前不得推进内存 projection；提交失败时 runtime-local control state 必须回滚到 canonical projection。
 - late media、side table 或日志变化不得回写已 append entry。
 

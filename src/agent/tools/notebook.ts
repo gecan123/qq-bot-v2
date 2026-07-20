@@ -119,7 +119,19 @@ export function createNotebookTool(deps: NotebookToolDeps = {}): Tool<Args> {
             storeOptions,
             { kind: args.kind as NotebookKind, topic: args.topic, content: args.content },
           )
-          return { content: JSON.stringify({ ok: true, action: 'write', entry }), outcome: { ok: true } }
+          return {
+            content: JSON.stringify({ ok: true, action: 'write', entry }),
+            outcome: {
+              ok: true,
+              code: 'written',
+              progress: true,
+              shareCandidate: {
+                key: `notebook:${entry.id}`,
+                cooldownKey: `notebook:${entry.kind}:${entry.topic}`,
+                summary: `Notebook 主题“${entry.topic}”新增了一项${entry.kind}成果。`,
+              },
+            },
+          }
         }
         if (args.action === 'list') {
           const result = await listNotebookRecords(
@@ -158,7 +170,19 @@ export function createNotebookTool(deps: NotebookToolDeps = {}): Tool<Args> {
             topic: args.topic,
             content: args.content,
           })
-          return { content: JSON.stringify({ ok: true, action: 'update', ...result }), outcome: { ok: true } }
+          return {
+            content: JSON.stringify({ ok: true, action: 'update', ...result }),
+            outcome: {
+              ok: true,
+              code: 'updated',
+              progress: true,
+              shareCandidate: {
+                key: `notebook:${result.entry.id}:${result.revision}`,
+                cooldownKey: `notebook:${result.entry.kind}:${result.entry.topic}`,
+                summary: `Notebook 主题“${result.entry.topic}”形成了新的阶段性成果。`,
+              },
+            },
+          }
         }
         if (args.action === 'delete') {
           const result = await deleteNotebookRecord({
@@ -166,7 +190,10 @@ export function createNotebookTool(deps: NotebookToolDeps = {}): Tool<Args> {
             entryId: args.id,
             expectedRevision: args.expectedRevision,
           })
-          return { content: JSON.stringify({ ok: true, action: 'delete', ...result }), outcome: { ok: true } }
+          return {
+            content: JSON.stringify({ ok: true, action: 'delete', ...result }),
+            outcome: { ok: true, code: 'deleted', progress: true },
+          }
         }
         const result = await compactNotebookRecords({
           ...storeOptions,
@@ -174,7 +201,19 @@ export function createNotebookTool(deps: NotebookToolDeps = {}): Tool<Args> {
           expectedRevision: args.expectedRevision,
           content: args.content,
         })
-        return { content: JSON.stringify({ ok: true, action: 'compact', ...result }), outcome: { ok: true } }
+        return {
+          content: JSON.stringify({ ok: true, action: 'compact', ...result }),
+          outcome: {
+            ok: true,
+            code: 'compacted',
+            progress: true,
+            shareCandidate: {
+              key: `notebook:${result.entry.id}:${result.revision}`,
+              cooldownKey: `notebook:${result.entry.kind}:${result.entry.topic}`,
+              summary: `Notebook 主题“${result.entry.topic}”完成了一次阶段整理。`,
+            },
+          },
+        }
       } catch (error) {
         if (error instanceof NotebookStoreError) {
           return {

@@ -19,6 +19,7 @@ import {
 } from './agent-ledger.types.js'
 import { projectAgentLedger } from './agent-ledger-projection.js'
 import type { MailboxCursors } from './mailbox.js'
+import type { AgentActivityReporter, AgentActivityTrigger } from './activity-surface.js'
 import { renderBotEvent } from './render-event.js'
 import { createInMemoryGoalStore } from './goal-store.js'
 import {
@@ -304,6 +305,171 @@ function makeCanonicalCompactionHarness(
 // historical (MVP-1) tool name, mirroring immutable ledger rows from before the MVP-2 rename.
 // New code calls the tool 'send_message' (see src/agent/tools/send-message.ts).
 describe('BotLoopAgent.runOnceForTest', () => {
+  test('appends one durable share checkpoint for the same new artifact key', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('继续自主研究')
+    const ledger = makeMockLedgerHarness(ctx.getSnapshot().messages)
+    const toolCall = { id: 'notebook-write', name: 'notebook', args: { action: 'write' } }
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([
+        {
+          content: '',
+          toolCalls: [toolCall],
+          usage: { inputTokens: 3, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+          contextWindowTokens: 200_000,
+        },
+        {
+          content: '',
+          toolCalls: [{ ...toolCall, id: 'notebook-write-again' }],
+          usage: { inputTokens: 3, cachedTokens: 0, outputTokens: 1 },
+          model: 'mock',
+          contextWindowTokens: 200_000,
+        },
+      ]),
+      tools: makeMockTools({
+        notebook: async () => ({
+          content: '{"ok":true}',
+          outcome: {
+            ok: true,
+            progress: true,
+            shareCandidate: {
+              key: 'notebook:sol-research-v1',
+              cooldownKey: 'notebook:sol-research',
+              summary: 'SOL 研究形成了新的阶段性结论。',
+            },
+          },
+        }),
+      }),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      activeGroupShareTargets: [{
+        groupId: 253631878,
+        groupName: '程序喵 AI 竞技场',
+        residentHint: '研究发现和工具成果的首选分享场所。',
+      }],
+    })
+
+    await agent.runOnceForTest()
+    await agent.runOnceForTest()
+
+    const checkpoints = ctx.getSnapshot().messages.filter((message) => (
+      message.role === 'user'
+      && typeof message.content === 'string'
+      && message.content.includes('"event":"share_checkpoint"')
+    ))
+    assert.equal(checkpoints.length, 1)
+    const payload = JSON.parse(checkpoints[0]!.content as string)
+    assert.equal(payload.candidateKey, 'notebook:sol-research-v1')
+    assert.equal(payload.activeGroups[0].groupId, 253631878)
+  })
+
+  test('does not append a share checkpoint when the same round already sent a message', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('继续自主研究')
+    const ledger = makeMockLedgerHarness(ctx.getSnapshot().messages)
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [{ id: 'sent-result', name: 'send_message', args: {} }],
+        usage: { inputTokens: 3, cachedTokens: 0, outputTokens: 1 },
+        model: 'mock',
+        contextWindowTokens: 200_000,
+      }]),
+      tools: makeMockTools({
+        send_message: async () => ({
+          content: '{"ok":true}',
+          effects: [{ type: 'message_sent', target: { type: 'group', groupId: 253631878 } }],
+          outcome: {
+            ok: true,
+            progress: true,
+            shareCandidate: {
+              key: 'notebook:already-shared',
+              cooldownKey: 'notebook:already-shared',
+              summary: '本轮成果已经发出。',
+            },
+          },
+        }),
+      }),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      activeGroupShareTargets: [{
+        groupId: 253631878,
+        groupName: '程序喵 AI 竞技场',
+        residentHint: '研究发现和工具成果的首选分享场所。',
+      }],
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(ctx.getSnapshot().messages.some((message) => (
+      message.role === 'user'
+      && typeof message.content === 'string'
+      && message.content.includes('"event":"share_checkpoint"')
+    )), false)
+  })
+
+  test('publishes a structured wake trigger and round phases to the disposable activity surface', async () => {
+    const ctx = createAgentContext()
+    const ledger = makeMockLedgerHarness([])
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({
+      type: 'napcat_private_message',
+      messageRowId: 99,
+      peerId: 42,
+      messageId: 100,
+      senderId: 42,
+      senderNickname: 'Alice',
+      mentionedSelf: true,
+      sentAt: new Date('2026-07-20T08:00:00.000Z'),
+      renderedText: 'hello',
+    })
+    const phases: Array<Parameters<AgentActivityReporter['setPhase']>[0]> = []
+    const triggers: Array<AgentActivityTrigger | null> = []
+    const activityReporter: AgentActivityReporter = {
+      setTrigger(trigger) { triggers.push(trigger) },
+      setPhase(phase) { phases.push(phase) },
+      toolStarted() {},
+      toolFinished() {},
+      async flush() {},
+    }
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [],
+        usage: { inputTokens: 3, cachedTokens: 0, outputTokens: 1 },
+        model: 'mock',
+        contextWindowTokens: 200_000,
+      }]),
+      tools: makeMockTools(),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      activityReporter,
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(triggers[0]?.kind, 'private_message')
+    assert.equal(triggers[0]?.label, '收到 Alice 的私聊')
+    assert.deepEqual(phases.map(item => item.phase), ['thinking', 'committing'])
+    assert.equal(phases[0]?.roundIndex, 1)
+  })
+
   test('flush does not rewrite already canonical context', async () => {
     const ctx = createAgentContext()
     ctx.appendUserMessage('durable before shutdown')

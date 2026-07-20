@@ -1,5 +1,6 @@
-import { HeadContent, Outlet, Scripts, createRootRouteWithContext } from '@tanstack/react-router'
+import { HeadContent, Scripts, createRootRouteWithContext } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
+import { AdminShell } from '../components/AdminShell.js'
 import type { AdminRouterContext } from '../router.js'
 import appCss from '../styles.css?url'
 
@@ -10,9 +11,12 @@ export const Route = createRootRouteWithContext<AdminRouterContext>()({
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
       { title: 'QQ Bot WebAdmin' },
     ],
-    links: [{ rel: 'stylesheet', href: appCss }],
+    links: [
+      { rel: 'stylesheet', href: appCss },
+      { rel: 'icon', href: 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=' },
+    ],
   }),
-  component: Outlet,
+  component: AdminShell,
   shellComponent: RootDocument,
 })
 

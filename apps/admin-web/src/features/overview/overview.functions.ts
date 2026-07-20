@@ -1,7 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
-import { getAdminPrisma } from '../../server/db.server.js'
-import { loadOverviewSnapshot } from './overview.service.js'
+import { loadOverviewServerSnapshot } from './overview.server.js'
 
 export const getOverviewSnapshot = createServerFn({ method: 'GET' }).handler(
-  () => loadOverviewSnapshot(getAdminPrisma()),
+  () => loadOverviewServerSnapshot(),
 )

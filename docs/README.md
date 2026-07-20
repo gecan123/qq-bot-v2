@@ -11,7 +11,7 @@
 - `docs/HARNESS_COMPARISON.md`：按 `learn-claude-code` 章节对照当前 Agent harness 能力。
 - `docs/OPERATIONS.md`：本地命令、日志、验证和排查。
 - `docs/TECH_DEBT.md`：已知漂移和清理候选。
-- `apps/admin-web/`：只读 WebAdmin 运维面；当前仅有 Overview，运行和安全边界见 `docs/OPERATIONS.md`。
+- `apps/admin-web/`：只读 WebAdmin 运维面；“现在”首页解释实时活动，其他页面用于 Ledger、原始事件、Goal/Agenda、Memory、QQ、指标和健康下钻，运行与安全边界见 `docs/OPERATIONS.md`。
 - `plans/`：多步任务的实现计划和决策记录。
 
 ## 维护规则

@@ -5,7 +5,7 @@ import type { OverviewSnapshot } from './overview.schema.js'
 import { OverviewView } from './OverviewView.js'
 
 const snapshot: OverviewSnapshot = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   generatedAt: '2026-07-20T08:00:00.000Z',
   readOnly: true,
   ledger: {
@@ -27,8 +27,38 @@ const snapshot: OverviewSnapshot = {
     tokensUsed: 800,
     tokenBudget: 10_000,
     revision: 3,
+    currentCommitment: {
+      action: '建立当前活动观察面',
+      reason: '让管理员一眼看懂 Agent 在做什么',
+      expectedEvidence: '首页显示实时 phase 和最近进展',
+    },
     updatedAt: '2026-07-20T07:58:00.000Z',
   },
+  activity: {
+    available: true,
+    sourceStatus: 'available',
+    phase: 'tool',
+    phaseStartedAt: '2026-07-20T07:59:55.000Z',
+    roundIndex: 8,
+    detail: '正在执行 browser',
+    waitUntil: null,
+    trigger: { kind: 'private_message', label: '收到 Alice 的私聊', target: { type: 'private', id: '42' } },
+    activeTools: [{ toolCallId: 'call-live', toolName: 'browser', roundIndex: 8, startedAt: '2026-07-20T07:59:55.000Z', argsSummary: { action: 'open' } }],
+    lastCompleted: null,
+  },
+  recentActions: [{
+    id: '3',
+    at: '2026-07-20T07:59:50.000Z',
+    title: '搜索了网络信息',
+    detail: '关键词：BTC 下跌原因',
+    ok: true,
+    durationMs: 5_182,
+    sideEffect: false,
+    toolName: 'web_search',
+    toolCallId: 'call-3',
+    roundIndex: 7,
+    argsSummary: { query: 'BTC 下跌原因' },
+  }],
   latestAgentUsage: {
     ts: '2026-07-20T07:57:00.000Z',
     model: 'test-model',
@@ -47,15 +77,18 @@ describe('OverviewView', () => {
   test('renders the read-only operational snapshot', () => {
     render(<OverviewView snapshot={snapshot} isRefreshing={false} refreshFailed={false} />)
 
-    assert.ok(screen.getByText('只读模式'))
-    assert.ok(screen.getByText('Ledger entries'))
+    assert.ok(screen.getByText('正在使用工具'))
+    assert.ok(screen.getByText('建立当前活动观察面'))
+    assert.ok(screen.getByText('收到 Alice 的私聊'))
+    assert.ok(screen.getByText('搜索了网络信息'))
+    assert.ok(screen.getByText('Ledger'))
     assert.ok(screen.getByText('12'))
-    assert.ok(screen.getByText('Head #42'))
+    assert.ok(screen.getByText('Head #42 · compaction'))
     assert.ok(screen.getByText('群 123'))
     assert.ok(screen.getByText('建立只读 WebAdmin'))
     assert.ok(screen.getByText('active'))
     assert.ok(screen.getByText('75.0%'))
-    assert.ok(screen.getByText('2 / 9'))
+    assert.ok(screen.getByText('2 failed'))
   })
 
   test('renders explicit empty runtime and Goal states', () => {
@@ -71,6 +104,19 @@ describe('OverviewView', () => {
           },
           goal: null,
           latestAgentUsage: null,
+          activity: {
+            available: false,
+            sourceStatus: 'missing',
+            phase: 'unavailable',
+            phaseStartedAt: null,
+            roundIndex: null,
+            detail: null,
+            waitUntil: null,
+            trigger: null,
+            activeTools: [],
+            lastCompleted: null,
+          },
+          recentActions: [],
         }}
         isRefreshing={false}
         refreshFailed={false}
@@ -78,6 +124,7 @@ describe('OverviewView', () => {
     )
 
     assert.ok(screen.getByText('Runtime 状态缺失'))
-    assert.ok(screen.getByText('暂无活跃 Goal'))
+    assert.ok(screen.getByText('暂无持久 Goal'))
+    assert.ok(screen.getByText('实时状态不可用'))
   })
 })

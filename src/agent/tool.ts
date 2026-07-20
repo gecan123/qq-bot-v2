@@ -65,6 +65,17 @@ export interface ToolExecutionResult {
 
 export type ToolContinuation = 'immediate' | 'wait_attention' | 'backoff' | 'stop'
 
+/**
+ * 工具明确标记的可分享成果。它只触发一次 runtime 决策点，不代表应该发送，
+ * 也不能绕过 QQ focus、目标授权或群 participation。
+ */
+export interface ToolShareCandidate {
+  key: string
+  /** 同一主题/成果族的稳定键，用于短时抑制连续 checkpoint。 */
+  cooldownKey: string
+  summary: string
+}
+
 export interface ToolExecutionOutcome {
   ok: boolean
   code?: string
@@ -77,6 +88,8 @@ export interface ToolExecutionOutcome {
   continuation?: ToolContinuation
   /** 本次披露的新颖性标识；同一进程内重复 key 会被 runtime 降级为无进展等待。 */
   noveltyKey?: string
+  /** 本轮产生了值得显式判断一次“是否分享”的新成果；不进入 ledger，checkpoint 会受控追加。 */
+  shareCandidate?: ToolShareCandidate
   /** 本轮工具实际披露的 messages.id，供旁路 reviewer 构造受控证据 allowlist；不进入 ledger。 */
   evidenceMessageRowIds?: number[]
 }

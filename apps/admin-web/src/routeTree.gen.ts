@@ -10,33 +10,154 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ContextRouteImport } from './routes/context'
+import { Route as HealthRouteImport } from './routes/health'
+import { Route as LifeRouteImport } from './routes/life'
+import { Route as MemoryRouteImport } from './routes/memory'
+import { Route as MetricsRouteImport } from './routes/metrics'
+import { Route as QqRouteImport } from './routes/qq'
+import { Route as TimelineRouteImport } from './routes/timeline'
+import { Route as MemoryFileIdRouteImport } from './routes/memory_.$fileId'
+import { Route as QqGroupGroupIdRouteImport } from './routes/qq_.group.$groupId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ContextRoute = ContextRouteImport.update({
+  id: '/context',
+  path: '/context',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HealthRoute = HealthRouteImport.update({
+  id: '/health',
+  path: '/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LifeRoute = LifeRouteImport.update({
+  id: '/life',
+  path: '/life',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MemoryRoute = MemoryRouteImport.update({
+  id: '/memory',
+  path: '/memory',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MetricsRoute = MetricsRouteImport.update({
+  id: '/metrics',
+  path: '/metrics',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const QqRoute = QqRouteImport.update({
+  id: '/qq',
+  path: '/qq',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TimelineRoute = TimelineRouteImport.update({
+  id: '/timeline',
+  path: '/timeline',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MemoryFileIdRoute = MemoryFileIdRouteImport.update({
+  id: '/memory_/$fileId',
+  path: '/memory/$fileId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const QqGroupGroupIdRoute = QqGroupGroupIdRouteImport.update({
+  id: '/qq_/group/$groupId',
+  path: '/qq/group/$groupId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/context': typeof ContextRoute
+  '/health': typeof HealthRoute
+  '/life': typeof LifeRoute
+  '/memory': typeof MemoryRoute
+  '/metrics': typeof MetricsRoute
+  '/qq': typeof QqRoute
+  '/timeline': typeof TimelineRoute
+  '/memory/$fileId': typeof MemoryFileIdRoute
+  '/qq/group/$groupId': typeof QqGroupGroupIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/context': typeof ContextRoute
+  '/health': typeof HealthRoute
+  '/life': typeof LifeRoute
+  '/memory': typeof MemoryRoute
+  '/metrics': typeof MetricsRoute
+  '/qq': typeof QqRoute
+  '/timeline': typeof TimelineRoute
+  '/memory/$fileId': typeof MemoryFileIdRoute
+  '/qq/group/$groupId': typeof QqGroupGroupIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/context': typeof ContextRoute
+  '/health': typeof HealthRoute
+  '/life': typeof LifeRoute
+  '/memory': typeof MemoryRoute
+  '/metrics': typeof MetricsRoute
+  '/qq': typeof QqRoute
+  '/timeline': typeof TimelineRoute
+  '/memory_/$fileId': typeof MemoryFileIdRoute
+  '/qq_/group/$groupId': typeof QqGroupGroupIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/context'
+    | '/health'
+    | '/life'
+    | '/memory'
+    | '/metrics'
+    | '/qq'
+    | '/timeline'
+    | '/memory/$fileId'
+    | '/qq/group/$groupId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/context'
+    | '/health'
+    | '/life'
+    | '/memory'
+    | '/metrics'
+    | '/qq'
+    | '/timeline'
+    | '/memory/$fileId'
+    | '/qq/group/$groupId'
+  id:
+    | '__root__'
+    | '/'
+    | '/context'
+    | '/health'
+    | '/life'
+    | '/memory'
+    | '/metrics'
+    | '/qq'
+    | '/timeline'
+    | '/memory_/$fileId'
+    | '/qq_/group/$groupId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ContextRoute: typeof ContextRoute
+  HealthRoute: typeof HealthRoute
+  LifeRoute: typeof LifeRoute
+  MemoryRoute: typeof MemoryRoute
+  MetricsRoute: typeof MetricsRoute
+  QqRoute: typeof QqRoute
+  TimelineRoute: typeof TimelineRoute
+  MemoryFileIdRoute: typeof MemoryFileIdRoute
+  QqGroupGroupIdRoute: typeof QqGroupGroupIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +169,83 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/context': {
+      id: '/context'
+      path: '/context'
+      fullPath: '/context'
+      preLoaderRoute: typeof ContextRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/health': {
+      id: '/health'
+      path: '/health'
+      fullPath: '/health'
+      preLoaderRoute: typeof HealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/life': {
+      id: '/life'
+      path: '/life'
+      fullPath: '/life'
+      preLoaderRoute: typeof LifeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/memory': {
+      id: '/memory'
+      path: '/memory'
+      fullPath: '/memory'
+      preLoaderRoute: typeof MemoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/metrics': {
+      id: '/metrics'
+      path: '/metrics'
+      fullPath: '/metrics'
+      preLoaderRoute: typeof MetricsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/qq': {
+      id: '/qq'
+      path: '/qq'
+      fullPath: '/qq'
+      preLoaderRoute: typeof QqRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/timeline': {
+      id: '/timeline'
+      path: '/timeline'
+      fullPath: '/timeline'
+      preLoaderRoute: typeof TimelineRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/memory_/$fileId': {
+      id: '/memory_/$fileId'
+      path: '/memory/$fileId'
+      fullPath: '/memory/$fileId'
+      preLoaderRoute: typeof MemoryFileIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/qq_/group/$groupId': {
+      id: '/qq_/group/$groupId'
+      path: '/qq/group/$groupId'
+      fullPath: '/qq/group/$groupId'
+      preLoaderRoute: typeof QqGroupGroupIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ContextRoute: ContextRoute,
+  HealthRoute: HealthRoute,
+  LifeRoute: LifeRoute,
+  MemoryRoute: MemoryRoute,
+  MetricsRoute: MetricsRoute,
+  QqRoute: QqRoute,
+  TimelineRoute: TimelineRoute,
+  MemoryFileIdRoute: MemoryFileIdRoute,
+  QqGroupGroupIdRoute: QqGroupGroupIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

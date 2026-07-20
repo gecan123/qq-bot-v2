@@ -63,6 +63,12 @@ import {
   advanceInboxReadCursor,
   type InboxReadCursors,
 } from './inbox-read-cursors.js'
+import type { AgentActivityReporter, AgentActivityTrigger } from './activity-surface.js'
+import {
+  renderShareCheckpoint,
+  selectShareCheckpointCandidate,
+  type ActiveGroupShareTarget,
+} from './share-checkpoint.js'
 
 const log = createLogger('BOT_LOOP')
 
@@ -114,8 +120,12 @@ export interface BotLoopAgentDeps {
   autonomy?: BotLoopAutonomyOptions
   /** 启动期冻结的群参与节奏；只作为 inbox_update 的软提示，不改变发送授权。 */
   groupParticipations?: ReadonlyMap<number, GroupParticipation>
+  /** active 群的稳定短定位；只用于成果后的单次分享判断，不改变唤醒或发送授权。 */
+  activeGroupShareTargets?: readonly ActiveGroupShareTarget[]
   /** 可选的 Life Journal 自省 hook；输出不进入 AgentContext。 */
   lifeJournal?: BotLoopLifeJournal
+  /** 可丢弃的实时活动观察面；不进入 ledger/runtime singleton。 */
+  activityReporter?: AgentActivityReporter
 }
 
 export interface BotLoopLifeJournal {
@@ -595,6 +605,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     onlyHelpToolCalls: boolean
     madeToolProgress: boolean
     evidenceMessageRowIds: number[]
+    toolOutcomes: ReactToolOutcome[]
     toolContinuation?: ToolContinuation
   }> {
     roundIndex++
@@ -620,6 +631,11 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
           stagedMessages,
           compactionKeepRecentTokens:
             deps.compactOptions?.keepRecentTokens ?? config.compaction.keepRecentTokens,
+        })
+        deps.activityReporter?.setPhase({
+          phase: 'committing',
+          roundIndex,
+          detail: '正在保存本轮结果',
         })
         lastContextWindowTokens = result.contextWindowTokens
         break
@@ -719,6 +735,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       evidenceMessageRowIds: [...new Set(result.toolOutcomes.flatMap(
         (outcome) => outcome.evidenceMessageRowIds ?? [],
       ))],
+      toolOutcomes: result.toolOutcomes,
       ...(toolControl.continuation ? { toolContinuation: toolControl.continuation } : {}),
     }
   }
@@ -829,6 +846,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     recoverableToolFailure?: boolean
     onlyHelpToolCalls?: boolean
     madeToolProgress?: boolean
+    shareCheckpointAppended?: boolean
     toolContinuation?: ToolContinuation
   }> {
     const beforeStepCount = deps.context.getSnapshot().messages.length
@@ -858,6 +876,15 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       })
     }
     const drained = drainEvents()
+    const trigger = describeActivityTrigger(drained.events, goalAtRoundStart)
+    deps.activityReporter?.setTrigger(trigger)
+    deps.activityReporter?.setPhase({
+      phase: 'thinking',
+      roundIndex: roundIndex + 1,
+      detail: goalAtRoundStart?.status === 'active'
+        ? '正在推进当前持久 Goal'
+        : '正在根据最新上下文决定下一步',
+    })
     let disclosed = await discloseEvents(
       drained.beforeGoal,
       stagedMessages,
@@ -952,6 +979,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls,
       madeToolProgress,
       evidenceMessageRowIds,
+      toolOutcomes,
       toolContinuation,
     } = roundResult
     const handledMailboxMarkers = collectHandledMailboxMarkers(sentTargets)
@@ -999,6 +1027,36 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         messages: [{ role: 'user', content: renderRestResumeReminder(restReminderNow) }],
       })
     }
+    let shareCheckpointAppended = false
+    if (!didPause && sentTargets.length === 0 && (deps.activeGroupShareTargets?.length ?? 0) > 0) {
+      const checkpointNow = autonomy.now()
+      let candidate = selectShareCheckpointCandidate(
+        toolOutcomes,
+        deps.context.getSnapshot().messages,
+        checkpointNow,
+      )
+      if (candidate) {
+        const canonical = await deps.ledgerRepo.loadCanonicalState()
+        const permanentMessages = canonical.entries.flatMap((entry) => (
+          entry.entryType === 'message' ? [entry.payload.message] : []
+        ))
+        candidate = selectShareCheckpointCandidate(toolOutcomes, permanentMessages, checkpointNow)
+      }
+      if (candidate) {
+        await commitChanges({
+          messages: [{
+            role: 'user',
+            content: renderShareCheckpoint(candidate, deps.activeGroupShareTargets!, checkpointNow),
+          }],
+        })
+        shareCheckpointAppended = true
+        log.info({
+          candidateKey: candidate.key,
+          sourceTool: candidate.sourceTool,
+          activeGroupCount: deps.activeGroupShareTargets!.length,
+        }, 'share_checkpoint_appended')
+      }
+    }
     return {
       ranRound: true,
       didPause,
@@ -1006,6 +1064,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       recoverableToolFailure,
       onlyHelpToolCalls,
       madeToolProgress,
+      shareCheckpointAppended,
       ...(toolContinuation ? { toolContinuation } : {}),
       actionRequired: goalAtRoundStart?.status === 'active' || (drained.hadAttention && disclosed > 0),
     }
@@ -1020,6 +1079,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       recoverableToolFailure = false,
       onlyHelpToolCalls = false,
       madeToolProgress = false,
+      shareCheckpointAppended = false,
       toolContinuation,
     } = await step()
     if (!ranRound && !stopRequested) {
@@ -1056,7 +1116,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         return
       }
       log.info({ consecutiveRounds, cooldownMs: autonomy.cooldownMs }, 'autonomy_round_cooldown_enter')
-      const wake = await autonomy.waitForAttentionOrTimeout(deps.eventQueue, autonomy.cooldownMs)
+      const wake = await waitForAttention('连续行动达到保护上限，等待注意事件或冷却到期', autonomy.cooldownMs)
       if (wake === 'attention') idleBackoffLevel = 0
       consecutiveRounds = 0
       noToolActionRetryPending = false
@@ -1084,6 +1144,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         return
       }
       if (!recoverableToolFailure && !onlyHelpToolCalls) recoverableToolCorrectionRounds = 0
+      if (shareCheckpointAppended) {
+        idleBackoffLevel = 0
+        return
+      }
       if (toolContinuation === 'immediate') {
         idleBackoffLevel = 0
         return
@@ -1091,7 +1155,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       if (toolContinuation === 'stop') {
         const waitMs = currentIdleWaitMs()
         log.info({ consecutiveRounds, waitMs }, 'tool_requested_stop_wait')
-        const wake = await autonomy.waitForAttentionOrTimeout(deps.eventQueue, waitMs)
+        const wake = await waitForAttention('工具请求停止，等待新的注意事件', waitMs)
         updateIdleBackoff(wake, true)
         return
       }
@@ -1105,7 +1169,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
           toolContinuation,
           idleBackoffLevel,
         }, 'tool_continuation_wait')
-        const wake = await autonomy.waitForAttentionOrTimeout(deps.eventQueue, waitMs)
+        const wake = await waitForAttention(
+          actionRequired ? '当前行动需要稍后重试' : '等待新的注意事件或退避到期',
+          waitMs,
+        )
         updateIdleBackoff(wake, !actionRequired)
         return
       }
@@ -1117,7 +1184,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         if (actionRequired) idleBackoffLevel = 0
         const waitMs = actionRequired ? autonomy.actionRetryWaitMs : currentIdleWaitMs()
         log.info({ consecutiveRounds, waitMs, actionRequired, idleBackoffLevel }, 'tool_no_progress_wait')
-        const wake = await autonomy.waitForAttentionOrTimeout(deps.eventQueue, waitMs)
+        const wake = await waitForAttention(
+          actionRequired ? '工具没有取得进展，等待短暂重试' : '当前没有新进展，等待新的注意事件',
+          waitMs,
+        )
         updateIdleBackoff(wake, !actionRequired)
         return
       }
@@ -1134,14 +1204,14 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         { consecutiveRounds, waitMs: autonomy.actionRetryWaitMs },
         'no_tool_action_retry_wait',
       )
-      await autonomy.waitForAttentionOrTimeout(deps.eventQueue, autonomy.actionRetryWaitMs)
+      await waitForAttention('当前请求尚未完成，等待短暂重试', autonomy.actionRetryWaitMs)
       noToolActionRetryPending = false
       return
     }
 
     const waitMs = currentIdleWaitMs()
     log.info({ consecutiveRounds, waitMs, idleBackoffLevel, actionAnchor: 'none' }, 'no_tool_quiescent_wait')
-    const wake = await autonomy.waitForAttentionOrTimeout(deps.eventQueue, waitMs)
+    const wake = await waitForAttention('当前没有待处理行动，等待新消息或计划事件', waitMs)
     updateIdleBackoff(wake, true)
     consecutiveRounds = 0
     recoverableToolCorrectionRounds = 0
@@ -1154,6 +1224,18 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     )
   }
 
+  async function waitForAttention(
+    detail: string,
+    timeoutMs: number,
+  ): Promise<'attention' | 'elapsed'> {
+    deps.activityReporter?.setPhase({
+      phase: 'waiting',
+      detail,
+      waitUntil: new Date(autonomy.now().getTime() + timeoutMs).toISOString(),
+    })
+    return await autonomy.waitForAttentionOrTimeout(deps.eventQueue, timeoutMs)
+  }
+
   function updateIdleBackoff(wake: 'attention' | 'elapsed', unanchored: boolean): void {
     if (wake === 'attention' || !unanchored) {
       idleBackoffLevel = 0
@@ -1163,6 +1245,11 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   }
 
   async function waitForExternalEvent(): Promise<void> {
+    deps.activityReporter?.setPhase({
+      phase: 'waiting',
+      detail: '上下文为空，等待第一条消息或计划事件',
+      waitUntil: null,
+    })
     const keepAlive = (deps.keepAlive ?? defaultKeepAlive).open()
     try {
       await deps.eventQueue.waitForEvent()
@@ -1178,6 +1265,12 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         await runOnce()
       } catch (err) {
         log.error({ err, roundIndex }, 'round_failed_backing_off')
+        deps.activityReporter?.setPhase({
+          phase: 'error',
+          roundIndex,
+          detail: err instanceof Error ? err.message.slice(0, 1_000) : String(err).slice(0, 1_000),
+          waitUntil: new Date(autonomy.now().getTime() + (deps.errorBackoffMs ?? DEFAULT_ERROR_BACKOFF_MS)).toISOString(),
+        })
         await sleep(deps.errorBackoffMs ?? DEFAULT_ERROR_BACKOFF_MS)
       }
     }
@@ -1189,11 +1282,18 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       if (compactionAbortController.signal.aborted) {
         compactionAbortController = new AbortController()
       }
+      deps.activityReporter?.setPhase({ phase: 'starting', roundIndex: null, detail: '主循环正在启动' })
       log.info('bot_loop_started')
-      await loop()
+      try {
+        await loop()
+      } finally {
+        deps.activityReporter?.setPhase({ phase: 'stopped', detail: '主循环已停止', waitUntil: null })
+        await deps.activityReporter?.flush()
+      }
     },
     async stop() {
       stopRequested = true
+      deps.activityReporter?.setPhase({ phase: 'stopping', detail: '正在安全停止主循环', waitUntil: null })
       compactionAbortController.abort(new Error('bot loop stopping'))
       cancelDebounceSleep?.()
       deps.eventQueue.enqueue({ type: 'wake' })
@@ -1201,6 +1301,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     },
     async flush() {
       await syncGoalState()
+      await deps.activityReporter?.flush()
     },
     async requestManualCompaction(focus) {
       const canonical = await deps.ledgerRepo.loadCanonicalState()
@@ -1215,6 +1316,65 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       await step()
     },
   }
+}
+
+function describeActivityTrigger(
+  events: readonly BotEvent[],
+  goal: AgentGoal | null,
+): AgentActivityTrigger | null {
+  for (const event of events) {
+    if (event.type === 'napcat_private_message') {
+      return {
+        kind: 'private_message',
+        label: `收到 ${event.senderNickname || event.peerId} 的私聊`,
+        target: { type: 'private', id: String(event.peerId) },
+      }
+    }
+    if (event.type === 'napcat_message' && event.mentionedSelf) {
+      return {
+        kind: 'group_mention',
+        label: `群 ${event.groupName || event.groupId} 中有人提到了 Agent`,
+        target: { type: 'group', id: String(event.groupId) },
+      }
+    }
+    if (event.type === 'scheduled_wake') {
+      return {
+        kind: 'scheduled_wake',
+        label: `计划“${event.name}”到期：${event.intention}`.slice(0, 500),
+        target: null,
+      }
+    }
+    if (event.type === 'background_task_completed') {
+      return {
+        kind: 'background_task',
+        label: `后台任务 ${event.toolName} 已${event.ok ? '完成' : '失败'}：${event.description}`.slice(0, 500),
+        target: null,
+      }
+    }
+    if (event.type === 'mailbox_backlog') {
+      return event.source.type === 'group'
+        ? {
+            kind: 'group_mention',
+            label: `恢复了群 ${event.source.groupName || event.source.groupId} 的 ${event.count} 条待处理通知`,
+            target: { type: 'group', id: String(event.source.groupId) },
+          }
+        : {
+            kind: 'private_message',
+            label: `恢复了 ${event.source.senderName} 的 ${event.count} 条待处理私聊`,
+            target: { type: 'private', id: String(event.source.peerId) },
+          }
+    }
+    if (event.type === 'bootstrap') {
+      return { kind: 'bootstrap', label: '首次启动，开始建立自己的初始方向', target: null }
+    }
+    if (event.type === 'curiosity_tick' || event.type === 'wake') {
+      return { kind: 'manual_wake', label: '收到运行时唤醒信号', target: null }
+    }
+  }
+  if (goal?.status === 'active') {
+    return { kind: 'goal', label: `继续推进 Goal：${goal.objective}`.slice(0, 500), target: null }
+  }
+  return null
 }
 
 function sleep(ms: number): Promise<void> {

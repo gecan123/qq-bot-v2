@@ -360,7 +360,11 @@ describe('merged main-agent tools', () => {
     assert.deepEqual(repeatedList.outcome, { ok: true, code: 'unchanged', progress: false })
     assert.match(JSON.stringify(detail.content), /abc/)
     assert.match(JSON.stringify(detail.content), /send_message imageRef=ephemeral:abc/)
-    assert.deepEqual(detail.outcome, { ok: true, code: 'completed', progress: true })
+    assert.equal(detail.outcome?.ok, true)
+    assert.equal(detail.outcome?.code, 'completed')
+    assert.equal(detail.outcome?.progress, true)
+    assert.match(detail.outcome?.shareCandidate?.key ?? '', new RegExp(`^background-task:${task.id}:`))
+    assert.match(detail.outcome?.shareCandidate?.summary ?? '', /生成图片.*done/)
     assert.deepEqual(repeatedDetail.outcome, { ok: true, code: 'unchanged', progress: false })
   })
 

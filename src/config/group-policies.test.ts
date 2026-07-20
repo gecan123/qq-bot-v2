@@ -20,6 +20,7 @@ describe('group policies', () => {
 ## 群 111
 
 - participation: active
+- resident-hint: 熟悉的技术群，适合分享研究成果。
 
 这里允许低门槛短句接话。
 
@@ -28,7 +29,12 @@ describe('group policies', () => {
 - participation: selective
 `),
       [
-        { id: 111, participation: 'active', guidance: '这里允许低门槛短句接话。' },
+        {
+          id: 111,
+          participation: 'active',
+          residentHint: '熟悉的技术群，适合分享研究成果。',
+          guidance: '这里允许低门槛短句接话。',
+        },
         { id: 222, participation: 'mentions', guidance: '只在有人明确找她时回应。' },
         { id: 333, participation: 'selective', guidance: '' },
       ],
@@ -48,6 +54,10 @@ describe('group policies', () => {
       '## 群 111\n\n没有档位',
       '## 群 111\n\n- participation: chatty',
       '## 群 111\n\n- participation: active\n- participation: selective',
+      '## 群 111\n\n- participation: active\n- resident-hint: 第一条\n- resident-hint: 第二条',
+      '## 群 111\n\n- participation: active\n- resident-hint:',
+      `## 群 111\n\n- participation: active\n- resident-hint: ${'过'.repeat(201)}`,
+      '## 群 111\n\n- participation: mentions\n- resident-hint: 不应常驻',
     ]) {
       assert.throws(() => parseGroupPoliciesMarkdown(value), /group|群|participation/i)
     }

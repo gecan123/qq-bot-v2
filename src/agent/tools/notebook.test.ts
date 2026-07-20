@@ -14,14 +14,20 @@ test('notebook tool writes and recalls topic-oriented process notes', async () =
       now: () => new Date('2026-07-13T02:00:00.000Z'),
       id: () => 'note-1',
     })
-    const written = JSON.parse(String((await tool.execute({
+    const writeResult = await tool.execute({
       action: 'write',
       kind: 'reading',
       topic: '三体',
       content: '读到黑暗森林。',
-    }, {} as never)).content))
+    }, {} as never)
+    const written = JSON.parse(String(writeResult.content))
     assert.equal(written.ok, true)
     assert.equal(written.entry.topic, '三体')
+    assert.deepEqual(writeResult.outcome?.shareCandidate, {
+      key: 'notebook:note-1',
+      cooldownKey: 'notebook:reading:三体',
+      summary: 'Notebook 主题“三体”新增了一项reading成果。',
+    })
     assert.equal(tool.schema.safeParse({
       action: 'write',
       kind: 'project',

@@ -80,11 +80,13 @@ pnpm toollogf
 
 ### WebAdmin（只读）
 
-`apps/admin-web` 当前只提供 Overview，展示 ledger/runtime/Goal/token/tool-call 汇总。它使用 TanStack Start、React、TanStack Router/Query、Tailwind CSS 4 和 Zod；浏览器到数据库的数据流是：
+`apps/admin-web` 的“现在”首页展示实时活动、Goal commitment 与最近工具进展，其他页面提供 Ledger、原始事件、生命状态、Memory、QQ、指标和健康下钻。它使用 TanStack Start、React、TanStack Router/Query、Tailwind CSS 4 和 Zod；浏览器到数据源的数据流是：
 
 ```text
 Browser → TanStack Start Server Function → read service → PostgreSQL
 ```
+
+实时 phase 另由 Bot Runtime 原子写入 `logs/agent-activity.json`。WebAdmin 会同时核对 `.bot.pid`；PID 缺失、不可达或不匹配时不展示旧文件为“正在执行”。该观察面不参与 replay，Bot 重启后才会开始产生新版实时状态。
 
 首次运行先生成根 Prisma client，并创建 app 私有环境文件：
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'vitest'
 import { loadOverviewSnapshot, type OverviewDb } from './overview.service.js'
+import type { AgentActivitySurface } from '../../../../../src/agent/activity-surface.js'
 
 const now = new Date('2026-07-20T08:00:00.000Z')
 
@@ -36,6 +37,11 @@ function createFakeDb(focus: unknown): OverviewDb {
           tokensUsed: 800,
           tokenBudget: 10_000,
           revision: 3,
+          currentCommitment: {
+            action: '建立当前活动观察面',
+            reason: '让管理员一眼看懂 Agent 在做什么',
+            expectedEvidence: '首页显示实时 phase 和最近进展',
+          },
           updatedAt: new Date('2026-07-20T07:58:00.000Z'),
         }
       },
@@ -57,8 +63,62 @@ function createFakeDb(focus: unknown): OverviewDb {
         const where = (input as { where: Record<string, unknown> }).where
         return where.ok === false ? 2 : 9
       },
+      async findMany() {
+        return [
+          {
+            id: 3n,
+            ts: new Date('2026-07-20T07:59:50.000Z'),
+            toolCallId: 'call-3',
+            toolName: 'web_search',
+            roundIndex: 7,
+            argsSummary: { query: 'BTC 下跌原因' },
+            durationMs: 5_182,
+            ok: true,
+            sideEffect: false,
+            error: null,
+          },
+          {
+            id: 2n,
+            ts: new Date('2026-07-20T07:59:40.000Z'),
+            toolCallId: 'call-2',
+            toolName: 'inbox',
+            roundIndex: 7,
+            argsSummary: { action: 'read' },
+            durationMs: 120,
+            ok: true,
+            sideEffect: false,
+            error: null,
+          },
+        ]
+      },
     },
   }
+}
+
+const activity: AgentActivitySurface = {
+  schemaVersion: 1,
+  instanceId: 'instance-1',
+  pid: 123,
+  startedAt: '2026-07-20T07:50:00.000Z',
+  generatedAt: '2026-07-20T07:59:59.000Z',
+  phase: 'tool',
+  phaseStartedAt: '2026-07-20T07:59:55.000Z',
+  roundIndex: 8,
+  detail: '正在执行 browser',
+  waitUntil: null,
+  trigger: {
+    kind: 'private_message',
+    label: '收到 Alice 的私聊',
+    target: { type: 'private', id: '42' },
+  },
+  activeTools: [{
+    toolCallId: 'call-live',
+    toolName: 'browser',
+    roundIndex: 8,
+    startedAt: '2026-07-20T07:59:55.000Z',
+    argsSummary: { action: 'open', url: 'https://example.com' },
+  }],
+  lastCompleted: null,
 }
 
 describe('loadOverviewSnapshot', () => {
@@ -66,6 +126,7 @@ describe('loadOverviewSnapshot', () => {
     const result = await loadOverviewSnapshot(
       createFakeDb({ type: 'group', groupId: 123 }),
       now,
+      { status: 'available', surface: activity },
     )
 
     assert.equal(result.ledger.entryCount, 12)
@@ -73,6 +134,11 @@ describe('loadOverviewSnapshot', () => {
     assert.equal(result.ledger.latestEntryType, 'compaction')
     assert.deepEqual(result.runtime.focus, { type: 'group', id: '123' })
     assert.equal(result.goal?.objective, '建立只读 WebAdmin')
+    assert.equal(result.goal?.currentCommitment?.action, '建立当前活动观察面')
+    assert.equal(result.activity.phase, 'tool')
+    assert.equal(result.activity.activeTools[0]?.toolName, 'browser')
+    assert.equal(result.recentActions[0]?.title, '搜索了网络信息')
+    assert.equal(result.recentActions[1]?.title, '读取了消息')
     assert.equal(result.latestAgentUsage?.cacheHitRate, 0.75)
     assert.deepEqual(result.tools24h, { calls: 9, failed: 2 })
     assert.equal(result.generatedAt, '2026-07-20T08:00:00.000Z')
@@ -84,9 +150,11 @@ describe('loadOverviewSnapshot', () => {
     const result = await loadOverviewSnapshot(
       createFakeDb({ type: 'group', groupId: 'bad' }),
       now,
+      { status: 'missing' },
     )
 
     assert.equal(result.runtime.focus, null)
+    assert.equal(result.activity.phase, 'unavailable')
     assert.ok(result.warnings.includes('runtime.qqConversationFocus invalid'))
   })
 })

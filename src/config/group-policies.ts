@@ -9,6 +9,8 @@ export type GroupParticipation = (typeof GROUP_PARTICIPATION_MODES)[number]
 export interface GroupPolicy {
   readonly id: number
   readonly participation: GroupParticipation
+  /** active 群的稳定短定位；允许进入常驻 prompt，完整正文仍按需读取。 */
+  readonly residentHint?: string
   readonly guidance: string
 }
 
@@ -16,10 +18,13 @@ const GROUP_PARTICIPATION_MODE_SET = new Set<string>(GROUP_PARTICIPATION_MODES)
 const LEVEL_TWO_HEADING_RE = /^##[ \t]+(.+?)[ \t]*$/gm
 const GROUP_HEADING_RE = /^群 ([1-9]\d*)$/
 const PARTICIPATION_RE = /^- participation:[ \t]*(\S+)[ \t]*$/gm
+const RESIDENT_HINT_RE = /^- resident-hint:[ \t]*(.*?)[ \t]*$/gm
+const MAX_RESIDENT_HINT_LENGTH = 200
 
 /**
  * prompts/groups.md 是监听范围、发送授权、参与节奏和 operator 固定群提示的唯一来源。
- * 标题/档位走严格解析；正文原样作为 chat_style 的按需 guidance，不进入常驻 prompt。
+ * 标题/档位/短定位走严格解析；resident-hint 只给 active 群进入常驻 prompt，
+ * 其余正文原样作为 chat_style 的按需 guidance。
  */
 export function parseGroupPoliciesMarkdown(
   markdown: string,
@@ -61,12 +66,29 @@ export function parseGroupPoliciesMarkdown(
       )
     }
 
+    const residentHintMatches = [...section.matchAll(RESIDENT_HINT_RE)]
+    if (residentHintMatches.length > 1) {
+      throw new Error(`${sourceName} group ${id} must contain at most one "- resident-hint: <text>" line`)
+    }
+    const residentHint = residentHintMatches[0]?.[1]?.trim()
+    if (residentHint != null && residentHint.length === 0) {
+      throw new Error(`${sourceName} group ${id} resident-hint must not be empty`)
+    }
+    if (residentHint != null && residentHint.length > MAX_RESIDENT_HINT_LENGTH) {
+      throw new Error(`${sourceName} group ${id} resident-hint must be at most ${MAX_RESIDENT_HINT_LENGTH} characters`)
+    }
+    if (residentHint != null && participation !== 'active') {
+      throw new Error(`${sourceName} group ${id} resident-hint is only allowed for active participation`)
+    }
+
     const guidance = section
       .replace(PARTICIPATION_RE, '')
+      .replace(RESIDENT_HINT_RE, '')
       .trim()
     policies.push({
       id,
       participation: participation as GroupParticipation,
+      ...(residentHint ? { residentHint } : {}),
       guidance,
     })
   }

@@ -1,4 +1,5 @@
 import type { BotOwner } from '../config/index.js'
+import type { GroupPolicy } from '../config/group-policies.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import type { TargetMetadataMaps } from './resolve-target-meta.js'
 
@@ -15,6 +16,7 @@ const BOT_OWNER_PROMPT_PATH = './prompts/system/owner.md'
  */
 export interface BuildBotSystemPromptInput {
   groupIds: readonly number[]
+  groupPolicies: readonly GroupPolicy[]
   metadata: TargetMetadataMaps
   selfNumber: number
   /**
@@ -35,12 +37,19 @@ function renderOwnerSection(owner: BotOwner | null): string | null {
 
 function renderSourceList(input: BuildBotSystemPromptInput): string {
   const lines: string[] = []
+  const policies = new Map(input.groupPolicies.map((policy) => [policy.id, policy]))
   if (input.groupIds.length > 0) {
     lines.push('你监听这些 QQ 群:')
     for (const groupId of input.groupIds) {
       const name = input.metadata.groupNames.get(groupId)
-      if (name) lines.push(`  - 群 ${name} (id=${groupId})`)
-      else lines.push(`  - 群 (id=${groupId})`)
+      const policy = policies.get(groupId)
+      const label = name ? `群 ${name} (id=${groupId})` : `群 (id=${groupId})`
+      if (policy?.participation === 'active') {
+        const hint = policy.residentHint ?? '可自然主动参与；有真实成果时可作为分享候选。'
+        lines.push(`  - ${label} [active 分享候选]: ${hint}`)
+      } else {
+        lines.push(`  - ${label}`)
+      }
     }
     lines.push('你同时接受任意 QQ 好友的私聊 (不预先列名 — 实时按消息里的昵称识别).')
   } else {

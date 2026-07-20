@@ -26,6 +26,12 @@ describe('buildBotSystemPrompt', () => {
   test('keeps the stable personality, I/O model, and progressive-disclosure entries', () => {
     const prompt = buildBotSystemPrompt({
       groupIds: [123],
+      groupPolicies: [{
+        id: 123,
+        participation: 'active',
+        residentHint: '研究发现和工具成果的分享场所。',
+        guidance: '完整细则不应常驻。',
+      }],
       metadata: { groupNames: new Map([[123, '测试群']]) },
       selfNumber: 456,
       owner: { qq: 789, name: 'owner' },
@@ -49,6 +55,8 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /QQ:789.*owner/)
     assert.match(prompt, /没有指令优先级/)
     assert.match(prompt, /主动联系.*不.*讨好.*打卡/s)
+    assert.match(prompt, /测试群.*active 分享候选.*研究发现和工具成果的分享场所/s)
+    assert.doesNotMatch(prompt, /完整细则不应常驻/)
 
     assert.ok(prompt.indexOf('[关系基线]') < prompt.indexOf('[人设]'))
     assert.ok(prompt.indexOf('[人设]') < prompt.indexOf('[运行环境]'))
@@ -57,6 +65,7 @@ describe('buildBotSystemPrompt', () => {
   test('keeps scenario manuals and harness-enforced details out of the resident prompt', () => {
     const prompt = buildBotSystemPrompt({
       groupIds: [123],
+      groupPolicies: [],
       metadata: { groupNames: new Map([[123, '测试群']]) },
       selfNumber: 456,
       owner: { qq: 789, name: 'owner' },
@@ -75,6 +84,7 @@ describe('buildBotSystemPrompt', () => {
   test('balances self-directed projects, relationships, and quiet', () => {
     const prompt = buildBotSystemPrompt({
       groupIds: [123],
+      groupPolicies: [],
       metadata: { groupNames: new Map([[123, '测试群']]) },
       selfNumber: 456,
       owner: { qq: 789, name: 'owner' },
@@ -90,6 +100,7 @@ describe('buildBotSystemPrompt', () => {
   test('keeps the owner fixture within the resident prompt budget', () => {
     const prompt = buildBotSystemPrompt({
       groupIds: [123],
+      groupPolicies: [],
       metadata: { groupNames: new Map([[123, '测试群']]) },
       selfNumber: 456,
       owner: { qq: 789, name: 'owner' },

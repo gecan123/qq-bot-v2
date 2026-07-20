@@ -124,7 +124,18 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
       )
       return {
         content: blocks,
-        outcome: { ok: true, code: changed ? 'completed' : 'unchanged', progress: changed },
+        outcome: {
+          ok: true,
+          code: changed ? 'completed' : 'unchanged',
+          progress: changed,
+          ...(changed ? {
+            shareCandidate: {
+              key: `background-task:${task.id}:${task.updatedAt.toISOString()}`,
+              cooldownKey: `background-task:${task.toolName}`,
+              summary: `后台任务“${task.description}”已完成${task.resultSummary ? `：${task.resultSummary}` : '。'}`,
+            },
+          } : {}),
+        },
       }
     },
   }

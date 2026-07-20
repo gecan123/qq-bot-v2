@@ -214,6 +214,29 @@ describe('memory tool schema', () => {
     })
   })
 
+  test('marks a changed topic conclusion as a share candidate but keeps self memory private by default', async () => {
+    await withTempMemory(async (rootDir) => {
+      let nextId = 0
+      const tool = createMemoryTool({ workspaceDir: rootDir, id: () => `memory-${++nextId}` })
+      const topic = await tool.execute({
+        action: 'write',
+        scope: 'topic',
+        title: 'SOL 研究',
+        content: 'SOL 当前结论需要结合成交量和链上活跃度验证。',
+      }, makeCtx())
+      const own = await tool.execute({
+        action: 'write',
+        scope: 'self',
+        title: '私人想法',
+        content: '这条只作为自己的长期认识。',
+      }, makeCtx())
+
+      assert.match(topic.outcome?.shareCandidate?.key ?? '', /^memory:topics\/topics\.md:memory-1:/)
+      assert.match(topic.outcome?.shareCandidate?.summary ?? '', /SOL 研究.*稳定结论/)
+      assert.equal(own.outcome?.shareCandidate, undefined)
+    })
+  })
+
   test('queues maintenance only when a new recent entry is created', async () => {
     await withTempMemory(async (rootDir) => {
       const queued: string[] = []

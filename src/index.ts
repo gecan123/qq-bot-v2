@@ -54,6 +54,7 @@ import {
   createStartupCompactionControlGate,
   replayOwnerCompactionCommands,
 } from './agent/compaction-control.js'
+import { createAgentActivityReporter } from './agent/activity-surface.js'
 
 const log = createLogger('APP')
 
@@ -350,6 +351,7 @@ async function main() {
   }
 
   // 10. 工具集 + bot system prompt (启动后定型, 进程内不变)
+  const activityReporter = createAgentActivityReporter()
   const runtime = createAgentRuntime({
     context,
     eventQueue,
@@ -394,6 +396,7 @@ async function main() {
     approvalMode: config.approvalMode,
     mcpConfigPath: config.mcpConfigPath,
     mcpSchemaSnapshotDir: config.mcpSchemaSnapshotDir,
+    activityReporter,
   })
   await startupCompactionControlGate.setRuntime(
     (focus) => runtime.agent.requestManualCompaction(focus),

@@ -60,6 +60,10 @@ import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js
 import { createLogger } from '../logger.js'
 import { createQqConversationController } from './tools/qq-conversation.js'
 import { findPendingMailboxThroughRowId } from './mailbox-handled.js'
+import {
+  createActivityTrackingToolExecutor,
+  type AgentActivityReporter,
+} from './activity-surface.js'
 
 const scheduleLog = createLogger('SCHEDULE')
 
@@ -120,6 +124,8 @@ export interface AgentRuntimeInput {
   mcpSchemaSnapshotDir?: string
   /** 测试或嵌入方显式替换/关闭配置驱动的可选工具；生产默认按 config 自动发现。 */
   optionalTools?: BotOptionalTools
+  /** 可丢弃的实时观察面；写入失败不得影响 Agent 行为。 */
+  activityReporter?: AgentActivityReporter
 }
 
 export interface AgentRuntime {
@@ -195,7 +201,7 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       `qq_private:${userId}`,
     ) != null,
   })
-  const tools = createDeferredToolExecutor({
+  const baseTools = createDeferredToolExecutor({
     ...buildBotToolManifest({
       sender: input.sender,
       targetPolicy,
@@ -250,9 +256,13 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       afterTool: [sendMessageSafetyGuard.afterTool, createGenerateImageTaskLogHook()],
     },
   })
+  const tools = input.activityReporter
+    ? createActivityTrackingToolExecutor(baseTools, input.activityReporter)
+    : baseTools
 
   const systemPrompt = buildBotSystemPrompt({
     groupIds,
+    groupPolicies: input.groupPolicies,
     metadata: input.metadata,
     selfNumber: input.selfNumber,
     owner: input.owner,
@@ -287,7 +297,16 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     renderEvent: renderBotEvent,
     eventDebounceMs: input.eventDebounceMs,
     groupParticipations,
+    activeGroupShareTargets: input.groupPolicies
+      .filter((policy) => policy.participation === 'active')
+      .map((policy) => ({
+        groupId: policy.id,
+        groupName: input.metadata.groupNames.get(policy.id) ?? null,
+        residentHint: policy.residentHint
+          ?? '可自然主动参与；有真实成果时可作为分享候选。',
+      })),
     lifeJournal: input.lifeJournal,
+    activityReporter: input.activityReporter,
   })
 
   let backgroundStartPromise: Promise<void> | null = null

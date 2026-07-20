@@ -13,6 +13,7 @@
 - 当前 Memory、Notebook、Life Journal 和 Agenda writer 只有单进程按资源键协调；如果未来允许多个 bot writer 进程共享 workspace，需要增加跨进程互斥或改成单 writer service。
 - `agent:reset-memory` 实际会同时删除 ledger、checkpoint/runtime、Goal、memory、Notebook 和 Life 状态；虽然 CLI 入口仍有确认门，仍应改成更准确的 state reset 名称，或拆出可显式选择的 scopes。
 - Life Journal usage 已进入统一观测日志，但 BotLoop 的进程内每日自主预算目前只累计主 Agent round token；是否纳入 compaction/review 需要统一预算接口后再决定。
+- 主 Agent prompt 允许在没有真实行动方向时无工具结束活动轮，但 OpenAI 路径当前固定 `tool_choice=required`，Claude 默认配置也使用强制工具调用的 `any`。这会让模型在本应安静时倾向调用低价值工具，与“不为证明自主而保持忙碌”的语义存在冲突。LongCat 当前在 `auto` 下的工具选择仍不稳定，因此暂时保留强制调用；切换前应增加 provider conformance 测试，分别覆盖有明确行动时可靠调用工具、无行动时自然结束、QQ 外发仍只走 `send_message`，确认模型版本稳定后再统一改为 `auto`。
 - 长期状态当前坚持 Markdown 扫描和确定性 lexical scoring。先积累规模、延迟、召回质量证据；只有出现可复现瓶颈时才评估可从 Markdown 重建的 SQLite FTS/BM25 或 embedding 派生索引。
 - 保持 README 和 `docs/` 与当前 single-context runtime 对齐，并逐步把关键契约转成 `repo-check` 规则。
 

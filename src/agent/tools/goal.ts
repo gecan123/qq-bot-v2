@@ -67,15 +67,11 @@ export function createGoalTool(goalStore: GoalStore): Tool<Args> {
   return {
     name: 'goal',
     description: [
-      '单一持久目标工具。你可以在没有未完成 goal 时用 create_self 给自己建立长期主线；owner 私聊 /goal 始终优先并可抢占 self goal。',
-      'action=get: 读取当前 goal。',
-      `action=create_self: 自主创建 self goal，默认 ${DEFAULT_SELF_GOAL_TOKEN_BUDGET} tokens、上限 ${MAX_GOAL_TOKEN_BUDGET}；runtime 另有宽松的 60 秒/64 次每 24 小时保险丝。`,
-      'create_self 必须同时提交 currentCommitment；token 是调查、试错和验证的行动预算，不是必须消耗的指标。',
-      'action=replan: 当前步骤完成或路线失效后，自己选择并持久化下一项具体承诺；active owner goal 也允许规划执行步骤。',
-      'action=complete: 只有 objective 的全部要求都被当前真实证据证明、没有剩余工作时才调用。',
-      'action=report_blocker: 同一 blocker 连续三个 goal round 都成立时才会把状态转成 blocked；前两次保持 active 并要求继续寻找可行路径。',
-      'action=abandon_self: 只允许放弃自己创建的 goal；不能放弃 owner goal。',
-      'priority=high 私聊/@/审批可以临时打断 active goal，但处理完要回到 goal；等待后台、外部输入或冷却时可做其他活动。',
+      '单一持久目标工具；无 active goal 时可 create_self，owner /goal 可抢占它。',
+      `create_self 默认 ${DEFAULT_SELF_GOAL_TOKEN_BUDGET}、上限 ${MAX_GOAL_TOKEN_BUDGET} tokens，必须给出立即执行的 currentCommitment；预算用于行动，不要求耗尽。`,
+      '步骤完成或路线失效时 replan；只有全部标准已有真实证据且无剩余工作才 complete。',
+      '同一 blocker 连续三个 goal round 才 blocked；此前继续寻找替代路径。只能 abandon_self，不能放弃 owner goal。',
+      '高优先级私聊/@/审批可暂时打断，处理后返回 goal；等待外部输入时可做其他活动。',
     ].join(' '),
     schema: argsSchema,
     async execute(rawArgs, ctx) {

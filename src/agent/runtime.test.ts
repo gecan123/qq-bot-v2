@@ -40,7 +40,10 @@ describe('createAgentRuntime', () => {
     )
 
     assert.ok(claude.fixedTokens.botSystemPrompt <= 2_800)
-    assert.ok(claude.fixedTokens.visibleTools <= 7_000)
+    assert.ok(
+      claude.fixedTokens.visibleTools <= 7_000,
+      `Claude visible tools exceed budget: ${claude.fixedTokens.visibleTools}`,
+    )
     assert.ok(openai.fixedTokens.visibleTools <= 7_800)
     assert.ok(total(claude) <= 9_900)
     assert.ok(total(openai) <= 10_700)

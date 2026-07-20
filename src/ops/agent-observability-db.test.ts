@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { buildInsertAgentTokenUsageSql, buildInsertAgentToolCallSql } from './agent-observability-db.js'
+import {
+  buildInsertAgentTokenUsageSql,
+  buildInsertAgentToolCallSql,
+  buildSelectAgentTokenUsageSql,
+} from './agent-observability-db.js'
 
 describe('agent observability db SQL', () => {
   test('builds tool-call insert with all persisted fields', () => {
@@ -56,5 +60,16 @@ describe('agent observability db SQL', () => {
       10,
       0.8,
     ])
+  })
+
+  test('excludes mock token rows by default and allows an explicit mock query', () => {
+    const defaults = buildSelectAgentTokenUsageSql({})
+    assert.match(defaults.sql, /"model" NOT IN/)
+    assert.deepEqual(defaults.values, ['mock'])
+
+    const mockOnly = buildSelectAgentTokenUsageSql({ model: 'mock' })
+    assert.doesNotMatch(mockOnly.sql, /NOT IN/)
+    assert.match(mockOnly.sql, /"model" =/)
+    assert.deepEqual(mockOnly.values, ['mock'])
   })
 })

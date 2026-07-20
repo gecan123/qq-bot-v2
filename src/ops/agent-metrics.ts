@@ -10,6 +10,7 @@ export interface AgentMetricsFilters {
   toolName?: string
   operation?: string
   model?: string
+  excludedModels?: readonly string[]
   ok?: boolean
   sideEffect?: boolean
 }
@@ -230,6 +231,7 @@ function summarizeTokenUsage(raw: string, filters: AgentMetricsFilters): {
   const total = createTokenBucket()
   const byOperation: Record<string, MutableTokenBucket> = {}
   let malformed = 0
+  const excludedModels = new Set(resolveExcludedMetricModels(filters))
 
   for (const value of parseNdjson<TokenUsageLine>(raw)) {
     if (!value.ok) {
@@ -240,6 +242,7 @@ function summarizeTokenUsage(raw: string, filters: AgentMetricsFilters): {
     if (!matchesTimeFilter(line.ts, filters)) continue
     if (filters.operation && line.operation !== filters.operation) continue
     if (filters.model && line.model !== filters.model) continue
+    if (typeof line.model === 'string' && excludedModels.has(line.model)) continue
 
     const operation = typeof line.operation === 'string' && line.operation.length > 0
       ? line.operation
@@ -250,6 +253,11 @@ function summarizeTokenUsage(raw: string, filters: AgentMetricsFilters): {
   }
 
   return { total, byOperation, malformed }
+}
+
+export function resolveExcludedMetricModels(filters: AgentMetricsFilters): readonly string[] {
+  if (filters.model) return []
+  return filters.excludedModels ?? ['mock']
 }
 
 function summarizeToolCalls(raw: string, filters: AgentMetricsFilters): {

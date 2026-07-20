@@ -126,4 +126,32 @@ describe('summarizeAgentMetrics', () => {
       sideEffectRate: 0,
     })
   })
+
+  test('excludes mock token usage by default but allows an explicit mock query', () => {
+    const input = {
+      tokenUsageNdjson: [
+        '{"operation":"agent.chat","model":"mock","inputTokens":500000,"cachedTokens":0,"outputTokens":500000}',
+        '{"operation":"agent.chat","model":"gpt-5","inputTokens":100,"cachedTokens":80,"outputTokens":20}',
+      ].join('\n'),
+      toolCallsNdjson: '',
+    }
+
+    const defaults = summarizeAgentMetrics(input)
+    assert.deepEqual(defaults.tokenUsage.total, {
+      entries: 1,
+      inputTokens: 100,
+      cachedTokens: 80,
+      outputTokens: 20,
+      cacheHitRate: 0.8,
+    })
+
+    const mockOnly = summarizeAgentMetrics(input, { model: 'mock' })
+    assert.deepEqual(mockOnly.tokenUsage.total, {
+      entries: 1,
+      inputTokens: 500000,
+      cachedTokens: 0,
+      outputTokens: 500000,
+      cacheHitRate: 0,
+    })
+  })
 })

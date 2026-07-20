@@ -2,7 +2,7 @@ import { prisma } from '../database/client.js'
 import { Prisma } from '../generated/prisma/client.js'
 import { createLogger } from '../logger.js'
 import type { AgentMetricsFilters, AgentMetricsSummary } from './agent-metrics.js'
-import { summarizeAgentMetrics } from './agent-metrics.js'
+import { resolveExcludedMetricModels, summarizeAgentMetrics } from './agent-metrics.js'
 import type { AgentTokenOperation } from '../agent/token-stats.js'
 import { formatBeijingIso } from '../utils/beijing-time.js'
 
@@ -156,7 +156,7 @@ export async function queryPersistedAgentMetrics(
       cachedTokens: row.cachedTokens,
       outputTokens: row.outputTokens,
     })).join('\n'),
-  })
+  }, filters)
 }
 
 export function buildSelectAgentToolCallsSql(filters: AgentMetricsFilters): Prisma.Sql {
@@ -179,6 +179,7 @@ export function buildSelectAgentToolCallsSql(filters: AgentMetricsFilters): Pris
 }
 
 export function buildSelectAgentTokenUsageSql(filters: AgentMetricsFilters): Prisma.Sql {
+  const excludedModels = resolveExcludedMetricModels(filters)
   return Prisma.sql`
     SELECT
       "ts",
@@ -193,6 +194,9 @@ export function buildSelectAgentTokenUsageSql(filters: AgentMetricsFilters): Pri
       filters.to ? Prisma.sql`"ts" <= ${filters.to}` : null,
       filters.operation ? Prisma.sql`"operation" = ${filters.operation}` : null,
       filters.model ? Prisma.sql`"model" = ${filters.model}` : null,
+      excludedModels.length > 0
+        ? Prisma.sql`"model" NOT IN (${Prisma.join([...excludedModels])})`
+        : null,
     ])}
   `
 }

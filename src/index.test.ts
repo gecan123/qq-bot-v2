@@ -46,4 +46,14 @@ describe('main runtime wiring', () => {
 
     assert.match(source, /enqueueColdStartBootstrap\(eventQueue, hasPersistedLedger\)/)
   })
+
+  test('runs best-effort observability cleanup with configured DB and NDJSON retention', async () => {
+    const source = await readFile(new URL('./index.ts', import.meta.url), 'utf8')
+
+    assert.match(source, /import \{ purgeObservabilityData \} from '\.\/ops\/observability-retention\.js'/)
+    assert.match(
+      source,
+      /await purgeObservabilityData\(\{\s*retentionDays: config\.observabilityRetentionDays,\s*ndjsonPaths: \[\s*config\.tokenUsageLogPath,\s*config\.toolCallLogPath,\s*config\.fetchLogPath,\s*\],\s*\}\)/,
+    )
+  })
 })

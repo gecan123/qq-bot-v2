@@ -33,6 +33,7 @@ import { createPersistentTaskRegistry } from './agent/background-task-registry.j
 import { enqueueColdStartBootstrap } from './agent/cold-start-bootstrap.js'
 import { createShutdownCoordinator, type ShutdownCoordinator } from './ops/shutdown.js'
 import { createAgentStartupLifecycle } from './ops/agent-startup-lifecycle.js'
+import { purgeObservabilityData } from './ops/observability-retention.js'
 import {
   AGENT_CONTEXT_SURFACE_PATH,
   writeRuntimeAgentContextSurface,
@@ -79,6 +80,14 @@ async function main() {
 
   // 0. 启动期清理 7 天前的 Message + Media
   await purgeOldData()
+  await purgeObservabilityData({
+    retentionDays: config.observabilityRetentionDays,
+    ndjsonPaths: [
+      config.tokenUsageLogPath,
+      config.toolCallLogPath,
+      config.fetchLogPath,
+    ],
+  })
 
   // 1. 媒体描述用的 LLM provider routing (与 agent 自身的 LLM 客户端独立)
   const mediaProvider = buildMediaProvider(config.llm)

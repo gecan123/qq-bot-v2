@@ -1,26 +1,30 @@
 import { z } from 'zod'
-import { loadPromptSection } from '../../config/prompt-loader.js'
+import { loadPrompt } from '../../config/prompt-loader.js'
 import type { GroupPolicy } from '../../config/group-policies.js'
 import type { TargetMetadataMaps } from '../resolve-target-meta.js'
 import type { Tool } from '../tool.js'
 
-const STYLE_PROMPT_PATH = './prompts/bot-style.md'
-const CHAT_CONSTRAINTS_PROMPT_PATH = './prompts/bot-chat-constraints.md'
+const STYLE_INDEX_PROMPT_PATH = './prompts/chat-style/index.md'
 
-const sectionNames = {
-  constraints: { path: CHAT_CONSTRAINTS_PROMPT_PATH, section: 'chat_constraints' },
-  base: { path: STYLE_PROMPT_PATH, section: 'style_base' },
-  anti_patterns: { path: STYLE_PROMPT_PATH, section: 'style_anti_patterns' },
-  special_cases: { path: STYLE_PROMPT_PATH, section: 'style_special_cases' },
+const STYLE_PROMPT_PATHS = {
+  constraints: './prompts/chat-style/constraints.md',
+  base: './prompts/chat-style/base.md',
+  anti_patterns: './prompts/chat-style/anti-patterns.md',
+  roleplay: './prompts/chat-style/roleplay.md',
+  nsfw: './prompts/chat-style/nsfw.md',
 } as const
+
+const GLOBAL_STYLE_SECTIONS = ['constraints', 'base', 'anti_patterns', 'roleplay', 'nsfw'] as const
 
 const argsSchema = z.discriminatedUnion('scope', [
   z.object({
     scope: z.literal('global').describe('读取 Luna 的全局说话风格指南.'),
     section: z
-      .enum(['constraints', 'base', 'anti_patterns', 'special_cases'])
+      .enum(GLOBAL_STYLE_SECTIONS)
       .optional()
-      .describe('可选. 不传只返回索引; 传 constraints / base / anti_patterns / special_cases 获取具体内容.'),
+      .describe(
+        '可选. 不传只返回索引; 传 constraints / base / anti_patterns / roleplay / nsfw 获取具体内容.',
+      ),
   }),
   z.object({
     scope: z.literal('group').describe('读取某个监听群的在场风格定制.'),
@@ -52,10 +56,9 @@ export function createChatStyleTool(deps: ChatStyleDeps): Tool<Args> {
     async execute(args) {
       if (args.scope === 'global') {
         if (!args.section) {
-          return { content: loadPromptSection(STYLE_PROMPT_PATH, 'style_index') }
+          return { content: loadPrompt(STYLE_INDEX_PROMPT_PATH) }
         }
-        const target = sectionNames[args.section]
-        return { content: loadPromptSection(target.path, target.section) }
+        return { content: loadPrompt(STYLE_PROMPT_PATHS[args.section]) }
       }
 
       if (!monitoredGroupIds.has(args.groupId)) {

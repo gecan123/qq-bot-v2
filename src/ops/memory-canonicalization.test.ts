@@ -46,6 +46,14 @@ describe('self/topic memory canonicalization', () => {
       const recalled = await recallMemoryEntries({ rootDir }, { scope: 'topic', query: 'lit-window 跨日模式' })
       assert.deepEqual(recalled.matches.map((match) => match.entryId), ['topic-2'])
       assert.match(await readFile(join(rootDir, 'memory', 'people', '10001', 'core.md'), 'utf8'), /喜欢短句/)
+
+      const completedPreview = await canonicalizeSelfTopicMemory({ rootDir })
+      assert.equal(completedPreview.needed, false)
+      const selfPath = join(rootDir, 'memory', 'self', 'self.md')
+      await writeFile(selfPath, `${await readFile(selfPath, 'utf8')}\n<!-- ignored operator note -->\n`, 'utf8')
+      const rawDriftPreview = await canonicalizeSelfTopicMemory({ rootDir })
+      assert.equal(rawDriftPreview.needed, true)
+      assert.notEqual(rawDriftPreview.stateFingerprint, completedPreview.stateFingerprint)
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }

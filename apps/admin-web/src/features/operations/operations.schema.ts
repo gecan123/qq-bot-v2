@@ -94,6 +94,7 @@ export const operationPreviewPayloadSchema = z.discriminatedUnion('operation', [
     needed: z.boolean(),
     totalItems: z.number().int().nonnegative(),
     estimatedBatches: z.number().int().nonnegative(),
+    repairableJournalEntries: z.number().int().nonnegative(),
     counts: languageCountsSchema,
   }).strict(),
 ])
@@ -163,6 +164,7 @@ export const operationProgressSchema = z.object({
 export const operationSafeErrorSchema = z.object({
   code: z.string().min(1).max(100),
   message: z.string().min(1).max(500),
+  backupDir: safePathSchema.optional(),
 }).strict()
 
 export const operationRunSchema = z.object({
@@ -178,7 +180,49 @@ export const operationRunSchema = z.object({
   progress: operationProgressSchema.nullable(),
   result: operationResultPayloadSchema.nullable(),
   error: operationSafeErrorSchema.nullable(),
-}).strict()
+}).strict().superRefine((run, context) => {
+  const active = run.status === 'queued' || run.status === 'running'
+  if (active && run.finishedAt !== null) {
+    context.addIssue({ code: 'custom', path: ['finishedAt'], message: 'active run cannot be finished' })
+  }
+  if (!active && run.finishedAt === null) {
+    context.addIssue({ code: 'custom', path: ['finishedAt'], message: 'terminal run must be finished' })
+  }
+  if (run.status === 'queued' && run.startedAt !== null) {
+    context.addIssue({ code: 'custom', path: ['startedAt'], message: 'queued run cannot be started' })
+  }
+  if (run.status === 'running' && run.startedAt === null) {
+    context.addIssue({ code: 'custom', path: ['startedAt'], message: 'running run must be started' })
+  }
+  if ((run.status === 'succeeded' || run.status === 'failed') && run.startedAt === null) {
+    context.addIssue({ code: 'custom', path: ['startedAt'], message: 'completed run must have started' })
+  }
+  if (run.status === 'queued' && run.progress !== null) {
+    context.addIssue({ code: 'custom', path: ['progress'], message: 'queued run cannot have progress' })
+  }
+  if (run.status === 'succeeded') {
+    if (run.result === null) context.addIssue({ code: 'custom', path: ['result'], message: 'succeeded run requires a result' })
+    if (run.error !== null) context.addIssue({ code: 'custom', path: ['error'], message: 'succeeded run cannot have an error' })
+  } else if (run.result !== null) {
+    context.addIssue({ code: 'custom', path: ['result'], message: 'non-succeeded run cannot have a result' })
+  }
+  if ((run.status === 'failed' || run.status === 'interrupted') && run.error === null) {
+    context.addIssue({ code: 'custom', path: ['error'], message: 'failed or interrupted run requires an error' })
+  }
+  if ((run.status === 'queued' || run.status === 'running') && run.error !== null) {
+    context.addIssue({ code: 'custom', path: ['error'], message: 'active run cannot have an error' })
+  }
+  if (run.result && run.result.operation !== run.request.operation) {
+    context.addIssue({ code: 'custom', path: ['result', 'operation'], message: 'result operation must match request' })
+  }
+  if (
+    run.result?.operation === 'reset_state'
+    && run.request.operation === 'reset_state'
+    && run.result.scope !== run.request.scope
+  ) {
+    context.addIssue({ code: 'custom', path: ['result', 'scope'], message: 'reset result scope must match request' })
+  }
+})
 
 export const operationRunStateSchema = z.object({
   version: z.literal(1),
@@ -186,7 +230,20 @@ export const operationRunStateSchema = z.object({
   updatedAt: isoDateSchema,
   activeRun: operationRunSchema.nullable(),
   recentRuns: z.array(operationRunSchema).max(25),
-}).strict()
+}).strict().superRefine((state, context) => {
+  if (state.activeRun && state.activeRun.status !== 'queued' && state.activeRun.status !== 'running') {
+    context.addIssue({ code: 'custom', path: ['activeRun', 'status'], message: 'active run must be queued or running' })
+  }
+  state.recentRuns.forEach((run, index) => {
+    if (run.status === 'queued' || run.status === 'running') {
+      context.addIssue({ code: 'custom', path: ['recentRuns', index, 'status'], message: 'recent run must be terminal' })
+    }
+  })
+  const ids = [state.activeRun?.id, ...state.recentRuns.map(run => run.id)].filter(Boolean)
+  if (new Set(ids).size !== ids.length) {
+    context.addIssue({ code: 'custom', path: ['recentRuns'], message: 'run ids must be unique' })
+  }
+})
 
 export const operationsSnapshotSchema = z.object({
   schemaVersion: z.literal(1),

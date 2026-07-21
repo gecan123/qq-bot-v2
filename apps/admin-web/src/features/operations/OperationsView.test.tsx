@@ -20,7 +20,7 @@ const resetPreview: OperationPreview = {
   schemaVersion: 1,
   id: 'preview-reset',
   createdAt: '2026-07-21T10:00:00.000Z',
-  expiresAt: '2026-07-21T10:05:00.000Z',
+  expiresAt: '2099-07-21T10:05:00.000Z',
   fingerprint: 'a'.repeat(64),
   request: { operation: 'reset_state', scope: 'context' },
   bot: { stopped: true, pid: null, reason: 'no_process' },
@@ -103,6 +103,24 @@ describe('OperationsView', () => {
     assert.deepEqual(submitted, { previewId: 'preview-reset', confirmation: 'RESET context' })
   })
 
+  test('invalidates an old preview when the selected operation or reset scope changes', () => {
+    renderView({ preview: resetPreview })
+    const execute = screen.getByRole('button', { name: '执行操作' }) as HTMLButtonElement
+    const confirmation = screen.getByLabelText('确认短语')
+
+    fireEvent.change(confirmation, { target: { value: 'RESET context' } })
+    assert.equal(execute.disabled, false)
+
+    fireEvent.click(screen.getByRole('button', { name: /迁移 Memory V2/ }))
+    assert.equal(execute.disabled, true)
+    assert.ok(screen.getByText(/当前选择已变化，请重新生成预览/))
+
+    fireEvent.click(screen.getByRole('button', { name: /重置 Agent 状态/ }))
+    fireEvent.change(screen.getByLabelText('重置范围'), { target: { value: 'all' } })
+    assert.equal(execute.disabled, true)
+    assert.ok(screen.getByText(/当前选择已变化，请重新生成预览/))
+  })
+
   test('asks for a new preview after stale-preview rejection', () => {
     renderView({ preview: resetPreview, error: 'preview_stale: operation inputs changed' })
 
@@ -121,10 +139,22 @@ describe('OperationsView', () => {
     rerender(view({ run: operationRun('failed') }))
     assert.ok(screen.getByText('执行失败'))
     assert.ok(screen.getByText('migration failed safely'))
+    assert.ok(screen.getByText('/repo/data/agent-workspace/db-backups/failed-memory-v2'))
 
     rerender(view({ run: operationRun('interrupted') }))
     assert.ok(screen.getByText('执行被中断'))
     assert.ok(screen.getByText(/检查备份和当前状态后再决定是否重试/))
+  })
+
+  test('keeps a persisted backup path visible in recent history after reload', () => {
+    renderView({
+      snapshot: {
+        ...snapshot,
+        recentRuns: [operationRun('failed')],
+      },
+    })
+
+    assert.ok(screen.getByText('/repo/data/agent-workspace/db-backups/failed-memory-v2'))
   })
 })
 
@@ -153,7 +183,11 @@ function operationRun(status: OperationRun['status']): OperationRun {
       warnings: 0,
     } : null,
     error: status === 'failed'
-      ? { code: 'migration_failed', message: 'migration failed safely' }
+      ? {
+          code: 'migration_failed',
+          message: 'migration failed safely',
+          backupDir: '/repo/data/agent-workspace/db-backups/failed-memory-v2',
+        }
       : status === 'interrupted'
         ? { code: 'process_interrupted', message: 'process exited' }
         : null,

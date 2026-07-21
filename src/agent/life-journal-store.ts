@@ -216,12 +216,20 @@ async function readJournalFile(rootDir: string, date: string): Promise<LifeJourn
     }
     throw error
   }
+  return parseLifeJournalDayContent({ path, date, content })
+}
+
+export function parseLifeJournalDayContent(input: {
+  path: string
+  date: string
+  content: string
+}): LifeJournalFile {
   return {
-    path,
-    date,
-    content,
-    revision: revisionOf(content),
-    entries: parseEntries(content, date).map(({ start: _start, end: _end, ...entry }) => entry),
+    path: input.path,
+    date: input.date,
+    content: input.content,
+    revision: revisionOf(input.content),
+    entries: parseEntries(input.content, input.date).map(({ start: _start, end: _end, ...entry }) => entry),
   }
 }
 

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { cp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import {
@@ -12,6 +12,7 @@ import {
   type MemoryScope,
 } from '../agent/memory-store.js'
 import { deriveMemoryEvidence, type LoadMemorySourceEvidence } from '../agent/memory-evidence.js'
+import { withOperationBackup } from './operation-backup-error.js'
 
 interface MigrationDocument {
   file: string
@@ -35,6 +36,7 @@ export interface MemoryV2MigrationResult {
   ok: true
   applied: boolean
   needed: boolean
+  stateFingerprint: string
   backupDir?: string
   filesBefore: number
   filesAfter: number
@@ -59,6 +61,7 @@ export async function migrateMemoryToV2(input: {
   const documents = new Map<string, MigrationDocument>()
   const warnings: string[] = []
   const changes: MemoryV2MigrationChange[] = []
+  const rawFiles = new Map<string, string>()
   let movedPersonEntries = 0
   let quarantinedPersonEntries = 0
   let needed = false
@@ -68,6 +71,7 @@ export async function migrateMemoryToV2(input: {
     if (!read.ok) throw new Error(`memory v2 migration cannot read ${file.file}: ${read.error}`)
     if (read.entriesTruncated) throw new Error(`memory v2 migration supports at most 50 entries per file: ${file.file}`)
     const raw = await readFile(join(rootDir, 'memory', file.file), 'utf8')
+    rawFiles.set(file.file, raw)
     if (!/^formatVersion:\s*2\s*$/m.test(raw)) needed = true
     const aliases = parseFrontmatterAliases(raw)
     const entityId = file.scope === 'person' || file.scope === 'group'
@@ -142,10 +146,18 @@ export async function migrateMemoryToV2(input: {
   }
 
   const planned = [...documents.values()].sort((a, b) => a.file.localeCompare(b.file))
+  const rendered = planned.map(document => ({ file: document.file, content: renderDocument(document) }))
+  const sourceFiles = [...rawFiles.keys()].sort()
+  const rawSources = sourceFiles.map(file => ({ file, content: rawFiles.get(file) }))
+  needed ||= sourceFiles.length !== rendered.length
+    || rendered.some(document => rawFiles.get(document.file) !== document.content)
   const resultBase = {
     ok: true as const,
     applied: input.apply === true,
     needed,
+    stateFingerprint: createHash('sha256')
+      .update(JSON.stringify({ rawSources, rendered, changes, warnings }))
+      .digest('hex'),
     filesBefore: listed.total,
     filesAfter: planned.length,
     entries: planned.reduce((sum, document) => sum + document.entries.length, 0),
@@ -182,6 +194,8 @@ export async function migrateMemoryToV2(input: {
       throw error
     }
     await rm(displaced, { recursive: true, force: true })
+  } catch (error) {
+    throw withOperationBackup(error, backupDir)
   } finally {
     await rm(tempRoot, { recursive: true, force: true })
   }

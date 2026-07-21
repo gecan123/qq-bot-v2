@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import type { Dirent } from 'node:fs'
 import { access, cp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import {
@@ -15,10 +16,12 @@ import {
 } from '../agent/notebook-store.js'
 import {
   readLifeJournalDay,
+  parseLifeJournalDayContent,
   updateLifeJournalEntry,
   writeLifeAgendaIfRevision,
 } from '../agent/life-journal-store.js'
 import { hasChineseNarrative } from '../agent/long-term-language.js'
+import { withOperationBackup } from './operation-backup-error.js'
 
 export interface LongTermTranslationItem {
   key: string
@@ -60,6 +63,8 @@ export interface LongTermStateLanguageMigrationPlan {
   estimatedBatches: number
   counts: LongTermStateLanguageMigrationCounts
   items: readonly LongTermTranslationItem[]
+  stateFingerprint: string
+  repairableJournalEntries: number
 }
 
 interface MemoryPlan {
@@ -117,12 +122,22 @@ interface CollectedMigrationPlan {
 export async function planLongTermStateLanguageMigration(input: {
   rootDir: string
 }): Promise<LongTermStateLanguageMigrationPlan> {
-  const collected = await collectMigrationPlan(resolve(input.rootDir))
+  const rootDir = resolve(input.rootDir)
+  const before = await fingerprintLongTermStateSources(rootDir)
+  const collected = await collectMigrationPlan(rootDir)
+  const stateFingerprint = await fingerprintLongTermStateSources(rootDir)
+  if (before !== stateFingerprint) throw new Error('long-term state changed while creating the migration preview')
+  const repairableJournalEntries = await countRepairableLifeJournalEntries(rootDir)
+  if (stateFingerprint !== await fingerprintLongTermStateSources(rootDir)) {
+    throw new Error('long-term state changed while counting repairable journal entries')
+  }
   return {
     totalItems: collected.requests.length,
     estimatedBatches: countTranslationBatches(collected.requests),
     counts: countPlanItems(collected),
     items: collected.requests,
+    stateFingerprint,
+    repairableJournalEntries,
   }
 }
 
@@ -133,6 +148,7 @@ export async function migrateLongTermStateToChinese(input: {
 }): Promise<LongTermStateLanguageMigrationResult> {
   const rootDir = resolve(input.rootDir)
   const backupDir = await backupLongTermState(rootDir, input.now?.() ?? new Date())
+  try {
   const repairedNestedJournalEntries = await repairNestedLifeJournalEntries(rootDir)
   const {
     requests,
@@ -142,7 +158,7 @@ export async function migrateLongTermStateToChinese(input: {
     agenda,
   } = await collectMigrationPlan(rootDir)
 
-  const translations = await input.translate(requests)
+  const translations = requests.length > 0 ? await input.translate(requests) : []
   const translated = validateTranslations(requests, translations)
   const counts = {
     memoryTitles: 0,
@@ -260,6 +276,9 @@ export async function migrateLongTermStateToChinese(input: {
     renamedMemoryFiles,
     translatedItems: requests.length,
   }
+  } catch (error) {
+    throw withOperationBackup(error, backupDir)
+  }
 }
 
 async function collectMigrationPlan(rootDir: string): Promise<CollectedMigrationPlan> {
@@ -269,6 +288,50 @@ async function collectMigrationPlan(rootDir: string): Promise<CollectedMigration
   const journalPlans = await collectJournalPlans(rootDir, requests)
   const agenda = await collectAgendaPlan(rootDir, requests)
   return { requests, memoryPlans, notebookPlans, journalPlans, agenda }
+}
+
+async function fingerprintLongTermStateSources(rootDir: string): Promise<string> {
+  const files: Array<{ file: string; content: string }> = []
+  for (const directory of ['memory', 'notebook', 'life']) {
+    await collectFingerprintFiles(rootDir, directory, files)
+  }
+  return createHash('sha256').update(JSON.stringify(files)).digest('hex')
+}
+
+async function countRepairableLifeJournalEntries(rootDir: string): Promise<number> {
+  const directory = join(rootDir, 'life', 'journal')
+  let names: string[]
+  try {
+    names = await readdir(directory)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0
+    throw error
+  }
+  let count = 0
+  for (const name of names.filter(candidate => candidate.endsWith('.md')).sort()) {
+    count += repairLifeJournalContent(await readFile(join(directory, name), 'utf8')).repaired
+  }
+  return count
+}
+
+async function collectFingerprintFiles(
+  rootDir: string,
+  relativeDir: string,
+  output: Array<{ file: string; content: string }>,
+): Promise<void> {
+  const directory = join(rootDir, relativeDir)
+  let entries: Dirent<string>[]
+  try {
+    entries = await readdir(directory, { withFileTypes: true })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw error
+  }
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const relative = join(relativeDir, entry.name)
+    if (entry.isDirectory()) await collectFingerprintFiles(rootDir, relative, output)
+    else if (entry.isFile()) output.push({ file: relative, content: await readFile(join(rootDir, relative), 'utf8') })
+  }
 }
 
 function countPlanItems(plan: CollectedMigrationPlan): LongTermStateLanguageMigrationCounts {
@@ -384,7 +447,9 @@ async function collectJournalPlans(
   const plans: JournalPlan[] = []
   for (const name of names.filter((candidate) => /^\d{4}-\d{2}-\d{2}\.md$/.test(candidate)).sort()) {
     const date = name.slice(0, -3)
-    const file = await readLifeJournalDay({ rootDir, date })
+    const path = join(dir, name)
+    const repaired = repairLifeJournalContent(await readFile(path, 'utf8'))
+    const file = parseLifeJournalDayContent({ path, date, content: repaired.content })
     const entries = file.entries.map((entry) => {
       const key = needsTranslation(entry.markdown) ? `life:${date}:entry:${entry.id}` : undefined
       if (key) requests.push({ key, text: entry.markdown, kind: 'markdown' })
@@ -511,48 +576,52 @@ export async function repairNestedLifeJournalEntries(rootDir: string): Promise<n
   let repaired = 0
   for (const name of names.filter((candidate) => candidate.endsWith('.md'))) {
     const path = join(dir, name)
-    let raw = await readFile(path, 'utf8')
-    let changed = false
-    while (true) {
-      const outerStart = raw.indexOf('<!-- life-journal-entry\n')
-      if (outerStart < 0) break
-      let cursor = outerStart
-      let foundNested = false
-      while (cursor >= 0) {
-        const close = raw.indexOf('<!-- /life-journal-entry -->', cursor)
-        const nested = raw.indexOf('<!-- life-journal-entry\n', cursor + 1)
-        if (nested < 0 || (close >= 0 && close < nested)) {
-          cursor = close < 0 ? -1 : raw.indexOf('<!-- life-journal-entry\n', close)
-          if (cursor < 0) break
-          continue
-        }
-        raw = `${raw.slice(0, cursor)}${raw.slice(nested)}`
-        repaired += 1
-        changed = true
-        foundNested = true
-        break
-      }
-      if (!foundNested) break
-    }
-    raw = raw.replace(
-      /(<!-- life-journal-entry\n(?:[^\n]*\n)*?source: )round(\ncreatedAt: [^\n]+\n)roundIndex: ([^\n]+)\n-->\n## (\d{2}:\d{2}) [^\n]+/g,
-      (match, prefix: string, createdAt: string, roundIndex: string, time: string) => {
-        if (/^\d+$/.test(roundIndex.trim())) return match
-        repaired += 1
-        changed = true
-        return `${prefix}manual${createdAt}-->\n## ${time} Manual`
-      },
-    )
-    const duplicateClose = /<!-- \/life-journal-entry -->\n<!-- \/life-journal-entry -->/g
-    const withoutDuplicateCloses = raw.replace(duplicateClose, '<!-- /life-journal-entry -->')
-    if (withoutDuplicateCloses !== raw) {
-      repaired += 1
-      changed = true
-      raw = withoutDuplicateCloses
-    }
-    if (changed) await atomicWrite(path, raw)
+    const original = await readFile(path, 'utf8')
+    const result = repairLifeJournalContent(original)
+    repaired += result.repaired
+    if (result.content !== original) await atomicWrite(path, result.content)
   }
   return repaired
+}
+
+function repairLifeJournalContent(input: string): { content: string; repaired: number } {
+  let raw = input
+  let repaired = 0
+  while (true) {
+    const outerStart = raw.indexOf('<!-- life-journal-entry\n')
+    if (outerStart < 0) break
+    let cursor = outerStart
+    let foundNested = false
+    while (cursor >= 0) {
+      const close = raw.indexOf('<!-- /life-journal-entry -->', cursor)
+      const nested = raw.indexOf('<!-- life-journal-entry\n', cursor + 1)
+      if (nested < 0 || (close >= 0 && close < nested)) {
+        cursor = close < 0 ? -1 : raw.indexOf('<!-- life-journal-entry\n', close)
+        if (cursor < 0) break
+        continue
+      }
+      raw = `${raw.slice(0, cursor)}${raw.slice(nested)}`
+      repaired += 1
+      foundNested = true
+      break
+    }
+    if (!foundNested) break
+  }
+  raw = raw.replace(
+    /(<!-- life-journal-entry\n(?:[^\n]*\n)*?source: )round(\ncreatedAt: [^\n]+\n)roundIndex: ([^\n]+)\n-->\n## (\d{2}:\d{2}) [^\n]+/g,
+    (match, prefix: string, createdAt: string, roundIndex: string, time: string) => {
+      if (/^\d+$/.test(roundIndex.trim())) return match
+      repaired += 1
+      return `${prefix}manual${createdAt}-->\n## ${time} Manual`
+    },
+  )
+  const duplicateClose = /<!-- \/life-journal-entry -->\n<!-- \/life-journal-entry -->/g
+  const withoutDuplicateCloses = raw.replace(duplicateClose, '<!-- /life-journal-entry -->')
+  if (withoutDuplicateCloses !== raw) {
+    repaired += 1
+    raw = withoutDuplicateCloses
+  }
+  return { content: raw, repaired }
 }
 
 export async function assertLongTermStateUsesChinese(rootDir: string): Promise<void> {

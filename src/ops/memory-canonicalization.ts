@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto'
-import { cp, mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { cp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import {
   inspectMemoryFileForMaintenance,
@@ -8,6 +8,7 @@ import {
   TOPIC_MEMORY_FILE,
   type MemoryEntry,
 } from '../agent/memory-store.js'
+import { withOperationBackup } from './operation-backup-error.js'
 
 interface CanonicalDocument {
   file: typeof SELF_MEMORY_FILE | typeof TOPIC_MEMORY_FILE
@@ -20,6 +21,7 @@ interface CanonicalDocument {
 export interface MemoryCanonicalizationResult {
   ok: true
   applied: boolean
+  needed: boolean
   backupDir?: string
   filesBefore: number
   filesAfter: number
@@ -27,6 +29,7 @@ export interface MemoryCanonicalizationResult {
   consolidatedFiles: number
   sourceFiles: string[]
   targets: string[]
+  stateFingerprint: string
 }
 
 export async function canonicalizeSelfTopicMemory(input: {
@@ -44,6 +47,7 @@ export async function canonicalizeSelfTopicMemory(input: {
   const documents = new Map<'self' | 'topic', CanonicalDocument>()
   const seenIds = new Map<string, string>()
   const sourceFiles: string[] = []
+  const rawFiles = new Map<string, string>()
   let entries = 0
 
   for (const file of listed.files) {
@@ -54,6 +58,7 @@ export async function canonicalizeSelfTopicMemory(input: {
     entries += snapshot.entries.length
     if (file.scope !== 'self' && file.scope !== 'topic') continue
     sourceFiles.push(file.file)
+    rawFiles.set(file.file, await readFile(join(rootDir, 'memory', file.file), 'utf8'))
     const target = canonicalTarget(file.scope)
     const document = documents.get(file.scope) ?? {
       file: target.file,
@@ -89,15 +94,24 @@ export async function canonicalizeSelfTopicMemory(input: {
   }
 
   const planned = [...documents.values()].sort((left, right) => left.file.localeCompare(right.file))
+  const rendered = planned.map(document => ({ file: document.file, content: renderDocument(document) }))
+  const sortedSourceFiles = [...sourceFiles].sort()
+  const rawSources = sortedSourceFiles.map(file => ({ file, content: rawFiles.get(file) }))
+  const needed = sortedSourceFiles.length !== rendered.length
+    || rendered.some(document => rawFiles.get(document.file) !== document.content)
   const resultBase = {
     ok: true as const,
     applied: input.apply === true,
+    needed,
     filesBefore: listed.total,
     filesAfter: listed.total - sourceFiles.length + planned.length,
     entries,
     consolidatedFiles: sourceFiles.length,
     sourceFiles: sourceFiles.sort(),
     targets: planned.map((document) => document.file),
+    stateFingerprint: createHash('sha256')
+      .update(JSON.stringify({ rawSources, rendered }))
+      .digest('hex'),
   }
   if (!input.apply) return resultBase
 
@@ -136,6 +150,8 @@ export async function canonicalizeSelfTopicMemory(input: {
       throw error
     }
     await rm(displaced, { recursive: true, force: true })
+  } catch (error) {
+    throw withOperationBackup(error, backupDir)
   } finally {
     await rm(tempRoot, { recursive: true, force: true })
   }

@@ -88,6 +88,29 @@ describe('memory v2 migration', () => {
       const completedPreview = await migrateMemoryToV2({ rootDir })
       assert.equal(completedPreview.applied, false)
       assert.equal(completedPreview.needed, false)
+
+      const groupPath = join(rootDir, 'memory', 'groups', '20001.md')
+      await writeFile(groupPath, `${await readFile(groupPath, 'utf8')}\n<!-- ignored operator note -->\n`, 'utf8')
+      const rawDriftPreview = await migrateMemoryToV2({ rootDir })
+      assert.equal(rawDriftPreview.needed, true)
+      assert.notEqual(rawDriftPreview.stateFingerprint, completedPreview.stateFingerprint)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  test('marks a partially migrated V2 document as needed when planned metadata changes', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'memory-v2-partial-'))
+    try {
+      await writeOldMemory(rootDir, 'groups/20001.md', 'group', '测试群', [
+        oldEntry('group-topic', '群里经常讨论 TypeScript。', []),
+      ])
+      const path = join(rootDir, 'memory', 'groups', '20001.md')
+      await writeFile(path, (await readFile(path, 'utf8')).replace('formatVersion: 1', 'formatVersion: 2'), 'utf8')
+
+      const preview = await migrateMemoryToV2({ rootDir })
+
+      assert.equal(preview.needed, true)
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }

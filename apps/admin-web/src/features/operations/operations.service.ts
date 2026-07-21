@@ -21,7 +21,10 @@ export type OperationProgressReporter = (
 
 export interface AdminOperationsPort {
   inspectBot(): Promise<BotProcessStatusDto>
-  preview(request: OperationRequest): Promise<OperationPreviewPayload>
+  preview(request: OperationRequest): Promise<{
+    payload: OperationPreviewPayload
+    stateFingerprint: string
+  }>
   execute(
     request: OperationRequest,
     progress: OperationProgressReporter,
@@ -48,6 +51,7 @@ export function createAdminOperationsService(
 ): {
     createPreview(request: OperationRequest): Promise<OperationPreview>
     getPreview(previewId: string): OperationPreview | null
+    preflight(input: OperationStartRequest): Promise<OperationPreview>
     execute(
       input: OperationStartRequest,
       progress: OperationProgressReporter,
@@ -61,10 +65,13 @@ export function createAdminOperationsService(
   return {
     async createPreview(requestInput) {
       const request = operationRequestSchema.parse(requestInput)
-      const [bot, payload] = await Promise.all([
+      cleanupPreviews(previews, options.now())
+      const [bot, material] = await Promise.all([
         port.inspectBot().then(value => botProcessStatusSchema.parse(value)),
-        port.preview(request).then(value => operationPreviewPayloadSchema.parse(value)),
+        port.preview(request),
       ])
+      const payload = operationPreviewPayloadSchema.parse(material.payload)
+      const stateFingerprint = parseStateFingerprint(material.stateFingerprint)
       assertPayloadMatchesRequest(request, payload)
       const createdAt = options.now()
       const preview = operationPreviewSchema.parse({
@@ -72,22 +79,25 @@ export function createAdminOperationsService(
         id: options.id(),
         createdAt: createdAt.toISOString(),
         expiresAt: new Date(createdAt.getTime() + options.previewTtlMs).toISOString(),
-        fingerprint: fingerprint(request, payload, options.hash),
+        fingerprint: fingerprint(request, payload, stateFingerprint, options.hash),
         request,
         bot,
         confirmationPhrase: confirmationPhrase(request),
         payload,
       })
       previews.set(preview.id, preview)
+      while (previews.size > 100) previews.delete(previews.keys().next().value as string)
       return preview
     },
 
     getPreview(previewId) {
+      cleanupPreviews(previews, options.now(), previewId)
       return previews.get(previewId) ?? null
     },
 
-    async execute(inputValue, progress) {
+    async preflight(inputValue) {
       const input = operationStartRequestSchema.parse(inputValue)
+      cleanupPreviews(previews, options.now(), input.previewId)
       const preview = previews.get(input.previewId)
       if (!preview) throw new AdminOperationError('preview_not_found', 'preview is missing or belongs to an earlier server process')
       if (input.confirmation !== preview.confirmationPhrase) {
@@ -102,9 +112,16 @@ export function createAdminOperationsService(
         throw new AdminOperationError('bot_running', `Bot process ${bot.pid} must be stopped manually`)
       }
 
-      const currentPayload = operationPreviewPayloadSchema.parse(await port.preview(preview.request))
+      const currentMaterial = await port.preview(preview.request)
+      const currentPayload = operationPreviewPayloadSchema.parse(currentMaterial.payload)
+      const currentStateFingerprint = parseStateFingerprint(currentMaterial.stateFingerprint)
       assertPayloadMatchesRequest(preview.request, currentPayload)
-      const currentFingerprint = fingerprint(preview.request, currentPayload, options.hash)
+      const currentFingerprint = fingerprint(
+        preview.request,
+        currentPayload,
+        currentStateFingerprint,
+        options.hash,
+      )
       if (currentFingerprint !== preview.fingerprint) {
         throw new AdminOperationError('preview_stale', 'operation inputs changed; create a new preview')
       }
@@ -112,6 +129,11 @@ export function createAdminOperationsService(
         throw new AdminOperationError('operation_not_needed', 'preview reports no changes to apply')
       }
 
+      return preview
+    },
+
+    async execute(inputValue, progress) {
+      const preview = await this.preflight(inputValue)
       const checkedProgress: OperationProgressReporter = value => progress(operationProgressSchema.parse(value))
       return operationResultPayloadSchema.parse(await port.execute(preview.request, checkedProgress))
     },
@@ -130,9 +152,25 @@ function confirmationPhrase(request: OperationRequest): string {
 function fingerprint(
   request: OperationRequest,
   payload: OperationPreviewPayload,
+  stateFingerprint: string,
   hash: (value: string) => string,
 ): string {
-  return hash(canonicalJson({ request, payload }))
+  return hash(canonicalJson({ request, payload, stateFingerprint }))
+}
+
+function parseStateFingerprint(value: string): string {
+  if (!/^[a-f0-9]{64}$/.test(value)) throw new Error('stateFingerprint must be a SHA-256 digest')
+  return value
+}
+
+function cleanupPreviews(
+  previews: Map<string, OperationPreview>,
+  now: Date,
+  keepId?: string,
+): void {
+  for (const [id, preview] of previews) {
+    if (id !== keepId && now.getTime() >= Date.parse(preview.expiresAt)) previews.delete(id)
+  }
 }
 
 function canonicalJson(value: unknown): string {

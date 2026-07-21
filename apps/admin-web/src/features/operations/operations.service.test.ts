@@ -53,6 +53,7 @@ function resetResult(scope: 'context' | 'knowledge' | 'all' = 'context'): Operat
 function fakePort(input: {
   bot?: BotProcessStatusDto
   preview?: OperationPreviewPayload
+  stateFingerprint?: string
 } = {}): AdminOperationsPort & {
   previewRequests: OperationRequest[]
   executeRequests: OperationRequest[]
@@ -65,7 +66,10 @@ function fakePort(input: {
     async inspectBot() { return input.bot ?? stoppedBot() },
     async preview(request) {
       previewRequests.push(request)
-      return input.preview ?? resetPayload(request.operation === 'reset_state' ? request.scope : 'context')
+      return {
+        payload: input.preview ?? resetPayload(request.operation === 'reset_state' ? request.scope : 'context'),
+        stateFingerprint: input.stateFingerprint ?? 'a'.repeat(64),
+      }
     },
     async execute(request, _progress: OperationProgressReporter) {
       executeRequests.push(request)
@@ -180,8 +184,26 @@ describe('createAdminOperationsService', () => {
     const admin = service(port)
     const preview = await admin.createPreview({ operation: 'reset_state', scope: 'context' })
     port.preview = async request => ({
-      ...resetPayload(request.operation === 'reset_state' ? request.scope : 'context'),
-      context: { ledgerEntries: 8, checkpoints: 1, runtimeStates: 1, goals: 1 },
+      payload: {
+        ...resetPayload(request.operation === 'reset_state' ? request.scope : 'context'),
+        context: { ledgerEntries: 8, checkpoints: 1, runtimeStates: 1, goals: 1 },
+      },
+      stateFingerprint: 'b'.repeat(64),
+    })
+
+    await assert.rejects(
+      admin.execute({ previewId: preview.id, confirmation: preview.confirmationPhrase }, async () => undefined),
+      /preview_stale/,
+    )
+  })
+
+  test('rejects changed server-only content even when the browser payload is unchanged', async () => {
+    const port = fakePort({ stateFingerprint: 'a'.repeat(64) })
+    const admin = service(port)
+    const preview = await admin.createPreview({ operation: 'reset_state', scope: 'context' })
+    port.preview = async request => ({
+      payload: resetPayload(request.operation === 'reset_state' ? request.scope : 'context'),
+      stateFingerprint: 'b'.repeat(64),
     })
 
     await assert.rejects(
@@ -214,5 +236,16 @@ describe('createAdminOperationsService', () => {
 
     assert.equal(result.operation, 'reset_state')
     assert.deepEqual(port.executeRequests, [{ operation: 'reset_state', scope: 'all' }])
+  })
+
+  test('bounds the in-memory preview cache and evicts the oldest preview', async () => {
+    let nextId = 0
+    const admin = service(fakePort(), { id: () => `preview-${++nextId}` })
+    for (let index = 0; index < 101; index += 1) {
+      await admin.createPreview({ operation: 'reset_state', scope: 'context' })
+    }
+
+    assert.equal(admin.getPreview('preview-1'), null)
+    assert.ok(admin.getPreview('preview-101'))
   })
 })

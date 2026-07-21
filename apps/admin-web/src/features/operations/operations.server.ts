@@ -22,7 +22,7 @@ import {
 import { getAdminPrisma } from '../../server/db.server.js'
 import { getRepositoryRoot, getWorkspaceRoot } from '../../server/paths.server.js'
 import { createOperationRunFileStore } from './operation-run-store.server.js'
-import { createOperationRunner } from './operation-runner.js'
+import { createOperationRunner, type OperationRunStart } from './operation-runner.js'
 import {
   botProcessStatusSchema,
   operationRunIdRequestSchema,
@@ -35,6 +35,7 @@ import {
   type OperationsSnapshot,
 } from './operations.schema.js'
 import {
+  AdminOperationError,
   createAdminOperationsService,
   type AdminOperationsPort,
 } from './operations.service.js'
@@ -86,11 +87,14 @@ export function createAdminOperationsPort(
             ? Object.values(result.context).some(count => count > 0)
             : false
           return {
-            operation: 'reset_state',
-            scope: request.scope,
-            needed: contextNeeded || knowledgeNeeded,
-            context: result.context ?? null,
-            knowledge: result.knowledge ?? null,
+            payload: {
+              operation: 'reset_state',
+              scope: request.scope,
+              needed: contextNeeded || knowledgeNeeded,
+              context: result.context ?? null,
+              knowledge: result.knowledge ?? null,
+            },
+            stateFingerprint: hashState(result),
           }
         }
         case 'migrate_memory_v2': {
@@ -99,19 +103,22 @@ export function createAdminOperationsPort(
             loadSourceEvidence: dependencies.loadMemoryEvidence,
           })
           return {
-            operation: 'migrate_memory_v2',
-            needed: result.needed,
-            filesBefore: result.filesBefore,
-            filesAfter: result.filesAfter,
-            entries: result.entries,
-            movedPersonEntries: result.movedPersonEntries,
-            quarantinedPersonEntries: result.quarantinedPersonEntries,
-            changes: result.changes.slice(0, 50),
-            warnings: result.warnings.slice(0, 20).map(warning => warning.slice(0, 500)),
-            truncated: {
-              changes: Math.max(0, result.changes.length - 50),
-              warnings: Math.max(0, result.warnings.length - 20),
+            payload: {
+              operation: 'migrate_memory_v2',
+              needed: result.needed,
+              filesBefore: result.filesBefore,
+              filesAfter: result.filesAfter,
+              entries: result.entries,
+              movedPersonEntries: result.movedPersonEntries,
+              quarantinedPersonEntries: result.quarantinedPersonEntries,
+              changes: result.changes.slice(0, 50),
+              warnings: result.warnings.slice(0, 20).map(warning => warning.slice(0, 500)),
+              truncated: {
+                changes: Math.max(0, result.changes.length - 50),
+                warnings: Math.max(0, result.warnings.length - 20),
+              },
             },
+            stateFingerprint: result.stateFingerprint,
           }
         }
         case 'canonicalize_memory': {
@@ -121,15 +128,17 @@ export function createAdminOperationsPort(
           const sourceFiles = [...result.sourceFiles].sort()
           const targetFiles = [...result.targets].sort()
           return {
-            operation: 'canonicalize_memory',
-            needed: sourceFiles.length !== targetFiles.length
-              || sourceFiles.some((file, index) => file !== targetFiles[index]),
-            filesBefore: result.filesBefore,
-            filesAfter: result.filesAfter,
-            entries: result.entries,
-            consolidatedFiles: result.consolidatedFiles,
-            sourceFiles,
-            targetFiles,
+            payload: {
+              operation: 'canonicalize_memory',
+              needed: result.needed,
+              filesBefore: result.filesBefore,
+              filesAfter: result.filesAfter,
+              entries: result.entries,
+              consolidatedFiles: result.consolidatedFiles,
+              sourceFiles,
+              targetFiles,
+            },
+            stateFingerprint: result.stateFingerprint,
           }
         }
         case 'migrate_state_language': {
@@ -137,11 +146,15 @@ export function createAdminOperationsPort(
             rootDir: dependencies.workspaceRoot,
           })
           return {
-            operation: 'migrate_state_language',
-            needed: result.totalItems > 0,
-            totalItems: result.totalItems,
-            estimatedBatches: result.estimatedBatches,
-            counts: result.counts,
+            payload: {
+              operation: 'migrate_state_language',
+              needed: result.totalItems > 0 || result.repairableJournalEntries > 0,
+              totalItems: result.totalItems,
+              estimatedBatches: result.estimatedBatches,
+              repairableJournalEntries: result.repairableJournalEntries,
+              counts: result.counts,
+            },
+            stateFingerprint: result.stateFingerprint,
           }
         }
       }
@@ -157,7 +170,6 @@ export function createAdminOperationsPort(
             workspaceDir: dependencies.workspaceRoot,
             ...(request.scope === 'knowledge' ? {} : { db: dependencies.db }),
           })
-          await progress({ phase: 'resetting', completed: 1, total: 1 })
           return { operation: 'reset_state', ...result }
         }
         case 'migrate_memory_v2': {
@@ -167,7 +179,6 @@ export function createAdminOperationsPort(
             apply: true,
             loadSourceEvidence: dependencies.loadMemoryEvidence,
           })
-          await progress({ phase: 'migrating_memory', completed: 1, total: 1 })
           return {
             operation: 'migrate_memory_v2',
             backupDir: result.backupDir ?? null,
@@ -185,7 +196,6 @@ export function createAdminOperationsPort(
             rootDir: dependencies.workspaceRoot,
             apply: true,
           })
-          await progress({ phase: 'canonicalizing_memory', completed: 1, total: 1 })
           return {
             operation: 'canonicalize_memory',
             backupDir: result.backupDir ?? null,
@@ -196,10 +206,10 @@ export function createAdminOperationsPort(
           }
         }
         case 'migrate_state_language': {
-          const translate = await dependencies.createLanguageTranslator()
           const result = await dependencies.migrateLongTermStateToChinese({
             rootDir: dependencies.workspaceRoot,
             async translate(items) {
+              const translate = await dependencies.createLanguageTranslator()
               let progressWrites = Promise.resolve()
               const translations = await translate(items, batch => {
                 progressWrites = progressWrites.then(() => progress({
@@ -235,30 +245,48 @@ interface OperationsRuntime {
 let runtimePromise: Promise<OperationsRuntime> | null = null
 
 export async function loadOperationsSnapshot(): Promise<OperationsSnapshot> {
-  const runtime = await getOperationsRuntime()
-  const [bot, state] = await Promise.all([
-    runtime.port.inspectBot(),
-    Promise.resolve(runtime.runner.snapshot()),
-  ])
-  return operationsSnapshotSchema.parse({
-    schemaVersion: 1,
-    generatedAt: new Date().toISOString(),
-    bot,
-    activeRun: state.activeRun,
-    recentRuns: state.recentRuns,
+  return withPublicOperationError('snapshot', async () => {
+    const runtime = await getOperationsRuntime()
+    const [bot, state] = await Promise.all([
+      runtime.port.inspectBot(),
+      Promise.resolve(runtime.runner.snapshot()),
+    ])
+    return operationsSnapshotSchema.parse({
+      schemaVersion: 1,
+      generatedAt: new Date().toISOString(),
+      bot,
+      activeRun: state.activeRun,
+      recentRuns: state.recentRuns,
+    })
   })
 }
 
 export async function createOperationPreviewServer(request: OperationRequest): Promise<OperationPreview> {
-  return (await getOperationsRuntime()).service.createPreview(request)
+  return withPublicOperationError('preview', async () => (
+    (await getOperationsRuntime()).service.createPreview(request)
+  ))
 }
 
 export async function startOperationServer(inputValue: unknown): Promise<OperationRun> {
+  return withPublicOperationError('start', async () => {
+    const runtime = await getOperationsRuntime()
+    return startOperationWithRuntime(inputValue, {
+      preflight: input => runtime.service.preflight(input),
+      submit: input => runtime.runner.submit(input),
+    })
+  })
+}
+
+export async function startOperationWithRuntime(
+  inputValue: unknown,
+  runtime: {
+    preflight(input: ReturnType<typeof operationStartRequestSchema.parse>): Promise<OperationPreview>
+    submit(input: OperationRunStart): Promise<OperationRun>
+  },
+): Promise<OperationRun> {
   const input = operationStartRequestSchema.parse(inputValue)
-  const runtime = await getOperationsRuntime()
-  const preview = runtime.service.getPreview(input.previewId)
-  if (!preview) throw Object.assign(new Error('preview_not_found'), { code: 'preview_not_found' })
-  return runtime.runner.submit({
+  const preview = await runtime.preflight(input)
+  return runtime.submit({
     request: preview.request,
     previewFingerprint: preview.fingerprint,
     previewId: preview.id,
@@ -267,10 +295,12 @@ export async function startOperationServer(inputValue: unknown): Promise<Operati
 }
 
 export async function getOperationRunServer(inputValue: unknown): Promise<OperationRun> {
-  const input = operationRunIdRequestSchema.parse(inputValue)
-  const run = (await getOperationsRuntime()).runner.find(input.runId)
-  if (!run) throw Object.assign(new Error('operation_run_not_found'), { code: 'operation_run_not_found' })
-  return run
+  return withPublicOperationError('run_query', async () => {
+    const input = operationRunIdRequestSchema.parse(inputValue)
+    const run = (await getOperationsRuntime()).runner.find(input.runId)
+    if (!run) throw Object.assign(new Error('operation_run_not_found'), { code: 'operation_run_not_found' })
+    return run
+  })
 }
 
 async function getOperationsRuntime(): Promise<OperationsRuntime> {
@@ -320,6 +350,11 @@ async function createDefaultOperationsRuntime(): Promise<OperationsRuntime> {
       previewId: input.previewId,
       confirmation: input.confirmation,
     }, progress),
+    reportError: report => reportAdminOperationError('runner', report.error, {
+      phase: report.phase,
+      runId: report.runId,
+      operation: report.request.operation,
+    }),
   })
   return { port, service, runner }
 }
@@ -364,4 +399,91 @@ async function loadMemoryEvidence(
     senderId: String(row.senderId),
     sentAt: (row.sentAt ?? row.createdAt).toISOString(),
   }))
+}
+
+function hashState(value: unknown): string {
+  return createHash('sha256').update(canonicalJson(value)).digest('hex')
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+    .join(',')}}`
+}
+
+async function withPublicOperationError<T>(stage: string, task: () => Promise<T>): Promise<T> {
+  try {
+    return await task()
+  } catch (error) {
+    await reportAdminOperationError(stage, error)
+    throw sanitizeOperationServerError(error)
+  }
+}
+
+export function sanitizeOperationServerError(error: unknown): Error & { code: string } {
+  const rawCode = error instanceof AdminOperationError
+    ? error.code
+    : error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string'
+      ? (error as { code: string }).code
+      : 'operation_request_failed'
+  const code = PUBLIC_SERVER_ERROR_MESSAGES[rawCode] ? rawCode : 'operation_request_failed'
+  return Object.assign(new Error(`${code}: ${PUBLIC_SERVER_ERROR_MESSAGES[code]!}`), { code })
+}
+
+const PUBLIC_SERVER_ERROR_MESSAGES: Record<string, string> = {
+  preview_not_found: 'Preview is unavailable. Create a new preview.',
+  confirmation_mismatch: 'Confirmation phrase did not match.',
+  preview_expired: 'Preview expired. Create a new preview.',
+  bot_running: 'Bot is running and must be stopped manually.',
+  preview_stale: 'Operation inputs changed. Create a new preview.',
+  operation_not_needed: 'The operation no longer has changes to apply.',
+  operation_mismatch: 'Operation preview did not match the requested operation.',
+  operation_in_progress: 'Another management operation is already active.',
+  operation_run_not_found: 'Operation run was not found.',
+  operation_state_corrupt: 'Persisted operation state is invalid.',
+  operation_request_failed: 'Management operation request failed. Inspect the local WebAdmin app log.',
+}
+
+async function reportAdminOperationError(
+  stage: string,
+  error: unknown,
+  context: Record<string, unknown> = {},
+): Promise<void> {
+  try {
+    const { createLogger } = await import('../../../../../src/logger.js')
+    createLogger('ADMIN_OPERATIONS').error({
+      stage,
+      ...context,
+      error: diagnosticError(error),
+    }, 'WebAdmin management operation error')
+  } catch {
+    // Error reporting must not replace the original operation outcome.
+  }
+}
+
+function diagnosticError(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) return { message: redactOperationDiagnostic(String(error)).slice(0, 4_000) }
+  const record = error as Error & { code?: unknown; backupDir?: unknown }
+  return {
+    name: error.name,
+    message: redactOperationDiagnostic(error.message).slice(0, 4_000),
+    stack: error.stack ? redactOperationDiagnostic(error.stack).slice(0, 8_000) : undefined,
+    code: typeof record.code === 'string' ? record.code.slice(0, 100) : undefined,
+    backupDir: typeof record.backupDir === 'string' ? record.backupDir.slice(0, 500) : undefined,
+  }
+}
+
+export function redactOperationDiagnostic(value: string): string {
+  return value
+    .replace(/(Authorization\s*:\s*)(?:Bearer|Basic)\s+[^\s,;]+/gi, '$1[REDACTED]')
+    .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+/gi, 'Bearer [REDACTED]')
+    .replace(/((?:Cookie|Set-Cookie)\s*:\s*)[^\r\n]+/gi, '$1[REDACTED]')
+    .replace(/(["']?(?:api[_-]?key|token|password|secret)["']?\s*[=:]\s*["'])[^"']*(["'])/gi, '$1[REDACTED]$2')
+    .replace(/(["']?(?:api[_-]?key|token|password|secret)["']?\s*[=:]\s*)[^\s,;}]+/gi, '$1[REDACTED]')
+    .replace(/\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis):\/\/[^\s]+/gi, match => (
+      `${match.slice(0, match.indexOf('://') + 3)}[REDACTED]`
+    ))
 }

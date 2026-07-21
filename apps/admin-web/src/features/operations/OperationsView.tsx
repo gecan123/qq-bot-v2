@@ -77,19 +77,39 @@ export function OperationsView({
     preview?.request.operation === 'reset_state' ? preview.request.scope : 'context',
   )
   const [confirmation, setConfirmation] = useState('')
+  const [clock, setClock] = useState(() => Date.now())
   const currentRun = run ?? snapshot.activeRun
 
   useEffect(() => {
     setConfirmation('')
   }, [preview])
 
+  useEffect(() => {
+    if (!preview) return undefined
+    const expiresAt = Date.parse(preview.expiresAt)
+    const delay = expiresAt - Date.now()
+    if (delay <= 0) {
+      setClock(Date.now())
+      return undefined
+    }
+    const timer = window.setTimeout(
+      () => setClock(Date.now()),
+      Math.min(delay + 1, 2_147_000_000),
+    )
+    return () => window.clearTimeout(timer)
+  }, [preview])
+
   const request: OperationRequest = operation === 'reset_state'
     ? { operation, scope }
     : { operation }
+  const previewMatchesSelection = preview !== null && requestsEqual(preview.request, request)
+  const previewCurrent = previewMatchesSelection
+    && Date.parse(preview.expiresAt) > Math.max(Date.parse(snapshot.generatedAt), clock)
   const botStopped = snapshot.bot.stopped
   const runActive = currentRun?.status === 'queued' || currentRun?.status === 'running'
   const canExecute = Boolean(
     preview
+    && previewCurrent
     && preview.payload.needed
     && botStopped
     && confirmation === preview.confirmationPhrase
@@ -111,7 +131,10 @@ export function OperationsView({
           key={card.operation}
           type="button"
           className={`operation-card ${operation === card.operation ? 'operation-card--selected' : ''}`}
-          onClick={() => setOperation(card.operation)}
+          onClick={() => {
+            setOperation(card.operation)
+            setConfirmation('')
+          }}
         >
           <span className="operation-card-icon"><Wrench size={17} /></span>
           <strong>{card.title}</strong>
@@ -129,7 +152,14 @@ export function OperationsView({
           {operation === 'reset_state' && (
             <label className="operation-field">
               <span>重置范围</span>
-              <select value={scope} onChange={event => setScope(event.target.value as typeof scope)}>
+              <select
+                aria-label="重置范围"
+                value={scope}
+                onChange={event => {
+                  setScope(event.target.value as typeof scope)
+                  setConfirmation('')
+                }}
+              >
                 <option value="context">context · Ledger / Runtime / Goal</option>
                 <option value="knowledge">knowledge · Memory / Journal / Life / Notebook</option>
                 <option value="all">all · context + knowledge</option>
@@ -151,6 +181,10 @@ export function OperationsView({
         <Panel title="预览详情" description="服务端只返回有界统计、固定路径和 warning 摘要。">
           {!preview
             ? <div className="empty-state"><span className="empty-state-dot" />请选择操作并生成预览</div>
+            : !previewMatchesSelection
+              ? <div className="empty-state"><span className="empty-state-dot" />当前选择已变化，请重新生成预览</div>
+              : !previewCurrent
+                ? <div className="empty-state"><span className="empty-state-dot" />预览已过期，请重新生成预览</div>
             : <div className="operation-preview">
                 <div className="operation-preview-head">
                   <StatusBadge tone={preview.payload.needed ? 'warn' : 'good'}>
@@ -179,7 +213,7 @@ export function OperationsView({
             </div>
           </div>
 
-          {preview && <>
+          {previewCurrent && preview && <>
             <div className="confirmation-copy">
               <span>请输入以下确认短语</span>
               <code>{preview.confirmationPhrase}</code>
@@ -233,6 +267,7 @@ export function OperationsView({
                 <StatusBadge tone={runTone(item.status)}>{runLabel(item.status)}</StatusBadge>
                 <strong>{operationTitle(item.request.operation)}</strong>
                 <time>{formatTimestamp(item.finishedAt ?? item.createdAt)}</time>
+                {runBackupDir(item) && <code>{runBackupDir(item)}</code>}
               </li>
             ))}
           </ol>}
@@ -256,7 +291,15 @@ function RunPanel({ run }: { run: OperationRun | null }) {
             </div>
           )}
           {run.status === 'succeeded' && <ResultSummary run={run} />}
-          {run.status === 'failed' && <div className="operation-error"><XCircle size={16} /><span>{run.error?.message ?? '操作失败'}</span></div>}
+          {run.status === 'failed' && (
+            <div className="operation-error">
+              <XCircle size={16} />
+              <div>
+                <span>{run.error?.message ?? '操作失败'}</span>
+                {run.error?.backupDir && <code>{run.error.backupDir}</code>}
+              </div>
+            </div>
+          )}
           {run.status === 'interrupted' && <div className="operation-error operation-error--warn"><AlertTriangle size={16} /><span>任务随 WebAdmin 进程退出而中断；请检查备份和当前状态后再决定是否重试。</span></div>}
         </div>}
   </Panel>
@@ -297,4 +340,15 @@ function runTone(status: OperationRun['status']): 'neutral' | 'good' | 'warn' | 
 
 function operationTitle(operation: OperationRequest['operation']): string {
   return operationCards.find(card => card.operation === operation)?.title ?? operation
+}
+
+function runBackupDir(run: OperationRun): string | null {
+  if (run.result && 'backupDir' in run.result) return run.result.backupDir
+  return run.error?.backupDir ?? null
+}
+
+function requestsEqual(left: OperationRequest, right: OperationRequest): boolean {
+  return left.operation === right.operation
+    && (left.operation !== 'reset_state'
+      || (right.operation === 'reset_state' && left.scope === right.scope))
 }

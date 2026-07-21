@@ -3,6 +3,9 @@ import { createHash } from 'node:crypto'
 import { describe, test } from 'vitest'
 import {
   createAdminOperationsPort,
+  redactOperationDiagnostic,
+  sanitizeOperationServerError,
+  startOperationWithRuntime,
   type AdminOperationsAdapterDependencies,
 } from './operations.server.js'
 import { createAdminOperationsService } from './operations.service.js'
@@ -54,6 +57,7 @@ function dependencies(events: string[]): AdminOperationsAdapterDependencies {
         ok: true,
         applied: input.apply === true,
         needed: true,
+        stateFingerprint: 'a'.repeat(64),
         ...(input.apply === true ? { backupDir: '/repo/data/agent-workspace/db-backups/memory-v2' } : {}),
         filesBefore: 2,
         filesAfter: 3,
@@ -69,6 +73,8 @@ function dependencies(events: string[]): AdminOperationsAdapterDependencies {
       return {
         ok: true,
         applied: input.apply === true,
+        needed: true,
+        stateFingerprint: 'b'.repeat(64),
         ...(input.apply === true ? { backupDir: '/repo/data/agent-workspace/db-backups/canonical' } : {}),
         filesBefore: 4,
         filesAfter: 2,
@@ -95,6 +101,8 @@ function dependencies(events: string[]): AdminOperationsAdapterDependencies {
           { key: 'memory:title', text: 'Old title', kind: 'title' },
           { key: 'memory:entry', text: 'Old entry', kind: 'content' },
         ],
+        stateFingerprint: createHash('sha256').update('language-state').digest('hex'),
+        repairableJournalEntries: 0,
       }
     },
     async createLanguageTranslator() {
@@ -141,7 +149,7 @@ describe('createAdminOperationsPort', () => {
     const previews = []
     for (const request of requests) previews.push(await port.preview(request))
 
-    assert.deepEqual(previews.map(preview => preview.operation), requests.map(request => request.operation))
+    assert.deepEqual(previews.map(preview => preview.payload.operation), requests.map(request => request.operation))
     assert.equal(events.filter(event => event === 'preview_reset:all').length, 1)
     assert.equal(events.filter(event => event === 'memory:preview').length, 1)
     assert.equal(events.filter(event => event === 'canonical:preview').length, 1)
@@ -156,6 +164,7 @@ describe('createAdminOperationsPort', () => {
       ok: true,
       applied: input.apply === true,
       needed: false,
+      stateFingerprint: 'a'.repeat(64),
       filesBefore: 2,
       filesAfter: 2,
       entries: 70,
@@ -172,13 +181,103 @@ describe('createAdminOperationsPort', () => {
 
     const preview = await createAdminOperationsPort(deps).preview({ operation: 'migrate_memory_v2' })
 
-    assert.equal(preview.operation, 'migrate_memory_v2')
-    if (preview.operation === 'migrate_memory_v2') {
-      assert.equal(preview.needed, false)
-      assert.equal(preview.changes.length, 50)
-      assert.equal(preview.warnings.length, 20)
-      assert.deepEqual(preview.truncated, { changes: 20, warnings: 5 })
+    assert.equal(preview.payload.operation, 'migrate_memory_v2')
+    if (preview.payload.operation === 'migrate_memory_v2') {
+      assert.equal(preview.payload.needed, false)
+      assert.equal(preview.payload.changes.length, 50)
+      assert.equal(preview.payload.warnings.length, 20)
+      assert.deepEqual(preview.payload.truncated, { changes: 20, warnings: 5 })
     }
+  })
+
+  test('keeps server-only state changes in the fingerprint when bounded payloads stay equal', async () => {
+    const events: string[] = []
+    const deps = dependencies(events)
+    let hiddenState = 'first'
+    deps.migrateMemoryToV2 = async input => ({
+      ok: true,
+      applied: input.apply === true,
+      needed: true,
+      stateFingerprint: createHash('sha256').update(hiddenState).digest('hex'),
+      filesBefore: 70,
+      filesAfter: 70,
+      entries: 70,
+      movedPersonEntries: 0,
+      quarantinedPersonEntries: 0,
+      changes: Array.from({ length: 70 }, (_, index) => ({
+        from: `self/${index}.md`,
+        to: `self/${index}.md`,
+        entryId: `entry-${index}`,
+        reason: 'format_upgrade' as const,
+      })),
+      warnings: [],
+    })
+    const port = createAdminOperationsPort(deps)
+
+    const first = await port.preview({ operation: 'migrate_memory_v2' })
+    hiddenState = 'changed-item-after-browser-cap'
+    const second = await port.preview({ operation: 'migrate_memory_v2' })
+
+    assert.deepEqual(second.payload, first.payload)
+    assert.notEqual(second.stateFingerprint, first.stateFingerprint)
+  })
+
+  test('fingerprints raw language items without returning their text to the browser', async () => {
+    const events: string[] = []
+    const deps = dependencies(events)
+    let text = 'Old title'
+    deps.planLongTermStateLanguageMigration = async () => ({
+      totalItems: 1,
+      estimatedBatches: 1,
+      counts: {
+        memoryTitles: 1,
+        memoryEntries: 0,
+        notebookTopics: 0,
+        notebookEntries: 0,
+        lifeJournalEntries: 0,
+        agendaItems: 0,
+      },
+      items: [{ key: 'memory:title', text, kind: 'title' }],
+      stateFingerprint: createHash('sha256').update(text).digest('hex'),
+      repairableJournalEntries: 0,
+    })
+    const port = createAdminOperationsPort(deps)
+
+    const first = await port.preview({ operation: 'migrate_state_language' })
+    text = 'Different private title'
+    const second = await port.preview({ operation: 'migrate_state_language' })
+
+    assert.deepEqual(second.payload, first.payload)
+    assert.doesNotMatch(JSON.stringify(second.payload), /Different private title/)
+    assert.notEqual(second.stateFingerprint, first.stateFingerprint)
+  })
+
+  test('marks a repair-only language plan as needed without exposing journal bytes', async () => {
+    const deps = dependencies([])
+    deps.planLongTermStateLanguageMigration = async () => ({
+      totalItems: 0,
+      estimatedBatches: 0,
+      counts: {
+        memoryTitles: 0,
+        memoryEntries: 0,
+        notebookTopics: 0,
+        notebookEntries: 0,
+        lifeJournalEntries: 0,
+        agendaItems: 0,
+      },
+      items: [],
+      stateFingerprint: createHash('sha256').update('repair-only-journal').digest('hex'),
+      repairableJournalEntries: 1,
+    })
+
+    const preview = await createAdminOperationsPort(deps).preview({ operation: 'migrate_state_language' })
+
+    assert.equal(preview.payload.operation, 'migrate_state_language')
+    if (preview.payload.operation === 'migrate_state_language') {
+      assert.equal(preview.payload.needed, true)
+      assert.equal(preview.payload.repairableJournalEntries, 1)
+    }
+    assert.doesNotMatch(JSON.stringify(preview.payload), /repair-only-journal/)
   })
 
   test('revalidates the preview, then guards the Bot, then calls only the selected mutation', async () => {
@@ -220,9 +319,59 @@ describe('createAdminOperationsPort', () => {
     assert.equal(result.operation, 'migrate_state_language')
     assert.deepEqual(events, [
       'assert_bot_stopped',
-      'language:create_translator',
       'language:execute',
+      'language:create_translator',
     ])
     assert.deepEqual(progress, [{ phase: 'translating', completed: 1, total: 1 }])
   })
+})
+
+describe('startOperationWithRuntime', () => {
+  test('does not submit a run until confirmation, guard, and stale preflight pass', async () => {
+    const events: string[] = []
+    await assert.rejects(
+      startOperationWithRuntime(
+        { previewId: 'preview-1', confirmation: 'wrong' },
+        {
+          async preflight() {
+            events.push('preflight')
+            throw Object.assign(new Error('confirmation_mismatch'), { code: 'confirmation_mismatch' })
+          },
+          async submit() {
+            events.push('submit')
+            throw new Error('must not submit')
+          },
+        },
+      ),
+      /confirmation_mismatch/,
+    )
+
+    assert.deepEqual(events, ['preflight'])
+  })
+})
+
+test('sanitizes unexpected server errors before they cross the browser boundary', () => {
+  const error = sanitizeOperationServerError(new Error('password=hunter2 database exploded'))
+
+  assert.equal(error.code, 'operation_request_failed')
+  assert.doesNotMatch(error.message, /hunter2|database exploded/)
+})
+
+test('redacts plain, JSON, bearer, and database secrets from app-log diagnostics', () => {
+  const redacted = redactOperationDiagnostic([
+    'password=hunter2',
+    '{"token":"json-secret"}',
+    "'secret' = 'quoted-secret'",
+    'Authorization: Bearer abc.def.ghi',
+    'Authorization: Basic basic-secret',
+    'Cookie: session=cookie-secret',
+    'Set-Cookie: session=set-cookie-secret',
+    'postgresql://user:pass@localhost/db',
+    'mongodb://mongo:pass@localhost/db',
+    'mysql://mysql:pass@localhost/db',
+    'redis://redis:pass@localhost/0',
+  ].join('\n'))
+
+  assert.doesNotMatch(redacted, /hunter2|json-secret|quoted-secret|abc\.def|basic-secret|cookie-secret|user:pass|mongo:pass|mysql:pass|redis:pass/)
+  assert.match(redacted, /\[REDACTED\]/)
 })

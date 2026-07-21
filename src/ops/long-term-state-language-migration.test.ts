@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -12,6 +12,79 @@ import {
   planLongTermStateLanguageMigration,
   repairNestedLifeJournalEntries,
 } from './long-term-state-language-migration.js'
+
+test('exposes the backup directory when translation fails after backup creation', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'language-migration-backup-'))
+  try {
+    await seedEnglishWorkspace(rootDir)
+    let failure: unknown
+    try {
+      await migrateLongTermStateToChinese({
+        rootDir,
+        now: () => new Date('2026-07-21T10:00:00.000Z'),
+        async translate() { throw new Error('provider secret') },
+      })
+    } catch (error) {
+      failure = error
+    }
+
+    const backupDir = (failure as { backupDir?: unknown } | undefined)?.backupDir
+    assert.equal(typeof backupDir, 'string')
+    assert.equal((await stat(backupDir as string)).isDirectory(), true)
+  } finally {
+    await rm(rootDir, { recursive: true, force: true })
+  }
+})
+
+test('fingerprints repair-relevant journal bytes even when translation counts stay unchanged', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'language-migration-repair-fingerprint-'))
+  try {
+    const journalDir = join(rootDir, 'life', 'journal')
+    await mkdir(journalDir, { recursive: true })
+    await writeFile(join(journalDir, '2026-07-21.md'), [
+      '# Life Journal 2026-07-21',
+      '',
+      '<!-- life-journal-format: 2 -->',
+      '',
+      '<!-- life-journal-entry',
+      'id: manual-note',
+      'date: 2026-07-21',
+      'kind: reflection',
+      'source: manual',
+      'createdAt: 2026-07-21T10:00:00.000+08:00',
+      '-->',
+      '## 10:00 Manual',
+      '',
+      '### 看到',
+      '- 已经是中文。',
+      '<!-- /life-journal-entry -->',
+      '<!-- /life-journal-entry -->',
+      '',
+    ].join('\n'), 'utf8')
+
+    const before = await planLongTermStateLanguageMigration({ rootDir })
+    assert.equal(before.totalItems, 0)
+    assert.equal(before.repairableJournalEntries, 1)
+    let translatorCalled = false
+    const applied = await migrateLongTermStateToChinese({
+      rootDir,
+      now: () => new Date('2026-07-21T10:00:00.000Z'),
+      async translate() {
+        translatorCalled = true
+        return []
+      },
+    })
+    assert.equal(translatorCalled, false)
+    assert.equal(applied.repairedNestedJournalEntries, 1)
+    const after = await planLongTermStateLanguageMigration({ rootDir })
+
+    assert.deepEqual(after.counts, before.counts)
+    assert.equal(after.repairableJournalEntries, 0)
+    assert.notEqual(after.stateFingerprint, before.stateFingerprint)
+  } finally {
+    await rm(rootDir, { recursive: true, force: true })
+  }
+})
 
 test('plans all translation categories without changing any workspace byte', async () => {
   const rootDir = await mkdtemp(join(tmpdir(), 'long-term-language-plan-'))

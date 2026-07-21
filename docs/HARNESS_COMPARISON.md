@@ -16,7 +16,7 @@
 | s10 System Prompt | 部分满足，适合本项目 | prompt 分 section 组装，但启动后冻结；这不完全等同教程的运行时动态拼接，但更利于当前 prompt cache 稳定性。 |
 | s11 Error Recovery | 核心已满足 | 有工具错误隔离、provider-neutral stop reason、transport/429/5xx/529/SSE overload 有界退避、`retry-after`、prompt-too-long 强制 compaction、`max_tokens` 预算升级与有界 continuation、显式同 provider fallback、round backoff、replay barrier 和幂等 shutdown。仍可补 OpenAI 错误的更细分类与恢复指标汇总。 |
 | s12 Task System | 部分满足 | 单一持久 Goal 支持 `origin=owner|self`、状态流转、revision、token/time/round 使用量、完成证据和三轮 blocker 门槛，并能跨 replay/compaction/restart 续跑；Agent 可自主建/弃 self Goal，owner Goal 可抢占。仍没有多任务图、依赖、认领或 blockedBy DAG。进程内 `todo` 继续只管当前执行计划。 |
-| s13 Background Tasks | 已满足核心 | 图片生成、交易研究等异步任务会注册 task，完成后进 event queue，并用 `background_task get` 取有界结果；registry 已原子持久化、终态幂等，重启时不可恢复闭包明确标成 `interrupted`。共享执行 scheduler 仍是进程内 lane；后续只有显式 job kind/payload 才允许自动重跑。 |
+| s13 Background Tasks | 已满足核心 | 图片生成、交易研究等异步任务会注册 task，完成后进 event queue，并用 `background_task get` 取有界结果；registry 已原子持久化、终态幂等，重启时不可恢复闭包明确标成 `interrupted`。共享执行 scheduler 仍是进程内 lane；实验阶段不建设通用 `jobKind + payload` 自动恢复层，接受在途任务因重启中断并按需重新发起。 |
 | s14 Cron Scheduler | 已满足核心 | `pause` 负责短休息；`schedule create/list/cancel` 支持 30 秒至 3 天内的一次性 `at`、固定间隔 `every` 和带 IANA 时区的 `cron`。独立 store 可跨重启恢复 timer，漏触发会合并且到期只产生稳定 `scheduled_wake` 注意事件；不包含长期 cron 平台、命令执行或 run history。 |
 | s15 Agent Teams | 未满足 | 没有持久 teammate、inbox、多个 LLM loop。 |
 | s16 Team Protocols | 未满足 | 没有多 Agent request/response FSM、plan approval 或 teammate shutdown handshake；当前只有单进程 runtime 的 graceful shutdown coordinator。 |
@@ -39,7 +39,7 @@
 ## 后续优先级
 
 1. P1 用真实但低风险的 MCP server 做一轮 operator 验收，观测 schema 大小、超时、断线和审批体验；在有证据前不开放 HTTP transport 或自动信任远端 annotations。
-2. P1 为确实需要重启后自动续跑的后台工作逐个注册稳定 `job kind + payload`；继续禁止序列化任意闭包。
-3. P2 根据真实召回失败样本评估 embedding/rerank；lexical provenance 继续保留为可解释基线。
-4. P2 根据 token/latency 指标再决定 text/tool-result micro-compact 和 recovery 指标面板，不凭感觉提前删上下文。
+2. P2 根据真实召回失败样本评估 embedding/rerank；lexical provenance 继续保留为可解释基线。
+3. P2 根据 token/latency 指标再决定 text/tool-result micro-compact 和 recovery 指标面板，不凭感觉提前删上下文。
+4. 通用 durable job 恢复层不列入当前路线图；只有重启丢失昂贵长任务形成可测量痛点，或外部服务原生提供可恢复 task/session ID 时再重新评估。
 5. s12 的多任务图/依赖、s15/s16 多 Agent team/protocol、s18 worktree isolation 只在 Luna 真正需要长期协作或自主改代码时引入；不把单一 Goal 扩成第二主循环。

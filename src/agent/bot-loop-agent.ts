@@ -170,6 +170,7 @@ const ASSISTANT_TEXT_ONLY_CORRECTION = JSON.stringify({
   code: 'assistant_text_without_tool',
   instruction: '上一轮只输出了普通 assistant 文本；它不会发送给任何人，也不会执行其中的计划。若仍有工作，现在调用具体工具；若确实没有待处理行动，以空内容且无工具调用结束。',
 })
+const EMPTY_TODO_CORRECTION_CODE = 'empty_todo_not_work_source'
 const defaultKeepAlive = {
   open() {
     const timer = setInterval(() => {}, DEFAULT_KEEP_ALIVE_INTERVAL_MS)
@@ -213,7 +214,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let shortWorkContinuationPending = false
   let recoverableToolCorrectionRounds = 0
   let idleBackoffLevel = 0
-  const recentToolNoveltyKeys = new Map<string, number>()
+  const recentToolNoveltyKeys = seedRecentToolNoveltyKeys(
+    deps.context.getSnapshot().messages,
+  )
   let nextCompactionAttemptAt = 0
   let compactionAbortController = new AbortController()
   let lastContextWindowTokens =
@@ -704,6 +707,16 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     stagedMessages.push(...result.messagesToAppend)
     if (result.assistantTextOnly) {
       stagedMessages.push({ role: 'user', content: ASSISTANT_TEXT_ONLY_CORRECTION })
+    }
+    const emptyTodoNoveltyKey = selectEmptyTodoCorrectionNoveltyKey(result.toolOutcomes)
+    if (
+      emptyTodoNoveltyKey != null
+      && !recentToolNoveltyKeys.has(emptyTodoNoveltyKey)
+    ) {
+      stagedMessages.push({
+        role: 'user',
+        content: renderEmptyTodoCorrection(emptyTodoNoveltyKey),
+      })
     }
     const nextContinuity = parseMailboxContinuityState(mailboxContinuity)
     recordMailboxRound(nextContinuity, result.inputTokens)
@@ -1443,6 +1456,66 @@ function describeActivityTrigger(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function selectEmptyTodoCorrectionNoveltyKey(
+  outcomes: readonly ReactToolOutcome[],
+): string | null {
+  if (outcomes.length !== 1) return null
+  const outcome = outcomes[0]!
+  if (
+    outcome.requestedToolName !== 'todo'
+    || outcome.toolName !== 'todo'
+    || outcome.code !== 'empty'
+    || outcome.noveltyKey == null
+  ) {
+    return null
+  }
+  return outcome.noveltyKey
+}
+
+function renderEmptyTodoCorrection(noveltyKey: string): string {
+  return JSON.stringify({
+    event: 'runtime_correction',
+    code: EMPTY_TODO_CORRECTION_CODE,
+    noveltyKey,
+    instruction: 'Todo 为空只表示当前进程没有已定的短期计划，不表示没有可做的事；Todo 也不是发现新方向的来源。现在不要再调用 todo。若没有 active Goal，从最近线索、稳定兴趣、wishes、关系或已有成果中选一个能立即产生新证据的小行动，并调用对应的具体工具；只有确实没有值得尝试的方向时，才以空内容且无工具调用结束。',
+  })
+}
+
+function seedRecentToolNoveltyKeys(
+  messages: readonly AgentMessage[],
+): Map<string, number> {
+  const seeded = new Map<string, number>()
+  const recentMessages = messages.slice(-(MAX_RECENT_TOOL_NOVELTY_KEYS * 4))
+  for (const [index, message] of recentMessages.entries()) {
+    if (message.role !== 'user') continue
+    let value: unknown
+    try {
+      value = JSON.parse(message.content)
+    } catch {
+      continue
+    }
+    if (
+      value == null
+      || typeof value !== 'object'
+      || (value as Record<string, unknown>).event !== 'runtime_correction'
+      || (value as Record<string, unknown>).code !== EMPTY_TODO_CORRECTION_CODE
+      || typeof (value as Record<string, unknown>).noveltyKey !== 'string'
+    ) {
+      continue
+    }
+    const noveltyKey = (value as Record<string, unknown>).noveltyKey as string
+    if (noveltyKey.length === 0 || noveltyKey.length > 500) continue
+    if (message.content !== renderEmptyTodoCorrection(noveltyKey)) continue
+    seeded.delete(noveltyKey)
+    seeded.set(noveltyKey, index)
+    if (seeded.size > MAX_RECENT_TOOL_NOVELTY_KEYS) {
+      const oldest = seeded.keys().next().value as string | undefined
+      if (oldest != null) seeded.delete(oldest)
+    }
+  }
+  return seeded
 }
 
 function resolveOverflowContextWindowTokens(error: unknown, fallback: number): number {

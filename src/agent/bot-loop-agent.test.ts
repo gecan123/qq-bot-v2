@@ -3741,6 +3741,141 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(waits, 1)
   })
 
+  test('first empty todo list appends a durable autonomy correction and permits one pivot round', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('已有上下文')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    let llmCallCount = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat() {
+          llmCallCount++
+          return {
+            content: '',
+            toolCalls: llmCallCount === 1
+              ? [{ id: 'todo-empty', name: 'todo', args: { action: 'list' } }]
+              : [],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools({
+        todo: async () => ({
+          content: '{"ok":true,"items":[],"revision":0}',
+          outcome: {
+            ok: true,
+            code: 'empty',
+            progress: false,
+            continuation: 'immediate',
+            noveltyKey: 'todo:0',
+          },
+        }),
+      }),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        async waitForAttentionOrTimeout() {
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 2)
+    const correction = ctx.getSnapshot().messages.find((message) => {
+      if (message.role !== 'user') return false
+      try {
+        const parsed = JSON.parse(message.content) as { code?: string }
+        return parsed.code === 'empty_todo_not_work_source'
+      } catch {
+        return false
+      }
+    })
+    assert.ok(correction && correction.role === 'user')
+    const parsed = JSON.parse(correction.content) as { noveltyKey?: string; instruction?: string }
+    assert.equal(parsed.noveltyKey, 'todo:0')
+    assert.match(parsed.instruction ?? '', /不要再调用 todo/)
+    assert.match(parsed.instruction ?? '', /具体工具/)
+  })
+
+  test('restart restores empty-todo suppression from the durable correction marker', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage(JSON.stringify({
+      event: 'runtime_correction',
+      code: 'empty_todo_not_work_source',
+      noveltyKey: 'todo:0',
+      instruction: 'Todo 为空只表示当前进程没有已定的短期计划，不表示没有可做的事；Todo 也不是发现新方向的来源。现在不要再调用 todo。若没有 active Goal，从最近线索、稳定兴趣、wishes、关系或已有成果中选一个能立即产生新证据的小行动，并调用对应的具体工具；只有确实没有值得尝试的方向时，才以空内容且无工具调用结束。',
+    }))
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    let llmCallCount = 0
+    let waits = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat() {
+          llmCallCount++
+          return {
+            content: '',
+            toolCalls: [{ id: 'todo-empty-after-restart', name: 'todo', args: { action: 'list' } }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools({
+        todo: async () => ({
+          content: '{"ok":true,"items":[],"revision":0}',
+          outcome: {
+            ok: true,
+            code: 'empty',
+            progress: false,
+            continuation: 'immediate',
+            noveltyKey: 'todo:0',
+          },
+        }),
+      }),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        async waitForAttentionOrTimeout(_queue, timeoutMs) {
+          waits++
+          assert.equal(timeoutMs, 15 * 60_000)
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 1)
+    assert.equal(waits, 1)
+    const corrections = ctx.getSnapshot().messages.filter((message) => (
+      message.role === 'user' && message.content.includes('empty_todo_not_work_source')
+    ))
+    assert.equal(corrections.length, 1)
+  })
+
   test('repeated novelty key suppresses immediate continuation and enters bounded wait', async () => {
     const ctx = createAgentContext()
     ctx.appendUserMessage('已有上下文')

@@ -14,7 +14,7 @@
 
 - 新的 LLM 可见事实只能通过 Runtime Host 的受控 append 或 compaction projection 进入。
 - assistant tool call 和对应 tool result 是不可拆的原子组。结果按 assistant 中的 tool-call 顺序持久化；并行完成时序不进入 ledger。
-- `ToolExecutionResult.content` 是唯一持久化工具结果。`outcome` 和 `effects` 只服务当前轮控制流；`progress`、`continuation` 和 `noveltyKey` 都不进入 replay，重复新颖性只作为有界进程内防空转状态。只有 Runtime Host 验证后的稳定 marker（例如 `mailbox_handled`、`runtime_correction`）可以另外 append。content-only 且无 tool call 的 assistant 输出不是有效行动或公开发言；Runtime Host 追加稳定纠错 marker 并只立即重试一次，再次命中则进入一分钟可打断等待。
+- `ToolExecutionResult.content` 是唯一持久化工具结果。`outcome` 和 `effects` 只服务当前轮控制流；`progress`、`continuation` 和普通 `noveltyKey` 都不进入 replay，重复新颖性默认只作为有界进程内防空转状态。只有 Runtime Host 验证后的稳定 marker（例如 `mailbox_handled`、`runtime_correction`）可以另外 append；首次空 Todo 读取会追加带该 `noveltyKey` 的专用 `runtime_correction`，启动恢复时只从近期 canonical marker 恢复这一窄化抑制状态，不从可变 side state 或工具结果猜测。content-only 且无 tool call 的 assistant 输出不是有效行动或公开发言；Runtime Host 追加稳定纠错 marker 并只立即重试一次，再次命中则进入一分钟可打断等待。
 - 工具可在 `outcome.shareCandidate` 中标记稳定成果键、主题冷却键和短摘要。Runtime Host 只在存在 active 群、成果真实取得进展且本轮未外发时，追加一次 `share_checkpoint` user marker；追加前按完整 append-only canonical ledger 检查同一成果键和两小时主题冷却，因此 compaction 不会使旧 checkpoint 重新触发。它不代表发送授权，外发仍必须经过 QQ focus 与 `send_message`。
 - 可见消息与通知披露 cursor、inbox 已读 cursor、continuity、Goal revision、capability 或 QQ focus 变化必须在同一事务提交。`inbox` 只把实际呈现在有界 tool result 中的最新 row 标为已读，输出截断时不能跳过未展示行。持久化成功前不得推进内存 projection；提交失败时 runtime-local control state 必须回滚到 canonical projection。
 - late media、side table 或日志变化不得回写已 append entry。

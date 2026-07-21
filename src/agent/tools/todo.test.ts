@@ -60,6 +60,32 @@ describe('todo tool', () => {
     assert.deepEqual(listed.items.map((item) => item.id), ['one'])
   })
 
+  test('list distinguishes an empty process-local plan from an existing plan', async () => {
+    const tool = createTodoTool()
+
+    const empty = await tool.execute({ action: 'list' }, makeCtx())
+    assert.deepEqual(empty.outcome, {
+      ok: true,
+      code: 'empty',
+      progress: false,
+      continuation: 'immediate',
+      noveltyKey: 'todo:0',
+    })
+
+    await tool.execute({
+      action: 'update',
+      items: [{ id: 'one', text: '执行已经选定的事', status: 'in_progress' }],
+    }, makeCtx())
+    const listed = await tool.execute({ action: 'list' }, makeCtx())
+    assert.deepEqual(listed.outcome, {
+      ok: true,
+      code: 'listed',
+      progress: false,
+      continuation: 'immediate',
+      noveltyKey: 'todo:1',
+    })
+  })
+
   test('repeated empty update is an explicit no-progress wait state', async () => {
     const tool = createTodoTool()
 
@@ -72,7 +98,8 @@ describe('todo tool', () => {
 
     assert.equal(result.status, 'unchanged')
     assert.equal(result.changed, false)
-    assert.match(result.next, /without calling todo again/)
+    assert.match(result.next, /do not call it again/)
+    assert.match(result.next, /Choose a concrete action/)
     assert.deepEqual(first.outcome, {
       ok: true,
       code: 'unchanged',

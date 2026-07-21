@@ -29,7 +29,7 @@ function renderState(items: TodoItem[]) {
     items,
     activeItem,
     next: items.length === 0
-      ? 'Todo list is empty. If there is no concrete multi-step task, end the round without calling todo again.'
+      ? 'Todo list is empty. Todo is not a source of new work; do not call it again. Choose a concrete action from recent context, interests, wishes, relationships, or existing results and call its tool; only end the round when no direction is worth trying.'
       : activeItem
         ? `Continue todo "${activeItem.id}" or update the list when status changes.`
         : 'No todo is in_progress. Start a pending item only when concrete multi-step work remains; otherwise no todo call is needed.',
@@ -56,17 +56,19 @@ export function createTodoTool(): Tool<Args> {
       '轻量计划工具, 用来管理当前进程内的多步任务清单.',
       'action=update: 提交完整 todo 列表; 同一时间最多一个 item.status=in_progress.',
       'items=[] 只用于清空已有列表; 列表已经为空或没有具体多步任务时不要重复调用.',
-      'action=list: 查看当前列表.',
+      'action=list: 仅在有理由相信当前进程已有计划时查看列表; 不要用它发现新方向或判断自己能做什么.',
       '适合复杂或多步工作; 长期/跨重启任务以后走持久 task system, 不要把 todo 当长期记忆.',
     ].join(' '),
     schema: argsSchema,
     async execute(rawArgs) {
       const args = argsSchema.parse(rawArgs)
       if (args.action === 'list') {
+        const empty = items.length === 0
         return {
           content: JSON.stringify({ ...renderState(items), revision }),
           outcome: {
             ok: true,
+            code: empty ? 'empty' : 'listed',
             progress: false,
             continuation: 'immediate',
             noveltyKey: `todo:${revision}`,

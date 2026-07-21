@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "pnpm typecheck && pnpm repo-check",
     "repo-check": "tsx scripts/repo-check.ts",
+    "probe:longcat-tool-choice": "tsx scripts/probe-longcat-tool-choice.ts",
     "web:dev": "pnpm --filter @qq-bot/admin-web dev",
     "web:test": "pnpm --filter @qq-bot/admin-web test",
     "web:typecheck": "pnpm --filter @qq-bot/admin-web typecheck",

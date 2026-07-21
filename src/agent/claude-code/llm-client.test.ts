@@ -129,7 +129,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
     assert.deepEqual(body.tool_choice, { type: 'auto' })
   })
 
-  test('forwards adaptive thinking mode into the request body', async (t) => {
+  test('forwards adaptive thinking mode and effort into the request body', async (t) => {
     const { fn, calls } = makeFetchMock([{ body: SAMPLE_TEXT_SSE }])
     t.mock.method(globalThis, 'fetch', fn)
 
@@ -139,7 +139,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
       baseURL: CLIPROXY_BASE_URL,
       apiKey: CLIPROXY_API_KEY,
       toolChoice: 'any',
-      thinking: { mode: 'adaptive' },
+      thinking: { mode: 'adaptive', effort: 'max' },
     })
     await client.chat({
       systemPrompt: 'persona',
@@ -149,6 +149,7 @@ describe('ClaudeCodeLlmClient.chat', () => {
 
     const body = JSON.parse(String(calls[0]?.init.body)) as Record<string, unknown>
     assert.deepEqual(body.thinking, { type: 'adaptive', display: 'summarized' })
+    assert.deepEqual(body.output_config, { effort: 'max' })
     assert.deepEqual(body.tool_choice, { type: 'auto' })
   })
 

@@ -128,12 +128,14 @@ describe('config', () => {
   test('parses Claude thinking toggle overrides', () => {
     const config = parseConfig(createBaseEnv({
       LLM_PROVIDER_CLAUDE_THINKING: 'adaptive',
+      LLM_PROVIDER_CLAUDE_THINKING_EFFORT: 'max',
       LLM_PROVIDER_CLAUDE_THINKING_PROMPT_RETENTION: 'always',
       LLM_PROVIDER_CLAUDE_THINKING_LOG: 'raw',
     }))
 
     assert.deepEqual(config.llm.claudeThinking, {
       mode: 'adaptive',
+      effort: 'max',
       retention: 'always',
       log: 'raw',
     })
@@ -145,6 +147,12 @@ describe('config', () => {
         LLM_PROVIDER_CLAUDE_THINKING: 'on',
       })),
       /LLM_PROVIDER_CLAUDE_THINKING/,
+    )
+    assert.throws(
+      () => parseConfig(createBaseEnv({
+        LLM_PROVIDER_CLAUDE_THINKING_EFFORT: 'ultra',
+      })),
+      /LLM_PROVIDER_CLAUDE_THINKING_EFFORT/,
     )
     assert.throws(
       () => parseConfig(createBaseEnv({

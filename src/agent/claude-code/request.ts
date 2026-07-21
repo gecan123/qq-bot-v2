@@ -3,7 +3,7 @@
  *
  * 起源是 kagami claude-code-provider.ts:365-470 的字段顺序与 3-block system 形态。
  * 关键不变量:
- *   - 字段顺序: {model, stream, max_tokens, system, messages, tools?, tool_choice?}
+ *   - 字段顺序: {model, stream, max_tokens, system, messages, thinking?, output_config?, tools?, tool_choice?}
  *     (cloak fingerprint 可能看 JSON shape, 不要换序)
  *   - system 为 3 块 text array: billing header → SDK prompt → user persona
  *   - 1h prompt caching 挂在 **最后一块 system block** 上 (per-block), 不放在顶层。
@@ -14,7 +14,8 @@
  *     真 Claude Code CLI 也不发, 它用 thinking_config 控制. 跟它对齐 = 字节稳定 + 不撞错。
  *     上层 LlmCallInput.temperature 仍存在, 由 OpenAI 路径单独 honor。
  *   - thinking 默认不发; 只有 claudeThinking.mode=adaptive 时发送 summarized adaptive thinking。
- *   - output_config / context_management v1 不发 (out of scope)
+ *   - output_config.effort 仅在 adaptive 且显式配置 effort 时发送；disabled 路径不发。
+ *   - context_management v1 不发 (out of scope)
  *
  * 为什么是 per-block 而不是 kagami 那种顶层 cache_control:
  *   kagami 自家 OAuth 直连 Anthropic, 顶层 cache_control 自动模式 work。
@@ -62,16 +63,21 @@ export interface ClaudeMessageRequestBody {
     type: 'adaptive'
     display: 'summarized'
   }
+  output_config?: {
+    effort: ClaudeThinkingEffort
+  }
   tools?: Array<Record<string, unknown>>
   tool_choice?: Record<string, unknown>
 }
 
 export type ClaudeToolChoice = 'any' | 'auto'
 export type ClaudeThinkingMode = 'disabled' | 'adaptive'
+export type ClaudeThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 export type ClaudeThinkingRetention = 'active-tool-cycle' | 'always'
 
 export interface ClaudeThinkingConfig {
   mode: ClaudeThinkingMode
+  effort?: ClaudeThinkingEffort
   retention?: ClaudeThinkingRetention
 }
 
@@ -115,6 +121,9 @@ export function buildClaudeCodeRequestBody(
 
   if (adaptiveThinkingEnabled) {
     body.thinking = { type: 'adaptive', display: 'summarized' }
+    if (input.thinking?.effort) {
+      body.output_config = { effort: input.thinking.effort }
+    }
   }
 
   if (toolsEnabled) {

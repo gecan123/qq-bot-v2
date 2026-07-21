@@ -24,11 +24,13 @@ type LlmScenarioConfig = {
 export type OpenAiReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 type ClaudeThinkingMode = 'disabled' | 'adaptive'
+type ClaudeThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 type ClaudeThinkingRetention = 'active-tool-cycle' | 'always'
 type ClaudeThinkingLog = 'off' | 'summary' | 'raw'
 
 type ClaudeThinkingConfig = {
   mode: ClaudeThinkingMode
+  effort?: ClaudeThinkingEffort
   retention: ClaudeThinkingRetention
   log: ClaudeThinkingLog
 }
@@ -83,6 +85,13 @@ const SCENARIO_NAME_MAP: Record<string, LlmScenarioKey> = {
 }
 
 const CLAUDE_THINKING_MODES: readonly ClaudeThinkingMode[] = ['disabled', 'adaptive']
+const CLAUDE_THINKING_EFFORTS: readonly ClaudeThinkingEffort[] = [
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+]
 const CLAUDE_THINKING_RETENTIONS: readonly ClaudeThinkingRetention[] = ['active-tool-cycle', 'always']
 const CLAUDE_THINKING_LOGS: readonly ClaudeThinkingLog[] = ['off', 'summary', 'raw']
 const OPENAI_REASONING_EFFORTS: readonly OpenAiReasoningEffort[] = [
@@ -229,7 +238,23 @@ function parseEnumValue<T extends string>(
   throw new Error(`Invalid ${name} "${value}" (expected ${allowed.join(' or ')})`)
 }
 
+function parseOptionalEnumValue<T extends string>(
+  name: string,
+  value: string | undefined,
+  allowed: readonly T[],
+): T | undefined {
+  const normalized = value?.trim().toLowerCase()
+  if (!normalized) return undefined
+  if ((allowed as readonly string[]).includes(normalized)) return normalized as T
+  throw new Error(`Invalid ${name} "${value}" (expected ${allowed.join(' or ')})`)
+}
+
 function parseClaudeThinking(env: EnvSource): ClaudeThinkingConfig {
+  const effort = parseOptionalEnumValue(
+    'LLM_PROVIDER_CLAUDE_THINKING_EFFORT',
+    env.LLM_PROVIDER_CLAUDE_THINKING_EFFORT,
+    CLAUDE_THINKING_EFFORTS,
+  )
   return {
     mode: parseEnumValue(
       'LLM_PROVIDER_CLAUDE_THINKING',
@@ -237,6 +262,7 @@ function parseClaudeThinking(env: EnvSource): ClaudeThinkingConfig {
       CLAUDE_THINKING_MODES,
       'disabled',
     ),
+    ...(effort ? { effort } : {}),
     retention: parseEnumValue(
       'LLM_PROVIDER_CLAUDE_THINKING_PROMPT_RETENTION',
       env.LLM_PROVIDER_CLAUDE_THINKING_PROMPT_RETENTION,

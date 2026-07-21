@@ -230,6 +230,7 @@ describe('buildClaudeCodeRequestBody', () => {
     })
 
     assert.equal('thinking' in body, false)
+    assert.equal('output_config' in body, false)
   })
 
   test('adaptive thinking adds summarized thinking config without tools', () => {
@@ -242,8 +243,35 @@ describe('buildClaudeCodeRequestBody', () => {
     })
 
     assert.deepEqual(body.thinking, { type: 'adaptive', display: 'summarized' })
+    assert.equal('output_config' in body, false)
     assert.equal('tools' in body, false)
     assert.equal('tool_choice' in body, false)
+  })
+
+  test('adaptive thinking sends configured effort through output_config', () => {
+    const body = buildClaudeCodeRequestBody({
+      model: 'LongCat-2.0',
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [],
+      thinking: { mode: 'adaptive', effort: 'max' },
+    })
+
+    assert.deepEqual(body.thinking, { type: 'adaptive', display: 'summarized' })
+    assert.deepEqual(body.output_config, { effort: 'max' })
+  })
+
+  test('disabled thinking omits output_config even when effort is configured', () => {
+    const body = buildClaudeCodeRequestBody({
+      model: 'LongCat-2.0',
+      systemPrompt: 's',
+      messages: [{ role: 'user', content: 'h' }],
+      tools: [],
+      thinking: { mode: 'disabled', effort: 'max' },
+    })
+
+    assert.equal('thinking' in body, false)
+    assert.equal('output_config' in body, false)
   })
 
   test('tools mapped to {name, description, input_schema}; tool_choice=any', () => {

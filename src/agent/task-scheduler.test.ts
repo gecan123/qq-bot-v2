@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { createTaskScheduler } from './task-scheduler.js'
+import { AGENT_TASK_LANES, createTaskScheduler } from './task-scheduler.js'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -9,6 +9,14 @@ function deferred<T>() {
 }
 
 describe('task scheduler', () => {
+  test('default agent lanes contain only active specialized workers', () => {
+    assert.deepEqual(Object.keys(AGENT_TASK_LANES), [
+      'maintenance',
+      'network',
+      'media-description',
+    ])
+  })
+
   test('enforces lane concurrency while allowing bounded parallel work', async () => {
     const scheduler = createTaskScheduler({ network: { concurrency: 2 } })
     const gates = [deferred<void>(), deferred<void>(), deferred<void>()]

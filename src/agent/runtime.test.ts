@@ -118,7 +118,6 @@ describe('createAgentRuntime', () => {
       'pause',
       'qq_directory',
       'background_task',
-      'delegate',
       'approval',
       'goal',
       'todo',

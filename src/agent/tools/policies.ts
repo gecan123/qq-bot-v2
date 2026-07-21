@@ -45,7 +45,6 @@ export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.fr
   qq_directory: fixed(PARALLEL_READ),
   background_task: byAction({ parallel: ['list', 'get'] }),
   schedule: byAction({ parallel: ['list'], sideEffect: ['create', 'cancel'] }),
-  delegate: fixed(EXCLUSIVE_READ),
   approval: byAction({ parallel: ['list', 'status'], sideEffect: ['approve', 'cancel'] }),
   goal: byAction({
     parallel: ['get'],

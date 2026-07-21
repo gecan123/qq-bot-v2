@@ -19,7 +19,6 @@ export const AGENT_TASK_LANES = {
   maintenance: { concurrency: 1 },
   network: { concurrency: 3 },
   'media-description': { concurrency: 2 },
-  delegate: { concurrency: 2 },
 } as const
 
 export function createAgentTaskScheduler(): TaskScheduler {

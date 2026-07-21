@@ -34,7 +34,6 @@ import { createQqDirectoryTool, type QqDirectoryDeps } from './qq-directory.js'
 import { createScheduleTool } from './schedule.js'
 import type { ScheduleRuntime } from '../schedule-runtime.js'
 import type { LlmClient } from '../llm-client.js'
-import { createDelegateTool } from './delegate.js'
 import type { ApprovalManager } from '../approval-manager.js'
 import { createApprovalTool } from './approval.js'
 import type { McpManager } from '../mcp-manager.js'
@@ -141,17 +140,10 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     metadata: deps.metadata,
     groupPolicies: deps.groupPolicies,
   })
-  const delegate = deps.llm ? createDelegateTool({
-    llm: deps.llm,
-    taskRegistry: deps.taskRegistry,
-    taskScheduler,
-    safeTools: [workspaceBash, inbox, qqDirectory, chatStyle, aiTone, skillTool, backgroundTask],
-  }) : null
   const tools: Tool[] = [
     pause,
     qqDirectory,
     backgroundTask,
-    ...(delegate ? [delegate] : []),
     ...(deps.approvalManager ? [createApprovalTool(deps.approvalManager)] : []),
     ...(deps.goalStore ? [createGoalTool(deps.goalStore)] : []),
     todoTool,

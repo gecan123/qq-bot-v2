@@ -25,7 +25,7 @@ export type {
  * AGENTS.md / CLAUDE.md「永续上下文契约」红线:
  *  - getSnapshot() 返回深拷贝, 外部修改不影响内部 (字节稳定的前提)
  *  - 主 Runtime Host 只能在 canonical commit/reload 后用 installProjection 整体安装
- *  - appendXxx 只服务不持久化的局部 AgentContext（例如 delegate）和测试 fixture
+ *  - appendXxx 只服务不持久化的局部 AgentContext 和测试 fixture
  *  - 持久形态 == 运行时形态; snapshot.messages 是 LLM 看到的 messages,
  *    activeToolCapabilities 是 runtime control state, 不进 LLM messages。
  */

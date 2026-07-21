@@ -20,7 +20,7 @@ export function renderGoalContinuation(
     scheduling: {
       foreground: 'single_turn_only',
       attention: '先处理本轮已经披露的 priority=high 私聊/@/审批；处理后回到 goal。',
-      background: '可使用现有 background_task/delegate 并发独立工作；不要创建第二个主循环。',
+      background: '可使用现有 background_task 并发独立工作；不要创建第二个主循环。',
       unrelatedWork: 'goal 有立即可执行步骤时不要主动开启无关自由活动；等待后台、外部输入或冷却时才可利用空档。',
     },
     completion: {

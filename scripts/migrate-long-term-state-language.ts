@@ -1,7 +1,4 @@
-import { execFile } from 'node:child_process'
-import { readFile, unlink } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { promisify } from 'node:util'
 import { z } from 'zod'
 import { createLlmClient, type LlmClient } from '../src/agent/llm-client.js'
 import type { Tool } from '../src/agent/tool.js'
@@ -12,12 +9,11 @@ import {
   type LongTermTranslationItem,
 } from '../src/ops/long-term-state-language-migration.js'
 import { hasChineseNarrative } from '../src/agent/long-term-language.js'
+import { assertBotStopped } from '../src/ops/bot-process-guard.js'
 
-const PID_FILE = '.bot.pid'
 const MAX_BATCH_CHARS = 3_500
 const MAX_BATCH_ITEMS = 8
 const APPLY_ARG = '--apply'
-const execFileAsync = promisify(execFile)
 
 const translationResultSchema = z.object({
   items: z.array(z.object({
@@ -176,47 +172,6 @@ function parseResult(
     return null
   }
   return parsed.data.items
-}
-
-async function assertBotStopped(projectRoot: string): Promise<void> {
-  let raw: string
-  try {
-    raw = await readFile(PID_FILE, 'utf8')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      await assertNoBotProcess(projectRoot)
-      return
-    }
-    throw error
-  }
-  const pid = Number(raw.trim())
-  if (!Number.isSafeInteger(pid) || pid <= 0) {
-    await unlink(PID_FILE)
-    await assertNoBotProcess(projectRoot)
-    return
-  }
-  try {
-    process.kill(pid, 0)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
-      await unlink(PID_FILE)
-      await assertNoBotProcess(projectRoot)
-      return
-    }
-    throw error
-  }
-  throw new Error(`bot is still running (pid=${pid}); stop it before migrating long-term state`)
-}
-
-async function assertNoBotProcess(projectRoot: string): Promise<void> {
-  const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,command='])
-  const matches = stdout.split('\n').filter((line) => (
-    line.includes(projectRoot)
-    && /(?:tsx|node).*src\/index\.ts/.test(line)
-  ))
-  if (matches.length > 0) {
-    throw new Error(`bot process still exists without a live pidfile; stop it before migrating long-term state:\n${matches.join('\n')}`)
-  }
 }
 
 function parseRootArg(args: string[]): string {

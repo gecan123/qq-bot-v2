@@ -1,11 +1,9 @@
-import { readFile, unlink } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import {
   parseAgentStateResetScope,
   resetAgentState,
 } from '../src/ops/reset-agent-state.js'
-
-const PID_FILE = '.bot.pid'
+import { assertBotStopped } from '../src/ops/bot-process-guard.js'
 
 function assertExplicitConfirmation(): void {
   if (process.argv.includes('--confirm')) return
@@ -14,38 +12,10 @@ function assertExplicitConfirmation(): void {
   )
 }
 
-async function assertBotStopped(): Promise<void> {
-  let raw: string
-  try {
-    raw = await readFile(PID_FILE, 'utf8')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
-    throw error
-  }
-
-  const pid = Number(raw.trim())
-  if (!Number.isSafeInteger(pid) || pid <= 0) {
-    await unlink(PID_FILE)
-    return
-  }
-
-  try {
-    process.kill(pid, 0)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
-      await unlink(PID_FILE)
-      return
-    }
-    throw error
-  }
-
-  throw new Error(`bot is still running (pid=${pid}); stop it before resetting state`)
-}
-
 async function main(): Promise<void> {
   assertExplicitConfirmation()
   const scope = parseAgentStateResetScope(process.argv.slice(2))
-  await assertBotStopped()
+  await assertBotStopped(resolve('.'))
   const needsDatabase = scope === 'all' || scope === 'context'
   const prisma = needsDatabase ? (await import('../src/database/client.js')).prisma : null
   if (prisma) await prisma.$connect()

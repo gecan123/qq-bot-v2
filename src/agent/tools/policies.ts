@@ -97,6 +97,7 @@ export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.fr
     sideEffect: ['connect', 'tools', 'call', 'disconnect'],
   }),
   browser: fixed(EXCLUSIVE_SIDE_EFFECT),
+  gh: fixed(PARALLEL_READ),
   openbb_cli: fixed(PARALLEL_READ),
   trading_agent: byAction({
     parallel: ['status', 'result'],

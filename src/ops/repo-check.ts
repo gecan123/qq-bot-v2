@@ -80,6 +80,7 @@ const TOOL_REGISTRY_MARKERS = [
   ['workspaceFileTool', 'workspace_file'],
   ['maybeCreateBrowserTool', 'browser'],
   ['maybeCreateWebSearchTool', 'web_search'],
+  ['createGhTool', 'gh'],
 ] as const
 
 const WORKSPACE_BASH_SUBCOMMAND_MARKERS = [

@@ -45,6 +45,7 @@ import type { LoadMemorySourceEvidence } from '../memory-evidence.js'
 import { createQqConversationTool, type QqConversationController } from './qq-conversation.js'
 import { applyBotToolPolicy } from './policies.js'
 import type { InboxReadCursors } from '../inbox-read-cursors.js'
+import { createGhTool } from './gh.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -138,6 +139,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     metadata: deps.metadata,
     groupPolicies: deps.groupPolicies,
   })
+  const gh = createGhTool()
   const tools: Tool[] = [
     pause,
     qqDirectory,
@@ -160,6 +162,12 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     workspaceBash,
   ]
   const capabilities: DeferredToolCapability[] = []
+
+  capabilities.push({
+    name: 'github',
+    description: '只读查看 GitHub 仓库：仓库概况、文件树、单文件内容和代码搜索。底层使用本机 gh，不接受原始命令，也不能修改 GitHub 状态。',
+    tools: [gh],
+  })
 
   capabilities.push({
     name: 'qq',

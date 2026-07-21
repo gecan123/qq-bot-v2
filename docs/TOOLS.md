@@ -21,6 +21,7 @@
 
 ## Deferred capability
 
+- `github`：内部工具是只读 `gh`，底层调用本机 GitHub CLI。仅提供 `view_repo`、`list_tree`、`read_file`、`search_code` 四个固定 action，用于查看当前 `gh` 身份可访问的仓库；不接受原始命令，不提供创建、修改、删除、合并、发布或 workflow 操作。
 - `mcp_connectors`：仅在配置 `BOT_MCP_CONFIG_PATH` 后出现，内部工具是 `mcp`。启动只读取配置，不拉外部进程；`mcp action=tools|connect|call` 首次使用才启动对应 stdio server。先分页读取 tools，再用返回的 `mcp__server__tool` 完整名称调用。schema 快照写入 `BOT_MCP_SCHEMA_SNAPSHOT_DIR`，远端结果和二进制内容有上限，关机时主动断开。
 - `browser`：配置 `BOT_BROWSER_ENABLED=true` 后可激活，内部工具是单一 action-driven `browser`；截图、下载和 annotation 返回后，artifact retention 清理由 sidecar 的单 worker 合并执行。
 - `finance`：配置 `OPENBB_CLI_ENABLED=true` 后可激活，内部工具是 `openbb_cli`。

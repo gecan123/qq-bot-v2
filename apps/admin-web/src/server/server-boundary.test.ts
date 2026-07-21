@@ -5,7 +5,7 @@ import { test } from 'vitest'
 
 const sourceRoot = join(process.cwd(), 'src')
 
-test('Admin Web production source preserves server/client and read-only boundaries', () => {
+test('Admin Web production source preserves server/client and localized mutation boundaries', () => {
   const violations: string[] = []
 
   for (const path of listSourceFiles(sourceRoot)) {
@@ -20,8 +20,28 @@ test('Admin Web production source preserves server/client and read-only boundari
 
     if (relativePath.includes('/features/') || relativePath.startsWith('features/')) {
       if (/\.(?:server|functions)\.tsx?$/.test(relativePath)) {
-        for (const mutation of ['.create(', '.createMany(', '.update(', '.updateMany(', '.upsert(', '.delete(', '.deleteMany(', '.$executeRaw(']) {
-          if (source.includes(mutation)) violations.push(`${relativePath}: ${mutation}`)
+        const operationsServer = relativePath === 'features/operations/operations.server.ts'
+        if (!operationsServer) {
+          for (const mutation of ['.create(', '.createMany(', '.update(', '.updateMany(', '.upsert(', '.delete(', '.deleteMany(', '.$executeRaw(']) {
+            if (source.includes(mutation)) violations.push(`${relativePath}: ${mutation}`)
+          }
+        } else {
+          if (!source.startsWith("import '@tanstack/react-start/server-only'")) {
+            violations.push(`${relativePath}: missing server-only first import`)
+          }
+          if (!source.includes('resetAgentState')) {
+            violations.push(`${relativePath}: missing typed reset service`)
+          }
+          for (const commandMarker of [
+            'node:child_process',
+            'execFile(',
+            'spawn(',
+            'scripts/',
+            '$executeRaw',
+            '$queryRaw',
+          ]) {
+            if (source.includes(commandMarker)) violations.push(`${relativePath}: ${commandMarker}`)
+          }
         }
       }
     }

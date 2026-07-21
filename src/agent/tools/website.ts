@@ -14,7 +14,7 @@ const WRITE_CONTENT_MAX_CHARS = Math.ceil(WRITE_MAX_BYTES / 3) * 4 + 16
 const COMMAND_OUTPUT_CAP = 4_000
 const revisionSchema = z.string().regex(/^[a-f0-9]{64}$/)
 
-const CONTENT_WRITE_EXTENSIONS = new Set(['.md', '.mdx', '.json', '.txt'])
+const BLOG_CONTENT_EXTENSIONS = new Set(['.md', '.mdx'])
 const IMAGE_WRITE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.svg'])
 const TEXT_READ_EXTENSIONS = new Set(['.md', '.mdx', '.json', '.txt', '.css', '.astro'])
 
@@ -114,7 +114,9 @@ export function createWebsiteTool(deps: WebsiteToolDeps): Tool<Args> {
       '管理 Luna 个人网站仓库的受控工具.',
       '支持 status 查看仓库状态, read 读取允许路径, write 写入, delete 删除, move 移动, publish 检查并发布允许路径变更.',
       'read 返回 revision; 覆盖、删除或移动已有文件必须携带最新 revision.',
-      '路径限制在内容、少量样式、about 页面和 public/images 下的安全文件; 不要读写配置、脚本、隐藏文件或路径逃逸.',
+      '新文章只能写入 src/content/blog/<slug>.md 或 .mdx; 创建前先 read 现有文章作为模板. frontmatter 使用 title, description, pubDate, tags, draft, 可选 updatedDate/cover; 不要使用 date/categories 代替必填字段.',
+      '其他路径仅限少量样式、about 页面和 public/images 下的安全文件; 不要读写配置、脚本、隐藏文件或路径逃逸.',
+      'publish 成功只表示构建通过且 Git commit/push 成功, 不表示 Vercel 已部署完成; 未确认正式 URL 可见目标内容前不得宣称已经上线.',
     ].join(' '),
     schema: argsSchema,
     async execute(rawArgs) {
@@ -437,6 +439,8 @@ async function publishWebsite(runtime: WebsiteRuntimeConfig, args: Extract<Args,
 
   return jsonResult({
     ok: true,
+    publishStatus: 'pushed',
+    deploymentStatus: 'unverified',
     branch: runtime.branch,
     commit: hashResult.stdout.trim(),
     changedFiles: postCheckChangedFiles,
@@ -446,7 +450,7 @@ async function publishWebsite(runtime: WebsiteRuntimeConfig, args: Extract<Args,
       stdout: clip(checkResult.stdout, 1_000),
       stderr: clip(checkResult.stderr, 1_000),
     },
-    next: 'Vercel Git integration should deploy this commit from the configured branch.',
+    next: 'Git push succeeded. Vercel deployment is not verified yet; check the deployment and confirm the expected page on publicUrl before describing the content as live.',
   })
 }
 
@@ -876,7 +880,7 @@ export function isAllowedWebsiteWritePath(file: string): boolean {
 
 function isAllowedWebsitePath(file: string): boolean {
   const ext = extname(file).toLowerCase()
-  if (file.startsWith('src/content/')) return CONTENT_WRITE_EXTENSIONS.has(ext)
+  if (file.startsWith('src/content/blog/')) return BLOG_CONTENT_EXTENSIONS.has(ext)
   if (file === 'src/pages/about.astro') return ext === '.astro'
   if (file === 'src/styles/tokens.css') return ext === '.css'
   if (file === 'src/styles/components.css') return ext === '.css'

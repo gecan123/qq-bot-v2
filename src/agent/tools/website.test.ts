@@ -19,9 +19,9 @@ function makeCtx(): ToolContext {
 
 async function makeSiteRepo(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'luna-site-'))
-  await mkdir(join(dir, 'src/content/posts'), { recursive: true })
+  await mkdir(join(dir, 'src/content/blog'), { recursive: true })
   await mkdir(join(dir, 'src/styles'), { recursive: true })
-  await writeFile(join(dir, 'src/content/posts/hello.md'), '# hello\n', 'utf8')
+  await writeFile(join(dir, 'src/content/blog/hello.md'), '# hello\n', 'utf8')
   await writeFile(join(dir, 'src/styles/tokens.css'), ':root { --color-bg: #fff; }\n', 'utf8')
   return dir
 }
@@ -65,13 +65,11 @@ const WRITE_MAX_BYTES_FOR_TEST = 256 * 1024
 const READ_MAX_BYTES_FOR_TEST = 256 * 1024
 
 describe('website path policy', () => {
-  test('allows Astro content and narrow style paths', () => {
-    assert.equal(isAllowedWebsiteReadPath('src/content/posts/hello.md'), true)
-    assert.equal(isAllowedWebsiteWritePath('src/content/posts/hello.md'), true)
-    assert.equal(isAllowedWebsiteReadPath('src/content/notes/today.mdx'), true)
-    assert.equal(isAllowedWebsiteWritePath('src/content/notes/today.mdx'), true)
-    assert.equal(isAllowedWebsiteReadPath('src/content/profile.json'), true)
-    assert.equal(isAllowedWebsiteWritePath('src/content/profile.json'), true)
+  test('allows the canonical Astro blog collection and narrow presentation paths', () => {
+    assert.equal(isAllowedWebsiteReadPath('src/content/blog/hello.md'), true)
+    assert.equal(isAllowedWebsiteWritePath('src/content/blog/hello.md'), true)
+    assert.equal(isAllowedWebsiteReadPath('src/content/blog/notes/today.mdx'), true)
+    assert.equal(isAllowedWebsiteWritePath('src/content/blog/notes/today.mdx'), true)
     assert.equal(isAllowedWebsiteReadPath('src/pages/about.astro'), true)
     assert.equal(isAllowedWebsiteWritePath('src/pages/about.astro'), true)
     assert.equal(isAllowedWebsiteReadPath('src/styles/tokens.css'), true)
@@ -88,6 +86,9 @@ describe('website path policy', () => {
       '/tmp/file.md',
       '.env',
       'src/content/.draft.md',
+      'src/content/posts/hello.md',
+      'src/content/notes/today.mdx',
+      'src/content/profile.json',
       '.github/workflows/deploy.yml',
       '.vercel/project.json',
       'package.json',
@@ -121,9 +122,9 @@ describe('website path policy', () => {
 
   test('rejects non-content extensions under Astro content', () => {
     const rejected = [
-      'src/content/posts/photo.png',
-      'src/content/posts/style.css',
-      'src/content/posts/page.astro',
+      'src/content/blog/photo.png',
+      'src/content/blog/style.css',
+      'src/content/blog/page.astro',
     ]
 
     for (const file of rejected) {
@@ -133,8 +134,8 @@ describe('website path policy', () => {
   })
 
   test('normalizes safe relative paths', () => {
-    assert.equal(safeWebsiteRelativePath('src/content/posts/hello.md'), 'src/content/posts/hello.md')
-    assert.equal(safeWebsiteRelativePath('src/content/posts//hello.md'), 'src/content/posts/hello.md')
+    assert.equal(safeWebsiteRelativePath('src/content/blog/hello.md'), 'src/content/blog/hello.md')
+    assert.equal(safeWebsiteRelativePath('src/content/blog//hello.md'), 'src/content/blog/hello.md')
     assert.equal(safeWebsiteRelativePath('src\\content\\posts\\hello.md'), null)
     assert.equal(safeWebsiteRelativePath('../hello.md'), null)
   })
@@ -167,12 +168,12 @@ describe('website tool read/write/status', () => {
 
       const result = JSON.parse((await tool.execute({
         action: 'read',
-        file: 'src/content/posts/hello.md',
+        file: 'src/content/blog/hello.md',
         maxChars: 20,
       }, makeCtx())).content as string) as { ok: boolean; file: string; content: string; truncated: boolean }
 
       assert.equal(result.ok, true)
-      assert.equal(result.file, 'src/content/posts/hello.md')
+      assert.equal(result.file, 'src/content/blog/hello.md')
       assert.equal(result.content, '# hello\n')
       assert.equal(result.truncated, false)
     } finally {
@@ -216,7 +217,7 @@ describe('website tool read/write/status', () => {
 
       const result = JSON.parse((await tool.execute({
         action: 'read',
-        file: 'src/content/posts/missing.md',
+        file: 'src/content/blog/missing.md',
       }, makeCtx())).content as string) as { ok: boolean; code: string }
 
       assert.equal(result.ok, false)
@@ -264,7 +265,7 @@ describe('website tool read/write/status', () => {
   test('rejects oversized text reads before returning content', async () => {
     const repoDir = await makeSiteRepo()
     try {
-      await writeFile(join(repoDir, 'src/content/posts/large.md'), `${'a'.repeat(READ_MAX_BYTES_FOR_TEST + 1)}\n`, 'utf8')
+      await writeFile(join(repoDir, 'src/content/blog/large.md'), `${'a'.repeat(READ_MAX_BYTES_FOR_TEST + 1)}\n`, 'utf8')
       const tool = createWebsiteTool({
         repoDir,
         branch: 'main',
@@ -275,7 +276,7 @@ describe('website tool read/write/status', () => {
 
       const result = JSON.parse((await tool.execute({
         action: 'read',
-        file: 'src/content/posts/large.md',
+        file: 'src/content/blog/large.md',
       }, makeCtx())).content as string) as { ok: boolean; code: string }
 
       assert.equal(result.ok, false)
@@ -288,7 +289,7 @@ describe('website tool read/write/status', () => {
   test('rejects directory reads at allowed paths', async () => {
     const repoDir = await makeSiteRepo()
     try {
-      await mkdir(join(repoDir, 'src/content/posts/dir.md'))
+      await mkdir(join(repoDir, 'src/content/blog/dir.md'))
       const tool = createWebsiteTool({
         repoDir,
         branch: 'main',
@@ -299,7 +300,7 @@ describe('website tool read/write/status', () => {
 
       const result = JSON.parse((await tool.execute({
         action: 'read',
-        file: 'src/content/posts/dir.md',
+        file: 'src/content/blog/dir.md',
       }, makeCtx())).content as string) as { ok: boolean; code: string }
 
       assert.equal(result.ok, false)
@@ -322,13 +323,13 @@ describe('website tool read/write/status', () => {
 
       const result = JSON.parse((await tool.execute({
         action: 'write',
-        file: 'src/content/posts/new.md',
+        file: 'src/content/blog/new.md',
         content: '# new\n',
       }, makeCtx())).content as string) as { ok: boolean; file: string; bytes: number }
 
       assert.equal(result.ok, true)
-      assert.equal(result.file, 'src/content/posts/new.md')
-      assert.equal(await readFile(join(repoDir, 'src/content/posts/new.md'), 'utf8'), '# new\n')
+      assert.equal(result.file, 'src/content/blog/new.md')
+      assert.equal(await readFile(join(repoDir, 'src/content/blog/new.md'), 'utf8'), '# new\n')
       assert.equal(result.bytes, Buffer.byteLength('# new\n'))
     } finally {
       await rm(repoDir, { recursive: true, force: true })
@@ -347,18 +348,18 @@ describe('website tool read/write/status', () => {
       })
       const read = JSON.parse((await tool.execute({
         action: 'read',
-        file: 'src/content/posts/hello.md',
+        file: 'src/content/blog/hello.md',
       }, makeCtx())).content as string) as { revision: string }
       const missingRevision = JSON.parse((await tool.execute({
         action: 'write',
-        file: 'src/content/posts/hello.md',
+        file: 'src/content/blog/hello.md',
         content: '# changed\n',
       }, makeCtx())).content as string) as { ok: boolean; code: string }
       assert.deepEqual({ ok: missingRevision.ok, code: missingRevision.code }, { ok: false, code: 'revision_required' })
 
       const written = JSON.parse((await tool.execute({
         action: 'write',
-        file: 'src/content/posts/hello.md',
+        file: 'src/content/blog/hello.md',
         content: '# changed\n',
         expectedRevision: read.revision,
       }, makeCtx())).content as string) as { ok: boolean; revision: string }
@@ -366,19 +367,19 @@ describe('website tool read/write/status', () => {
 
       const moved = JSON.parse((await tool.execute({
         action: 'move',
-        source: 'src/content/posts/hello.md',
-        destination: 'src/content/posts/moved.md',
+        source: 'src/content/blog/hello.md',
+        destination: 'src/content/blog/moved.md',
         expectedRevision: written.revision,
       }, makeCtx())).content as string) as { ok: boolean; revision: string }
       assert.equal(moved.ok, true)
 
       const deleted = JSON.parse((await tool.execute({
         action: 'delete',
-        file: 'src/content/posts/moved.md',
+        file: 'src/content/blog/moved.md',
         expectedRevision: moved.revision,
       }, makeCtx())).content as string) as { ok: boolean }
       assert.equal(deleted.ok, true)
-      await assert.rejects(readFile(join(repoDir, 'src/content/posts/moved.md'), 'utf8'))
+      await assert.rejects(readFile(join(repoDir, 'src/content/blog/moved.md'), 'utf8'))
     } finally {
       await rm(repoDir, { recursive: true, force: true })
     }
@@ -387,7 +388,7 @@ describe('website tool read/write/status', () => {
   test('rejects writes to existing directories at allowed paths', async () => {
     const repoDir = await makeSiteRepo()
     try {
-      await mkdir(join(repoDir, 'src/content/posts/dir.md'))
+      await mkdir(join(repoDir, 'src/content/blog/dir.md'))
       const tool = createWebsiteTool({
         repoDir,
         branch: 'main',
@@ -398,7 +399,7 @@ describe('website tool read/write/status', () => {
 
       const result = JSON.parse((await tool.execute({
         action: 'write',
-        file: 'src/content/posts/dir.md',
+        file: 'src/content/blog/dir.md',
         content: '# changed\n',
       }, makeCtx())).content as string) as { ok: boolean; code: string }
 
@@ -464,7 +465,7 @@ describe('website tool read/write/status', () => {
     try {
       const outsideFile = join(outsideDir, 'secret.md')
       await writeFile(outsideFile, '# outside\n', 'utf8')
-      await symlink(outsideFile, join(repoDir, 'src/content/posts/link.md'))
+      await symlink(outsideFile, join(repoDir, 'src/content/blog/link.md'))
       const tool = createWebsiteTool({
         repoDir,
         branch: 'main',
@@ -475,7 +476,7 @@ describe('website tool read/write/status', () => {
 
       const result = JSON.parse((await tool.execute({
         action: 'read',
-        file: 'src/content/posts/link.md',
+        file: 'src/content/blog/link.md',
       }, makeCtx())).content as string) as { ok: boolean; code: string }
 
       assert.equal(result.ok, false)
@@ -492,7 +493,7 @@ describe('website tool read/write/status', () => {
     try {
       const outsideFile = join(outsideDir, 'secret.md')
       await writeFile(outsideFile, '# outside\n', 'utf8')
-      await symlink(outsideFile, join(repoDir, 'src/content/posts/link.md'))
+      await symlink(outsideFile, join(repoDir, 'src/content/blog/link.md'))
       const tool = createWebsiteTool({
         repoDir,
         branch: 'main',
@@ -503,7 +504,7 @@ describe('website tool read/write/status', () => {
 
       const result = JSON.parse((await tool.execute({
         action: 'write',
-        file: 'src/content/posts/link.md',
+        file: 'src/content/blog/link.md',
         content: '# changed\n',
       }, makeCtx())).content as string) as { ok: boolean; code: string }
 
@@ -520,7 +521,7 @@ describe('website tool read/write/status', () => {
     const repoDir = await makeSiteRepo()
     const outsideDir = await mkdtemp(join(tmpdir(), 'luna-site-outside-'))
     try {
-      await symlink(outsideDir, join(repoDir, 'src/content/posts/linkdir'))
+      await symlink(outsideDir, join(repoDir, 'src/content/blog/linkdir'))
       const tool = createWebsiteTool({
         repoDir,
         branch: 'main',
@@ -531,7 +532,7 @@ describe('website tool read/write/status', () => {
 
       const result = JSON.parse((await tool.execute({
         action: 'write',
-        file: 'src/content/posts/linkdir/sub/new.md',
+        file: 'src/content/blog/linkdir/sub/new.md',
         content: '# changed\n',
       }, makeCtx())).content as string) as { ok: boolean; code: string }
 
@@ -552,7 +553,7 @@ describe('website tool read/write/status', () => {
         'git rev-parse --abbrev-ref HEAD': { stdout: 'main\n' },
         'git remote get-url origin': { stdout: 'git@github.com:owner/luna-site.git\n' },
         'git rev-parse --short HEAD': { stdout: 'abc1234\n' },
-        'git status --porcelain': { stdout: ' M src/content/posts/hello.md\n' },
+        'git status --porcelain': { stdout: ' M src/content/blog/hello.md\n' },
       })
       const tool = createWebsiteTool({
         repoDir,
@@ -581,7 +582,7 @@ describe('website tool read/write/status', () => {
       assert.equal(result.remote, 'git@github.com:owner/luna-site.git')
       assert.equal(result.latestCommit, 'abc1234')
       assert.equal(result.dirty, true)
-      assert.deepEqual(result.changedFiles, ['src/content/posts/hello.md'])
+      assert.deepEqual(result.changedFiles, ['src/content/blog/hello.md'])
     } finally {
       await rm(repoDir, { recursive: true, force: true })
     }
@@ -650,7 +651,7 @@ describe('website tool read/write/status', () => {
     try {
       const runner = makeRunner({
         'git rev-parse --abbrev-ref HEAD': { stdout: 'main\n' },
-        'git status --porcelain --untracked-files=all': { stdout: ' M package.json\n M src/content/posts/hello.md\n' },
+        'git status --porcelain --untracked-files=all': { stdout: ' M package.json\n M src/content/blog/hello.md\n' },
       })
       const tool = createWebsiteTool({
         repoDir,
@@ -680,9 +681,9 @@ describe('website tool read/write/status', () => {
       const runner: WebsiteCommandRunner = async (command) => {
         const key = [command.executable, ...command.args].join(' ')
         if (key === 'git rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'main\n', stderr: '', timedOut: false }
-        if (key === 'git status --porcelain --untracked-files=all') return { exitCode: 0, stdout: 'R  package.json -> src/content/posts/hello.md\n', stderr: '', timedOut: false }
+        if (key === 'git status --porcelain --untracked-files=all') return { exitCode: 0, stdout: 'R  package.json -> src/content/blog/hello.md\n', stderr: '', timedOut: false }
         if (key === 'pnpm build') return { exitCode: 0, stdout: 'built\n', stderr: '', timedOut: false }
-        if (key === 'git add src/content/posts/hello.md') return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
+        if (key === 'git add src/content/blog/hello.md') return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
         if (key.startsWith('git commit -m ')) return { exitCode: 0, stdout: '[main abc1234] content\n', stderr: '', timedOut: false }
         if (key === 'git rev-parse --short HEAD') return { exitCode: 0, stdout: 'abc1234\n', stderr: '', timedOut: false }
         if (key === 'git push origin main') return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
@@ -718,10 +719,10 @@ describe('website tool read/write/status', () => {
         commands.push([command.executable, ...command.args].join(' '))
         const key = commands.at(-1)!
         if (key === 'git rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'main\n', stderr: '', timedOut: false }
-        if (key === 'git status --porcelain --untracked-files=all') return { exitCode: 0, stdout: 'R  src/content/posts/old.md -> src/content/posts/new.md\n', stderr: '', timedOut: false }
+        if (key === 'git status --porcelain --untracked-files=all') return { exitCode: 0, stdout: 'R  src/content/blog/old.md -> src/content/blog/new.md\n', stderr: '', timedOut: false }
         if (key === 'pnpm build') return { exitCode: 0, stdout: 'built\n', stderr: '', timedOut: false }
         if (key === 'git add -A -- src/content') return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
-        if (key === 'git diff --cached --name-status') return { exitCode: 0, stdout: 'R100\tsrc/content/posts/old.md\tsrc/content/posts/new.md\n', stderr: '', timedOut: false }
+        if (key === 'git diff --cached --name-status') return { exitCode: 0, stdout: 'R100\tsrc/content/blog/old.md\tsrc/content/blog/new.md\n', stderr: '', timedOut: false }
         if (key.startsWith('git commit -m ')) return { exitCode: 0, stdout: '[main abc1234] content\n', stderr: '', timedOut: false }
         if (key === 'git rev-parse --short HEAD') return { exitCode: 0, stdout: 'abc1234\n', stderr: '', timedOut: false }
         if (key === 'git push origin main') return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
@@ -741,7 +742,7 @@ describe('website tool read/write/status', () => {
       }
 
       assert.equal(result.ok, true)
-      assert.deepEqual(result.changedFiles, ['src/content/posts/old.md', 'src/content/posts/new.md'])
+      assert.deepEqual(result.changedFiles, ['src/content/blog/old.md', 'src/content/blog/new.md'])
       assert.deepEqual(commands, [
         'git rev-parse --abbrev-ref HEAD',
         'git status --porcelain --untracked-files=all',
@@ -766,10 +767,10 @@ describe('website tool read/write/status', () => {
         commands.push([command.executable, ...command.args].join(' '))
         const key = commands.at(-1)!
         if (key === 'git rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'main\n', stderr: '', timedOut: false }
-        if (key === 'git status --porcelain --untracked-files=all') return { exitCode: 0, stdout: ' D src/content/posts/old.md\n', stderr: '', timedOut: false }
+        if (key === 'git status --porcelain --untracked-files=all') return { exitCode: 0, stdout: ' D src/content/blog/old.md\n', stderr: '', timedOut: false }
         if (key === 'pnpm build') return { exitCode: 0, stdout: 'built\n', stderr: '', timedOut: false }
         if (key === 'git add -A -- src/content') return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
-        if (key === 'git diff --cached --name-status') return { exitCode: 0, stdout: 'D\tsrc/content/posts/old.md\n', stderr: '', timedOut: false }
+        if (key === 'git diff --cached --name-status') return { exitCode: 0, stdout: 'D\tsrc/content/blog/old.md\n', stderr: '', timedOut: false }
         if (key.startsWith('git commit -m ')) return { exitCode: 0, stdout: '[main abc1234] content\n', stderr: '', timedOut: false }
         if (key === 'git rev-parse --short HEAD') return { exitCode: 0, stdout: 'abc1234\n', stderr: '', timedOut: false }
         if (key === 'git push origin main') return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
@@ -789,7 +790,7 @@ describe('website tool read/write/status', () => {
       }
 
       assert.equal(result.ok, true)
-      assert.deepEqual(result.changedFiles, ['src/content/posts/old.md'])
+      assert.deepEqual(result.changedFiles, ['src/content/blog/old.md'])
       assert.deepEqual(commands, [
         'git rev-parse --abbrev-ref HEAD',
         'git status --porcelain --untracked-files=all',
@@ -814,10 +815,10 @@ describe('website tool read/write/status', () => {
         commands.push([command.executable, ...command.args].join(' '))
         const key = commands.at(-1)!
         if (key === 'git rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'main\n', stderr: '', timedOut: false }
-        if (key === 'git status --porcelain --untracked-files=all') return { exitCode: 0, stdout: '?? src/content/newdir/file.md\n', stderr: '', timedOut: false }
+        if (key === 'git status --porcelain --untracked-files=all') return { exitCode: 0, stdout: '?? src/content/blog/newdir/file.md\n', stderr: '', timedOut: false }
         if (key === 'pnpm build') return { exitCode: 0, stdout: 'built\n', stderr: '', timedOut: false }
         if (key === 'git add -A -- src/content') return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
-        if (key === 'git diff --cached --name-status') return { exitCode: 0, stdout: 'A\tsrc/content/newdir/file.md\n', stderr: '', timedOut: false }
+        if (key === 'git diff --cached --name-status') return { exitCode: 0, stdout: 'A\tsrc/content/blog/newdir/file.md\n', stderr: '', timedOut: false }
         if (key.startsWith('git commit -m ')) return { exitCode: 0, stdout: '[main abc1234] content\n', stderr: '', timedOut: false }
         if (key === 'git rev-parse --short HEAD') return { exitCode: 0, stdout: 'abc1234\n', stderr: '', timedOut: false }
         if (key === 'git push origin main') return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
@@ -837,7 +838,7 @@ describe('website tool read/write/status', () => {
       }
 
       assert.equal(result.ok, true)
-      assert.deepEqual(result.changedFiles, ['src/content/newdir/file.md'])
+      assert.deepEqual(result.changedFiles, ['src/content/blog/newdir/file.md'])
       assert.deepEqual(commands, [
         'git rev-parse --abbrev-ref HEAD',
         'git status --porcelain --untracked-files=all',
@@ -868,8 +869,8 @@ describe('website tool read/write/status', () => {
           return {
             exitCode: 0,
             stdout: statusCalls === 1
-              ? ' M src/content/posts/hello.md\n'
-              : ' M src/content/posts/hello.md\n?? src/content/.draft.md\n',
+              ? ' M src/content/blog/hello.md\n'
+              : ' M src/content/blog/hello.md\n?? src/content/.draft.md\n',
             stderr: '',
             timedOut: false,
           }
@@ -895,7 +896,7 @@ describe('website tool read/write/status', () => {
       assert.equal(result.ok, false)
       assert.equal(result.code, 'unsafe_dirty_worktree')
       assert.deepEqual(result.unsafeFiles, ['src/content/.draft.md'])
-      assert.deepEqual(result.changedFiles, ['src/content/posts/hello.md', 'src/content/.draft.md'])
+      assert.deepEqual(result.changedFiles, ['src/content/blog/hello.md', 'src/content/.draft.md'])
       assert.deepEqual(commands, [
         'git rev-parse --abbrev-ref HEAD',
         'git status --porcelain --untracked-files=all',
@@ -919,9 +920,9 @@ describe('website tool read/write/status', () => {
       await runRealGit(repoDir, ['checkout', '-b', 'main'])
       await runRealGit(repoDir, ['config', 'user.email', 'luna@example.com'])
       await runRealGit(repoDir, ['config', 'user.name', 'Luna'])
-      await runRealGit(repoDir, ['add', 'check.mjs', 'src/content/posts/hello.md'])
+      await runRealGit(repoDir, ['add', 'check.mjs', 'src/content/blog/hello.md'])
       await runRealGit(repoDir, ['commit', '-m', 'init'])
-      await writeFile(join(repoDir, 'src/content/posts/hello.md'), '# changed\n', 'utf8')
+      await writeFile(join(repoDir, 'src/content/blog/hello.md'), '# changed\n', 'utf8')
 
       const tool = createWebsiteTool({
         repoDir,
@@ -952,12 +953,12 @@ describe('website tool read/write/status', () => {
       await runRealGit(repoDir, ['checkout', '-b', 'main'])
       await runRealGit(repoDir, ['config', 'user.email', 'luna@example.com'])
       await runRealGit(repoDir, ['config', 'user.name', 'Luna'])
-      await runRealGit(repoDir, ['add', 'src/content/posts/hello.md'])
+      await runRealGit(repoDir, ['add', 'src/content/blog/hello.md'])
       await runRealGit(repoDir, ['commit', '-m', 'init'])
       const initialCommit = (await runRealGit(repoDir, ['rev-parse', 'HEAD'])).trim()
 
-      await rm(join(repoDir, 'src/content/posts/hello.md'), { force: true })
-      await symlink('/tmp/luna-site-target', join(repoDir, 'src/content/posts/hello.md'))
+      await rm(join(repoDir, 'src/content/blog/hello.md'), { force: true })
+      await symlink('/tmp/luna-site-target', join(repoDir, 'src/content/blog/hello.md'))
 
       const tool = createWebsiteTool({
         repoDir,
@@ -974,7 +975,7 @@ describe('website tool read/write/status', () => {
 
       assert.equal(result.ok, false)
       assert.equal(result.code, 'unsafe_staged_index')
-      assert.deepEqual(result.unsafeFiles, ['src/content/posts/hello.md'])
+      assert.deepEqual(result.unsafeFiles, ['src/content/blog/hello.md'])
       assert.equal((await runRealGit(repoDir, ['rev-parse', 'HEAD'])).trim(), initialCommit)
       assert.equal(await runRealGit(repoDir, ['diff', '--cached', '--name-status']), '')
     } finally {
@@ -988,7 +989,7 @@ describe('website tool read/write/status', () => {
       const runner = makeRunner({
         'git rev-parse --abbrev-ref HEAD': { stdout: 'main\n' },
         'git status --porcelain --untracked-files=all': {
-          stdout: ' M src/content/posts/hello.md\n',
+          stdout: ' M src/content/blog/hello.md\n',
           stdoutTruncated: true,
         },
       })
@@ -1020,13 +1021,13 @@ describe('website tool read/write/status', () => {
         commands.push([command.executable, ...command.args].join(' '))
         const key = commands.at(-1)!
         if (key === 'git rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'main\n', stderr: '', timedOut: false }
-        if (key === 'git status --porcelain --untracked-files=all') return { exitCode: 0, stdout: ' M src/content/posts/hello.md\n', stderr: '', timedOut: false }
+        if (key === 'git status --porcelain --untracked-files=all') return { exitCode: 0, stdout: ' M src/content/blog/hello.md\n', stderr: '', timedOut: false }
         if (key === 'pnpm build') return { exitCode: 0, stdout: 'built\n', stderr: '', timedOut: false }
         if (key === 'git add -A -- src/content') return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
         if (key === 'git diff --cached --name-status') {
           return {
             exitCode: 0,
-            stdout: 'M\tsrc/content/posts/hello.md\n',
+            stdout: 'M\tsrc/content/blog/hello.md\n',
             stderr: '',
             timedOut: false,
             stdoutTruncated: true,
@@ -1072,10 +1073,10 @@ describe('website tool read/write/status', () => {
         commands.push([command.executable, ...command.args].join(' '))
         const key = commands.at(-1)!
         if (key === 'git rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'main\n', stderr: '', timedOut: false }
-        if (key === 'git status --porcelain --untracked-files=all') return { exitCode: 0, stdout: ' M src/content/posts/hello.md\n', stderr: '', timedOut: false }
+        if (key === 'git status --porcelain --untracked-files=all') return { exitCode: 0, stdout: ' M src/content/blog/hello.md\n', stderr: '', timedOut: false }
         if (key === 'pnpm build') return { exitCode: 0, stdout: 'built\n', stderr: '', timedOut: false }
         if (key === 'git add -A -- src/content') return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
-        if (key === 'git diff --cached --name-status') return { exitCode: 0, stdout: 'M\tsrc/content/posts/hello.md\nA\tsrc/content/.draft.md\n', stderr: '', timedOut: false }
+        if (key === 'git diff --cached --name-status') return { exitCode: 0, stdout: 'M\tsrc/content/blog/hello.md\nA\tsrc/content/.draft.md\n', stderr: '', timedOut: false }
         if (key === 'git reset -- src/content') return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
         return { exitCode: 1, stdout: '', stderr: `unexpected command ${key}`, timedOut: false }
       }
@@ -1116,10 +1117,10 @@ describe('website tool read/write/status', () => {
       const runner: WebsiteCommandRunner = async (command) => {
         const key = [command.executable, ...command.args].join(' ')
         if (key === 'git rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'main\n', stderr: '', timedOut: false }
-        if (key === 'git status --porcelain --untracked-files=all') return { exitCode: 0, stdout: ' M src/content/posts/hello.md\n', stderr: '', timedOut: false }
+        if (key === 'git status --porcelain --untracked-files=all') return { exitCode: 0, stdout: ' M src/content/blog/hello.md\n', stderr: '', timedOut: false }
         if (key === 'pnpm build') return { exitCode: 0, stdout: 'built\n', stderr: '', timedOut: false }
         if (key === 'git add -A -- src/content') return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
-        if (key === 'git diff --cached --name-status') return { exitCode: 0, stdout: 'M\tsrc/content/posts/hello.md\n', stderr: '', timedOut: false }
+        if (key === 'git diff --cached --name-status') return { exitCode: 0, stdout: 'M\tsrc/content/blog/hello.md\n', stderr: '', timedOut: false }
         if (key.startsWith('git commit -m ')) return { exitCode: 0, stdout: '[main abc1234] content\n', stderr: '', timedOut: false }
         if (key === 'git rev-parse --short HEAD') return { exitCode: 0, stdout: 'abc1234\n', stderr: '', timedOut: false }
         if (key === 'git push origin main') return { exitCode: 1, stdout: '', stderr: 'rejected\n', timedOut: false }
@@ -1157,10 +1158,10 @@ describe('website tool read/write/status', () => {
         commands.push([command.executable, ...command.args].join(' '))
         const key = commands.at(-1)!
         if (key === 'git rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'main\n', stderr: '', timedOut: false }
-        if (key === 'git status --porcelain --untracked-files=all') return { exitCode: 0, stdout: ' M src/content/posts/hello.md\n', stderr: '', timedOut: false }
+        if (key === 'git status --porcelain --untracked-files=all') return { exitCode: 0, stdout: ' M src/content/blog/hello.md\n', stderr: '', timedOut: false }
         if (key === 'pnpm build') return { exitCode: 0, stdout: 'built\n', stderr: '', timedOut: false }
         if (key === 'git add -A -- src/content') return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
-        if (key === 'git diff --cached --name-status') return { exitCode: 0, stdout: 'M\tsrc/content/posts/hello.md\n', stderr: '', timedOut: false }
+        if (key === 'git diff --cached --name-status') return { exitCode: 0, stdout: 'M\tsrc/content/blog/hello.md\n', stderr: '', timedOut: false }
         if (key.startsWith('git commit -m ')) return { exitCode: 0, stdout: '[main abc1234] content\n', stderr: '', timedOut: false }
         if (key === 'git rev-parse --short HEAD') return { exitCode: 0, stdout: 'abc1234\n', stderr: '', timedOut: false }
         if (key === 'git push origin main') return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
@@ -1180,15 +1181,21 @@ describe('website tool read/write/status', () => {
         message: 'content: 更新 hello',
       }, makeCtx())).content as string) as {
         ok: boolean
+        publishStatus: string
+        deploymentStatus: string
         commit: string
         changedFiles: string[]
         publicUrl: string
+        next: string
       }
 
       assert.equal(result.ok, true)
+      assert.equal(result.publishStatus, 'pushed')
+      assert.equal(result.deploymentStatus, 'unverified')
       assert.equal(result.commit, 'abc1234')
-      assert.deepEqual(result.changedFiles, ['src/content/posts/hello.md'])
+      assert.deepEqual(result.changedFiles, ['src/content/blog/hello.md'])
       assert.equal(result.publicUrl, 'https://luna.example.com')
+      assert.match(result.next, /Git push succeeded.*Vercel deployment is not verified.*publicUrl.*live/)
       assert.deepEqual(commands, [
         'git rev-parse --abbrev-ref HEAD',
         'git status --porcelain --untracked-files=all',

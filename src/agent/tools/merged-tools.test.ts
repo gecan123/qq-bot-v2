@@ -337,6 +337,7 @@ describe('merged main-agent tools', () => {
     assert.equal(capabilities.has('media_library'), false)
     assert.deepEqual(capabilities.get('media_fetch'), ['fetch_content'])
     assert.deepEqual(capabilities.get('website'), ['website'])
+    assert.match(capabilityDescriptions.get('website') ?? '', /Luna 自己的长期创作空间.*src\/content\/blog.*现有模板.*publish.*正式页面.*上线.*机械改动/s)
     if (capabilities.has('finance')) assert.deepEqual(capabilities.get('finance'), ['openbb_cli'])
     assert.deepEqual(capabilities.get('trading_research'), ['trading_agent'])
     assert.match(capabilityDescriptions.get('trading_research') ?? '', /具体金融问题.*跨来源证据.*简单报价.*finance/)

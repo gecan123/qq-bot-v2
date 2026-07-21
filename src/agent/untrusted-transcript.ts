@@ -13,6 +13,7 @@ export type UntrustedTranscriptPurpose =
   | 'idle_intention'
   | 'memory_maintenance'
   | 'long_term_state_language_migration'
+  | 'goal_completion'
 
 export function renderUntrustedTranscript(input: {
   purpose: UntrustedTranscriptPurpose

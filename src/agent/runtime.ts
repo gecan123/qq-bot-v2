@@ -209,7 +209,6 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       taskRegistry,
       taskScheduler: input.taskScheduler,
       scheduleRuntime,
-      llm: input.llm,
       approvalManager,
       mcpManager,
       goalStore: input.goalStore,

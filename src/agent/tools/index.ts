@@ -33,7 +33,6 @@ import { createAgentTaskScheduler, type TaskScheduler } from '../task-scheduler.
 import { createQqDirectoryTool, type QqDirectoryDeps } from './qq-directory.js'
 import { createScheduleTool } from './schedule.js'
 import type { ScheduleRuntime } from '../schedule-runtime.js'
-import type { LlmClient } from '../llm-client.js'
 import type { ApprovalManager } from '../approval-manager.js'
 import { createApprovalTool } from './approval.js'
 import type { McpManager } from '../mcp-manager.js'
@@ -61,7 +60,6 @@ export interface BotToolDeps {
   optionalTools?: BotOptionalTools
   taskScheduler?: TaskScheduler
   scheduleRuntime: ScheduleRuntime
-  llm?: LlmClient
   approvalManager?: ApprovalManager
   mcpManager?: McpManager
   goalStore?: GoalStore

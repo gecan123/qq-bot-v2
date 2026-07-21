@@ -53,7 +53,7 @@ export interface AgentStateResetResult {
   deletedRuntimeStates: number
   deletedGoals: number
   createdRuntimeState: boolean
-  removedDirectories: string[]
+  removedDirectories: Array<(typeof KNOWLEDGE_DIRECTORIES)[number]>
 }
 
 export function parseAgentStateResetScope(argv: readonly string[]): AgentStateResetScope {

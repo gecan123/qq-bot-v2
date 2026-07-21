@@ -1,10 +1,12 @@
 # Agent Autonomous Life Loop Implementation Plan
 
+> 历史计划：2026-07-22 已撤销连续轮次冷却上限；当前契约以 `docs/ARCHITECTURE.md` 和代码为准。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Let the agent continue self-directed work after sending, schedule its own wake-up through `pause`, and remain bounded by round and daily token safeguards.
+**Goal:** Let the agent continue self-directed work after sending and schedule its own wake-up through `pause`, without a fixed consecutive-round ceiling.
 
-**Architecture:** Keep self-wake timing inside the existing blocking `pause/rest` tool so no mutable scheduler state enters replay. Remove send-success waiting from BotLoop, return the agent's next intention after rest, and add injectable runtime-only guards for runaway consecutive rounds and daily autonomous token usage.
+**Architecture:** Keep self-wake timing inside the existing blocking `pause/rest` tool so no mutable scheduler state enters replay. Remove send-success waiting from BotLoop, return the agent's next intention after rest, and let idle/no-progress scheduling provide bounded waits without capping productive consecutive rounds.
 
 **Tech Stack:** TypeScript ESM, Zod, node:test, existing EventQueue and BotLoopAgent
 
@@ -39,7 +41,7 @@
 3. Remove `shouldWaitForExternalEvent` and the send-result parser; only an empty/no-context step waits for external input.
 4. Re-run the focused BotLoop test.
 
-### Task 3: Add consecutive-round cooldown
+### Task 3: Remove the superseded consecutive-round cooldown
 
 **Files:**
 - Modify: `src/agent/bot-loop-agent.test.ts`
@@ -47,9 +49,9 @@
 
 **Steps:**
 
-1. Add failing tests with injected `maxConsecutiveRounds`, fake cooldown timer, and an attention event.
-2. Prove the loop cools down after the configured number of rounds, resets after a `pause` call, and lets attention events interrupt cooldown.
-3. Implement runtime-only consecutive-round tracking and `waitForAttentionOrTimeout` without appending synthetic context messages.
+1. Remove the fixed consecutive-round cap and its cooldown configuration surface.
+2. Prove more than 20 consecutive progress rounds do not force a wait.
+3. Keep normal idle, no-progress, explicit continuation, and pause waits intact.
 4. Re-run focused tests.
 
 ### Task 4: Add daily autonomous token budget

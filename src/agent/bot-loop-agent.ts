@@ -142,8 +142,6 @@ export interface BotLoopLifeJournal {
 }
 
 export interface BotLoopAutonomyOptions {
-  maxConsecutiveRounds?: number
-  cooldownMs?: number
   idleWaitMs?: number
   maxIdleWaitMs?: number
   actionRetryWaitMs?: number
@@ -157,8 +155,6 @@ export interface BotLoopAutonomyOptions {
 const DEFAULT_ERROR_BACKOFF_MS = 5_000
 const DEFAULT_EVENT_DEBOUNCE_MS = 3_000
 const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 86_400_000
-const DEFAULT_MAX_CONSECUTIVE_ROUNDS = 20
-const DEFAULT_AUTONOMY_COOLDOWN_MS = 15 * 60_000
 const DEFAULT_IDLE_WAIT_MS = 15 * 60_000
 const DEFAULT_MAX_IDLE_WAIT_MS = 4 * 60 * 60_000
 const DEFAULT_ACTION_RETRY_WAIT_MS = 60_000
@@ -192,8 +188,6 @@ export interface BotLoopAgent {
 export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   const idleWaitMs = Math.max(1, deps.autonomy?.idleWaitMs ?? DEFAULT_IDLE_WAIT_MS)
   const autonomy = {
-    maxConsecutiveRounds: Math.max(1, deps.autonomy?.maxConsecutiveRounds ?? DEFAULT_MAX_CONSECUTIVE_ROUNDS),
-    cooldownMs: Math.max(1, deps.autonomy?.cooldownMs ?? DEFAULT_AUTONOMY_COOLDOWN_MS),
     idleWaitMs,
     maxIdleWaitMs: Math.max(idleWaitMs, deps.autonomy?.maxIdleWaitMs ?? DEFAULT_MAX_IDLE_WAIT_MS),
     actionRetryWaitMs: Math.max(1, deps.autonomy?.actionRetryWaitMs ?? DEFAULT_ACTION_RETRY_WAIT_MS),
@@ -1120,36 +1114,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     }
 
     consecutiveRounds++
-    if (consecutiveRounds >= autonomy.maxConsecutiveRounds) {
-      const continuingCorrection = recoverableToolFailure
-        || (recoverableToolCorrectionRounds > 0 && onlyHelpToolCalls)
-      if (
-        continuingCorrection
-        && recoverableToolCorrectionRounds < MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS
-      ) {
-        recoverableToolCorrectionRounds++
-        actionCorrectionRetryPending = false
-        log.info({
-          consecutiveRounds,
-          correctionRound: recoverableToolCorrectionRounds,
-          maxCorrectionRounds: MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS,
-          recoverableToolFailure,
-          onlyHelpToolCalls,
-        }, 'recoverable_tool_error_retry_immediate')
-        return
-      }
-      if (toolContinuation === 'wait_event') {
-        await waitForToolExternalEvent(toolContinuationDetail, actionRequired)
-        return
-      }
-      log.info({ consecutiveRounds, cooldownMs: autonomy.cooldownMs }, 'autonomy_round_cooldown_enter')
-      const wake = await waitForAttention('连续行动达到保护上限，等待注意事件或冷却到期', autonomy.cooldownMs)
-      if (wake === 'attention') idleBackoffLevel = 0
-      consecutiveRounds = 0
-      actionCorrectionRetryPending = false
-      recoverableToolCorrectionRounds = 0
-      return
-    }
 
     if (toolCallCount > 0) {
       const continuingCorrection = recoverableToolFailure

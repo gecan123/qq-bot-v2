@@ -65,7 +65,7 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - Notebook、topic Memory 或后台任务明确产出新成果后，Runtime 可追加一次 `share_checkpoint`，列出启动时冻结的 active 群短定位。它只要求 Agent 判断一次是否适合分享，不自动发送、不改变 QQ focus/发送授权或普通群消息的免唤醒规则；同一成果键永久去重，同主题两小时内不连续追加。
 - provider-confirmed 外发到有 pending 通知的同 target mailbox 后，Runtime 在 tool result 闭合后原子 append `mailbox_handled` 与 runtime cursor，避免把已经处理的旧行再次视为新请求。
 - `pause action=rest` 是 30–600 秒短休息安全阀。没有真实牵引力时应直接以无工具轮结束活动并进入 runtime 有界等待；只有此刻确实选择短暂休息才调用 `pause`，调用后立即计时，不再同步请求额外 LLM。计时可被注意事件、后台任务完成或停止信号打断。
-- 连续轮次和空闲循环有进程内有界保护；它们不进入 ledger。工具用 `outcome.progress` 报告是否获得新事实或改变状态，用 `continuation=immediate|wait_attention|wait_event|backoff|stop` 独立表达下一轮调度：`wait_event` 表示已有真实后台工作，等待完成事件时不受 pending 请求的一分钟纠错节奏驱动，也会重置连续行动计数；可丢弃的 `continuationDetail` 只用于实时活动说明。`noveltyKey` 抑制进程内重复披露，`retryClass=immediate|after_event|backoff|terminal` 只描述失败重试。可立即纠正的失败仍受三轮上限保护。`curiosity_tick` 只保留为人工调试入口。
+- 连续自主行动不设轮次上限，不会因为工作轮数达到固定值而强制冷却。空闲、无进展和工具明确请求等待时仍使用进程内有界等待，它们不进入 ledger。工具用 `outcome.progress` 报告是否获得新事实或改变状态，用 `continuation=immediate|wait_attention|wait_event|backoff|stop` 独立表达下一轮调度：`wait_event` 表示已有真实后台工作，等待完成事件时不受 pending 请求的一分钟纠错节奏驱动，也会重置连续行动计数；可丢弃的 `continuationDetail` 只用于实时活动说明。`noveltyKey` 抑制进程内重复披露，`retryClass=immediate|after_event|backoff|terminal` 只描述失败重试。可立即纠正的失败仍只允许三轮紧密重试，之后回到普通无进展调度，但不终止自主活动。`curiosity_tick` 只保留为人工调试入口。
 - 循环控制使用稳定结构化载荷，不能依赖自由文本判断成功或状态。
 
 ## 持久边界

@@ -2403,7 +2403,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     }
   })
 
-  test('pause effect resets consecutive-round guard without parsing result content', async () => {
+  test('pause effect controls the loop without parsing result content', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'curiosity_tick' })
@@ -2422,7 +2422,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     }
     let agent: ReturnType<typeof createBotLoopAgent>
     let pauseCallCount = 0
-    let cooldownWaits = 0
+    let waits = 0
     const tools = makeMockTools({
       pause: async () => {
         pauseCallCount++
@@ -2446,11 +2446,9 @@ describe('BotLoopAgent.runOnceForTest', () => {
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
-        maxConsecutiveRounds: 1,
-        cooldownMs: 60_000,
         now: () => new Date('2026-07-06T00:00:00.000Z'),
         async waitForAttentionOrTimeout() {
-          cooldownWaits++
+          waits++
           await agent.stop()
           return 'elapsed'
         },
@@ -2461,7 +2459,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     assert.equal(pauseCallCount, 2)
     assert.equal(llmCallCount, 2)
-    assert.equal(cooldownWaits, 0)
+    assert.equal(waits, 0)
   })
 
   test('appends and immediately persists one reminder after a naturally completed rest', async () => {
@@ -3031,7 +3029,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'curiosity_tick' })
     let llmCallCount = 0
-    let cooldownWaits = 0
+    let waits = 0
     let agent: ReturnType<typeof createBotLoopAgent>
     const llm: LlmClient = {
       async chat() {
@@ -3067,10 +3065,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
-        maxConsecutiveRounds: 2,
-        cooldownMs: 60_000,
         async waitForAttentionOrTimeout() {
-          cooldownWaits++
+          waits++
           await agent.stop()
           return 'elapsed'
         },
@@ -3080,7 +3076,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     await agent.start()
 
     assert.equal(llmCallCount, 2)
-    assert.equal(cooldownWaits, 1)
+    assert.equal(waits, 1)
   })
 
   test('persists inbox read effects atomically with the visible tool result', async () => {
@@ -3195,17 +3191,17 @@ describe('BotLoopAgent.runOnceForTest', () => {
     }
   })
 
-  test('高 token 使用不触发跨日限流，连续轮次达到上限后冷却 15 分钟', async () => {
+  test('高 token 使用不触发跨日限流，连续进展超过 20 轮也不强制冷却', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'curiosity_tick' })
     let llmCallCount = 0
-    let cooldownWaits = 0
+    let waits = 0
     let agent: ReturnType<typeof createBotLoopAgent>
     const llm: LlmClient = {
       async chat() {
         llmCallCount++
-        if (llmCallCount === 3) await agent.stop()
+        if (llmCallCount === 25) await agent.stop()
         return {
           content: '',
           toolCalls: [{ id: `lookup-${llmCallCount}`, name: 'lookup', args: {} }],
@@ -3230,10 +3226,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
-        maxConsecutiveRounds: 2,
-        async waitForAttentionOrTimeout(_queue, timeoutMs) {
-          cooldownWaits++
-          assert.equal(timeoutMs, 15 * 60_000)
+        async waitForAttentionOrTimeout() {
+          waits++
           await agent.stop()
           return 'elapsed'
         },
@@ -3242,20 +3236,21 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     await agent.start()
 
-    assert.equal(llmCallCount, 2)
-    assert.equal(cooldownWaits, 1)
+    assert.equal(llmCallCount, 25)
+    assert.equal(waits, 0)
   })
 
-  test('连续轮次上限为可恢复工具错误保留有界纠错链路', async () => {
+  test('可恢复工具错误保留有界紧密纠错链路', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'curiosity_tick' })
     let llmCallCount = 0
-    let cooldownWaits = 0
+    let waits = 0
     let agent: ReturnType<typeof createBotLoopAgent>
     const llm: LlmClient = {
       async chat() {
         llmCallCount++
+        if (llmCallCount === 3) await agent.stop()
         const toolCalls = llmCallCount === 1
           ? [{ id: 'inactive-1', name: 'invoke', args: { tool: 'fetch_content', args: { action: 'url' } } }]
           : llmCallCount === 2
@@ -3291,10 +3286,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
-        maxConsecutiveRounds: 1,
-        cooldownMs: 60_000,
         async waitForAttentionOrTimeout() {
-          cooldownWaits++
+          waits++
           await agent.stop()
           return 'elapsed'
         },
@@ -3304,10 +3297,10 @@ describe('BotLoopAgent.runOnceForTest', () => {
     await agent.start()
 
     assert.equal(llmCallCount, 3)
-    assert.equal(cooldownWaits, 1)
+    assert.equal(waits, 0)
   })
 
-  test('retryClass=immediate 在连续轮次上限前也立即进入有界纠错', async () => {
+  test('retryClass=immediate 立即进入有界纠错', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'curiosity_tick' })
@@ -3350,7 +3343,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
-        maxConsecutiveRounds: 10,
         async waitForAttentionOrTimeout() {
           waits++
           return 'elapsed'
@@ -3556,8 +3548,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
         async flush() {},
       },
       autonomy: {
-        maxConsecutiveRounds: 1,
-        cooldownMs: 123,
         async waitForAttentionOrTimeout(_queue, timeoutMs) {
           assert.equal(timeoutMs, 15 * 60_000)
           await agent.stop()
@@ -3791,12 +3781,12 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(llmCallCount, 2)
   })
 
-  test('参数校验失败的 pause 不会重置连续轮次保护', async () => {
+  test('参数校验失败的 pause 不会被当成真实 pause effect', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'curiosity_tick' })
     let llmCallCount = 0
-    let cooldownWaits = 0
+    let waits = 0
     let agent: ReturnType<typeof createBotLoopAgent>
     const llm: LlmClient = {
       async chat() {
@@ -3828,10 +3818,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
-        maxConsecutiveRounds: 2,
-        cooldownMs: 60_000,
         async waitForAttentionOrTimeout() {
-          cooldownWaits++
+          waits++
           await agent.stop()
           return 'elapsed'
         },
@@ -3841,7 +3829,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     await agent.start()
 
     assert.equal(llmCallCount, 2)
-    assert.equal(cooldownWaits, 1)
+    assert.equal(waits, 1)
   })
 
   test('assistant 返回 no tool calls 时不把 text-only 思考写入 context', async () => {

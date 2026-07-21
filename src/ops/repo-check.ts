@@ -248,9 +248,31 @@ function checkAdminWebSources(
       normalizedPath.includes('/src/features/')
       && /\.(?:server|functions)\.tsx?$/.test(normalizedPath)
     ) {
-      for (const marker of ADMIN_WEB_MUTATION_MARKERS) {
-        if (source.includes(marker)) {
-          errors.push(`${normalizedPath} must stay read-only; found Prisma mutation "${marker}"`)
+      const operationsServer = normalizedPath === 'apps/admin-web/src/features/operations/operations.server.ts'
+      if (!operationsServer) {
+        for (const marker of ADMIN_WEB_MUTATION_MARKERS) {
+          if (source.includes(marker)) {
+            errors.push(`${normalizedPath} must stay read-only; found Prisma mutation "${marker}"`)
+          }
+        }
+      } else {
+        if (!source.startsWith("import '@tanstack/react-start/server-only'")) {
+          errors.push(`${normalizedPath} must start with the server-only import`)
+        }
+        if (!source.includes('resetAgentState')) {
+          errors.push(`${normalizedPath} must use the typed resetAgentState service`)
+        }
+        for (const marker of [
+          'node:child_process',
+          'execFile(',
+          'spawn(',
+          'scripts/',
+          '$executeRaw',
+          '$queryRaw',
+        ]) {
+          if (source.includes(marker)) {
+            errors.push(`${normalizedPath} must not use generic execution marker "${marker}"`)
+          }
         }
       }
     }

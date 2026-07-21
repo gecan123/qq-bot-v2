@@ -164,6 +164,34 @@ describe('runRepoChecks', () => {
     assert.match(result.errors.join('\n'), /\.update\(/)
   })
 
+  test('allows only the fixed operations server mutation boundary and rejects generic execution', () => {
+    const allowed = runRepoChecks({
+      ...validFiles,
+      adminWebSources: {
+        'apps/admin-web/src/features/operations/operations.server.ts': [
+          "import '@tanstack/react-start/server-only'",
+          "import { createHash } from 'node:crypto'",
+          'const fingerprint = createHash(\'sha256\').update(\'preview\').digest(\'hex\')',
+          'export async function run() { return resetAgentState({ scope: \'context\' }) }',
+        ].join('\n'),
+      },
+    })
+    const rejected = runRepoChecks({
+      ...validFiles,
+      adminWebSources: {
+        'apps/admin-web/src/features/operations/operations.server.ts': [
+          "import '@tanstack/react-start/server-only'",
+          "import { execFile } from 'node:child_process'",
+          'export async function run() { return prisma.$executeRaw(\'DELETE\') }',
+        ].join('\n'),
+      },
+    })
+
+    assert.deepEqual(allowed.errors, [])
+    assert.match(rejected.errors.join('\n'), /node:child_process/)
+    assert.match(rejected.errors.join('\n'), /\$executeRaw/)
+  })
+
   test('requires append-only agent ledger models and rejects legacy snapshot models', () => {
     const result = runRepoChecks({
       ...validFiles,

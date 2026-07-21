@@ -24,8 +24,7 @@
 ## 范围路由
 
 - 读文件前先判断任务范围。
-- 当前范围主要是 bot/backend；不要假设一定存在 admin WebUI。
-- 如果以后重新出现 `apps/admin-web/**`，且任务明确涉及它，先读它自己的局部指令，并把修改限制在对应范围。
+- 当前范围包括 bot/backend 和独立的 `apps/admin-web/**` 本机管理面；涉及 WebAdmin 时先读它自己的局部指令，并把修改限制在对应范围。
 - 做 bot/backend 任务时，不要读或改无关的 UI/admin 面。
 
 ## 核心产品契约
@@ -49,6 +48,7 @@
 - 不要把裸 shell 暴露给常驻 bot。Bash 类工具必须有命令 allowlist、固定 workspace、最小 env、输出/时间上限和审计日志。
 - `data/agent-workspace/` 是 bot 自己生产内容的区域，默认不是项目源码。除非用户明确要求，否则不要提交这里的生成物。
 - 有副作用的工具要格外谨慎：`send_message`、图片生成/下载、notebook/life_journal/memory/sticker 工具、browser 写操作，以及未来任何会写 DB 或外部服务的工具。
+- WebAdmin 的观察 feature 保持只读；唯一写入口是固定 operations feature，必须经过预览、确认、Bot 停止检查、single-flight runner 和本地审计，禁止通用 shell、SQL、命令名或路径输入。
 - 除非任务明确需要真实运行，否则不要启动会连接外部服务、QQ/NapCat、浏览器 sidecar、数据库或长期驻留的真实进程；优先使用静态检查、focused test、日志和已有运行证据。
 - 确需启动真实进程时，必须用可控方式运行，记录 PID/端口/log，任务结束前主动关闭，并用 `.bot.pid`、`ps`、`lsof` 或相关日志复查确认没有遗留进程。
 

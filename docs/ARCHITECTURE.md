@@ -20,17 +20,27 @@
 
 Goal 也不创建第二个主 Agent。`bot_agent_goal` 只保存控制状态；状态变化通过 revision 事件进入 ledger。owner Goal 可以抢占 self Goal，旧 goalId 的迟到调用会被拒绝。
 
-## 只读 WebAdmin
+## 本机 WebAdmin
 
-`apps/admin-web` 是独立的 TanStack Start Node 应用，不参与 bot 启动、ingress 或主 Agent 调度。“现在”首页结合当前 Goal/commitment、已完成工具审计和 `logs/agent-activity.json`，直接解释 Agent 的唤醒原因、实时 phase、当前工具、等待条件与最近进展；Context/Ledger、原始事件、生命状态、Memory、QQ、指标和健康页保留为技术下钻。
+`apps/admin-web` 是独立的 TanStack Start Node 应用，不参与 bot 启动、ingress 或主 Agent 调度。“现在”首页结合当前 Goal/commitment、已完成工具审计和 `logs/agent-activity.json`，直接解释 Agent 的唤醒原因、实时 phase、当前工具、等待条件与最近进展；Context/Ledger、原始事件、生命状态、Memory、QQ、指标和健康页保留为只读技术下钻。
 
-数据流固定为：
+观察数据流固定为：
 
 ```text
 Browser → TanStack Start Server Function → read service → PostgreSQL
 ```
 
-浏览器只消费经过 Zod 校验的 DTO；BigInt 转十进制字符串，Date 转 ISO 8601。Prisma、环境变量和数据库连接只存在于 server-only 模块，client bundle 有静态边界检查和构建产物秘密扫描。第一阶段接口全部只读，WebAdmin 不能更新 ledger、runtime state、checkpoint、Goal、消息、媒体或 workspace side-data。
+管理操作使用独立边界：
+
+```text
+Browser → validated Server Function → operation service
+        → Bot-stopped guard → typed src/ops mutation
+        → local run state / audit log
+```
+
+浏览器只消费经过 Zod 校验的 DTO；BigInt 转十进制字符串，Date 转 ISO 8601。Prisma、环境变量和数据库连接只存在于 server-only 模块，client bundle 有静态边界检查和构建产物秘密扫描。观察 feature 全部只读；唯一写入口是 `features/operations/operations.server.ts` 对 reset、Memory v2、Memory canonicalization 和长期状态中文迁移四种强类型服务的调用。浏览器不能提交命令、脚本参数、SQL、工作目录或文件路径。
+
+每次写操作先生成短期预览和 SHA-256 指纹，要求 operator 输入服务端确认短语；执行前重新检查 Bot 已停止、重建预览并核对指纹。同一时刻最多一个任务。run state 原子写入 `logs/admin-operation-state.json`，transition 审计追加到 `logs/admin-operations.ndjson`；WebAdmin 重启时旧 `running` 记录转为 `interrupted`，不会盲目续跑。三种迁移使用底层自动备份，reset 没有自动恢复路径；WebAdmin 不会停止或重启 Bot。
 
 WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay source，不能用来重建 `AgentContext`。它默认绑定 `127.0.0.1:20030`；当前没有管理员鉴权，不得直接暴露到非可信网络。
 
@@ -92,4 +102,4 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - `src/agent/tools/**`：受控工具；注册表以 `src/agent/tools/index.ts` 为准。
 - `src/bot/**`、`src/messaging/**`、`src/media/**`：NapCat ingress、发送和媒体路径。
 - `src/database/**`、`src/ops/**`：数据库 helper、运维日志和只读检查。
-- `apps/admin-web/**`：TanStack Start 只读运维面；`*.functions.ts` 暴露 RPC wrapper，`*.server.ts` 保留 Prisma/env helper。
+- `apps/admin-web/**`：TanStack Start 本机管理面；观察 feature 只读，operations feature 通过固定 DTO、single-flight runner 和本地审计调用强类型 `src/ops` 服务；`*.functions.ts` 暴露 RPC wrapper，`*.server.ts` 保留 Prisma/env/文件 helper。

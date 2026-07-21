@@ -78,13 +78,32 @@ pnpm toollog
 pnpm toollogf
 ```
 
-### WebAdmin（只读）
+### WebAdmin（本机管理模式）
 
-`apps/admin-web` 的“现在”首页展示实时活动、Goal commitment 与最近工具进展，其他页面提供 Ledger、原始事件、生命状态、Memory、QQ、指标和健康下钻。它使用 TanStack Start、React、TanStack Router/Query、Tailwind CSS 4 和 Zod；浏览器到数据源的数据流是：
+`apps/admin-web` 的“现在”首页展示实时活动、Goal commitment 与最近工具进展，其他观察页面提供 Ledger、原始事件、生命状态、Memory、QQ、指标和健康下钻。“管理操作”页面只开放以下四种固定维护操作：
+
+- `reset_state`：选择 `context`、`knowledge` 或 `all`；没有自动恢复路径。
+- `migrate_memory_v2`：升级 Memory 场景模型，执行时创建 `memory-v2-*` 备份。
+- `canonicalize_memory`：归并 Self / Topic Memory，执行时创建 `memory-canonical-*` 备份。
+- `migrate_state_language`：分批迁移长期状态中文叙述，执行时创建 `long-term-language-*` 备份。
+
+观察数据流是：
 
 ```text
 Browser → TanStack Start Server Function → read service → PostgreSQL
 ```
+
+管理操作数据流是：
+
+```text
+Browser → validated Server Function → operation service
+        → Bot-stopped guard → typed src/ops mutation
+        → local run state / audit log
+```
+
+每次写入必须先生成只读预览。operator 检查影响范围和 warning 后，输入服务端返回的精确确认短语；服务端再次确认 Bot 已停止，重新生成预览并核对 SHA-256 指纹，状态漂移时返回 `preview_stale` 并要求重新预览。WebAdmin 不会发送 signal，也不会自动停止或重启 Bot。任意写任务运行时拒绝第二个任务。
+
+任务状态是 `queued`、`running`、`succeeded`、`failed` 或 `interrupted`。当前 state 原子写入 `logs/admin-operation-state.json`，每次 transition 追加到 `logs/admin-operations.ndjson`；日志只保存有界结果摘要，不记录 LLM 输入、长期状态正文、密钥或完整数据库 payload。WebAdmin 重启时，上一进程遗留的 active run 标记为 `interrupted`；operator 必须结合备份和健康检查判断是否重试，系统不会自动续跑。
 
 实时 phase 另由 Bot Runtime 原子写入 `logs/agent-activity.json`。WebAdmin 会同时核对 `.bot.pid`；PID 缺失、不可达或不匹配时不展示旧文件为“正在执行”。该观察面不参与 replay，Bot 重启后才会开始产生新版实时状态。
 
@@ -107,7 +126,7 @@ pnpm web:build
 pnpm repo-check
 ```
 
-构建不连接数据库；真实页面加载才通过 Server Function 使用 `DATABASE_URL`。第一阶段所有管理接口只读，不允许更新 ledger、runtime state、checkpoint、Goal、消息、媒体或 workspace side-data。WebAdmin、页面 cache 和查询 DTO 都不是 replay source，不能重建或改写 `AgentContext`。
+构建不连接数据库；真实页面加载才通过 Server Function 使用 `DATABASE_URL`。观察 feature 不允许更新 ledger、runtime state、checkpoint、Goal、消息、媒体或 workspace side-data。唯一 mutation adapter 是 `features/operations/operations.server.ts`，它不能调用 shell、package script、任意 SQL 或接受路径输入。WebAdmin run state、审计日志、页面 cache 和查询 DTO 都不是 replay source，不能重建或改写 `AgentContext`。
 
 ### Agent Context 占用分析
 

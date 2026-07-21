@@ -34,6 +34,7 @@ export interface MemoryV2MigrationChange {
 export interface MemoryV2MigrationResult {
   ok: true
   applied: boolean
+  needed: boolean
   backupDir?: string
   filesBefore: number
   filesAfter: number
@@ -60,12 +61,14 @@ export async function migrateMemoryToV2(input: {
   const changes: MemoryV2MigrationChange[] = []
   let movedPersonEntries = 0
   let quarantinedPersonEntries = 0
+  let needed = false
 
   for (const file of listed.files) {
     const read = await readMemoryFile({ rootDir }, { file: file.file, maxChars: 12_000 })
     if (!read.ok) throw new Error(`memory v2 migration cannot read ${file.file}: ${read.error}`)
     if (read.entriesTruncated) throw new Error(`memory v2 migration supports at most 50 entries per file: ${file.file}`)
     const raw = await readFile(join(rootDir, 'memory', file.file), 'utf8')
+    if (!/^formatVersion:\s*2\s*$/m.test(raw)) needed = true
     const aliases = parseFrontmatterAliases(raw)
     const entityId = file.scope === 'person' || file.scope === 'group'
       ? entityIdFromFile(file.file, file.scope)
@@ -83,6 +86,7 @@ export async function migrateMemoryToV2(input: {
         context = { kind: 'legacy_unscoped' }
         reason = 'person_quarantine'
         quarantinedPersonEntries += 1
+        needed = true
       } else if (file.scope === 'group') {
         const personId = explicitPersonId(originalEntry.content)
         if (personId) {
@@ -92,6 +96,7 @@ export async function migrateMemoryToV2(input: {
           title = personId
           reason = 'person_extracted_from_group'
           movedPersonEntries += 1
+          needed = true
         }
       }
 
@@ -140,6 +145,7 @@ export async function migrateMemoryToV2(input: {
   const resultBase = {
     ok: true as const,
     applied: input.apply === true,
+    needed,
     filesBefore: listed.total,
     filesAfter: planned.length,
     entries: planned.reduce((sum, document) => sum + document.entries.length, 0),

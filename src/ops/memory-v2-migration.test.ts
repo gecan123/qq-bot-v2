@@ -22,6 +22,7 @@ describe('memory v2 migration', () => {
 
       const dryRun = await migrateMemoryToV2({ rootDir })
       assert.equal(dryRun.applied, false)
+      assert.equal(dryRun.needed, true)
       assert.equal(dryRun.movedPersonEntries, 1)
       assert.equal(dryRun.quarantinedPersonEntries, 1)
       assert.match(await readFile(join(rootDir, 'memory', 'groups', '20001.md'), 'utf8'), /formatVersion: 1/)
@@ -83,6 +84,10 @@ describe('memory v2 migration', () => {
         context: { kind: 'qq_group', id: '20001' },
       })
       assert.deepEqual(quarantinedRecall.matches, [])
+
+      const completedPreview = await migrateMemoryToV2({ rootDir })
+      assert.equal(completedPreview.applied, false)
+      assert.equal(completedPreview.needed, false)
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }

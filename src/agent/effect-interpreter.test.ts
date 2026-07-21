@@ -67,6 +67,31 @@ describe('interpretToolEffects', () => {
     })
   })
 
+  test('accepts a one-round continuation only from a valid send_message effect', () => {
+    assert.deepEqual(interpretToolEffects([{
+      toolCallId: 'send-1',
+      toolName: 'send_message',
+      effect: {
+        type: 'message_sent',
+        target: { type: 'private', userId: 123 },
+        continueWork: true,
+      },
+    }, {
+      toolCallId: 'lookup-1',
+      toolName: 'lookup',
+      effect: {
+        type: 'message_sent',
+        target: { type: 'private', userId: 456 },
+        continueWork: true,
+      },
+    }]), {
+      didPause: false,
+      didCompleteRest: false,
+      sentTargets: [{ type: 'private', userId: 123 }],
+      workContinuationRequested: true,
+    })
+  })
+
   test('deduplicates repeated targets while preserving first-seen order', () => {
     assert.deepEqual(interpretToolEffects([{
       toolCallId: 'send-1',

@@ -11,6 +11,7 @@ export interface EffectInterpretation {
   didCompleteRest: boolean
   sentTargets: MessageSentTarget[]
   inboxReads?: InboxReadEffect[]
+  workContinuationRequested?: true
 }
 
 export function interpretToolEffects(effects: ReactToolEffect[]): EffectInterpretation {
@@ -19,6 +20,7 @@ export function interpretToolEffects(effects: ReactToolEffect[]): EffectInterpre
   const sentTargets: MessageSentTarget[] = []
   const seenSentTargets = new Set<string>()
   const inboxReads = new Map<string, InboxReadEffect>()
+  let workContinuationRequested = false
 
   for (const item of effects) {
     switch (item.effect.type) {
@@ -44,6 +46,7 @@ export function interpretToolEffects(effects: ReactToolEffect[]): EffectInterpre
           logRejectedEffect(item, 'invalid_target')
           break
         }
+        if (item.effect.continueWork === true) workContinuationRequested = true
         const key = target.type === 'group'
           ? `qq_group:${target.groupId}`
           : `qq_private:${target.userId}`
@@ -81,6 +84,7 @@ export function interpretToolEffects(effects: ReactToolEffect[]): EffectInterpre
     didCompleteRest,
     sentTargets,
     ...(inboxReads.size > 0 ? { inboxReads: [...inboxReads.values()] } : {}),
+    ...(workContinuationRequested ? { workContinuationRequested: true } : {}),
   }
 }
 

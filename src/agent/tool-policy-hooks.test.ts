@@ -25,6 +25,7 @@ const sendMessageSchema = z.object({
   reply_to: z.number().int().positive().optional(),
   work: z.discriminatedUnion('state', [
     z.object({ state: z.literal('none') }),
+    z.object({ state: z.literal('continue') }),
     z.object({ state: z.literal('goal_progress'), goalId: z.string().uuid() }),
   ]).optional(),
 })
@@ -223,6 +224,31 @@ describe('createSendMessageWorkCommitmentHook', () => {
 
     assert.equal(JSON.parse(result.content as string).ok, true)
     assert.equal(calls.length, 1)
+  })
+
+  test('allows immediate continuation without creating a Goal', async () => {
+    const calls: unknown[] = []
+    let goalReads = 0
+    const exec = createToolExecutor([createFakeSendTool(calls)], {
+      hooks: {
+        beforeTool: [createSendMessageWorkCommitmentHook({
+          getCurrentGoal: async () => {
+            goalReads++
+            return null
+          },
+        })],
+      },
+    })
+
+    const result = await exec.execute({
+      id: 'continue',
+      name: 'send_message',
+      args: { message: '我先看清楚结构，马上继续。', work: { state: 'continue' } },
+    }, makeCtx())
+
+    assert.equal(JSON.parse(result.content as string).ok, true)
+    assert.equal(calls.length, 1)
+    assert.equal(goalReads, 0)
   })
 })
 

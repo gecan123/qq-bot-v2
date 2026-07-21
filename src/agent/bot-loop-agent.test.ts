@@ -3496,6 +3496,74 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(toolCallCount, 1)
   })
 
+  test('send_message continue keeps the next no-progress round on the short retry wait', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('已有上下文')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    let llmCallCount = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat() {
+          llmCallCount++
+          return {
+            content: '',
+            toolCalls: llmCallCount === 1
+              ? [{
+                  id: 'send-continue',
+                  name: 'send_message',
+                  args: { message: '我先看清楚结构，马上继续。', work: { state: 'continue' } },
+                }]
+              : [{ id: 'todo-empty', name: 'todo', args: { action: 'list' } }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools({
+        send_message: async () => ({
+          content: '{"ok":true,"status":"sent"}',
+          effects: [{
+            type: 'message_sent',
+            target: { type: 'private', userId: 9001 },
+            continueWork: true,
+          }],
+          outcome: { ok: true, progress: true },
+        }),
+        todo: async () => ({
+          content: '{"ok":true,"items":[]}',
+          outcome: {
+            ok: true,
+            progress: false,
+            continuation: 'wait_attention',
+            noveltyKey: 'todo:0',
+          },
+        }),
+      }),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        async waitForAttentionOrTimeout(_queue, timeoutMs) {
+          assert.equal(timeoutMs, 60_000)
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 2)
+  })
+
   test('background event wait does not poll an actionable private request and publishes its reason', async () => {
     const ctx = createAgentContext()
     ctx.appendUserMessage(

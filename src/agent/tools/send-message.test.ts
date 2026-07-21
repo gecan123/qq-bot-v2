@@ -238,6 +238,22 @@ describe('send_message current conversation contract', () => {
     assert.deepEqual(result.outcome, { ok: true })
   })
 
+  test('marks a successful continue send for one-round runtime continuation', async () => {
+    const { sender } = makeSender()
+    const tool = createAllowedTool(sender, { type: 'private', userId: 10001 })
+
+    const result = await tool.execute({
+      message: '我先看清楚结构，马上继续。',
+      work: { state: 'continue' },
+    }, makeContext())
+
+    assert.deepEqual(result.effects, [{
+      type: 'message_sent',
+      target: { type: 'private', userId: 10001 },
+      continueWork: true,
+    }])
+  })
+
   test('returns policy rejection without calling sender', async () => {
     const { sender, calls } = makeSender()
     const tool = createSendMessageTool({
@@ -291,6 +307,10 @@ describe('send_message schema and content', () => {
       work: { state: 'none' },
     }).success, true)
     assert.equal(tool.schema.safeParse({ imageRef: 'bad', work: { state: 'none' } }).success, false)
+    assert.equal(tool.schema.safeParse({
+      message: '马上继续',
+      work: { state: 'continue' },
+    }).success, true)
     assert.equal(tool.schema.safeParse({
       message: '还在做',
       work: { state: 'goal_progress', goalId: '11111111-1111-4111-8111-111111111111' },

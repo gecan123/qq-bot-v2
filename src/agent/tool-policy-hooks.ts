@@ -94,7 +94,7 @@ export interface SendMessageSafetyGuard {
   afterTool: AfterToolHook
 }
 
-/** 进度外发必须绑定真实 active Goal，避免口头承诺发送后失去行动锚点。 */
+/** 持久 Goal 的进度外发必须绑定真实 active Goal；短期 continue 由 BotLoop 进程内承接。 */
 export function createSendMessageWorkCommitmentHook(
   options: SendMessageWorkCommitmentHookOptions,
 ): BeforeToolHook {
@@ -125,7 +125,7 @@ export function createSendMessageWorkCommitmentHook(
         ok: false,
         code: 'work_commitment_required',
         error,
-        instruction: '先用 goal create_self/replan 建立具体 currentCommitment，再用其 goalId 重试。如果已无后续工作，删掉正文中的未来承诺并用 work.state=none。',
+        instruction: '持久工作先用 goal create_self/replan 建立具体 currentCommitment，再用其 goalId 重试；如果只是当前会话内马上续做，改用 work.state=continue；如果已无后续工作，删掉正文中的未来承诺并用 work.state=none。',
       }),
       outcome: {
         ok: false,
@@ -220,11 +220,13 @@ function isReplySend(
 
 function parseSendMessageWorkBinding(value: unknown):
   | { state: 'none' }
+  | { state: 'continue' }
   | { state: 'goal_progress'; goalId: string }
   | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const work = value as Record<string, unknown>
   if (work.state === 'none') return { state: 'none' }
+  if (work.state === 'continue') return { state: 'continue' }
   if (work.state === 'goal_progress' && typeof work.goalId === 'string') {
     return { state: 'goal_progress', goalId: work.goalId }
   }

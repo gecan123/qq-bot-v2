@@ -114,6 +114,8 @@ export type ToolEffect =
   | {
       type: 'message_sent'
       target: MessageSentTarget
+      /** 这次外发后仍有当前会话内的立即工作；仅为下一轮提供进程内行动锚点。 */
+      continueWork?: true
     }
   | {
       type: 'inbox_read'

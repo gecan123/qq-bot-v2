@@ -210,6 +210,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let roundIndex = 0
   let consecutiveRounds = 0
   let actionCorrectionRetryPending = false
+  let shortWorkContinuationPending = false
   let recoverableToolCorrectionRounds = 0
   let idleBackoffLevel = 0
   const recentToolNoveltyKeys = new Map<string, number>()
@@ -608,6 +609,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     didPause: boolean
     didCompleteRest: boolean
     sentTargets: MessageSentTarget[]
+    workContinuationRequested: boolean
     recoverableToolFailure: boolean
     onlyHelpToolCalls: boolean
     madeToolProgress: boolean
@@ -696,6 +698,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       didCompleteRest,
       sentTargets,
       inboxReads = [],
+      workContinuationRequested = false,
     } = interpretToolEffects(result.effects)
 
     stagedMessages.push(...result.messagesToAppend)
@@ -735,6 +738,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       didPause,
       didCompleteRest,
       sentTargets,
+      workContinuationRequested,
       recoverableToolFailure: result.toolOutcomes.some((outcome) => (
         !outcome.ok && (
           outcome.retryClass === 'immediate'
@@ -973,6 +977,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       return { ranRound: false }
     }
 
+    const shortWorkContinuationAtRoundStart = shortWorkContinuationPending
     const roundStartedAt = Date.now()
     let roundResult: Awaited<ReturnType<typeof runRound>>
     try {
@@ -998,6 +1003,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       didPause,
       didCompleteRest,
       sentTargets,
+      workContinuationRequested,
       recoverableToolFailure,
       onlyHelpToolCalls,
       madeToolProgress,
@@ -1082,6 +1088,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         }, 'share_checkpoint_appended')
       }
     }
+    shortWorkContinuationPending = workContinuationRequested
     return {
       ranRound: true,
       didPause,
@@ -1096,7 +1103,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       actionRequired: goalAtRoundStart?.status === 'active'
         || (drained.hadAttention && disclosed > 0)
         || hasPendingPrivateMailboxAttention(deps.context.getSnapshot().messages)
-        || assistantTextOnly,
+        || assistantTextOnly
+        || shortWorkContinuationAtRoundStart
+        || workContinuationRequested,
     }
   }
 

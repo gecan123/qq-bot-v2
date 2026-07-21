@@ -15,7 +15,14 @@ import {
 import { createGoalTool } from './tools/goal.js'
 import { InMemoryEventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
+import type { GoalCompletionJudge, GoalCompletionJudgment } from './goal-completion-judge.js'
 import { prisma } from '../database/client.js'
+
+const acceptingGoalJudge: GoalCompletionJudge = {
+  async evaluate() {
+    return { ok: true, reason: '验收证据满足目标' }
+  },
+}
 
 describe('goal control and store', () => {
   const firstCommitment = {
@@ -250,7 +257,7 @@ describe('goal control and store', () => {
       command: { action: 'set', objective: '等待授权', tokenBudget: null },
     })
     const goalId = (await firstProcessStore.get())!.goalId
-    const firstProcessTool = createGoalTool(firstProcessStore)
+    const firstProcessTool = createGoalTool(firstProcessStore, acceptingGoalJudge)
     const queue = new InMemoryEventQueue<BotEvent>()
     for (const goalRoundIndex of [1, 2]) {
       await firstProcessTool.execute({
@@ -260,7 +267,7 @@ describe('goal control and store', () => {
     }
 
     const restoredStore = createInMemoryGoalStore(await firstProcessStore.get())
-    const restoredTool = createGoalTool(restoredStore)
+    const restoredTool = createGoalTool(restoredStore, acceptingGoalJudge)
     await restoredTool.execute({
       action: 'report_blocker', goalId, blockerKey: 'owner_auth', reason: '重启后仍缺授权',
     }, {
@@ -280,7 +287,7 @@ describe('goal control and store', () => {
       command: { action: 'set', objective: '目标', tokenBudget: null },
     })
     const goal = (await store.get())!
-    const tool = createGoalTool(store)
+    const tool = createGoalTool(store, acceptingGoalJudge)
     const context = { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 8 }
     const getResult = await tool.execute({ action: 'get' }, context)
     assert.match(String(getResult.content), new RegExp(goal.goalId))
@@ -302,15 +309,83 @@ describe('goal control and store', () => {
       evidence: ['pnpm build exit 0', '目标文件已检查'],
     }, context)
     assert.equal(completed.outcome?.ok, true)
+    assert.match(String(completed.content), /验收证据满足目标/)
     assert.match(String(completed.content), /注意力重新自由/)
     assert.equal((await store.get())?.status, 'complete')
     assert.equal((await store.get())?.currentCommitment, null)
     assert.deepEqual((await store.get())?.completionEvidence, ['pnpm build exit 0', '目标文件已检查'])
   })
 
+  test('keeps the goal active and returns the judge reason when completion is rejected', async () => {
+    const store = await ownerGoalStore('完成全部测试')
+    const tool = createGoalTool(store, {
+      async evaluate() { return { ok: false, reason: '缺少完整测试命令输出' } },
+    })
+    const goal = (await store.get())!
+
+    const result = await tool.execute({
+      action: 'complete', goalId: goal.goalId, evidence: ['声称测试通过'],
+    }, toolContext())
+
+    assert.equal((await store.get())?.status, 'active')
+    assert.equal(result.outcome?.code, 'completion_rejected')
+    assert.equal(result.outcome?.continuation, 'immediate')
+    assert.match(String(result.content), /缺少完整测试命令输出/)
+  })
+
+  test('keeps the goal active and backs off when the judge is unavailable', async () => {
+    const store = await ownerGoalStore('完成全部测试')
+    const tool = createGoalTool(store, {
+      async evaluate() { throw new Error('provider unavailable') },
+    })
+    const goal = (await store.get())!
+
+    const result = await tool.execute({
+      action: 'complete', goalId: goal.goalId, evidence: ['pnpm test exit 0'],
+    }, toolContext())
+
+    assert.equal((await store.get())?.status, 'active')
+    assert.equal(result.outcome?.code, 'verification_unavailable')
+    assert.equal(result.outcome?.retryClass, 'backoff')
+    assert.equal(result.outcome?.continuation, 'backoff')
+  })
+
+  test('cannot apply a late accepted judgment to a replacement goal', async () => {
+    const store = await ownerGoalStore('完成原目标')
+    const originalGoal = (await store.get())!
+    const evaluationStarted = deferred<void>()
+    const judgment = deferred<GoalCompletionJudgment>()
+    const tool = createGoalTool(store, {
+      async evaluate() {
+        evaluationStarted.resolve()
+        return judgment.promise
+      },
+    })
+
+    const completion = tool.execute({
+      action: 'complete', goalId: originalGoal.goalId, evidence: ['原目标证据'],
+    }, toolContext())
+    const judgeStarted = await Promise.race([
+      evaluationStarted.promise.then(() => true),
+      completion.then(() => false),
+    ])
+    assert.equal(judgeStarted, true)
+    await store.applyControl({ messageRowId: 2, command: { action: 'clear' } })
+    await store.applyControl({
+      messageRowId: 3,
+      command: { action: 'set', objective: '替代目标', tokenBudget: null },
+    })
+    judgment.resolve({ ok: true, reason: '原目标证据充分' })
+
+    const result = await completion
+    assert.equal(result.outcome?.code, 'stale_goal')
+    assert.equal((await store.get())?.objective, '替代目标')
+    assert.equal((await store.get())?.status, 'active')
+  })
+
   test('goal tool exposes create_self and abandon_self actions', async () => {
     const store = createInMemoryGoalStore()
-    const tool = createGoalTool(store)
+    const tool = createGoalTool(store, acceptingGoalJudge)
     const context = { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 1 }
     assert.equal(tool.schema.safeParse({
       action: 'create_self',
@@ -408,3 +483,26 @@ describe('goal control and store', () => {
     assert.deepEqual(processed, [11, 13, 14])
   })
 })
+
+async function ownerGoalStore(objective: string) {
+  const store = createInMemoryGoalStore()
+  await store.applyControl({
+    messageRowId: 1,
+    command: { action: 'set', objective, tokenBudget: null },
+  })
+  return store
+}
+
+function toolContext() {
+  return { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 1 }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}

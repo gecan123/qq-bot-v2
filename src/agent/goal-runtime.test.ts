@@ -9,6 +9,13 @@ import { renderBotEvent } from './render-event.js'
 import { createToolExecutor } from './tool.js'
 import { createGoalTool } from './tools/goal.js'
 import { createTestAgentLedger } from './test-support/agent-ledger.js'
+import type { GoalCompletionJudge } from './goal-completion-judge.js'
+
+const acceptingGoalJudge: GoalCompletionJudge = {
+  async evaluate() {
+    return { ok: true, reason: '验收证据满足目标' }
+  },
+}
 
 function validLedgerSummary(content: string): string {
   return [
@@ -82,7 +89,7 @@ describe('BotLoop goal integration', () => {
           }
         },
       },
-      tools: createToolExecutor([createGoalTool(goalStore)]),
+      tools: createToolExecutor([createGoalTool(goalStore, acceptingGoalJudge)]),
       ...ledgerDeps(context),
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
@@ -134,7 +141,7 @@ describe('BotLoop goal integration', () => {
           }
         },
       },
-      tools: createToolExecutor([createGoalTool(goalStore)]),
+      tools: createToolExecutor([createGoalTool(goalStore, acceptingGoalJudge)]),
       ledgerRepo: ledger.repo,
       ledgerLoader: ledger.loader,
       renderEvent: renderBotEvent,

@@ -1,11 +1,15 @@
 import { z } from 'zod'
 import type { Tool } from '../tool.js'
+import type { GoalCompletionJudge } from '../goal-completion-judge.js'
 import {
   DEFAULT_SELF_GOAL_TOKEN_BUDGET,
   MAX_GOAL_TOKEN_BUDGET,
   type AgentGoal,
   type GoalStore,
 } from '../goal-store.js'
+import { createLogger } from '../../logger.js'
+
+const log = createLogger('goal-tool')
 
 const evidenceSchema = z.string().trim().min(1).max(500)
 const commitmentSchema = z.object({
@@ -63,7 +67,10 @@ const argsSchema = z.discriminatedUnion('action', [
 
 type Args = z.infer<typeof argsSchema>
 
-export function createGoalTool(goalStore: GoalStore): Tool<Args> {
+export function createGoalTool(
+  goalStore: GoalStore,
+  completionJudge: GoalCompletionJudge,
+): Tool<Args> {
   return {
     name: 'goal',
     description: [
@@ -89,6 +96,69 @@ export function createGoalTool(goalStore: GoalStore): Tool<Args> {
           },
         }
       }
+      if (args.action === 'complete') {
+        const goal = await goalStore.get()
+        if (
+          !goal
+          || goal.goalId !== args.goalId
+          || !['active', 'budget_limited'].includes(goal.status)
+        ) {
+          return renderMutationResult(await goalStore.complete({
+            goalId: args.goalId,
+            evidence: args.evidence,
+          }))
+        }
+
+        let judgment
+        try {
+          judgment = await completionJudge.evaluate({ goal, evidence: args.evidence })
+        } catch (error) {
+          log.warn(
+            { goalId: goal.goalId, ...judgeErrorMetadata(error) },
+            'goal_completion_verification_unavailable',
+          )
+          return {
+            content: JSON.stringify({
+              ok: false,
+              code: 'verification_unavailable',
+              error: 'Goal 完成验收暂时不可用；Goal 保持 active。',
+              goal: publicGoal(goal),
+            }),
+            outcome: {
+              ok: false,
+              code: 'verification_unavailable',
+              progress: false,
+              retryClass: 'backoff',
+              continuation: 'backoff',
+              noveltyKey: goalNoveltyKey(goal),
+            },
+          }
+        }
+
+        if (!judgment.ok) {
+          return {
+            content: JSON.stringify({
+              ok: false,
+              code: 'completion_rejected',
+              reason: judgment.reason,
+              goal: publicGoal(goal),
+              next: '根据 reason 补充工作和真实证据后，再次调用 goal action=complete。',
+            }),
+            outcome: {
+              ok: false,
+              code: 'completion_rejected',
+              progress: false,
+              continuation: 'immediate',
+              noveltyKey: goalNoveltyKey(goal),
+            },
+          }
+        }
+
+        return renderMutationResult(await goalStore.complete({
+          goalId: args.goalId,
+          evidence: args.evidence,
+        }), judgment.reason)
+      }
       const mutation = args.action === 'create_self'
         ? await goalStore.createSelf({
             objective: args.objective,
@@ -102,9 +172,7 @@ export function createGoalTool(goalStore: GoalStore): Tool<Args> {
               goalId: args.goalId,
               currentCommitment: args.currentCommitment,
             })
-        : args.action === 'complete'
-          ? await goalStore.complete({ goalId: args.goalId, evidence: args.evidence })
-          : args.action === 'abandon_self'
+        : args.action === 'abandon_self'
             ? await goalStore.abandonSelf({ goalId: args.goalId, reason: args.reason })
             : await goalStore.reportBlocker({
                 goalId: args.goalId,
@@ -112,32 +180,50 @@ export function createGoalTool(goalStore: GoalStore): Tool<Args> {
                 blockerKey: args.blockerKey,
                 reason: args.reason,
               })
-      return {
-        content: JSON.stringify({
-          ok: mutation.ok,
-          code: mutation.code,
-          goal: mutation.goal ? publicGoal(mutation.goal) : null,
-          ...(mutation.error ? { error: mutation.error } : {}),
-          ...(mutation.code === 'blocker_recorded' ? {
-            next: 'goal 仍为 active。继续寻找替代路径；只有同一 blocker 在下一 goal round 仍成立时才再次报告。',
-          } : mutation.code === 'created' || mutation.code === 'replanned' ? {
-            next: '立即执行 currentCommitment.action；得到 expectedEvidence 后继续推进或 replan。',
-          } : mutation.goal?.status === 'complete' ? {
-            next: '当前 goal 已完成，注意力重新自由。进行一次有界方向检查；有真实后续就自行选择并行动。',
-          } : {}),
-        }),
-        outcome: {
-          ok: mutation.ok,
-          code: mutation.code,
-          progress: mutation.ok && !['unchanged', 'duplicate'].includes(mutation.code),
-          continuation: mutation.ok && mutation.goal?.status !== 'blocked'
-            ? 'immediate'
-            : 'wait_attention',
-          noveltyKey: goalNoveltyKey(mutation.goal),
-          ...(mutation.error ? { error: mutation.error } : {}),
-        },
-      }
+      return renderMutationResult(mutation)
     },
+  }
+}
+
+function renderMutationResult(
+  mutation: Awaited<ReturnType<GoalStore['complete']>>,
+  judgmentReason?: string,
+) {
+  return {
+    content: JSON.stringify({
+      ok: mutation.ok,
+      code: mutation.code,
+      goal: mutation.goal ? publicGoal(mutation.goal) : null,
+      ...(judgmentReason ? { judgment: { ok: true, reason: judgmentReason } } : {}),
+      ...(mutation.error ? { error: mutation.error } : {}),
+      ...(mutation.code === 'blocker_recorded' ? {
+        next: 'goal 仍为 active。继续寻找替代路径；只有同一 blocker 在下一 goal round 仍成立时才再次报告。',
+      } : mutation.code === 'created' || mutation.code === 'replanned' ? {
+        next: '立即执行 currentCommitment.action；得到 expectedEvidence 后继续推进或 replan。',
+      } : mutation.goal?.status === 'complete' ? {
+        next: '当前 goal 已完成，注意力重新自由。进行一次有界方向检查；有真实后续就自行选择并行动。',
+      } : {}),
+    }),
+    outcome: {
+      ok: mutation.ok,
+      code: mutation.code,
+      progress: mutation.ok && !['unchanged', 'duplicate'].includes(mutation.code),
+      continuation: mutation.ok && mutation.goal?.status !== 'blocked'
+        ? 'immediate' as const
+        : 'wait_attention' as const,
+      noveltyKey: goalNoveltyKey(mutation.goal),
+      ...(mutation.error ? { error: mutation.error } : {}),
+    },
+  }
+}
+
+function judgeErrorMetadata(error: unknown): Record<string, unknown> {
+  if (!error || typeof error !== 'object') return { errorType: typeof error }
+  const record = error as Record<string, unknown>
+  return {
+    errorName: error instanceof Error ? error.name : 'unknown',
+    ...(typeof record.kind === 'string' ? { errorKind: record.kind } : {}),
+    ...(typeof record.status === 'number' ? { errorStatus: record.status } : {}),
   }
 }
 

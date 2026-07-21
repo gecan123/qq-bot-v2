@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'vitest'
 import { loadOverviewSnapshot, type OverviewDb } from './overview.service.js'
 import type { AgentActivitySurface } from '../../../../../src/agent/activity-surface.js'
+import type { OverviewToolActivityInput } from './overview-tool-log.js'
 
 const now = new Date('2026-07-20T08:00:00.000Z')
 
@@ -58,41 +59,35 @@ function createFakeDb(focus: unknown): OverviewDb {
         }
       },
     },
-    agentToolCall: {
-      async count(input) {
-        const where = (input as { where: Record<string, unknown> }).where
-        return where.ok === false ? 2 : 9
-      },
-      async findMany() {
-        return [
-          {
-            id: 3n,
-            ts: new Date('2026-07-20T07:59:50.000Z'),
-            toolCallId: 'call-3',
-            toolName: 'web_search',
-            roundIndex: 7,
-            argsSummary: { query: 'BTC 下跌原因' },
-            durationMs: 5_182,
-            ok: true,
-            sideEffect: false,
-            error: null,
-          },
-          {
-            id: 2n,
-            ts: new Date('2026-07-20T07:59:40.000Z'),
-            toolCallId: 'call-2',
-            toolName: 'inbox',
-            roundIndex: 7,
-            argsSummary: { action: 'read' },
-            durationMs: 120,
-            ok: true,
-            sideEffect: false,
-            error: null,
-          },
-        ]
-      },
-    },
   }
+}
+
+const toolActivity: OverviewToolActivityInput = {
+  calls24h: 9,
+  failed24h: 2,
+  warnings: [],
+  recentCalls: [
+    {
+      ts: '2026-07-20T07:59:50.000Z',
+      toolCallId: 'call-3',
+      toolName: 'web_search',
+      roundIndex: 7,
+      argsSummary: { query: 'BTC 下跌原因' },
+      durationMs: 5_182,
+      ok: true,
+      sideEffect: false,
+    },
+    {
+      ts: '2026-07-20T07:59:40.000Z',
+      toolCallId: 'call-2',
+      toolName: 'inbox',
+      roundIndex: 7,
+      argsSummary: { action: 'read' },
+      durationMs: 120,
+      ok: true,
+      sideEffect: false,
+    },
+  ],
 }
 
 const activity: AgentActivitySurface = {
@@ -127,6 +122,7 @@ describe('loadOverviewSnapshot', () => {
       createFakeDb({ type: 'group', groupId: 123 }),
       now,
       { status: 'available', surface: activity },
+      toolActivity,
     )
 
     assert.equal(result.ledger.entryCount, 12)
@@ -138,6 +134,7 @@ describe('loadOverviewSnapshot', () => {
     assert.equal(result.activity.phase, 'tool')
     assert.equal(result.activity.activeTools[0]?.toolName, 'browser')
     assert.equal(result.recentActions[0]?.title, '搜索了网络信息')
+    assert.equal(result.recentActions[0]?.id, 'call-3')
     assert.equal(result.recentActions[1]?.title, '读取了消息')
     assert.equal(result.latestAgentUsage?.cacheHitRate, 0.75)
     assert.deepEqual(result.tools24h, { calls: 9, failed: 2 })
@@ -151,10 +148,12 @@ describe('loadOverviewSnapshot', () => {
       createFakeDb({ type: 'group', groupId: 'bad' }),
       now,
       { status: 'missing' },
+      { ...toolActivity, warnings: ['工具审计模式为 side_effects；最近进展只包含副作用调用。'] },
     )
 
     assert.equal(result.runtime.focus, null)
     assert.equal(result.activity.phase, 'unavailable')
     assert.ok(result.warnings.includes('runtime.qqConversationFocus invalid'))
+    assert.ok(result.warnings.includes('工具审计模式为 side_effects；最近进展只包含副作用调用。'))
   })
 })

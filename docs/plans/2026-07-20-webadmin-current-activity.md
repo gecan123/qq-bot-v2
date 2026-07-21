@@ -8,7 +8,7 @@
 
 - `bot_agent_ledger_entries` 继续是唯一持久 LLM history source；当前活动面不能进入 replay 或反向重建 context。
 - `bot_agent_goal.current_commitment` 是持久 Goal 当前步骤的权威来源。
-- `agent_tool_calls` 是已经完成的工具审计证据，不表示工具仍在执行。
+- `logs/tool-calls.ndjson` 是已经完成的工具审计证据，不表示工具仍在执行；其覆盖范围由 `BOT_TOOL_AUDIT_MODE` 决定，WebAdmin 不从 `agent_tool_calls` 旧表补齐。
 - 进程内 phase、并发工具、等待原因和唤醒原因写入 `logs/agent-activity.json`。它是可丢弃的 best-effort 观察面，不是控制状态或事实账本。
 - AdminWeb 只读以上来源，不提供 wake、send、compact 或状态更新接口。
 
@@ -19,9 +19,9 @@ BotLoopAgent / ToolExecutor
   -> AgentActivityReporter
   -> atomic logs/agent-activity.json
 
-PostgreSQL Goal / runtime / completed tool calls ----+
-                                                     +-> WebAdmin overview DTO -> Browser
-logs/agent-activity.json ----------------------------+
+PostgreSQL Goal / runtime ----------------------------+
+logs/tool-calls.ndjson completed audited tool calls --+-> WebAdmin overview DTO -> Browser
+logs/agent-activity.json -----------------------------+
 ```
 
 ## Runtime phase
@@ -45,13 +45,13 @@ logs/agent-activity.json ----------------------------+
 2. 当前 Goal；没有持久 Goal 时明确显示，而不是从日志猜一个 Goal。
 3. 当前步骤：优先 Goal `currentCommitment.action`，否则展示正在执行的工具或当前等待条件。
 4. 唤醒原因、当前 QQ focus、下一项预期证据/等待条件。
-5. 最近进展：把已完成工具调用翻译成简短动作，默认隐藏 toolCallId、roundIndex、参数 JSON 等技术细节。
+5. 最近进展：把本地工具审计日志中的已完成调用翻译成简短动作，默认隐藏 toolCallId、roundIndex、参数 JSON 等技术细节；审计模式不是 `all` 时明确提示覆盖范围。
 
 `/context` 和 `/timeline` 保留为下钻诊断页，不承担“现在正在干什么”的主要入口。
 
 ## 验证
 
 - Reporter 状态转换、并发工具和原子 writer 使用 focused test。
-- Overview service 测试 live/missing/stale surface、Goal commitment 和最近进展翻译。
+- Overview service 测试 live/missing/stale surface、Goal commitment 和最近进展翻译；日志解析测试排序、最近 16 条、24 小时统计和损坏记录降级。
 - Overview 组件测试当前状态、步骤、等待条件与技术细节。
 - 运行 AdminWeb test、typecheck、build，以及根 `pnpm repo-check`。

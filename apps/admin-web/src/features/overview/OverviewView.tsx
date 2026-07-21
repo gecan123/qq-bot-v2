@@ -94,7 +94,7 @@ export function OverviewView({ snapshot, isRefreshing, refreshFailed }: Overview
     </section>
 
     <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,.8fr)]">
-      <Panel title="最近进展" description="一个已完成工具调用对应一条人话进展；参数、ID 和 round 默认折叠。">
+      <Panel title="最近进展" description="来自本地工具审计日志；参数、ID 和 round 默认折叠，具体覆盖范围取决于当前审计模式。">
         {snapshot.recentActions.length === 0
           ? <div className="empty-state"><span className="empty-state-dot" />暂无已完成工具记录</div>
           : <ol className="activity-feed">
@@ -132,7 +132,7 @@ export function OverviewView({ snapshot, isRefreshing, refreshFailed }: Overview
 
     <div className="mt-4"><StatGrid>
       <StatCard label="Ledger" value={formatCount(snapshot.ledger.entryCount)} detail={`Head #${snapshot.ledger.headEntryId ?? '—'} · ${snapshot.ledger.latestEntryType ?? '无 entry'}`} />
-      <StatCard label="Tools · 24h" value={formatCount(snapshot.tools24h.calls)} detail={`${snapshot.tools24h.failed} failed`} tone={snapshot.tools24h.failed ? 'warn' : 'good'} />
+      <StatCard label="Audited tools · 24h" value={formatCount(snapshot.tools24h.calls)} detail={`${snapshot.tools24h.failed} failed`} tone={snapshot.tools24h.failed ? 'warn' : 'good'} />
       <StatCard label="Latest input" value={formatCount(usage?.inputTokens ?? null)} detail={usage?.model ?? '暂无 agent.chat usage'} />
       <StatCard label="Cache hit" value={formatPercent(usage?.cacheHitRate ?? null)} detail={`${formatCount(usage?.cachedTokens ?? null)} cached`} />
     </StatGrid></div>

@@ -7,15 +7,21 @@ import {
 } from '../../../../../src/agent/activity-surface.js'
 import { getAdminPrisma } from '../../server/db.server.js'
 import { getRepositoryRoot } from '../../server/paths.server.js'
+import { loadOverviewToolActivity } from './overview-tool-log.server.js'
 import { loadOverviewSnapshot, type OverviewActivityInput } from './overview.service.js'
 
 export async function loadOverviewServerSnapshot(now = new Date()) {
   const root = getRepositoryRoot()
-  const activity = await readAgentActivitySurface(join(root, AGENT_ACTIVITY_SURFACE_PATH))
+  const [activity, toolActivity] = await Promise.all([
+    readAgentActivitySurface(join(root, AGENT_ACTIVITY_SURFACE_PATH))
+      .then(value => validateLiveProcess(root, value)),
+    loadOverviewToolActivity(root, now),
+  ])
   return await loadOverviewSnapshot(
     getAdminPrisma(),
     now,
-    await validateLiveProcess(root, activity),
+    activity,
+    toolActivity,
   )
 }
 

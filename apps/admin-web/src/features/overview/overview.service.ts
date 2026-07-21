@@ -3,6 +3,7 @@ import type {
   AgentActivitySurface,
   AgentActivitySurfaceReadResult,
 } from '../../../../../src/agent/activity-surface.js'
+import type { OverviewToolActivityInput } from './overview-tool-log.js'
 
 export type OverviewActivityInput = AgentActivitySurfaceReadResult | { status: 'stale' }
 
@@ -40,30 +41,22 @@ export interface OverviewDb {
       cacheHitRate: number | null
     } | null>
   }
-  agentToolCall: {
-    count(input: object): Promise<number>
-    findMany(input: object): Promise<Array<{
-      id: bigint
-      ts: Date
-      toolCallId: string
-      toolName: string
-      roundIndex: number
-      argsSummary: unknown
-      durationMs: number
-      ok: boolean
-      sideEffect: boolean
-      error: string | null
-    }>>
-  }
+}
+
+const emptyToolActivity: OverviewToolActivityInput = {
+  recentCalls: [],
+  calls24h: 0,
+  failed24h: 0,
+  warnings: [],
 }
 
 export async function loadOverviewSnapshot(
   db: OverviewDb,
   now: Date = new Date(),
   activityInput: OverviewActivityInput = { status: 'missing' },
+  toolActivity: OverviewToolActivityInput = emptyToolActivity,
 ): Promise<OverviewSnapshot> {
-  const since = new Date(now.getTime() - 24 * 60 * 60 * 1000)
-  const [entryCount, head, runtime, goal, usage, calls, failed, recentCalls] = await Promise.all([
+  const [entryCount, head, runtime, goal, usage] = await Promise.all([
     db.botAgentLedgerEntry.count(),
     db.botAgentLedgerEntry.findFirst({
       orderBy: { id: 'desc' },
@@ -98,27 +91,9 @@ export async function loadOverviewSnapshot(
         cacheHitRate: true,
       },
     }),
-    db.agentToolCall.count({ where: { ts: { gte: since } } }),
-    db.agentToolCall.count({ where: { ts: { gte: since }, ok: false } }),
-    db.agentToolCall.findMany({
-      orderBy: [{ ts: 'desc' }, { id: 'desc' }],
-      take: 16,
-      select: {
-        id: true,
-        ts: true,
-        toolCallId: true,
-        toolName: true,
-        roundIndex: true,
-        argsSummary: true,
-        durationMs: true,
-        ok: true,
-        sideEffect: true,
-        error: true,
-      },
-    }),
   ])
 
-  const warnings: string[] = []
+  const warnings: string[] = [...toolActivity.warnings]
   const focus = parseFocus(runtime?.qqConversationFocus, warnings)
 
   const activity = mapActivity(activityInput)
@@ -147,10 +122,10 @@ export async function loadOverviewSnapshot(
       updatedAt: goal.updatedAt.toISOString(),
     },
     activity,
-    recentActions: recentCalls.map(row => ({
-      id: row.id.toString(),
-      at: row.ts.toISOString(),
-      ...describeToolAction(row.toolName, row.argsSummary, row.error),
+    recentActions: toolActivity.recentCalls.map(row => ({
+      id: row.toolCallId,
+      at: row.ts,
+      ...describeToolAction(row.toolName, row.argsSummary, row.error ?? null),
       ok: row.ok,
       durationMs: row.durationMs,
       sideEffect: row.sideEffect,
@@ -164,7 +139,7 @@ export async function loadOverviewSnapshot(
       ts: usage.ts.toISOString(),
       cacheHitRate: usage.cacheHitRate ?? deriveCacheHitRate(usage),
     },
-    tools24h: { calls, failed },
+    tools24h: { calls: toolActivity.calls24h, failed: toolActivity.failed24h },
     warnings,
   })
 }

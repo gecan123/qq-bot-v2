@@ -989,6 +989,14 @@ describe('ScheduleRuntime firing and restart recovery', () => {
 
     assert.deepEqual(await store.load(), [])
     assert.deepEqual(await runtime.list(), [])
+    assert.deepEqual(await runtime.getOccurrence('schedule-1', 1), {
+      scheduleId: 'schedule-1',
+      name: 'review-progress',
+      intention: 'Review the latest goal and decide the next useful action',
+      scheduleKind: 'at',
+      scheduledFor: '2026-07-17T01:00:00.000Z',
+      runCount: 1,
+    })
     assert.equal(eventQueue.size(), 1)
     assert.equal(eventQueue.dequeue()?.type, 'scheduled_wake')
     assert.equal(eventQueue.size(), 0)

@@ -77,6 +77,7 @@ const mockScheduleRuntime: ScheduleRuntime = {
   async start() {},
   async create() { throw new Error('not used') },
   async list() { return [] },
+  async getOccurrence() { return null },
   async cancel(id) { return { status: 'already_absent', id } },
   async stop() {},
 }
@@ -371,18 +372,53 @@ describe('merged main-agent tools', () => {
     assert.deepEqual(repeatedDetail.outcome, { ok: true, code: 'unchanged', progress: false })
   })
 
-  test('background_task marks a running result as wait-for-event rather than progress', async () => {
+  test('background_task renders a running task as a successful event wait rather than an error', async () => {
     const registry = createInMemoryTaskRegistry()
     const task = registry.register({ toolName: 'generate_image', description: '生成图片' })
     const tool = createBackgroundTaskTool({ taskRegistry: registry })
 
     const result = await tool.execute({ action: 'get', taskId: task.id }, makeCtx())
+    const payload = JSON.parse(result.content as string) as {
+      ok: boolean
+      status: string
+      taskId: string
+      toolName: string
+      elapsedMs: number
+      next: string
+    }
 
+    assert.deepEqual(payload, {
+      ok: true,
+      taskId: task.id,
+      toolName: 'generate_image',
+      status: 'running',
+      elapsedMs: payload.elapsedMs,
+      next: '等待 kind=background_task_completed 的 notification 后再次读取结果。',
+    })
     assert.deepEqual(result.outcome, {
       ok: true,
       code: 'still_running',
       progress: false,
-      retryClass: 'after_event',
+      continuation: 'wait_event',
+      continuationDetail: '后台任务“生成图片”正在运行，等待完成通知',
+      noveltyKey: `background-task:${task.id}:running`,
+    })
+  })
+
+  test('background_task list waits for completion when any task is still running', async () => {
+    const registry = createInMemoryTaskRegistry()
+    const task = registry.register({ toolName: 'generate_image', description: '生成图片' })
+    const tool = createBackgroundTaskTool({ taskRegistry: registry })
+
+    const result = await tool.execute({ action: 'list' }, makeCtx())
+
+    assert.deepEqual(result.outcome, {
+      ok: true,
+      code: 'observed',
+      progress: true,
+      continuation: 'wait_event',
+      continuationDetail: '仍有 1 个后台任务在运行，等待完成通知',
+      noveltyKey: `background-tasks:${task.id}:running`,
     })
   })
 

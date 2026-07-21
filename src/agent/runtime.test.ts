@@ -609,6 +609,7 @@ function makeScheduleRuntime(overrides: Partial<ScheduleRuntime> = {}): Schedule
     async start() {},
     async create() { throw new Error('unexpected create') },
     async list() { return [] },
+    async getOccurrence() { return null },
     async cancel(id) { return { status: 'already_absent', id } },
     async stop() {},
     ...overrides,

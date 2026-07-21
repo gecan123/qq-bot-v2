@@ -52,6 +52,7 @@ export interface ReactToolOutcome {
   progress: boolean
   retryClass?: 'immediate' | 'after_event' | 'backoff' | 'terminal'
   continuation?: ToolContinuation
+  continuationDetail?: string
   noveltyKey?: string
   shareCandidate?: ToolShareCandidate
   evidenceMessageRowIds?: number[]
@@ -240,6 +241,9 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
         progress: result.outcome?.progress ?? true,
         ...(result.outcome?.retryClass ? { retryClass: result.outcome.retryClass } : {}),
         ...(result.outcome?.continuation ? { continuation: result.outcome.continuation } : {}),
+        ...(result.outcome?.continuation && result.outcome.continuationDetail
+          ? { continuationDetail: result.outcome.continuationDetail.slice(0, 1_000) }
+          : {}),
         ...(result.outcome?.noveltyKey ? { noveltyKey: result.outcome.noveltyKey } : {}),
         ...(result.outcome?.shareCandidate
           ? { shareCandidate: { ...result.outcome.shareCandidate } }
@@ -258,6 +262,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
         progress: result.outcome?.progress ?? true,
         retryClass: result.outcome?.retryClass,
         continuation: result.outcome?.continuation,
+        continuationDetail: result.outcome?.continuationDetail?.slice(0, 1_000),
         noveltyKey: result.outcome?.noveltyKey,
         shareCandidateKey: result.outcome?.shareCandidate?.key,
       }, 'round_tool_done')

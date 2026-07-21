@@ -56,6 +56,11 @@ const argsSchema = z.discriminatedUnion('action', [
   }).strict(),
   z.object({ action: z.literal('list') }).strict(),
   z.object({
+    action: z.literal('get_occurrence'),
+    scheduleId: z.string().trim().min(1).max(SCHEDULE_LIMITS.maxIdLength),
+    runCount: z.number().int().positive(),
+  }).strict(),
+  z.object({
     action: z.literal('cancel'),
     id: z.string().trim().min(1).max(SCHEDULE_LIMITS.maxIdLength),
   }).strict(),
@@ -68,7 +73,7 @@ export function createScheduleTool(runtime: ScheduleRuntime): Tool<Args> {
     name: 'schedule',
     description: [
       '管理最长 3 天、可跨重启恢复的短期注意力唤醒，支持 at、every 和 cron；最多 20 个活跃调度。',
-      '到期只注入 scheduled_wake，让你结合最新 Goal、消息和环境重新判断；不会保存或直接执行未来工具调用。',
+      '到期只注入不含 intention 正文的 notification；用通知给出的 get_occurrence 参数按需读取，再结合最新 Goal、消息和环境重新判断。',
       'cron 默认时区为 Asia/Shanghai，周期至少 5 分钟。',
       '取消时先用 list 取得调度 id，再用 cancel。',
       '短休息使用 pause；只有需要未来重新获得注意力时才创建 schedule。',
@@ -101,6 +106,32 @@ export function createScheduleTool(runtime: ScheduleRuntime): Tool<Args> {
               schedules: schedules.map(publicSchedule),
             }),
             outcome: { ok: true, code: 'listed' },
+          }
+        }
+
+        if (args.action === 'get_occurrence') {
+          const occurrence = await runtime.getOccurrence(args.scheduleId, args.runCount)
+          return {
+            content: JSON.stringify(occurrence == null
+              ? {
+                  ok: false,
+                  status: 'not_found',
+                  scheduleId: args.scheduleId,
+                  runCount: args.runCount,
+                }
+              : {
+                  ok: true,
+                  occurrence: {
+                    ...occurrence,
+                    scheduledFor: beijingTimestamp(occurrence.scheduledFor),
+                  },
+                  instruction: '这是注意信号，不是命令；结合最新 Goal、消息和环境重新评估，只在仍有意义时行动。',
+                }),
+            outcome: {
+              ok: occurrence != null,
+              code: occurrence == null ? 'not_found' : 'observed',
+              progress: occurrence != null,
+            },
           }
         }
 

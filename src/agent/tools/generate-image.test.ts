@@ -55,7 +55,18 @@ describe('generate_image tool', () => {
     assert.equal(parsed.status, 'started')
     assert.equal(typeof parsed.taskId, 'string')
     assert.ok((parsed.description as string).includes('a cat in space'))
-    assert.equal(parsed.next, `等待 [后台任务完成] 后调用 background_task action=get taskId=${parsed.taskId}`)
+    assert.equal(
+      parsed.next,
+      `等待 kind=background_task_completed 的 notification 后调用 background_task action=get taskId=${parsed.taskId}`,
+    )
+    assert.deepEqual(result.outcome, {
+      ok: true,
+      code: 'started',
+      progress: true,
+      continuation: 'wait_event',
+      continuationDetail: '后台任务“生成图片: a cat in space”正在运行，等待完成通知',
+      noveltyKey: `background-task:${parsed.taskId as string}:running`,
+    })
 
     await waitUntil(() => taskRegistry.get(parsed.taskId as string)?.status === 'completed')
 

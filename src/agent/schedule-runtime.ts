@@ -13,6 +13,11 @@ import {
   type ScheduleJob,
   type ScheduleStore,
 } from './schedule-store.js'
+import {
+  createInMemoryScheduleOccurrenceStore,
+  type ScheduleOccurrence,
+  type ScheduleOccurrenceStore,
+} from './schedule-occurrence-store.js'
 
 export interface CreateScheduleInput {
   name: string
@@ -66,6 +71,7 @@ export interface ScheduleRuntime {
   start(): Promise<void>
   create(input: CreateScheduleInput): Promise<CreateScheduleResult>
   list(): Promise<ScheduleJob[]>
+  getOccurrence(scheduleId: string, runCount: number): Promise<ScheduleOccurrence | null>
   cancel(id: string): Promise<CancelScheduleResult>
   stop(): Promise<void>
 }
@@ -78,6 +84,7 @@ export interface ScheduleRuntimeLogEntry {
 
 export interface ScheduleRuntimeDependencies {
   store: ScheduleStore
+  occurrenceStore?: ScheduleOccurrenceStore
   eventQueue: EventQueue<BotEvent>
   now?: () => Date
   setTimer?: (callback: () => void, delayMs: number) => unknown
@@ -105,6 +112,7 @@ export function createScheduleRuntime(
     clearTimeout(handle as ReturnType<typeof setTimeout>)
   })
   const createId = dependencies.createId ?? randomUUID
+  const occurrenceStore = dependencies.occurrenceStore ?? createInMemoryScheduleOccurrenceStore()
   const logger = dependencies.logger
   const retryDelayMs = dependencies.retryDelayMs ?? 5_000
 
@@ -250,6 +258,9 @@ export function createScheduleRuntime(
             currentJob.id === id ? advancement.job! : currentJob,
           )
         : [...jobs.values()].filter((currentJob) => currentJob.id !== id)
+      if (advancement.event) {
+        await recordScheduleOccurrence(occurrenceStore, advancement.event)
+      }
       await dependencies.store.replace(nextJobs)
     } catch (error) {
       log({ event: 'schedule_timer_failed', scheduleId: id, error })
@@ -328,6 +339,9 @@ export function createScheduleRuntime(
           }
           const recovery = recoverLoadedJobs(loaded, now())
           if (recovery.changed) {
+            for (const event of recovery.events) {
+              await recordScheduleOccurrence(occurrenceStore, event)
+            }
             await persistSchedules(
               dependencies.store,
               recovery.jobs,
@@ -485,6 +499,13 @@ export function createScheduleRuntime(
       })
     },
 
+    getOccurrence(scheduleId, runCount) {
+      return enqueueMutation(async () => {
+        requireStarted()
+        return await occurrenceStore.get(scheduleId, runCount)
+      })
+    },
+
     cancel(id) {
       return enqueueMutation(async () => {
         requireStarted()
@@ -577,6 +598,24 @@ async function persistSchedules(
     await store.replace(schedules)
   } catch (error) {
     throw schedulePersistenceError(operation, error)
+  }
+}
+
+async function recordScheduleOccurrence(
+  store: ScheduleOccurrenceStore,
+  event: Extract<BotEvent, { type: 'scheduled_wake' }>,
+): Promise<void> {
+  try {
+    await store.record({
+      scheduleId: event.scheduleId,
+      name: event.name,
+      intention: event.intention,
+      scheduleKind: event.scheduleKind,
+      scheduledFor: event.scheduledFor.toISOString(),
+      runCount: event.runCount,
+    })
+  } catch (error) {
+    throw schedulePersistenceError('Failed to persist schedule occurrence', error)
   }
 }
 

@@ -16,7 +16,7 @@
 
 专用后台工作统一走 bounded task scheduler：`maintenance=1`、`network=3`、`media-description=2`。同一 `resourceKey` 串行，相同 `dedupeKey` 共享任务。这些有明确类型和边界的 Node async worker 不是新的主 Agent；完成结果回到同一主 ledger。ingress 媒体描述使用独立 `jobQueue`，Browser sidecar 是独立进程。项目当前接受进程重启中断在途后台任务：遗留 `running` 明确转成 `interrupted`，不建设通用 `jobKind + payload` 自动恢复层；只有重启丢失昂贵长任务形成可测量痛点，或外部服务原生提供可恢复 task/session ID 时再重新评估。
 
-短期调度由进程内 `ScheduleRuntime` 管理。它把状态原子写入 `schedules.json`，到期只向现有 event queue 注入 `scheduled_wake`，仍由单一 `BotLoopAgent` 串行处理。
+短期调度由进程内 `ScheduleRuntime` 管理。它把 active 状态原子写入 `schedules.json`，把已触发正文写入独立 occurrence store；到期只向现有 event queue 注入内部 `scheduled_wake`，由单一 `BotLoopAgent` 转成不含 intention 的 `notification`，Agent 按需调用 `schedule get_occurrence` 打开。
 
 Goal 也不创建第二个主 Agent。`bot_agent_goal` 只保存控制状态；状态变化通过 revision 事件进入 ledger。owner Goal 可以抢占 self Goal，旧 goalId 的迟到调用会被拒绝。
 
@@ -65,7 +65,7 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - Notebook、topic Memory 或后台任务明确产出新成果后，Runtime 可追加一次 `share_checkpoint`，列出启动时冻结的 active 群短定位。它只要求 Agent 判断一次是否适合分享，不自动发送、不改变 QQ focus/发送授权或普通群消息的免唤醒规则；同一成果键永久去重，同主题两小时内不连续追加。
 - provider-confirmed 外发到有 pending 通知的同 target mailbox 后，Runtime 在 tool result 闭合后原子 append `mailbox_handled` 与 runtime cursor，避免把已经处理的旧行再次视为新请求。
 - `pause action=rest` 是 30–600 秒短休息安全阀。没有真实牵引力时应直接以无工具轮结束活动并进入 runtime 有界等待；只有此刻确实选择短暂休息才调用 `pause`，调用后立即计时，不再同步请求额外 LLM。计时可被注意事件、后台任务完成或停止信号打断。
-- 连续轮次和空闲循环有进程内有界保护；它们不进入 ledger。工具用 `outcome.progress` 报告是否获得新事实或改变状态，用 `continuation=immediate|wait_attention|backoff|stop` 独立表达下一轮调度，用 `noveltyKey` 抑制进程内重复披露；`retryClass=immediate|after_event|backoff|terminal` 只描述失败重试。可立即纠正的失败仍受三轮上限保护。`curiosity_tick` 只保留为人工调试入口。
+- 连续轮次和空闲循环有进程内有界保护；它们不进入 ledger。工具用 `outcome.progress` 报告是否获得新事实或改变状态，用 `continuation=immediate|wait_attention|wait_event|backoff|stop` 独立表达下一轮调度：`wait_event` 表示已有真实后台工作，等待完成事件时不受 pending 请求的一分钟纠错节奏驱动，也会重置连续行动计数；可丢弃的 `continuationDetail` 只用于实时活动说明。`noveltyKey` 抑制进程内重复披露，`retryClass=immediate|after_event|backoff|terminal` 只描述失败重试。可立即纠正的失败仍受三轮上限保护。`curiosity_tick` 只保留为人工调试入口。
 - 循环控制使用稳定结构化载荷，不能依赖自由文本判断成功或状态。
 
 ## 持久边界
@@ -73,7 +73,7 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - `messages` / `media` 是入站事实账本，只用于 missed replay、搜索、审计和按需读取，不是 prompt history。
 - `bot_agent_ledger_entries` 保存 append-only LLM history；`bot_agent_runtime_state` 保存通知披露 cursor、inbox 已读 cursor、continuity、Goal revision、active capabilities、QQ 当前会话 focus、last wake 和 ledger head；`bot_agent_checkpoint` 只缓存已验证 projection。
 - QQ 新消息不会隐式切换 focus。Agent 必须先通过 `qq_conversation open` 显式打开允许的群或好友，`send_message` 才能向当前 focus 发送；focus 不从 transcript、memory 或日志重建。
-- `prompts/groups.md` 是群监听范围、主动发送权限、参与档位和 operator 固定群提示的唯一配置源。启动时严格解析并冻结；`mentions` 只允许结构化 @ reply，`selective` / `active` 允许 Agent 主动读 inbox 后 ambient。普通群消息不生成 `inbox_update`，档位不改变唤醒规则。active 群可用一行稳定 `resident-hint` 进入常驻 source list，作为成果分享候选；完整正文仍只由 `chat_style` 按需读取，会变化的群文化与历史写 group memory。
+- `prompts/groups.md` 是群监听范围、主动发送权限、参与档位和 operator 固定群提示的唯一配置源。启动时严格解析并冻结；`mentions` 只允许结构化 @ reply，其普通消息不生成 notification；`selective` / `active` 的普通消息可聚合为 `delivery=passive` 的 QQ notification，但不唤醒、不打断休息，正文仍必须用 inbox 按需读取。档位不扩大发送授权。active 群可用一行稳定 `resident-hint` 进入常驻 source list，作为成果分享候选；完整风格正文仍只由 `chat_style` 按需读取，会变化的群文化与历史写 group memory。
 - `bot_agent_goal`、Memory、Notebook、Life Journal、Agenda、调度文件和 `logs/*` 都是 side state，不能作为 transcript replay 来源。
 - QQ provider 已确认发送和本地数据库之间没有分布式事务，因此 `mailbox_handled` 是 durable 防重复边界，不承诺外部发送 exactly-once。
 - compaction、append 与 runtime 元数据使用数据库事务；checkpoint 刷新和 `afterCompact` 是 best-effort，不回滚已提交历史。

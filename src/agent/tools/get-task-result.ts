@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { Tool } from '../tool.js'
 import type { ToolResultContentBlock } from '../agent-context.types.js'
 import type { BackgroundTaskRegistry } from '../background-task-registry.js'
+import { createBackgroundTaskWaitOutcome } from '../background-task-control.js'
 import { createToolResultProgressTracker } from '../tool-progress.js'
 
 const argsSchema = z.object({
@@ -27,7 +28,7 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
     description: [
       '获取已完成后台任务的详细结果.',
       '对于图片生成任务, 返回结果中包含图片预览 (压缩图) 和 ephemeralRef (可传给 send_message 发送原图).',
-      '任务必须已完成 (completed/failed), 否则返回错误.',
+      '任务仍在运行时返回 status=running 并等待完成事件, 不是失败.',
     ].join(' '),
     schema: argsSchema,
     async execute(rawArgs) {
@@ -45,10 +46,18 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
         const elapsedMs = Date.now() - task.startedAt.getTime()
         return {
           content: JSON.stringify({
-            ok: false,
-            error: `任务 #${args.taskId} 仍在运行中 (已耗时 ${Math.round(elapsedMs / 1000)}s)`,
+            ok: true,
+            taskId: task.id,
+            toolName: task.toolName,
+            status: 'running',
+            elapsedMs,
+            next: '等待 kind=background_task_completed 的 notification 后再次读取结果。',
           }),
-          outcome: { ok: true, code: 'still_running', progress: false, retryClass: 'after_event' },
+          outcome: createBackgroundTaskWaitOutcome({
+            task,
+            code: 'still_running',
+            progress: false,
+          }),
         }
       }
 

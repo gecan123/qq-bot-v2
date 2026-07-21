@@ -1,6 +1,7 @@
 import type { BotEvent } from './event.js'
 import { formatBeijingIso } from '../utils/beijing-time.js'
 import type { GroupParticipation } from '../config/group-policies.js'
+import { renderNotificationEnvelope } from './notification.js'
 
 export type MailboxCursors = Record<string, number>
 export const MAILBOX_BACKLOG_THRESHOLD = 100
@@ -109,15 +110,12 @@ export function renderMailboxNotification(
         readArgs: { action: 'read', source: 'group', groupId: first.groupId, afterRowId, ...contextArgs },
       }
 
-  const payload = {
-    event: 'inbox_update',
+  const data = {
     mailbox: mailboxKey,
-    priority,
-    source: source.value,
+    qqSource: source.value,
     ...(first.type === 'napcat_message' && options.participation
       ? { participation: options.participation }
       : {}),
-    count: events.length,
     firstRowId: first.messageRowId,
     throughRowId,
     senderCount,
@@ -126,14 +124,37 @@ export function renderMailboxNotification(
   }
 
   if (events.length <= MAILBOX_BACKLOG_THRESHOLD) {
-    return JSON.stringify(payload)
+    return renderNotificationEnvelope({
+      id: `qq:${mailboxKey}:${throughRowId}`,
+      source: { type: 'qq', mailbox: mailboxKey },
+      kind: 'inbox_update',
+      priority,
+      delivery: priority === 'high' ? 'interrupt' : 'passive',
+      groupKey: mailboxKey,
+      count: events.length,
+      occurredAt: timeRange.to,
+      open: { tool: 'inbox', args: source.readArgs },
+      data,
+    })
   }
 
   const firstRecent = events[Math.max(0, events.length - MAILBOX_BACKLOG_RECENT_LIMIT)]!
-  return JSON.stringify({
-    ...payload,
-    mode: 'backlog',
-    latestReadArgs: recentReadArgsForEvent(firstRecent),
+  const latestReadArgs = recentReadArgsForEvent(firstRecent)
+  return renderNotificationEnvelope({
+    id: `qq:${mailboxKey}:${throughRowId}`,
+    source: { type: 'qq', mailbox: mailboxKey },
+    kind: 'inbox_update',
+    priority,
+    delivery: priority === 'high' ? 'interrupt' : 'passive',
+    groupKey: mailboxKey,
+    count: events.length,
+    occurredAt: timeRange.to,
+    open: { tool: 'inbox', args: latestReadArgs },
+    data: {
+      ...data,
+      mode: 'backlog',
+      latestReadArgs,
+    },
   })
 }
 
@@ -141,27 +162,38 @@ export function renderMailboxBacklogNotification(
   event: MailboxBacklogEvent,
   options: Pick<MailboxNotificationOptions, 'participation'> = {},
 ): string {
-  return JSON.stringify({
-    event: 'inbox_update',
-    mode: 'backlog',
-    mailbox: event.mailboxKey,
+  const readArgs = readArgsForSource(event.source, Math.max(0, event.firstRowId - 1))
+  const latestReadArgs = {
+    ...readArgsForSource(event.source, event.recentAfterRowId),
+    limit: MAILBOX_BACKLOG_RECENT_LIMIT,
+  }
+  const occurredAt = formatBeijingIso(event.timeRange.to)
+  return renderNotificationEnvelope({
+    id: `qq:${event.mailboxKey}:${event.throughRowId}`,
+    source: { type: 'qq', mailbox: event.mailboxKey },
+    kind: 'inbox_update',
     priority: event.priority,
-    source: event.source,
-    ...(event.source.type === 'group' && options.participation
-      ? { participation: options.participation }
-      : {}),
+    delivery: event.priority === 'high' ? 'interrupt' : 'passive',
+    groupKey: event.mailboxKey,
     count: event.count,
-    firstRowId: event.firstRowId,
-    throughRowId: event.throughRowId,
-    senderCount: event.senderCount,
-    timeRange: {
-      from: formatBeijingIso(event.timeRange.from),
-      to: formatBeijingIso(event.timeRange.to),
-    },
-    readArgs: readArgsForSource(event.source, Math.max(0, event.firstRowId - 1)),
-    latestReadArgs: {
-      ...readArgsForSource(event.source, event.recentAfterRowId),
-      limit: MAILBOX_BACKLOG_RECENT_LIMIT,
+    occurredAt,
+    open: { tool: 'inbox', args: latestReadArgs },
+    data: {
+      mode: 'backlog',
+      mailbox: event.mailboxKey,
+      qqSource: event.source,
+      ...(event.source.type === 'group' && options.participation
+        ? { participation: options.participation }
+        : {}),
+      firstRowId: event.firstRowId,
+      throughRowId: event.throughRowId,
+      senderCount: event.senderCount,
+      timeRange: {
+        from: formatBeijingIso(event.timeRange.from),
+        to: occurredAt,
+      },
+      readArgs,
+      latestReadArgs,
     },
   })
 }

@@ -1170,6 +1170,92 @@ describe('BotLoopAgent.runOnceForTest', () => {
     })
   })
 
+  test('keeps an unhandled private mailbox actionable across a later no-progress tool round', async () => {
+    const ctx = createAgentContext()
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({
+      type: 'napcat_private_message',
+      messageRowId: 88,
+      peerId: 9001,
+      messageId: 12345,
+      senderId: 9001,
+      senderNickname: 'Alice',
+      mentionedSelf: true,
+      sentAt: new Date('2026-07-21T14:57:35.000Z'),
+      renderedText: '这些东西都可以分享，记住了吗',
+    })
+    let llmCallCount = 0
+    let inboxCallCount = 0
+    let waits = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat() {
+          llmCallCount++
+          return {
+            content: '',
+            toolCalls: llmCallCount === 1
+              ? [{ id: 'inbox-private', name: 'inbox', args: { source: 'private', peerId: 9001 } }]
+              : llmCallCount === 2
+                ? [{ id: 'inbox-empty-group', name: 'inbox', args: { source: 'group', groupId: 99 } }]
+                : [{ id: 'send-private', name: 'send_message', args: { text: '记住了' } }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools({
+        inbox: async () => {
+          inboxCallCount++
+          return inboxCallCount === 1
+            ? {
+                content: '{"ok":true,"messages":[{"rowId":88}]}',
+                outcome: { ok: true, code: 'observed', progress: true },
+                effects: [{ type: 'inbox_read', mailbox: 'qq_private:9001', throughRowId: 88 }],
+              }
+            : {
+                content: '{"ok":true,"messages":[]}',
+                outcome: { ok: true, code: 'empty', progress: false },
+              }
+        },
+        send_message: async () => {
+          await agent.stop()
+          return {
+            content: '{"ok":true,"status":"sent"}',
+            outcome: { ok: true, code: 'sent', progress: true },
+            effects: [{ type: 'message_sent', target: { type: 'private', userId: 9001 } }],
+          }
+        },
+      }),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        async waitForAttentionOrTimeout() {
+          waits++
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 3)
+    assert.equal(waits, 0)
+    assert.deepEqual(ctx.getSnapshot().messages.at(-1), {
+      role: 'user',
+      content: '{"event":"mailbox_handled","mailbox":"qq_private:9001","throughRowId":88}',
+    })
+  })
+
   test('does not append a handled marker when send_message has no confirmed effect', async () => {
     const ctx = createAgentContext()
     ctx.appendUserMessage(
@@ -1345,7 +1431,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(messages[0]?.role, 'user')
     if (messages[0]?.role === 'user') {
       const notification = JSON.parse(messages[0].content)
-      assert.equal(notification.mailbox, 'qq_group:999')
+      assert.equal(notification.data.mailbox, 'qq_group:999')
       assert.equal(notification.priority, 'high')
       assert.doesNotMatch(messages[0].content, /hello/)
     }
@@ -1401,7 +1487,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(notification?.role, 'user')
     if (notification?.role === 'user') {
       const payload = JSON.parse(notification.content)
-      assert.equal(payload.readArgs.contextBefore, 1)
+      assert.equal(payload.open.args.contextBefore, 1)
     }
     assert.equal(savedContinuity.at(-1)?.roundSeq, 1)
     assert.equal(savedContinuity.at(-1)?.mailboxes['qq_private:9001']?.lastMessageAtMs,
@@ -1888,7 +1974,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
     assert.equal(userMessages.length, 1)
     const notification = JSON.parse(userMessages[0]!.content)
-    assert.equal(notification.source.groupName, '环境群')
+    assert.equal(notification.data.qqSource.groupName, '环境群')
     assert.equal(notification.count, 2)
     assert.doesNotMatch(userMessages[0]!.content, /AMBIENT_BODY/)
     assert.deepEqual(savedCursors, [
@@ -1941,7 +2027,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
     assert.equal(userMessages.length, 2)
-    assert.deepEqual(userMessages.map((message) => JSON.parse(message.content).mailbox), [
+    assert.deepEqual(userMessages.map((message) => JSON.parse(message.content).data.mailbox), [
       'qq_private:9001',
       'qq_private:9002',
     ])
@@ -1995,10 +2081,10 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
     assert.equal(userMessages.length, 1)
     const notification = JSON.parse(userMessages[0]!.content)
-    assert.equal(notification.mode, 'backlog')
-    assert.equal(notification.mailbox, 'qq_group:999')
-    assert.equal(notification.throughRowId, 1_500)
-    assert.deepEqual(notification.latestReadArgs, {
+    assert.equal(notification.data.mode, 'backlog')
+    assert.equal(notification.data.mailbox, 'qq_group:999')
+    assert.equal(notification.data.throughRowId, 1_500)
+    assert.deepEqual(notification.data.latestReadArgs, {
       action: 'read',
       source: 'group',
       groupId: 999,
@@ -2594,7 +2680,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     await agent.runOnceForTest()
 
     const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
-    assert.equal(userMessages.some((message) => message.content.includes('"event":"scheduled_wake"')), true)
+    assert.equal(userMessages.some((message) => message.content.includes('"kind":"schedule_due"')), true)
     assert.equal(
       userMessages.some((message) => message.content.includes('"event":"rest_interrupted_attention"')),
       true,
@@ -2649,7 +2735,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
     assert.equal(JSON.parse(userMessages[0]!.content).priority, 'high')
-    assert.equal(JSON.parse(userMessages[1]!.content).event, 'scheduled_wake')
+    assert.equal(JSON.parse(userMessages[1]!.content).kind, 'schedule_due')
     assert.equal(JSON.parse(userMessages[2]!.content).event, 'goal_continuation')
   })
 
@@ -2730,17 +2816,19 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const notifications = ctx.getSnapshot().messages
       .filter((message) => message.role === 'user')
       .map((message) => JSON.parse(message.content) as {
-        mode?: string
         priority?: string
-        throughRowId?: number
-        readArgs?: { contextBefore?: number }
+        data?: {
+          mode?: string
+          throughRowId?: number
+          readArgs?: { contextBefore?: number }
+        }
       })
     assert.equal(notifications[0]?.priority, 'high')
-    assert.equal(notifications[0]?.throughRowId, 101)
-    assert.equal(notifications[1]?.mode, 'backlog')
+    assert.equal(notifications[0]?.data?.throughRowId, 101)
+    assert.equal(notifications[1]?.data?.mode, 'backlog')
     assert.equal(continuityAfterReordering?.mailboxes['qq_group:999']?.lastMessageAtMs, highAt.getTime())
-    assert.equal(notifications[2]?.throughRowId, 102)
-    assert.equal(notifications[2]?.readArgs?.contextBefore, undefined)
+    assert.equal(notifications[2]?.data?.throughRowId, 102)
+    assert.equal(notifications[2]?.data?.readArgs?.contextBefore, undefined)
   })
 
   test('sorts high backlog and mentioned group batches before a scheduled wake', async () => {
@@ -2796,11 +2884,11 @@ describe('BotLoopAgent.runOnceForTest', () => {
     await agent.runOnceForTest()
 
     const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
-    assert.equal(JSON.parse(userMessages[0]!.content).mode, 'backlog')
+    assert.equal(JSON.parse(userMessages[0]!.content).data.mode, 'backlog')
     assert.equal(JSON.parse(userMessages[0]!.content).priority, 'high')
     assert.equal(JSON.parse(userMessages[1]!.content).priority, 'high')
-    assert.equal(JSON.parse(userMessages[1]!.content).throughRowId, 101)
-    assert.equal(JSON.parse(userMessages[2]!.content).event, 'scheduled_wake')
+    assert.equal(JSON.parse(userMessages[1]!.content).data.throughRowId, 101)
+    assert.equal(JSON.parse(userMessages[2]!.content).kind, 'schedule_due')
   })
 
   test('discloses scheduled wake before the active goal continuation', async () => {
@@ -2839,7 +2927,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     await agent.runOnceForTest()
 
     const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
-    assert.equal(JSON.parse(userMessages[0]!.content).event, 'scheduled_wake')
+    assert.equal(JSON.parse(userMessages[0]!.content).kind, 'schedule_due')
     assert.equal(JSON.parse(userMessages[1]!.content).event, 'goal_continuation')
   })
 
@@ -3414,6 +3502,128 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     assert.equal(llmCallCount, 1)
     assert.equal(toolCallCount, 1)
+  })
+
+  test('background event wait does not poll an actionable private request and publishes its reason', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage(
+      '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
+    )
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    const phases: Array<Parameters<AgentActivityReporter['setPhase']>[0]> = []
+    let llmCallCount = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat() {
+          llmCallCount++
+          return {
+            content: '',
+            toolCalls: [{ id: 'start-research', name: 'trading_agent', args: { action: 'start' } }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools({
+        trading_agent: async () => ({
+          content: '{"ok":true,"status":"started","taskId":"bg-1"}',
+          outcome: {
+            ok: true,
+            code: 'started',
+            progress: true,
+            continuation: 'wait_event',
+            continuationDetail: '后台任务“SOL 研究”正在运行，等待完成通知',
+            noveltyKey: 'background-task:bg-1:running',
+          },
+        }),
+      }),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      activityReporter: {
+        setTrigger() {},
+        setPhase(phase) { phases.push(phase) },
+        toolStarted() {},
+        toolFinished() {},
+        async flush() {},
+      },
+      autonomy: {
+        maxConsecutiveRounds: 1,
+        cooldownMs: 123,
+        async waitForAttentionOrTimeout(_queue, timeoutMs) {
+          assert.equal(timeoutMs, 15 * 60_000)
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 1)
+    assert.equal([...phases].reverse().find(phase => phase.phase === 'waiting')?.detail,
+      '后台任务“SOL 研究”正在运行，等待完成通知')
+  })
+
+  test('pending private attention gets one immediate no-progress correction before a bounded wait', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage(
+      '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
+    )
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    let llmCallCount = 0
+    let waits = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat() {
+          llmCallCount++
+          return {
+            content: '',
+            toolCalls: [{ id: `empty-${llmCallCount}`, name: 'inbox', args: { source: 'group', groupId: 99 } }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools({
+        inbox: async () => ({
+          content: '{"ok":true,"messages":[]}',
+          outcome: { ok: true, code: 'empty', progress: false },
+        }),
+      }),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        async waitForAttentionOrTimeout(_queue, timeoutMs) {
+          waits++
+          assert.equal(timeoutMs, 60_000)
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 2)
+    assert.equal(waits, 1)
   })
 
   test('successful meta lookup can request one immediate decision round without claiming progress', async () => {

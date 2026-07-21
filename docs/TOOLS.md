@@ -5,9 +5,9 @@
 ## 默认可见能力
 
 - 对话控制：`pause`。`action=rest` 是确实想暂时停一下时的短休息安全阀，默认 60 秒、范围 30–600 秒。没有未处理义务或真实牵引力时直接以无工具轮结束活动，runtime 会自然进入有界等待；不要把 `pause` 当收尾动作。调用 `pause` 后立即计时，不再同步请求 Life Journal 或额外 LLM。结构化 `intention` 只写一个 `primaryDirection` 和一个不同的 `alternativeDirection`，都要包含对象与第一步；当前精力允许时直接执行主方向，`reason` 要解释为什么此刻休息更合适。等消息、机械检查行情、泛泛浏览站点或整理 memory/journal 不是行动方向；未来某时再看用 `schedule`。休息不算 `progress`；结束后结果回显 `resumePlan`，下一轮重新评估方向，若被高优事件打断，处理完后再回看同一 plan。
-- 短期调度：`schedule action=create|list|cancel`，公开 ID 字段统一为 `id`。`create` 支持一次性 `at`、固定间隔 `every` 和墙上时间 `cron`；一次触发必须位于 30 秒到 3 天内，周期相邻触发至少 5 分钟，最多 20 个 active job，每个 job 创建 3 天后过期。同名同定义创建幂等返回 `existing`，同名不同定义返回冲突及已有 `id`，需先 cancel；`list` 返回有界公开摘要。状态保存在独立 schedule store，重启后恢复 timer；到期只注入 `scheduled_wake` 注意事件，不执行预存命令。它在轮次边界低于 `priority=high` QQ 通知、高于 active Goal 和普通环境事件；普通短休息仍用 `pause`。
+- 短期调度：`schedule action=create|list|get_occurrence|cancel`，active job 的公开 ID 字段统一为 `id`。`create` 支持一次性 `at`、固定间隔 `every` 和墙上时间 `cron`；一次触发必须位于 30 秒到 3 天内，周期相邻触发至少 5 分钟，最多 20 个 active job，每个 job 创建 3 天后过期。同名同定义创建幂等返回 `existing`，同名不同定义返回冲突及已有 `id`，需先 cancel；`list` 返回有界公开摘要。active 状态保存在 schedule store，触发正文保存在 occurrence store；到期 notification 只给名称、时间和 `get_occurrence` 打开参数，不执行预存命令。它是 normal+interrupt，轮次边界低于 high notification、高于 active Goal 和 passive notification；普通短休息仍用 `pause`。
 - 当前计划：`todo`（当前进程内的短期多步计划，最多一个 `in_progress`）。`items=[]` 只清空已有计划；列表已为空时返回 `changed=false`，不要求再次调用。
-- 持久目标：`goal action=get|create_self|complete|report_blocker|abandon_self`。没有未完成 Goal 时，Agent 可以为自己的兴趣直接创建 `origin=self` 的持久目标，必须给出真实 `motivation` 和可核验 `completionCriteria`；默认预算 1,000,000 tokens，单个上限 10,000,000，60 秒冷却和滚动 24 小时最多 64 个只是失控保险丝。Agent 可以放弃 self Goal，但不能放弃 owner Goal。配置的 owner 仍可用私聊 `/goal` 创建、暂停、恢复或取消，owner Goal 会直接抢占 self Goal。轮次边界优先级是 `priority=high` QQ 通知 > `scheduled_wake` > active Goal > 普通环境事件；前台仍是单一串行 BotLoop，等待后台或外部输入时可以做其他事情。`complete` 必须提交逐项真实证据；同一 blocker 每个连续 Goal round 用相同 `blockerKey` 报告，第三轮才转 `blocked`。Goal token budget 按未缓存 input 加 output 计量；只有明确的 provider 硬额度/账单上限才转 `usage_limited`，普通临时 429 仍走已有有界重试和 round backoff。
+- 持久目标：`goal action=get|create_self|complete|report_blocker|abandon_self`。没有未完成 Goal 时，Agent 可以为自己的兴趣直接创建 `origin=self` 的持久目标，必须给出真实 `motivation` 和可核验 `completionCriteria`；默认预算 1,000,000 tokens，单个上限 10,000,000，60 秒冷却和滚动 24 小时最多 64 个只是失控保险丝。Agent 可以放弃 self Goal，但不能放弃 owner Goal。配置的 owner 仍可用私聊 `/goal` 创建、暂停、恢复或取消，owner Goal 会直接抢占 self Goal。轮次边界优先级是 high+interrupt notification > normal+interrupt notification > active Goal > passive notification；前台仍是单一串行 BotLoop，等待后台或外部输入时可以做其他事情。`complete` 必须提交逐项真实证据；同一 blocker 每个连续 Goal round 用相同 `blockerKey` 报告，第三轮才转 `blocked`。Goal token budget 按未缓存 input 加 output 计量；只有明确的 provider 硬额度/账单上限才转 `usage_limited`，普通临时 429 仍走已有有界重试和 round backoff。
 - QQ 发送位于 deferred `qq` capability：先 `help action=activate capability=qq`，再 `invoke qq_conversation open` 显式打开允许的群或好友，最后 `invoke send_message` 发送文本、图片、图文或受控音乐卡片。
 - QQ 目录：`qq_directory`（分页列出/搜索 NapCat 当前全部好友；群目录只披露当前已加入且配置在 `prompts/groups.md` 的群；`profile` 按 QQ 号合并当前目录名和消息事实账本中观察到的历史群名片/昵称）。
 - 稳定按需壳：`help`（`list` / `describe` / `activate` / `deactivate` capability 或内部工具 schema）和 `invoke`（调用已激活 capability 内部工具）。激活不会改变下一轮顶层 tools 列表。
@@ -15,7 +15,7 @@
 - 表情包：`collect_sticker`（收藏、移除、列表、搜索和随机候选）。
 - 外部内容：`workspace_bash` 内置的 `fetch` 子命令（url/image/avatar/reddit list/reddit post）、配置后可用的 `web_search`、`workspace_bash` 内置的 `openbb` 子命令；配置官方 Moomoo Skill 后可查询行情、账户并操作普通证券模拟仓；配置 `CRYPTO_PAPER_ENABLED=true` 后，typed `crypto_paper` 使用 Moomoo Crypto 行情维护本地模拟资金、持仓和成交。
 - 风格和文本判断：`chat_style` 按需读取聊天约束/风格/群定制；`ai_tone` 用本地 AIRadar 模型判断中文文本更像 AI 腔调还是人味。
-- 运行时工作：`background_task`（通用异步任务 list/get；get 的文本结果有通用上限）、只读 `workspace_bash`；普通私有工作文件通过 deferred `workspace_management` 内的 `workspace_file` 修改。任务 registry 持久化到 `BOT_BACKGROUND_TASK_STATE_PATH`；所有遗留 running 在重启时明确变成 `interrupted`，包括旧版 `scheduled_wake.v1` recovery descriptor，不会永远伪装成运行中。当前定时唤醒不走 task registry，而由上述独立 schedule store 恢复。
+- 运行时工作：`background_task`（通用异步任务 list/get；get 的文本结果有通用上限）、只读 `workspace_bash`；普通私有工作文件通过 deferred `workspace_management` 内的 `workspace_file` 修改。任务 registry 持久化到 `BOT_BACKGROUND_TASK_STATE_PATH`；所有遗留 running 在重启时明确变成 `interrupted`。完成/失败 notification 不复制 description、summary 或结果正文，只携带状态和 `background_task get` 打开动作。当前定时唤醒不走 task registry，而由上述独立 schedule/occurrence store 恢复。
 - 持久目标：`goal` 支持 `get/create_self/replan/complete/report_blocker/abandon_self`。self Goal 创建时必须同时提交当前具体承诺 `currentCommitment`；owner Goal 初始没有承诺时由 Agent 先 `replan`。完成步骤或路线失效后更新承诺，完整目标有证据完成后注意力重新回到普通自主选择。
 - 审批控制：`approval action=list|status|approve|cancel`。默认 `BOT_APPROVAL_MODE=thin`，只拦网站 `publish` 和未声明只读的 MCP 调用；本地 memory/notebook/Life Journal/workspace 删除、网站本地删除和 skill 安装不等待审批。被拦调用会返回 `approvalId`；owner 私聊发送精确文本 `批准 <approvalId>` 后，用消息 `rowId` 批准并以相同参数重试。审批默认 10 分钟过期且只能消费一次。需要旧的全量本地审批时设 `strict`，快速实验可设 `off`。
 
@@ -42,7 +42,8 @@
 
 - 工具对 LLM 返回的事实只放在 `content`。运行时可以附带 `outcome` 和 `effects`，但二者不进入 `AgentContext`；例如 `pause` 结束或被打断时返回 `effects: [{ type: 'pause', status }]`，由 EffectInterpreter 驱动循环语义，不反解析结果文本。
 - 工具可以用 `outcome.progress=false` 声明一次成功调用没有获得新信息、改变状态或完成外部动作。Runtime Host 会把这种调用视为无进展并进入可被新注意事件打断的等待，不因存在 tool call 就立即续跑；事实性的 `content` 仍正常进入 ledger。
-- `outcome.retryClass` 只给 Runtime Host 提供调度语义：`immediate` 允许有界纠错，`after_event` 等待外部事件，`backoff` 进入退避，`terminal` 不应原样重试。重复的 `inbox`、目录、Memory 和后台任务读取会返回 `progress=false`；后台任务仍在运行时返回 `after_event`。
+- `outcome.continuation` 与进展分离：`immediate` 请求一次立即决策，`wait_attention` 等普通注意事件，`wait_event` 表示已启动或观察到真实后台工作并等待完成事件，`backoff` 进入退避，`stop` 停止当前方向。`continuationDetail` 最多透传 1000 字符到可丢弃活动观察面，不进入 ledger。后台任务 start、运行中的 `background_task get/list` 都返回 `wait_event`，因此不会提前轮询，完成事件仍会立即唤醒主循环；重启后直接查询不再有本机 completion event 保证的持久远端 session 时返回 `backoff`，避免立即空转并保留定期复查能力。
+- `outcome.retryClass` 只描述失败后的重试条件：`immediate` 允许有界纠错，`after_event` 需要外部状态改变，`backoff` 进入退避，`terminal` 不应原样重试。重复的 `inbox`、目录和 Memory 读取会返回 `progress=false`；正常的后台任务运行状态不是失败，不使用 `retryClass`。
 - 需要后续程序判断的结果使用稳定 JSON，并包含明确的成功状态和错误 code。面向人的摘要或错误说明放在具名字段中，不与 JSON 前后拼接自然语言。
 - schema 校验失败返回具体 `issues`、当前工具名和立即重试同一工具的提示；未知顶层工具返回当前 `availableTools` 和恢复提示，已移除的 `send_image` / `workspace_command` 分别定向引导到 `send_message.imageRef` / `workspace_bash`，不做静默兼容。
 - `capability_inactive` / `invalid_arguments` 这类可恢复失败在命中连续轮次上限时，Runtime Host 最多保留 3 个立即纠错轮；纯 `help` 步骤可继续该有界链路，成功重试或额度用完后仍进入原 cooldown。该进程内状态不进入 ledger 或 runtime singleton。
@@ -75,7 +76,7 @@
 - `send_message.music` 只接受 qq/163/kugou/kuwo/migu 的歌曲 ID，或字段受限且 URL 必须为 HTTPS 的 custom 音乐卡片；不接受任意 JSON 卡片。
 - assistant text 是内部历史/推理，不是公开发送通道。
 - `send_message` 成功不会隐式结束 Agent 当前活动；下一轮可以继续行动、无工具结束活动，或在确实想短暂休息时调用 `pause`。
-- `prompts/groups.md` 是群策略唯一来源。所有普通群消息都只进入被动 inbox，不会唤醒或打断 Agent；私聊和 QQ 结构化 at 明确提到 bot 的群消息才进入注意事件队列。`mentions` 只允许结构化 @ reply；`selective` / `active` 允许 Agent 主动读取 inbox 后 ambient。引用普通群消息不能绕过 `mentions`；私聊目标必须是 NapCat 当前好友。未授权会明确拒绝，不会模拟成功。
+- `prompts/groups.md` 是群策略唯一来源。普通群消息永远不会唤醒或打断 Agent：`mentions` 群只进入被动 inbox，`selective` / `active` 群可以额外形成 passive notification，在下一次自然轮次披露来源、数量和 inbox 打开动作。私聊和 QQ 结构化 at 明确提到 bot 的群消息才是 interrupt attention。`mentions` 只允许结构化 @ reply；`selective` / `active` 允许 Agent 主动读取 inbox 后 ambient。引用普通群消息不能绕过 `mentions`；私聊目标必须是 NapCat 当前好友。未授权会明确拒绝，不会模拟成功。
 - 私聊的主动发言冷却只限制没有同 target pending mailbox 的真正 ambient send。对新入站私聊的回复不必为了绕过冷却而添加 `reply_to`；`reply_to` 只用于 QQ 引用展示。
 - `qq_directory` 是只读目录。`list_friends` / `search_friends` 覆盖 NapCat 当前全部好友，因此这些结果都可作为 private `send_message` target；`list_groups` 只返回 NapCat 当前群列表与 `prompts/groups.md` 群 section 的交集，不扩大群监听或发送授权。`profile` 以 QQ 号为主键，把当前好友 remark/nickname 与 `messages` 中同一 sender 的群名片、sender nickname、出现群和时间合并为带来源的 identity view；它不把昵称当权限或稳定事实。结果有条数上限和 offset 分页，不提供加删好友、加退群或群管理动作。
 - 群 `send_message` 最终失败后才按需查询机器人自身的当前禁言状态；确认命中时 tool result 返回 `reason=group_muted` 和可用的 `mutedUntil`，否则返回 `reason=send_failed`。该事实不缓存，也不会阻止后续真实发送。

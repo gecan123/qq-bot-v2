@@ -275,7 +275,7 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
             status: outcome.status,
             truncated: args.url.length > 500,
           }),
-          outcome: { ok: false, code: 'http_error' },
+          outcome: { ok: false, code: 'http_error', progress: false },
         }
       }
 

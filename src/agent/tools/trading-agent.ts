@@ -2,7 +2,8 @@ import { z } from 'zod'
 import { config, type VibeTradingConfig } from '../../config/index.js'
 import { createLogger } from '../../logger.js'
 import type { BackgroundTaskRegistry, JsonValue } from '../background-task-registry.js'
-import type { Tool, ToolContext } from '../tool.js'
+import { createBackgroundTaskWaitOutcome } from '../background-task-control.js'
+import type { Tool, ToolContext, ToolExecutionOutcome } from '../tool.js'
 
 const log = createLogger('TOOL_TRADING_AGENT')
 const API_RESPONSE_MAX_CHARS = 1_000_000
@@ -112,7 +113,9 @@ export function createTradingAgentTool(
         const view = await loadAttemptView(client, args.sessionId, args.attemptId, deps.runtimeConfig.resultMaxChars)
         return {
           content: JSON.stringify({ ok: true, action: args.action, ...view }),
-          outcome: { ok: true },
+          outcome: view.status === 'running'
+            ? createPersistedAttemptWaitOutcome(view)
+            : { ok: true },
         }
       }
 
@@ -161,9 +164,25 @@ export function createTradingAgentTool(
           attemptId,
           next: `等待完成通知后调用 background_task action=get taskId=${task.id}; 重启后调用 trading_agent action=result sessionId=${sessionId} attemptId=${attemptId}`,
         }),
-        outcome: { ok: true },
+        outcome: createBackgroundTaskWaitOutcome({
+          task,
+          code: 'started',
+          progress: true,
+        }),
       }
     },
+  }
+}
+
+function createPersistedAttemptWaitOutcome(view: AttemptView): ToolExecutionOutcome {
+  const attemptId = view.attemptId ?? 'latest'
+  return {
+    ok: true,
+    code: 'still_running',
+    progress: false,
+    continuation: 'backoff',
+    continuationDetail: `Vibe-Trading session ${view.sessionId} 仍在运行，稍后复查结果`,
+    noveltyKey: `trading-agent:${view.sessionId}:${attemptId}:running`,
   }
 }
 

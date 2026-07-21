@@ -8,6 +8,7 @@ import { compressForContext } from '../../media/compress-for-context.js'
 import { generateImage, editImage } from '../../llm/image-gen.js'
 import type { ImageGenerationOptions } from '../../llm/image-gen.js'
 import type { BackgroundTaskRegistry, JsonValue } from '../background-task-registry.js'
+import { createBackgroundTaskWaitOutcome } from '../background-task-control.js'
 import { createLogger } from '../../logger.js'
 
 const log = createLogger('TOOL_GENERATE_IMAGE')
@@ -74,7 +75,7 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<RawArgs> 
       '这是「创作」工具 — 想画新东西、改图、加文字时用. 不要用来「收藏」已有的图 (收藏走 collect_sticker).',
       '只传 prompt → 从零生成; 单图编辑传 image, 多图编辑/参考传 images; image 和 images 不能同时提供.',
       '编辑图片时注意区分意图: 用户想「微调」(改文字/局部修改/保持风格) 还是「大改」(换风格/重构). 如果对方说得模糊 (比如只说「帮我改一下这图」), 先 send_message 问一句是想保持原样微调还是大改, 再动手.',
-      '本工具只负责创建图片生成/编辑后台任务, 立即返回 taskId; 不直接返回最终图片. 完成后你会收到 [后台任务完成] 消息.',
+      '本工具只负责创建图片生成/编辑后台任务, 立即返回 taskId; 不直接返回最终图片. 完成后你会收到 kind=background_task_completed 的 notification.',
       '后续统一用 background_task action=list/get 查看状态或取结果 (含预览图 + ephemeralRef, 可传给 send_message 发送).',
       'prompt 用英文效果最好.',
     ].join(' '),
@@ -235,7 +236,12 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<RawArgs> 
           status: 'started',
           taskId: task.id,
           description,
-          next: `等待 [后台任务完成] 后调用 background_task action=get taskId=${task.id}`,
+          next: `等待 kind=background_task_completed 的 notification 后调用 background_task action=get taskId=${task.id}`,
+        }),
+        outcome: createBackgroundTaskWaitOutcome({
+          task,
+          code: 'started',
+          progress: true,
         }),
       }
     },

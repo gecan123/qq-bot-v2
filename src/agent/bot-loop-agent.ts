@@ -47,6 +47,7 @@ import {
 } from './mailbox-continuity.js'
 import {
   findPendingMailboxThroughRowId,
+  hasPendingPrivateMailboxAttention,
   renderMailboxHandledEvent,
 } from './mailbox-handled.js'
 import { projectAgentLedger } from './agent-ledger-projection.js'
@@ -69,6 +70,10 @@ import {
   selectShareCheckpointCandidate,
   type ActiveGroupShareTarget,
 } from './share-checkpoint.js'
+import {
+  isAttentionEvent,
+  notificationRoutingForEvent,
+} from './notification.js'
 
 const log = createLogger('BOT_LOOP')
 
@@ -118,7 +123,7 @@ export interface BotLoopAgentDeps {
   }
   /** 运行时自主循环保护；不进入 ledger 或 runtime singleton。 */
   autonomy?: BotLoopAutonomyOptions
-  /** 启动期冻结的群参与节奏；只作为 inbox_update 的软提示，不改变发送授权。 */
+  /** 启动期冻结的群参与节奏；只作为 QQ notification 的软提示，不改变发送授权。 */
   groupParticipations?: ReadonlyMap<number, GroupParticipation>
   /** active 群的稳定短定位；只用于成果后的单次分享判断，不改变唤醒或发送授权。 */
   activeGroupShareTargets?: readonly ActiveGroupShareTarget[]
@@ -205,7 +210,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let ledgerHeadEntryId = deps.initialLedgerHeadEntryId ?? null
   let roundIndex = 0
   let consecutiveRounds = 0
-  let noToolActionRetryPending = false
+  let actionCorrectionRetryPending = false
   let recoverableToolCorrectionRounds = 0
   let idleBackoffLevel = 0
   const recentToolNoveltyKeys = new Map<string, number>()
@@ -486,17 +491,20 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     }
 
     const plan = planMailboxDisclosures(events, mailboxCursors)
-    const highPriorityDisclosures: MailboxDisclosure[] = []
-    const scheduledWakeDisclosures: MailboxDisclosure[] = []
+    const highInterruptingDisclosures: MailboxDisclosure[] = []
+    const normalInterruptingDisclosures: MailboxDisclosure[] = []
     const ordinaryDisclosures: MailboxDisclosure[] = []
     for (const disclosure of plan.disclosures) {
       if (isHighPriorityMailboxDisclosure(disclosure)) {
-        highPriorityDisclosures.push(disclosure)
-      } else if (
-        disclosure.kind === 'direct' &&
-        disclosure.event.type === 'scheduled_wake'
-      ) {
-        scheduledWakeDisclosures.push(disclosure)
+        highInterruptingDisclosures.push(disclosure)
+        continue
+      }
+      const routing = disclosure.kind === 'direct'
+        ? notificationRoutingForEvent(disclosure.event)
+        : null
+      if (routing?.delivery === 'interrupt') {
+        if (routing.priority === 'high') highInterruptingDisclosures.push(disclosure)
+        else normalInterruptingDisclosures.push(disclosure)
       } else {
         ordinaryDisclosures.push(disclosure)
       }
@@ -504,7 +512,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     return {
       consumed: events.length,
       hadAttention: events.some(isAttentionEvent),
-      beforeGoal: [...highPriorityDisclosures, ...scheduledWakeDisclosures],
+      beforeGoal: [...highInterruptingDisclosures, ...normalInterruptingDisclosures],
       afterGoal: ordinaryDisclosures,
       cursors: plan.cursors,
       events,
@@ -607,6 +615,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     evidenceMessageRowIds: number[]
     toolOutcomes: ReactToolOutcome[]
     toolContinuation?: ToolContinuation
+    toolContinuationDetail?: string
   }> {
     roundIndex++
     let recoveredContextOverflow = false
@@ -737,15 +746,22 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       ))],
       toolOutcomes: result.toolOutcomes,
       ...(toolControl.continuation ? { toolContinuation: toolControl.continuation } : {}),
+      ...(toolControl.continuationDetail
+        ? { toolContinuationDetail: toolControl.continuationDetail }
+        : {}),
     }
   }
 
   function resolveToolControl(outcomes: readonly ReactToolOutcome[]): {
     madeProgress: boolean
     continuation?: ToolContinuation
+    continuationDetail?: string
   } {
     let madeProgress = false
-    const continuations: ToolContinuation[] = []
+    const continuations: Array<{
+      continuation: ToolContinuation
+      detail?: string
+    }> = []
     for (const outcome of outcomes) {
       const duplicateNovelty = outcome.noveltyKey != null && recentToolNoveltyKeys.has(outcome.noveltyKey)
       if (outcome.noveltyKey != null) rememberToolNovelty(outcome.noveltyKey)
@@ -758,24 +774,25 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         madeProgress = true
       }
       if (outcome.continuation) {
-        continuations.push(
-          duplicateNovelty && outcome.continuation === 'immediate'
+        continuations.push({
+          continuation: duplicateNovelty && outcome.continuation === 'immediate'
             ? 'wait_attention'
             : outcome.continuation,
-        )
+          ...(outcome.continuationDetail
+            ? { detail: outcome.continuationDetail.slice(0, 1_000) }
+            : {}),
+        })
       }
     }
+    const selected = continuations.find(item => item.continuation === 'stop')
+      ?? continuations.find(item => item.continuation === 'immediate')
+      ?? continuations.find(item => item.continuation === 'backoff')
+      ?? continuations.find(item => item.continuation === 'wait_event')
+      ?? continuations.find(item => item.continuation === 'wait_attention')
     return {
       madeProgress,
-      ...(continuations.includes('stop')
-        ? { continuation: 'stop' as const }
-        : continuations.includes('immediate')
-          ? { continuation: 'immediate' as const }
-          : continuations.includes('backoff')
-            ? { continuation: 'backoff' as const }
-            : continuations.includes('wait_attention')
-              ? { continuation: 'wait_attention' as const }
-              : {}),
+      ...(selected ? { continuation: selected.continuation } : {}),
+      ...(selected?.detail ? { continuationDetail: selected.detail } : {}),
     }
   }
 
@@ -848,6 +865,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     madeToolProgress?: boolean
     shareCheckpointAppended?: boolean
     toolContinuation?: ToolContinuation
+    toolContinuationDetail?: string
   }> {
     const beforeStepCount = deps.context.getSnapshot().messages.length
     const goalAtRoundStart = await deps.goalStore?.get() ?? null
@@ -981,6 +999,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       evidenceMessageRowIds,
       toolOutcomes,
       toolContinuation,
+      toolContinuationDetail,
     } = roundResult
     const handledMailboxMarkers = collectHandledMailboxMarkers(sentTargets)
     await commitChanges({ messages: handledMailboxMarkers })
@@ -1066,7 +1085,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       madeToolProgress,
       shareCheckpointAppended,
       ...(toolContinuation ? { toolContinuation } : {}),
-      actionRequired: goalAtRoundStart?.status === 'active' || (drained.hadAttention && disclosed > 0),
+      ...(toolContinuationDetail ? { toolContinuationDetail } : {}),
+      actionRequired: goalAtRoundStart?.status === 'active'
+        || (drained.hadAttention && disclosed > 0)
+        || hasPendingPrivateMailboxAttention(deps.context.getSnapshot().messages),
     }
   }
 
@@ -1081,6 +1103,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       madeToolProgress = false,
       shareCheckpointAppended = false,
       toolContinuation,
+      toolContinuationDetail,
     } = await step()
     if (!ranRound && !stopRequested) {
       await waitForExternalEvent()
@@ -1090,7 +1113,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
 
     if (didPause) {
       consecutiveRounds = 0
-      noToolActionRetryPending = false
+      actionCorrectionRetryPending = false
       recoverableToolCorrectionRounds = 0
       idleBackoffLevel = 0
       return
@@ -1105,7 +1128,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         && recoverableToolCorrectionRounds < MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS
       ) {
         recoverableToolCorrectionRounds++
-        noToolActionRetryPending = false
+        actionCorrectionRetryPending = false
         log.info({
           consecutiveRounds,
           correctionRound: recoverableToolCorrectionRounds,
@@ -1115,17 +1138,20 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         }, 'recoverable_tool_error_retry_immediate')
         return
       }
+      if (toolContinuation === 'wait_event') {
+        await waitForToolExternalEvent(toolContinuationDetail, actionRequired)
+        return
+      }
       log.info({ consecutiveRounds, cooldownMs: autonomy.cooldownMs }, 'autonomy_round_cooldown_enter')
       const wake = await waitForAttention('连续行动达到保护上限，等待注意事件或冷却到期', autonomy.cooldownMs)
       if (wake === 'attention') idleBackoffLevel = 0
       consecutiveRounds = 0
-      noToolActionRetryPending = false
+      actionCorrectionRetryPending = false
       recoverableToolCorrectionRounds = 0
       return
     }
 
     if (toolCallCount > 0) {
-      noToolActionRetryPending = false
       const continuingCorrection = recoverableToolFailure
         || (recoverableToolCorrectionRounds > 0 && onlyHelpToolCalls)
       if (
@@ -1133,6 +1159,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         && recoverableToolCorrectionRounds < MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS
       ) {
         recoverableToolCorrectionRounds++
+        actionCorrectionRetryPending = false
         idleBackoffLevel = 0
         log.info({
           consecutiveRounds,
@@ -1145,6 +1172,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       }
       if (!recoverableToolFailure && !onlyHelpToolCalls) recoverableToolCorrectionRounds = 0
       if (shareCheckpointAppended) {
+        actionCorrectionRetryPending = false
         idleBackoffLevel = 0
         return
       }
@@ -1155,8 +1183,16 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       if (toolContinuation === 'stop') {
         const waitMs = currentIdleWaitMs()
         log.info({ consecutiveRounds, waitMs }, 'tool_requested_stop_wait')
-        const wake = await waitForAttention('工具请求停止，等待新的注意事件', waitMs)
+        const wake = await waitForAttention(
+          toolContinuationDetail ?? '工具请求停止，等待新的注意事件',
+          waitMs,
+        )
+        actionCorrectionRetryPending = false
         updateIdleBackoff(wake, true)
+        return
+      }
+      if (toolContinuation === 'wait_event') {
+        await waitForToolExternalEvent(toolContinuationDetail, actionRequired)
         return
       }
       if (toolContinuation === 'backoff' || toolContinuation === 'wait_attention') {
@@ -1170,33 +1206,42 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
           idleBackoffLevel,
         }, 'tool_continuation_wait')
         const wake = await waitForAttention(
-          actionRequired ? '当前行动需要稍后重试' : '等待新的注意事件或退避到期',
+          toolContinuationDetail
+            ?? (actionRequired ? '当前行动需要稍后重试' : '等待新的注意事件或退避到期'),
           waitMs,
         )
+        actionCorrectionRetryPending = false
         updateIdleBackoff(wake, !actionRequired)
         return
       }
       if (madeToolProgress) {
+        actionCorrectionRetryPending = false
         idleBackoffLevel = 0
         return
       }
       if (!madeToolProgress) {
         if (actionRequired) idleBackoffLevel = 0
+        if (actionRequired && !actionCorrectionRetryPending) {
+          actionCorrectionRetryPending = true
+          log.info({ consecutiveRounds }, 'tool_no_progress_action_retry_immediate')
+          return
+        }
         const waitMs = actionRequired ? autonomy.actionRetryWaitMs : currentIdleWaitMs()
         log.info({ consecutiveRounds, waitMs, actionRequired, idleBackoffLevel }, 'tool_no_progress_wait')
         const wake = await waitForAttention(
           actionRequired ? '工具没有取得进展，等待短暂重试' : '当前没有新进展，等待新的注意事件',
           waitMs,
         )
+        actionCorrectionRetryPending = false
         updateIdleBackoff(wake, !actionRequired)
         return
       }
     }
 
-    if (actionRequired || noToolActionRetryPending) {
+    if (actionRequired || actionCorrectionRetryPending) {
       idleBackoffLevel = 0
-      if (!noToolActionRetryPending) {
-        noToolActionRetryPending = true
+      if (!actionCorrectionRetryPending) {
+        actionCorrectionRetryPending = true
         log.info({ consecutiveRounds }, 'no_tool_action_retry_immediate')
         return
       }
@@ -1205,7 +1250,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         'no_tool_action_retry_wait',
       )
       await waitForAttention('当前请求尚未完成，等待短暂重试', autonomy.actionRetryWaitMs)
-      noToolActionRetryPending = false
+      actionCorrectionRetryPending = false
       return
     }
 
@@ -1215,6 +1260,27 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     updateIdleBackoff(wake, true)
     consecutiveRounds = 0
     recoverableToolCorrectionRounds = 0
+  }
+
+  async function waitForToolExternalEvent(
+    detail: string | undefined,
+    actionRequired: boolean,
+  ): Promise<void> {
+    const waitMs = currentIdleWaitMs()
+    log.info({
+      consecutiveRounds,
+      waitMs,
+      actionRequired,
+      toolContinuation: 'wait_event',
+    }, 'tool_external_event_wait')
+    await waitForAttention(
+      detail ?? '后台工作仍在运行，等待完成事件',
+      waitMs,
+    )
+    consecutiveRounds = 0
+    actionCorrectionRetryPending = false
+    recoverableToolCorrectionRounds = 0
+    idleBackoffLevel = 0
   }
 
   function currentIdleWaitMs(): number {
@@ -1379,14 +1445,6 @@ function describeActivityTrigger(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-function isAttentionEvent(event: BotEvent): boolean {
-  if (event.type === 'napcat_private_message') return true
-  if (event.type === 'napcat_message') return event.mentionedSelf
-  return event.type === 'background_task_completed'
-    || event.type === 'scheduled_wake'
-    || event.type === 'wake'
 }
 
 function resolveOverflowContextWindowTokens(error: unknown, fallback: number): number {

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { Tool } from '../tool.js'
 import type { BackgroundTaskRegistry } from '../background-task-registry.js'
+import { createBackgroundTaskListWaitOutcome } from '../background-task-control.js'
 import { createToolResultProgressTracker } from '../tool-progress.js'
 
 const argsSchema = z.object({})
@@ -45,12 +46,17 @@ export function createCheckTasksTool(deps: CheckTasksDeps): Tool<z.infer<typeof 
       const changed = progressTracker.observe('list', signature)
       return {
         content: JSON.stringify({ running, recentCompleted: recent }),
-        outcome: {
-          ok: true,
-          code: changed ? 'observed' : 'unchanged',
-          progress: changed,
-          ...(runningTasks.length > 0 ? { retryClass: 'after_event' as const } : {}),
-        },
+        outcome: runningTasks.length > 0
+          ? createBackgroundTaskListWaitOutcome({
+              taskIds: runningTasks.map(task => task.id),
+              progress: changed,
+              code: changed ? 'observed' : 'unchanged',
+            })
+          : {
+              ok: true,
+              code: changed ? 'observed' : 'unchanged',
+              progress: changed,
+            },
       }
     },
   }

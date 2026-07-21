@@ -340,6 +340,33 @@ describe('replayMissedMessages — multi-source × live event dedup', () => {
     assert.equal(q.size(), 0)
   })
 
+  test('restores ordinary selective/active group rows as passive notifications', async () => {
+    const rows = [makeGroupRow({
+      id: 5,
+      groupId: 672312932,
+      messageId: 5,
+      senderId: 555,
+      text: '普通群聊',
+      createdAt: new Date('2026-05-04T00:01:00Z'),
+    })]
+    installFindManyRows(rows)
+    const q = new InMemoryEventQueue<BotEvent>()
+
+    const result = await replayMissedMessages({
+      mailboxCursors: { 'qq_group:672312932': 4 },
+      legacyLastWakeAt: null,
+    }, {
+      enqueueMessageEvent: createDedupEnqueue(q),
+      selfNumber: 999,
+      groupIds: [672312932],
+      passiveGroupIds: [672312932],
+      ensureReady: stubEnsureReady,
+    })
+
+    assert.deepEqual(result, { enqueued: 1, skippedDuplicates: 0 })
+    assert.equal(q.dequeue()?.type, 'napcat_message')
+  })
+
   test('filters each source by its own message-row cursor', async () => {
     const rows: Message[] = [
       makeGroupRow({

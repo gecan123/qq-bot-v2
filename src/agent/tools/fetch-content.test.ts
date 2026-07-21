@@ -69,6 +69,14 @@ describe('fetch_content tool', () => {
     assert.equal(payload.status, 'started')
     assert.equal(taskRegistry.get(payload.taskId)?.status, 'running')
     assert.deepEqual(urlCalls, [{ url: 'https://example.com/slow' }])
+    assert.deepEqual(started.outcome, {
+      ok: true,
+      code: 'started',
+      progress: true,
+      continuation: 'wait_event',
+      continuationDetail: '后台任务“后台抓取网页: https://example.com/slow”正在运行，等待完成通知',
+      noveltyKey: `background-task:${payload.taskId}:running`,
+    })
 
     release()
     await taskScheduler.drain()

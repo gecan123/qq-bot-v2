@@ -54,10 +54,11 @@ describe('trading_agent', () => {
     assert.match(tool.description, /具体金融问题.*跨来源取证.*历史回测/)
     assert.match(tool.description, /简单价格数据优先用 openbb_cli/)
 
-    const started = JSON.parse((await tool.execute({
+    const startResult = await tool.execute({
       action: 'start',
       prompt: '回测 BTC 均线策略',
-    }, { eventQueue, roundIndex: 1 })).content as string) as {
+    }, { eventQueue, roundIndex: 1 })
+    const started = JSON.parse(startResult.content as string) as {
       taskId: string
       sessionId: string
       attemptId: string
@@ -65,6 +66,14 @@ describe('trading_agent', () => {
 
     assert.equal(started.sessionId, 'session-1')
     assert.equal(started.attemptId, 'attempt-1')
+    assert.deepEqual(startResult.outcome, {
+      ok: true,
+      code: 'started',
+      progress: true,
+      continuation: 'wait_event',
+      continuationDetail: '后台任务“Vibe-Trading 研究: 回测 BTC 均线策略”正在运行，等待完成通知',
+      noveltyKey: `background-task:${started.taskId}:running`,
+    })
     await waitUntil(() => registry.get(started.taskId)?.status === 'completed')
 
     const post = requests.find((request) => (
@@ -129,6 +138,44 @@ describe('trading_agent', () => {
     assert.equal(result.attemptId, 'attempt-2')
     assert.equal(result.result, '12345...')
     assert.equal(result.truncated, true)
+  })
+
+  test('backs off when a persisted session is still running', async () => {
+    const tool = createTradingAgentTool({
+      taskRegistry: createInMemoryTaskRegistry(),
+      runtimeConfig,
+      fetchImpl: (async (input: string | URL | Request) => {
+        const url = new URL(String(input))
+        if (url.pathname === '/sessions/session-running') {
+          return jsonResponse({ session_id: 'session-running', last_attempt_id: 'attempt-running' })
+        }
+        return jsonResponse([])
+      }) as typeof fetch,
+    })
+
+    const execution = await tool.execute({
+      action: 'result',
+      sessionId: 'session-running',
+    }, {
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      roundIndex: 1,
+    })
+
+    assert.deepEqual(JSON.parse(execution.content as string), {
+      ok: true,
+      action: 'result',
+      sessionId: 'session-running',
+      attemptId: 'attempt-running',
+      status: 'running',
+    })
+    assert.deepEqual(execution.outcome, {
+      ok: true,
+      code: 'still_running',
+      progress: false,
+      continuation: 'backoff',
+      continuationDetail: 'Vibe-Trading session session-running 仍在运行，稍后复查结果',
+      noveltyKey: 'trading-agent:session-running:attempt-running:running',
+    })
   })
 
   test('rejects non-success API responses without leaking unbounded bodies', async () => {

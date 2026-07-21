@@ -4,6 +4,7 @@ import { createFetchUrlTool } from './fetch-url.js'
 import { createFetchImageTool } from './fetch-image.js'
 import { createRedditTool } from './reddit.js'
 import type { BackgroundTaskRegistry } from '../background-task-registry.js'
+import { createBackgroundTaskWaitOutcome } from '../background-task-control.js'
 import type { TaskScheduler } from '../task-scheduler.js'
 import type { ToolContext, ToolExecutionResult } from '../tool.js'
 
@@ -228,7 +229,11 @@ function startBackgroundFetch(input: {
       description,
       next: `等待完成通知后调用 background_task action=get taskId=${task.id}`,
     }),
-    outcome: { ok: true },
+    outcome: createBackgroundTaskWaitOutcome({
+      task,
+      code: 'started',
+      progress: true,
+    }),
   }
 }
 

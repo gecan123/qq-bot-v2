@@ -63,7 +63,7 @@ export interface ToolExecutionResult {
   effects?: ToolEffect[]
 }
 
-export type ToolContinuation = 'immediate' | 'wait_attention' | 'backoff' | 'stop'
+export type ToolContinuation = 'immediate' | 'wait_attention' | 'wait_event' | 'backoff' | 'stop'
 
 /**
  * 工具明确标记的可分享成果。它只触发一次 runtime 决策点，不代表应该发送，
@@ -86,6 +86,8 @@ export interface ToolExecutionOutcome {
   retryClass?: 'immediate' | 'after_event' | 'backoff' | 'terminal'
   /** 与 progress 解耦的续轮建议；元信息读取可以不算进展但仍请求一次立即决策。 */
   continuation?: ToolContinuation
+  /** continuation 触发等待时写入可丢弃活动观察面的有界人类可读原因；不进入 ledger。 */
+  continuationDetail?: string
   /** 本次披露的新颖性标识；同一进程内重复 key 会被 runtime 降级为无进展等待。 */
   noveltyKey?: string
   /** 本轮产生了值得显式判断一次“是否分享”的新成果；不进入 ledger，checkpoint 会受控追加。 */

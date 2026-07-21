@@ -49,6 +49,10 @@ import {
   createInMemoryScheduleStore,
   createPersistentScheduleStore,
 } from './schedule-store.js'
+import {
+  createInMemoryScheduleOccurrenceStore,
+  createPersistentScheduleOccurrenceStore,
+} from './schedule-occurrence-store.js'
 import { createApprovalManager, type ApprovalManager } from './approval-manager.js'
 import {
   createMcpManagerFromConfigFile,
@@ -154,6 +158,9 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     store: input.scheduleStatePath
       ? createPersistentScheduleStore(input.scheduleStatePath)
       : createInMemoryScheduleStore(),
+    occurrenceStore: input.scheduleStatePath
+      ? createPersistentScheduleOccurrenceStore(`${input.scheduleStatePath}.occurrences`)
+      : createInMemoryScheduleOccurrenceStore(),
     eventQueue: input.eventQueue,
     logger: input.scheduleLogger ?? createScheduleRuntimeLogHandler(),
   })

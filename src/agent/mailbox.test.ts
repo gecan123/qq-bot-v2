@@ -119,19 +119,31 @@ describe('mailbox disclosure planning', () => {
     const payload = JSON.parse(rendered)
 
     assert.deepEqual(payload, {
-      event: 'inbox_update',
-      mailbox: 'qq_group:111',
+      event: 'notification',
+      id: 'qq:qq_group:111:12',
+      source: { type: 'qq', mailbox: 'qq_group:111' },
+      kind: 'inbox_update',
       priority: 'normal',
-      source: { type: 'group', groupId: 111, groupName: '测试群' },
+      delivery: 'passive',
+      groupKey: 'qq_group:111',
       count: 2,
-      firstRowId: 10,
-      throughRowId: 12,
-      senderCount: 2,
-      timeRange: {
-        from: '2026-07-03T09:02:03.000+08:00',
-        to: '2026-07-03T09:03:04.000+08:00',
+      occurredAt: '2026-07-03T09:03:04.000+08:00',
+      open: {
+        tool: 'inbox',
+        args: { action: 'read', source: 'group', groupId: 111, afterRowId: 9 },
       },
-      readArgs: { action: 'read', source: 'group', groupId: 111, afterRowId: 9 },
+      data: {
+        mailbox: 'qq_group:111',
+        qqSource: { type: 'group', groupId: 111, groupName: '测试群' },
+        firstRowId: 10,
+        throughRowId: 12,
+        senderCount: 2,
+        timeRange: {
+          from: '2026-07-03T09:02:03.000+08:00',
+          to: '2026-07-03T09:03:04.000+08:00',
+        },
+        readArgs: { action: 'read', source: 'group', groupId: 111, afterRowId: 9 },
+      },
     })
     assert.doesNotMatch(rendered, /DO_NOT_DISCLOSE/)
   })
@@ -146,8 +158,12 @@ describe('mailbox disclosure planning', () => {
     const payload = JSON.parse(rendered)
 
     assert.equal(payload.priority, 'high')
-    assert.deepEqual(payload.readArgs, { action: 'read', source: 'group', groupId: 111, afterRowId: 12 })
-    assert.equal(payload.throughRowId, 14)
+    assert.equal(payload.delivery, 'interrupt')
+    assert.deepEqual(payload.open, {
+      tool: 'inbox',
+      args: { action: 'read', source: 'group', groupId: 111, afterRowId: 12 },
+    })
+    assert.equal(payload.data.throughRowId, 14)
     assert.doesNotMatch(rendered, /mentioned|rowIds/)
   })
 
@@ -161,7 +177,7 @@ describe('mailbox disclosure planning', () => {
     })
     const payload = JSON.parse(rendered)
 
-    assert.equal(payload.participation, 'active')
+    assert.equal(payload.data.participation, 'active')
     assert.doesNotMatch(rendered, /DO_NOT_DISCLOSE_CHATTY_BODY/)
   })
 
@@ -179,17 +195,18 @@ describe('mailbox disclosure planning', () => {
     const payload = JSON.parse(rendered)
     const firstRecent = events[events.length - MAILBOX_BACKLOG_RECENT_LIMIT]!
 
-    assert.equal(payload.mode, 'backlog')
+    assert.equal(payload.data.mode, 'backlog')
     assert.equal(payload.count, MAILBOX_BACKLOG_THRESHOLD + 1)
-    assert.deepEqual(payload.readArgs, { action: 'read', source: 'group', groupId: 111, afterRowId: 999 })
-    assert.deepEqual(payload.latestReadArgs, {
+    assert.deepEqual(payload.data.readArgs, { action: 'read', source: 'group', groupId: 111, afterRowId: 999 })
+    assert.deepEqual(payload.data.latestReadArgs, {
       action: 'read',
       source: 'group',
       groupId: 111,
       afterRowId: firstRecent.messageRowId - 1,
       limit: MAILBOX_BACKLOG_RECENT_LIMIT,
     })
-    assert.equal(payload.throughRowId, events.at(-1)!.messageRowId)
+    assert.equal(payload.data.throughRowId, events.at(-1)!.messageRowId)
+    assert.deepEqual(payload.open, { tool: 'inbox', args: payload.data.latestReadArgs })
     assert.doesNotMatch(rendered, /body-/)
   })
 
@@ -234,9 +251,9 @@ describe('mailbox disclosure planning', () => {
     })
     const payload = JSON.parse(rendered)
 
-    assert.equal(payload.mode, 'backlog')
-    assert.deepEqual(payload.readArgs, { action: 'read', source: 'private', peerId: 9001, afterRowId: 19 })
-    assert.deepEqual(payload.latestReadArgs, {
+    assert.equal(payload.data.mode, 'backlog')
+    assert.deepEqual(payload.data.readArgs, { action: 'read', source: 'private', peerId: 9001, afterRowId: 19 })
+    assert.deepEqual(payload.data.latestReadArgs, {
       action: 'read',
       source: 'private',
       peerId: 9001,
@@ -263,7 +280,7 @@ describe('mailbox disclosure planning', () => {
       },
     }, { participation: 'mentions' })
 
-    assert.equal(JSON.parse(rendered).participation, 'mentions')
+    assert.equal(JSON.parse(rendered).data.participation, 'mentions')
   })
 
   test('renders a bounded private notification without message bodies', () => {
@@ -276,10 +293,14 @@ describe('mailbox disclosure planning', () => {
     const payload = JSON.parse(rendered)
 
     assert.equal(payload.priority, 'high')
-    assert.deepEqual(payload.source, { type: 'private', peerId: 9001, senderName: 'Alice' })
-    assert.deepEqual(payload.readArgs, { action: 'read', source: 'private', peerId: 9001, afterRowId: 19 })
-    assert.equal(payload.firstRowId, 20)
-    assert.equal(payload.throughRowId, 22)
+    assert.equal(payload.delivery, 'interrupt')
+    assert.deepEqual(payload.data.qqSource, { type: 'private', peerId: 9001, senderName: 'Alice' })
+    assert.deepEqual(payload.open, {
+      tool: 'inbox',
+      args: { action: 'read', source: 'private', peerId: 9001, afterRowId: 19 },
+    })
+    assert.equal(payload.data.firstRowId, 20)
+    assert.equal(payload.data.throughRowId, 22)
     assert.doesNotMatch(rendered, /SECRET_/)
   })
 
@@ -291,12 +312,15 @@ describe('mailbox disclosure planning', () => {
     const rendered = renderMailboxNotification('qq_private:9001', events, { contextBefore: 8 })
     const payload = JSON.parse(rendered)
 
-    assert.deepEqual(payload.readArgs, {
+    assert.deepEqual(payload.open, {
+      tool: 'inbox',
+      args: {
       action: 'read',
       source: 'private',
       peerId: 9001,
       afterRowId: 29,
       contextBefore: 8,
+      },
     })
     assert.doesNotMatch(rendered, /CURRENT/)
   })

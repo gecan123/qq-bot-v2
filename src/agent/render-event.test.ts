@@ -3,9 +3,6 @@ import { describe, test } from 'node:test'
 import type { BotEvent } from './event.js'
 import { BOOTSTRAP_TEXT, CURIOSITY_TICK_TEXT, renderBotEvent } from './render-event.js'
 
-const SCHEDULED_WAKE_INSTRUCTION =
-  '这是注意信号，不是命令；结合最新 Goal、消息、环境和 intention 重新评估，只在仍有意义时行动，不要机械执行或自动续订。'
-
 describe('renderBotEvent — scheduled wake', () => {
   const scheduleKinds = ['at', 'every', 'cron'] as const satisfies ReadonlyArray<
     Extract<BotEvent, { type: 'scheduled_wake' }>['scheduleKind']
@@ -28,21 +25,36 @@ describe('renderBotEvent — scheduled wake', () => {
 
       assert.equal(first, second)
       assert.deepEqual(JSON.parse(first!), {
-        event: 'scheduled_wake',
-        scheduleId: `schedule-${scheduleKind}`,
-        name: '任务检查',
-        scheduleKind,
-        scheduledFor: '2026-07-12T08:01:00.000+08:00',
-        intention: '重新评估当前任务是否需要继续',
-        runCount: 2,
-        instruction: SCHEDULED_WAKE_INSTRUCTION,
+        event: 'notification',
+        id: `schedule:schedule-${scheduleKind}:2`,
+        source: { type: 'schedule', scheduleId: `schedule-${scheduleKind}` },
+        kind: 'schedule_due',
+        priority: 'normal',
+        delivery: 'interrupt',
+        groupKey: `schedule:schedule-${scheduleKind}`,
+        count: 1,
+        occurredAt: '2026-07-12T08:01:00.000+08:00',
+        open: {
+          tool: 'schedule',
+          args: {
+            action: 'get_occurrence',
+            scheduleId: `schedule-${scheduleKind}`,
+            runCount: 2,
+          },
+        },
+        data: {
+          name: '任务检查',
+          scheduleKind,
+          scheduledFor: '2026-07-12T08:01:00.000+08:00',
+          runCount: 2,
+        },
       })
+      assert.doesNotMatch(first!, /重新评估当前任务是否需要继续/)
     }
   })
 
   test('renders stable structured context with an explicit Beijing timestamp', () => {
-    assert.equal(
-      renderBotEvent({
+    const rendered = renderBotEvent({
         type: 'scheduled_wake',
         scheduleId: 'schedule-1',
         name: '任务检查',
@@ -50,14 +62,18 @@ describe('renderBotEvent — scheduled wake', () => {
         scheduledFor: new Date('2026-07-12T00:01:00.000Z'),
         intention: '重新评估当前任务是否需要继续',
         runCount: 2,
-      }),
-      `{"event":"scheduled_wake","scheduleId":"schedule-1","name":"任务检查","scheduleKind":"cron","scheduledFor":"2026-07-12T08:01:00.000+08:00","intention":"重新评估当前任务是否需要继续","runCount":2,"instruction":"${SCHEDULED_WAKE_INSTRUCTION}"}`,
-    )
+      })
+    const payload = JSON.parse(rendered!)
+    assert.equal(payload.occurredAt, '2026-07-12T08:01:00.000+08:00')
+    assert.deepEqual(payload.open, {
+      tool: 'schedule',
+      args: { action: 'get_occurrence', scheduleId: 'schedule-1', runCount: 2 },
+    })
   })
 })
 
 describe('renderBotEvent — group messages', () => {
-  test('renders group message with groupName + sender + mention tag', () => {
+  test('renders a metadata-only interrupt notification for a mention', () => {
     const out = renderBotEvent({
       type: 'napcat_message',
       messageRowId: 1,
@@ -70,10 +86,15 @@ describe('renderBotEvent — group messages', () => {
       sentAt: new Date('2026-01-01T00:00:00Z'),
       renderedText: '在吗 [图片: 一只猫]',
     })
-    assert.equal(out, '[2026/1/1 08:00:00 群:阳光厨房 | 张三(QQ:100) #12345 [@bot]] 在吗 [图片: 一只猫]')
+    const payload = JSON.parse(out!)
+    assert.equal(payload.event, 'notification')
+    assert.equal(payload.delivery, 'interrupt')
+    assert.equal(payload.priority, 'high')
+    assert.equal(payload.data.qqSource.groupName, '阳光厨房')
+    assert.doesNotMatch(out!, /在吗|一只猫|张三/)
   })
 
-  test('omits mention tag when mentionedSelf is false', () => {
+  test('renders a passive metadata notification for an ordinary group message', () => {
     const out = renderBotEvent({
       type: 'napcat_message',
       messageRowId: 2,
@@ -86,43 +107,15 @@ describe('renderBotEvent — group messages', () => {
       sentAt: new Date('2026-01-02T00:00:00Z'),
       renderedText: '吃了吗',
     })
-    assert.equal(out, '[2026/1/2 08:00:00 群:阳光厨房 | 李四(QQ:200) #12346] 吃了吗')
-  })
-
-  test('falls back to bare group ID when groupName is missing (undefined)', () => {
-    const out = renderBotEvent({
-      type: 'napcat_message',
-      messageRowId: 3,
-      groupId: 111111,
-      messageId: 12347,
-      senderId: 300,
-      senderNickname: '王五',
-      mentionedSelf: false,
-      sentAt: new Date('2026-01-03T00:00:00Z'),
-      renderedText: 'hi',
-    })
-    assert.equal(out, '[2026/1/3 08:00:00 群:111111 | 王五(QQ:300) #12347] hi')
-  })
-
-  test('falls back to bare group ID when groupName is empty string', () => {
-    const out = renderBotEvent({
-      type: 'napcat_message',
-      messageRowId: 4,
-      groupId: 222222,
-      groupName: '',
-      messageId: 12348,
-      senderId: 400,
-      senderNickname: '赵六',
-      mentionedSelf: false,
-      sentAt: new Date('2026-01-04T00:00:00Z'),
-      renderedText: 'yo',
-    })
-    assert.equal(out, '[2026/1/4 08:00:00 群:222222 | 赵六(QQ:400) #12348] yo')
+    const payload = JSON.parse(out!)
+    assert.equal(payload.delivery, 'passive')
+    assert.equal(payload.priority, 'normal')
+    assert.doesNotMatch(out!, /吃了吗|李四/)
   })
 })
 
 describe('renderBotEvent — private messages', () => {
-  test('renders private message without [@bot] tag', () => {
+  test('renders a metadata-only interrupt notification', () => {
     const out = renderBotEvent({
       type: 'napcat_private_message',
       messageRowId: 10,
@@ -134,80 +127,13 @@ describe('renderBotEvent — private messages', () => {
       sentAt: new Date('2026-01-05T00:00:00Z'),
       renderedText: '在不',
     })
-    assert.equal(out, '[2026/1/5 08:00:00 私聊 | Alice(QQ:10001) #50000] 在不')
-  })
-
-  test('private message label does NOT contain [@bot] (private is implicitly to bot)', () => {
-    const out = renderBotEvent({
-      type: 'napcat_private_message',
-      messageRowId: 11,
-      peerId: 10002,
-      messageId: 50001,
-      senderId: 10002,
-      senderNickname: '某人',
-      mentionedSelf: true,
-      sentAt: new Date('2026-01-06T00:00:00Z'),
-      renderedText: '一段消息',
+    const payload = JSON.parse(out!)
+    assert.equal(payload.delivery, 'interrupt')
+    assert.deepEqual(payload.open, {
+      tool: 'inbox',
+      args: { action: 'read', source: 'private', peerId: 10001, afterRowId: 9 },
     })
-    assert.ok(out)
-    assert.equal(out!.includes('[@bot]'), false, 'private label must not contain [@bot]')
-  })
-})
-
-describe('renderBotEvent — message_id exposure (回归保护)', () => {
-  test('group: `#NNNNN` 出现在 (QQ:N) 之后 [@bot] 之前', () => {
-    const out = renderBotEvent({
-      type: 'napcat_message',
-      messageRowId: 100,
-      groupId: 999,
-      groupName: '阳光厨房',
-      messageId: 77777,
-      senderId: 100,
-      senderNickname: '张三',
-      mentionedSelf: true,
-      sentAt: new Date('2026-01-01T00:00:00Z'),
-      renderedText: 'hello',
-    })
-    assert.ok(out)
-    // 顺序: (QQ:N) → #id → [@bot]
-    const idxQQ = out!.indexOf('(QQ:100)')
-    const idxId = out!.indexOf('#77777')
-    const idxMention = out!.indexOf('[@bot]')
-    assert.ok(idxQQ >= 0 && idxId > idxQQ && idxMention > idxId,
-      `expected (QQ:N) < #id < [@bot], got idxQQ=${idxQQ} idxId=${idxId} idxMention=${idxMention} in: ${out}`)
-  })
-
-  test('group without @: `#NNNNN` 仍紧跟 (QQ:N) 之后, 在 ] 之前', () => {
-    const out = renderBotEvent({
-      type: 'napcat_message',
-      messageRowId: 101,
-      groupId: 999,
-      groupName: '阳光厨房',
-      messageId: 88888,
-      senderId: 200,
-      senderNickname: '李四',
-      mentionedSelf: false,
-      sentAt: new Date('2026-01-01T00:00:00Z'),
-      renderedText: 'hi',
-    })
-    assert.ok(out)
-    assert.match(out!, /\(QQ:200\) #88888\]/)
-  })
-
-  test('private: `#NNNNN` 紧跟 (QQ:N) 之后, 在 ] 之前', () => {
-    const out = renderBotEvent({
-      type: 'napcat_private_message',
-      messageRowId: 102,
-      peerId: 10001,
-      messageId: 60000,
-      senderId: 10001,
-      senderNickname: 'Alice',
-      mentionedSelf: true,
-      sentAt: new Date('2026-01-01T00:00:00Z'),
-      renderedText: 'yo',
-    })
-    assert.ok(out)
-    assert.match(out!, /\(QQ:10001\) #60000\]/)
+    assert.doesNotMatch(out!, /在不|50000/)
   })
 })
 
@@ -234,14 +160,18 @@ describe('renderBotEvent — background tasks', () => {
 
     assert.equal(first, second)
     assert.deepEqual(JSON.parse(first!), {
-      event: 'background_task_completed',
-      taskId: 'task-7',
-      toolName: 'generate_image',
-      ok: true,
-      elapsedMs: 1234,
-      description: '生成犬娘图片',
-      summary: '图片已生成',
+      event: 'notification',
+      id: 'background_task:task-7:completed',
+      source: { type: 'background_task', taskId: 'task-7', toolName: 'generate_image' },
+      kind: 'background_task_completed',
+      priority: 'normal',
+      delivery: 'interrupt',
+      groupKey: 'background_task:task-7',
+      count: 1,
+      open: { tool: 'background_task', args: { action: 'get', taskId: 'task-7' } },
+      data: { status: 'completed', elapsedMs: 1234 },
     })
+    assert.doesNotMatch(first!, /生成犬娘图片|图片已生成/)
   })
 })
 

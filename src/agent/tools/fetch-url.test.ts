@@ -228,7 +228,7 @@ describe('fetch_url tool — failure modes', () => {
     assert.equal(payload.ok, false)
     assert.equal(payload.code, 'http_error')
     assert.equal(payload.status, 404)
-    assert.deepEqual(result.outcome, { ok: false, code: 'http_error' })
+    assert.deepEqual(result.outcome, { ok: false, code: 'http_error', progress: false })
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.status, 404)
     assert.equal(logged.errorKind, 'http_404')

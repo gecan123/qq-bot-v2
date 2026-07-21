@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { createLogger } from '../../logger.js'
-import type { BotEvent } from '../event.js'
 import type { Tool, ToolExecutionResult } from '../tool.js'
+import { isAttentionEvent } from '../notification.js'
 
 const log = createLogger('TOOL_REST')
 
@@ -68,15 +68,6 @@ const argsSchema = z.object({
 })
 
 type RestArgs = z.infer<typeof argsSchema>
-
-function isAttentionEvent(event: BotEvent): boolean {
-  if (event.type === 'napcat_private_message') return true
-  if (event.type === 'napcat_message') return event.mentionedSelf
-  if (event.type === 'background_task_completed') return true
-  if (event.type === 'scheduled_wake') return true
-  if (event.type === 'wake') return true
-  return false
-}
 
 function restResult(
   status: 'elapsed' | 'interrupted',

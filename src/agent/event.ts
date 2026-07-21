@@ -86,3 +86,15 @@ export type ChatMessageEvent = Extract<
 export function isChatAttentionEvent(event: ChatMessageEvent): boolean {
   return event.type === 'napcat_private_message' || event.mentionedSelf
 }
+
+/**
+ * 私聊/@ 始终入队；普通群消息只有在显式启用 passive notification 的群里入队。
+ * passive 只决定下一次自然轮次能否看到 badge，不会因此成为 attention。
+ */
+export function shouldQueueChatEvent(
+  event: ChatMessageEvent,
+  passiveGroupIds: ReadonlySet<number>,
+): boolean {
+  return isChatAttentionEvent(event)
+    || (event.type === 'napcat_message' && passiveGroupIds.has(event.groupId))
+}

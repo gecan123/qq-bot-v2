@@ -11,8 +11,6 @@ import {
 } from './mailbox.js'
 
 const log = createLogger('REPLAY')
-const GROUP_ATTENTION_SCAN_BATCH = 500
-
 /**
  * 启动时按每个 mailbox 的 message-row cursor 回放尚未披露的群消息 + 私聊消息。
  *
@@ -33,6 +31,8 @@ export interface ReplayMissedDeps {
   enqueueMessageEvent: (event: BotEvent) => boolean | Promise<boolean>
   selfNumber: number
   groupIds: readonly number[]
+  /** selective/active 群的普通消息恢复成 passive notification；其余群仍只恢复结构化 @。 */
+  passiveGroupIds?: readonly number[]
   /**
    * 测试可注入. 默认走 src/media/ensure-message-ready.ts 的实现 (等待媒体描述 + 冻结 resolved_text).
    */
@@ -66,23 +66,28 @@ export async function replayMissedMessages(
   }
 
   const groupIds = deps.groupIds.map((id) => BigInt(id))
+  const passiveGroupIds = new Set((deps.passiveGroupIds ?? []).map((id) => BigInt(id)))
   const sourceFilters: Array<Record<string, unknown>> = []
   const replaySources: ReplaySource[] = []
   for (const groupId of groupIds) {
     const key = `qq_group:${groupId}`
     const cursor = checkpoint.mailboxCursors[key]
-    const mentionedSelf = {
-      array_contains: [{ type: 'at', targetId: String(deps.selfNumber) }],
-    }
+    const contentFilter = passiveGroupIds.has(groupId)
+      ? {}
+      : {
+          content: {
+            array_contains: [{ type: 'at', targetId: String(deps.selfNumber) }],
+          },
+        }
     if (cursor != null) {
-      const where = { sceneKind: 'qq_group', groupId, content: mentionedSelf, id: { gt: cursor } }
+      const where = { sceneKind: 'qq_group', groupId, ...contentFilter, id: { gt: cursor } }
       sourceFilters.push(where)
       replaySources.push({ mailboxKey: key, where })
     } else if (checkpoint.legacyLastWakeAt) {
       const where = {
         sceneKind: 'qq_group',
         groupId,
-        content: mentionedSelf,
+        ...contentFilter,
         createdAt: { gt: checkpoint.legacyLastWakeAt },
       }
       sourceFilters.push(where)
@@ -172,9 +177,6 @@ async function replaySource(
     senderId: { not: BigInt(deps.selfNumber) },
     ...source.where,
   }
-  if (source.mailboxKey.startsWith('qq_group:')) {
-    return replayGroupAttentionRows(where, checkpoint, deps)
-  }
   const rows = await prisma.message.findMany({
     where,
     orderBy: { id: 'asc' },
@@ -225,31 +227,6 @@ async function replaySource(
     : { enqueued: 0, skippedDuplicates: 1 }
 }
 
-async function replayGroupAttentionRows(
-  initialWhere: Record<string, unknown>,
-  checkpoint: ReplayCheckpoint,
-  deps: ReplayMissedDeps,
-): Promise<ReplayCounters> {
-  const totals: ReplayCounters = { enqueued: 0, skippedDuplicates: 0 }
-  let afterScannedRowId: number | null = null
-  for (;;) {
-    const where: Record<string, unknown> = afterScannedRowId == null
-      ? initialWhere
-      : { ...initialWhere, id: { gt: afterScannedRowId } }
-    const rows: Message[] = await prisma.message.findMany({
-      where,
-      orderBy: { id: 'asc' },
-      take: GROUP_ATTENTION_SCAN_BATCH,
-    })
-    if (rows.length === 0) return totals
-    const result = await enqueueReplayRows(rows, checkpoint, deps)
-    totals.enqueued += result.enqueued
-    totals.skippedDuplicates += result.skippedDuplicates
-    afterScannedRowId = rows.at(-1)!.id
-    if (rows.length < GROUP_ATTENTION_SCAN_BATCH) return totals
-  }
-}
-
 async function enqueueReplayRows(
   rows: Message[],
   checkpoint: ReplayCheckpoint,
@@ -272,8 +249,13 @@ async function enqueueReplayRows(
     const mentionedSelf = segments.some(
       (seg) => seg.type === 'at' && seg.targetId === String(deps.selfNumber),
     )
-    // 普通群聊只留在 messages/inbox；replay 也不得把它重新变成唤醒事件。
-    if (row.sceneKind === 'qq_group' && !mentionedSelf) continue
+    // mentions 群的普通消息仍只留在 messages/inbox；selective/active 群则恢复成
+    // passive notification，入队但不会唤醒等待中的 Agent。
+    if (
+      row.sceneKind === 'qq_group'
+      && !mentionedSelf
+      && !(deps.passiveGroupIds ?? []).includes(Number(row.groupId))
+    ) continue
 
     const ready = await ensureReady(row)
 

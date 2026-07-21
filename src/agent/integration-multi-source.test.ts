@@ -191,6 +191,7 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
       syncActiveToolCapabilities: qq.syncActiveCapabilities,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
+      compactOptions: { reserveTokens: 0 },
     })
 
     await agent.runOnceForTest()
@@ -214,14 +215,14 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     const notificationMessages = messages.slice(0, 3)
     assert.ok(notificationMessages.every((message) => message.role === 'user'))
     const notifications = notificationMessages.map((message) => JSON.parse(message.content))
-    assert.deepEqual(notifications.map(({ mailbox, priority }) => ({ mailbox, priority })), [
+    assert.deepEqual(notifications.map(({ data, priority }) => ({ mailbox: data.mailbox, priority })), [
       { mailbox: 'qq_group:111', priority: 'high' },
       { mailbox: 'qq_private:10001', priority: 'high' },
       { mailbox: 'qq_group:222', priority: 'normal' },
     ])
-    assert.equal(notifications[0]!.source.groupName, '阳光厨房')
-    assert.equal(notifications[1]!.source.senderName, 'Alice')
-    assert.equal(notifications[2]!.source.groupName, '技术群')
+    assert.equal(notifications[0]!.data.qqSource.groupName, '阳光厨房')
+    assert.equal(notifications[1]!.data.qqSource.senderName, 'Alice')
+    assert.equal(notifications[2]!.data.qqSource.groupName, '技术群')
     assert.doesNotMatch(notificationMessages.map((message) => message.content).join('\n'), /在吗|私聊问个事|今天天气好/)
 
     const handledMarker = messages[9]
@@ -303,6 +304,7 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
       syncActiveToolCapabilities: qq.syncActiveCapabilities,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
+      compactOptions: { reserveTokens: 0 },
     })
 
     await agent.runOnceForTest()

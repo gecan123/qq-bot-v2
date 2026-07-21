@@ -27,15 +27,19 @@ export function captureMailboxAttentionState(
       continue
     }
 
-    if (!isMailboxKey(payload.mailbox) || !isPositiveSafeInteger(payload.throughRowId)) {
-      continue
-    }
-    if (payload.event === 'inbox_update') {
-      mergeMailboxCursors(merged, payload.mailbox, {
-        disclosedThroughRowId: payload.throughRowId,
+    const disclosure = parseMailboxDisclosure(payload)
+    if (disclosure) {
+      mergeMailboxCursors(merged, disclosure.mailbox, {
+        disclosedThroughRowId: disclosure.throughRowId,
         handledThroughRowId: 0,
       })
-    } else if (payload.event === 'mailbox_handled') {
+      continue
+    }
+    if (
+      payload.event === 'mailbox_handled'
+      && isMailboxKey(payload.mailbox)
+      && isPositiveSafeInteger(payload.throughRowId)
+    ) {
       mergeMailboxCursors(merged, payload.mailbox, {
         disclosedThroughRowId: 0,
         handledThroughRowId: payload.throughRowId,
@@ -50,6 +54,31 @@ export function captureMailboxAttentionState(
   return state
 }
 
+function parseMailboxDisclosure(
+  payload: Record<string, unknown>,
+): { mailbox: string; throughRowId: number } | null {
+  if (
+    payload.event === 'inbox_update'
+    && isMailboxKey(payload.mailbox)
+    && isPositiveSafeInteger(payload.throughRowId)
+  ) {
+    return { mailbox: payload.mailbox, throughRowId: payload.throughRowId }
+  }
+  if (
+    payload.event !== 'notification'
+    || payload.kind !== 'inbox_update'
+    || !isRecord(payload.data)
+    || !isMailboxKey(payload.data.mailbox)
+    || !isPositiveSafeInteger(payload.data.throughRowId)
+  ) {
+    return null
+  }
+  return {
+    mailbox: payload.data.mailbox,
+    throughRowId: payload.data.throughRowId,
+  }
+}
+
 export function findPendingMailboxThroughRowId(
   messages: readonly AgentMessage[],
   mailbox: string,
@@ -60,6 +89,15 @@ export function findPendingMailboxThroughRowId(
   return cursors.disclosedThroughRowId > cursors.handledThroughRowId
     ? cursors.disclosedThroughRowId
     : null
+}
+
+export function hasPendingPrivateMailboxAttention(
+  messages: readonly AgentMessage[],
+): boolean {
+  return Object.entries(captureMailboxAttentionState(messages)).some(([mailbox, cursors]) => (
+    mailbox.startsWith('qq_private:')
+    && cursors.disclosedThroughRowId > cursors.handledThroughRowId
+  ))
 }
 
 export function renderMailboxHandledEvent(mailbox: string, throughRowId: number): string {

@@ -36,6 +36,9 @@ function runtimeStub(overrides: Partial<ScheduleRuntime> = {}): ScheduleRuntime 
     async list() {
       return []
     },
+    async getOccurrence() {
+      return null
+    },
     async cancel(id) {
       return { status: 'already_absent', id }
     },
@@ -215,6 +218,38 @@ describe('schedule tool', () => {
     ])
   })
 
+  test('opens a fired occurrence body on demand', async () => {
+    const tool = createScheduleTool(runtimeStub({
+      async getOccurrence(scheduleId, runCount) {
+        assert.equal(scheduleId, 'schedule-1')
+        assert.equal(runCount, 2)
+        return {
+          scheduleId,
+          name: '任务检查',
+          intention: '结合最新进展判断是否继续',
+          scheduleKind: 'cron',
+          scheduledFor: '2026-07-13T01:00:00.000Z',
+          runCount,
+        }
+      },
+    }))
+
+    const result = await tool.execute({
+      action: 'get_occurrence',
+      scheduleId: 'schedule-1',
+      runCount: 2,
+    }, ctx)
+    const content = parseContent(result.content)
+    assert.equal(content.ok, true)
+    assert.equal((content.occurrence as Record<string, unknown>).intention,
+      '结合最新进展判断是否继续')
+    assert.deepEqual(result.outcome, {
+      ok: true,
+      code: 'observed',
+      progress: true,
+    })
+  })
+
   test('treats cancelled and already-absent cancellation as idempotent success', async () => {
     for (const status of ['cancelled', 'already_absent'] as const) {
       let receivedId: string | undefined
@@ -331,9 +366,10 @@ describe('schedule tool', () => {
     const description = createScheduleTool(runtimeStub()).description
 
     assert.match(description, /最长 3 天/)
-    assert.match(description, /scheduled_wake/)
+    assert.match(description, /notification/)
+    assert.match(description, /get_occurrence/)
     assert.match(description, /重新判断/)
-    assert.match(description, /不.*未来工具调用/)
+    assert.match(description, /不含 intention 正文/)
     assert.match(description, /Asia\/Shanghai/)
     assert.match(description, /至少 5 分钟/)
     assert.match(description, /20/)

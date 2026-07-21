@@ -4,6 +4,7 @@ import type { AgentMessage } from './agent-context.types.js'
 import {
   captureMailboxAttentionState,
   findPendingMailboxThroughRowId,
+  hasPendingPrivateMailboxAttention,
   isMailboxAttentionStateMessage,
   renderMailboxAttentionStateEvent,
   renderMailboxHandledEvent,
@@ -38,6 +39,41 @@ describe('mailbox handled cursor', () => {
     ]
 
     assert.equal(findPendingMailboxThroughRowId(messages, 'qq_private:123'), null)
+  })
+
+  test('recognizes the unified notification envelope and keeps legacy events compatible', () => {
+    const messages: AgentMessage[] = [{
+      role: 'user',
+      content: '{"event":"notification","id":"qq:qq_private:123:10","source":{"type":"qq","mailbox":"qq_private:123"},"kind":"inbox_update","priority":"high","delivery":"interrupt","groupKey":"qq_private:123","count":1,"open":{"tool":"inbox","args":{"action":"read"}},"data":{"mailbox":"qq_private:123","throughRowId":10}}',
+    }]
+    assert.equal(findPendingMailboxThroughRowId(messages, 'qq_private:123'), 10)
+  })
+
+  test('treats only unhandled private disclosures as pending private attention', () => {
+    const pending: AgentMessage[] = [
+      {
+        role: 'user',
+        content: '{"event":"inbox_update","mailbox":"qq_group:99","throughRowId":20}',
+      },
+      {
+        role: 'user',
+        content: '{"event":"inbox_update","mailbox":"qq_private:123","throughRowId":10}',
+      },
+      {
+        role: 'user',
+        content: '{"event":"mailbox_handled","mailbox":"qq_private:123","throughRowId":8}',
+      },
+    ]
+    assert.equal(hasPendingPrivateMailboxAttention(pending), true)
+
+    const handled = [
+      ...pending,
+      {
+        role: 'user' as const,
+        content: '{"event":"mailbox_handled","mailbox":"qq_private:123","throughRowId":10}',
+      },
+    ]
+    assert.equal(hasPendingPrivateMailboxAttention(handled), false)
   })
 
   test('ignores malformed JSON, non-user messages, and other mailboxes', () => {

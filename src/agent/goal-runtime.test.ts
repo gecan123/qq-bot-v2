@@ -201,7 +201,7 @@ describe('BotLoop goal integration', () => {
     const goal = await goalStore.get()
     assert.equal(goal?.status, 'budget_limited')
     const users = context.getSnapshot().messages.filter((message) => message.role === 'user')
-    assert.match(users[1]!.content, /inbox_update/)
+    assert.match(users[1]!.content, /notification/)
     assert.match(users[2]!.content, /goal_continuation/)
     assert.match(users.at(-1)!.content, /budget_limited/)
   })

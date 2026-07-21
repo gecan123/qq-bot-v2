@@ -18,7 +18,7 @@ import { purgeOldData } from './database/retention.js'
 import { findMemoryEvidenceRows } from './database/messages.js'
 import { createAgentContext } from './agent/agent-context.js'
 import { InMemoryEventQueue } from './agent/event-queue.js'
-import { isChatAttentionEvent, type BotEvent } from './agent/event.js'
+import { shouldQueueChatEvent, type BotEvent } from './agent/event.js'
 import { createAgentLedgerRepo } from './agent/agent-ledger-repo.js'
 import { createAgentLedgerLoader } from './agent/agent-ledger-loader.js'
 import { createLlmClient } from './agent/llm-client.js'
@@ -232,11 +232,17 @@ async function main() {
     }
   }
   const startupGoalControlGate = createStartupGoalControlGate(processOwnerGoalControl)
+  const passiveGroupNotificationIds = new Set(
+    config.groupPolicies
+      .filter((policy) => policy.participation !== 'mentions')
+      .map((policy) => policy.id),
+  )
   const enqueueMessageEvent = async (event: BotEvent): Promise<boolean> => {
-    // 普通群消息只保存在 messages/inbox；只有明确 @ bot 才能打断或唤醒主循环。
+    // mentions 群的普通消息只保存在 messages/inbox；selective/active 群进入 passive
+    // notification，但不会打断等待或休息。私聊和明确 @ bot 才是 attention。
     if (
       (event.type === 'napcat_message' || event.type === 'napcat_private_message')
-      && !isChatAttentionEvent(event)
+      && !shouldQueueChatEvent(event, passiveGroupNotificationIds)
     ) return false
     if (event.type === 'napcat_private_message') {
       const compactionControl = await startupCompactionControlGate.submit({
@@ -343,6 +349,7 @@ async function main() {
     enqueueMessageEvent,
     selfNumber: config.selfNumber,
     groupIds: config.botTargetGroupIds,
+    passiveGroupIds: [...passiveGroupNotificationIds],
   })
   log.info({ enqueued: replayResult.enqueued }, 'replay-missed 完成')
 

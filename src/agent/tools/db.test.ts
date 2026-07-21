@@ -32,6 +32,7 @@ const scheduleRuntime: ScheduleRuntime = {
   async start() {},
   async create() { throw new Error('not used') },
   async list() { return [] },
+  async getOccurrence() { return null },
   async cancel(id) { return { status: 'already_absent', id } },
   async stop() {},
 }

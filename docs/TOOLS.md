@@ -17,7 +17,6 @@
 - 风格和文本判断：`chat_style` 按需读取聊天约束/风格/群定制；`ai_tone` 用本地 AIRadar 模型判断中文文本更像 AI 腔调还是人味。
 - 运行时工作：`background_task`（通用异步任务 list/get；get 的文本结果有通用上限）、只读 `workspace_bash`；普通私有工作文件通过 deferred `workspace_management` 内的 `workspace_file` 修改。任务 registry 持久化到 `BOT_BACKGROUND_TASK_STATE_PATH`；所有遗留 running 在重启时明确变成 `interrupted`，包括旧版 `scheduled_wake.v1` recovery descriptor，不会永远伪装成运行中。当前定时唤醒不走 task registry，而由上述独立 schedule store 恢复。
 - 持久目标：`goal` 支持 `get/create_self/replan/complete/report_blocker/abandon_self`。self Goal 创建时必须同时提交当前具体承诺 `currentCommitment`；owner Goal 初始没有承诺时由 Agent 先 `replan`。完成步骤或路线失效后更新承诺，完整目标有证据完成后注意力重新回到普通自主选择。
-- 受限委派：`delegate` 把边界明确的调查/分析任务放进最多 2 并发的后台 lane。每个 delegate 使用全新 AgentContext，只看 task 文本；`allowedTools` 只能从 `workspace_bash`、`inbox`、`qq_directory`、`chat_style`、`ai_tone`、`skill`、`background_task` 的固定只读集合选，默认纯 LLM。轮数最多 8、超时最多 300 秒，必须用 `delegate_return` 结构化结束；内部 transcript 不进入主 ledger，最终结果通过 `background_task get` 取回。
 - 审批控制：`approval action=list|status|approve|cancel`。默认 `BOT_APPROVAL_MODE=thin`，只拦网站 `publish` 和未声明只读的 MCP 调用；本地 memory/notebook/Life Journal/workspace 删除、网站本地删除和 skill 安装不等待审批。被拦调用会返回 `approvalId`；owner 私聊发送精确文本 `批准 <approvalId>` 后，用消息 `rowId` 批准并以相同参数重试。审批默认 10 分钟过期且只能消费一次。需要旧的全量本地审批时设 `strict`，快速实验可设 `off`。
 
 ## Deferred capability

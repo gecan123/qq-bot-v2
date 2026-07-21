@@ -14,7 +14,7 @@
 6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责受控 append、runtime cursor/continuity/Goal revision/capability/QQ focus 原子更新、compaction、life journal hook 和 pause/autonomy 控制。事务成功后才推进内存 `AgentContext`。
 7. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct。连续且显式只读的 tool calls 可以并行，副作用和未知调用是 barrier；tool results 始终按 assistant tool-call 顺序成组 append。只有 `ToolExecutionResult.content` 进入 ledger，`outcome` / `effects` 由 Runtime Host 解释。
 
-后台工作统一走 bounded task scheduler：`maintenance=1`、`network=3`、`media-description=2`、`delegate=2`。同一 `resourceKey` 串行，相同 `dedupeKey` 共享任务。它们是 Node async worker，不是新的主 Agent；完成结果回到同一主 ledger。ingress 媒体描述使用独立 `jobQueue`，Browser sidecar 是独立进程。
+专用后台工作统一走 bounded task scheduler：`maintenance=1`、`network=3`、`media-description=2`。同一 `resourceKey` 串行，相同 `dedupeKey` 共享任务。这些有明确类型和边界的 Node async worker 不是新的主 Agent；完成结果回到同一主 ledger。ingress 媒体描述使用独立 `jobQueue`，Browser sidecar 是独立进程。
 
 短期调度由进程内 `ScheduleRuntime` 管理。它把状态原子写入 `schedules.json`，到期只向现有 event queue 注入 `scheduled_wake`，仍由单一 `BotLoopAgent` 串行处理。
 
@@ -79,7 +79,7 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - compaction、append 与 runtime 元数据使用数据库事务；checkpoint 刷新和 `afterCompact` 是 best-effort，不回滚已提交历史。
 - `data/agent-workspace/` 是 bot 生产的 workspace 数据，不是项目源码。
 
-不实现 pi 风格 session tree。QQ 外发、mailbox cursor、Goal revision 和工具副作用必须共享一条可审计的线性时间线，否则“哪条分支已发送、已处理”没有唯一答案。需要并行时使用 bounded background task/delegate，并把结果汇回主 ledger。
+不实现 pi 风格 session tree。QQ 外发、mailbox cursor、Goal revision 和工具副作用必须共享一条可审计的线性时间线，否则“哪条分支已发送、已处理”没有唯一答案。需要并行时使用有明确类型和边界的 background task，并把结果汇回主 ledger。
 
 ## 生命周期边界
 

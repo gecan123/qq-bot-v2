@@ -18,18 +18,13 @@ NapCat 入站
   -> ledger 与 runtime state 原子提交
 ```
 
-PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goal 和观测数据；Memory、Notebook、Life Journal、Agenda、schedule、approval 与 background task 元数据主要保存在 workspace Markdown/JSON。WebAdmin 是独立只读运维面。
+PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goal 和观测数据；Memory、Notebook、Life Journal、Agenda、schedule、approval 与 background task 元数据主要保存在 workspace Markdown/JSON。WebAdmin 的观察 feature 保持只读，固定 operations feature 是唯一受控写入口。
 
-现有设计的可靠性基础包括：append-only canonical history、确定性 replay、compaction CAS、tool call/result 原子组、显式 QQ target focus、集中 tool policy、渐进式披露、有界 scheduler，以及只读 admin 边界。下面条目是在这些契约之上的具体缺口。
+现有设计的可靠性基础包括：append-only canonical history、确定性 replay、compaction CAS、tool call/result 原子组、显式 QQ target focus、集中 tool policy、渐进式披露、有界 scheduler，以及 WebAdmin 的只读观察边界和固定 operations 写入边界。下面条目是在这些契约之上的具体缺口。
 
 ## P0：已确认正确性缺陷
 
-### Delegate 多轮上下文没有延续
-
-- 证据：`src/agent/tools/delegate.ts` 每轮调用 `runReactRound()` 后丢弃返回的 `messagesToAppend`；`src/agent/react-kernel.ts` 只返回 assistant tool call 与 tool result，不直接修改传入 context。因此第二轮仍只看到原始 task，看不到第一轮工具结果。
-- 测试缺口：`src/agent/tools/delegate.test.ts` 只验证第一轮输入；mock 的第二轮不依赖第一轮结果，所以无法捕获该问题。
-- 影响：需要“先查资料、再根据结果继续查或汇总”的委派任务可能重复调用、臆测结果或耗尽 `maxRounds`。
-- 目标：给 delegate 使用独立的临时 Runtime Host，或按顺序把每轮 `messagesToAppend` 安装进其本地 context；继续保证 tool call/result 原子性，且内部 transcript 不进入主 ledger。增加真正依赖前一轮 tool result 的回归测试。
+当前没有已知 P0 正确性缺陷。
 
 ## P1：可靠性与规模风险
 
@@ -75,9 +70,9 @@ PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goa
 
 ### Usage 与 prompt cache 归因混杂
 
-- delegate 复用 `runReactRound()`，其 token usage 仍记录成 `operation=agent.chat`；OpenAI 请求也固定使用 `prompt_cache_key=qq-bot-v2-main-agent`，没有区分主 Agent 与 delegate prompt。
-- Goal token budget 当前只覆盖主 Agent round 的未缓存 input + output；delegate、compaction、Life review、Memory maintenance 等辅助 LLM 调用不进入完整任务成本。
-- 目标：建立统一 usage accounting，至少带 `actor/operation/taskId/goalId`；给不同稳定 prompt family 使用不同 cache key，再明确 Goal budget 是“主循环预算”还是“目标总成本预算”。
+- compaction、Life review、Memory maintenance 等辅助 LLM 调用仍缺少统一的 `actor/operation/taskId/goalId` 归因，不同稳定 prompt family 的 cache key 分离也没有形成统一契约。
+- Goal token budget 当前只覆盖主 Agent round 的未缓存 input + output；这些辅助 LLM 调用不进入完整任务成本。
+- 目标：建立统一 usage accounting 和稳定 prompt-family 分离，再明确 Goal budget 是“主循环预算”还是“目标总成本预算”。
 
 ### BotLoopAgent 职责过密
 
@@ -114,13 +109,12 @@ PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goa
 
 ## 推荐偿还顺序
 
-1. 修复 delegate 多轮上下文并补回归测试。
-2. 增加数据库级单实例 fencing，并让普通 ledger append 使用 expected-head CAS。
-3. 把 ledger commit 改为增量 projection，增加规模 benchmark。
-4. 清理 startup dedup `Set` 的稳态无界增长。
-5. 明确 Memory evidence retention 模型。
-6. 建立 CI、fresh migration 和真实 PostgreSQL 并发测试。
-7. 再处理媒体 blob 去重、统一 usage accounting、singleton 约束和恢复 runbook。
+1. 增加数据库级单实例 fencing，并让普通 ledger append 使用 expected-head CAS。
+2. 把 ledger commit 改为增量 projection，增加规模 benchmark。
+3. 清理 startup dedup `Set` 的稳态无界增长。
+4. 明确 Memory evidence retention 模型。
+5. 建立 CI、fresh migration 和真实 PostgreSQL 并发测试。
+6. 再处理媒体 blob 去重、统一 usage accounting、singleton 约束和恢复 runbook。
 
 ## 持续维护
 

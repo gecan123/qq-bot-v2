@@ -14,9 +14,41 @@ const WRITE_CONTENT_MAX_CHARS = Math.ceil(WRITE_MAX_BYTES / 3) * 4 + 16
 const COMMAND_OUTPUT_CAP = 4_000
 const revisionSchema = z.string().regex(/^[a-f0-9]{64}$/)
 
-const BLOG_CONTENT_EXTENSIONS = new Set(['.md', '.mdx'])
-const IMAGE_WRITE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.svg'])
-const TEXT_READ_EXTENSIONS = new Set(['.md', '.mdx', '.json', '.txt', '.css', '.astro'])
+const WEBSITE_TEXT_EXTENSIONS = new Set([
+  '.astro',
+  '.css',
+  '.html',
+  '.js',
+  '.jsx',
+  '.json',
+  '.less',
+  '.md',
+  '.mdx',
+  '.mjs',
+  '.sass',
+  '.scss',
+  '.svelte',
+  '.svg',
+  '.ts',
+  '.tsx',
+  '.txt',
+  '.vue',
+  '.webmanifest',
+  '.xml',
+])
+const WEBSITE_BINARY_EXTENSIONS = new Set([
+  '.avif',
+  '.gif',
+  '.ico',
+  '.jpeg',
+  '.jpg',
+  '.otf',
+  '.png',
+  '.ttf',
+  '.webp',
+  '.woff',
+  '.woff2',
+])
 
 export interface WebsiteCommandRunInput {
   executable: string
@@ -115,7 +147,8 @@ export function createWebsiteTool(deps: WebsiteToolDeps): Tool<Args> {
       '支持 status 查看仓库状态, read 读取允许路径, write 写入, delete 删除, move 移动, publish 检查并发布允许路径变更.',
       'read 返回 revision; 覆盖、删除或移动已有文件必须携带最新 revision.',
       '新文章只能写入 src/content/blog/<slug>.md 或 .mdx; 创建前先 read 现有文章作为模板. frontmatter 使用 title, description, pubDate, tags, draft, 可选 updatedDate/cover; 不要使用 date/categories 代替必填字段.',
-      '其他路径仅限少量样式、about 页面和 public/images 下的安全文件; 不要读写配置、脚本、隐藏文件或路径逃逸.',
+      '可读写 src/** 下受支持的 Astro 源码、内容、样式与素材，以及 public/** 下受支持的静态资源; 可以建立页面、组件、布局和内容分类结构.',
+      '不要读写仓库根配置、依赖、CI、部署配置、脚本、隐藏文件或路径逃逸.',
       'publish 成功只表示构建通过且 Git commit/push 成功, 不表示 Vercel 已部署完成; 未确认正式 URL 可见目标内容前不得宣称已经上线.',
     ].join(' '),
     schema: argsSchema,
@@ -181,7 +214,7 @@ async function readWebsiteFile(runtime: WebsiteRuntimeConfig, args: Extract<Args
   }
 
   const relativePath = safeWebsiteRelativePath(args.file)
-  const isText = relativePath ? TEXT_READ_EXTENSIONS.has(extname(relativePath).toLowerCase()) : false
+  const isText = relativePath ? WEBSITE_TEXT_EXTENSIONS.has(extname(relativePath).toLowerCase()) : false
 
   const fileTarget = await existingSitePath(runtime.repoDir, args.file)
   if (fileTarget === 'not_found') {
@@ -755,14 +788,12 @@ function publishStageSpecs(changedFiles: string[]): string[] {
     let spec: string | null = null
     if (file.startsWith('src/content/')) {
       spec = 'src/content'
+    } else if (file.startsWith('src/')) {
+      spec = 'src'
     } else if (file.startsWith('public/images/')) {
       spec = 'public/images'
-    } else if (
-      file === 'src/pages/about.astro' ||
-      file === 'src/styles/tokens.css' ||
-      file === 'src/styles/components.css'
-    ) {
-      spec = file
+    } else if (file.startsWith('public/')) {
+      spec = 'public'
     }
     if (spec && !specs.includes(spec)) specs.push(spec)
   }
@@ -880,10 +911,9 @@ export function isAllowedWebsiteWritePath(file: string): boolean {
 
 function isAllowedWebsitePath(file: string): boolean {
   const ext = extname(file).toLowerCase()
-  if (file.startsWith('src/content/blog/')) return BLOG_CONTENT_EXTENSIONS.has(ext)
-  if (file === 'src/pages/about.astro') return ext === '.astro'
-  if (file === 'src/styles/tokens.css') return ext === '.css'
-  if (file === 'src/styles/components.css') return ext === '.css'
-  if (file.startsWith('public/images/')) return IMAGE_WRITE_EXTENSIONS.has(ext)
-  return false
+  const isEditableTree = file.startsWith('src/') || file.startsWith('public/')
+  return isEditableTree && (
+    WEBSITE_TEXT_EXTENSIONS.has(ext) ||
+    WEBSITE_BINARY_EXTENSIONS.has(ext)
+  )
 }

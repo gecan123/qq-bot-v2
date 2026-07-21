@@ -65,19 +65,28 @@ const WRITE_MAX_BYTES_FOR_TEST = 256 * 1024
 const READ_MAX_BYTES_FOR_TEST = 256 * 1024
 
 describe('website path policy', () => {
-  test('allows the canonical Astro blog collection and narrow presentation paths', () => {
+  test('allows supported Astro source trees and public static assets', () => {
     assert.equal(isAllowedWebsiteReadPath('src/content/blog/hello.md'), true)
     assert.equal(isAllowedWebsiteWritePath('src/content/blog/hello.md'), true)
     assert.equal(isAllowedWebsiteReadPath('src/content/blog/notes/today.mdx'), true)
     assert.equal(isAllowedWebsiteWritePath('src/content/blog/notes/today.mdx'), true)
-    assert.equal(isAllowedWebsiteReadPath('src/pages/about.astro'), true)
-    assert.equal(isAllowedWebsiteWritePath('src/pages/about.astro'), true)
-    assert.equal(isAllowedWebsiteReadPath('src/styles/tokens.css'), true)
-    assert.equal(isAllowedWebsiteWritePath('src/styles/tokens.css'), true)
-    assert.equal(isAllowedWebsiteReadPath('src/styles/components.css'), true)
-    assert.equal(isAllowedWebsiteWritePath('src/styles/components.css'), true)
+    assert.equal(isAllowedWebsiteReadPath('src/pages/blog/[category].astro'), true)
+    assert.equal(isAllowedWebsiteWritePath('src/pages/blog/[category].astro'), true)
+    assert.equal(isAllowedWebsiteReadPath('src/pages/rss.xml.js'), true)
+    assert.equal(isAllowedWebsiteWritePath('src/pages/rss.xml.js'), true)
+    assert.equal(isAllowedWebsiteReadPath('src/components/Header.astro'), true)
+    assert.equal(isAllowedWebsiteWritePath('src/components/Header.astro'), true)
+    assert.equal(isAllowedWebsiteReadPath('src/layouts/BlogPost.astro'), true)
+    assert.equal(isAllowedWebsiteWritePath('src/styles/global.scss'), true)
+    assert.equal(isAllowedWebsiteReadPath('src/content.config.ts'), true)
+    assert.equal(isAllowedWebsiteWritePath('src/consts.ts'), true)
+    assert.equal(isAllowedWebsiteReadPath('src/assets/fonts/site.woff2'), true)
+    assert.equal(isAllowedWebsiteWritePath('src/assets/cover.avif'), true)
     assert.equal(isAllowedWebsiteReadPath('public/images/avatar.webp'), true)
     assert.equal(isAllowedWebsiteWritePath('public/images/avatar.webp'), true)
+    assert.equal(isAllowedWebsiteReadPath('public/favicon.ico'), true)
+    assert.equal(isAllowedWebsiteWritePath('public/manifest.webmanifest'), true)
+    assert.equal(isAllowedWebsiteWritePath('public/sw.js'), true)
   })
 
   test('rejects config, ci, hidden files, scripts, and path escape', () => {
@@ -86,19 +95,16 @@ describe('website path policy', () => {
       '/tmp/file.md',
       '.env',
       'src/content/.draft.md',
-      'src/content/posts/hello.md',
-      'src/content/notes/today.mdx',
-      'src/content/profile.json',
       '.github/workflows/deploy.yml',
       '.vercel/project.json',
       'package.json',
       'pnpm-lock.yaml',
       'astro.config.mjs',
       'tsconfig.json',
-      'src/pages/index.astro',
-      'src/styles/global.css',
       'scripts/build.js',
-      'public/images/evil.js',
+      'src/generated/site.wasm',
+      'public/archive.zip',
+      'public/data.sqlite',
     ]
 
     for (const file of rejected) {
@@ -107,12 +113,8 @@ describe('website path policy', () => {
     }
   })
 
-  test('rejects text files under public images', () => {
-    const rejected = [
-      'public/images/readme.md',
-      'public/images/style.css',
-      'public/images/data.json',
-    ]
+  test('rejects unsupported binary and archive extensions in editable trees', () => {
+    const rejected = ['src/assets/model.bin', 'public/images/source.psd', 'public/download.tar']
 
     for (const file of rejected) {
       assert.equal(isAllowedWebsiteReadPath(file), false, file)
@@ -120,12 +122,8 @@ describe('website path policy', () => {
     }
   })
 
-  test('rejects non-content extensions under Astro content', () => {
-    const rejected = [
-      'src/content/blog/photo.png',
-      'src/content/blog/style.css',
-      'src/content/blog/page.astro',
-    ]
+  test('rejects unsupported extensions under Astro content', () => {
+    const rejected = ['src/content/blog/archive.zip', 'src/content/blog/database.sqlite']
 
     for (const file of rejected) {
       assert.equal(isAllowedWebsiteReadPath(file), false, file)
@@ -331,6 +329,38 @@ describe('website tool read/write/status', () => {
       assert.equal(result.file, 'src/content/blog/new.md')
       assert.equal(await readFile(join(repoDir, 'src/content/blog/new.md'), 'utf8'), '# new\n')
       assert.equal(result.bytes, Buffer.byteLength('# new\n'))
+    } finally {
+      await rm(repoDir, { recursive: true, force: true })
+    }
+  })
+
+  test('creates nested Astro category pages', async () => {
+    const repoDir = await makeSiteRepo()
+    try {
+      const tool = createWebsiteTool({
+        repoDir,
+        branch: 'main',
+        checkCommand: 'pnpm build',
+        commandTimeoutMs: 60_000,
+        runner: makeRunner(),
+      })
+      const content = '---\nconst { category } = Astro.params\n---\n<h1>{category}</h1>\n'
+
+      const written = JSON.parse((await tool.execute({
+        action: 'write',
+        file: 'src/pages/blog/[category].astro',
+        content,
+      }, makeCtx())).content as string) as { ok: boolean; file: string; revision: string }
+      const read = JSON.parse((await tool.execute({
+        action: 'read',
+        file: 'src/pages/blog/[category].astro',
+      }, makeCtx())).content as string) as { ok: boolean; content: string; revision: string }
+
+      assert.equal(written.ok, true)
+      assert.equal(written.file, 'src/pages/blog/[category].astro')
+      assert.equal(read.ok, true)
+      assert.equal(read.content, content)
+      assert.equal(read.revision, written.revision)
     } finally {
       await rm(repoDir, { recursive: true, force: true })
     }
@@ -641,6 +671,47 @@ describe('website tool read/write/status', () => {
 
       assert.equal(result.ok, false)
       assert.equal(result.code, 'wrong_branch')
+    } finally {
+      await rm(repoDir, { recursive: true, force: true })
+    }
+  })
+
+  test('publish accepts and stages a new nested Astro category page', async () => {
+    const repoDir = await makeSiteRepo()
+    const commands: string[] = []
+    try {
+      const runner: WebsiteCommandRunner = async (command) => {
+        const key = [command.executable, ...command.args].join(' ')
+        commands.push(key)
+        if (key === 'git rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'main\n', stderr: '', timedOut: false }
+        if (key === 'git status --porcelain --untracked-files=all') return { exitCode: 0, stdout: '?? src/pages/blog/[category].astro\n', stderr: '', timedOut: false }
+        if (key === 'pnpm build') return { exitCode: 0, stdout: 'built\n', stderr: '', timedOut: false }
+        if (key === 'git add -A -- src') return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
+        if (key === 'git diff --cached --name-status') return { exitCode: 0, stdout: 'A\tsrc/pages/blog/[category].astro\n', stderr: '', timedOut: false }
+        if (key.startsWith('git commit -m ')) return { exitCode: 0, stdout: '[main abc1234] site\n', stderr: '', timedOut: false }
+        if (key === 'git rev-parse --short HEAD') return { exitCode: 0, stdout: 'abc1234\n', stderr: '', timedOut: false }
+        if (key === 'git push origin main') return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
+        return { exitCode: 1, stdout: '', stderr: `unexpected command ${key}`, timedOut: false }
+      }
+      const tool = createWebsiteTool({
+        repoDir,
+        branch: 'main',
+        checkCommand: 'pnpm build',
+        commandTimeoutMs: 60_000,
+        runner,
+      })
+
+      const result = JSON.parse((await tool.execute({ action: 'publish' }, makeCtx())).content as string) as {
+        ok: boolean
+        publishStatus: string
+        changedFiles: string[]
+      }
+
+      assert.equal(result.ok, true)
+      assert.equal(result.publishStatus, 'pushed')
+      assert.deepEqual(result.changedFiles, ['src/pages/blog/[category].astro'])
+      assert.ok(commands.includes('git add -A -- src'))
+      assert.ok(commands.includes('git push origin main'))
     } finally {
       await rm(repoDir, { recursive: true, force: true })
     }

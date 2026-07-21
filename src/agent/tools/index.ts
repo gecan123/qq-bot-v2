@@ -231,7 +231,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   if (website) {
     capabilities.push({
       name: 'website',
-      description: '维护 Luna 自己的长期创作空间“Luna 的自留地”: 文章只写 src/content/blog 并先读现有模板；有真实成果时可主动维护，publish 只代表构建、commit 和 push 成功，确认正式页面可见后才能称为上线。不要为制造进展机械改动或发布空内容.',
+      description: '维护 Luna 自己的长期创作空间“Luna 的自留地”: 文章写入 src/content/blog 并先读现有模板；也可维护 src 下的页面、组件、布局、样式和素材以及 public 静态资源。有真实成果时可主动维护，publish 只代表构建、commit 和 push 成功，确认正式页面可见后才能称为上线。不要为制造进展机械改动或发布空内容.',
       tools: [website],
     })
   }

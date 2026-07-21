@@ -66,7 +66,7 @@
 
 - 网站源码放在独立 Astro 仓库中；owner 负责首次建站、Git 认证、Vercel 项目和域名，bot 通过 `BOT_WEBSITE_REPO_DIR` 访问本机 checkout。
 - `website action=status|read|write|delete|move|publish` 分别用于查看状态、读取、写入、删除、移动和发布。读取返回 revision；覆盖、删除或移动已有文件必须带最新 revision。`BOT_WEBSITE_PUBLIC_URL` 仅用于状态/发布结果提示，不参与部署鉴权。
-- 读写路径只允许 `src/content/**`、`src/pages/about.astro`、`src/styles/tokens.css`、`src/styles/components.css` 和 `public/images/**` 中受支持的文件类型；绝对路径、隐藏路径、路径逃逸、符号链接和非普通文件会被拒绝。
+- 读写路径允许 `src/**` 中受支持的 Astro 源码、内容、样式和素材，以及 `public/**` 中受支持的静态资源；因此 bot 可以建立页面、组件、布局和内容分类结构。仓库根配置、依赖、CI、部署配置和脚本仍不在允许范围；绝对路径、隐藏路径、路径逃逸、符号链接和非普通文件会被拒绝。
 - `publish` 只接受配置分支上的允许路径变更；先运行 `BOT_WEBSITE_CHECK_COMMAND`，再次校验工作区和暂存区，再 commit 并 push。Vercel 由网站仓库的 push 自动触发。
 
 ## 安全规则

@@ -15,6 +15,7 @@ import { Route as HealthRouteImport } from './routes/health'
 import { Route as LifeRouteImport } from './routes/life'
 import { Route as MemoryRouteImport } from './routes/memory'
 import { Route as MetricsRouteImport } from './routes/metrics'
+import { Route as OperationsRouteImport } from './routes/operations'
 import { Route as QqRouteImport } from './routes/qq'
 import { Route as TimelineRouteImport } from './routes/timeline'
 import { Route as MemoryFileIdRouteImport } from './routes/memory_.$fileId'
@@ -50,6 +51,11 @@ const MetricsRoute = MetricsRouteImport.update({
   path: '/metrics',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OperationsRoute = OperationsRouteImport.update({
+  id: '/operations',
+  path: '/operations',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const QqRoute = QqRouteImport.update({
   id: '/qq',
   path: '/qq',
@@ -78,6 +84,7 @@ export interface FileRoutesByFullPath {
   '/life': typeof LifeRoute
   '/memory': typeof MemoryRoute
   '/metrics': typeof MetricsRoute
+  '/operations': typeof OperationsRoute
   '/qq': typeof QqRoute
   '/timeline': typeof TimelineRoute
   '/memory/$fileId': typeof MemoryFileIdRoute
@@ -90,6 +97,7 @@ export interface FileRoutesByTo {
   '/life': typeof LifeRoute
   '/memory': typeof MemoryRoute
   '/metrics': typeof MetricsRoute
+  '/operations': typeof OperationsRoute
   '/qq': typeof QqRoute
   '/timeline': typeof TimelineRoute
   '/memory/$fileId': typeof MemoryFileIdRoute
@@ -103,6 +111,7 @@ export interface FileRoutesById {
   '/life': typeof LifeRoute
   '/memory': typeof MemoryRoute
   '/metrics': typeof MetricsRoute
+  '/operations': typeof OperationsRoute
   '/qq': typeof QqRoute
   '/timeline': typeof TimelineRoute
   '/memory_/$fileId': typeof MemoryFileIdRoute
@@ -117,6 +126,7 @@ export interface FileRouteTypes {
     | '/life'
     | '/memory'
     | '/metrics'
+    | '/operations'
     | '/qq'
     | '/timeline'
     | '/memory/$fileId'
@@ -129,6 +139,7 @@ export interface FileRouteTypes {
     | '/life'
     | '/memory'
     | '/metrics'
+    | '/operations'
     | '/qq'
     | '/timeline'
     | '/memory/$fileId'
@@ -141,6 +152,7 @@ export interface FileRouteTypes {
     | '/life'
     | '/memory'
     | '/metrics'
+    | '/operations'
     | '/qq'
     | '/timeline'
     | '/memory_/$fileId'
@@ -154,6 +166,7 @@ export interface RootRouteChildren {
   LifeRoute: typeof LifeRoute
   MemoryRoute: typeof MemoryRoute
   MetricsRoute: typeof MetricsRoute
+  OperationsRoute: typeof OperationsRoute
   QqRoute: typeof QqRoute
   TimelineRoute: typeof TimelineRoute
   MemoryFileIdRoute: typeof MemoryFileIdRoute
@@ -204,6 +217,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MetricsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/operations': {
+      id: '/operations'
+      path: '/operations'
+      fullPath: '/operations'
+      preLoaderRoute: typeof OperationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/qq': {
       id: '/qq'
       path: '/qq'
@@ -242,6 +262,7 @@ const rootRouteChildren: RootRouteChildren = {
   LifeRoute: LifeRoute,
   MemoryRoute: MemoryRoute,
   MetricsRoute: MetricsRoute,
+  OperationsRoute: OperationsRoute,
   QqRoute: QqRoute,
   TimelineRoute: TimelineRoute,
   MemoryFileIdRoute: MemoryFileIdRoute,

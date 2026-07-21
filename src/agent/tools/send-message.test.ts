@@ -14,6 +14,7 @@ import type { QqConversationController } from './qq-conversation.js'
 import { createSendMessageTool } from './send-message.js'
 
 type ActiveFocus = Exclude<QqConversationFocus, null>
+const noWork = { state: 'none' as const }
 
 function makeContext(): ToolContext {
   return { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 0 }
@@ -108,7 +109,7 @@ describe('send_message current conversation contract', () => {
       },
     })
 
-    const result = await tool.execute({ message: 'hi' }, makeContext())
+    const result = await tool.execute({ message: 'hi', work: noWork }, makeContext())
 
     assert.deepEqual(parse(result.content), {
       ok: false,
@@ -139,7 +140,7 @@ describe('send_message current conversation contract', () => {
       },
     })
 
-    const result = await tool.execute({ message: 'hi' }, makeContext())
+    const result = await tool.execute({ message: 'hi', work: noWork }, makeContext())
 
     assert.equal(parse(result.content).code, 'CHAT_CONTEXT_STALE')
     assert.equal(result.outcome?.ok, false)
@@ -162,8 +163,8 @@ describe('send_message current conversation contract', () => {
       },
     })
 
-    await tool.execute({ message: 'ambient' }, makeContext())
-    await tool.execute({ message: 'reply', reply_to: 555 }, makeContext())
+    await tool.execute({ message: 'ambient', work: noWork }, makeContext())
+    await tool.execute({ message: 'reply', reply_to: 555, work: noWork }, makeContext())
 
     assert.deepEqual(policyCalls, [
       {
@@ -187,7 +188,7 @@ describe('send_message current conversation contract', () => {
     const { sender, calls } = makeSender()
     const tool = createAllowedTool(sender)
 
-    await tool.execute({ message: 'hi', mention_user_id: 100 }, makeContext())
+    await tool.execute({ message: 'hi', mention_user_id: 100, work: noWork }, makeContext())
 
     assert.deepEqual(calls[0]?.segments.map((segment) => segment.type), ['at', 'text'])
     assert.equal(calls[0]?.segments[0]?.data.qq, '100')
@@ -207,7 +208,7 @@ describe('send_message current conversation contract', () => {
       },
     })
 
-    const result = await tool.execute({ message: 'hi', mention_user_id: 100 }, makeContext())
+    const result = await tool.execute({ message: 'hi', mention_user_id: 100, work: noWork }, makeContext())
 
     assert.equal(parse(result.content).code, 'MENTION_NOT_ALLOWED')
     assert.equal(result.outcome?.ok, false)
@@ -220,7 +221,7 @@ describe('send_message current conversation contract', () => {
     const { sender } = makeSender()
     const tool = createAllowedTool(sender, { type: 'private', userId: 10001 })
 
-    const result = await tool.execute({ message: 'hi', reply_to: 333 }, makeContext())
+    const result = await tool.execute({ message: 'hi', reply_to: 333, work: noWork }, makeContext())
 
     assert.deepEqual(parse(result.content), {
       ok: true,
@@ -247,7 +248,7 @@ describe('send_message current conversation contract', () => {
       },
     })
 
-    const result = await tool.execute({ message: 'hi' }, makeContext())
+    const result = await tool.execute({ message: 'hi', work: noWork }, makeContext())
 
     assert.deepEqual(parse(result.content), {
       ok: false,
@@ -272,16 +273,37 @@ describe('send_message schema and content', () => {
   test('exposes the clean schema without target, mode, or replyToMessageId', () => {
     const { sender } = makeSender()
     const tool = createAllowedTool(sender)
-    const shape = tool.schema.safeParse({ message: 'hi', reply_to: 5, mention_user_id: 100 })
+    const shape = tool.schema.safeParse({
+      message: 'hi',
+      reply_to: 5,
+      mention_user_id: 100,
+      work: { state: 'none' },
+    })
 
     assert.equal(shape.success, true)
-    assert.equal(tool.schema.safeParse({ message: 'x'.repeat(501) }).success, false)
-    assert.equal(tool.schema.safeParse({ message: 'hi', reply_to: 0 }).success, false)
+    assert.equal(tool.schema.safeParse({ message: 'hi' }).success, false)
+    assert.equal(tool.schema.safeParse({ message: 'x'.repeat(501), work: { state: 'none' } }).success, false)
+    assert.equal(tool.schema.safeParse({ message: 'hi', reply_to: 0, work: { state: 'none' } }).success, false)
     assert.equal(tool.schema.safeParse({}).success, false)
-    assert.equal(tool.schema.safeParse({ imageRef: 'media:42' }).success, true)
-    assert.equal(tool.schema.safeParse({ imageRef: `ephemeral:${'a'.repeat(64)}` }).success, true)
-    assert.equal(tool.schema.safeParse({ imageRef: 'bad' }).success, false)
-    assert.equal(tool.schema.safeParse({ message: 'hi', target: { type: 'group', groupId: 1 } }).success, true)
+    assert.equal(tool.schema.safeParse({ imageRef: 'media:42', work: { state: 'none' } }).success, true)
+    assert.equal(tool.schema.safeParse({
+      imageRef: `ephemeral:${'a'.repeat(64)}`,
+      work: { state: 'none' },
+    }).success, true)
+    assert.equal(tool.schema.safeParse({ imageRef: 'bad', work: { state: 'none' } }).success, false)
+    assert.equal(tool.schema.safeParse({
+      message: '还在做',
+      work: { state: 'goal_progress', goalId: '11111111-1111-4111-8111-111111111111' },
+    }).success, true)
+    assert.equal(tool.schema.safeParse({
+      message: '还在做',
+      work: { state: 'goal_progress', goalId: 'not-a-uuid' },
+    }).success, false)
+    assert.equal(tool.schema.safeParse({
+      message: 'hi',
+      work: { state: 'none' },
+      target: { type: 'group', groupId: 1 },
+    }).success, true)
     if (shape.success) {
       const data = shape.data as Record<string, unknown>
       assert.equal('target' in data, false)
@@ -295,8 +317,11 @@ describe('send_message schema and content', () => {
     const tool = createAllowedTool(sender)
     const platformMusic = { platform: 'qq' as const, id: '004Z8Ihr0JIu5s' }
 
-    assert.equal(tool.schema.safeParse({ music: platformMusic }).success, true)
-    await tool.execute({ music: platformMusic }, makeContext())
+    assert.equal(tool.schema.safeParse({
+      music: platformMusic,
+      work: { state: 'none' },
+    }).success, true)
+    await tool.execute({ music: platformMusic, work: noWork }, makeContext())
     assert.deepEqual(calls[0]?.segments, [
       { type: 'music', data: { type: 'qq', id: '004Z8Ihr0JIu5s' } },
     ])
@@ -307,6 +332,7 @@ describe('send_message schema and content', () => {
         image: 'https://example.com/cover.png',
         title: 'Luna Song',
       },
+      work: { state: 'none' },
     }).success, true)
     assert.equal(tool.schema.safeParse({
       music: {
@@ -315,6 +341,7 @@ describe('send_message schema and content', () => {
         image: 'https://example.com/cover.png',
         title: 'Luna Song',
       },
+      work: { state: 'none' },
     }).success, false)
   })
 
@@ -323,7 +350,7 @@ describe('send_message schema and content', () => {
     const tool = createAllowedTool(sender)
     const message = '  收到。  \n\n\n*思考: 用户可见正文*  '
 
-    await tool.execute({ message }, makeContext())
+    await tool.execute({ message, work: noWork }, makeContext())
 
     assert.equal(calls[0]?.segments[0]?.data.text, '收到。\n\n*思考: 用户可见正文*')
   })
@@ -336,7 +363,7 @@ describe('send_message failure diagnostics', () => {
     const { inspector, calls } = makeMuteInspector({ muted: true, mutedUntil })
     const tool = createAllowedTool(sender, { type: 'group', groupId: 111 }, inspector)
 
-    const result = await tool.execute({ message: 'hi' }, makeContext())
+    const result = await tool.execute({ message: 'hi', work: noWork }, makeContext())
 
     assert.deepEqual(calls, [111])
     assert.equal(parse(result.content).reason, 'group_muted')
@@ -354,7 +381,7 @@ describe('send_message failure diagnostics', () => {
     const { inspector, calls } = makeMuteInspector()
     const tool = createAllowedTool(sender, { type: 'private', userId: 10001 }, inspector)
 
-    const result = await tool.execute({ message: 'hi' }, makeContext())
+    const result = await tool.execute({ message: 'hi', work: noWork }, makeContext())
 
     assert.deepEqual(calls, [])
     assert.equal(parse(result.content).reason, 'send_failed')
@@ -401,7 +428,7 @@ describe('send_message image handling', () => {
     const { sender, calls } = makeSender()
     const tool = createAllowedTool(sender)
 
-    const result = await tool.execute({ image: { ephemeralRef: hash } }, makeContext())
+    const result = await tool.execute({ image: { ephemeralRef: hash }, work: noWork }, makeContext())
 
     assert.equal(parse(result.content).status, 'sent')
     assert.deepEqual(calls[0]?.segments.map((segment) => segment.type), ['image'])
@@ -421,7 +448,7 @@ describe('send_message image handling', () => {
     const { sender } = makeSender()
 
     const result = await createAllowedTool(sender).execute(
-      { image: { ephemeralRef: hash } },
+      { image: { ephemeralRef: hash }, work: noWork },
       makeContext(),
     )
 
@@ -440,7 +467,7 @@ describe('send_message image handling', () => {
     const { sender } = makeSender({ success: false, attempts: 2 })
 
     const result = await createAllowedTool(sender).execute(
-      { image: { ephemeralRef: hash } },
+      { image: { ephemeralRef: hash }, work: noWork },
       makeContext(),
     )
 
@@ -465,7 +492,7 @@ describe('send_message image handling', () => {
     const { sender } = makeSender()
 
     const result = await createAllowedTool(sender).execute(
-      { image: { ephemeralRef: hash } },
+      { image: { ephemeralRef: hash }, work: noWork },
       makeContext(),
     )
 
@@ -491,7 +518,7 @@ describe('send_message image handling', () => {
       },
     })
 
-    const result = await tool.execute({ image: { ephemeralRef: hash } }, makeContext())
+    const result = await tool.execute({ image: { ephemeralRef: hash }, work: noWork }, makeContext())
 
     assert.equal(parse(result.content).status, 'rejected')
     assert.equal(result.outcome?.ok, false)
@@ -511,7 +538,10 @@ describe('send_message image handling', () => {
     })) as never
     const { sender, calls } = makeSender()
 
-    const result = await createAllowedTool(sender).execute({ imageRef: 'media:7' }, makeContext())
+    const result = await createAllowedTool(sender).execute({
+      imageRef: 'media:7',
+      work: noWork,
+    }, makeContext())
 
     assert.equal((parse(result.content).image as Record<string, unknown>).mediaId, 7)
     assert.deepEqual(calls[0]?.segments.map((segment) => segment.type), ['image'])
@@ -526,6 +556,7 @@ describe('send_message image handling', () => {
       message: 'hi，醒着呢。咋啦',
       imageRef: 'media:1',
       reply_to: 333,
+      work: noWork,
     }, makeContext())
 
     assert.equal(parse(result.content).status, 'sent')

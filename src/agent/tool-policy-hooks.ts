@@ -48,6 +48,17 @@ interface SendMessageAiToneHookOptions {
 interface SendMessageHookArgs {
   message?: unknown
   reply_to?: unknown
+  work?: unknown
+}
+
+interface SendMessageGoalBinding {
+  goalId: string
+  status: string
+  currentCommitment: unknown
+}
+
+export interface SendMessageWorkCommitmentHookOptions {
+  getCurrentGoal: () => Promise<SendMessageGoalBinding | null>
 }
 
 type SendMessageAiToneTarget =
@@ -81,6 +92,51 @@ export interface SendMessageSafetyGuardOptions {
 export interface SendMessageSafetyGuard {
   beforeTool: BeforeToolHook
   afterTool: AfterToolHook
+}
+
+/** 进度外发必须绑定真实 active Goal，避免口头承诺发送后失去行动锚点。 */
+export function createSendMessageWorkCommitmentHook(
+  options: SendMessageWorkCommitmentHookOptions,
+): BeforeToolHook {
+  return async ({ call }) => {
+    if (call.name !== 'send_message') return
+    const args = call.args as SendMessageHookArgs
+    const work = parseSendMessageWorkBinding(args.work)
+    if (work?.state !== 'goal_progress') return
+
+    const goal = await options.getCurrentGoal()
+    if (
+      goal?.goalId === work.goalId
+      && goal.status === 'active'
+      && goal.currentCommitment != null
+    ) {
+      return
+    }
+
+    const error = goal == null
+      ? '进度消息承诺了后续工作，但当前没有 active Goal。'
+      : goal.goalId !== work.goalId
+        ? `进度消息绑定的 goalId 不是当前 Goal（current=${goal.goalId}）。`
+        : goal.status !== 'active'
+          ? `进度消息绑定的 Goal 状态是 ${goal.status}，不是 active。`
+          : '当前 active Goal 缺少 currentCommitment。'
+    return {
+      content: JSON.stringify({
+        ok: false,
+        code: 'work_commitment_required',
+        error,
+        instruction: '先用 goal create_self/replan 建立具体 currentCommitment，再用其 goalId 重试。如果已无后续工作，删掉正文中的未来承诺并用 work.state=none。',
+      }),
+      outcome: {
+        ok: false,
+        code: 'work_commitment_required',
+        error,
+        progress: false,
+        retryClass: 'immediate',
+        continuation: 'immediate',
+      },
+    }
+  }
 }
 
 /** 只按成功主动外发计时的进程内防抖；pending mailbox 回复不受限。 */
@@ -160,6 +216,19 @@ function isReplySend(
 ): boolean {
   if (args.reply_to != null) return true
   return target?.type === 'private' && hasPendingPrivateMailbox?.(target.userId) === true
+}
+
+function parseSendMessageWorkBinding(value: unknown):
+  | { state: 'none' }
+  | { state: 'goal_progress'; goalId: string }
+  | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const work = value as Record<string, unknown>
+  if (work.state === 'none') return { state: 'none' }
+  if (work.state === 'goal_progress' && typeof work.goalId === 'string') {
+    return { state: 'goal_progress', goalId: work.goalId }
+  }
+  return null
 }
 
 export function createGenerateImageTaskLogHook(options: GenerateImageTaskLogHookOptions = {}): AfterToolHook {

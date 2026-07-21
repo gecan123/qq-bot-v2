@@ -59,12 +59,27 @@ const musicSchema = z.object({
     }
   }
 })
+const workBindingSchema = z.discriminatedUnion('state', [
+  z.object({
+    state: z.literal('none')
+      .describe('这条消息发出后没有向对方承诺继续完成的工作。'),
+  }),
+  z.object({
+    state: z.literal('goal_progress')
+      .describe('这是进度消息，发出后仍要继续完成已激活 Goal 的 currentCommitment。'),
+    goalId: z.string().uuid()
+      .describe('必须与当前 active Goal 完全一致；不能用过期、cancelled 或 complete Goal。'),
+  }),
+])
 const argsSchema = z.object({
   message: z.string().min(1).max(MAX_TEXT_LENGTH).nullable().optional(),
   imageRef: imageRefSchema.nullable().optional(),
   music: musicSchema.nullable().optional(),
   reply_to: z.number().int().positive().optional(),
   mention_user_id: z.number().int().positive().optional(),
+  work: workBindingSchema.describe(
+    '必填的工作状态声明。只要正文说了“接下来做”“先学习再继续”或其他未完成行动，就必须用 goal_progress 并绑定 active Goal。',
+  ),
 }).refine((value) => value.message != null || value.imageRef != null || value.music != null, {
   message: 'message、imageRef 或 music 至少一个非空',
 })
@@ -77,6 +92,9 @@ interface Args {
   music?: MusicShare | null
   reply_to?: number
   mention_user_id?: number
+  work:
+    | { state: 'none' }
+    | { state: 'goal_progress'; goalId: string }
 }
 
 interface ResolvedArgs {
@@ -124,6 +142,7 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
       '群 ambient 只能发到主动发送白名单；不在主动发送白名单的监听群只允许 reply 明确 @ 机器人的消息。私聊只能发给当前 QQ 好友。未授权会明确拒绝，不会模拟成功。',
       'mention_user_id 仅允许当前会话为群聊时使用。',
       'imageRef 使用 media:<id> 或 ephemeral:<64-hex>；message、imageRef 和 music 至少一个非 null。',
+      'work 必填：普通闲聊或已经收尾用 {state:"none"}；只要这条消息承诺发出后还会继续工作，必须先建立 active Goal + currentCommitment，再用 {state:"goal_progress",goalId}。',
       'message 是 QQ 用户可见正文，最多 500 字。只有调用本工具才会真实发送。',
     ].join(' '),
     schema: argsSchema,

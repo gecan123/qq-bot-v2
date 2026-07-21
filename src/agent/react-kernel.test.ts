@@ -69,6 +69,38 @@ describe('runReactRound', () => {
     })
   })
 
+  test('marks non-empty assistant text without tool calls for host correction', async () => {
+    const context = createAgentContext({
+      initialMessages: [{ role: 'user', content: '继续工作' }],
+    })
+    const result = await runReactRound({
+      systemPrompt: 'system',
+      context,
+      llm: {
+        async chat() {
+          return {
+            content: '我接下来会继续处理。',
+            toolCalls: [],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: {
+        list: () => [],
+        classify: classifyExclusive,
+        async execute(): Promise<ToolExecutionResult> {
+          throw new Error('unexpected tool execution')
+        },
+      },
+      toolContext: { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 1 },
+    })
+
+    assert.equal(result.assistantTextOnly, true)
+    assert.deepEqual(result.messagesToAppend, [])
+  })
+
   test('stages assistant tool calls and tool results without mutating the durable context', async () => {
     const context = createAgentContext()
     context.appendUserMessage('hello')
@@ -121,6 +153,7 @@ describe('runReactRound', () => {
     assert.deepEqual(executionOrder, ['7:lookup'])
     assert.equal(result.inputTokens, 10)
     assert.equal(result.tokensUsed, 15)
+    assert.equal(result.assistantTextOnly, false)
     assert.deepEqual(result.effects, [])
     assert.deepEqual(result.toolOutcomes, [{
       toolCallId: 'lookup-1',

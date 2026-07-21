@@ -15,6 +15,7 @@ import {
   createGenerateImageTaskLogHook,
   createSendMessageAiToneHook,
   createSendMessageSafetyGuard,
+  createSendMessageWorkCommitmentHook,
 } from './tool-policy-hooks.js'
 import { createOwnerApprovalHook, type ApprovalMode } from './approval-policy.js'
 import { buildBotToolManifest, type BotOptionalTools } from './tools/index.js'
@@ -256,6 +257,9 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
         createOwnerApprovalHook(approvalManager, (toolName, args) => (
           toolName === 'mcp' ? mcpManager?.approvalRequirementForArgs(args) ?? null : null
         ), input.approvalMode ?? 'thin'),
+        createSendMessageWorkCommitmentHook({
+          getCurrentGoal: async () => await input.goalStore?.get() ?? null,
+        }),
         sendMessageSafetyGuard.beforeTool,
         createSendMessageAiToneHook({ getCurrentTarget: getCurrentQqTarget }),
       ],

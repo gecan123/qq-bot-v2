@@ -165,6 +165,11 @@ const MAX_RECENT_TOOL_NOVELTY_KEYS = 256
 const RECOVERABLE_TOOL_ERROR_CODES = new Set(['capability_inactive', 'invalid_arguments'])
 const OUTPUT_CONTINUATION_PROMPT =
   '[runtime recovery] 上一段 assistant 输出达到长度上限。请从中断处继续，不要重复已完成内容，并用一个完整的工具调用结束本轮。'
+const ASSISTANT_TEXT_ONLY_CORRECTION = JSON.stringify({
+  event: 'runtime_correction',
+  code: 'assistant_text_without_tool',
+  instruction: '上一轮只输出了普通 assistant 文本；它不会发送给任何人，也不会执行其中的计划。若仍有工作，现在调用具体工具；若确实没有待处理行动，以空内容且无工具调用结束。',
+})
 const defaultKeepAlive = {
   open() {
     const timer = setInterval(() => {}, DEFAULT_KEEP_ALIVE_INTERVAL_MS)
@@ -606,6 +611,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     recoverableToolFailure: boolean
     onlyHelpToolCalls: boolean
     madeToolProgress: boolean
+    assistantTextOnly: boolean
     evidenceMessageRowIds: number[]
     toolOutcomes: ReactToolOutcome[]
     toolContinuation?: ToolContinuation
@@ -693,6 +699,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     } = interpretToolEffects(result.effects)
 
     stagedMessages.push(...result.messagesToAppend)
+    if (result.assistantTextOnly) {
+      stagedMessages.push({ role: 'user', content: ASSISTANT_TEXT_ONLY_CORRECTION })
+    }
     const nextContinuity = parseMailboxContinuityState(mailboxContinuity)
     recordMailboxRound(nextContinuity, result.inputTokens)
     let nextInboxReadCursors = inboxReadCursors
@@ -735,6 +744,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls: result.toolOutcomes.length > 0
         && result.toolOutcomes.every((outcome) => outcome.requestedToolName === 'help'),
       madeToolProgress: toolControl.madeProgress,
+      assistantTextOnly: result.assistantTextOnly,
       evidenceMessageRowIds: [...new Set(result.toolOutcomes.flatMap(
         (outcome) => outcome.evidenceMessageRowIds ?? [],
       ))],
@@ -857,6 +867,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     recoverableToolFailure?: boolean
     onlyHelpToolCalls?: boolean
     madeToolProgress?: boolean
+    assistantTextOnly?: boolean
     shareCheckpointAppended?: boolean
     toolContinuation?: ToolContinuation
     toolContinuationDetail?: string
@@ -990,6 +1001,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       recoverableToolFailure,
       onlyHelpToolCalls,
       madeToolProgress,
+      assistantTextOnly,
       evidenceMessageRowIds,
       toolOutcomes,
       toolContinuation,
@@ -1077,12 +1089,14 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       recoverableToolFailure,
       onlyHelpToolCalls,
       madeToolProgress,
+      assistantTextOnly,
       shareCheckpointAppended,
       ...(toolContinuation ? { toolContinuation } : {}),
       ...(toolContinuationDetail ? { toolContinuationDetail } : {}),
       actionRequired: goalAtRoundStart?.status === 'active'
         || (drained.hadAttention && disclosed > 0)
-        || hasPendingPrivateMailboxAttention(deps.context.getSnapshot().messages),
+        || hasPendingPrivateMailboxAttention(deps.context.getSnapshot().messages)
+        || assistantTextOnly,
     }
   }
 
@@ -1095,6 +1109,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       recoverableToolFailure = false,
       onlyHelpToolCalls = false,
       madeToolProgress = false,
+      assistantTextOnly = false,
       shareCheckpointAppended = false,
       toolContinuation,
       toolContinuationDetail,
@@ -1206,14 +1221,24 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       idleBackoffLevel = 0
       if (!actionCorrectionRetryPending) {
         actionCorrectionRetryPending = true
-        log.info({ consecutiveRounds }, 'no_tool_action_retry_immediate')
+        log.info(
+          { consecutiveRounds, assistantTextOnly },
+          assistantTextOnly
+            ? 'assistant_text_only_retry_immediate'
+            : 'no_tool_action_retry_immediate',
+        )
         return
       }
       log.info(
-        { consecutiveRounds, waitMs: autonomy.actionRetryWaitMs },
-        'no_tool_action_retry_wait',
+        { consecutiveRounds, waitMs: autonomy.actionRetryWaitMs, assistantTextOnly },
+        assistantTextOnly ? 'assistant_text_only_retry_wait' : 'no_tool_action_retry_wait',
       )
-      await waitForAttention('当前请求尚未完成，等待短暂重试', autonomy.actionRetryWaitMs)
+      await waitForAttention(
+        assistantTextOnly
+          ? '模型仍只输出普通文本，等待短暂纠错'
+          : '当前请求尚未完成，等待短暂重试',
+        autonomy.actionRetryWaitMs,
+      )
       actionCorrectionRetryPending = false
       return
     }

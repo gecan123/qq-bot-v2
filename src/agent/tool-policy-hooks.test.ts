@@ -8,6 +8,7 @@ import {
   createGenerateImageTaskLogHook,
   createSendMessageAiToneHook,
   createSendMessageSafetyGuard,
+  createSendMessageWorkCommitmentHook,
   type AiTonePrecheckLogEntry,
   type GenerateImageTaskLogEntry,
 } from './tool-policy-hooks.js'
@@ -22,6 +23,10 @@ function makeCtx() {
 const sendMessageSchema = z.object({
   message: z.string().nullable().optional(),
   reply_to: z.number().int().positive().optional(),
+  work: z.discriminatedUnion('state', [
+    z.object({ state: z.literal('none') }),
+    z.object({ state: z.literal('goal_progress'), goalId: z.string().uuid() }),
+  ]).optional(),
 })
 
 function createFakeSendTool(
@@ -124,6 +129,100 @@ describe('createSendMessageSafetyGuard', () => {
     assert.equal(JSON.parse(response.content as string).ok, true)
     assert.equal(JSON.parse(ambientAgain.content as string).code, 'private_ambient_cooldown')
     assert.equal(calls.length, 2)
+  })
+})
+
+describe('createSendMessageWorkCommitmentHook', () => {
+  const activeGoalId = '11111111-1111-4111-8111-111111111111'
+
+  test('allows a progress message bound to the current active Goal commitment', async () => {
+    const calls: unknown[] = []
+    const exec = createToolExecutor([createFakeSendTool(calls)], {
+      hooks: {
+        beforeTool: [createSendMessageWorkCommitmentHook({
+          getCurrentGoal: async () => ({
+            goalId: activeGoalId,
+            status: 'active',
+            currentCommitment: { action: '读 Astro 文档' },
+          }),
+        })],
+      },
+    })
+
+    const result = await exec.execute({
+      id: 'progress',
+      name: 'send_message',
+      args: {
+        message: '我先学一下 Astro 再继续改。',
+        work: { state: 'goal_progress', goalId: activeGoalId },
+      },
+    }, makeCtx())
+
+    assert.equal(JSON.parse(result.content as string).ok, true)
+    assert.equal(calls.length, 1)
+  })
+
+  test('rejects a future-work promise without a matching active Goal commitment', async () => {
+    const cases = [
+      null,
+      { goalId: activeGoalId, status: 'cancelled', currentCommitment: { action: '旧任务' } },
+      { goalId: activeGoalId, status: 'active', currentCommitment: null },
+      {
+        goalId: '22222222-2222-4222-8222-222222222222',
+        status: 'active',
+        currentCommitment: { action: '另一个任务' },
+      },
+    ]
+
+    for (const [index, goal] of cases.entries()) {
+      const calls: unknown[] = []
+      const exec = createToolExecutor([createFakeSendTool(calls)], {
+        hooks: {
+          beforeTool: [createSendMessageWorkCommitmentHook({
+            getCurrentGoal: async () => goal,
+          })],
+        },
+      })
+      const result = await exec.execute({
+        id: `blocked-${index}`,
+        name: 'send_message',
+        args: {
+          message: '我稍后继续。',
+          work: { state: 'goal_progress', goalId: activeGoalId },
+        },
+      }, makeCtx())
+
+      assert.equal(JSON.parse(result.content as string).code, 'work_commitment_required')
+      assert.deepEqual(result.outcome, {
+        ok: false,
+        code: 'work_commitment_required',
+        error: (JSON.parse(result.content as string) as { error: string }).error,
+        progress: false,
+        retryClass: 'immediate',
+        continuation: 'immediate',
+      })
+      assert.equal(calls.length, 0)
+    }
+  })
+
+  test('does not require a Goal when the message leaves no promised work', async () => {
+    const calls: unknown[] = []
+    const exec = createToolExecutor([createFakeSendTool(calls)], {
+      hooks: {
+        beforeTool: [createSendMessageWorkCommitmentHook({
+          getCurrentGoal: async () => null,
+        })],
+      },
+    })
+
+    const result = await exec.execute({
+      id: 'none',
+      name: 'send_message',
+      args: { message: '知道了。', work: { state: 'none' } },
+    }, makeCtx())
+
+    assert.equal(JSON.parse(result.content as string).ok, true)
+    assert.equal(calls.length, 1)
   })
 })
 

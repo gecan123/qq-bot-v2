@@ -68,6 +68,8 @@ export interface ReactRoundResult {
   messagesToAppend: DurableAgentMessage[]
   /** 包含 max_tokens 重试，供 host 做完整观测。 */
   completions: LlmCallOutput[]
+  /** 模型只输出了不会发送或执行的普通文本；host 必须进入有界纠错。 */
+  assistantTextOnly: boolean
   /** 仅供当前 Runtime Host 决定纠错/等待，不进入 AgentContext。 */
   toolOutcomes: ReactToolOutcome[]
 }
@@ -283,6 +285,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
     effects,
     messagesToAppend,
     completions,
+    assistantTextOnly: completion.toolCalls.length === 0 && completion.content.trim().length > 0,
     toolOutcomes,
   }
 }

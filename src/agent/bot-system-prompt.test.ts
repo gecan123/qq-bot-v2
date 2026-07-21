@@ -49,6 +49,8 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /mentionedSelf.*mentionTargets/s)
     assert.match(prompt, /help.*activate.*qq.*qq_conversation open.*send_message/s)
     assert.match(prompt, /CHAT_CONTEXT_UNAVAILABLE.*CHAT_CONTEXT_STALE/s)
+    assert.match(prompt, /send_message\.work.*none.*active Goal.*currentCommitment.*goal_progress.*goalId/s)
+    assert.match(prompt, /只输出文本.*不调工具.*runtime 纠错/s)
     assert.match(prompt, /没有.*义务.*值得尝试.*无工具结束.*活动轮/s)
     assert.match(prompt, /memory.*稳定事实.*recall/s)
     assert.match(prompt, /chat_style.*按需/s)
@@ -99,6 +101,7 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /最近线索.*稳定兴趣.*wishes.*关系.*已有成果.*候选方向/s)
     assert.match(prompt, /研究.*创作.*自然联系熟人.*相互转化/s)
     assert.match(prompt, /一次只推进一个.*真实证据.*self Goal.*currentCommitment/s)
+    assert.match(prompt, /不要.*承诺.*我会继续.*进度外发.*绑定.*Goal.*继续 currentCommitment/s)
     assert.match(prompt, /自主不等于.*持续忙碌.*频繁发言.*无工具结束/s)
   })
 

@@ -3832,26 +3832,17 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(waits, 1)
   })
 
-  test('assistant 返回 no tool calls 时不把 text-only 思考写入 context', async () => {
-    const ctx = createAgentContext()
-    const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({
-      type: 'napcat_message',
-      messageRowId: 1,
-      groupId: 999,
-      messageId: 12345,
-      senderId: 100,
-      senderNickname: '张三',
-      mentionedSelf: true,
-      sentAt: new Date('2026-01-01T00:00:00Z'),
-      renderedText: 'hello',
+  test('assistant text-only 结束会写入受控纠错并立即重试工具行动', async () => {
+    const ctx = createAgentContext({
+      initialMessages: [{ role: 'user', content: '已有上下文，当前没有 pending mailbox' }],
     })
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
 
     let llmCallCount = 0
     let restCalled = false
     let agent: ReturnType<typeof createBotLoopAgent>
     const llm: LlmClient = {
-      async chat() {
+      async chat(input) {
         llmCallCount++
         if (llmCallCount === 1) {
           return {
@@ -3862,6 +3853,13 @@ describe('BotLoopAgent.runOnceForTest', () => {
             contextWindowTokens: 200_000,
           }
         }
+        const correction = input.messages.at(-1)?.content
+        assert.equal(typeof correction, 'string')
+        assert.match(
+          correction as string,
+          /"event":"runtime_correction".*"code":"assistant_text_without_tool"/,
+        )
+        await agent.stop()
         return {
           content: '',
           toolCalls: [{ id: 'c2', name: 'rest', args: { durationSeconds: 30 } }],
@@ -3875,7 +3873,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const tools = makeMockTools({
       rest: async () => {
         restCalled = true
-        await agent.stop()
         return { content: '{"ok":true,"status":"elapsed"}' }
       },
     })
@@ -3889,25 +3886,65 @@ describe('BotLoopAgent.runOnceForTest', () => {
       tools,
       ledgerRepo: repo,
       ledgerLoader: loader,
-      renderEvent: async (event) => {
-        if (event.type !== 'napcat_message') return null
-        return `[${event.senderNickname}] hello`
-      },
+      renderEvent: () => null,
       eventDebounceMs: 0,
     })
 
-    const startPromise = agent.start()
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await agent.start()
 
-    assert.ok(llmCallCount >= 2, `expected LLM to choose next action itself, got ${llmCallCount}`)
+    assert.equal(llmCallCount, 2)
     assert.equal(restCalled, true)
     assert.equal(
       ctx.getSnapshot().messages.some((msg) => msg.role === 'assistant' && msg.content === '先想一下'),
       false,
       'text-only assistant output is transient telemetry, not durable context',
     )
+    assert.equal(
+      ctx.getSnapshot().messages.some((msg) => (
+        msg.role === 'user' && msg.content.includes('assistant_text_without_tool')
+      )),
+      true,
+    )
+  })
 
-    await startPromise
+  test('连续 assistant text-only 结束只立即纠错一次，第二次进入一分钟有界等待', async () => {
+    const ctx = createAgentContext({
+      initialMessages: [{ role: 'user', content: '已有上下文' }],
+    })
+    const waits: number[] = []
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
+    agent = createBotLoopAgent({
+      systemPrompt: 'you are a bot',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: {
+        async chat() {
+          return {
+            content: '我稍后会继续。',
+            toolCalls: [],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools(),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: () => null,
+      eventDebounceMs: 0,
+      autonomy: {
+        async waitForAttentionOrTimeout(_queue, timeoutMs) {
+          waits.push(timeoutMs)
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+    assert.deepEqual(waits, [60_000])
   })
 
   test('send_message 参数不做隐藏思考 preflight 拦截', async () => {

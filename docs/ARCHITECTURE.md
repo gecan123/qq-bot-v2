@@ -61,7 +61,7 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 
 ## 自主循环
 
-- `send_message` 成功只是完成一个动作，不强制立即等待。刚收到注意事件或存在 active Goal 时，无工具结束会立即重试一次；第二次无工具等待 60 秒。自由空闲或无进展工具轮从 15 分钟开始指数退避，最多 4 小时；新的注意事件或真实工具进展会复位退避。
+- `send_message` 成功只是完成一个动作，不强制立即等待。正文留下后续工作时，`work=goal_progress` 必须绑定当前 active Goal/currentCommitment；mailbox 在成功回复后仍可关闭防重，Goal 独立保留行动锚点。刚收到注意事件、存在 active Goal，或模型只输出了不会执行的普通文本时，无工具结束会立即纠错一次；连续第二次等待 60 秒。自由空闲或无进展工具轮从 15 分钟开始指数退避，最多 4 小时；新的注意事件或真实工具进展会复位退避。
 - Notebook、topic Memory 或后台任务明确产出新成果后，Runtime 可追加一次 `share_checkpoint`，列出启动时冻结的 active 群短定位。它只要求 Agent 判断一次是否适合分享，不自动发送、不改变 QQ focus/发送授权或普通群消息的免唤醒规则；同一成果键永久去重，同主题两小时内不连续追加。
 - provider-confirmed 外发到有 pending 通知的同 target mailbox 后，Runtime 在 tool result 闭合后原子 append `mailbox_handled` 与 runtime cursor，避免把已经处理的旧行再次视为新请求。
 - `pause action=rest` 是 30–600 秒短休息安全阀。没有真实牵引力时应直接以无工具轮结束活动并进入 runtime 有界等待；只有此刻确实选择短暂休息才调用 `pause`，调用后立即计时，不再同步请求额外 LLM。计时可被注意事件、后台任务完成或停止信号打断。

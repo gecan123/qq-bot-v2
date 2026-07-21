@@ -254,7 +254,10 @@ describe('createAgentRuntime', () => {
     const send = await runtime.tools.execute({
       id: 'send-private',
       name: 'invoke',
-      args: { tool: 'send_message', args: { message: 'hi', reply_to: 5 } },
+      args: {
+        tool: 'send_message',
+        args: { message: 'hi', reply_to: 5, work: { state: 'none' } },
+      },
     }, {
       eventQueue: new InMemoryEventQueue<BotEvent>(),
       roundIndex: 1,
@@ -317,7 +320,10 @@ describe('createAgentRuntime', () => {
     await runtime.tools.execute({
       id: 'ambient',
       name: 'invoke',
-      args: { tool: 'send_message', args: { message: '早，今天要做什么？' } },
+      args: {
+        tool: 'send_message',
+        args: { message: '早，今天要做什么？', work: { state: 'none' } },
+      },
     }, toolContext)
 
     context.appendUserMessage(
@@ -326,7 +332,10 @@ describe('createAgentRuntime', () => {
     const response = await runtime.tools.execute({
       id: 'response',
       name: 'invoke',
-      args: { tool: 'send_message', args: { message: '我今天想继续看 Anka 那篇论文。' } },
+      args: {
+        tool: 'send_message',
+        args: { message: '我今天想继续看 Anka 那篇论文。', work: { state: 'none' } },
+      },
     }, toolContext)
 
     assert.equal(JSON.parse(response.content as string).status, 'sent')

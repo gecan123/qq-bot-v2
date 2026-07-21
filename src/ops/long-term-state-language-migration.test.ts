@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -9,8 +9,49 @@ import { appendNotebookRecord, listNotebookRecords } from '../agent/notebook-sto
 import {
   assertLongTermStateUsesChinese,
   migrateLongTermStateToChinese,
+  planLongTermStateLanguageMigration,
   repairNestedLifeJournalEntries,
 } from './long-term-state-language-migration.js'
+
+test('plans all translation categories without changing any workspace byte', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'long-term-language-plan-'))
+  try {
+    await seedEnglishWorkspace(rootDir)
+    const before = await snapshotTree(rootDir)
+
+    const preview = await planLongTermStateLanguageMigration({ rootDir })
+
+    assert.equal(preview.totalItems, 6)
+    assert.equal(preview.estimatedBatches, 1)
+    assert.deepEqual(preview.counts, {
+      memoryTitles: 1,
+      memoryEntries: 1,
+      notebookTopics: 1,
+      notebookEntries: 1,
+      lifeJournalEntries: 1,
+      agendaItems: 1,
+    })
+    assert.equal(preview.items.length, 6)
+    assert.deepEqual(await snapshotTree(rootDir), before)
+  } finally {
+    await rm(rootDir, { recursive: true, force: true })
+  }
+})
+
+test('plans no work for an empty already-Chinese workspace', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'long-term-language-plan-chinese-'))
+  try {
+    await writeLifeAgenda({ rootDir }, '# Agenda\n\n## Active\n- [ ] 保持长期状态为中文。\n\n## Waiting\n\n## Someday\n\n## Done\n')
+
+    const preview = await planLongTermStateLanguageMigration({ rootDir })
+
+    assert.equal(preview.totalItems, 0)
+    assert.equal(preview.estimatedBatches, 0)
+    assert.deepEqual(preview.items, [])
+  } finally {
+    await rm(rootDir, { recursive: true, force: true })
+  }
+})
 
 test('migrates human-readable long-term state to Chinese while preserving machine structure', async () => {
   const rootDir = await mkdtemp(join(tmpdir(), 'long-term-language-migration-'))
@@ -171,3 +212,38 @@ roundIndex: midday
     await rm(rootDir, { recursive: true, force: true })
   }
 })
+
+async function seedEnglishWorkspace(rootDir: string): Promise<void> {
+  await writeMemoryEntry({ rootDir, id: () => 'memory-1' }, {
+    scope: 'self',
+    title: 'OpenAI migration notes',
+    content: 'Keep API names and paths unchanged while translating the explanation.',
+  })
+  await appendNotebookRecord({ rootDir, id: () => 'notebook-1' }, {
+    kind: 'project',
+    topic: 'Language migration',
+    content: 'Translate old notebook entries without changing facts.',
+  })
+  await appendLifeJournalEntry({
+    rootDir,
+    id: () => 'journal-1',
+    now: () => new Date('2026-07-18T02:00:00.000Z'),
+    roundIndex: 1,
+    markdown: '### Saw\n- A quiet migration test.\n\n### Mood\n- Careful and calm.',
+  })
+  await writeLifeAgenda({ rootDir }, '# Agenda\n\n## Active\n- [ ] Finish the language migration.\n\n## Waiting\n\n## Someday\n\n## Done\n')
+}
+
+async function snapshotTree(rootDir: string): Promise<Record<string, string>> {
+  const snapshot: Record<string, string> = {}
+  const visit = async (directory: string, prefix = ''): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const relativePath = prefix ? join(prefix, entry.name) : entry.name
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) await visit(path, relativePath)
+      else snapshot[relativePath] = (await readFile(path)).toString('base64')
+    }
+  }
+  await visit(rootDir)
+  return snapshot
+}

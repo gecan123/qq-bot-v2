@@ -14,7 +14,6 @@ import {
   updateNotebookRecord,
 } from '../agent/notebook-store.js'
 import {
-  readLifeAgendaSnapshot,
   readLifeJournalDay,
   updateLifeJournalEntry,
   writeLifeAgendaIfRevision,
@@ -45,6 +44,22 @@ export interface LongTermStateLanguageMigrationResult {
   }
   renamedMemoryFiles: Array<{ from: string; to: string }>
   translatedItems: number
+}
+
+export interface LongTermStateLanguageMigrationCounts {
+  memoryTitles: number
+  memoryEntries: number
+  notebookTopics: number
+  notebookEntries: number
+  lifeJournalEntries: number
+  agendaItems: number
+}
+
+export interface LongTermStateLanguageMigrationPlan {
+  totalItems: number
+  estimatedBatches: number
+  counts: LongTermStateLanguageMigrationCounts
+  items: readonly LongTermTranslationItem[]
 }
 
 interface MemoryPlan {
@@ -88,6 +103,28 @@ const NOTEBOOK_TOPIC_MAX = 120
 const MEMORY_ENTRY_MAX = 2_000
 const NOTEBOOK_ENTRY_MAX = 12_000
 const LIFE_ENTRY_MAX = 12_000
+export const LONG_TERM_TRANSLATION_MAX_BATCH_CHARS = 3_500
+export const LONG_TERM_TRANSLATION_MAX_BATCH_ITEMS = 8
+
+interface CollectedMigrationPlan {
+  requests: LongTermTranslationItem[]
+  memoryPlans: MemoryPlan[]
+  notebookPlans: NotebookPlan[]
+  journalPlans: JournalPlan[]
+  agenda: Awaited<ReturnType<typeof collectAgendaPlan>>
+}
+
+export async function planLongTermStateLanguageMigration(input: {
+  rootDir: string
+}): Promise<LongTermStateLanguageMigrationPlan> {
+  const collected = await collectMigrationPlan(resolve(input.rootDir))
+  return {
+    totalItems: collected.requests.length,
+    estimatedBatches: countTranslationBatches(collected.requests),
+    counts: countPlanItems(collected),
+    items: collected.requests,
+  }
+}
 
 export async function migrateLongTermStateToChinese(input: {
   rootDir: string
@@ -97,12 +134,13 @@ export async function migrateLongTermStateToChinese(input: {
   const rootDir = resolve(input.rootDir)
   const backupDir = await backupLongTermState(rootDir, input.now?.() ?? new Date())
   const repairedNestedJournalEntries = await repairNestedLifeJournalEntries(rootDir)
-  const requests: LongTermTranslationItem[] = []
-
-  const memoryPlans = await collectMemoryPlans(rootDir, requests)
-  const notebookPlans = await collectNotebookPlans(rootDir, requests)
-  const journalPlans = await collectJournalPlans(rootDir, requests)
-  const agenda = await collectAgendaPlan(rootDir, requests)
+  const {
+    requests,
+    memoryPlans,
+    notebookPlans,
+    journalPlans,
+    agenda,
+  } = await collectMigrationPlan(rootDir)
 
   const translations = await input.translate(requests)
   const translated = validateTranslations(requests, translations)
@@ -224,6 +262,58 @@ export async function migrateLongTermStateToChinese(input: {
   }
 }
 
+async function collectMigrationPlan(rootDir: string): Promise<CollectedMigrationPlan> {
+  const requests: LongTermTranslationItem[] = []
+  const memoryPlans = await collectMemoryPlans(rootDir, requests)
+  const notebookPlans = await collectNotebookPlans(rootDir, requests)
+  const journalPlans = await collectJournalPlans(rootDir, requests)
+  const agenda = await collectAgendaPlan(rootDir, requests)
+  return { requests, memoryPlans, notebookPlans, journalPlans, agenda }
+}
+
+function countPlanItems(plan: CollectedMigrationPlan): LongTermStateLanguageMigrationCounts {
+  return {
+    memoryTitles: plan.memoryPlans.reduce((count, item) => (
+      count
+      + (item.titleKey ? 1 : 0)
+      + item.entries.flatMap(entry => entry.aliasKeys).filter(Boolean).length
+    ), 0),
+    memoryEntries: plan.memoryPlans.reduce(
+      (count, item) => count + item.entries.filter(entry => entry.key).length,
+      0,
+    ),
+    notebookTopics: plan.notebookPlans.filter(item => item.topicKey).length,
+    notebookEntries: plan.notebookPlans.filter(item => item.contentKey).length,
+    lifeJournalEntries: plan.journalPlans.reduce(
+      (count, item) => count + item.entries.filter(entry => entry.key).length,
+      0,
+    ),
+    agendaItems: plan.agenda.lines.length,
+  }
+}
+
+function countTranslationBatches(items: readonly LongTermTranslationItem[]): number {
+  let batches = 0
+  let currentItems = 0
+  let currentChars = 0
+  for (const item of items) {
+    if (
+      currentItems > 0
+      && (
+        currentItems >= LONG_TERM_TRANSLATION_MAX_BATCH_ITEMS
+        || currentChars + item.text.length > LONG_TERM_TRANSLATION_MAX_BATCH_CHARS
+      )
+    ) {
+      batches += 1
+      currentItems = 0
+      currentChars = 0
+    }
+    currentItems += 1
+    currentChars += item.text.length
+  }
+  return batches + (currentItems > 0 ? 1 : 0)
+}
+
 function needsTranslation(value: string): boolean {
   if (!hasChineseNarrative(value)) return true
   if (LEGACY_JOURNAL_HEADING.test(value)) return true
@@ -309,7 +399,9 @@ async function collectAgendaPlan(
   rootDir: string,
   requests: LongTermTranslationItem[],
 ): Promise<{ markdown: string; revision: string; lines: AgendaLinePlan[] }> {
-  const snapshot = await readLifeAgendaSnapshot({ rootDir })
+  const markdown = await readExistingAgenda(rootDir)
+  if (markdown === null) return { markdown: '', revision: revisionOf(''), lines: [] }
+  const snapshot = { markdown, revision: revisionOf(markdown) }
   const lines: AgendaLinePlan[] = []
   for (const [index, raw] of snapshot.markdown.split('\n').entries()) {
     if (!raw.trim() || /^#{1,2}\s+(?:Agenda|Active|Waiting|Someday|Done)\s*$/.test(raw)) continue
@@ -499,14 +591,23 @@ export async function assertLongTermStateUsesChinese(rootDir: string): Promise<v
       }
     }
   }
-  const agenda = await readLifeAgendaSnapshot({ rootDir })
-  for (const [index, line] of agenda.markdown.split('\n').entries()) {
+  const agenda = await readExistingAgenda(rootDir)
+  for (const [index, line] of (agenda ?? '').split('\n').entries()) {
     if (!line.trim() || /^#{1,2}\s+(?:Agenda|Active|Waiting|Someday|Done)\s*$/.test(line)) continue
     if (/^\s*<!--.*-->\s*$/.test(line)) continue
     const text = /^(?:\s*-\s*\[[ xX]\]\s*)(.*)$/.exec(line)?.[1] ?? line
     if (text.trim() && !hasChineseNarrative(text)) failures.push(`agenda line: ${index + 1}`)
   }
   if (failures.length > 0) throw new Error(`long-term state still has non-Chinese narrative:\n${failures.join('\n')}`)
+}
+
+async function readExistingAgenda(rootDir: string): Promise<string | null> {
+  try {
+    return await readFile(join(rootDir, 'life', 'agenda.md'), 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
 }
 
 function revisionOf(content: string): string {

@@ -6,8 +6,10 @@ import { spawnSync } from 'node:child_process'
 import { describe, test } from 'node:test'
 import {
   parseAgentStateResetScope,
+  previewAgentStateReset,
   resetAgentState,
   type AgentStateResetDb,
+  type AgentStateResetPreviewDb,
   type AgentStateResetScope,
 } from './reset-agent-state.js'
 
@@ -55,6 +57,117 @@ async function assertManagedStatePresent(workspaceDir: string): Promise<void> {
   for (const directory of ['memory', 'journal', 'life', 'notebook']) {
     assert.equal(await readFile(join(workspaceDir, directory, 'old.md'), 'utf8'), 'old state')
   }
+}
+
+function fakePreviewDb(counts = {
+  ledgerEntries: 7,
+  checkpoints: 1,
+  runtimeStates: 1,
+  goals: 1,
+}): AgentStateResetPreviewDb {
+  return {
+    botAgentLedgerEntry: { count: async () => counts.ledgerEntries },
+    botAgentCheckpoint: { count: async () => counts.checkpoints },
+    botAgentRuntimeState: { count: async () => counts.runtimeStates },
+    botAgentGoal: { count: async () => counts.goals },
+  }
+}
+
+async function createPreviewWorkspace(): Promise<string> {
+  const workspaceDir = await mkdtemp(join(tmpdir(), 'agent-state-reset-preview-'))
+  await mkdir(join(workspaceDir, 'memory', 'nested'), { recursive: true })
+  await writeFile(join(workspaceDir, 'memory', 'one.md'), 'one', 'utf8')
+  await writeFile(join(workspaceDir, 'memory', 'nested', 'two.md'), 'two', 'utf8')
+  await mkdir(join(workspaceDir, 'life'), { recursive: true })
+  await writeFile(join(workspaceDir, 'life', 'one.md'), 'one', 'utf8')
+  await mkdir(join(workspaceDir, 'notebook'), { recursive: true })
+  await writeFile(join(workspaceDir, 'notebook', 'one.md'), 'one', 'utf8')
+  return workspaceDir
+}
+
+describe('previewAgentStateReset', () => {
+  test('reports context row counts without starting a transaction', async () => {
+    const workspaceDir = await createPreviewWorkspace()
+    try {
+      const preview = await previewAgentStateReset({
+        scope: 'context',
+        workspaceDir,
+        db: fakePreviewDb(),
+      })
+
+      assert.deepEqual(preview, {
+        scope: 'context',
+        context: { ledgerEntries: 7, checkpoints: 1, runtimeStates: 1, goals: 1 },
+      })
+      await assertManagedStatePresentForPreview(workspaceDir)
+    } finally {
+      await rm(workspaceDir, { recursive: true, force: true })
+    }
+  })
+
+  test('reports fixed knowledge directories and recursively counts files', async () => {
+    const workspaceDir = await createPreviewWorkspace()
+    try {
+      const preview = await previewAgentStateReset({ scope: 'knowledge', workspaceDir })
+
+      assert.deepEqual(preview, {
+        scope: 'knowledge',
+        knowledge: {
+          directories: [
+            { name: 'memory', exists: true, files: 2 },
+            { name: 'journal', exists: false, files: 0 },
+            { name: 'life', exists: true, files: 1 },
+            { name: 'notebook', exists: true, files: 1 },
+          ],
+        },
+      })
+      await assertManagedStatePresentForPreview(workspaceDir)
+    } finally {
+      await rm(workspaceDir, { recursive: true, force: true })
+    }
+  })
+
+  test('combines context and knowledge sections for all scope', async () => {
+    const workspaceDir = await createPreviewWorkspace()
+    try {
+      const preview = await previewAgentStateReset({
+        scope: 'all',
+        workspaceDir,
+        db: fakePreviewDb(),
+      })
+
+      assert.equal(preview.scope, 'all')
+      assert.deepEqual(preview.context, {
+        ledgerEntries: 7,
+        checkpoints: 1,
+        runtimeStates: 1,
+        goals: 1,
+      })
+      assert.equal(preview.knowledge?.directories.length, 4)
+    } finally {
+      await rm(workspaceDir, { recursive: true, force: true })
+    }
+  })
+
+  test('requires a database only for context-bearing previews', async () => {
+    const workspaceDir = await createPreviewWorkspace()
+    try {
+      await assert.rejects(
+        previewAgentStateReset({ scope: 'context', workspaceDir }),
+        /database is required for reset preview scope context/,
+      )
+    } finally {
+      await rm(workspaceDir, { recursive: true, force: true })
+    }
+  })
+})
+
+async function assertManagedStatePresentForPreview(workspaceDir: string): Promise<void> {
+  assert.equal(await readFile(join(workspaceDir, 'memory', 'one.md'), 'utf8'), 'one')
+  assert.equal(await readFile(join(workspaceDir, 'memory', 'nested', 'two.md'), 'utf8'), 'two')
+  assert.equal(await readFile(join(workspaceDir, 'life', 'one.md'), 'utf8'), 'one')
+  assert.equal(await readFile(join(workspaceDir, 'notebook', 'one.md'), 'utf8'), 'one')
+  await assert.rejects(access(join(workspaceDir, 'journal')))
 }
 
 describe('resetAgentState', () => {

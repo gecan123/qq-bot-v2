@@ -1,4 +1,4 @@
-import { rm } from 'node:fs/promises'
+import { readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AGENT_RUNTIME_STATE_SCHEMA_VERSION } from '../agent/agent-ledger.types.js'
 import { createEmptyMailboxContinuityState } from '../agent/mailbox-continuity.js'
@@ -22,6 +22,30 @@ export interface AgentStateResetDb {
   $transaction<T>(run: (tx: AgentStateResetTx) => Promise<T>): Promise<T>
 }
 
+export interface AgentStateResetPreviewDb {
+  botAgentLedgerEntry: { count(): Promise<number> }
+  botAgentCheckpoint: { count(): Promise<number> }
+  botAgentRuntimeState: { count(): Promise<number> }
+  botAgentGoal: { count(): Promise<number> }
+}
+
+export interface AgentStateResetPreview {
+  scope: AgentStateResetScope
+  context?: {
+    ledgerEntries: number
+    checkpoints: number
+    runtimeStates: number
+    goals: number
+  }
+  knowledge?: {
+    directories: Array<{
+      name: (typeof KNOWLEDGE_DIRECTORIES)[number]
+      exists: boolean
+      files: number
+    }>
+  }
+}
+
 export interface AgentStateResetResult {
   scope: AgentStateResetScope
   deletedLedgerEntries: number
@@ -41,6 +65,36 @@ export function parseAgentStateResetScope(argv: readonly string[]): AgentStateRe
     throw new Error(`invalid reset scope "${value ?? ''}" (expected all, context, or knowledge)`)
   }
   return value as AgentStateResetScope
+}
+
+export async function previewAgentStateReset(options: {
+  scope: AgentStateResetScope
+  db?: AgentStateResetPreviewDb
+  workspaceDir: string
+}): Promise<AgentStateResetPreview> {
+  const preview: AgentStateResetPreview = { scope: options.scope }
+
+  if (options.scope === 'all' || options.scope === 'context') {
+    if (!options.db) throw new Error(`database is required for reset preview scope ${options.scope}`)
+    const [ledgerEntries, checkpoints, runtimeStates, goals] = await Promise.all([
+      options.db.botAgentLedgerEntry.count(),
+      options.db.botAgentCheckpoint.count(),
+      options.db.botAgentRuntimeState.count(),
+      options.db.botAgentGoal.count(),
+    ])
+    preview.context = { ledgerEntries, checkpoints, runtimeStates, goals }
+  }
+
+  if (options.scope === 'all' || options.scope === 'knowledge') {
+    preview.knowledge = {
+      directories: await Promise.all(KNOWLEDGE_DIRECTORIES.map(async name => {
+        const count = await countFiles(join(options.workspaceDir, name))
+        return { name, exists: count !== null, files: count ?? 0 }
+      })),
+    }
+  }
+
+  return preview
 }
 
 export async function resetAgentState(options: {
@@ -96,4 +150,26 @@ export async function resetAgentState(options: {
   }
 
   return result
+}
+
+async function countFiles(directory: string): Promise<number | null> {
+  const pending = [directory]
+  let visitedEntries = 0
+  let files = 0
+  while (pending.length > 0) {
+    let entries
+    try {
+      entries = await readdir(pending.pop()!, { withFileTypes: true })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT' && visitedEntries === 0) return null
+      throw error
+    }
+    for (const entry of entries) {
+      visitedEntries += 1
+      if (visitedEntries > 10_000) throw new Error(`reset preview directory entry limit exceeded: ${directory}`)
+      if (entry.isDirectory()) pending.push(join(entry.parentPath, entry.name))
+      else files += 1
+    }
+  }
+  return files
 }

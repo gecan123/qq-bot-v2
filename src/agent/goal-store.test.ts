@@ -346,7 +346,6 @@ describe('goal control and store', () => {
 
     assert.equal((await store.get())?.status, 'active')
     assert.equal(result.outcome?.code, 'verification_unavailable')
-    assert.equal(result.outcome?.retryClass, 'backoff')
     assert.equal(result.outcome?.continuation, 'backoff')
   })
 

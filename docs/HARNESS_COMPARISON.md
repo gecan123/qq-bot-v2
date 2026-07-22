@@ -8,22 +8,22 @@
 | s02 Tool Use | 已满足核心 | 工具集中注册，执行层有 schema 校验、错误隔离、结构化恢复提示和 tool-call 审计；同轮连续的显式只读调用可以并行，结果仍按原 tool-call 顺序 append，未知工具和副作用调用保持 exclusive barrier。 |
 | s03 Permission | 已满足核心，开发默认偏薄 | 有 `workspace_bash` allowlist、repo 只读、blocked paths、timeout/output cap，`send_message` 有 target/ambient 边界。默认 thin approval 只拦网站发布和非只读 MCP；本地删除与 skill 安装直接执行以支持快速迭代。可切 `strict` 恢复完整审批或 `off` 关闭统一 hook；审批仍绑定精确参数、真实 owner 私聊、TTL 和一次性消费。 |
 | s04 Hooks | 部分满足，方向正确 | 已有 executor 级 `beforeTool` / `afterTool` hook，以及 compaction 的 `beforeCompact` / `afterCompact`；还没有 `UserPromptSubmit`、`Stop` 或统一的全生命周期 registry。 |
-| s05 TodoWrite | 已满足核心 | 有进程内 `todo` 工具，可 `list/update` 当前多步计划，并约束同一时间最多一个 `in_progress`。它只服务当前工作；持久任务图属于 s12，不由 `todo` 承担。 |
+| s05 TodoWrite | 有意不实现 | 当前连续执行状态由主循环和 tool result 直接承接，跨重启工作只使用 Goal；删除独立 Todo 避免第三套计划状态。 |
 | s06 Subagent | 有意不提供通用能力 | 通用 clean-context subagent 已移除，避免维护第二套多轮 LLM 控制流；`trading_agent` 继续作为边界明确的专用金融研究 worker，主前台仍只有一个通用 LLM loop。 |
 | s07 Skill Loading | 已满足且有扩展 | 有有界的 `skill list/load`，目录面向 runtime Agent；deferred `skill_editor` 支持草稿、触发/排除边界校验、安全扫描和拒绝覆盖安装。仍没有多 skill root 或自动相关选择。 |
 | s08 Context Compact | 已满足核心 | 有 token/overflow/owner `/compact` 触发的摘要 compaction、完整 prefix summarization、safe cut、CAS append-only boundary 和 `beforeCompact` / `afterCompact` hooks，避免切开 tool call/result；完整 transcript 保留在 permanent ledger，LLM 请求另有 working-context 投影，旧图片只在视图中降级。仍可按真实指标评估 text/tool-result micro-compact。 |
 | s09 Memory | 已满足核心 | `memory` 已有 Markdown v2、分页 read、revision、entry 更新/删除/compact；`recall` 做有界 entry 级相关召回并保留 provenance，`review` 只读提出重复/近重复/可能冲突，确认后再 mutation。Notebook 保存主题过程，Life Journal 保存经历/感受/梦，Agenda 保存当前承诺和下一步。没有无条件自动提取或自动破坏性整理，这是有意边界。 |
 | s10 System Prompt | 部分满足，适合本项目 | prompt 分 section 组装，但启动后冻结；这不完全等同教程的运行时动态拼接，但更利于当前 prompt cache 稳定性。 |
 | s11 Error Recovery | 核心已满足 | 有工具错误隔离、provider-neutral stop reason、transport/429/5xx/529/SSE overload 有界退避、`retry-after`、prompt-too-long 强制 compaction、`max_tokens` 预算升级与有界 continuation、显式同 provider fallback、round backoff、replay barrier 和幂等 shutdown。仍可补 OpenAI 错误的更细分类与恢复指标汇总。 |
-| s12 Task System | 部分满足 | 单一持久 Goal 支持 `origin=owner|self`、状态流转、revision、token/time/round 使用量、完成证据、独立无工具完成验收和三轮 blocker 门槛，并能跨 replay/compaction/restart 续跑；Agent 可自主建/弃 self Goal，owner Goal 可抢占。验收只读 untrusted envelope 中的 canonical projection，拒绝或不可用保持 active。仍没有多任务图、依赖、认领或 blockedBy DAG。进程内 `todo` 继续只管当前执行计划。 |
+| s12 Task System | 部分满足 | 单一持久 Goal 支持 `origin=owner|self`、状态流转、revision、token/time/round 使用量、完成证据、独立无工具完成验收和三轮 blocker 门槛，并能跨 replay/compaction/restart 续跑；Agent 可自主建/弃 self Goal，owner Goal 可抢占。仍没有多任务图、依赖、认领或 blockedBy DAG。 |
 | s13 Background Tasks | 已满足核心 | 图片生成、交易研究等异步任务会注册 task，完成后进 event queue，并用 `background_task get` 取有界结果；registry 已原子持久化、终态幂等，重启时不可恢复闭包明确标成 `interrupted`。共享执行 scheduler 仍是进程内 lane；实验阶段不建设通用 `jobKind + payload` 自动恢复层，接受在途任务因重启中断并按需重新发起。 |
 | s14 Cron Scheduler | 已满足核心 | `pause` 负责短休息；`schedule create/list/cancel` 支持 30 秒至 3 天内的一次性 `at`、固定间隔 `every` 和带 IANA 时区的 `cron`。独立 store 可跨重启恢复 timer，漏触发会合并且到期只产生稳定 `scheduled_wake` 注意事件；不包含长期 cron 平台、命令执行或 run history。 |
 | s15 Agent Teams | 未满足 | 没有持久 teammate、inbox、多个 LLM loop。 |
 | s16 Team Protocols | 未满足 | 没有多 Agent request/response FSM、plan approval 或 teammate shutdown handshake；当前只有单进程 runtime 的 graceful shutdown coordinator。 |
-| s17 Autonomous Agents | 产品目标上已较强满足 | 主 Agent 在发送后继续行动，自主决定 `pause`，可被注意事件唤醒，并有连续轮次短暂冷却、Life Journal/Agenda 连续性；不设置每日 token 预算或跨日限流。active Goal 会在每轮和 compaction 后重注入为默认主线，高优先事件可临时打断后返回；仍没有面向多 Agent 的任务板认领。 |
+| s17 Autonomous Agents | 产品目标上已较强满足 | 主 Agent 在发送后继续行动，自主决定 `pause`，可被注意事件唤醒，并有连续轮次短暂冷却和显式 Life Journal/Agenda 连续性；不设置每日 token 预算或跨日限流。active Goal 会在每轮和 compaction 后重注入为默认主线。 |
 | s18 Worktree Isolation | 未满足 | 当前 bot 不自主改仓库源码；若以后允许 Luna 自主改代码，需要补。 |
 | s19 MCP Plugin | 已满足核心 | 配置驱动的 `mcp_connectors` 是 deferred capability；启动时不拉外部进程，首次 `tools/connect/call` 才用官方 v1 SDK 建立 stdio 连接。远端工具映射到 `mcp__server__tool`，schema 有哈希版本快照和分页结果上限，只有 operator 明确列入 `readOnlyTools` 的调用免审批，其余默认走 owner approval。暂不支持 Streamable HTTP、resources/prompts 或动态安装 plugin。 |
-| s20 Comprehensive | 单 Agent 产品骨架成熟 | 已有单循环 + 永续 context/replay + working projection + mailbox + 单一持久 Goal + deferred tools/MCP + 分层权限/审批 + recovery + compaction + durable typed background task/schedule + explainable memory + hooks + todo/skill + 安全并行 + 自主循环。未覆盖的是通用 subagent、持久任务图、多 Agent team/protocol 和自主改代码隔离，这些不是当前 QQ bot 产品的默认需求。 |
+| s20 Comprehensive | 单 Agent 产品骨架成熟 | 已有单循环 + 永续 context/replay + working projection + mailbox + 单一持久 Goal + deferred tools/MCP + 分层权限/审批 + recovery + compaction + durable typed background task/schedule + explainable memory + hooks + skill + 安全并行 + 自主循环。 |
 
 ## 本轮路线图落地状态
 

@@ -136,7 +136,7 @@ export function createQqDirectoryTool(deps: QqDirectoryDeps): Tool<Args> {
             code: 'directory_unavailable',
             error: `QQ directory unavailable: ${message}`,
             progress: false,
-            retryClass: 'backoff',
+            continuation: 'backoff',
           },
         }
       }

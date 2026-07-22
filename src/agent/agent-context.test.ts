@@ -51,25 +51,21 @@ describe('createAgentContext', () => {
     const projection = {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       messages: [{ role: 'user' as const, content: 'projected' }],
-      activeToolCapabilities: ['browser'],
       qqConversationFocus: null,
     }
 
     ctx.installProjection(projection)
     projection.messages[0]!.content = 'mutated'
-    projection.activeToolCapabilities.push('media_generation')
 
     assert.deepEqual(ctx.exportPersistedSnapshot(), {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       messages: [{ role: 'user', content: 'projected' }],
-      activeToolCapabilities: ['browser'],
       qqConversationFocus: null,
     })
     assert.throws(
       () => ctx.installProjection({
         schemaVersion: SNAPSHOT_SCHEMA_VERSION,
         messages: [{ role: 'tool', toolCallId: 'orphan', content: 'bad' }],
-        activeToolCapabilities: [],
         qqConversationFocus: null,
       }),
       /projection integrity validation failed/,
@@ -82,23 +78,17 @@ describe('createAgentContext', () => {
     ctx1.appendUserMessage('hello')
     ctx1.appendAssistantTurn({ content: '', toolCalls: [{ id: 'c1', name: 'wait', args: {} }] })
     ctx1.appendToolResult({ toolCallId: 'c1', content: 'ok' })
-    ctx1.activateToolCapability('browser')
-    ctx1.activateToolCapability('media_generation')
 
     const persisted = ctx1.exportPersistedSnapshot()
     assert.equal(persisted.schemaVersion, SNAPSHOT_SCHEMA_VERSION)
     assert.equal(persisted.messages.length, 3)
-    assert.deepEqual(persisted.activeToolCapabilities, ['browser', 'media_generation'])
 
     const ctx2 = createAgentContext()
     ctx2.installProjection(persisted)
     assert.deepEqual(ctx2.getSnapshot(), {
       messages: persisted.messages,
-      activeToolCapabilities: ['browser', 'media_generation'],
       qqConversationFocus: null,
     })
-    ctx2.deactivateToolCapability('browser')
-    assert.deepEqual(ctx2.getSnapshot().activeToolCapabilities, ['media_generation'])
   })
 
   test('QQ conversation focus is cloned and only changes through complete projection installs', () => {
@@ -106,7 +96,6 @@ describe('createAgentContext', () => {
     const projection = {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       messages: [{ role: 'user' as const, content: 'before' }],
-      activeToolCapabilities: [],
       qqConversationFocus: { type: 'group' as const, groupId: 123 },
     }
 

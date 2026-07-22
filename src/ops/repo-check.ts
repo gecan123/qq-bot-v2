@@ -72,7 +72,6 @@ const TOOL_REGISTRY_MARKERS = [
   ['createSendMessageTool', 'send_message'],
   ['createGenerateImageTool', 'generate_image'],
   ['createBackgroundTaskTool', 'background_task'],
-  ['todoTool', 'todo'],
   ['skillTool', 'skill'],
   ['memoryTool', 'memory'],
   ['collectStickerTool', 'collect_sticker'],
@@ -81,18 +80,9 @@ const TOOL_REGISTRY_MARKERS = [
   ['maybeCreateBrowserTool', 'browser'],
   ['maybeCreateWebSearchTool', 'web_search'],
   ['createGhTool', 'gh'],
+  ['createDbTool', 'db'],
+  ['createMetricsTool', 'metrics'],
 ] as const
-
-const WORKSPACE_BASH_SUBCOMMAND_MARKERS = [
-  ['parseHelpCommand', 'help'],
-  ['parseDbToolCommand', 'db'],
-  ['parseStyleCommand', 'style'],
-  ['parseOpenbbCommand', 'openbb'],
-  ['parseFetchCommand', 'fetch'],
-  ['parseMetricsCommand', 'metrics'],
-] as const
-
-const SYSTEM_PROMPT_EXEMPT_WORKSPACE_BASH_SUBCOMMANDS = new Set(['openbb', 'fetch'])
 
 const ADMIN_WEB_SERVER_ONLY_MARKERS = [
   '@prisma/',
@@ -365,11 +355,8 @@ function checkPromptLayout(files: RepoCheckFiles, errors: string[]): void {
   }
 
   const systemPrompt = files['prompts/system/system.md']
-  if (!systemPrompt.includes('style global')) {
-    errors.push('prompts/system/system.md must mention the style global route')
-  }
-  if (!systemPrompt.includes('style group')) {
-    errors.push('prompts/system/system.md must mention the style group route')
+  if (!mentionsToken(systemPrompt, 'chat_style')) {
+    errors.push('prompts/system/system.md must mention the typed chat_style route')
   }
   if (!/(?:全局)?风格索引/.test(systemPrompt)) {
     errors.push('prompts/system/system.md must point to the style index')
@@ -396,9 +383,7 @@ function checkPromptLayout(files: RepoCheckFiles, errors: string[]): void {
 
 function checkToolIndexes(files: RepoCheckFiles, errors: string[]): void {
   const toolIndex = files['src/agent/tools/index.ts']
-  const workspaceBash = files['src/agent/tools/workspace-bash.ts']
   const toolsDoc = files['docs/TOOLS.md']
-  const systemPrompt = files['prompts/system/system.md']
 
   for (const [marker, toolName] of TOOL_REGISTRY_MARKERS) {
     if (!toolIndex.includes(marker)) continue
@@ -407,15 +392,6 @@ function checkToolIndexes(files: RepoCheckFiles, errors: string[]): void {
     }
   }
 
-  for (const [marker, subcommand] of WORKSPACE_BASH_SUBCOMMAND_MARKERS) {
-    if (!workspaceBash.includes(marker)) continue
-    if (!mentionsToken(toolsDoc, subcommand)) {
-      errors.push(`docs/TOOLS.md must mention workspace_bash subcommand "${subcommand}"`)
-    }
-    if (!SYSTEM_PROMPT_EXEMPT_WORKSPACE_BASH_SUBCOMMANDS.has(subcommand) && !mentionsToken(systemPrompt, subcommand)) {
-      errors.push(`prompts/system/system.md must mention workspace_bash subcommand "${subcommand}"`)
-    }
-  }
 }
 
 function checkToolBoundaryDocs(files: RepoCheckFiles, errors: string[]): void {

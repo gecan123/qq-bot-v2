@@ -185,7 +185,7 @@ export function createQqConversationTool(controller: QqConversationController): 
               ok: false,
               code: result.code,
               progress: false,
-              retryClass: 'immediate',
+              continuation: 'immediate',
             },
       }
     },

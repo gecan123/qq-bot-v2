@@ -33,7 +33,7 @@
 | Goal 控制状态 | Postgres `bot_agent_goal` | 否；revision 事件可见 | owner 命令或 `goal` tool | Runtime Host / `goal get` | 不能重建 transcript |
 | 运维证据 | `logs/*`、观测表 | 否 | runtime best-effort | 运维命令 | 永远不是 replay 或记忆来源 |
 
-`activeToolCapabilities`、mailbox cursors、continuity、goal revision、last wake 和 ledger head 保存在 runtime singleton，但属于运行控制状态，不属于 LLM 可见记忆。完整不变量见 `docs/AGENT_CONTEXT.md`。
+mailbox cursors、continuity、goal revision、QQ focus、last wake 和 ledger head 保存在 runtime singleton，但属于运行控制状态，不属于 LLM 可见记忆。完整不变量见 `docs/AGENT_CONTEXT.md`。
 
 ## 总体数据流
 
@@ -153,19 +153,9 @@ compaction、Memory maintenance 和 Life review 都会把历史正文或 side-da
 - revision 冲突会基于最新文件重新排队。
 - 整个过程运行在共享单并发 `maintenance` lane，不修改 `AgentContext`。
 
-### Life review
+### 显式 Life 维护
 
-BotLoop 成功完成一轮后，把有界 round delta 异步提交给 reviewer。reviewer 同时读取当前 Agenda 和最近两天 Life Journal，选择 record 或 skip：
-
-- 主循环不等待 reviewer。
-- pause-only round 跳过；调用有节流、超时和 latest-pending coalescing。
-- reviewer 优先看到最近写入的条目，而不是从日文件开头截断；只读 inbox、开关会话、重复观察同一群活跃或重复同一心情时应 skip。
-- reviewer 的 Journal 正文只接受允许的三级小节和非空项目符号，日文件标题、Round 标题、entry metadata 与保留 marker 会触发一次重试，仍无效则安全跳过。store 对所有 writer 继续拒绝保留 marker，避免正文破坏 v2 边界。
-- 同一次 review 最多返回三个长期 Memory 候选；新条目只写入 recent tier，并进入现有 maintenance 队列。person/group 候选必须提供明确实体 ID、`person_*|group_*` memoryKind 和本轮真实 `Message.id`；review 只能引用本轮直接事件或有界 inbox payload 暴露过的证据行。runtime 负责推导人物场景与 claimant。
-- Memory 候选沿用现有去重；单个候选失败不会阻止 Journal、Agenda 或其他候选落盘。
-- reviewer 不读取 Notebook，也不把输出 append 到 `AgentContext`。
-
-这只是复用同一次辅助模型调用和写入路由，不是隐藏召回：Memory 仍需通过明确的 recall/search/list/read 路径进入当前工作上下文，也不会成为 replay 输入。Notebook 没有自动 reviewer；这是为了避免把演进中的观点过早压缩或晋升。Agenda 也不保留独立历史，历史意义由 Life Journal 或 ledger 承担。
+Life Journal 和 Agenda 只通过显式 `life_journal` 工具维护；主循环不再在每轮后启动旁路 reviewer。Memory、Notebook、Life Journal 和 Agenda 都需通过明确的工具读取进入当前工作上下文，不会成为 replay 输入。这样可避免把普通工具观察误写成经历，也让写入责任和证据边界保持单一。
 
 ## 一致性与 replay 不变量
 
@@ -221,7 +211,7 @@ checkpoint 写失败不影响已提交的 ledger/runtime 事务；删除整张 c
 - `src/agent/workspace-state-coordinator.ts`：四类 side-data 的单进程按资源写入串行化。
 - `src/agent/memory-store.ts`、`tools/memory.ts`、`memory-maintenance.ts`：长期语义记忆。
 - `src/agent/notebook-store.ts`、`tools/notebook.ts`：主题过程笔记。
-- `src/agent/life-journal-store.ts`、`tools/life-journal.ts`、`life-journal.ts`：Life Journal、Agenda 和异步 review。
+- `src/agent/life-journal-store.ts`、`tools/life-journal.ts`：Life Journal 和 Agenda 的显式读写。
 - `src/ops/reset-agent-state.ts`：显式 `all|context|knowledge` reset 边界。
 - `src/ops/agent-memory-check.ts`、`scripts/agent-memory-check.ts`：只读 Markdown 完整性检查和 CLI。
 - `prisma/schema.prisma`：事实账本、append-only ledger、runtime/checkpoint、Goal 和观测表契约。

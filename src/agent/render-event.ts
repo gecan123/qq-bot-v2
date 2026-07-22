@@ -11,10 +11,10 @@ import { mailboxKeyForEvent, renderMailboxNotification } from './mailbox.js'
  * wake 只是内部解阻塞信号；bootstrap/curiosity_tick 仍是显式控制事件，不伪装成通知。
  */
 export const CURIOSITY_TICK_TEXT =
-  '[好奇心 tick] 这是一次人工调试唤醒, 不是你好奇心的来源. 按自己当前的兴趣、todo 和 intention 决定下一步.'
+  '[好奇心 tick] 这是一次人工调试唤醒, 不是你好奇心的来源. 按当前兴趣、Goal、Agenda 和最近线索决定下一步.'
 
 export const BOOTSTRAP_TEXT =
-  '[冷启动] 这是一次全新 AgentContext 的首次启动, 当前没有待回复的历史消息. 按自己的身份、兴趣、todo 和 intention 决定第一步.'
+  '[冷启动] 这是一次全新 AgentContext 的首次启动, 当前没有待回复的历史消息. 按自己的身份、兴趣、Agenda 和可验证线索决定第一步.'
 
 export function renderBotEvent(event: BotEvent): string | null {
   if (event.type === 'wake') return null

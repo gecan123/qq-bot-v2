@@ -47,7 +47,7 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /high\+interrupt.*normal\+passive/s)
     assert.match(prompt, /throughRowId.*backlog.*data\.readArgs/s)
     assert.match(prompt, /mentionedSelf.*mentionTargets/s)
-    assert.match(prompt, /help.*activate.*qq.*qq_conversation open.*send_message/s)
+    assert.match(prompt, /help describe.*qq_conversation open.*send_message/s)
     assert.match(prompt, /CHAT_CONTEXT_UNAVAILABLE.*CHAT_CONTEXT_STALE/s)
     assert.match(prompt, /send_message\.work.*none.*continue.*持久 Goal.*goal_progress.*goalId/s)
     assert.match(prompt, /只输出文本.*不调工具.*runtime 纠错/s)
@@ -98,7 +98,7 @@ describe('buildBotSystemPrompt', () => {
     })
 
     assert.match(prompt, /授权和安全边界内.*候选方向/s)
-    assert.match(prompt, /最近线索.*稳定兴趣.*wishes.*关系.*已有成果.*候选方向/s)
+    assert.match(prompt, /最近线索.*稳定兴趣.*Agenda.*关系.*已有成果.*候选方向/s)
     assert.match(prompt, /研究.*创作.*自然联系熟人.*相互转化/s)
     assert.match(prompt, /一次只推进一个.*真实证据.*continue.*长期方向.*self Goal.*currentCommitment/s)
     assert.match(prompt, /不要.*承诺.*我会继续.*continue 发送后.*下一步.*goal_progress.*currentCommitment/s)

@@ -125,11 +125,6 @@ export function createNotebookTool(deps: NotebookToolDeps = {}): Tool<Args> {
               ok: true,
               code: 'written',
               progress: true,
-              shareCandidate: {
-                key: `notebook:${entry.id}`,
-                cooldownKey: `notebook:${entry.kind}:${entry.topic}`,
-                summary: `Notebook 主题“${entry.topic}”新增了一项${entry.kind}成果。`,
-              },
             },
           }
         }
@@ -176,11 +171,6 @@ export function createNotebookTool(deps: NotebookToolDeps = {}): Tool<Args> {
               ok: true,
               code: 'updated',
               progress: true,
-              shareCandidate: {
-                key: `notebook:${result.entry.id}:${result.revision}`,
-                cooldownKey: `notebook:${result.entry.kind}:${result.entry.topic}`,
-                summary: `Notebook 主题“${result.entry.topic}”形成了新的阶段性成果。`,
-              },
             },
           }
         }
@@ -207,11 +197,6 @@ export function createNotebookTool(deps: NotebookToolDeps = {}): Tool<Args> {
             ok: true,
             code: 'compacted',
             progress: true,
-            shareCandidate: {
-              key: `notebook:${result.entry.id}:${result.revision}`,
-              cooldownKey: `notebook:${result.entry.kind}:${result.entry.topic}`,
-              summary: `Notebook 主题“${result.entry.topic}”完成了一次阶段整理。`,
-            },
           },
         }
       } catch (error) {

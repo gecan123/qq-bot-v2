@@ -1,7 +1,6 @@
 import {
   createBotLoopAgent,
   type BotLoopAgent,
-  type BotLoopLifeJournal,
 } from './bot-loop-agent.js'
 import { buildBotSystemPrompt } from './bot-system-prompt.js'
 import {
@@ -113,7 +112,6 @@ export interface AgentRuntimeInput {
   initialLastWakeAt?: Date | null
   initialGoalRevision?: number
   goalStore?: GoalStore
-  lifeJournal?: BotLoopLifeJournal
   taskScheduler?: TaskScheduler
   memoryMaintenance?: MemoryMaintenanceRuntime
   workspaceDir?: string
@@ -143,7 +141,6 @@ export interface AgentRuntime {
 }
 
 export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
-  let activeToolCapabilities = [...input.context.getSnapshot().activeToolCapabilities]
   let qqConversationFocus = input.context.getSnapshot().qqConversationFocus
   let inboxReadCursors: InboxReadCursors = { ...input.initialInboxReadCursors }
   const groupIds = input.groupPolicies.map((policy) => policy.id)
@@ -246,15 +243,6 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       loadMemorySourceEvidence: findMemoryEvidenceRows,
       ownerId: input.owner == null ? undefined : String(input.owner.qq),
     }),
-    activeCapabilities: {
-      list: () => [...activeToolCapabilities],
-      activate: (capability) => {
-        if (!activeToolCapabilities.includes(capability)) activeToolCapabilities.push(capability)
-      },
-      deactivate: (capability) => {
-        activeToolCapabilities = activeToolCapabilities.filter((item) => item !== capability)
-      },
-    },
     trace: {
       path: input.toolCallLogPath,
       mode: input.toolAuditMode ?? 'side_effects',
@@ -295,10 +283,6 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     ledgerRepo: input.ledgerRepo,
     ledgerLoader: input.ledgerLoader,
     initialLedgerHeadEntryId: input.initialLedgerHeadEntryId,
-    getActiveToolCapabilities: () => activeToolCapabilities,
-    syncActiveToolCapabilities: (capabilities) => {
-      activeToolCapabilities = [...capabilities]
-    },
     getQqConversationFocus: () => qqConversationFocus,
     syncQqConversationFocus: (focus) => {
       qqConversationFocus = focus
@@ -315,15 +299,6 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     renderEvent: renderBotEvent,
     eventDebounceMs: input.eventDebounceMs,
     groupParticipations,
-    activeGroupShareTargets: input.groupPolicies
-      .filter((policy) => policy.participation === 'active')
-      .map((policy) => ({
-        groupId: policy.id,
-        groupName: input.metadata.groupNames.get(policy.id) ?? null,
-        residentHint: policy.residentHint
-          ?? '可自然主动参与；有真实成果时可作为分享候选。',
-      })),
-    lifeJournal: input.lifeJournal,
     activityReporter: input.activityReporter,
   })
 

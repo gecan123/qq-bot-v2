@@ -3,7 +3,7 @@ import { describe, test } from 'node:test'
 import { createInMemoryTaskRegistry } from '../background-task-registry.js'
 import type { MessageSender } from '../../messaging/message-sender.js'
 import { createDbTool } from './db.js'
-import { buildBotTools } from './index.js'
+import { buildBotToolManifest } from './index.js'
 import type { SendTargetPolicy } from '../send-target-policy.js'
 import type { ScheduleRuntime } from '../schedule-runtime.js'
 import type { QqConversationController } from './qq-conversation.js'
@@ -80,8 +80,8 @@ describe('db tool', () => {
     assert.match(result.content as string, /"rowCount": 1/)
   })
 
-  test('bot tool registry exposes database access through workspace_bash only', () => {
-    const names = buildBotTools({
+  test('bot tool registry exposes database access as a typed deferred capability', () => {
+    const manifest = buildBotToolManifest({
       sender: mockSender,
       targetPolicy,
       conversations,
@@ -96,11 +96,9 @@ describe('db tool', () => {
         async loadFriends() { return [] },
         async loadGroups() { return [] },
       },
-    }).map((tool) => tool.name)
+    })
+    const database = manifest.capabilities.find((capability) => capability.name === 'database_read')
 
-    assert.ok(names.includes('workspace_bash'))
-    assert.equal(names.includes('db'), false)
-    assert.equal(names.includes('db_schema'), false)
-    assert.equal(names.includes('db_read'), false)
+    assert.deepEqual(database?.tools.map((tool) => tool.name), ['db'])
   })
 })

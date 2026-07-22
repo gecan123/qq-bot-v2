@@ -9,20 +9,20 @@ function isSideEffectTool(toolName: string, args: Record<string, unknown>): bool
 describe('tool-call-log side effect classification', () => {
   test('classifies Moomoo reads separately from simulated trading writes', () => {
     for (const command of [
-      'moomoo check_env',
-      'moomoo quote/get_snapshot US.AAPL',
-      'moomoo trade/get_portfolio --trd-env SIMULATE',
+      'check_env',
+      'quote/get_snapshot US.AAPL',
+      'trade/get_portfolio --trd-env SIMULATE',
     ]) {
-      assert.equal(isSideEffectTool('workspace_bash', { command }), false, command)
+      assert.equal(isSideEffectTool('moomoo_skill', { command }), false, command)
     }
 
     for (const command of [
-      'moomoo trade/place_order --code US.AAPL --side BUY --quantity 1 --price 100 --trd-env SIMULATE',
-      'moomoo trade/modify_order --order-id 123 --price 101 --trd-env SIMULATE',
-      'moomoo trade/cancel_order --order-id 123 --trd-env SIMULATE',
-      'moomoo unknown',
+      'trade/place_order --code US.AAPL --side BUY --quantity 1 --price 100 --trd-env SIMULATE',
+      'trade/modify_order --order-id 123 --price 101 --trd-env SIMULATE',
+      'trade/cancel_order --order-id 123 --trd-env SIMULATE',
+      'unknown',
     ]) {
-      assert.equal(isSideEffectTool('workspace_bash', { command }), true, command)
+      assert.equal(isSideEffectTool('moomoo_skill', { command }), true, command)
     }
   })
 
@@ -55,7 +55,6 @@ describe('tool-call-log side effect classification', () => {
   test('fails closed for unknown tools/actions and covers runtime state mutations', () => {
     assert.equal(isSideEffectTool('unknown_future_tool', {}), true)
     assert.equal(isSideEffectTool('schedule', { action: 'create' }), true)
-    assert.equal(isSideEffectTool('todo', { action: 'update' }), true)
     assert.equal(isSideEffectTool('qq_conversation', { action: 'open' }), true)
     assert.equal(isSideEffectTool('approval', { action: 'approve' }), true)
     assert.equal(isSideEffectTool('memory', { action: 'mark_disputed' }), true)

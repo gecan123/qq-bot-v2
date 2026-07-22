@@ -50,7 +50,6 @@ export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.fr
     parallel: ['get'],
     sideEffect: ['create_self', 'complete', 'report_blocker', 'abandon_self'],
   }),
-  todo: byAction({ parallel: ['list'], sideEffect: ['update'] }),
   skill: fixed(PARALLEL_READ),
   memory: byAction({
     parallel: ['search', 'recall', 'review', 'read', 'list'],
@@ -71,7 +70,6 @@ export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.fr
     sideEffect: ['collect', 'remove'],
   }),
   chat_style: fixed(PARALLEL_READ),
-  ai_tone: fixed(PARALLEL_READ),
   notebook: byAction({
     parallel: ['list', 'search', 'read'],
     sideEffect: ['write', 'update', 'delete', 'compact'],
@@ -84,9 +82,9 @@ export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.fr
     exclusive: ['account', 'portfolio', 'orders'],
     sideEffect: ['buy', 'sell', 'reset'],
   }),
-  workspace_bash: (args) => (
-    isWorkspaceBashSideEffect(args) ? EXCLUSIVE_SIDE_EFFECT : PARALLEL_READ
-  ),
+  workspace_bash: fixed(PARALLEL_READ),
+  db: fixed(PARALLEL_READ),
+  metrics: fixed(PARALLEL_READ),
   qq_conversation: byAction({
     exclusive: ['list', 'current'],
     sideEffect: ['open', 'close'],
@@ -99,6 +97,15 @@ export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.fr
   browser: fixed(EXCLUSIVE_SIDE_EFFECT),
   gh: fixed(PARALLEL_READ),
   openbb_cli: fixed(PARALLEL_READ),
+  moomoo_skill: (args) => {
+    const command = typeof args.command === 'string' ? args.command.trim() : ''
+    if (
+      command === 'check_env'
+      || command.startsWith('quote/')
+      || command.startsWith('trade/get_')
+    ) return PARALLEL_READ
+    return EXCLUSIVE_SIDE_EFFECT
+  },
   trading_agent: byAction({
     parallel: ['status', 'result'],
     sideEffect: ['start', 'continue', 'cancel'],
@@ -143,37 +150,4 @@ export function classifyBotToolPolicy(
 ): ToolPolicyDecision {
   const policy = BOT_TOOL_POLICIES[toolName]
   return policy ? policy(args) : EXCLUSIVE_SIDE_EFFECT
-}
-
-function isWorkspaceBashSideEffect(args: Record<string, unknown>): boolean {
-  const command = typeof args.command === 'string' ? args.command.trim() : ''
-  if (!command) return true
-  if (args.cwd === 'repo') return false
-  if (/[\r\n;&|`<]/.test(command) || command.includes('$(')) return true
-
-  const first = firstShellToken(command)
-  if (!first || command.includes('>')) return true
-  if (first === 'fetch') {
-    if (command === 'fetch image' || command.startsWith('fetch image ')) return true
-    if (command === 'fetch avatar' || command.startsWith('fetch avatar ')) return true
-    return !isKnownWorkspaceSubcommand(command, ['fetch url', 'fetch reddit list', 'fetch reddit post'])
-  }
-  if (first === 'moomoo') {
-    return !(
-      command === 'moomoo check_env'
-      || command.startsWith('moomoo quote/')
-      || command.startsWith('moomoo trade/get_')
-    )
-  }
-  if (first === 'help' || first === 'db' || first === 'style' || first === 'openbb') return false
-  return !['pwd', 'ls', 'rg', 'cat', 'head', 'tail', 'wc'].includes(first)
-}
-
-function firstShellToken(command: string): string | null {
-  const match = /^\s*([^\s"'`;&|<>]+)/.exec(command)
-  return match?.[1] ?? null
-}
-
-function isKnownWorkspaceSubcommand(command: string, prefixes: readonly string[]): boolean {
-  return prefixes.some((prefix) => command === prefix || command.startsWith(`${prefix} `))
 }

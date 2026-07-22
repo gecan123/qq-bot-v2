@@ -63,7 +63,7 @@ describe('skill tool', () => {
     const tool = createSkillTool({ skillsDir: await makeSkillDir(), maxContentChars: 20 })
 
     assert.match(tool.description, /已知 name 时直接 load.*不知道候选时才 list/)
-    assert.match(tool.description, /执行步骤和状态改用 todo/)
+    assert.match(tool.description, /当前连续执行状态不要写进 skill/)
     assert.match(tool.description, /准备因.*没事做.*休息.*autonomous_life/)
 
     const loadResult = await tool.execute({ action: 'load', name: 'tool_help' }, makeCtx())
@@ -114,7 +114,6 @@ describe('skill tool', () => {
       'repo_change_workflow',
       'repo_map',
       'self_review_repo',
-      'todo_workflow',
       'tool_contract_design',
       'tool_help',
       'tool_security',

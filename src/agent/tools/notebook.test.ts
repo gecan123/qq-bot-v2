@@ -23,11 +23,7 @@ test('notebook tool writes and recalls topic-oriented process notes', async () =
     const written = JSON.parse(String(writeResult.content))
     assert.equal(written.ok, true)
     assert.equal(written.entry.topic, '三体')
-    assert.deepEqual(writeResult.outcome?.shareCandidate, {
-      key: 'notebook:note-1',
-      cooldownKey: 'notebook:reading:三体',
-      summary: 'Notebook 主题“三体”新增了一项reading成果。',
-    })
+    assert.equal(writeResult.outcome?.progress, true)
     assert.equal(tool.schema.safeParse({
       action: 'write',
       kind: 'project',

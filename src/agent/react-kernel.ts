@@ -7,7 +7,6 @@ import type {
   ToolEffect,
   ToolExecutionResult,
   ToolExecutor,
-  ToolShareCandidate,
 } from './tool.js'
 import { recordTokenUsage } from './token-stats.js'
 import { createLogger } from '../logger.js'
@@ -50,12 +49,9 @@ export interface ReactToolOutcome {
   ok: boolean
   code?: string
   progress: boolean
-  retryClass?: 'immediate' | 'after_event' | 'backoff' | 'terminal'
   continuation?: ToolContinuation
   continuationDetail?: string
   noveltyKey?: string
-  shareCandidate?: ToolShareCandidate
-  evidenceMessageRowIds?: number[]
 }
 
 export interface ReactRoundResult {
@@ -241,18 +237,11 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
         toolName: resolveEffectiveToolName(batchCall),
         ok: result.outcome?.ok ?? true,
         progress: result.outcome?.progress ?? true,
-        ...(result.outcome?.retryClass ? { retryClass: result.outcome.retryClass } : {}),
         ...(result.outcome?.continuation ? { continuation: result.outcome.continuation } : {}),
         ...(result.outcome?.continuation && result.outcome.continuationDetail
           ? { continuationDetail: result.outcome.continuationDetail.slice(0, 1_000) }
           : {}),
         ...(result.outcome?.noveltyKey ? { noveltyKey: result.outcome.noveltyKey } : {}),
-        ...(result.outcome?.shareCandidate
-          ? { shareCandidate: { ...result.outcome.shareCandidate } }
-          : {}),
-        ...(result.outcome?.evidenceMessageRowIds?.length
-          ? { evidenceMessageRowIds: result.outcome.evidenceMessageRowIds }
-          : {}),
         ...(result.outcome?.code ? { code: result.outcome.code } : {}),
       })
       log.info({
@@ -262,11 +251,9 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
         ok: result.outcome?.ok ?? true,
         code: result.outcome?.code,
         progress: result.outcome?.progress ?? true,
-        retryClass: result.outcome?.retryClass,
         continuation: result.outcome?.continuation,
         continuationDetail: result.outcome?.continuationDetail?.slice(0, 1_000),
         noveltyKey: result.outcome?.noveltyKey,
-        shareCandidateKey: result.outcome?.shareCandidate?.key,
       }, 'round_tool_done')
       messagesToAppend.push(await toDurableAgentMessage({
         role: 'tool',

@@ -348,8 +348,6 @@ describe('runRepoChecks', () => {
     })
 
     assert.match(result.errors.join('\n'), /docs\/TOOLS\.md must mention registered tool "generate_image"/)
-    assert.match(result.errors.join('\n'), /docs\/TOOLS\.md must mention workspace_bash subcommand "help"/)
-    assert.match(result.errors.join('\n'), /prompts\/system\/system\.md must mention workspace_bash subcommand "help"/)
   })
 
   test('rejects legacy prompt files left behind after directory migration', () => {

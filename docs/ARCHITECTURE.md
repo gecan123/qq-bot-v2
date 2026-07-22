@@ -11,7 +11,7 @@
 3. NapCat handlers 先连接 ingress。首次群历史 backfill 通过 barrier 等待所有来源尝试完成，再执行 missed-message replay；单群失败只记录 source-level error。实时和 replay 消息使用相同 message-row dedup gate。
 4. `src/bot/**` 把 NapCat 事件写入 `messages` / `media`；`src/agent/mailbox.ts` 再按来源聚合成不含正文的确定性通知。
 5. `src/agent/runtime.ts` 装配 context projection、tools、system prompt 和 `BotLoopAgent`。主 Agent 始终只有一个，轮次边界按高优先 QQ、scheduled wake、active Goal、普通环境事件的顺序披露。
-6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责受控 append、runtime cursor/continuity/Goal revision/capability/QQ focus 原子更新、compaction、life journal hook 和 pause/autonomy 控制。事务成功后才推进内存 `AgentContext`。
+6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责受控 append、runtime cursor/continuity/Goal revision/QQ focus 原子更新、compaction 和 pause/autonomy 控制。事务成功后才推进内存 `AgentContext`。
 7. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct。连续且显式只读的 tool calls 可以并行，副作用和未知调用是 barrier；tool results 始终按 assistant tool-call 顺序成组 append。只有 `ToolExecutionResult.content` 进入 ledger，`outcome` / `effects` 由 Runtime Host 解释。
 
 专用后台工作统一走 bounded task scheduler：`maintenance=1`、`network=3`、`media-description=2`。同一 `resourceKey` 串行，相同 `dedupeKey` 共享任务。这些有明确类型和边界的 Node async worker 不是新的主 Agent；完成结果回到同一主 ledger。ingress 媒体描述使用独立 `jobQueue`，Browser sidecar 是独立进程。项目当前接受进程重启中断在途后台任务：遗留 `running` 明确转成 `interrupted`，不建设通用 `jobKind + payload` 自动恢复层；只有重启丢失昂贵长任务形成可测量痛点，或外部服务原生提供可恢复 task/session ID 时再重新评估。
@@ -62,10 +62,9 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 ## 自主循环
 
 - `send_message` 成功只是完成一个动作，不强制立即等待。当前会话内马上续做用 `work=continue`，它只为下一轮提供进程内行动锚点；需要跨注意周期或重启的长期进度仍用绑定 active Goal/currentCommitment 的 `work=goal_progress`。mailbox 在成功回复后仍可关闭防重。刚收到注意事件、存在 active Goal、收到短期续做信号，或模型只输出了不会执行的普通文本时，无工具结束会立即纠错一次；连续第二次等待 60 秒。自由空闲或无进展工具轮从 15 分钟开始指数退避，最多 4 小时；新的注意事件或真实工具进展会复位退避。
-- Notebook、topic Memory 或后台任务明确产出新成果后，Runtime 可追加一次 `share_checkpoint`，列出启动时冻结的 active 群短定位。它只要求 Agent 判断一次是否适合分享，不自动发送、不改变 QQ focus/发送授权或普通群消息的免唤醒规则；同一成果键永久去重，同主题两小时内不连续追加。
 - provider-confirmed 外发到有 pending 通知的同 target mailbox 后，Runtime 在 tool result 闭合后原子 append `mailbox_handled` 与 runtime cursor，避免把已经处理的旧行再次视为新请求。
 - `pause action=rest` 是 30–600 秒短休息安全阀。没有真实牵引力时应直接以无工具轮结束活动并进入 runtime 有界等待；只有此刻确实选择短暂休息才调用 `pause`，调用后立即计时，不再同步请求额外 LLM。计时可被注意事件、后台任务完成或停止信号打断。
-- 连续自主行动不设轮次上限，不会因为工作轮数达到固定值而强制冷却。空闲、无进展和工具明确请求等待时仍使用进程内有界等待，它们不进入 ledger。工具用 `outcome.progress` 报告是否获得新事实或改变状态，用 `continuation=immediate|wait_attention|wait_event|backoff|stop` 独立表达下一轮调度：`wait_event` 表示已有真实后台工作，等待完成事件时不受 pending 请求的一分钟纠错节奏驱动，也会重置连续行动计数；可丢弃的 `continuationDetail` 只用于实时活动说明。`noveltyKey` 默认抑制进程内重复披露；空 Todo 读取是窄化例外，Runtime Host 首次追加一条带 key 的稳定 `runtime_correction`，要求改从现有线索选择具体行动，并在重启时从 canonical marker 恢复重复抑制，防止每个新进程都重放空读。`retryClass=immediate|after_event|backoff|terminal` 只描述失败重试。可立即纠正的失败仍只允许三轮紧密重试，之后回到普通无进展调度，但不终止自主活动。`curiosity_tick` 只保留为人工调试入口。
+- 连续自主行动不设轮次上限，不会因为工作轮数达到固定值而强制冷却。空闲、无进展和工具明确请求等待时仍使用进程内有界等待，它们不进入 ledger。工具用 `outcome.progress` 报告是否获得新事实或改变状态，只用 `continuation=immediate|wait_attention|wait_event|backoff|stop` 表达下一轮调度：`wait_event` 表示已有真实后台工作，等待完成事件时不受 pending 请求的一分钟纠错节奏驱动，也会重置连续行动计数；可丢弃的 `continuationDetail` 只用于实时活动说明。`noveltyKey` 默认抑制进程内重复披露。`continuation=immediate` 的失败最多保留三轮紧密纠错，之后回到普通无进展调度。`curiosity_tick` 只保留为人工调试入口。
 - 循环控制使用稳定结构化载荷，不能依赖自由文本判断成功或状态。
 
 ## 持久边界

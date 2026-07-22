@@ -4,7 +4,7 @@
  *   group event A + private event from peer X + group event B
  *     → render-event labels each correctly
  *     → all QQ messages become priority-aware inbox notifications
- *     → LLM (mocked) activates qq and opens the intended conversation
+ *     → LLM (mocked) opens the intended conversation
  *     → tool execution invokes send_message using the durable conversation focus
  *     → group/private cross-source events do NOT leak into each other
  */
@@ -63,7 +63,6 @@ function makeMockLlm(outputs: LlmCallOutput[]): LlmClient {
 
 function makeQqTools(context: ReturnType<typeof createAgentContext>, sender: MessageSender) {
   let focus = context.getSnapshot().qqConversationFocus
-  let activeCapabilities = [...context.getSnapshot().activeToolCapabilities]
   const conversations = createQqConversationController({
     state: {
       get: () => focus,
@@ -90,22 +89,11 @@ function makeQqTools(context: ReturnType<typeof createAgentContext>, sender: Mes
         createSendMessageTool({ sender, targetPolicy: allowAllTargets, conversations }),
       ],
     }],
-    activeCapabilities: {
-      list: () => [...activeCapabilities],
-      activate: (capability) => {
-        if (!activeCapabilities.includes(capability)) activeCapabilities.push(capability)
-      },
-      deactivate: (capability) => {
-        activeCapabilities = activeCapabilities.filter((item) => item !== capability)
-      },
-    },
   })
   return {
     tools,
     getFocus: () => focus,
     syncFocus: (next: typeof focus) => { focus = next },
-    getActiveCapabilities: () => activeCapabilities,
-    syncActiveCapabilities: (next: readonly string[]) => { activeCapabilities = [...next] },
   }
 }
 
@@ -160,9 +148,8 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
       renderedText: '今天天气好',
     })
 
-    // The model activates QQ, opens the exact mailbox conversation, then sends through invoke.
+    // The model opens the exact mailbox conversation, then sends through invoke.
     const llm = makeMockLlm([
-      toolOutput('activate-qq', 'help', { action: 'activate', capability: 'qq' }),
       toolOutput('open-group', 'invoke', {
         tool: 'qq_conversation',
         args: { action: 'open', target: { type: 'group', groupId: 111 } },
@@ -187,14 +174,11 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
       ledgerLoader: ledger.loader,
       getQqConversationFocus: qq.getFocus,
       syncQqConversationFocus: qq.syncFocus,
-      getActiveToolCapabilities: qq.getActiveCapabilities,
-      syncActiveToolCapabilities: qq.syncActiveCapabilities,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       compactOptions: { reserveTokens: 0 },
     })
 
-    await agent.runOnceForTest()
     await agent.runOnceForTest()
     await agent.runOnceForTest()
 
@@ -203,8 +187,6 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
       'user',
       'user',
       'user',
-      'assistant',
-      'tool',
       'assistant',
       'tool',
       'assistant',
@@ -225,7 +207,7 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     assert.equal(notifications[2]!.data.qqSource.groupName, '技术群')
     assert.doesNotMatch(notificationMessages.map((message) => message.content).join('\n'), /在吗|私聊问个事|今天天气好/)
 
-    const handledMarker = messages[9]
+    const handledMarker = messages[7]
     assert.ok(handledMarker?.role === 'user')
     assert.deepEqual(JSON.parse(handledMarker.content), {
       event: 'mailbox_handled',
@@ -275,7 +257,6 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
     })
 
     const llm = makeMockLlm([
-      toolOutput('activate-qq', 'help', { action: 'activate', capability: 'qq' }),
       toolOutput('open-private', 'invoke', {
         tool: 'qq_conversation',
         args: { action: 'open', target: { type: 'private', userId: 10001 } },
@@ -300,14 +281,11 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
       ledgerLoader: ledger.loader,
       getQqConversationFocus: qq.getFocus,
       syncQqConversationFocus: qq.syncFocus,
-      getActiveToolCapabilities: qq.getActiveCapabilities,
-      syncActiveToolCapabilities: qq.syncActiveCapabilities,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       compactOptions: { reserveTokens: 0 },
     })
 
-    await agent.runOnceForTest()
     await agent.runOnceForTest()
     await agent.runOnceForTest()
 

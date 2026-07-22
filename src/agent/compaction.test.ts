@@ -109,7 +109,6 @@ function projection(entries: readonly AgentLedgerEntry[]): AgentLedgerProjection
     snapshot: {
       schemaVersion: 4,
       messages,
-      activeToolCapabilities: [],
       qqConversationFocus: null,
     },
   }
@@ -402,7 +401,6 @@ function runtimeStateFor(entries: readonly AgentLedgerEntry[]) {
     inboxReadCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
-    activeToolCapabilities: [],
     qqConversationFocus: null,
     lastWakeAt: null,
     ledgerHeadEntryId: entries.at(-1)?.id ?? null,

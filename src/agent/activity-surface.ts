@@ -170,7 +170,7 @@ export function createAgentActivityReporter(options: ReporterOptions = {}): Agen
         ...surface.activeTools.filter(tool => tool.toolCallId !== input.toolCallId),
         { ...input, argsSummary: jsonValueSchema.parse(input.argsSummary), startedAt: at },
       ]
-      const resting = input.toolName === 'pause' || input.toolName === 'rest'
+      const resting = input.toolName === 'pause'
       const restArgs = resting && input.argsSummary && typeof input.argsSummary === 'object'
         ? input.argsSummary as Record<string, unknown>
         : null
@@ -202,7 +202,7 @@ export function createAgentActivityReporter(options: ReporterOptions = {}): Agen
         ...surface,
         generatedAt: at,
         phase: activeTools.length > 0
-          ? activeTools.some(tool => tool.toolName === 'pause' || tool.toolName === 'rest')
+          ? activeTools.some(tool => tool.toolName === 'pause')
             ? 'resting'
             : 'tool'
           : 'thinking',

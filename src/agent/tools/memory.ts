@@ -30,23 +30,6 @@ import { deriveMemoryEvidence, type LoadMemorySourceEvidence } from '../memory-e
 
 const log = createLogger('TOOL_MEMORY')
 
-function topicMemoryShareCandidate(
-  file: string,
-  entryId: string,
-  revision: string,
-  summary: string,
-) {
-  return file === 'topics/topics.md'
-    ? {
-        shareCandidate: {
-          key: `memory:${file}:${entryId}:${revision}`,
-          cooldownKey: `memory:${file}:${entryId}`,
-          summary,
-        },
-      }
-    : {}
-}
-
 const DEFAULT_WORKSPACE_DIR = 'data/agent-workspace'
 
 const scopeSchema = z.enum(['self', 'person', 'group', 'topic'])
@@ -284,7 +267,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
                 code: 'invalid_evidence',
                 error,
                 progress: false,
-                retryClass: 'immediate',
+                continuation: 'immediate',
               },
             }
           }
@@ -329,13 +312,6 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
               ok: true,
               code: result.changed ? 'written' : 'unchanged',
               progress: result.changed,
-              ...(result.changed && args.scope === 'topic' ? {
-                shareCandidate: {
-                  key: `memory:${result.file}:${result.entryId}:${result.revision}`,
-                  cooldownKey: `memory:${result.file}:${result.entryId}`,
-                  summary: `主题记忆“${result.title}”形成了一项新的稳定结论。`,
-                },
-              } : {}),
             },
           }
         }
@@ -430,7 +406,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
                   code: 'delete_failed',
                   error: '部分记忆文件删除失败',
                   progress: result.deleted.length > 0,
-                  retryClass: 'immediate',
+                  continuation: 'immediate',
                 },
           }
         }
@@ -455,12 +431,6 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
               ok: true,
               code: 'updated',
               progress: true,
-              ...topicMemoryShareCandidate(
-                args.file,
-                result.entryId,
-                result.revision,
-                '主题记忆形成了一项更新后的稳定结论。',
-              ),
             },
           }
         }
@@ -489,12 +459,6 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
               ok: true,
               code: 'corrected',
               progress: true,
-              ...topicMemoryShareCandidate(
-                args.file,
-                result.replacementEntryId,
-                result.revision,
-                '主题记忆纠正了一项旧结论。',
-              ),
             },
           }
         }
@@ -525,12 +489,6 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
               ok: true,
               code: 'promoted',
               progress: true,
-              ...topicMemoryShareCandidate(
-                args.file,
-                result.entryId,
-                result.revision,
-                '主题记忆沉淀了一项稳定结论。',
-              ),
             },
           }
         }
@@ -583,12 +541,6 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
               ok: true,
               code: 'compacted',
               progress: true,
-              ...topicMemoryShareCandidate(
-                args.file,
-                result.entryId,
-                result.revision,
-                '主题记忆完成了一次结论整合。',
-              ),
             },
           }
         }
@@ -605,7 +557,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
               code: 'not_found',
               error: result.error,
               progress: false,
-              retryClass: 'immediate',
+              continuation: 'immediate',
             },
           }
         }
@@ -633,7 +585,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             code,
             error: message,
             progress: false,
-            retryClass: code === 'memory_failed' ? 'backoff' : 'immediate',
+            continuation: code === 'memory_failed' ? 'backoff' : 'immediate',
           },
         }
       }

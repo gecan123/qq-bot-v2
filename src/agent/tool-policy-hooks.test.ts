@@ -199,7 +199,6 @@ describe('createSendMessageWorkCommitmentHook', () => {
         code: 'work_commitment_required',
         error: (JSON.parse(result.content as string) as { error: string }).error,
         progress: false,
-        retryClass: 'immediate',
         continuation: 'immediate',
       })
       assert.equal(calls.length, 0)

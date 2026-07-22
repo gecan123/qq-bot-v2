@@ -132,7 +132,6 @@ export function createSendMessageWorkCommitmentHook(
         code: 'work_commitment_required',
         error,
         progress: false,
-        retryClass: 'immediate',
         continuation: 'immediate',
       },
     }

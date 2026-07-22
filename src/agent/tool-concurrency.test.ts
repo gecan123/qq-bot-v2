@@ -66,12 +66,12 @@ describe('tool concurrency policy', () => {
     })), false)
   })
 
-  test('background fetch and unknown workspace commands remain exclusive', () => {
+  test('background fetch remains exclusive while workspace_bash is always read-only', () => {
     assert.equal(isParallelSafeToolCall(tools, call('fetch_content', {
       action: 'url', url: 'https://example.com', background: true,
     })), false)
     assert.equal(isParallelSafeToolCall(tools, call('workspace_bash', {
       cwd: 'workspace', command: 'mystery command',
-    })), false)
+    })), true)
   })
 })

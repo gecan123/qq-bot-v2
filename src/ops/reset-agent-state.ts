@@ -127,7 +127,6 @@ export async function resetAgentState(options: {
           inboxReadCursors: {},
           mailboxContinuity: createEmptyMailboxContinuityState(),
           goalRevision: 0,
-          activeToolCapabilities: [],
           qqConversationFocus: null,
           lastWakeAt: null,
           ledgerHeadEntryId: null,

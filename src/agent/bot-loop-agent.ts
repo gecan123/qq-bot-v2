@@ -66,11 +66,6 @@ import {
 } from './inbox-read-cursors.js'
 import type { AgentActivityReporter, AgentActivityTrigger } from './activity-surface.js'
 import {
-  renderShareCheckpoint,
-  selectShareCheckpointCandidate,
-  type ActiveGroupShareTarget,
-} from './share-checkpoint.js'
-import {
   isAttentionEvent,
   notificationRoutingForEvent,
 } from './notification.js'
@@ -98,9 +93,6 @@ export interface BotLoopAgentDeps {
   /** 从 runtime singleton 恢复的 goal control revision；只控制 LLM 可见状态事件的去重。 */
   initialGoalRevision?: number
   initialLedgerHeadEntryId?: bigint | null
-  /** deferred capability 的 round-local 状态，在可见 tool result 提交时同行落盘。 */
-  getActiveToolCapabilities?: () => readonly string[]
-  syncActiveToolCapabilities?: (capabilities: readonly string[]) => void
   /** QQ 会话焦点也是 runtime control state，与可见 tool result 同事务落盘。 */
   getQqConversationFocus?: () => QqConversationFocus
   syncQqConversationFocus?: (focus: QqConversationFocus) => void
@@ -125,20 +117,8 @@ export interface BotLoopAgentDeps {
   autonomy?: BotLoopAutonomyOptions
   /** 启动期冻结的群参与节奏；只作为 QQ notification 的软提示，不改变发送授权。 */
   groupParticipations?: ReadonlyMap<number, GroupParticipation>
-  /** active 群的稳定短定位；只用于成果后的单次分享判断，不改变唤醒或发送授权。 */
-  activeGroupShareTargets?: readonly ActiveGroupShareTarget[]
-  /** 可选的 Life Journal 自省 hook；输出不进入 AgentContext。 */
-  lifeJournal?: BotLoopLifeJournal
   /** 可丢弃的实时活动观察面；不进入 ledger/runtime singleton。 */
   activityReporter?: AgentActivityReporter
-}
-
-export interface BotLoopLifeJournal {
-  recordRound(input: {
-    roundIndex: number
-    messages: AgentMessage[]
-    evidenceMessageRowIds?: number[]
-  }): Promise<unknown>
 }
 
 export interface BotLoopAutonomyOptions {
@@ -162,7 +142,6 @@ const DEFAULT_COMPACTION_FAILURE_BACKOFF_MS = 10 * 60_000
 const MAX_OUTPUT_CONTINUATIONS_PER_ROUND = 2
 const MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS = 3
 const MAX_RECENT_TOOL_NOVELTY_KEYS = 256
-const RECOVERABLE_TOOL_ERROR_CODES = new Set(['capability_inactive', 'invalid_arguments'])
 const OUTPUT_CONTINUATION_PROMPT =
   '[runtime recovery] 上一段 assistant 输出达到长度上限。请从中断处继续，不要重复已完成内容，并用一个完整的工具调用结束本轮。'
 const ASSISTANT_TEXT_ONLY_CORRECTION = JSON.stringify({
@@ -170,7 +149,6 @@ const ASSISTANT_TEXT_ONLY_CORRECTION = JSON.stringify({
   code: 'assistant_text_without_tool',
   instruction: '上一轮只输出了普通 assistant 文本；它不会发送给任何人，也不会执行其中的计划。若仍有工作，现在调用具体工具；若确实没有待处理行动，以空内容且无工具调用结束。',
 })
-const EMPTY_TODO_CORRECTION_CODE = 'empty_todo_not_work_source'
 const defaultKeepAlive = {
   open() {
     const timer = setInterval(() => {}, DEFAULT_KEEP_ALIVE_INTERVAL_MS)
@@ -214,9 +192,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let shortWorkContinuationPending = false
   let recoverableToolCorrectionRounds = 0
   let idleBackoffLevel = 0
-  const recentToolNoveltyKeys = seedRecentToolNoveltyKeys(
-    deps.context.getSnapshot().messages,
-  )
+  const recentToolNoveltyKeys = new Map<string, number>()
   let nextCompactionAttemptAt = 0
   let compactionAbortController = new AbortController()
   let lastContextWindowTokens =
@@ -227,7 +203,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     inboxReadCursors: InboxReadCursors
     mailboxContinuity: MailboxContinuityState
     goalRevision: number
-    activeToolCapabilities: readonly string[]
     qqConversationFocus: QqConversationFocus
     lastWakeAt: Date | null
     ledgerHeadEntryId: bigint | null
@@ -238,7 +213,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     goalRevision = input.goalRevision
     lastWakeAt = input.lastWakeAt == null ? null : new Date(input.lastWakeAt)
     ledgerHeadEntryId = input.ledgerHeadEntryId
-    deps.syncActiveToolCapabilities?.(input.activeToolCapabilities)
     deps.syncQqConversationFocus?.(input.qqConversationFocus)
     deps.syncInboxReadCursors?.(input.inboxReadCursors)
   }
@@ -270,9 +244,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       }
       await reloadProjectionFromCanonical()
     } catch (error) {
-      // deferred capability callbacks only mutate round-local host state; roll it back
-      // when its paired visible tool result cannot be committed.
-      deps.syncActiveToolCapabilities?.(deps.context.getSnapshot().activeToolCapabilities)
       deps.syncQqConversationFocus?.(deps.context.getSnapshot().qqConversationFocus)
       deps.syncInboxReadCursors?.(inboxReadCursors)
       throw error
@@ -617,8 +588,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     onlyHelpToolCalls: boolean
     madeToolProgress: boolean
     assistantTextOnly: boolean
-    evidenceMessageRowIds: number[]
-    toolOutcomes: ReactToolOutcome[]
     toolContinuation?: ToolContinuation
     toolContinuationDetail?: string
   }> {
@@ -708,16 +677,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     if (result.assistantTextOnly) {
       stagedMessages.push({ role: 'user', content: ASSISTANT_TEXT_ONLY_CORRECTION })
     }
-    const emptyTodoNoveltyKey = selectEmptyTodoCorrectionNoveltyKey(result.toolOutcomes)
-    if (
-      emptyTodoNoveltyKey != null
-      && !recentToolNoveltyKeys.has(emptyTodoNoveltyKey)
-    ) {
-      stagedMessages.push({
-        role: 'user',
-        content: renderEmptyTodoCorrection(emptyTodoNoveltyKey),
-      })
-    }
     const nextContinuity = parseMailboxContinuityState(mailboxContinuity)
     recordMailboxRound(nextContinuity, result.inputTokens)
     let nextInboxReadCursors = inboxReadCursors
@@ -733,9 +692,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       runtimePatch: {
         mailboxContinuity: nextContinuity,
         ...(inboxReads.length > 0 ? { inboxReadCursors: nextInboxReadCursors } : {}),
-        ...(deps.getActiveToolCapabilities
-          ? { activeToolCapabilities: [...deps.getActiveToolCapabilities()] }
-          : {}),
         ...(deps.getQqConversationFocus
           ? { qqConversationFocus: deps.getQqConversationFocus() }
           : {}),
@@ -753,19 +709,12 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       sentTargets,
       workContinuationRequested,
       recoverableToolFailure: result.toolOutcomes.some((outcome) => (
-        !outcome.ok && (
-          outcome.retryClass === 'immediate'
-          || (outcome.code != null && RECOVERABLE_TOOL_ERROR_CODES.has(outcome.code))
-        )
+        !outcome.ok && outcome.continuation === 'immediate'
       )),
       onlyHelpToolCalls: result.toolOutcomes.length > 0
         && result.toolOutcomes.every((outcome) => outcome.requestedToolName === 'help'),
       madeToolProgress: toolControl.madeProgress,
       assistantTextOnly: result.assistantTextOnly,
-      evidenceMessageRowIds: [...new Set(result.toolOutcomes.flatMap(
-        (outcome) => outcome.evidenceMessageRowIds ?? [],
-      ))],
-      toolOutcomes: result.toolOutcomes,
       ...(toolControl.continuation ? { toolContinuation: toolControl.continuation } : {}),
       ...(toolControl.continuationDetail
         ? { toolContinuationDetail: toolControl.continuationDetail }
@@ -885,11 +834,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     onlyHelpToolCalls?: boolean
     madeToolProgress?: boolean
     assistantTextOnly?: boolean
-    shareCheckpointAppended?: boolean
     toolContinuation?: ToolContinuation
     toolContinuationDetail?: string
   }> {
-    const beforeStepCount = deps.context.getSnapshot().messages.length
     const goalAtRoundStart = await deps.goalStore?.get() ?? null
     const stagedMessages: AgentMessage[] = []
     const stagedContinuity = parseMailboxContinuityState(mailboxContinuity)
@@ -1021,8 +968,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls,
       madeToolProgress,
       assistantTextOnly,
-      evidenceMessageRowIds,
-      toolOutcomes,
       toolContinuation,
       toolContinuationDetail,
     } = roundResult
@@ -1035,22 +980,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         timeUsedSeconds: Math.max(0, Math.round((Date.now() - roundStartedAt) / 1000)),
       })
       await syncGoalState()
-    }
-    try {
-      const roundMessages = deps.context.getSnapshot().messages.slice(beforeStepCount)
-      const directEvidenceIds = drained.events.flatMap((event) => (
-        event.type === 'napcat_message' || event.type === 'napcat_private_message'
-          ? [event.messageRowId]
-          : []
-      ))
-      const allEvidenceIds = [...new Set([...directEvidenceIds, ...evidenceMessageRowIds])]
-      await deps.lifeJournal?.recordRound({
-        roundIndex,
-        messages: roundMessages,
-        ...(allEvidenceIds.length > 0 ? { evidenceMessageRowIds: allEvidenceIds } : {}),
-      })
-    } catch (err) {
-      log.warn({ err, roundIndex }, 'life_journal_record_failed_skipped')
     }
     const restReminderNow = didCompleteRest ? autonomy.now() : null
     const shouldAppendRestReminder = restReminderNow != null
@@ -1071,36 +1000,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         messages: [{ role: 'user', content: renderRestResumeReminder(restReminderNow) }],
       })
     }
-    let shareCheckpointAppended = false
-    if (!didPause && sentTargets.length === 0 && (deps.activeGroupShareTargets?.length ?? 0) > 0) {
-      const checkpointNow = autonomy.now()
-      let candidate = selectShareCheckpointCandidate(
-        toolOutcomes,
-        deps.context.getSnapshot().messages,
-        checkpointNow,
-      )
-      if (candidate) {
-        const canonical = await deps.ledgerRepo.loadCanonicalState()
-        const permanentMessages = canonical.entries.flatMap((entry) => (
-          entry.entryType === 'message' ? [entry.payload.message] : []
-        ))
-        candidate = selectShareCheckpointCandidate(toolOutcomes, permanentMessages, checkpointNow)
-      }
-      if (candidate) {
-        await commitChanges({
-          messages: [{
-            role: 'user',
-            content: renderShareCheckpoint(candidate, deps.activeGroupShareTargets!, checkpointNow),
-          }],
-        })
-        shareCheckpointAppended = true
-        log.info({
-          candidateKey: candidate.key,
-          sourceTool: candidate.sourceTool,
-          activeGroupCount: deps.activeGroupShareTargets!.length,
-        }, 'share_checkpoint_appended')
-      }
-    }
     shortWorkContinuationPending = workContinuationRequested
     return {
       ranRound: true,
@@ -1110,7 +1009,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls,
       madeToolProgress,
       assistantTextOnly,
-      shareCheckpointAppended,
       ...(toolContinuation ? { toolContinuation } : {}),
       ...(toolContinuationDetail ? { toolContinuationDetail } : {}),
       actionRequired: goalAtRoundStart?.status === 'active'
@@ -1132,7 +1030,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls = false,
       madeToolProgress = false,
       assistantTextOnly = false,
-      shareCheckpointAppended = false,
       toolContinuation,
       toolContinuationDetail,
     } = await step()
@@ -1172,11 +1069,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         return
       }
       if (!recoverableToolFailure && !onlyHelpToolCalls) recoverableToolCorrectionRounds = 0
-      if (shareCheckpointAppended) {
-        actionCorrectionRetryPending = false
-        idleBackoffLevel = 0
-        return
-      }
       if (toolContinuation === 'immediate') {
         idleBackoffLevel = 0
         return
@@ -1456,66 +1348,6 @@ function describeActivityTrigger(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-function selectEmptyTodoCorrectionNoveltyKey(
-  outcomes: readonly ReactToolOutcome[],
-): string | null {
-  if (outcomes.length !== 1) return null
-  const outcome = outcomes[0]!
-  if (
-    outcome.requestedToolName !== 'todo'
-    || outcome.toolName !== 'todo'
-    || outcome.code !== 'empty'
-    || outcome.noveltyKey == null
-  ) {
-    return null
-  }
-  return outcome.noveltyKey
-}
-
-function renderEmptyTodoCorrection(noveltyKey: string): string {
-  return JSON.stringify({
-    event: 'runtime_correction',
-    code: EMPTY_TODO_CORRECTION_CODE,
-    noveltyKey,
-    instruction: 'Todo 为空只表示当前进程没有已定的短期计划，不表示没有可做的事；Todo 也不是发现新方向的来源。现在不要再调用 todo。若没有 active Goal，从最近线索、稳定兴趣、wishes、关系或已有成果中选一个能立即产生新证据的小行动，并调用对应的具体工具；只有确实没有值得尝试的方向时，才以空内容且无工具调用结束。',
-  })
-}
-
-function seedRecentToolNoveltyKeys(
-  messages: readonly AgentMessage[],
-): Map<string, number> {
-  const seeded = new Map<string, number>()
-  const recentMessages = messages.slice(-(MAX_RECENT_TOOL_NOVELTY_KEYS * 4))
-  for (const [index, message] of recentMessages.entries()) {
-    if (message.role !== 'user') continue
-    let value: unknown
-    try {
-      value = JSON.parse(message.content)
-    } catch {
-      continue
-    }
-    if (
-      value == null
-      || typeof value !== 'object'
-      || (value as Record<string, unknown>).event !== 'runtime_correction'
-      || (value as Record<string, unknown>).code !== EMPTY_TODO_CORRECTION_CODE
-      || typeof (value as Record<string, unknown>).noveltyKey !== 'string'
-    ) {
-      continue
-    }
-    const noveltyKey = (value as Record<string, unknown>).noveltyKey as string
-    if (noveltyKey.length === 0 || noveltyKey.length > 500) continue
-    if (message.content !== renderEmptyTodoCorrection(noveltyKey)) continue
-    seeded.delete(noveltyKey)
-    seeded.set(noveltyKey, index)
-    if (seeded.size > MAX_RECENT_TOOL_NOVELTY_KEYS) {
-      const oldest = seeded.keys().next().value as string | undefined
-      if (oldest != null) seeded.delete(oldest)
-    }
-  }
-  return seeded
 }
 
 function resolveOverflowContextWindowTokens(error: unknown, fallback: number): number {

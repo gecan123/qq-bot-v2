@@ -43,7 +43,7 @@ export function createSkillTool(deps: SkillToolDeps = {}): Tool<Args> {
       '按需加载仓库内的长说明和工作流.',
       'action=list: 查看有哪些 skill.',
       'action=load: 按精确 name 读取正文, 输出有长度上限; 已知 name 时直接 load, 不知道候选时才 list.',
-      '遇到不熟悉的专项规则、安全边界或标准工作流时加载匹配 skill; 执行步骤和状态改用 todo.',
+      '遇到不熟悉的专项规则、安全边界或标准工作流时加载匹配 skill；当前连续执行状态不要写进 skill.',
       '当前方向耗尽、连续静默或准备因为“没事做”而休息时直接 load autonomous_life; 已有明确方向时不要加载.',
       '简单日常回复、已知单步操作或只是步骤多但规则已清楚的任务不要调用; 不要把长手册塞进常驻上下文.',
     ].join(' '),

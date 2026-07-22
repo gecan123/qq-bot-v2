@@ -28,7 +28,6 @@ interface FakeState {
     inboxReadCursors: unknown
     mailboxContinuity: unknown
     goalRevision: number
-    activeToolCapabilities: unknown
     qqConversationFocus: unknown
     lastWakeAt: Date | null
     ledgerHeadEntryId: bigint | null
@@ -53,7 +52,6 @@ function initialRuntime(): AgentRuntimeState {
     inboxReadCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
-    activeToolCapabilities: [],
     qqConversationFocus: null,
     lastWakeAt: null,
     ledgerHeadEntryId: null,
@@ -321,7 +319,6 @@ describe('createAgentLedgerRepo', () => {
         snapshot: {
           schemaVersion: SNAPSHOT_SCHEMA_VERSION,
           messages: [],
-          activeToolCapabilities: [],
         },
         activeEntryCount: 0,
         permanentEntryCount: 0,
@@ -360,13 +357,11 @@ describe('createAgentLedgerRepo', () => {
     const updated = await repo.updateRuntime({
       expectedHeadEntryId: null,
       patch: {
-        activeToolCapabilities: ['browser'],
         qqConversationFocus: { type: 'private', userId: 2002 },
         lastWakeAt: new Date('2026-07-15T12:30:00.000Z'),
       },
     })
 
-    assert.deepEqual(updated.activeToolCapabilities, ['browser'])
     assert.deepEqual(updated.qqConversationFocus, { type: 'private', userId: 2002 })
     assert.equal(updated.lastWakeAt?.toISOString(), '2026-07-15T12:30:00.000Z')
     const cleared = await repo.updateRuntime({

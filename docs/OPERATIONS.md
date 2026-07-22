@@ -218,7 +218,7 @@ BOT_MCP_SCHEMA_SNAPSHOT_DIR=data/agent-workspace/runtime/mcp-schemas
 
 配置文件只支持本机 stdio server；`command` / `args` 由 operator 固定，运行时不用 shell。`env` 适合非敏感固定值；密钥优先通过 `inheritEnv` 写变量名，再由 bot 进程环境提供真实值。`readOnlyTools` 必须使用 server 暴露的原始 tool name，未列出的调用默认需要 owner 审批。
 
-重启后先通过 `help action=activate capability=mcp_connectors` 激活，再按以下顺序使用：
+重启后通过 `help action=describe capability=mcp_connectors` 查看入口，再按以下顺序直接 invoke：
 
 ```text
 invoke tool=mcp args={"action":"servers"}
@@ -382,7 +382,7 @@ VIBE_TRADING_RESULT_MAX_CHARS=12000
 ~/.local/share/vibe-trading/.venv/bin/vibe-trading run -p '研究 BTC-USDT 最近 30 天趋势，只做研究，不执行真实交易' --json
 ```
 
-运行时先用 `help action=activate capability=trading_research`，再用 `invoke tool=trading_agent args={...}`。`start` / `continue` 异步返回 `taskId`、`sessionId`、`attemptId`；完成后走 `background_task get`，进程重启后走 `trading_agent result` 恢复。不要配置真实券商 connector，也不要把 Vibe API 监听到非 loopback 地址。
+运行时先用 `help action=describe capability=trading_research` 查看参数，再用 `invoke tool=trading_agent args={...}`。`start` / `continue` 异步返回 `taskId`、`sessionId`、`attemptId`；完成后走 `background_task get`，进程重启后走 `trading_agent result` 恢复。不要配置真实券商 connector，也不要把 Vibe API 监听到非 loopback 地址。
 
 ## 验证
 

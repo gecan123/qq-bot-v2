@@ -72,11 +72,6 @@ describe('owner approval policy', () => {
     const executor = createDeferredToolExecutor({
       alwaysOnTools: [],
       capabilities: [{ name: 'managed', description: 'managed', tools: [setupResult.memory] }],
-      activeCapabilities: {
-        list: () => ['managed'],
-        activate() {},
-        deactivate() {},
-      },
       hooks: { beforeTool: [createOwnerApprovalHook(setupResult.manager, undefined, 'strict')] },
     })
 

@@ -75,7 +75,6 @@ export function projectAgentLedger(input: {
     snapshot: {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       messages: projectedMessages,
-      activeToolCapabilities: [...runtimeState.activeToolCapabilities],
       qqConversationFocus: runtimeState.qqConversationFocus,
     },
   }
@@ -190,7 +189,6 @@ export function parseAgentRuntimeState(value: unknown): AgentRuntimeState {
     'inboxReadCursors',
     'mailboxContinuity',
     'goalRevision',
-    'activeToolCapabilities',
     'qqConversationFocus',
     'lastWakeAt',
     'ledgerHeadEntryId',
@@ -199,20 +197,6 @@ export function parseAgentRuntimeState(value: unknown): AgentRuntimeState {
     throw new AgentLedgerIntegrityError(
       `${path} has unsupported schemaVersion: ${String(state.schemaVersion)}`,
     )
-  }
-  if (!Array.isArray(state.activeToolCapabilities)) {
-    throw new AgentLedgerIntegrityError(`${path}.activeToolCapabilities must be an array`)
-  }
-  const capabilities = state.activeToolCapabilities.map((capability, index) => {
-    if (typeof capability !== 'string' || capability.trim() === '') {
-      throw new AgentLedgerIntegrityError(
-        `${path}.activeToolCapabilities[${index}] must be a non-empty string`,
-      )
-    }
-    return capability
-  })
-  if (new Set(capabilities).size !== capabilities.length) {
-    throw new AgentLedgerIntegrityError(`${path}.activeToolCapabilities must not contain duplicates`)
   }
   if (state.lastWakeAt !== null && (
     !(state.lastWakeAt instanceof Date) || !Number.isFinite(state.lastWakeAt.getTime())
@@ -241,7 +225,6 @@ export function parseAgentRuntimeState(value: unknown): AgentRuntimeState {
       `${path}.mailboxContinuity`,
     ) as unknown as AgentRuntimeState['mailboxContinuity'],
     goalRevision: requireNonNegativeSafeInteger(state.goalRevision, `${path}.goalRevision`),
-    activeToolCapabilities: capabilities,
     qqConversationFocus: parseQqConversationFocus(
       state.qqConversationFocus,
       `${path}.qqConversationFocus`,
@@ -476,7 +459,6 @@ function assertSnapshotIntegrity(
   const snapshot = {
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
     messages: [...messages],
-    activeToolCapabilities: [...runtimeState.activeToolCapabilities],
     qqConversationFocus: runtimeState.qqConversationFocus,
   }
   const result = validateBotSnapshotIntegrity({

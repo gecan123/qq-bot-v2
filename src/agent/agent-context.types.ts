@@ -76,8 +76,7 @@ export type QqConversationFocus =
 export interface PersistedAgentSnapshot {
   schemaVersion: number
   messages: DurableAgentMessage[]
-  activeToolCapabilities: string[]
   qqConversationFocus: QqConversationFocus
 }
 
-export const SNAPSHOT_SCHEMA_VERSION = 4
+export const SNAPSHOT_SCHEMA_VERSION = 5

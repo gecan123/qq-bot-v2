@@ -103,11 +103,9 @@ describe('createAgentRuntime', () => {
     assert.match(serializedRequest, /canonical context evidence: focused tests passed/)
   })
 
-  test('wires deferred tool activation state through AgentContext', async () => {
+  test('wires deferred tools without persistent activation state', async () => {
     const context = createAgentContext()
-    context.activateToolCapability('external_research')
     const ledger = createTestAgentLedger({
-      runtimeState: { activeToolCapabilities: ['external_research'] },
     })
     let mcpConnections = 0
     let scheduleStarts = 0
@@ -158,9 +156,6 @@ describe('createAgentRuntime', () => {
       mcpManager,
       scheduleRuntime,
       goalStore: createInMemoryGoalStore(),
-      lifeJournal: {
-        async recordRound() {},
-      },
     })
 
     assert.match(runtime.systemPrompt, /测试群/)
@@ -170,13 +165,10 @@ describe('createAgentRuntime', () => {
       'background_task',
       'approval',
       'goal',
-      'todo',
       'skill',
       'memory',
       'inbox',
       'chat_style',
-      'ai_tone',
-      'workspace_bash',
       'help',
       'invoke',
     ])
@@ -203,21 +195,14 @@ describe('createAgentRuntime', () => {
     const shortTermScheduling = payload.capabilities.find((item: { name: string }) => item.name === 'short_term_scheduling')
     const lifeState = payload.capabilities.find((item: { name: string }) => item.name === 'life_state')
     const stickerManagement = payload.capabilities.find((item: { name: string }) => item.name === 'sticker_management')
-    assert.equal(externalResearch.active, true)
-    assert.equal(skillManagement.active, false)
-    assert.equal(mcpConnectors.active, false)
     assert.deepEqual(mcpConnectors.tools, ['mcp'])
-    assert.equal(qq.active, false)
     assert.deepEqual(qq.tools, ['qq_conversation', 'send_message'])
-    assert.equal(shortTermScheduling.active, false)
     assert.deepEqual(shortTermScheduling.tools, ['schedule'])
-    assert.equal(lifeState.active, false)
     assert.deepEqual(lifeState.tools, ['notebook', 'life_journal'])
-    assert.equal(stickerManagement.active, false)
     assert.deepEqual(stickerManagement.tools, ['collect_sticker'])
     assert.equal(mcpConnections, 0)
 
-    const inactiveSchedule = await runtime.tools.execute({
+    const scheduleList = await runtime.tools.execute({
       id: 'schedule-inactive',
       name: 'invoke',
       args: { tool: 'schedule', args: { action: 'list' } },
@@ -225,21 +210,7 @@ describe('createAgentRuntime', () => {
       eventQueue: new InMemoryEventQueue<BotEvent>(),
       roundIndex: 1,
     })
-    assert.deepEqual(inactiveSchedule.outcome, {
-      ok: false,
-      code: 'capability_inactive',
-      error: 'tool schedule is not active; activate one of: short_term_scheduling',
-    })
-    assert.deepEqual(JSON.parse(inactiveSchedule.content as string).next, [
-      {
-        tool: 'help',
-        args: { action: 'activate', capability: 'short_term_scheduling' },
-      },
-      {
-        tool: 'invoke',
-        args: { tool: 'schedule', args: { action: 'list' } },
-      },
-    ])
+    assert.equal(JSON.parse(scheduleList.content as string).ok, true)
 
     const pauseQueue = new InMemoryEventQueue<BotEvent>()
     pauseQueue.enqueue({ type: 'wake' })
@@ -282,14 +253,6 @@ describe('createAgentRuntime', () => {
 
     assert.equal(runtime.tools.list().some((tool) => tool.name === 'send_message'), false)
 
-    await runtime.tools.execute({
-      id: 'activate-qq',
-      name: 'help',
-      args: { action: 'activate', capability: 'qq' },
-    }, {
-      eventQueue: new InMemoryEventQueue<BotEvent>(),
-      roundIndex: 1,
-    })
     await runtime.tools.execute({
       id: 'open-private',
       name: 'invoke',
@@ -354,11 +317,6 @@ describe('createAgentRuntime', () => {
       roundIndex: 1,
     }
 
-    await runtime.tools.execute({
-      id: 'activate-qq',
-      name: 'help',
-      args: { action: 'activate', capability: 'qq' },
-    }, toolContext)
     await runtime.tools.execute({
       id: 'open-private',
       name: 'invoke',
@@ -456,41 +414,6 @@ describe('createAgentRuntime', () => {
     await writeFile(scheduleStatePath, '{"version":1,"schedules":[]}', 'utf8')
     await runtime.startBackgroundServices()
     await runtime.stopBackgroundServices()
-  })
-
-  test('persists capability activation with its visible help result before installing it', async () => {
-    const context = createAgentContext()
-    context.appendUserMessage('activate research')
-    const ledger = createTestAgentLedger({ messages: context.getSnapshot().messages })
-    const runtime = createAgentRuntime({
-      ...makeRuntimeInput(),
-      context,
-      llm: {
-        async chat() {
-          return {
-            content: '',
-            toolCalls: [{
-              id: 'activate-research',
-              name: 'help',
-              args: { action: 'activate', capability: 'external_research' },
-            }],
-            usage: { inputTokens: 5, cachedTokens: 0, outputTokens: 2 },
-            model: 'mock',
-            contextWindowTokens: 200_000,
-          }
-        },
-      },
-      ledgerRepo: ledger.repo,
-      ledgerLoader: ledger.loader,
-    })
-
-    await runtime.agent.runOnceForTest()
-
-    const committed = ledger.snapshots.at(-1)
-    assert.ok(committed)
-    assert.deepEqual(committed.activeToolCapabilities, ['external_research'])
-    assert.equal(committed.messages.at(-1)?.role, 'tool')
-    assert.deepEqual(context.getSnapshot().activeToolCapabilities, ['external_research'])
   })
 
   test('rejects restarting background services after they have stopped', async () => {
@@ -651,11 +574,6 @@ async function executeSchedule(
     eventQueue: new InMemoryEventQueue<BotEvent>(),
     roundIndex: 1,
   }
-  await runtime.tools.execute({
-    id: 'activate-schedule',
-    name: 'help',
-    args: { action: 'activate', capability: 'short_term_scheduling' },
-  }, ctx)
   return await runtime.tools.execute({
     id: 'schedule-test',
     name: 'invoke',

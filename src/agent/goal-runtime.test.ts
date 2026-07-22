@@ -428,7 +428,6 @@ function ledgerDeps(context: ReturnType<typeof createAgentContext>) {
   const ledger = createTestAgentLedger({
     messages: context.getSnapshot().messages,
     runtimeState: {
-      activeToolCapabilities: context.getSnapshot().activeToolCapabilities,
     },
   })
   return { ledgerRepo: ledger.repo, ledgerLoader: ledger.loader }

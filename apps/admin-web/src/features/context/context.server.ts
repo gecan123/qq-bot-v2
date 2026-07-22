@@ -9,7 +9,7 @@ export async function loadContextSnapshot(now = new Date()): Promise<ContextSnap
     db.botAgentLedgerEntry.findMany({ orderBy: { id: 'desc' }, take: 80 }),
     db.botAgentLedgerEntry.groupBy({ by: ['entryType'], _count: { _all: true }, orderBy: { _count: { entryType: 'desc' } } }),
     db.botAgentCheckpoint.findUnique({ where: { id: 1 }, select: { throughEntryId: true, updatedAt: true } }),
-    db.botAgentRuntimeState.findUnique({ where: { id: 1 }, select: { ledgerHeadEntryId: true, goalRevision: true, activeToolCapabilities: true, updatedAt: true } }),
+    db.botAgentRuntimeState.findUnique({ where: { id: 1 }, select: { ledgerHeadEntryId: true, goalRevision: true, updatedAt: true } }),
     db.agentTokenUsage.findFirst({ where: { operation: 'agent.chat' }, orderBy: [{ ts: 'desc' }, { id: 'desc' }] }),
   ])
   const warnings: string[] = []
@@ -31,7 +31,6 @@ export async function loadContextSnapshot(now = new Date()): Promise<ContextSnap
     runtime: {
       ledgerHeadId: runtimeHeadId,
       goalRevision: runtime?.goalRevision ?? null,
-      activeCapabilities: stringArray(runtime?.activeToolCapabilities),
       updatedAt: runtime?.updatedAt.toISOString() ?? null,
     },
     latestUsage: usage === null ? null : {
@@ -44,10 +43,6 @@ export async function loadContextSnapshot(now = new Date()): Promise<ContextSnap
     })),
     warnings,
   })
-}
-
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
 
 function readRole(value: unknown): string | null {

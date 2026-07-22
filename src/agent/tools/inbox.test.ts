@@ -61,7 +61,6 @@ describe('inbox tool', () => {
     assert.equal(payload.messages[0]!.text, 'message-11')
     assert.equal(payload.messages[0]!.replyable, true)
     assert.equal(result.outcome?.progress, true)
-    assert.deepEqual(result.outcome?.evidenceMessageRowIds, [11, 12])
     assert.deepEqual(result.effects, [{
       type: 'inbox_read',
       mailbox: 'qq_group:111',
@@ -79,7 +78,6 @@ describe('inbox tool', () => {
       ok: true,
       code: 'unchanged',
       progress: false,
-      evidenceMessageRowIds: [11, 12],
     })
   })
 

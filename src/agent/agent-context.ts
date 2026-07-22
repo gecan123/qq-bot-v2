@@ -26,13 +26,11 @@ export type {
  *  - getSnapshot() 返回深拷贝, 外部修改不影响内部 (字节稳定的前提)
  *  - 主 Runtime Host 只能在 canonical commit/reload 后用 installProjection 整体安装
  *  - appendXxx 只服务不持久化的局部 AgentContext 和测试 fixture
- *  - 持久形态 == 运行时形态; snapshot.messages 是 LLM 看到的 messages,
- *    activeToolCapabilities 是 runtime control state, 不进 LLM messages。
+ *  - 持久形态 == 运行时形态; snapshot.messages 是 LLM 看到的 messages。
  */
 export interface AgentContext {
   getSnapshot(): {
     messages: DurableAgentMessage[]
-    activeToolCapabilities: string[]
     qqConversationFocus: QqConversationFocus
   }
   appendUserMessage(content: string): void
@@ -42,8 +40,6 @@ export interface AgentContext {
     nativeBlocks?: ClaudeAssistantNativeBlock[]
   }): void
   appendToolResult(input: { toolCallId: string; content: ToolResultContent }): void
-  activateToolCapability(capability: string): void
-  deactivateToolCapability(capability: string): void
   /** Runtime Host 在 canonical commit/reload 后安装完整 projection。 */
   installProjection(snapshot: PersistedAgentSnapshot): void
   exportPersistedSnapshot(): PersistedAgentSnapshot
@@ -57,18 +53,15 @@ interface CreateAgentContextOptions {
 
 export function createAgentContext(options: CreateAgentContextOptions = {}): AgentContext {
   let messages: DurableAgentMessage[] = options.initialMessages ? cloneMessages(options.initialMessages) : []
-  let activeToolCapabilities: string[] = []
   let qqConversationFocus: QqConversationFocus = null
 
   const impl: AgentContext = {
     getSnapshot(): {
       messages: DurableAgentMessage[]
-      activeToolCapabilities: string[]
       qqConversationFocus: QqConversationFocus
     } {
       return {
         messages: cloneMessages(messages),
-        activeToolCapabilities: [...activeToolCapabilities],
         qqConversationFocus: cloneQqConversationFocus(qqConversationFocus),
       }
     },
@@ -97,14 +90,6 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
         content: input.content,
       })
     },
-    activateToolCapability(capability: string): void {
-      if (!activeToolCapabilities.includes(capability)) {
-        activeToolCapabilities = [...activeToolCapabilities, capability]
-      }
-    },
-    deactivateToolCapability(capability: string): void {
-      activeToolCapabilities = activeToolCapabilities.filter((item) => item !== capability)
-    },
     installProjection(snapshot: PersistedAgentSnapshot): void {
       const validation = validateBotSnapshotIntegrity({
         snapshot,
@@ -115,23 +100,19 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
         throw new Error(`projection integrity validation failed: ${validation.errors.join('; ')}`)
       }
       const nextMessages = cloneMessages(snapshot.messages)
-      const nextCapabilities = [...snapshot.activeToolCapabilities]
       const nextQqConversationFocus = cloneQqConversationFocus(snapshot.qqConversationFocus)
       messages = nextMessages
-      activeToolCapabilities = nextCapabilities
       qqConversationFocus = nextQqConversationFocus
     },
     exportPersistedSnapshot(): PersistedAgentSnapshot {
       return {
         schemaVersion: SNAPSHOT_SCHEMA_VERSION,
         messages: cloneMessages(messages),
-        activeToolCapabilities: [...activeToolCapabilities],
         qqConversationFocus: cloneQqConversationFocus(qqConversationFocus),
       }
     },
     reset(): void {
       messages = []
-      activeToolCapabilities = []
       qqConversationFocus = null
     },
   }

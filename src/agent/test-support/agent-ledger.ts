@@ -39,7 +39,6 @@ export function createTestAgentLedger(input: {
     mailboxCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
-    activeToolCapabilities: [],
     qqConversationFocus: null,
     lastWakeAt: null,
     ...structuredClone(input.runtimeState ?? {}),

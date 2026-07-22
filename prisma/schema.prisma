@@ -73,7 +73,6 @@ model BotAgentRuntimeState {
   inboxReadCursors       Json      @map("inbox_read_cursors")
   mailboxContinuity      Json      @map("mailbox_continuity")
   goalRevision           Int       @map("goal_revision")
-  activeToolCapabilities Json      @map("active_tool_capabilities")
   qqConversationFocus    Json?     @map("qq_conversation_focus")
   lastWakeAt             DateTime? @map("last_wake_at") @db.Timestamptz(6)
   ledgerHeadEntryId      BigInt?   @map("ledger_head_entry_id")

@@ -15,7 +15,6 @@ import { buildMediaProvider } from './llm/media-provider.js'
 import { messageSender } from './messaging/message-sender.js'
 
 import { purgeOldData } from './database/retention.js'
-import { findMemoryEvidenceRows } from './database/messages.js'
 import { createAgentContext } from './agent/agent-context.js'
 import { InMemoryEventQueue } from './agent/event-queue.js'
 import { shouldQueueChatEvent, type BotEvent } from './agent/event.js'
@@ -24,7 +23,6 @@ import { createAgentLedgerLoader } from './agent/agent-ledger-loader.js'
 import { createLlmClient } from './agent/llm-client.js'
 import { createMemoryMaintenanceRuntime } from './agent/memory-maintenance.js'
 import { setTokenUsageDbPersistenceEnabled } from './agent/token-stats.js'
-import { createLifeJournalRuntime } from './agent/life-journal.js'
 import { replayMissedMessages } from './agent/replay-missed.js'
 import { resolveTargetMetadataMaps } from './agent/resolve-target-meta.js'
 import { createDedupEnqueue } from './agent/dedup-enqueue.js'
@@ -108,21 +106,13 @@ async function main() {
   const llm = createLlmClient()
   const taskScheduler = createAgentTaskScheduler()
   const workspaceStateCoordinator = createWorkspaceStateCoordinator()
-  const lifeJournalLlm = createLlmClient({
+  const maintenanceLlm = createLlmClient({
     claudeThinking: { mode: 'disabled' },
   })
   const memoryMaintenance = createMemoryMaintenanceRuntime({
-    llm: lifeJournalLlm,
+    llm: maintenanceLlm,
     taskScheduler,
     workspaceStateCoordinator,
-  })
-  const lifeJournal = createLifeJournalRuntime({
-    llm: lifeJournalLlm,
-    taskScheduler,
-    workspaceStateCoordinator,
-    memoryMaintenance,
-    loadSourceEvidence: findMemoryEvidenceRows,
-    ownerId: config.owner == null ? undefined : String(config.owner.qq),
   })
 
   // 3.5 启动期 persona-spoof 自检 (claude-code 路径专用): 若 cliproxy mode=auto
@@ -393,7 +383,6 @@ async function main() {
     initialLastWakeAt: loadedLedger.runtimeState.lastWakeAt,
     initialGoalRevision: loadedLedger.runtimeState.goalRevision,
     goalStore,
-    lifeJournal,
     taskScheduler,
     memoryMaintenance,
     workspaceStateCoordinator,

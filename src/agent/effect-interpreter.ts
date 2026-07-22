@@ -4,7 +4,7 @@ import { createLogger } from '../logger.js'
 
 const log = createLogger('EFFECT_INTERPRETER')
 
-const PAUSE_EFFECT_TOOLS = new Set(['pause', 'rest'])
+const PAUSE_EFFECT_TOOLS = new Set(['pause'])
 
 export interface EffectInterpretation {
   didPause: boolean

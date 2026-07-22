@@ -1,6 +1,4 @@
 import { readFileSync } from 'node:fs'
-import { z } from 'zod'
-import type { Tool } from '../tool.js'
 
 interface AiToneModel {
   ngram_range: [number, number]
@@ -19,22 +17,6 @@ export interface AiTonePrediction {
 }
 
 export type AiTonePredictor = (text: string, threshold?: number) => Promise<AiTonePrediction> | AiTonePrediction
-
-const argsSchema = z.object({
-  text: z.string().trim().min(1).max(2000).describe('要判断的中文文本, 上限 2000 字符.'),
-  threshold: z
-    .number()
-    .min(0)
-    .max(1)
-    .optional()
-    .describe('可选阈值, 0-1. 不传则使用模型默认阈值.'),
-})
-
-type Args = z.infer<typeof argsSchema>
-
-export interface AiToneToolDeps {
-  predictor?: AiTonePredictor
-}
 
 let cachedModel: AiToneModel | null = null
 
@@ -91,22 +73,5 @@ export function predictAiTone(text: string, threshold?: number): AiTonePredictio
     label: isAI ? 'AI味' : '人味',
     threshold: effectiveThreshold,
     textLength: Array.from(text).length,
-  }
-}
-
-export function createAiToneTool(deps: AiToneToolDeps = {}): Tool<Args> {
-  const predictor = deps.predictor ?? predictAiTone
-
-  return {
-    name: 'ai_tone',
-    description: [
-      '判断中文文本更像 AI 腔调还是人味, 返回概率、标签和阈值.',
-      '适合发送前自检或改写语气时参考; 短文本、技术长文和刻意模仿都可能误判.',
-      '只做风格辅助, 不要把结果当作事实判断或身份判断.',
-    ].join(' '),
-    schema: argsSchema,
-    async execute(args) {
-      return { content: JSON.stringify({ ok: true, ...(await predictor(args.text, args.threshold)) }) }
-    },
   }
 }

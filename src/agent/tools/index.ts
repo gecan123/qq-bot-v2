@@ -10,7 +10,6 @@ import { createGenerateImageTool } from './generate-image.js'
 import { createBackgroundTaskTool } from './background-task.js'
 import { createMemoryTool } from './memory.js'
 import { skillTool } from './skill.js'
-import { todoTool } from './todo.js'
 import { collectStickerTool } from './collect-sticker.js'
 import { createWorkspaceBashTool } from './workspace-bash.js'
 import { maybeCreateBrowserTool } from './browser.js'
@@ -19,7 +18,6 @@ import { maybeCreateWebsiteTool } from './website.js'
 import { createFetchContentTool, fetchContentScopeAccepts } from './fetch-content.js'
 import { createInboxTool } from './inbox.js'
 import { createChatStyleTool } from './chat-style.js'
-import { createAiToneTool } from './ai-tone.js'
 import { createNotebookTool } from './notebook.js'
 import { createLifeJournalTool } from './life-journal.js'
 import { skillEditorTool } from './skill-editor.js'
@@ -47,6 +45,9 @@ import { createQqConversationTool, type QqConversationController } from './qq-co
 import { applyBotToolPolicy } from './policies.js'
 import type { InboxReadCursors } from '../inbox-read-cursors.js'
 import { createGhTool } from './gh.js'
+import { createDbTool } from './db.js'
+import { maybeCreateMoomooSkillTool } from './moomoo-skill.js'
+import { createMetricsTool } from './metrics.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -80,6 +81,7 @@ export interface BotOptionalTools {
   website?: Tool | null
   webSearch?: Tool | null
   cryptoPaper?: Tool | null
+  moomoo?: Tool | null
 }
 
 export interface BotToolManifest {
@@ -103,6 +105,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     scope: 'media_fetch',
   })
   const cryptoPaper = resolveOptionalTool(deps.optionalTools, 'cryptoPaper', maybeCreateCryptoPaperTool)
+  const moomoo = resolveOptionalTool(deps.optionalTools, 'moomoo', maybeCreateMoomooSkillTool)
   const tradingAgent = resolveOptionalTool(
     deps.optionalTools,
     'tradingAgent',
@@ -126,7 +129,6 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     metadata: deps.metadata,
     groupPolicies: deps.groupPolicies,
   })
-  const aiTone = createAiToneTool()
   const pause = createPauseTool()
   const schedule = createScheduleTool(deps.scheduleRuntime)
   const notebook = createNotebookTool({
@@ -138,12 +140,8 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     workspaceStateCoordinator: deps.workspaceStateCoordinator,
   })
   const collectSticker = collectStickerTool
-  const workspaceBash = createWorkspaceBashTool({
-    groupIdWhitelist: deps.groupIds,
-    groupIds: deps.groupIds,
-    metadata: deps.metadata,
-    groupPolicies: deps.groupPolicies,
-  })
+  const workspaceBash = createWorkspaceBashTool({ workspaceDir: deps.workspaceDir })
+  const db = createDbTool({ groupIdWhitelist: deps.groupIds })
   const gh = createGhTool()
   const tools: Tool[] = [
     pause,
@@ -151,7 +149,6 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     backgroundTask,
     ...(deps.approvalManager ? [createApprovalTool(deps.approvalManager)] : []),
     ...(deps.goalStore ? [createGoalTool(deps.goalStore, deps.goalCompletionJudge!)] : []),
-    todoTool,
     skillTool,
     createMemoryTool({
       workspaceDir: deps.workspaceDir,
@@ -162,9 +159,6 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     }),
     inbox,
     chatStyle,
-    aiTone,
-    ...(cryptoPaper ? [cryptoPaper] : []),
-    workspaceBash,
   ]
   const capabilities: DeferredToolCapability[] = []
 
@@ -216,11 +210,12 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   }
 
   const openbb = resolveOptionalTool(deps.optionalTools, 'openbb', maybeCreateOpenbbCliTool)
-  if (openbb) {
+  const financeTools = [openbb, moomoo, cryptoPaper].filter((tool): tool is Tool => tool != null)
+  if (financeTools.length > 0) {
     capabilities.push({
       name: 'finance',
-      description: 'OpenBB CLI 金融数据查询.',
-      tools: [openbb],
+      description: '金融数据查询与受限模拟交易：OpenBB、Moomoo 和加密货币纸面账户；具体可用工具以 describe 结果为准.',
+      tools: financeTools,
     })
   }
 
@@ -254,8 +249,18 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   capabilities.push(
     {
       name: 'workspace_management',
-      description: '普通私有工作文件: 分页读取、创建、覆盖、精确替换、删除和移动; 包括持续维护 notes/wishes.md 愿望清单.',
-      tools: [workspaceFileTool],
+      description: '普通私有工作文件：结构化读写，以及受限的只读 pwd/ls/rg/cat/head/tail/wc 命令；不提供通用 shell.',
+      tools: [workspaceFileTool, workspaceBash],
+    },
+    {
+      name: 'database_read',
+      description: '只读查询允许范围内的 Bot 数据库事实；使用固定 schema/query action，SQL 经过只读校验、参数化与结果上限约束.',
+      tools: [db],
+    },
+    {
+      name: 'diagnostics',
+      description: '按自然日读取 Bot 自身的 token/cache、工具调用和休息指标。',
+      tools: [createMetricsTool()],
     },
     {
       name: 'document_reading',

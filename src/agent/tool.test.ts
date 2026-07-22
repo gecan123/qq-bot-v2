@@ -330,7 +330,7 @@ describe('createToolExecutor', () => {
     ])
   })
 
-  test('classifies workspace_bash side effects by command', async () => {
+  test('classifies every workspace_bash route as read-only', async () => {
     const writes: string[] = []
     const workspaceBash: Tool<{ cwd?: 'workspace' | 'repo'; command: string }> = {
       name: 'workspace_bash',
@@ -360,10 +360,10 @@ describe('createToolExecutor', () => {
     await exec.execute({ id: 'unknown', name: 'workspace_bash', args: { command: 'curl https://example.com' } }, makeCtx())
 
     assert.equal(JSON.parse(writes[0]!).sideEffect, false)
-    assert.equal(JSON.parse(writes[1]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[1]!).sideEffect, false)
     assert.equal(JSON.parse(writes[2]!).sideEffect, false)
-    assert.equal(JSON.parse(writes[3]!).sideEffect, true)
-    assert.equal(JSON.parse(writes[4]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[3]!).sideEffect, false)
+    assert.equal(JSON.parse(writes[4]!).sideEffect, false)
   })
 
   test('classifies notebook mutations as side effects', async () => {
@@ -659,7 +659,7 @@ describe('createToolExecutor', () => {
     const payload = JSON.parse(result.content as string)
     assert.deepEqual(payload.availableTools, ['workspace_bash'])
     assert.equal(payload.retryable, true)
-    assert.match(payload.hint, /availableTools.*help describe\/activate/)
+    assert.match(payload.hint, /availableTools.*help describe/)
     assert.deepEqual(result.outcome, { ok: false, code: 'unknown_tool', error: 'Unknown tool: nope' })
   })
 
@@ -769,7 +769,7 @@ describe('createToolExecutor', () => {
 })
 
 describe('createDeferredToolExecutor', () => {
-  test('traces an active deferred invocation once as the target tool', async () => {
+  test('traces a deferred invocation once as the target tool', async () => {
     const writes: string[] = []
     const browser: Tool<{ action: 'status' }> = {
       name: 'browser',
@@ -781,11 +781,6 @@ describe('createDeferredToolExecutor', () => {
     }
     const exec = createDeferredToolExecutor({
       alwaysOnTools: [],
-      activeCapabilities: {
-        list: () => ['browser'],
-        activate() {},
-        deactivate() {},
-      },
       capabilities: [{ name: 'browser', description: 'browser', tools: [browser] }],
       trace: {
         clockMs: () => 100,
@@ -808,7 +803,7 @@ describe('createDeferredToolExecutor', () => {
     assert.deepEqual(trace.argsSummary, { action: 'status' })
   })
 
-  test('traces rejected deferred invocations once as failed invoke calls', async () => {
+  test('traces deferred and unknown invocations once', async () => {
     const writes: string[] = []
     const browser: Tool<Record<string, never>> = {
       name: 'browser',
@@ -845,7 +840,7 @@ describe('createDeferredToolExecutor', () => {
         return { id: trace.toolCallId, toolName: trace.toolName, ok: trace.ok }
       }),
       [
-        { id: 'inactive', toolName: 'invoke', ok: false },
+        { id: 'inactive', toolName: 'browser', ok: true },
         { id: 'unknown', toolName: 'invoke', ok: false },
       ],
     )
@@ -884,22 +879,10 @@ describe('createDeferredToolExecutor', () => {
       (await exec.execute({ id: 'b0', name: 'browser', args: { action: 'status' } }, makeCtx())).content as string,
       /Unknown tool/,
     )
-    assert.match(
-      (
-        await exec.execute(
-          { id: 'i0', name: 'invoke', args: { tool: 'browser', args: { action: 'status' } } },
-          makeCtx(),
-        )
-      ).content as string,
-      /capability_inactive/,
-    )
-
-    const activated = await exec.execute(
-      { id: 'a1', name: 'help', args: { action: 'activate', capability: 'browser' } },
+    assert.match((await exec.execute(
+      { id: 'i0', name: 'invoke', args: { tool: 'browser', args: { action: 'status' } } },
       makeCtx(),
-    )
-
-    assert.match(activated.content as string, /invoke/)
+    )).content as string, /"ok":true/)
     assert.deepEqual(exec.list().map((tool) => tool.name), ['echo', 'help', 'invoke'])
     assert.match(
       (
@@ -921,8 +904,7 @@ describe('createDeferredToolExecutor', () => {
     )
   })
 
-  test('routes duplicate deferred tool names by args and returns a structured recovery sequence', async () => {
-    const active = ['media_fetch']
+  test('routes duplicate deferred tool names by args without activation state', async () => {
     const research: Tool<{ action: 'url'; url: string }> = {
       name: 'fetch_content',
       description: 'research fetch',
@@ -941,13 +923,6 @@ describe('createDeferredToolExecutor', () => {
     }
     const exec = createDeferredToolExecutor({
       alwaysOnTools: [],
-      activeCapabilities: {
-        list: () => [...active],
-        activate(capability) {
-          if (!active.includes(capability)) active.push(capability)
-        },
-        deactivate() {},
-      },
       capabilities: [
         {
           name: 'external_research',
@@ -964,34 +939,15 @@ describe('createDeferredToolExecutor', () => {
       ],
     })
 
-    const inactive = JSON.parse((await exec.execute({
+    const researchResult = await exec.execute({
       id: 'url-inactive',
       name: 'invoke',
       args: {
         tool: 'fetch_content',
         args: { action: 'url', url: 'https://news.ycombinator.com' },
       },
-    }, makeCtx())).content as string) as {
-      code: string
-      capabilities: string[]
-      next: Array<{ tool: string; args: Record<string, unknown> }>
-    }
-
-    assert.equal(inactive.code, 'capability_inactive')
-    assert.deepEqual(inactive.capabilities, ['external_research'])
-    assert.deepEqual(inactive.next, [
-      {
-        tool: 'help',
-        args: { action: 'activate', capability: 'external_research' },
-      },
-      {
-        tool: 'invoke',
-        args: {
-          tool: 'fetch_content',
-          args: { action: 'url', url: 'https://news.ycombinator.com' },
-        },
-      },
-    ])
+    }, makeCtx())
+    assert.equal(researchResult.content, 'research-ok')
 
     const describedMedia = JSON.parse((await exec.execute({
       id: 'describe-media',
@@ -1001,10 +957,6 @@ describe('createDeferredToolExecutor', () => {
     assert.equal(describedMedia.tool.capability, 'media_fetch')
     assert.equal(describedMedia.tool.description, 'media fetch')
 
-    await exec.execute(
-      { id: 'activate-research', name: 'help', args: { action: 'activate', capability: 'external_research' } },
-      makeCtx(),
-    )
     const invalid = JSON.parse((await exec.execute({
       id: 'url-invalid',
       name: 'invoke',
@@ -1028,11 +980,6 @@ describe('createDeferredToolExecutor', () => {
     }
     const exec = createDeferredToolExecutor({
       alwaysOnTools: [],
-      activeCapabilities: {
-        list: () => ['workspace_management'],
-        activate() {},
-        deactivate() {},
-      },
       capabilities: [{ name: 'workspace_management', description: 'workspace', tools: [workspaceFile] }],
     })
 
@@ -1049,136 +996,7 @@ describe('createDeferredToolExecutor', () => {
     assert.match(result.hint, /expectedRevision/)
   })
 
-  test('can store active capabilities in an external runtime state', async () => {
-    const active: string[] = ['browser']
-    const browser: Tool<Record<string, never>> = {
-      name: 'browser',
-      description: 'browser',
-      schema: z.object({}),
-      async execute() {
-        return { content: 'browser-ok' }
-      },
-    }
-    const media: Tool<Record<string, never>> = {
-      name: 'generate_image',
-      description: 'image',
-      schema: z.object({}),
-      async execute() {
-        return { content: 'image-ok' }
-      },
-    }
-    const exec = createDeferredToolExecutor({
-      alwaysOnTools: [],
-      activeCapabilities: {
-        list: () => [...active],
-        activate: (capability) => {
-          if (!active.includes(capability)) active.push(capability)
-        },
-        deactivate: (capability) => {
-          const index = active.indexOf(capability)
-          if (index >= 0) active.splice(index, 1)
-        },
-      },
-      capabilities: [
-        { name: 'browser', description: 'browser', tools: [browser] },
-        { name: 'media_generation', description: 'image', tools: [media] },
-      ],
-    })
 
-    assert.deepEqual(exec.list().map((tool) => tool.name), ['help', 'invoke'])
-    assert.match(
-      (
-        await exec.execute(
-          { id: 'b1', name: 'invoke', args: { tool: 'browser', args: {} } },
-          makeCtx(),
-        )
-      ).content as string,
-      /browser-ok/,
-    )
-
-    await exec.execute(
-      { id: 'a1', name: 'help', args: { action: 'activate', capability: 'media_generation' } },
-      makeCtx(),
-    )
-    assert.deepEqual(active, ['browser', 'media_generation'])
-    assert.deepEqual(exec.list().map((tool) => tool.name), ['help', 'invoke'])
-    assert.match(
-      (
-        await exec.execute(
-          { id: 'm1', name: 'invoke', args: { tool: 'generate_image', args: {} } },
-          makeCtx(),
-        )
-      ).content as string,
-      /image-ok/,
-    )
-
-    await exec.execute(
-      { id: 'd1', name: 'help', args: { action: 'deactivate', capability: 'browser' } },
-      makeCtx(),
-    )
-    assert.deepEqual(active, ['media_generation'])
-    assert.deepEqual(exec.list().map((tool) => tool.name), ['help', 'invoke'])
-    assert.match(
-      (
-        await exec.execute(
-          { id: 'b2', name: 'invoke', args: { tool: 'browser', args: {} } },
-          makeCtx(),
-        )
-      ).content as string,
-      /capability_inactive/,
-    )
-  })
-
-  test('restored AgentContext state controls invoke access without changing the top-level tool list', async () => {
-    const browser: Tool<Record<string, never>> = {
-      name: 'browser',
-      description: 'browser',
-      schema: z.object({}),
-      async execute() {
-        return { content: 'browser-ok' }
-      },
-    }
-    const ctx1 = createAgentContext()
-    const exec1 = createDeferredToolExecutor({
-      alwaysOnTools: [],
-      activeCapabilities: {
-        list: () => ctx1.getSnapshot().activeToolCapabilities,
-        activate: (capability) => ctx1.activateToolCapability(capability),
-        deactivate: (capability) => ctx1.deactivateToolCapability(capability),
-      },
-      capabilities: [{ name: 'browser', description: 'browser', tools: [browser] }],
-    })
-
-    await exec1.execute(
-      { id: 'a1', name: 'help', args: { action: 'activate', capability: 'browser' } },
-      makeCtx(),
-    )
-    const persisted = ctx1.exportPersistedSnapshot()
-
-    const ctx2 = createAgentContext()
-    ctx2.installProjection(persisted)
-    const exec2 = createDeferredToolExecutor({
-      alwaysOnTools: [],
-      activeCapabilities: {
-        list: () => ctx2.getSnapshot().activeToolCapabilities,
-        activate: (capability) => ctx2.activateToolCapability(capability),
-        deactivate: (capability) => ctx2.deactivateToolCapability(capability),
-      },
-      capabilities: [{ name: 'browser', description: 'browser', tools: [browser] }],
-    })
-
-    assert.deepEqual(ctx2.getSnapshot().activeToolCapabilities, ['browser'])
-    assert.deepEqual(exec2.list().map((tool) => tool.name), ['help', 'invoke'])
-    assert.match(
-      (
-        await exec2.execute(
-          { id: 'b1', name: 'invoke', args: { tool: 'browser', args: {} } },
-          makeCtx(),
-        )
-      ).content as string,
-      /browser-ok/,
-    )
-  })
 
   test('help describes deferred tool schemas on demand', async () => {
     const browser: Tool<{ action: 'status' }> = {
@@ -1199,13 +1017,12 @@ describe('createDeferredToolExecutor', () => {
         .content as string,
     ) as {
       ok: boolean
-      tool: { name: string; capability: string; active: boolean; inputSchema: { properties?: Record<string, unknown> } }
+      tool: { name: string; capability: string; inputSchema: { properties?: Record<string, unknown> } }
     }
 
     assert.equal(described.ok, true)
     assert.equal(described.tool.name, 'browser')
     assert.equal(described.tool.capability, 'browser')
-    assert.equal(described.tool.active, false)
     assert.ok(described.tool.inputSchema.properties?.action)
   })
 })

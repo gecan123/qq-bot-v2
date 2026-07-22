@@ -192,7 +192,6 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
           ok: true,
           code: changed ? 'observed' : 'unchanged',
           progress: changed,
-          evidenceMessageRowIds: evidenceRowIdsFromReadPayload(content),
         },
       }
     },
@@ -203,17 +202,6 @@ function currentMessageRowIdsFromReadPayload(content: string): number[] {
   try {
     const parsed = JSON.parse(content) as { messages?: unknown[] }
     return (parsed.messages ?? [])
-      .map((value) => value && typeof value === 'object' ? (value as { rowId?: unknown }).rowId : undefined)
-      .filter((value): value is number => Number.isInteger(value) && Number(value) > 0)
-  } catch {
-    return []
-  }
-}
-
-function evidenceRowIdsFromReadPayload(content: string): number[] {
-  try {
-    const parsed = JSON.parse(content) as { messages?: unknown[]; previousMessages?: unknown[] }
-    return [...(parsed.previousMessages ?? []), ...(parsed.messages ?? [])]
       .map((value) => value && typeof value === 'object' ? (value as { rowId?: unknown }).rowId : undefined)
       .filter((value): value is number => Number.isInteger(value) && Number(value) > 0)
   } catch {
@@ -394,7 +382,7 @@ function extractMentionTargets(content: unknown): string[] {
 function errorResult(error: string) {
   return {
     content: JSON.stringify({ ok: false, error }),
-    outcome: { ok: false as const, code: 'invalid_source', error, progress: false, retryClass: 'immediate' as const },
+    outcome: { ok: false as const, code: 'invalid_source', error, progress: false, continuation: 'immediate' as const },
   }
 }
 

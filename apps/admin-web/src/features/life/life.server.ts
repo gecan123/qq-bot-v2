@@ -10,7 +10,7 @@ export async function loadLifeSnapshot(now = new Date()): Promise<LifeSnapshot> 
   const workspace = getWorkspaceRoot()
   const [goal, runtime, inboxReadCount, agendaRaw, schedulesRaw, tasksRaw] = await Promise.all([
     db.botAgentGoal.findUnique({ where: { id: 1 } }),
-    db.botAgentRuntimeState.findUnique({ where: { id: 1 }, select: { lastWakeAt: true, updatedAt: true, qqConversationFocus: true, mailboxCursors: true, activeToolCapabilities: true } }),
+    db.botAgentRuntimeState.findUnique({ where: { id: 1 }, select: { lastWakeAt: true, updatedAt: true, qqConversationFocus: true, mailboxCursors: true } }),
     readInboxReadCursorCount(db),
     readOptional(join(workspace, 'life', 'agenda.md')),
     readJson(join(workspace, 'runtime', 'schedules.json')),
@@ -26,7 +26,7 @@ export async function loadLifeSnapshot(now = new Date()): Promise<LifeSnapshot> 
     summary: nullableText(row.resultSummary ?? row.error)?.slice(0, 360) ?? null,
   }))
   const notes = [
-    'todo 工具列表是进程内临时状态，重启后会清空，因此这里不把它伪装成持久任务。',
+    '短期连续行动不单独持久化；跨重启工作只由 Goal 表示。',
     '后台任务文件按原始 JSON 只读解析；不会实例化 registry，以免触发恢复状态写入。',
     'Agenda 直接读取文件；缺失时不会调用 ensure/create。',
   ]
@@ -43,7 +43,7 @@ export async function loadLifeSnapshot(now = new Date()): Promise<LifeSnapshot> 
     runtime: {
       lastWakeAt: runtime?.lastWakeAt?.toISOString() ?? null, updatedAt: runtime?.updatedAt.toISOString() ?? null,
       focus: runtime?.qqConversationFocus ?? null, mailboxCount: objectSize(runtime?.mailboxCursors),
-      inboxReadCount, capabilities: stringArray(runtime?.activeToolCapabilities),
+      inboxReadCount,
     }, notes,
   })
 }
@@ -55,6 +55,5 @@ function text(value: unknown, fallback: string): string { return typeof value ==
 function nullableText(value: unknown): string | null { return typeof value === 'string' ? value : null }
 function number(value: unknown): number { return typeof value === 'number' && Number.isFinite(value) ? value : 0 }
 function objectSize(value: unknown): number { return value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value).length : 0 }
-function stringArray(value: unknown): string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [] }
 function countSections(markdown: string): Record<string, number> { const out: Record<string, number> = {}; let current = 'Preamble'; for (const line of markdown.split('\n')) { const heading = /^##\s+(.+)$/.exec(line); if (heading) { current = heading[1].trim(); out[current] = 0 } else if (/^\s*[-*]\s+\S/.test(line)) out[current] = (out[current] ?? 0) + 1 } return out }
 async function readInboxReadCursorCount(db: ReturnType<typeof getAdminPrisma>): Promise<number> { try { const rows = await db.$queryRawUnsafe<Array<{ value: unknown }>>('SELECT inbox_read_cursors AS value FROM bot_agent_runtime_state WHERE id = 1'); return objectSize(rows[0]?.value) } catch { return 0 } }

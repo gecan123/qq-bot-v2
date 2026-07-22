@@ -231,9 +231,8 @@ describe('memory tool schema', () => {
         content: '这条只作为自己的长期认识。',
       }, makeCtx())
 
-      assert.match(topic.outcome?.shareCandidate?.key ?? '', /^memory:topics\/topics\.md:memory-1:/)
-      assert.match(topic.outcome?.shareCandidate?.summary ?? '', /SOL 研究.*稳定结论/)
-      assert.equal(own.outcome?.shareCandidate, undefined)
+      assert.equal(topic.outcome?.progress, true)
+      assert.equal(own.outcome?.progress, true)
     })
   })
 
@@ -380,7 +379,7 @@ describe('memory tool execute', () => {
         code: 'invalid_evidence',
         error: 'sourceMessageIds contain unknown message rows: 404',
         progress: false,
-        retryClass: 'immediate',
+        continuation: 'immediate',
       })
     })
   })

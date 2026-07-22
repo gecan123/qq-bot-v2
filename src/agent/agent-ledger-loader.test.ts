@@ -41,7 +41,6 @@ function runtimeState(head: bigint | null): AgentRuntimeState {
     inboxReadCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
-    activeToolCapabilities: [],
     qqConversationFocus: null,
     lastWakeAt: null,
     ledgerHeadEntryId: head,
@@ -152,7 +151,6 @@ describe('createAgentLedgerLoader', () => {
         snapshot: {
           schemaVersion: SNAPSHOT_SCHEMA_VERSION,
           messages: [{ role: 'future', content: 'bad' }],
-          activeToolCapabilities: [],
         },
         activeEntryCount: 1,
         permanentEntryCount: 1,
@@ -195,7 +193,6 @@ describe('createAgentLedgerLoader', () => {
         snapshot: {
           schemaVersion: SNAPSHOT_SCHEMA_VERSION,
           messages: [],
-          activeToolCapabilities: [],
         },
         activeEntryCount: 0,
         permanentEntryCount: 1,

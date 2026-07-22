@@ -3,17 +3,16 @@ import { readFile } from 'node:fs/promises'
 import { describe, test } from 'node:test'
 
 describe('main runtime wiring', () => {
-  test('wires Life Journal runtime into Agent runtime assembly', async () => {
+  test('wires only explicit memory maintenance into Agent runtime assembly', async () => {
     const source = await readFile(new URL('./index.ts', import.meta.url), 'utf8')
 
-    assert.match(source, /import \{ createLifeJournalRuntime \} from '\.\/agent\/life-journal\.js'/)
+    assert.doesNotMatch(source, /createLifeJournalRuntime/)
     assert.match(source, /import \{ createAgentRuntime \} from '\.\/agent\/runtime\.js'/)
-    assert.match(source, /const lifeJournalLlm = createLlmClient\(\{\s*claudeThinking: \{ mode: 'disabled' \},\s*\}\)/)
+    assert.match(source, /const maintenanceLlm = createLlmClient\(\{\s*claudeThinking: \{ mode: 'disabled' \},\s*\}\)/)
     assert.match(source, /const taskScheduler = createAgentTaskScheduler\(\)/)
     assert.match(source, /const workspaceStateCoordinator = createWorkspaceStateCoordinator\(\)/)
-    assert.match(source, /const lifeJournal = createLifeJournalRuntime\(\{\s*llm: lifeJournalLlm,\s*taskScheduler,\s*workspaceStateCoordinator,\s*memoryMaintenance,\s*loadSourceEvidence: findMemoryEvidenceRows,\s*ownerId: config\.owner == null \? undefined : String\(config\.owner\.qq\),\s*\}\)/)
-    assert.match(source, /const memoryMaintenance = createMemoryMaintenanceRuntime\(\{\s*llm: lifeJournalLlm,\s*taskScheduler,\s*workspaceStateCoordinator,\s*\}\)/)
-    assert.match(source, /createAgentRuntime\(\{[\s\S]*\blifeJournal,\s*taskScheduler,\s*memoryMaintenance,\s*workspaceStateCoordinator,\s*[\s\S]*\}\)/)
+    assert.match(source, /const memoryMaintenance = createMemoryMaintenanceRuntime\(\{\s*llm: maintenanceLlm,\s*taskScheduler,\s*workspaceStateCoordinator,\s*\}\)/)
+    assert.match(source, /createAgentRuntime\(\{[\s\S]*\btaskScheduler,\s*memoryMaintenance,\s*workspaceStateCoordinator,\s*[\s\S]*\}\)/)
     assert.match(source, /scheduleStatePath:\s*config\.scheduleStatePath/)
   })
 

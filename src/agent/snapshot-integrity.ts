@@ -16,7 +16,6 @@ export interface BotSnapshotIntegrityResult {
     messages: number
     assistantToolCalls: number
     toolResults: number
-    activeToolCapabilities: number
     mailboxCursors: number
     goalRevision: number
   }
@@ -27,9 +26,6 @@ export function validateBotSnapshotIntegrity(input: BotSnapshotIntegrityInput): 
   const warnings: string[] = []
   const snapshot = input.snapshot as unknown as Record<string, unknown>
   const messages = Array.isArray(snapshot.messages) ? snapshot.messages : []
-  const activeToolCapabilities = Array.isArray(snapshot.activeToolCapabilities)
-    ? snapshot.activeToolCapabilities
-    : []
   const mailboxCursors = normalizeCursorEntries(input.mailboxCursors, errors)
 
   validateStableJson(input.snapshot, errors)
@@ -39,11 +35,7 @@ export function validateBotSnapshotIntegrity(input: BotSnapshotIntegrityInput): 
   if (!Array.isArray(snapshot.messages)) {
     errors.push('snapshot.messages must be an array')
   }
-  if (!Array.isArray(snapshot.activeToolCapabilities)) {
-    errors.push('snapshot.activeToolCapabilities must be an array')
-  }
   validateQqConversationFocus(snapshot.qqConversationFocus, errors)
-  validateActiveCapabilities(activeToolCapabilities, errors)
   validateMessages(messages, errors, warnings)
   validateMailboxCursors(mailboxCursors, errors)
   validateMailboxContinuity(input.mailboxContinuity, errors)
@@ -62,7 +54,6 @@ export function validateBotSnapshotIntegrity(input: BotSnapshotIntegrityInput): 
         return count + message.toolCalls.length
       }, 0),
       toolResults: messages.filter((message) => isRecord(message) && message.role === 'tool').length,
-      activeToolCapabilities: activeToolCapabilities.length,
       mailboxCursors: mailboxCursors.length,
       goalRevision,
     },
@@ -126,20 +117,6 @@ function validateStableJson(snapshot: PersistedAgentSnapshot, errors: string[]):
   }
 }
 
-function validateActiveCapabilities(values: unknown[], errors: string[]): void {
-  const seen = new Set<string>()
-  for (const [index, value] of values.entries()) {
-    if (typeof value !== 'string' || value.trim() === '') {
-      errors.push(`activeToolCapabilities[${index}] must be a non-empty string`)
-      continue
-    }
-    if (seen.has(value)) {
-      errors.push(`activeToolCapabilities[${index}] duplicates ${value}`)
-    }
-    seen.add(value)
-  }
-}
-
 function validateMessages(messages: unknown[], errors: string[], warnings: string[]): void {
   const expectedToolCallIds = new Set<string>()
   const consumedToolResultIds = new Set<string>()
@@ -149,10 +126,6 @@ function validateMessages(messages: unknown[], errors: string[], warnings: strin
       errors.push(`messages[${index}] must be an object`)
       continue
     }
-    if (Object.prototype.hasOwnProperty.call(message, 'activeToolCapabilities')) {
-      errors.push(`messages[${index}] must not contain activeToolCapabilities`)
-    }
-
     if (message.role === 'user') {
       if (typeof message.content !== 'string') {
         errors.push(`messages[${index}].content must be a string`)

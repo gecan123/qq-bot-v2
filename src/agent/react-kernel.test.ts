@@ -136,7 +136,6 @@ describe('runReactRound', () => {
             continuation: 'immediate',
             continuationDetail: '读取完成后立即决定下一步',
             noveltyKey: 'lookup:hello:v1',
-            evidenceMessageRowIds: [41, 42],
           },
         }
       },
@@ -164,7 +163,6 @@ describe('runReactRound', () => {
       continuation: 'immediate',
       continuationDetail: '读取完成后立即决定下一步',
       noveltyKey: 'lookup:hello:v1',
-      evidenceMessageRowIds: [41, 42],
     }])
     assert.deepEqual(context.getSnapshot().messages, [
       { role: 'user', content: 'hello' },

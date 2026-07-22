@@ -38,7 +38,7 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
       if (!task) {
         return {
           content: JSON.stringify({ ok: false, error: `任务 #${args.taskId} 不存在` }),
-          outcome: { ok: false, code: 'not_found', progress: false, retryClass: 'terminal' },
+          outcome: { ok: false, code: 'not_found', progress: false, continuation: 'stop' },
         }
       }
 
@@ -71,7 +71,7 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
             error: task.error,
             ...(task.recovery ? { recovery: task.recovery } : {}),
           }),
-          outcome: { ok: false, code: task.status, progress: false, retryClass: 'terminal' },
+          outcome: { ok: false, code: task.status, progress: false, continuation: 'stop' },
         }
       }
 
@@ -137,13 +137,6 @@ export function createGetTaskResultTool(deps: GetTaskResultDeps): Tool<Args> {
           ok: true,
           code: changed ? 'completed' : 'unchanged',
           progress: changed,
-          ...(changed ? {
-            shareCandidate: {
-              key: `background-task:${task.id}:${task.updatedAt.toISOString()}`,
-              cooldownKey: `background-task:${task.toolName}`,
-              summary: `后台任务“${task.description}”已完成${task.resultSummary ? `：${task.resultSummary}` : '。'}`,
-            },
-          } : {}),
         },
       }
     },

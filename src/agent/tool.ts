@@ -65,35 +65,18 @@ export interface ToolExecutionResult {
 
 export type ToolContinuation = 'immediate' | 'wait_attention' | 'wait_event' | 'backoff' | 'stop'
 
-/**
- * 工具明确标记的可分享成果。它只触发一次 runtime 决策点，不代表应该发送，
- * 也不能绕过 QQ focus、目标授权或群 participation。
- */
-export interface ToolShareCandidate {
-  key: string
-  /** 同一主题/成果族的稳定键，用于短时抑制连续 checkpoint。 */
-  cooldownKey: string
-  summary: string
-}
-
 export interface ToolExecutionOutcome {
   ok: boolean
   code?: string
   error?: string
   /** false 表示调用成功但没有获得新信息、改变状态或完成外部动作。 */
   progress?: boolean
-  /** runtime 应如何安排下一次尝试；不进入 durable ledger。 */
-  retryClass?: 'immediate' | 'after_event' | 'backoff' | 'terminal'
-  /** 与 progress 解耦的续轮建议；元信息读取可以不算进展但仍请求一次立即决策。 */
+  /** 与 progress 解耦的唯一续轮建议；不进入 durable ledger。 */
   continuation?: ToolContinuation
   /** continuation 触发等待时写入可丢弃活动观察面的有界人类可读原因；不进入 ledger。 */
   continuationDetail?: string
   /** 本次披露的新颖性标识；同一进程内重复 key 会被 runtime 降级为无进展等待。 */
   noveltyKey?: string
-  /** 本轮产生了值得显式判断一次“是否分享”的新成果；不进入 ledger，checkpoint 会受控追加。 */
-  shareCandidate?: ToolShareCandidate
-  /** 本轮工具实际披露的 messages.id，供旁路 reviewer 构造受控证据 allowlist；不进入 ledger。 */
-  evidenceMessageRowIds?: number[]
 }
 
 export type MessageSentTarget =
@@ -170,16 +153,9 @@ export interface DeferredToolCapability {
   acceptsToolCall?: (toolName: string, args: Record<string, unknown>) => boolean
 }
 
-export interface ActiveToolCapabilityState {
-  list(): string[]
-  activate(capability: string): void
-  deactivate(capability: string): void
-}
-
 export interface DeferredToolExecutorOptions extends ToolExecutorOptions {
   alwaysOnTools: Tool[]
   capabilities: DeferredToolCapability[]
-  activeCapabilities?: ActiveToolCapabilityState
 }
 
 export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions = {}): ToolExecutor {
@@ -280,7 +256,7 @@ function buildUnknownToolHint(toolName: string, availableTools: string[]): strin
     return '不存在 workspace_command；只读工作区或仓库时改用 workspace_bash，并提供 cwd 和 command。'
   }
   if (availableTools.length > 0) {
-    return '从 availableTools 选择精确工具名；需要 deferred 能力时先用 help describe/activate，再通过 invoke 调用。'
+    return '从 availableTools 选择精确工具名；需要 deferred 能力时先用 help describe 查看 schema，再通过 invoke 直接调用。'
   }
   return '当前执行器没有可用工具；不要继续猜测相似工具名。'
 }
@@ -298,16 +274,6 @@ function buildInvalidToolArgumentsHint(toolName: string): string {
 export function createDeferredToolExecutor(options: DeferredToolExecutorOptions): ToolExecutor {
   const capabilityByName = new Map<string, DeferredToolCapability>()
   const deferredToolEntriesByName = new Map<string, DeferredToolEntry[]>()
-  const localActiveCapabilities = new Set<string>()
-  const activeCapabilities = options.activeCapabilities ?? {
-    list: () => [...localActiveCapabilities],
-    activate: (capability: string) => {
-      localActiveCapabilities.add(capability)
-    },
-    deactivate: (capability: string) => {
-      localActiveCapabilities.delete(capability)
-    },
-  }
 
   for (const capability of options.capabilities) {
     if (capabilityByName.has(capability.name)) {
@@ -323,7 +289,6 @@ export function createDeferredToolExecutor(options: DeferredToolExecutorOptions)
 
   const help = createHelpTool({
     capabilities: options.capabilities,
-    activeCapabilities,
     deferredToolEntriesByName,
   })
   const invoke = createInvokeTool()
@@ -361,7 +326,6 @@ export function createDeferredToolExecutor(options: DeferredToolExecutorOptions)
           ctx,
           invoke,
           deferredToolEntriesByName,
-          activeCapabilities,
           executorOptions: options,
         })
       }
@@ -376,7 +340,7 @@ interface DeferredToolEntry {
 }
 
 type HelpToolArgs = {
-  action: 'list' | 'activate' | 'deactivate' | 'describe'
+  action: 'list' | 'describe'
   capability?: string
   tool?: string
 }
@@ -388,23 +352,15 @@ type InvokeToolArgs = {
 
 function createHelpTool(options: {
   capabilities: DeferredToolCapability[]
-  activeCapabilities: ActiveToolCapabilityState
   deferredToolEntriesByName: Map<string, DeferredToolEntry[]>
 }): Tool<HelpToolArgs> {
   const capabilityByName = new Map(options.capabilities.map((capability) => [capability.name, capability]))
   const capabilityNames = options.capabilities.map((capability) => capability.name).join(', ')
   const schema = z.object({
-    action: z.enum(['list', 'activate', 'deactivate', 'describe']).describe('list=查看能力; activate=允许 invoke 调用该 capability; deactivate=收起能力; describe=按需查看 capability 或 tool 说明.'),
-    capability: z.string().trim().min(1).optional().describe('action=activate/deactivate 时必填; action=describe 时与 tool 至少提供一个.'),
+    action: z.enum(['list', 'describe']).describe('list=查看能力; describe=按需查看 capability 或 tool 说明.'),
+    capability: z.string().trim().min(1).optional().describe('action=describe 时与 tool 至少提供一个.'),
     tool: z.string().trim().min(1).optional().describe('action=describe 时与 capability 至少提供一个.'),
   }).superRefine((args, ctx) => {
-    if ((args.action === 'activate' || args.action === 'deactivate') && !args.capability) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['capability'],
-        message: 'capability is required for activate/deactivate',
-      })
-    }
     if (args.action === 'describe' && !args.capability && !args.tool) {
       ctx.addIssue({
         code: 'custom',
@@ -417,15 +373,12 @@ function createHelpTool(options: {
   return {
     name: 'help',
     description: [
-      '稳定工具帮助入口. 用 list 查看可激活 capability; 用 describe 按需查看内部工具 schema; 用 activate 后再通过 invoke 调用内部工具.',
+      '稳定工具帮助入口. 用 list 查看 capability; 用 describe 按需查看内部工具 schema; 然后通过 invoke 调用内部工具.',
       `可用 capability: ${capabilityNames || 'none'}.`,
-      '顶层 tools 不会因 activate/deactivate 改变.',
+      '顶层 tools 保持稳定，deferred 工具继续由各自 schema、policy 和 approval 保护.',
     ].join(' '),
     schema,
-    policy: (args) => ({
-      sideEffect: args.action === 'activate' || args.action === 'deactivate',
-      concurrency: 'exclusive',
-    }),
+    policy: () => ({ sideEffect: false, concurrency: 'parallel' }),
     async execute(args) {
       if (args.action === 'list') {
         return {
@@ -434,10 +387,9 @@ function createHelpTool(options: {
             capabilities: options.capabilities.map((capability) => ({
               name: capability.name,
               description: capability.description,
-              active: options.activeCapabilities.list().includes(capability.name),
               tools: capability.tools.map((tool) => tool.name),
             })),
-            next: '需要某个工具的参数时调用 help action=describe tool=<tool>; 需要使用时先 activate capability, 再 invoke tool=<tool> args=<object>.',
+            next: '需要某个工具的参数时调用 help action=describe tool=<tool>; 然后 invoke tool=<tool> args=<object>.',
           }),
         }
       }
@@ -456,14 +408,11 @@ function createHelpTool(options: {
               outcome: { ok: false, code: 'unknown_tool', error: `unknown deferred tool: ${args.tool}` },
             }
           }
-          const activeNames = new Set(options.activeCapabilities.list())
           const requestedEntry = args.capability
             ? entries.find((item) => item.capability.name === args.capability)
             : undefined
           const entry = requestedEntry
-            ?? entries.find((item) => activeNames.has(item.capability.name))
             ?? entries[0]!
-          const active = activeNames.has(entry.capability.name)
           return {
             content: JSON.stringify({
               ok: true,
@@ -472,15 +421,9 @@ function createHelpTool(options: {
                 description: entry.tool.description,
                 capability: entry.capability.name,
                 capabilities: entries.map((item) => item.capability.name),
-                active,
                 inputSchema: zodToToolJsonSchema(entry.tool.schema),
               },
-              next: active
-                ? { tool: 'invoke', args: { tool: entry.tool.name, args: {} } }
-                : {
-                    tool: 'help',
-                    args: { action: 'activate', capability: entry.capability.name },
-                  },
+              next: { tool: 'invoke', args: { tool: entry.tool.name, args: {} } },
             }),
           }
         }
@@ -503,7 +446,6 @@ function createHelpTool(options: {
             capability: {
               name: capability.name,
               description: capability.description,
-              active: options.activeCapabilities.list().includes(capability.name),
               tools: capability.tools.map((tool) => ({
                 name: tool.name,
                 description: tool.description,
@@ -514,40 +456,7 @@ function createHelpTool(options: {
         }
       }
 
-      const capability = args.capability ? capabilityByName.get(args.capability) : null
-      if (!capability) {
-        return {
-          content: JSON.stringify({
-            ok: false,
-            code: 'unknown_capability',
-            error: `unknown capability: ${args.capability ?? ''}`,
-            capabilities: options.capabilities.map((item) => item.name),
-          }),
-          outcome: { ok: false, code: 'unknown_capability', error: `unknown capability: ${args.capability ?? ''}` },
-        }
-      }
-
-      if (args.action === 'activate') {
-        options.activeCapabilities.activate(capability.name)
-        return {
-          content: JSON.stringify({
-            ok: true,
-            action: 'activate',
-            capability: capability.name,
-            message: `${capability.name} 已激活; 现在可通过 invoke 调用内部工具: ${capability.tools.map((tool) => tool.name).join(', ')}`,
-          }),
-        }
-      }
-
-      options.activeCapabilities.deactivate(capability.name)
-      return {
-        content: JSON.stringify({
-          ok: true,
-          action: 'deactivate',
-          capability: capability.name,
-          message: `${capability.name} 已收起`,
-        }),
-      }
+      throw new Error(`unsupported help action: ${String(args.action)}`)
     },
   }
 }
@@ -555,7 +464,7 @@ function createHelpTool(options: {
 function createInvokeTool(): Tool<InvokeToolArgs> {
   return {
     name: 'invoke',
-    description: '稳定内部工具调用入口. 先用 help list/describe/activate 发现能力; 只能调用已激活 capability 中的内部工具.',
+    description: '稳定内部工具调用入口. 先用 help list/describe 发现能力和参数；调用仍受目标工具的 schema、policy 和 approval 保护.',
     schema: z.object({
       tool: z.string().trim().min(1).describe('要调用的内部工具名, 例如 browser、web_search、fetch_content、generate_image、openbb_cli.'),
       args: z.record(z.string(), z.unknown()).optional().describe('内部工具参数对象. 具体字段先用 help action=describe tool=<tool> 查看.'),
@@ -572,7 +481,6 @@ async function executeInvokeToolCall(options: {
   ctx: ToolContext
   invoke: Tool<InvokeToolArgs>
   deferredToolEntriesByName: Map<string, DeferredToolEntry[]>
-  activeCapabilities: ActiveToolCapabilityState
   executorOptions: DeferredToolExecutorOptions
 }): Promise<ToolExecutionResult> {
   const startedAt = options.executorOptions.trace
@@ -639,44 +547,7 @@ async function executeInvokeToolCall(options: {
     item.capability.acceptsToolCall?.(targetToolName, targetArgs) ?? true
   ))
   const eligibleEntries = matchingEntries.length > 0 ? matchingEntries : entries
-  const activeCapabilityNames = new Set(options.activeCapabilities.list())
-  const entry = eligibleEntries.find((item) => activeCapabilityNames.has(item.capability.name))
-  if (!entry) {
-    const capabilities = eligibleEntries.map((item) => item.capability.name)
-    const recommendedCapability = capabilities[0] ?? ''
-    const action = typeof targetArgs.action === 'string' ? targetArgs.action : null
-    const error = `tool ${targetToolName} is not active; activate one of: ${capabilities.join(', ')}`
-    const result = {
-      content: JSON.stringify({
-        ok: false,
-        code: 'capability_inactive',
-        error,
-        tool: targetToolName,
-        ...(action ? { action } : {}),
-        capabilities,
-        next: [
-          {
-            tool: 'help',
-            args: { action: 'activate', capability: recommendedCapability },
-          },
-          {
-            tool: 'invoke',
-            args: { tool: targetToolName, args: targetArgs },
-          },
-        ],
-      }),
-      outcome: { ok: false, code: 'capability_inactive', error },
-    }
-    await traceToolCall(
-      options.executorOptions.trace,
-      normalizedCall,
-      options.ctx.roundIndex,
-      startedAt,
-      result,
-      { tool: options.invoke },
-    )
-    return result
-  }
+  const entry = eligibleEntries[0]!
 
   return createToolExecutor([entry.tool], options.executorOptions).execute(
     { id: options.call.id, name: entry.tool.name, args: targetArgs },

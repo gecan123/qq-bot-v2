@@ -12,7 +12,7 @@ replay 必须确定性。同一 canonical ledger/runtime 下，projection messag
 - `bot_agent_ledger_entries` 是唯一持久 LLM history source；`AgentContext` 是其内存 projection。
 - `messages` 是入站事实账本，不是 LLM ledger。
 - `mailboxCursors` 必须和对应可见 append 在 ledger/runtime 事务中原子提交。
-- `activeToolCapabilities` 随 runtime singleton 持久化/恢复，但不作为 LLM 可见事实注入 messages。
+- QQ focus、mailbox cursors 和 Goal revision 随 runtime singleton 持久化/恢复，但不作为 LLM 可见事实注入 messages；deferred capability 没有激活状态。
 - `logs/*.ndjson` 不能作为 replay 输入。
 
 禁止做:

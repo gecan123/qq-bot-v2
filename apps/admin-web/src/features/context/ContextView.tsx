@@ -20,7 +20,7 @@ export function ContextView({ snapshot, isRefreshing, refreshFailed }: { snapsho
       </Panel>
       <div className="space-y-4">
         <Panel title="Entry 构成">{snapshot.ledger.typeCounts.map(item => <div key={item.type} className="mb-2 flex items-center justify-between gap-3 rounded-lg bg-stone-100 px-3 py-2 text-sm"><span>{item.type}</span><strong>{formatCount(item.count)}</strong></div>)}</Panel>
-        <Panel title="Runtime projection 指针"><dl className="space-y-2 text-sm"><Metric label="Runtime head" value={snapshot.runtime.ledgerHeadId ?? '—'} /><Metric label="Goal revision" value={String(snapshot.runtime.goalRevision ?? '—')} /><Metric label="Capabilities" value={String(snapshot.runtime.activeCapabilities.length)} /><Metric label="Runtime updated" value={formatTimestamp(snapshot.runtime.updatedAt)} /></dl></Panel>
+        <Panel title="Runtime projection 指针"><dl className="space-y-2 text-sm"><Metric label="Runtime head" value={snapshot.runtime.ledgerHeadId ?? '—'} /><Metric label="Goal revision" value={String(snapshot.runtime.goalRevision ?? '—')} /><Metric label="Runtime updated" value={formatTimestamp(snapshot.runtime.updatedAt)} /></dl></Panel>
       </div>
     </div>
     <WarningList warnings={snapshot.warnings} />

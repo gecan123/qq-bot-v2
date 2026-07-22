@@ -32,7 +32,6 @@ interface RuntimeStorageRow {
   inboxReadCursors: unknown
   mailboxContinuity: unknown
   goalRevision: number
-  activeToolCapabilities: unknown
   qqConversationFocus: unknown
   lastWakeAt: Date | null
   ledgerHeadEntryId: bigint | null
@@ -79,7 +78,6 @@ export interface AgentRuntimePatch {
   inboxReadCursors?: InboxReadCursors
   mailboxContinuity?: MailboxContinuityState
   goalRevision?: number
-  activeToolCapabilities?: string[]
   qqConversationFocus?: QqConversationFocus
   lastWakeAt?: Date | null
 }
@@ -282,7 +280,6 @@ async function loadRuntimeState(client: AgentLedgerPersistenceClient): Promise<A
     inboxReadCursors: row.inboxReadCursors,
     mailboxContinuity: row.mailboxContinuity,
     goalRevision: row.goalRevision,
-    activeToolCapabilities: row.activeToolCapabilities,
     qqConversationFocus: row.qqConversationFocus,
     lastWakeAt: row.lastWakeAt,
     ledgerHeadEntryId: row.ledgerHeadEntryId,
@@ -307,9 +304,6 @@ async function persistRuntimeState(
   if (patch?.inboxReadCursors !== undefined) data.inboxReadCursors = next.inboxReadCursors as never
   if (patch?.mailboxContinuity !== undefined) data.mailboxContinuity = next.mailboxContinuity as never
   if (patch?.goalRevision !== undefined) data.goalRevision = next.goalRevision
-  if (patch?.activeToolCapabilities !== undefined) {
-    data.activeToolCapabilities = next.activeToolCapabilities as never
-  }
   if (patch && Object.hasOwn(patch, 'qqConversationFocus')) {
     data.qqConversationFocus = next.qqConversationFocus as never
   }
@@ -324,7 +318,6 @@ async function persistRuntimeState(
     inboxReadCursors: row.inboxReadCursors,
     mailboxContinuity: row.mailboxContinuity,
     goalRevision: row.goalRevision,
-    activeToolCapabilities: row.activeToolCapabilities,
     qqConversationFocus: row.qqConversationFocus,
     lastWakeAt: row.lastWakeAt,
     ledgerHeadEntryId: row.ledgerHeadEntryId,
@@ -360,9 +353,6 @@ function definedRuntimePatch(patch: AgentRuntimePatch | undefined): AgentRuntime
   if (patch.inboxReadCursors !== undefined) defined.inboxReadCursors = patch.inboxReadCursors
   if (patch.mailboxContinuity !== undefined) defined.mailboxContinuity = patch.mailboxContinuity
   if (patch.goalRevision !== undefined) defined.goalRevision = patch.goalRevision
-  if (patch.activeToolCapabilities !== undefined) {
-    defined.activeToolCapabilities = patch.activeToolCapabilities
-  }
   if (Object.hasOwn(patch, 'qqConversationFocus')) {
     defined.qqConversationFocus = patch.qqConversationFocus
   }

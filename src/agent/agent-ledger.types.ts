@@ -9,7 +9,7 @@ import type { MailboxCursors } from './mailbox.js'
 import type { InboxReadCursors } from './inbox-read-cursors.js'
 
 export const AGENT_LEDGER_SCHEMA_VERSION = 1 as const
-export const AGENT_RUNTIME_STATE_SCHEMA_VERSION = 3 as const
+export const AGENT_RUNTIME_STATE_SCHEMA_VERSION = 4 as const
 
 export type CompactionReason = 'threshold' | 'overflow' | 'manual'
 
@@ -59,7 +59,6 @@ export interface AgentRuntimeState {
   inboxReadCursors: InboxReadCursors
   mailboxContinuity: MailboxContinuityState
   goalRevision: number
-  activeToolCapabilities: string[]
   qqConversationFocus: QqConversationFocus
   lastWakeAt: Date | null
   ledgerHeadEntryId: bigint | null

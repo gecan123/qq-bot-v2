@@ -128,7 +128,6 @@ export function createGoalTool(
               ok: false,
               code: 'verification_unavailable',
               progress: false,
-              retryClass: 'backoff',
               continuation: 'backoff',
               noveltyKey: goalNoveltyKey(goal),
             },

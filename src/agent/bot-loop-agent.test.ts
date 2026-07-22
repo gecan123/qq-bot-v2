@@ -816,7 +816,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.deepEqual(ctx.getSnapshot().messages.slice(1), ledger.appendCalls[0]?.messages)
   })
 
-  test('commits mailbox disclosure and cursor advancement atomically', async () => {
+  test('commits mailbox notification disclosure without marking message bodies as read', async () => {
     const ctx = createAgentContext()
     const queue = new InMemoryEventQueue<BotEvent>()
     queue.enqueue({
@@ -855,9 +855,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.deepEqual(ledger.appendCalls[0]?.runtimePatch?.mailboxCursors, {
       'qq_private:9001': 31,
     })
-    assert.deepEqual(ledger.appendCalls[0]?.runtimePatch?.inboxReadCursors, {
-      'qq_private:9001': 31,
-    })
+    assert.equal(ledger.appendCalls[0]?.runtimePatch?.inboxReadCursors, undefined)
     assert.deepEqual(ctx.getSnapshot().messages, [])
     assert.equal(queue.size(), 1, 'failed disclosure must remain retryable')
   })

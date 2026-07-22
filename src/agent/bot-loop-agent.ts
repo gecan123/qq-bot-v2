@@ -873,23 +873,12 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     log.debug({ roundIndex: roundIndex + 1, eventsConsumed: drained.consumed, eventsDisclosed: disclosed }, 'round_start')
 
     const cursorsChanged = JSON.stringify(drained.cursors) !== JSON.stringify(mailboxCursors)
-    let disclosedInboxReadCursors = inboxReadCursors
-    for (const [mailbox, throughRowId] of Object.entries(drained.cursors)) {
-      if (throughRowId > (mailboxCursors[mailbox] ?? 0)) {
-        disclosedInboxReadCursors = advanceInboxReadCursor(
-          disclosedInboxReadCursors,
-          mailbox,
-          throughRowId,
-        )
-      }
-    }
     if (stagedMessages.length > 0 || cursorsChanged || nextGoalRevision !== goalRevision) {
       try {
         await commitChanges({
           messages: stagedMessages,
           runtimePatch: {
             mailboxCursors: drained.cursors,
-            ...(cursorsChanged ? { inboxReadCursors: disclosedInboxReadCursors } : {}),
             mailboxContinuity: stagedContinuity,
             goalRevision: nextGoalRevision,
             lastWakeAt: stagedWake.lastWakeAt,

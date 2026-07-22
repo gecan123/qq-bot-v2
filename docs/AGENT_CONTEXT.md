@@ -36,10 +36,10 @@
 - cut point 以 entry token 预算选择，并保持 tool pair 原子性。若单个 tool turn 跨过目标预算，允许 split-turn：summary 同时包含历史部分和该 turn 已压缩的前缀，tail 从合法 assistant boundary 开始。
 - 被压缩的完整 prefix 都进入 summarizer，不能按比例静默丢弃头部。Claude 的普通 history compaction 复用主 Agent 的 system、tools 和原始 working-context prefix，只在末尾追加可信 control message；受控机器 marker 只能作为线索，不能由摘要改写为权威状态。OpenAI 与 Claude split-turn fallback 继续使用隔离的 `[UNTRUSTED_DATA]` 序列化请求。summary 必须通过固定 heading、token 上限和完整 candidate projection 校验。
 - Claude 主请求会在同一原子 cut 规则算出的 future compaction boundary 增加 provider-only 1h cache breakpoint；真正压缩时在相同 prefix 末尾再次声明该 breakpoint。cache marker 不进入 ledger/projection，cache miss 也不改变摘要语义。压缩调用可携带相同 tool declarations，但其 tool call 永不执行；tool call、空输出或截断都按 summarizer failure 处理。
-- trigger 有三种：动态 threshold、provider context overflow、owner friend-private `/compact [focus]`。threshold 使用 provider input prefix 加本轮新 entry 的本地估算；overflow 每轮最多强制 compact-and-retry 一次；manual 绕过 threshold/backoff。
+- trigger 只有动态 threshold 和 provider context overflow。threshold 使用 provider input prefix 加本轮新 entry 的本地估算；overflow 每轮最多强制 compact-and-retry 一次。
 - `beforeCompact` 和 summarizer 在事务外运行，支持 abort；CAS `appendCompaction(expectedHeadEntryId)` 成功后才安装 candidate。head race 丢弃 candidate 并基于新 head 重算一次。
-- threshold 失败退避十分钟；manual/overflow 不读该退避。summarizer 或 commit 失败不改变 canonical history；checkpoint 和 `afterCompact` 失败只记录，不回滚已提交 compaction；shutdown 会中止未提交 summarizer。
-- active Goal 在 compaction 后追加稳定 continuation。mailbox continuity 的 compaction epoch 与 compaction entry 同事务提交；rest reminder 状态和 mailbox attention 状态进入 compaction payload 的受控字段，不交给 summarizer 改写。
+- threshold 失败退避十分钟；overflow 不读该退避。summarizer 或 commit 失败不改变 canonical history；checkpoint 和 `afterCompact` 失败只记录，不回滚已提交 compaction；shutdown 会中止未提交 summarizer。
+- active Goal 在 compaction 后追加稳定 continuation。mailbox continuity 的 compaction epoch 与 compaction entry 同事务提交；mailbox attention 状态进入 compaction payload 的受控字段，不交给 summarizer 改写。
 - compaction 只改变 LLM messages projection，不得清空或从 transcript 重建 active capabilities、QQ focus 等 runtime control state。
 
 ## 图片与 working context
@@ -57,7 +57,6 @@
 - 未追加 `mailbox_handled` 的私聊 mailbox 跨 round 保持行动锚点。锚点下的无进展 round 只允许一次立即纠错；连续第二次仍无进展时进入一分钟、可被注意事件打断的等待，不能降级为普通十五分钟 idle wait，也不能无限即时自循环。
 - provider-confirmed `send_message` 仍与本地数据库不存在分布式事务。只有同 target 有 pending disclosure 时才 append `mailbox_handled`；这防止重复回应，但不承诺 QQ 外发 exactly-once。
 - `mailbox_handled` 只表示这批入站已经回应，不表示回应中承诺的工作已完成。`send_message.work=continue` 只在进程内为下一轮保留短期行动锚点，不跨重启；`work=goal_progress` 必须绑定当前 active Goal 且其 `currentCommitment` 非空，否则 before-tool hook 以 `work_commitment_required` 拒绝外发。进度消息可以关闭 mailbox 防重，长期行动锚点仍由 Goal revision/continuation 契约跨轮与跨重启保留。
-- owner `/compact` 只接受 NapCat 已确认的 friend 私聊，且 peer/sender 都必须等于配置 owner。startup replay 与 live overlap 按 message row 去重；命令文本不进入普通 LLM history，focus 作为有界 trusted metadata 进入 compaction payload。
 - owner 和 self Goal 的 `complete` 在状态写入前各执行一次独立、无工具 LLM 验收。judger 只读取当前 canonical projection：优先从当前 goalId 首次出现处截取，marker 已被 compaction 移出时使用完整 projection；transcript 包在 untrusted envelope 中，不能从日志、Goal side table、Memory 或其他可变 side state 重建证据。
 - 只有严格解析出的 `{ok:true}` 才允许调用 `GoalStore.complete()`；`ok:false`、provider 或协议失败都不改变 Goal 状态，同一次尝试不自动重试。拒绝或不可用原因只通过正常 `goal` tool result 进入 ledger；judger 不决定 blocker，也不创建第二个 Agent。
 - 不实现 pi 风格 session tree。QQ 外发、mailbox cursor、Goal revision 和工具副作用需要一条可审计的线性时间线；分叉历史会让“哪条分支已发送/已处理”失去唯一答案。并行工作只通过有明确类型和边界的 background task 完成，结果回到主 ledger。
@@ -71,7 +70,6 @@
 - `src/agent/bot-loop-agent.ts`：Runtime Host、事务边界、trigger 与失败恢复。
 - `src/agent/compaction*.ts`：token cut、serialization、hooks、candidate 和 summary 校验。
 - `src/agent/working-context.ts`、`src/media/agent-image-ref.ts`：单次请求 projection 与稳定图片引用解析。
-- `src/agent/compaction-control.ts`：owner `/compact` 身份、replay gate 和去重。
 - `src/ops/agent-ledger-check.ts`：完全只读的 canonical/checkpoint 检查。
 
 ## 修改前检查

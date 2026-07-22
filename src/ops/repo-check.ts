@@ -68,7 +68,7 @@ const REQUIRED_ENV_MARKERS = [
 
 const TOOL_REGISTRY_MARKERS = [
   ['createDeferredToolExecutor', 'invoke'],
-  ['pauseTool', 'pause'],
+  ['yieldTool', 'yield'],
   ['createSendMessageTool', 'send_message'],
   ['createGenerateImageTool', 'generate_image'],
   ['createBackgroundTaskTool', 'background_task'],
@@ -79,9 +79,13 @@ const TOOL_REGISTRY_MARKERS = [
   ['workspaceFileTool', 'workspace_file'],
   ['maybeCreateBrowserTool', 'browser'],
   ['maybeCreateWebSearchTool', 'web_search'],
+] as const
+
+const MAIN_AGENT_FORBIDDEN_TOOL_MARKERS = [
   ['createGhTool', 'gh'],
   ['createDbTool', 'db'],
   ['createMetricsTool', 'metrics'],
+  ['createSkillEditorTool', 'skill_editor'],
 ] as const
 
 const ADMIN_WEB_SERVER_ONLY_MARKERS = [
@@ -389,6 +393,12 @@ function checkToolIndexes(files: RepoCheckFiles, errors: string[]): void {
     if (!toolIndex.includes(marker)) continue
     if (!mentionsToken(toolsDoc, toolName)) {
       errors.push(`docs/TOOLS.md must mention registered tool "${toolName}"`)
+    }
+  }
+
+  for (const [marker, toolName] of MAIN_AGENT_FORBIDDEN_TOOL_MARKERS) {
+    if (toolIndex.includes(marker)) {
+      errors.push(`src/agent/tools/index.ts must keep operator tool "${toolName}" out of the main Agent`)
     }
   }
 

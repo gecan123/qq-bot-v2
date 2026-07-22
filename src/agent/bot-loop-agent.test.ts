@@ -58,10 +58,7 @@ function makeScheduledWake(): Extract<BotEvent, { type: 'scheduled_wake' }> {
     type: 'scheduled_wake',
     scheduleId: 'schedule-1',
     name: '回看线索',
-    scheduleKind: 'at',
     scheduledFor: new Date('2026-07-13T09:00:00.000Z'),
-    intention: '重新判断这条线索是否值得继续',
-    runCount: 1,
   }
 }
 
@@ -599,42 +596,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const messages = ctx.getSnapshot().messages
     assert.match((messages[0] as { content: string }).content, /^\[历史摘要\]/)
     assert.equal(messages.at(-1)?.role, 'tool')
-  })
-
-  test('manual compaction bypasses the threshold and keeps focus as trusted metadata', async () => {
-    const seed = ['old-a', 'old-b', 'old-c', 'recent'].map((content) => ({
-      role: 'user' as const,
-      content,
-    }))
-    const ctx = createAgentContext({ initialMessages: seed })
-    const ledger = makeCanonicalCompactionHarness(seed)
-    const agent = createBotLoopAgent({
-      systemPrompt: '',
-      context: ctx,
-      eventQueue: new InMemoryEventQueue<BotEvent>(),
-      llm: makeMockLlm([]),
-      tools: makeMockTools(),
-      ledgerRepo: ledger.repo,
-      ledgerLoader: ledger.loader,
-      initialLedgerHeadEntryId: 4n,
-      renderEvent: renderBotEvent,
-      compactOptions: {
-        reserveTokens: 20,
-        keepRecentTokens: 1,
-        summarizeCandidate: async () => validLedgerSummary(),
-      },
-    })
-
-    const compacted = await agent.requestManualCompaction('关注工具结果')
-
-    assert.equal(compacted, true)
-    assert.equal(ledger.compactionCalls.length, 1)
-    const payload = ledger.compactionCalls[0]?.payload as {
-      reason: string
-      manualFocus?: string
-    }
-    assert.equal(payload.reason, 'manual')
-    assert.equal(payload.manualFocus, '关注工具结果')
   })
 
   test('ledger summarizer failure writes no entry and backs threshold attempts off for ten minutes', async () => {
@@ -1422,7 +1383,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     ctx.appendUserMessage('old-2')
     ctx.appendUserMessage('old-3')
     const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
+    eventQueue.enqueue({ type: 'bootstrap' })
     let chatCalls = 0
     const llm: LlmClient = {
       async chat() {
@@ -1472,7 +1433,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const ctx = createAgentContext()
     for (let i = 0; i < 5; i += 1) ctx.appendUserMessage(`old-${i}`)
     const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
+    eventQueue.enqueue({ type: 'bootstrap' })
     let chatCalls = 0
     let summarizeCalls = 0
     const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
@@ -1510,7 +1471,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     for (let i = 0; i < 5; i += 1) ctx.appendUserMessage(`old-${i}`)
     let beforeRecovery = ctx.getSnapshot()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
+    eventQueue.enqueue({ type: 'bootstrap' })
     let chatCalls = 0
     let summarizeCalls = 0
     const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
@@ -1557,7 +1518,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
   test('checkpoints text-only truncated output and continues without replaying partial tool calls', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
+    eventQueue.enqueue({ type: 'bootstrap' })
     const seenMessages: PersistedAgentSnapshot['messages'][] = []
     let chatCalls = 0
     let toolExecutions = 0
@@ -1810,7 +1771,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
   test('preserves the restored legacy wake boundary across non-message rounds', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
+    eventQueue.enqueue({ type: 'bootstrap' })
     const restoredWakeAt = new Date('2026-07-02T12:00:00Z')
     const { repo, loader, savedLastWakeAt } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
@@ -2019,7 +1980,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     await startPromise
   })
 
-  test('send_message 成功后继续下一轮, 由 pause 决定何时休息', async () => {
+  test('send_message 成功后可以在下一轮用 yield 交回控制权', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({
@@ -2052,16 +2013,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
           content: '',
           toolCalls: [{
             id: 'c2',
-            name: 'pause',
-            args: {
-              action: 'rest',
-              durationSeconds: 300,
-              reason: '完成一段活动后短暂放空',
-              intention: {
-                primaryDirection: '继续自己的研究并验证下一条证据',
-                alternativeDirection: '挑一篇群友文章读第一节',
-              },
-            },
+            name: 'yield',
+            args: { reason: '当前没有待处理行动' },
           }],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',
@@ -2071,16 +2024,19 @@ describe('BotLoopAgent.runOnceForTest', () => {
     }
 
     let sendMessageCount = 0
-    let pauseCalled = false
+    let yielded = false
     const tools = makeMockTools({
       send_message: async () => {
         sendMessageCount++
         return { content: '{"ok":true,"status":"sent"}' }
       },
-      pause: async () => {
-        pauseCalled = true
+      yield: async () => {
+        yielded = true
         await agent.stop()
-        return { content: '{"ok":true,"status":"elapsed","resume":"继续自己的研究"}' }
+        return {
+          content: '{"ok":true,"status":"yielded"}',
+          outcome: { ok: true, code: 'yielded', progress: false, continuation: 'stop' },
+        }
       },
     })
     const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
@@ -2106,293 +2062,11 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
       assert.equal(llmCallCount, 2, 'send_message 只是动作, 成功后仍应由 Agent 选择下一步')
       assert.equal(sendMessageCount, 1)
-      assert.equal(pauseCalled, true)
+      assert.equal(yielded, true)
     } finally {
       await agent.stop()
       await startPromise
     }
-  })
-
-  test('pause effect controls the loop without parsing result content', async () => {
-    const ctx = createAgentContext()
-    const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
-    let llmCallCount = 0
-    const llm: LlmClient = {
-      async chat() {
-        llmCallCount++
-        return {
-          content: '',
-          toolCalls: [{ id: `pause-${llmCallCount}`, name: 'pause', args: {} }],
-          usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
-          model: 'mock',
-          contextWindowTokens: 200_000,
-        }
-      },
-    }
-    let agent: ReturnType<typeof createBotLoopAgent>
-    let pauseCallCount = 0
-    let waits = 0
-    const tools = makeMockTools({
-      pause: async () => {
-        pauseCallCount++
-        if (pauseCallCount === 2) await agent.stop()
-        return {
-          content: JSON.stringify({ ok: true, status: 'elapsed' }),
-          outcome: { ok: true, code: 'elapsed' },
-          effects: [{ type: 'pause' }],
-        }
-      },
-    })
-    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
-    agent = createBotLoopAgent({
-      systemPrompt: '',
-      context: ctx,
-      eventQueue,
-      llm,
-      tools,
-      ledgerRepo: repo,
-      ledgerLoader: loader,
-      renderEvent: renderBotEvent,
-      eventDebounceMs: 0,
-      autonomy: {
-        now: () => new Date('2026-07-06T00:00:00.000Z'),
-        async waitForAttentionOrTimeout() {
-          waits++
-          await agent.stop()
-          return 'elapsed'
-        },
-      },
-    })
-
-    await agent.start()
-
-    assert.equal(pauseCallCount, 2)
-    assert.equal(llmCallCount, 2)
-    assert.equal(waits, 0)
-  })
-
-  test('appends and immediately persists one reminder after a naturally completed rest', async () => {
-    const ctx = createAgentContext()
-    ctx.appendUserMessage('older history')
-    const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
-    const { repo, loader, saved } = makeMockLedgerHarness(ctx.getSnapshot().messages)
-    const agent = createBotLoopAgent({
-      systemPrompt: '',
-      context: ctx,
-      eventQueue,
-      llm: makeMockLlm([{
-        content: '',
-        toolCalls: [{ id: 'pause-1', name: 'pause', args: {} }],
-        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 2 },
-        model: 'mock',
-        contextWindowTokens: 200_000,
-      }]),
-      tools: makeMockTools({
-        pause: async () => ({
-          content: JSON.stringify({
-            ok: true,
-            status: 'elapsed',
-            resumePlan: {
-              primaryDirection: '读一篇具体论文',
-              alternativeDirection: '复核一条已有研究假设',
-            },
-          }),
-          effects: [{ type: 'pause', status: 'elapsed' }],
-        }),
-      }),
-      ledgerRepo: repo,
-      ledgerLoader: loader,
-      renderEvent: renderBotEvent,
-      eventDebounceMs: 0,
-      compactOptions: {
-        triggerTokens: 1,
-        keepRecentTokens: 1,
-        summarizeCandidate: async () => validLedgerSummary('rest 前的历史'),
-      },
-      autonomy: {
-        now: () => new Date('2026-07-13T08:00:00.000Z'),
-      },
-    })
-
-    await agent.runOnceForTest()
-
-    const messages = ctx.getSnapshot().messages
-    const last = messages.at(-1)
-    assert.equal(last?.role, 'user')
-    if (last?.role === 'user') {
-      assert.match(last.content, /^<system-reminder>\n/)
-      assert.match(last.content, /"event":"rest_resume"/)
-      assert.doesNotMatch(last.content, /读一篇具体论文/)
-    }
-    const pauseResultIndex = messages.findIndex((message) => (
-      message.role === 'tool' && message.toolCallId === 'pause-1'
-    ))
-    assert.ok(pauseResultIndex > 0, 'pause tool result must survive compaction')
-    const pauseCall = messages[pauseResultIndex - 1]
-    assert.equal(pauseCall?.role, 'assistant', 'pause assistant call/result must remain atomic')
-    if (pauseCall?.role === 'assistant') {
-      assert.equal(pauseCall.toolCalls.at(-1)?.id, 'pause-1')
-    }
-    assert.ok(pauseResultIndex < messages.length - 1, 'reminder must follow the complete tool result')
-    assert.match(
-      messages[0]?.role === 'user' ? messages[0].content : '',
-      /^\[历史摘要\]/,
-      'reminder must be appended after ordinary compaction',
-    )
-    assert.equal(saved.length, 4, 'event, tool batch, compaction, and reminder must each be durable')
-    assert.deepEqual(saved.at(-1)?.messages, messages)
-  })
-
-  test('does not append a reminder when rest is interrupted', async () => {
-    const ctx = createAgentContext()
-    const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
-    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
-    const agent = createBotLoopAgent({
-      systemPrompt: '',
-      context: ctx,
-      eventQueue,
-      llm: makeMockLlm([{
-        content: '',
-        toolCalls: [{ id: 'pause-1', name: 'pause', args: {} }],
-        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 2 },
-        model: 'mock',
-        contextWindowTokens: 200_000,
-      }]),
-      tools: makeMockTools({
-        pause: async () => ({
-          content: JSON.stringify({ ok: true, status: 'interrupted' }),
-          effects: [{ type: 'pause', status: 'interrupted' }],
-        }),
-      }),
-      ledgerRepo: repo,
-      ledgerLoader: loader,
-      renderEvent: renderBotEvent,
-      eventDebounceMs: 0,
-    })
-
-    await agent.runOnceForTest()
-
-    assert.equal(
-      ctx.getSnapshot().messages.some(
-        (message) => message.role === 'user' && message.content.startsWith('<system-reminder>'),
-      ),
-      false,
-    )
-  })
-
-  test('persists one focus reminder when an attention event interrupts rest', async () => {
-    const ctx = createAgentContext()
-    ctx.appendAssistantTurn({
-      content: '',
-      toolCalls: [{ id: 'pause-1', name: 'pause', args: { action: 'rest' } }],
-    })
-    ctx.appendToolResult({
-      toolCallId: 'pause-1',
-      content: JSON.stringify({
-        ok: true,
-        status: 'interrupted',
-        resumePlan: {
-          primaryDirection: '继续读 QuadRF 的实现说明，先找出采样率换算公式',
-          alternativeDirection: '整理刚才发现的一条射频工具线索',
-        },
-      }),
-    })
-    const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({
-      type: 'napcat_private_message',
-      messageRowId: 88,
-      peerId: 9001,
-      messageId: 20_088,
-      senderId: 9001,
-      senderNickname: 'Alice',
-      mentionedSelf: true,
-      sentAt: new Date('2026-07-13T09:00:00.000Z'),
-      renderedText: '在吗',
-    })
-    const { repo, loader, saved } = makeMockLedgerHarness(ctx.getSnapshot().messages)
-    const agent = createBotLoopAgent({
-      systemPrompt: '',
-      context: ctx,
-      eventQueue,
-      llm: makeMockLlm([{
-        content: '',
-        toolCalls: [],
-        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
-        model: 'mock',
-        contextWindowTokens: 200_000,
-      }]),
-      tools: makeMockTools(),
-      ledgerRepo: repo,
-      ledgerLoader: loader,
-      renderEvent: renderBotEvent,
-      eventDebounceMs: 0,
-    })
-
-    await agent.runOnceForTest()
-
-    const reminders = ctx.getSnapshot().messages.filter(
-      (message) => message.role === 'user' && message.content.includes('"event":"rest_interrupted_attention"'),
-    )
-    assert.equal(reminders.length, 1)
-    assert.doesNotMatch(reminders[0]?.role === 'user' ? reminders[0].content : '', /QuadRF|采样率|射频工具/)
-    assert.equal(
-      saved[0]?.messages.some(
-        (message) => message.role === 'user' && message.content.includes('"event":"rest_interrupted_attention"'),
-      ),
-      true,
-      'the pre-round ledger append must durably include the reminder',
-    )
-  })
-
-  test('treats scheduled wake as attention when it interrupts rest', async () => {
-    const ctx = createAgentContext()
-    ctx.appendAssistantTurn({
-      content: '',
-      toolCalls: [{ id: 'pause-1', name: 'pause', args: { action: 'rest' } }],
-    })
-    ctx.appendToolResult({
-      toolCallId: 'pause-1',
-      content: JSON.stringify({
-        ok: true,
-        status: 'interrupted',
-        resumePlan: {
-          primaryDirection: '继续读原来的资料',
-          alternativeDirection: '整理上一次的线索',
-        },
-      }),
-    })
-    const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue(makeScheduledWake())
-    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
-    const agent = createBotLoopAgent({
-      systemPrompt: '',
-      context: ctx,
-      eventQueue,
-      llm: makeMockLlm([{
-        content: '',
-        toolCalls: [],
-        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
-        model: 'mock',
-        contextWindowTokens: 200_000,
-      }]),
-      tools: makeMockTools(),
-      ledgerRepo: repo,
-      ledgerLoader: loader,
-      renderEvent: renderBotEvent,
-      eventDebounceMs: 0,
-    })
-
-    await agent.runOnceForTest()
-
-    const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
-    assert.equal(userMessages.some((message) => message.content.includes('"kind":"schedule_due"')), true)
-    assert.equal(
-      userMessages.some((message) => message.content.includes('"event":"rest_interrupted_attention"')),
-      true,
-    )
   })
 
   test('discloses high-priority QQ notification before an earlier scheduled wake', async () => {
@@ -2693,7 +2367,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
   test('delegates tool execution failures to the React kernel durable error result path', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
+    eventQueue.enqueue({ type: 'bootstrap' })
     const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: 'you are a bot',
@@ -2734,65 +2408,10 @@ describe('BotLoopAgent.runOnceForTest', () => {
     }
   })
 
-  test('effect interpreter rejects pause effects returned by non-pause tools', async () => {
-    const ctx = createAgentContext()
-    const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
-    let llmCallCount = 0
-    let waits = 0
-    let agent: ReturnType<typeof createBotLoopAgent>
-    const llm: LlmClient = {
-      async chat() {
-        llmCallCount++
-        if (llmCallCount === 3) await agent.stop()
-        return {
-          content: '',
-          toolCalls: llmCallCount === 1
-            ? [{ id: 'lookup-1', name: 'lookup', args: {} }]
-            : [],
-          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
-          model: 'mock',
-          contextWindowTokens: 200_000,
-        }
-      },
-    }
-    const tools = makeMockTools({
-      lookup: async () => ({
-        content: '{"ok":true}',
-        effects: [{ type: 'pause' }],
-      }),
-    })
-    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
-
-    agent = createBotLoopAgent({
-      systemPrompt: 'you are a bot',
-      context: ctx,
-      eventQueue,
-      llm,
-      tools,
-      ledgerRepo: repo,
-      ledgerLoader: loader,
-      renderEvent: renderBotEvent,
-      eventDebounceMs: 0,
-      autonomy: {
-        async waitForAttentionOrTimeout() {
-          waits++
-          await agent.stop()
-          return 'elapsed'
-        },
-      },
-    })
-
-    await agent.start()
-
-    assert.equal(llmCallCount, 2)
-    assert.equal(waits, 1)
-  })
-
   test('persists inbox read effects atomically with the visible tool result', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
+    eventQueue.enqueue({ type: 'bootstrap' })
     const ledger = makeMockLedgerHarness(ctx.getSnapshot().messages)
     const agent = createBotLoopAgent({
       systemPrompt: '',
@@ -2904,7 +2523,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
   test('高 token 使用不触发跨日限流，连续进展超过 20 轮也不强制冷却', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
+    eventQueue.enqueue({ type: 'bootstrap' })
     let llmCallCount = 0
     let waits = 0
     let agent: ReturnType<typeof createBotLoopAgent>
@@ -2954,7 +2573,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
   test('continuation=immediate 立即进入有界纠错', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
+    eventQueue.enqueue({ type: 'bootstrap' })
     let llmCallCount = 0
     let waits = 0
     const llm: LlmClient = {
@@ -2964,7 +2583,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
           content: '',
           toolCalls: llmCallCount === 1
             ? [{ id: 'bad-evidence', name: 'lookup', args: {} }]
-            : [{ id: 'pause-after-correction', name: 'pause', args: {} }],
+            : [{ id: 'yield-after-correction', name: 'yield', args: {} }],
           usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
           model: 'mock',
           contextWindowTokens: 200_000,
@@ -2987,7 +2606,10 @@ describe('BotLoopAgent.runOnceForTest', () => {
             continuation: 'immediate',
           },
         }),
-        pause: async () => ({ content: '{"ok":true}', outcome: { ok: true } }),
+        yield: async () => ({
+          content: '{"status":"yielded"}',
+          outcome: { ok: true, code: 'yielded', progress: false, continuation: 'stop' },
+        }),
       }),
       ledgerRepo: repo,
       ledgerLoader: loader,
@@ -3012,7 +2634,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const ctx = createAgentContext()
     ctx.appendUserMessage('已有上下文')
     const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
+    eventQueue.enqueue({ type: 'bootstrap' })
     let llmCallCount = 0
     let agent: ReturnType<typeof createBotLoopAgent>
     const llm: LlmClient = {
@@ -3055,7 +2677,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const ctx = createAgentContext()
     ctx.appendUserMessage('已有上下文')
     const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
+    eventQueue.enqueue({ type: 'bootstrap' })
     const waits: number[] = []
     let agent: ReturnType<typeof createBotLoopAgent>
     const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
@@ -3500,57 +3122,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     await agent.start()
     assert.equal(llmCallCount, 2)
-  })
-
-  test('参数校验失败的 pause 不会被当成真实 pause effect', async () => {
-    const ctx = createAgentContext()
-    const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({ type: 'curiosity_tick' })
-    let llmCallCount = 0
-    let waits = 0
-    let agent: ReturnType<typeof createBotLoopAgent>
-    const llm: LlmClient = {
-      async chat() {
-        llmCallCount++
-        if (llmCallCount === 3) await agent.stop()
-        return {
-          content: '',
-          toolCalls: llmCallCount === 1
-            ? [{ id: 'bad-pause', name: 'pause', args: {} }]
-            : [],
-          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
-          model: 'mock',
-          contextWindowTokens: 200_000,
-        }
-      },
-    }
-    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
-
-    agent = createBotLoopAgent({
-      systemPrompt: 'you are a bot',
-      context: ctx,
-      eventQueue,
-      llm,
-      tools: makeMockTools({
-        pause: async () => ({ content: '{"error":"Invalid tool arguments"}' }),
-      }),
-      ledgerRepo: repo,
-      ledgerLoader: loader,
-      renderEvent: renderBotEvent,
-      eventDebounceMs: 0,
-      autonomy: {
-        async waitForAttentionOrTimeout() {
-          waits++
-          await agent.stop()
-          return 'elapsed'
-        },
-      },
-    })
-
-    await agent.start()
-
-    assert.equal(llmCallCount, 2)
-    assert.equal(waits, 1)
   })
 
   test('assistant text-only 结束会写入受控纠错并立即重试工具行动', async () => {

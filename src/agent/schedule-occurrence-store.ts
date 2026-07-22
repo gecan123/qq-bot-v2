@@ -8,144 +8,121 @@ export interface ScheduleOccurrence {
   scheduleId: string
   name: string
   intention: string
-  scheduleKind: 'at' | 'every' | 'cron'
   scheduledFor: string
-  runCount: number
 }
 
 export interface ScheduleOccurrenceStore {
   record(occurrence: ScheduleOccurrence): Promise<void>
-  get(scheduleId: string, runCount: number): Promise<ScheduleOccurrence | null>
+  get(scheduleId: string): Promise<ScheduleOccurrence | null>
 }
 
 const MAX_OCCURRENCES = 200
-const isoTimestampSchema = z.iso.datetime({ offset: true })
 const occurrenceSchema = z.object({
   scheduleId: z.string().trim().min(1).max(SCHEDULE_LIMITS.maxIdLength),
   name: z.string().trim().min(1).max(SCHEDULE_LIMITS.maxNameLength),
   intention: z.string().trim().min(1).max(SCHEDULE_LIMITS.maxIntentionLength),
-  scheduleKind: z.enum(['at', 'every', 'cron']),
-  scheduledFor: isoTimestampSchema,
-  runCount: z.number().int().positive(),
+  scheduledFor: z.iso.datetime({ offset: true }),
 }).strict()
 const storedSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   occurrences: z.array(occurrenceSchema).max(MAX_OCCURRENCES),
 }).strict()
 
 export function createInMemoryScheduleOccurrenceStore(
-  initialOccurrences: readonly ScheduleOccurrence[] = [],
+  initial: readonly ScheduleOccurrence[] = [],
 ): ScheduleOccurrenceStore {
-  let occurrences = parseOccurrences(initialOccurrences)
+  let occurrences = parseOccurrences(initial)
   return {
     async record(occurrence) {
       occurrences = recordOccurrence(occurrences, occurrence)
     },
-    async get(scheduleId, runCount) {
-      return cloneOccurrence(findOccurrence(occurrences, scheduleId, runCount))
+    async get(scheduleId) {
+      return cloneOccurrence(occurrences.find((item) => item.scheduleId === scheduleId) ?? null)
     },
   }
 }
 
 export function createPersistentScheduleOccurrenceStore(path: string): ScheduleOccurrenceStore {
   let mutationTail: Promise<void> = Promise.resolve()
-
   const mutate = async (operation: () => Promise<void>): Promise<void> => {
     const result = mutationTail.then(operation)
     mutationTail = result.then(() => undefined, () => undefined)
     return await result
   }
-
   return {
     async record(occurrence) {
       await mutate(async () => {
         const current = await loadOccurrences(path)
         const next = recordOccurrence(current, occurrence)
-        if (next === current) return
-        await persistOccurrences(path, next)
+        if (next !== current) await persistOccurrences(path, next)
       })
     },
-    async get(scheduleId, runCount) {
+    async get(scheduleId) {
       await mutationTail
-      return cloneOccurrence(findOccurrence(await loadOccurrences(path), scheduleId, runCount))
+      return cloneOccurrence((await loadOccurrences(path)).find(
+        (item) => item.scheduleId === scheduleId,
+      ) ?? null)
     },
   }
 }
 
 function recordOccurrence(
   current: readonly ScheduleOccurrence[],
-  rawOccurrence: ScheduleOccurrence,
+  raw: ScheduleOccurrence,
 ): ScheduleOccurrence[] {
-  const occurrence = occurrenceSchema.parse(rawOccurrence)
-  const existing = findOccurrence(current, occurrence.scheduleId, occurrence.runCount)
+  const occurrence = occurrenceSchema.parse(raw)
+  const existing = current.find((item) => item.scheduleId === occurrence.scheduleId)
   if (existing) {
     if (JSON.stringify(existing) !== JSON.stringify(occurrence)) {
-      throw new Error(`schedule occurrence conflict: ${occurrence.scheduleId}:${occurrence.runCount}`)
+      throw new Error(`schedule occurrence conflict: ${occurrence.scheduleId}`)
     }
     return current as ScheduleOccurrence[]
   }
   return parseOccurrences([...current, occurrence].slice(-MAX_OCCURRENCES))
 }
 
-function findOccurrence(
-  occurrences: readonly ScheduleOccurrence[],
-  scheduleId: string,
-  runCount: number,
-): ScheduleOccurrence | null {
-  if (!Number.isSafeInteger(runCount) || runCount <= 0) return null
-  return occurrences.find((item) => (
-    item.scheduleId === scheduleId && item.runCount === runCount
-  )) ?? null
-}
-
 function parseOccurrences(input: readonly ScheduleOccurrence[]): ScheduleOccurrence[] {
   const occurrences = z.array(occurrenceSchema).max(MAX_OCCURRENCES).parse(input)
-  const keys = new Set<string>()
+  const ids = new Set<string>()
   for (const occurrence of occurrences) {
-    const key = `${occurrence.scheduleId}:${occurrence.runCount}`
-    if (keys.has(key)) throw new Error(`duplicate schedule occurrence: ${key}`)
-    keys.add(key)
+    if (ids.has(occurrence.scheduleId)) {
+      throw new Error(`duplicate schedule occurrence: ${occurrence.scheduleId}`)
+    }
+    ids.add(occurrence.scheduleId)
   }
   return structuredClone(occurrences) as ScheduleOccurrence[]
 }
 
 async function loadOccurrences(path: string): Promise<ScheduleOccurrence[]> {
-  let contents: string
   try {
-    contents = await readFile(path, 'utf8')
+    const stored = storedSchema.parse(JSON.parse(await readFile(path, 'utf8')) as unknown)
+    return parseOccurrences(stored.occurrences)
   } catch (error) {
     if (isNodeError(error) && error.code === 'ENOENT') return []
     throw error
   }
-  return parseOccurrences(storedSchema.parse(JSON.parse(contents) as unknown).occurrences)
 }
 
-async function persistOccurrences(
-  path: string,
-  occurrences: readonly ScheduleOccurrence[],
-): Promise<void> {
+async function persistOccurrences(path: string, occurrences: readonly ScheduleOccurrence[]): Promise<void> {
   const parsed = parseOccurrences(occurrences)
   const directory = dirname(path)
   await mkdir(directory, { recursive: true })
-  const temporaryPath = join(
-    directory,
-    `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`,
-  )
+  const temporaryPath = join(directory, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`)
   try {
     await writeFile(
       temporaryPath,
-      `${JSON.stringify({ version: 1, occurrences: parsed }, null, 2)}\n`,
+      `${JSON.stringify({ version: 2, occurrences: parsed }, null, 2)}\n`,
       'utf8',
     )
     await rename(temporaryPath, path)
   } catch (error) {
-    await rm(temporaryPath, { force: true }).catch(() => {})
+    await rm(temporaryPath, { force: true }).catch(() => undefined)
     throw error
   }
 }
 
-function cloneOccurrence(occurrence: ScheduleOccurrence | null): ScheduleOccurrence | null {
-  return occurrence == null ? null : structuredClone(occurrence) as ScheduleOccurrence
+function cloneOccurrence(value: ScheduleOccurrence | null): ScheduleOccurrence | null {
+  return value == null ? null : structuredClone(value) as ScheduleOccurrence
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

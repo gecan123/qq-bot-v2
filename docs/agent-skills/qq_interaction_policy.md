@@ -12,7 +12,7 @@ description: 准备对 QQ 群或私聊发言、读取 inbox、处理 @bot、ambi
 - 对外发言必须走 `send_message`。
 - `send_message` target 必须明确，不能从 memory 或旧上下文里猜。
 - 群 reply 只允许监听群；群 ambient 还必须在 ambient 发送白名单；私聊目标必须是当前好友。
-- `send_message` 成功不代表当前活动结束，下一轮仍由自己决定继续或 `pause`。
+- `send_message` 成功不代表当前活动结束，下一轮仍由自己决定继续或 `yield`。
 
 读取正文:
 

@@ -42,8 +42,6 @@ function compactionEntry(
       isSplitTurn: input.isSplitTurn ?? false,
       previousCompactionEntryId: input.previousCompactionEntryId ?? null,
       mailboxAttentionState: input.mailboxAttentionState ?? {},
-      restResumeState: input.restResumeState ?? null,
-      ...(input.manualFocus === undefined ? {} : { manualFocus: input.manualFocus }),
     },
     createdAt: CREATED_AT,
   }
@@ -153,10 +151,6 @@ describe('projectAgentLedger', () => {
           'qq_private:20': { disclosedThroughRowId: 9, handledThroughRowId: 8 },
           'qq_group:10': { disclosedThroughRowId: 7, handledThroughRowId: 7 },
         },
-        restResumeState: {
-          emittedAt: '2026-07-15T18:00:00+08:00',
-          nonPauseActionSince: true,
-        },
       }),
       messageEntry(4n, { role: 'user', content: '新问题' }),
     ]
@@ -174,8 +168,7 @@ describe('projectAgentLedger', () => {
       messages: [
         {
           role: 'user',
-          content: '[历史摘要]\n旧问题已经处理。\n\n[rest_resume_state]\n'
-            + '{"event":"rest_resume_state","emittedAt":"2026-07-15T18:00:00+08:00","nonPauseActionSince":true}',
+          content: '[历史摘要]\n旧问题已经处理。',
         },
         {
           role: 'user',

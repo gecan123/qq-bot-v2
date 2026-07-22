@@ -14,14 +14,12 @@ import {
   type CompactionAgentLedgerEntry,
   type CompactionLedgerPayload,
   type MessageAgentLedgerEntry,
-  type RestResumeCompactionState,
 } from './agent-ledger.types.js'
 import { renderMailboxAttentionStateEvent, type MailboxAttentionState } from './mailbox-handled.js'
 import { parseInboxReadCursors } from './inbox-read-cursors.js'
 import { validateBotSnapshotIntegrity } from './snapshot-integrity.js'
 
 const HISTORY_SUMMARY_PREFIX = '[历史摘要]\n'
-const REST_STATE_MARKER = '\n\n[rest_resume_state]\n'
 const MAILBOX_KEY_PATTERN = /^qq_(?:group|private):\d+$/
 const POSITIVE_DECIMAL_PATTERN = /^[1-9]\d*$/
 
@@ -125,6 +123,7 @@ function parseMessagePayload(value: unknown, path: string): MessageAgentLedgerEn
 
 function parseCompactionPayload(value: unknown, path: string): CompactionLedgerPayload {
   const payload = requireRecord(value, path)
+  // 旧 canonical rows 仍可 replay，但已移除字段只被接受并丢弃，不再进入当前 projection。
   requireExactKeys(payload, [
     'schemaVersion',
     'summary',
@@ -135,8 +134,7 @@ function parseCompactionPayload(value: unknown, path: string): CompactionLedgerP
     'isSplitTurn',
     'previousCompactionEntryId',
     'mailboxAttentionState',
-    'restResumeState',
-  ], ['manualFocus'], path)
+  ], ['manualFocus', 'restResumeState'], path)
   if (payload.schemaVersion !== AGENT_LEDGER_SCHEMA_VERSION) {
     throw new AgentLedgerIntegrityError(
       `${path} has unsupported compaction schemaVersion: ${String(payload.schemaVersion)}`,
@@ -152,10 +150,6 @@ function parseCompactionPayload(value: unknown, path: string): CompactionLedgerP
   if (typeof payload.isSplitTurn !== 'boolean') {
     throw new AgentLedgerIntegrityError(`${path}.isSplitTurn must be boolean`)
   }
-  const manualFocus = payload.manualFocus
-  if (manualFocus !== undefined && (typeof manualFocus !== 'string' || manualFocus.trim() === '')) {
-    throw new AgentLedgerIntegrityError(`${path}.manualFocus must be a non-empty string when present`)
-  }
   return {
     schemaVersion: AGENT_LEDGER_SCHEMA_VERSION,
     summary: payload.summary,
@@ -165,7 +159,7 @@ function parseCompactionPayload(value: unknown, path: string): CompactionLedgerP
       payload.estimatedTokensAfter,
       `${path}.estimatedTokensAfter`,
     ),
-    reason,
+    reason: reason === 'manual' ? 'threshold' : reason,
     isSplitTurn: payload.isSplitTurn,
     previousCompactionEntryId: parseNullableEntryId(
       payload.previousCompactionEntryId,
@@ -175,8 +169,6 @@ function parseCompactionPayload(value: unknown, path: string): CompactionLedgerP
       payload.mailboxAttentionState,
       `${path}.mailboxAttentionState`,
     ),
-    restResumeState: parseRestResumeState(payload.restResumeState, `${path}.restResumeState`),
-    ...(manualFocus === undefined ? {} : { manualFocus }),
   }
 }
 
@@ -436,14 +428,7 @@ function selectActiveMessages(
 }
 
 function renderSummaryMessage(payload: CompactionLedgerPayload): DurableAgentMessage {
-  const restState = payload.restResumeState == null
-    ? ''
-    : `${REST_STATE_MARKER}${JSON.stringify({
-        event: 'rest_resume_state',
-        emittedAt: payload.restResumeState.emittedAt,
-        nonPauseActionSince: payload.restResumeState.nonPauseActionSince,
-      })}`
-  return { role: 'user', content: `${HISTORY_SUMMARY_PREFIX}${payload.summary}${restState}` }
+  return { role: 'user', content: `${HISTORY_SUMMARY_PREFIX}${payload.summary}` }
 }
 
 function renderMachineStateMessages(payload: CompactionLedgerPayload): DurableAgentMessage[] {
@@ -504,19 +489,6 @@ function parseMailboxAttentionState(value: unknown, path: string): MailboxAttent
     }
   }
   return parsed
-}
-
-function parseRestResumeState(value: unknown, path: string): RestResumeCompactionState | null {
-  if (value === null) return null
-  const state = requireRecord(value, path)
-  requireExactKeys(state, ['emittedAt', 'nonPauseActionSince'], [], path)
-  if (typeof state.emittedAt !== 'string' || !Number.isFinite(Date.parse(state.emittedAt))) {
-    throw new AgentLedgerIntegrityError(`${path}.emittedAt must be a valid timestamp string`)
-  }
-  if (typeof state.nonPauseActionSince !== 'boolean') {
-    throw new AgentLedgerIntegrityError(`${path}.nonPauseActionSince must be boolean`)
-  }
-  return { emittedAt: state.emittedAt, nonPauseActionSince: state.nonPauseActionSince }
 }
 
 function parseNullableEntryId(value: unknown, path: string): string | null {

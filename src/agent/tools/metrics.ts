@@ -50,7 +50,7 @@ function renderMetricsResult(result: unknown): string {
       const tokenUsage = report.tokenUsage && typeof report.tokenUsage === 'object' && !Array.isArray(report.tokenUsage)
         ? (report.tokenUsage as Record<string, unknown>).total
         : undefined
-      return { date: report.date, tokenUsage, toolCalls: report.toolCalls, rest: report.rest }
+      return { date: report.date, tokenUsage, toolCalls: report.toolCalls }
     })
     : []
   return JSON.stringify({

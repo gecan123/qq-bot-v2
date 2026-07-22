@@ -72,7 +72,6 @@ pnpm --silent agent:context -- --json
 pnpm db:generate
 pnpm db:migrate
 pnpm db:push
-pnpm tick
 pnpm browser:controller
 pnpm toollog
 pnpm toollogf
@@ -149,8 +148,8 @@ JSON 报告带当前为 `2` 的 `schemaVersion`，总占用字段是 `estimatedS
 
 - 从仓库根目录启动，确保 `.bot.pid`、logs、prompts 和相对路径稳定。
 - `pnpm dev` 使用 watch 模式，文件变化会重启；`pnpm dev:once` 单次启动，不监听文件变化。
-- `pnpm tick` 会读取 `.bot.pid`，向进程发送 `SIGUSR1`，并注入一个仅供人工调试的 curiosity tick。正常自主循环由 Agent 的 `pause` 计时和 BotLoop 连续运行驱动，不依赖这个命令。
-- `pnpm agent:daily-metrics -- --date YYYY-MM-DD` 或 Agent 的 `workspace_bash metrics today` 会同时报告 rest 请求、idle anchor 来源、替代方向转向、确认休息、时长与理由分类，以及转向或休息后下一步是实际做事、再次休息还是证据不足。
+- `.bot.pid` 只供 WebAdmin 和破坏性运维命令判断 Bot 是否仍在运行，不接受产品控制信号。
+- `pnpm agent:daily-metrics -- --date YYYY-MM-DD` 按日报告主 Agent 的 token/cache 和工具调用，不再维护 rest 专门指标；该命令属于 operator 入口，不暴露给主 Agent。
 
 ## 短期调度
 
@@ -160,7 +159,7 @@ JSON 报告带当前为 `2` 的 `schemaVersion`，总占用字段是 `estimatedS
 BOT_SCHEDULE_STATE_PATH=data/agent-workspace/runtime/schedules.json
 ```
 
-启动 Agent 主循环前，runtime 会完整读取和校验 store，清理已过期 job，合并停机期间遗漏的周期触发，持久化恢复结果后再重新挂 timer。未知 version、损坏 JSON 或非法 job 会让启动显式失败；顶层错误会包含 `BOT_SCHEDULE_STATE_PATH` 对应的实际路径，而不是把损坏 store 当成空列表继续运行。Timer 挂载、重试或 event enqueue 异常由 `SCHEDULE` logger 以 `schedule_runtime_failed` 记录 `scheduleId` 和原始错误。
+启动 Agent 主循环前，runtime 会完整读取和校验 v2 store，再为每个一次性 `at` / `afterSeconds` job 挂 timer；停机期间已经到期的 job 在恢复后触发它唯一的 occurrence，不做周期合并。未知 version、损坏 JSON 或非法 job 会让启动显式失败；从含 recurring job 的 v1 store 切换时应在 Bot 停止后由 operator 清理旧 schedule 状态。Timer、处理或 event enqueue 异常由 `SCHEDULE` logger 记录 `scheduleId` 和原始错误。
 
 Graceful shutdown 在 jobs 阶段调用 `stopBackgroundServices()`：它会等待正在串行的 schedule mutation 并清除全部 timer handle，但不删除尚未完成的持久 job；下次启动继续按 store 恢复。不要在 bot 运行时手工编辑该文件。
 
@@ -394,13 +393,13 @@ VIBE_TRADING_RESULT_MAX_CHARS=12000
 
 ## Agent 反馈
 
-- `pnpm agent:doctor` 先做本地静态健康检查：必需文件、必需环境变量、agent 指令镜像、schema anchor、startup anchor 和 tool registry anchor；静态检查通过后连接 Postgres 执行同等只读 ledger 检查。输出 JSON，任一阶段有错误时非零退出。
+- `pnpm agent:doctor` 先做本地静态健康检查：必需文件、必需环境变量、agent 指令镜像、schema anchor、startup anchor 和 tool registry anchor；静态检查通过后连接 Postgres 执行同等只读 ledger 检查。`LLM_DEFAULT_PROVIDER=claude-code` 时还会在这里执行最多三次 persona-spoof 真实 LLM 探测，普通 Bot 启动不再探测。输出 JSON，任一阶段有错误时非零退出。
 - `pnpm agent:memory-check` 只读扫描 `data/agent-workspace` 下的 Memory、Notebook、Life Journal 和 Agenda Markdown，输出文件/entry 数量、Memory lifecycle、损坏格式、跨 store 重复 ID、self/unknown supersedes 与 Agenda revision；不会创建目录、默认文件或执行修复。结构问题退出 1；可用 `pnpm agent:memory-check -- --root <path>` 指定其他 workspace。
 - `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson`、`logs/tool-calls.ndjson` 和当前保留的 `logs/app*.log` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率，以及按群 `inboxReads`、`messagesRead`、`sendAttempts`、`sendBlocked`、成功 ambient/reply 和 `readToSendRate`。默认排除 `model=mock` 测试数据，显式传 `--model mock` 时才查看；当前 token operations 包括 `agent.chat`、`compaction`、`life_journal.review`、`life_journal.idle_pick` 和 `memory.maintenance`。
 - `pnpm agent:metrics <token-log> <tool-log> [app-log]` 可以汇总指定日志文件；省略 `app-log` 时自动读取当前 `logs/app*.log` 滚动文件。
 - token/cache 使用继续 best-effort 写入 Postgres `agent_token_usage`；工具调用只有 `BOT_TOOL_AUDIT_DB_ENABLED=true` 时写入 `agent_tool_calls`。写 DB 失败只记 warning，不影响 bot 执行。
 - `pnpm agent:metrics --db` 从 Postgres 汇总持久化事件；可加 `--from <iso> --to <iso> --tool <name> --operation <name> --model <name> --ok true|false --side-effect true|false` 做筛选。
-- `pnpm agent:daily-metrics` 按北京时间自然日统计真实 bot 的全部模型 tool call、token/cache 与 rest 行为，默认查今天并排除 `model=mock` 测试数据。rest 指标包括请求、真正开始、被未完兴趣转向、idle anchor 来源、非法提前确认、时长、理由分类、转向后行动和醒后行动；行动只在非 `pause` / `rest` / `help` 工具实际成功后计数，转向后直接进入 rest 单列为 `restedInstead`，日志缺少后续证据时记为 `unknown`。`--date YYYY-MM-DD` 指定截止自然日，`--days N` 逐日返回包含截止日在内的最近 N 天（最多 31 天）；例如 `pnpm agent:daily-metrics -- --date 2026-07-13` 和 `pnpm agent:daily-metrics -- --days 7`。bot 内可通过 `workspace_bash` 的 `metrics today|yesterday|YYYY-MM-DD` 或 `metrics days <1-7>` 取得有界结构化数据。新日志会把 `invoke` 记成其实际请求的内部工具；旧日志无法展开时保留 `invoke` 并报告 `unresolvedInvokeCalls`。
+- `pnpm agent:daily-metrics` 按北京时间自然日统计真实 bot 的全部模型 tool call 与 token/cache，默认查今天并排除 `model=mock` 测试数据。`--date YYYY-MM-DD` 指定截止自然日，`--days N` 逐日返回包含截止日在内的最近 N 天（最多 31 天）；例如 `pnpm agent:daily-metrics -- --date 2026-07-13` 和 `pnpm agent:daily-metrics -- --days 7`。新日志会把 `invoke` 记成其实际请求的内部工具；旧日志无法展开时保留 `invoke` 并报告 `unresolvedInvokeCalls`。该报告只在 operator/WebAdmin 面使用。
 - `pnpm agent:ledger-check` 使用原始只读 Prisma 查询检查 canonical rows：验证 entry schema、严格递增 ID、runtime head、compaction chain/boundary、assistant tool call/result 原子组，以及 checkpoint 的 match/stale/corrupt 分类。它不通过 runtime repository 修复或写回数据；输出 JSON，有错误时非零退出。runtime 启动会先校验 canonical ledger，checkpoint 缺失、过期或损坏时只从 ledger 重建，绝不从消息、side-data 或日志重建 prompt history。
 
 ## Git

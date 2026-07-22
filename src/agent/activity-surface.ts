@@ -16,7 +16,6 @@ const phaseSchema = z.enum([
   'starting',
   'thinking',
   'tool',
-  'resting',
   'committing',
   'waiting',
   'error',
@@ -170,25 +169,14 @@ export function createAgentActivityReporter(options: ReporterOptions = {}): Agen
         ...surface.activeTools.filter(tool => tool.toolCallId !== input.toolCallId),
         { ...input, argsSummary: jsonValueSchema.parse(input.argsSummary), startedAt: at },
       ]
-      const resting = input.toolName === 'pause'
-      const restArgs = resting && input.argsSummary && typeof input.argsSummary === 'object'
-        ? input.argsSummary as Record<string, unknown>
-        : null
-      const durationSeconds = typeof restArgs?.durationSeconds === 'number'
-        ? restArgs.durationSeconds
-        : null
       surface = {
         ...surface,
         generatedAt: at,
-        phase: resting ? 'resting' : 'tool',
+        phase: 'tool',
         phaseStartedAt: surface.activeTools.length === 0 ? at : surface.phaseStartedAt,
         roundIndex: input.roundIndex,
-        detail: resting && typeof restArgs?.reason === 'string'
-          ? restArgs.reason
-          : `正在执行 ${input.toolName}`,
-        waitUntil: durationSeconds === null
-          ? null
-          : new Date(now().getTime() + durationSeconds * 1_000).toISOString(),
+        detail: `正在执行 ${input.toolName}`,
+        waitUntil: null,
         activeTools,
       }
       publish()
@@ -201,11 +189,7 @@ export function createAgentActivityReporter(options: ReporterOptions = {}): Agen
       surface = {
         ...surface,
         generatedAt: at,
-        phase: activeTools.length > 0
-          ? activeTools.some(tool => tool.toolName === 'pause')
-            ? 'resting'
-            : 'tool'
-          : 'thinking',
+        phase: activeTools.length > 0 ? 'tool' : 'thinking',
         phaseStartedAt: activeTools.length > 0 ? surface.phaseStartedAt : at,
         detail: activeTools.length > 0 ? surface.detail : '正在根据工具结果决定下一步',
         waitUntil: activeTools.length > 0 ? surface.waitUntil : null,

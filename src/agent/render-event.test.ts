@@ -1,73 +1,30 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import type { BotEvent } from './event.js'
-import { BOOTSTRAP_TEXT, CURIOSITY_TICK_TEXT, renderBotEvent } from './render-event.js'
+import { BOOTSTRAP_TEXT, renderBotEvent } from './render-event.js'
 
 describe('renderBotEvent — scheduled wake', () => {
-  const scheduleKinds = ['at', 'every', 'cron'] as const satisfies ReadonlyArray<
-    Extract<BotEvent, { type: 'scheduled_wake' }>['scheduleKind']
-  >
-
-  test('renders complete stable context for every supported schedule kind', () => {
-    for (const scheduleKind of scheduleKinds) {
-      const event = {
-        type: 'scheduled_wake',
-        scheduleId: `schedule-${scheduleKind}`,
-        name: '任务检查',
-        scheduleKind,
-        scheduledFor: new Date('2026-07-12T00:01:00.000Z'),
-        intention: '重新评估当前任务是否需要继续',
-        runCount: 2,
-      } satisfies Extract<BotEvent, { type: 'scheduled_wake' }>
-
-      const first = renderBotEvent(event)
-      const second = renderBotEvent(event)
-
-      assert.equal(first, second)
-      assert.deepEqual(JSON.parse(first!), {
-        event: 'notification',
-        id: `schedule:schedule-${scheduleKind}:2`,
-        source: { type: 'schedule', scheduleId: `schedule-${scheduleKind}` },
-        kind: 'schedule_due',
-        priority: 'normal',
-        delivery: 'interrupt',
-        groupKey: `schedule:schedule-${scheduleKind}`,
-        count: 1,
-        occurredAt: '2026-07-12T08:01:00.000+08:00',
-        open: {
-          tool: 'schedule',
-          args: {
-            action: 'get_occurrence',
-            scheduleId: `schedule-${scheduleKind}`,
-            runCount: 2,
-          },
-        },
-        data: {
-          name: '任务检查',
-          scheduleKind,
-          scheduledFor: '2026-07-12T08:01:00.000+08:00',
-          runCount: 2,
-        },
-      })
-      assert.doesNotMatch(first!, /重新评估当前任务是否需要继续/)
-    }
-  })
-
-  test('renders stable structured context with an explicit Beijing timestamp', () => {
-    const rendered = renderBotEvent({
-        type: 'scheduled_wake',
-        scheduleId: 'schedule-1',
-        name: '任务检查',
-        scheduleKind: 'cron',
-        scheduledFor: new Date('2026-07-12T00:01:00.000Z'),
-        intention: '重新评估当前任务是否需要继续',
-        runCount: 2,
-      })
-    const payload = JSON.parse(rendered!)
-    assert.equal(payload.occurredAt, '2026-07-12T08:01:00.000+08:00')
-    assert.deepEqual(payload.open, {
-      tool: 'schedule',
-      args: { action: 'get_occurrence', scheduleId: 'schedule-1', runCount: 2 },
+  test('renders one stable metadata-only notification', () => {
+    const event = {
+      type: 'scheduled_wake',
+      scheduleId: 'schedule-1',
+      name: '任务检查',
+      scheduledFor: new Date('2026-07-12T00:01:00.000Z'),
+    } satisfies Extract<BotEvent, { type: 'scheduled_wake' }>
+    const rendered = renderBotEvent(event)
+    assert.equal(rendered, renderBotEvent(event))
+    assert.deepEqual(JSON.parse(rendered!), {
+      event: 'notification',
+      id: 'schedule:schedule-1',
+      source: { type: 'schedule', scheduleId: 'schedule-1' },
+      kind: 'schedule_due',
+      priority: 'normal',
+      delivery: 'interrupt',
+      groupKey: 'schedule:schedule-1',
+      count: 1,
+      occurredAt: '2026-07-12T08:01:00.000+08:00',
+      open: { tool: 'schedule', args: { action: 'get_occurrence', scheduleId: 'schedule-1' } },
+      data: { name: '任务检查', scheduledFor: '2026-07-12T08:01:00.000+08:00' },
     })
   })
 })
@@ -172,27 +129,6 @@ describe('renderBotEvent — background tasks', () => {
       data: { status: 'completed', elapsedMs: 1234 },
     })
     assert.doesNotMatch(first!, /生成犬娘图片|图片已生成/)
-  })
-})
-
-describe('renderBotEvent — curiosity tick', () => {
-  test('returns the constant tick text', () => {
-    assert.equal(renderBotEvent({ type: 'curiosity_tick' }), CURIOSITY_TICK_TEXT)
-  })
-
-  test('frames curiosity tick as a manual debug wake, not the source of curiosity', () => {
-    const out = renderBotEvent({ type: 'curiosity_tick' })
-
-    assert.match(out!, /人工调试/)
-    assert.match(out!, /不是你好奇心的来源/)
-    assert.doesNotMatch(out!, /例行戳一下/)
-  })
-
-  test('tick text is byte-stable across calls (no time / counter embedded)', () => {
-    const a = renderBotEvent({ type: 'curiosity_tick' })
-    const b = renderBotEvent({ type: 'curiosity_tick' })
-    assert.equal(a, b)
-    assert.ok(a && a.startsWith('[好奇心 tick]'))
   })
 })
 

@@ -264,7 +264,7 @@ export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args
       '受限只读检索工具. cwd=workspace 查看私有工作文件; cwd=repo 查看仓库源码和公开文档.',
       '只允许 pwd/ls/rg/cat/head/tail/wc，直接 spawn 固定 executable，不经过 shell.',
       'repo 禁止读取 .env、.git、data、logs、node_modules 和 prompts/groups.md.',
-      '文件修改使用 workspace_file；数据库、指标、外部内容、聊天风格和金融能力使用各自 typed tool.',
+      '文件修改使用 workspace_file；数据库、指标和仓库维护交给 operator，外部内容、聊天风格和金融使用各自 typed tool.',
     ].join(' '),
     schema: argsSchema,
     async execute(args) {

@@ -90,11 +90,6 @@ export interface InboxReadEffect {
 
 export type ToolEffect =
   | {
-      type: 'pause'
-      /** elapsed 只在休息自然到时后产生；旧调用方未携带 status 时不得推断为自然醒。 */
-      status?: 'elapsed' | 'interrupted'
-    }
-  | {
       type: 'message_sent'
       target: MessageSentTarget
       /** 这次外发后仍有当前会话内的立即工作；仅为下一轮提供进程内行动锚点。 */

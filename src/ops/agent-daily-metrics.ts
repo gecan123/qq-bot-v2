@@ -51,46 +51,6 @@ export interface DailyAgentMetricsReport {
     /** 旧日志没有 effectiveToolNames，或 invoke 缺少合法 target 时无法展开。 */
     unresolvedInvokeCalls: number
   }
-  rest: {
-    requests: number
-    started: number
-    redirected: number
-    confirmationRejected: number
-    confirmed: number
-    elapsed: number
-    interrupted: number
-    requestedSeconds: {
-      total: number
-      average: number | null
-      max: number | null
-    }
-    reasons: {
-      waitingForPersonOrMessage: number
-      completion: number
-      timeOfDay: number
-      marketPolling: number
-      other: number
-    }
-    redirectSources: {
-      recentContext: number
-      agenda: number
-      journal: number
-      wishes: number
-      unknown: number
-    }
-    postRedirect: {
-      observed: number
-      acted: number
-      restedInstead: number
-      unknown: number
-    }
-    postRest: {
-      observed: number
-      acted: number
-      restedAgain: number
-      unknown: number
-    }
-  }
 }
 
 export interface DailyAgentMetricsResult {
@@ -129,30 +89,6 @@ interface MutableDay {
   toolCalls: number
   byTool: Record<string, number>
   unresolvedInvokeCalls: number
-  rest: MutableRestMetrics
-}
-
-interface MutableRestMetrics {
-  started: number
-  redirected: number
-  confirmationRejected: number
-  confirmed: number
-  elapsed: number
-  interrupted: number
-  requestedSecondsTotal: number
-  requestedSecondsMax: number | null
-  reasons: DailyAgentMetricsReport['rest']['reasons']
-  redirectSources: DailyAgentMetricsReport['rest']['redirectSources']
-  postRedirectActed: number
-  postRedirectRestedInstead: number
-  postRedirectUnknown: number
-  awaitingPostRedirectAction: boolean
-  postRestActed: number
-  postRestRestedAgain: number
-  postRestRestedAgainUnverified: number
-  postRestUnknown: number
-  awaitingPostRestAction: boolean
-  toolCompletionEvidenceAvailable: boolean
 }
 
 interface TokenUsageLine {
@@ -170,12 +106,6 @@ interface AppLogLine {
   model?: unknown
   toolNames?: unknown
   effectiveToolNames?: unknown
-  toolName?: unknown
-  ok?: unknown
-  durationSeconds?: unknown
-  reason?: unknown
-  anchorSource?: unknown
-  confirmed?: unknown
 }
 
 interface Accumulator {
@@ -266,7 +196,6 @@ function createAccumulator(dates: readonly string[], excludedModels: readonly st
       toolCalls: 0,
       byTool: {},
       unresolvedInvokeCalls: 0,
-      rest: createRestMetrics(),
     })
   }
 
@@ -302,80 +231,6 @@ function createAccumulator(dates: readonly string[], excludedModels: readonly st
       const day = dayForTimestamp(parsed.time, days)
       if (!day) return
 
-      if (parsed.msg === 'rest_enter') {
-        if (day.rest.awaitingPostRedirectAction) {
-          day.rest.postRedirectRestedInstead++
-          day.rest.awaitingPostRedirectAction = false
-        }
-        if (day.rest.awaitingPostRestAction) {
-          if (day.rest.toolCompletionEvidenceAvailable) {
-            day.rest.postRestRestedAgain++
-          } else {
-            day.rest.postRestRestedAgainUnverified++
-          }
-          day.rest.awaitingPostRestAction = false
-        }
-        day.rest.started++
-        if (parsed.confirmed === true) day.rest.confirmed++
-        const durationSeconds = numeric(parsed.durationSeconds)
-        day.rest.requestedSecondsTotal += durationSeconds
-        day.rest.requestedSecondsMax = Math.max(day.rest.requestedSecondsMax ?? 0, durationSeconds)
-        addRestReason(day.rest, parsed.reason)
-        return
-      }
-      if (parsed.msg === 'rest_redirected') {
-        if (day.rest.awaitingPostRedirectAction) day.rest.postRedirectUnknown++
-        day.rest.redirected++
-        addRedirectSource(day.rest, parsed.anchorSource)
-        day.rest.awaitingPostRedirectAction = true
-        addRestReason(day.rest, parsed.reason)
-        return
-      }
-      if (parsed.msg === 'rest_confirmation_rejected') {
-        day.rest.confirmationRejected++
-        addRestReason(day.rest, parsed.reason)
-        return
-      }
-      if (parsed.msg === 'rest_elapsed') {
-        day.rest.elapsed++
-        if (day.rest.awaitingPostRestAction) day.rest.postRestUnknown++
-        day.rest.awaitingPostRestAction = true
-        return
-      }
-      if (parsed.msg === 'rest_interrupted') {
-        day.rest.interrupted++
-        return
-      }
-      if (parsed.msg === 'round_tool_done') {
-        if (!day.rest.toolCompletionEvidenceAvailable) {
-          day.rest.toolCompletionEvidenceAvailable = true
-          day.rest.postRestRestedAgain += day.rest.postRestRestedAgainUnverified
-          day.rest.postRestRestedAgainUnverified = 0
-        }
-        if (
-          day.rest.awaitingPostRedirectAction
-          && parsed.ok !== false
-          && typeof parsed.toolName === 'string'
-          && parsed.toolName !== 'pause'
-          && parsed.toolName !== 'rest'
-          && parsed.toolName !== 'help'
-        ) {
-          day.rest.postRedirectActed++
-          day.rest.awaitingPostRedirectAction = false
-        }
-        if (
-          day.rest.awaitingPostRestAction
-          && parsed.ok !== false
-          && typeof parsed.toolName === 'string'
-          && parsed.toolName !== 'pause'
-          && parsed.toolName !== 'rest'
-          && parsed.toolName !== 'help'
-        ) {
-          day.rest.postRestActed++
-          day.rest.awaitingPostRestAction = false
-        }
-        return
-      }
       if (parsed.msg !== 'round_llm_done') return
       if (typeof parsed.model === 'string' && excluded.has(parsed.model)) return
 
@@ -429,124 +284,6 @@ function finalizeDay(day: MutableDay): DailyAgentMetricsReport {
         Object.entries(day.byTool).sort(([leftName, left], [rightName, right]) => right - left || leftName.localeCompare(rightName)),
       ),
       unresolvedInvokeCalls: day.unresolvedInvokeCalls,
-    },
-    rest: finalizeRestMetrics(day.rest),
-  }
-}
-
-function createRestMetrics(): MutableRestMetrics {
-  return {
-    started: 0,
-    redirected: 0,
-    confirmationRejected: 0,
-    confirmed: 0,
-    elapsed: 0,
-    interrupted: 0,
-    requestedSecondsTotal: 0,
-    requestedSecondsMax: null,
-    reasons: {
-      waitingForPersonOrMessage: 0,
-      completion: 0,
-      timeOfDay: 0,
-      marketPolling: 0,
-      other: 0,
-    },
-    redirectSources: {
-      recentContext: 0,
-      agenda: 0,
-      journal: 0,
-      wishes: 0,
-      unknown: 0,
-    },
-    postRedirectActed: 0,
-    postRedirectRestedInstead: 0,
-    postRedirectUnknown: 0,
-    awaitingPostRedirectAction: false,
-    postRestActed: 0,
-    postRestRestedAgain: 0,
-    postRestRestedAgainUnverified: 0,
-    postRestUnknown: 0,
-    awaitingPostRestAction: false,
-    toolCompletionEvidenceAvailable: false,
-  }
-}
-
-function addRedirectSource(rest: MutableRestMetrics, rawSource: unknown): void {
-  switch (rawSource) {
-    case 'recent_context':
-      rest.redirectSources.recentContext++
-      break
-    case 'agenda':
-      rest.redirectSources.agenda++
-      break
-    case 'journal':
-      rest.redirectSources.journal++
-      break
-    case 'wishes':
-      rest.redirectSources.wishes++
-      break
-    default:
-      rest.redirectSources.unknown++
-  }
-}
-
-function addRestReason(rest: MutableRestMetrics, rawReason: unknown): void {
-  const reason = typeof rawReason === 'string' ? rawReason : ''
-  let matched = false
-  if (/(?:等|等待|没回|未回|不在线|离线|睡了|睡觉|消息|回复)/i.test(reason)) {
-    rest.reasons.waitingForPersonOrMessage++
-    matched = true
-  }
-  if (/(?:完成|做完|结束|告一段落|收工|没事|无事可做|都处理完)/i.test(reason)) {
-    rest.reasons.completion++
-    matched = true
-  }
-  if (/(?:深夜|凌晨|晚上|中午|天亮|时间晚|该睡|休息时间)/i.test(reason)) {
-    rest.reasons.timeOfDay++
-    matched = true
-  }
-  if (/(?:价格|行情|走势|K\s*线|市场|观察|盯盘|SOL|BTC|ETH)/i.test(reason)) {
-    rest.reasons.marketPolling++
-    matched = true
-  }
-  if (!matched) rest.reasons.other++
-}
-
-function finalizeRestMetrics(rest: MutableRestMetrics): DailyAgentMetricsReport['rest'] {
-  const postRedirectUnknown = rest.postRedirectUnknown + (rest.awaitingPostRedirectAction ? 1 : 0)
-  const postRedirectObserved = rest.postRedirectActed
-    + rest.postRedirectRestedInstead
-    + postRedirectUnknown
-  const unknown = rest.postRestUnknown
-    + rest.postRestRestedAgainUnverified
-    + (rest.awaitingPostRestAction ? 1 : 0)
-  const observed = rest.postRestActed + rest.postRestRestedAgain + unknown
-  return {
-    requests: rest.started + rest.redirected + rest.confirmationRejected,
-    started: rest.started,
-    redirected: rest.redirected,
-    confirmationRejected: rest.confirmationRejected,
-    confirmed: rest.confirmed,
-    elapsed: rest.elapsed,
-    interrupted: rest.interrupted,
-    requestedSeconds: {
-      total: rest.requestedSecondsTotal,
-      average: rest.started > 0 ? round(rest.requestedSecondsTotal / rest.started) : null,
-      max: rest.requestedSecondsMax,
-    },
-    reasons: { ...rest.reasons },
-    redirectSources: { ...rest.redirectSources },
-    postRedirect: {
-      observed: postRedirectObserved,
-      acted: rest.postRedirectActed,
-      restedInstead: rest.postRedirectRestedInstead,
-      unknown: postRedirectUnknown,
-    },
-    postRest: {
-      observed,
-      acted: rest.postRestActed,
-      restedAgain: rest.postRestRestedAgain,
-      unknown,
     },
   }
 }

@@ -4,19 +4,13 @@ import { createLogger } from '../logger.js'
 
 const log = createLogger('EFFECT_INTERPRETER')
 
-const PAUSE_EFFECT_TOOLS = new Set(['pause'])
-
 export interface EffectInterpretation {
-  didPause: boolean
-  didCompleteRest: boolean
   sentTargets: MessageSentTarget[]
   inboxReads?: InboxReadEffect[]
   workContinuationRequested?: true
 }
 
 export function interpretToolEffects(effects: ReactToolEffect[]): EffectInterpretation {
-  let didPause = false
-  let didCompleteRest = false
   const sentTargets: MessageSentTarget[] = []
   const seenSentTargets = new Set<string>()
   const inboxReads = new Map<string, InboxReadEffect>()
@@ -24,18 +18,6 @@ export function interpretToolEffects(effects: ReactToolEffect[]): EffectInterpre
 
   for (const item of effects) {
     switch (item.effect.type) {
-      case 'pause': {
-        if (!PAUSE_EFFECT_TOOLS.has(item.toolName)) {
-          log.warn(
-            { toolName: item.toolName, toolCallId: item.toolCallId, effectType: item.effect.type },
-            'tool_effect_rejected',
-          )
-          break
-        }
-        didPause = true
-        if (item.effect.status === 'elapsed') didCompleteRest = true
-        break
-      }
       case 'message_sent': {
         if (item.toolName !== 'send_message') {
           logRejectedEffect(item, 'untrusted_tool')
@@ -80,8 +62,6 @@ export function interpretToolEffects(effects: ReactToolEffect[]): EffectInterpre
   }
 
   return {
-    didPause,
-    didCompleteRest,
     sentTargets,
     ...(inboxReads.size > 0 ? { inboxReads: [...inboxReads.values()] } : {}),
     ...(workContinuationRequested ? { workContinuationRequested: true } : {}),

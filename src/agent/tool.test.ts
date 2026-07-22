@@ -178,10 +178,10 @@ describe('createToolExecutor', () => {
 
   test('classifies merged memory side effects by action', async () => {
     const writes: string[] = []
-    const memory: Tool<{ action: 'write' | 'search' | 'list' | 'delete' | 'update_entry' | 'delete_entry' | 'promote_entry' | 'compact' }> = {
+    const memory: Tool<{ action: 'remember' | 'recall' | 'correct' }> = {
       name: 'memory',
       description: 'memory',
-      schema: z.object({ action: z.enum(['write', 'search', 'list', 'delete', 'update_entry', 'delete_entry', 'promote_entry', 'compact']) }),
+      schema: z.object({ action: z.enum(['remember', 'recall', 'correct']) }),
       async execute() {
         return { content: JSON.stringify({ ok: true }) }
       },
@@ -196,23 +196,13 @@ describe('createToolExecutor', () => {
       },
     })
 
-    await exec.execute({ id: 'write', name: 'memory', args: { action: 'write' } }, makeCtx())
-    await exec.execute({ id: 'search', name: 'memory', args: { action: 'search' } }, makeCtx())
-    await exec.execute({ id: 'list', name: 'memory', args: { action: 'list' } }, makeCtx())
-    await exec.execute({ id: 'delete', name: 'memory', args: { action: 'delete' } }, makeCtx())
-    await exec.execute({ id: 'update', name: 'memory', args: { action: 'update_entry' } }, makeCtx())
-    await exec.execute({ id: 'delete-entry', name: 'memory', args: { action: 'delete_entry' } }, makeCtx())
-    await exec.execute({ id: 'promote-entry', name: 'memory', args: { action: 'promote_entry' } }, makeCtx())
-    await exec.execute({ id: 'compact', name: 'memory', args: { action: 'compact' } }, makeCtx())
+    await exec.execute({ id: 'remember', name: 'memory', args: { action: 'remember' } }, makeCtx())
+    await exec.execute({ id: 'recall', name: 'memory', args: { action: 'recall' } }, makeCtx())
+    await exec.execute({ id: 'correct', name: 'memory', args: { action: 'correct' } }, makeCtx())
 
     assert.equal(JSON.parse(writes[0]!).sideEffect, true)
     assert.equal(JSON.parse(writes[1]!).sideEffect, false)
-    assert.equal(JSON.parse(writes[2]!).sideEffect, false)
-    assert.equal(JSON.parse(writes[3]!).sideEffect, true)
-    assert.equal(JSON.parse(writes[4]!).sideEffect, true)
-    assert.equal(JSON.parse(writes[5]!).sideEffect, true)
-    assert.equal(JSON.parse(writes[6]!).sideEffect, true)
-    assert.equal(JSON.parse(writes[7]!).sideEffect, true)
+    assert.equal(JSON.parse(writes[2]!).sideEffect, true)
   })
 
   test('classifies fetch_content image actions as side effects', async () => {

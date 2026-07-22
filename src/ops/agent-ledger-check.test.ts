@@ -54,7 +54,6 @@ function compaction(
     isSplitTurn: false,
     previousCompactionEntryId: previousCompactionEntryId?.toString() ?? null,
     mailboxAttentionState: {},
-    restResumeState: null,
   }
   return { id, entryType: 'compaction', payload, createdAt }
 }

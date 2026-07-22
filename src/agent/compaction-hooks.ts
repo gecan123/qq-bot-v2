@@ -9,7 +9,6 @@ export type BeforeCompactResult =
 export interface BeforeCompactEvent {
   preparation: ReadyCompactionPreparation
   reason: CompactionReason
-  manualFocus?: string
   signal: AbortSignal
 }
 

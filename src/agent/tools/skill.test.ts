@@ -134,7 +134,7 @@ describe('skill tool', () => {
     }
   })
 
-  test('memory hygiene skill describes autonomous consolidation before permanent deletion', async () => {
+  test('memory hygiene skill keeps the main Agent on the three-action interface', async () => {
     const tool = createSkillTool()
 
     const loaded = JSON.parse((await tool.execute({
@@ -144,8 +144,8 @@ describe('skill tool', () => {
 
     assert.equal(loaded.ok, true)
     assert.match(loaded.content, /memory.*action=recall/s)
-    assert.match(loaded.content, /memory.*action=review/s)
-    assert.match(loaded.content, /promote_entry.*update_entry.*compact.*delete_entry/s)
+    assert.match(loaded.content, /remember \/ recall \/ correct/)
+    assert.match(loaded.content, /review、promote、merge、compact.*内部 maintenance/s)
     assert.match(loaded.content, /maintenance lane/)
     assert.match(loaded.content, /不按固定时间/)
   })

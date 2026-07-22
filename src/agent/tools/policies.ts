@@ -41,7 +41,7 @@ function byAction(input: {
  * 构造直接失败，避免并发白名单和副作用日志各自漂移。
  */
 export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.freeze({
-  pause: fixed(EXCLUSIVE_READ),
+  yield: fixed(EXCLUSIVE_READ),
   qq_directory: fixed(PARALLEL_READ),
   background_task: byAction({ parallel: ['list', 'get'] }),
   schedule: byAction({ parallel: ['list', 'get_occurrence'], sideEffect: ['create', 'cancel'] }),
@@ -52,17 +52,8 @@ export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.fr
   }),
   skill: fixed(PARALLEL_READ),
   memory: byAction({
-    parallel: ['search', 'recall', 'review', 'read', 'list'],
-    sideEffect: [
-      'write',
-      'delete',
-      'update_entry',
-      'delete_entry',
-      'promote_entry',
-      'mark_disputed',
-      'supersede_entry',
-      'compact',
-    ],
+    parallel: ['recall'],
+    sideEffect: ['remember', 'correct'],
   }),
   inbox: fixed(PARALLEL_READ),
   collect_sticker: byAction({

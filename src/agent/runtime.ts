@@ -12,7 +12,6 @@ import { createSendTargetPolicy } from './send-target-policy.js'
 import { createDeferredToolExecutor, type ToolExecutor } from './tool.js'
 import {
   createGenerateImageTaskLogHook,
-  createSendMessageAiToneHook,
   createSendMessageSafetyGuard,
   createSendMessageWorkCommitmentHook,
 } from './tool-policy-hooks.js'
@@ -257,7 +256,6 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
           getCurrentGoal: async () => await input.goalStore?.get() ?? null,
         }),
         sendMessageSafetyGuard.beforeTool,
-        createSendMessageAiToneHook({ getCurrentTarget: getCurrentQqTarget }),
       ],
       afterTool: [sendMessageSafetyGuard.afterTool, createGenerateImageTaskLogHook()],
     },

@@ -163,6 +163,7 @@ export interface MemoryRecallResult {
   ok: true
   matches: Array<{
     file: string
+    revision: string
     scope: MemoryScope
     title: string
     updatedAt: string | null
@@ -508,6 +509,7 @@ export async function recallMemoryEntries(
       if (score < MIN_RECALL_SCORE) continue
       matches.push({
         file,
+        revision: revisionOf(raw),
         scope: parsed.scope,
         title: parsed.title,
         updatedAt: entry.updatedAt,

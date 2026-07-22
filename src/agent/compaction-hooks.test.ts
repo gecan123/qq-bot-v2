@@ -8,8 +8,7 @@ describe('compaction hooks', () => {
   test('beforeCompact can continue, cancel, or provide a custom summary', async () => {
     const event = {
       preparation: {} as ReadyCompactionPreparation,
-      reason: 'manual' as const,
-      manualFocus: 'tools',
+      reason: 'threshold' as const,
       signal: new AbortController().signal,
     }
 

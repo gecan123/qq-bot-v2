@@ -160,7 +160,7 @@ describe('createAgentRuntime', () => {
 
     assert.match(runtime.systemPrompt, /测试群/)
     assert.deepEqual(runtime.tools.list().map((tool) => tool.name), [
-      'pause',
+      'yield',
       'qq_directory',
       'background_task',
       'approval',
@@ -212,27 +212,17 @@ describe('createAgentRuntime', () => {
     })
     assert.equal(JSON.parse(scheduleList.content as string).ok, true)
 
-    const pauseQueue = new InMemoryEventQueue<BotEvent>()
-    pauseQueue.enqueue({ type: 'wake' })
-    const pauseResult = await runtime.tools.execute({
-      id: 'pause-1',
-      name: 'pause',
-      args: {
-        action: 'rest',
-        durationSeconds: 30,
-        reason: '刚完成一段活动，想短暂停一下',
-        intention: {
-          primaryDirection: '读一篇具体论文的摘要',
-          alternativeDirection: '复核一条已有研究假设',
-        },
-      },
+    const yieldResult = await runtime.tools.execute({
+      id: 'yield-1',
+      name: 'yield',
+      args: { reason: '当前没有待处理行动' },
     }, {
-      eventQueue: pauseQueue,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
       roundIndex: 1,
     })
-    const pausePayload = JSON.parse(pauseResult.content as string)
-    assert.equal(pausePayload.status, 'interrupted')
-    assert.deepEqual(pauseResult.effects, [{ type: 'pause', status: 'interrupted' }])
+    const yieldPayload = JSON.parse(yieldResult.content as string)
+    assert.equal(yieldPayload.status, 'yielded')
+    assert.equal(yieldResult.effects, undefined)
     await runtime.stopBackgroundServices()
     assert.equal(scheduleStops, 1)
   })
@@ -368,7 +358,7 @@ describe('createAgentRuntime', () => {
         action: 'create',
         name: 'follow-up',
         intention: '结合最新上下文重新检查进展',
-        schedule: { kind: 'at', afterSeconds: 30 },
+        afterSeconds: 30,
       })
       assert.deepEqual(beforeStart.outcome, { ok: false, code: 'not_started' })
 
@@ -377,7 +367,7 @@ describe('createAgentRuntime', () => {
         action: 'create',
         name: 'follow-up',
         intention: '结合最新上下文重新检查进展',
-        schedule: { kind: 'at', afterSeconds: 30 },
+        afterSeconds: 30,
       })
       assert.deepEqual(created.outcome, { ok: true, code: 'created' })
 
@@ -411,7 +401,7 @@ describe('createAgentRuntime', () => {
         && error.cause.name === 'ScheduleRuntimeError',
     )
 
-    await writeFile(scheduleStatePath, '{"version":1,"schedules":[]}', 'utf8')
+    await writeFile(scheduleStatePath, '{"version":2,"schedules":[]}', 'utf8')
     await runtime.startBackgroundServices()
     await runtime.stopBackgroundServices()
   })
@@ -489,19 +479,16 @@ describe('createAgentRuntime', () => {
     tempDirs.push(dir)
     const scheduleStatePath = join(dir, 'schedules.json')
     const now = Date.now()
-    const createdAt = new Date(now - 60_000)
+    const createdAt = new Date(now - 61_000)
     const scheduledFor = new Date(now - 1_000)
     await writeFile(scheduleStatePath, JSON.stringify({
-      version: 1,
+      version: 2,
       schedules: [{
         id: 'log-schedule',
         name: 'logger wiring',
         intention: 'must not be logged',
-        schedule: { kind: 'at', at: scheduledFor.toISOString() },
+        at: scheduledFor.toISOString(),
         createdAt: createdAt.toISOString(),
-        expiresAt: new Date(createdAt.getTime() + 3 * 24 * 60 * 60_000).toISOString(),
-        nextRunAt: scheduledFor.toISOString(),
-        runCount: 0,
       }],
     }), 'utf8')
     const entries: ScheduleRuntimeLogEntry[] = []
@@ -513,6 +500,8 @@ describe('createAgentRuntime', () => {
     })
 
     await runtime.startBackgroundServices()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await executeSchedule(runtime, { action: 'list' })
 
     assert.equal(entries.length, 1)
     assert.equal(entries[0]?.event, 'schedule_event_enqueue_failed')

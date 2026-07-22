@@ -17,9 +17,9 @@ const dummyTool: Tool = {
   execute: async () => ({ content: 'ok' }),
 }
 
-const pauseTool: Tool = {
-  name: 'pause',
-  description: '短休息',
+const yieldTool: Tool = {
+  name: 'yield',
+  description: '交回控制权',
   schema: z.object({}),
   execute: async () => ({ content: 'ok' }),
 }
@@ -279,7 +279,7 @@ describe('buildClaudeCodeRequestBody', () => {
       model: 'claude-sonnet-4-5',
       systemPrompt: 's',
       messages: [{ role: 'user', content: 'h' }],
-      tools: [dummyTool, pauseTool],
+      tools: [dummyTool, yieldTool],
     })
     assert.deepEqual(body.tool_choice, { type: 'any' })
     assert.ok(Array.isArray(body.tools))
@@ -474,20 +474,20 @@ describe('buildClaudeCodeRequestBody', () => {
       {
         role: 'assistant',
         content: '',
-        toolCalls: [{ id: 'call_1', name: 'pause', args: { action: 'rest' } }],
+        toolCalls: [{ id: 'call_1', name: 'yield', args: {} }],
       },
-      { role: 'tool', toolCallId: 'call_1', content: '[休息结束] 已休息约 30 秒。' },
+      { role: 'tool', toolCallId: 'call_1', content: '{"status":"yielded"}' },
     ]
     const body = buildClaudeCodeRequestBody({
       model: 'claude-sonnet-4-5',
       systemPrompt: 's',
       messages,
-      tools: [pauseTool],
+      tools: [yieldTool],
     })
     assert.equal(body.messages.length, 2)
     assert.deepEqual(body.messages[1], {
       role: 'user',
-      content: [{ type: 'tool_result', tool_use_id: 'call_1', content: '[休息结束] 已休息约 30 秒。', cache_control: { type: 'ephemeral', ttl: '1h' } }],
+      content: [{ type: 'tool_result', tool_use_id: 'call_1', content: '{"status":"yielded"}', cache_control: { type: 'ephemeral', ttl: '1h' } }],
     })
   })
 

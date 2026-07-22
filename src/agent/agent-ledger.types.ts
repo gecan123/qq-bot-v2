@@ -11,12 +11,7 @@ import type { InboxReadCursors } from './inbox-read-cursors.js'
 export const AGENT_LEDGER_SCHEMA_VERSION = 1 as const
 export const AGENT_RUNTIME_STATE_SCHEMA_VERSION = 4 as const
 
-export type CompactionReason = 'threshold' | 'overflow' | 'manual'
-
-export interface RestResumeCompactionState {
-  emittedAt: string
-  nonPauseActionSince: boolean
-}
+export type CompactionReason = 'threshold' | 'overflow'
 
 export interface MessageLedgerPayload {
   schemaVersion: typeof AGENT_LEDGER_SCHEMA_VERSION
@@ -33,8 +28,6 @@ export interface CompactionLedgerPayload {
   isSplitTurn: boolean
   previousCompactionEntryId: string | null
   mailboxAttentionState: MailboxAttentionState
-  restResumeState: RestResumeCompactionState | null
-  manualFocus?: string
 }
 
 export interface MessageAgentLedgerEntry {

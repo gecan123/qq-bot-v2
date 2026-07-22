@@ -84,12 +84,12 @@ flowchart LR
 
 ### Memory
 
-- scope 为 `self|person|group|topic`。`self` 与 `topic` 分别只有 `self/self.md`、`topics/topics.md` 两个 canonical 文件；write 的 title 作为 entry alias 参与 recall，不决定文件路径。Memory v2 把人物主体与观察场景正交建模：跨场景人物核心位于 `people/<qq>/core.md`，群内观察位于 `people/<qq>/groups/<group>.md`，私聊观察位于 `people/<qq>/private/<peer>.md`；`groups/<group>.md` 只保存群体整体。无法还原场景的旧人物事实进入 `people/<qq>/unscoped.md` 隔离区，不参与普通人物 recall。
+- scope 为 `self|person|group|topic`。主 Agent 只使用 `remember|recall|correct`。`self` 与 `topic` 分别只有 `self/self.md`、`topics/topics.md` 两个 canonical 文件；remember 的 title 作为 entry alias 参与 recall，不决定文件路径。Memory v2 把人物主体与观察场景正交建模：跨场景人物核心位于 `people/<qq>/core.md`，群内观察位于 `people/<qq>/groups/<group>.md`，私聊观察位于 `people/<qq>/private/<peer>.md`；`groups/<group>.md` 只保存群体整体。无法还原场景的旧人物事实进入 `people/<qq>/unscoped.md` 隔离区，不参与普通人物 recall。
 - 每个 entry 带稳定 ID、北京时间、`sourceMessageIds`、`assertedByIds`、`evidenceKind`、语义 `memoryKind` 和 `tier=recent|stable`。人物与群文件都保留“谁说的、在哪个场景说的”，subject 不再与 claimant 混为一谈。
-- 普通 write 先生成 recent；完全相同内容在同文件内去重。
-- person/group 的 write、update 和 correction 必须引用真实存在的 `Message.id`；runtime 从消息行推导 context、claimant 和 `self_report|owner_assertion|third_party_report`，不会要求“关于某人的证据必须由本人发送”。普通人物写入总是先落来源场景，不会直接升级成 core。群写入只接受同群来源，并只允许 `group_*` 语义；个人职业、偏好、身份仍归 person。`correct_entry` 用一次 revision-checked 原子写 supersede 旧 entry 并创建 replacement。
-- `recall` 做确定性 lexical scoring。person recall 必须提供 QQ `id` 和当前 `group|private` context，只读取 `people/<id>/core.md` 与当前场景文件；不会把另一个群里的观察混进来。group recall 只读取 `groups/<id>.md`。`self|topic` recall 禁止提供 `id`；scope 和 id 都不传时保留跨范围探索。`search` 只做宽泛文件发现，`review` 只给重复/冲突候选。
-- `compact` 和自动 `merge` 产生新的 stable entry，并把原 entry 标为 `superseded` 后保留，使 `supersedes` 始终可解析；已 superseded 内容不参与 search、recall、review 或 maintenance 阈值。
+- 普通 remember 先生成 recent；完全相同内容在同文件内去重。
+- person/group 的 remember 和 correct 必须引用真实存在的 `Message.id`；runtime 从消息行推导 context、claimant 和 `self_report|owner_assertion|third_party_report`，不会要求“关于某人的证据必须由本人发送”。普通人物写入总是先落来源场景，不会直接升级成 core。群写入只接受同群来源，并只允许 `group_*` 语义；个人职业、偏好、身份仍归 person。`correct` 用 recall 返回的 entry ID 与文件 revision，原子 supersede 旧 entry 并创建 replacement。
+- `recall` 做确定性 lexical scoring。person recall 必须提供 QQ `id` 和当前 `group|private` context，只读取 `people/<id>/core.md` 与当前场景文件；不会把另一个群里的观察混进来。group recall 只读取 `groups/<id>.md`。`self|topic` recall 禁止提供 `id`；scope 和 id 都不传时保留跨范围探索。
+- review、promote、merge、discard 和 compact 属于内部 maintenance 或 deferred admin，不暴露给主 Agent。maintenance 产生新的 stable entry 时保留 supersedes 链；已 superseded 内容不参与 recall 或 maintenance 阈值。
 - 显式 mutation 和自动 maintenance 都使用文件 revision；stable 不会被自动 discard。
 
 ### Notebook
@@ -110,7 +110,7 @@ flowchart LR
 
 - 单文件 `life/agenda.md` 表示“现在仍有效的状态”，不是 append-only 历史。
 - 主 Agent 显式修改时必须先 read，再带最新 revision 覆盖完整 Agenda。
-- 异步 Life review 会读取 Agenda，也可能更新它。`pause` 不读取 Agenda 或 Journal，也不会同步请求额外 LLM；没有牵引力时由主循环以无工具轮自然结束活动。
+- 异步 Life review 会读取 Agenda，也可能更新它。`yield` 不读取 Agenda 或 Journal，也不会同步请求额外 LLM；没有牵引力时由主循环以无工具轮或 yield 结束当前活动。
 
 ## 读取与披露
 

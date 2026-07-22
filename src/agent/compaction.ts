@@ -15,7 +15,6 @@ import {
   type CompactionLedgerPayload,
   type CompactionReason,
   type MessageAgentLedgerEntry,
-  type RestResumeCompactionState,
 } from './agent-ledger.types.js'
 import {
   estimateEntryTokens,
@@ -51,7 +50,6 @@ export interface ReadyCompactionPreparation {
   tokensBefore: number
   estimatedTailTokens: number
   previousCompaction: CompactionAgentLedgerEntry | null
-  manualFocus?: string
 }
 
 export interface CannotCompactPreparation {
@@ -112,7 +110,7 @@ export function selectCompactionCacheBreakpointMessageIndex(
 
 /**
  * 只做确定性切点准备，不调用 LLM、不写 ledger，也不修改 AgentContext。
- * threshold 使用严格大于；overflow/manual 由调用方显式触发。
+ * threshold 使用严格大于；overflow 由上下文溢出显式触发。
  */
 export function prepareCompaction(input: {
   entries: readonly AgentLedgerEntry[]
@@ -123,7 +121,6 @@ export function prepareCompaction(input: {
   reserveTokens: number
   keepRecentTokens: number
   reason: CompactionReason
-  manualFocus?: string
 }): CompactionPreparation | null {
   validatePreparationNumbers(input)
   const triggerTokens = Math.max(0, input.contextWindowTokens - input.reserveTokens)
@@ -199,7 +196,6 @@ export function prepareCompaction(input: {
     tokensBefore: input.contextTokens,
     estimatedTailTokens: tailUnits.reduce((sum, unit) => sum + unit.tokens, 0),
     previousCompaction,
-    ...(input.manualFocus === undefined ? {} : { manualFocus: input.manualFocus }),
   }
 }
 
@@ -216,16 +212,12 @@ export async function createCompactionCandidate(input: {
   signal?: AbortSignal
   maxSummaryTokens?: number
   mailboxAttentionState?: MailboxAttentionState
-  restResumeState?: RestResumeCompactionState | null
 }): Promise<CompactionCandidateResult> {
   const hooks = input.hooks ?? {}
   const signal = input.signal ?? new AbortController().signal
   const beforeResult = await runBeforeCompactHook(hooks, {
     preparation: input.preparation,
     reason: input.preparation.reason,
-    ...(input.preparation.manualFocus === undefined
-      ? {}
-      : { manualFocus: input.preparation.manualFocus }),
     signal,
   })
   if (beforeResult.action === 'cancel') {
@@ -245,9 +237,6 @@ export async function createCompactionCandidate(input: {
       previousSummary,
       entries: historyEntries,
       kind: 'history',
-      ...(input.preparation.manualFocus === undefined
-        ? {}
-        : { manualFocus: input.preparation.manualFocus }),
     }), { signal })
     if (signal.aborted) return { status: 'cancelled', reason: 'aborted' }
     if (input.preparation.isSplitTurn) {
@@ -255,9 +244,6 @@ export async function createCompactionCandidate(input: {
         previousSummary: null,
         entries: filterSummarizerMachineState(input.preparation.splitTurnPrefixEntries),
         kind: 'split_turn_prefix',
-        ...(input.preparation.manualFocus === undefined
-          ? {}
-          : { manualFocus: input.preparation.manualFocus }),
       }), { signal })
       rawSummary = combineSplitTurnSummary(mainSummary, prefixSummary)
     } else {
@@ -305,10 +291,6 @@ export async function createCompactionCandidate(input: {
     isSplitTurn: input.preparation.isSplitTurn,
     previousCompactionEntryId: input.preparation.previousCompaction?.id.toString() ?? null,
     mailboxAttentionState,
-    restResumeState: input.restResumeState ?? null,
-    ...(input.preparation.manualFocus === undefined
-      ? {}
-      : { manualFocus: input.preparation.manualFocus }),
   }
 
   const expectedHead = input.preparation.expectedHeadEntryId
@@ -532,7 +514,6 @@ export async function summarizeCachedClaudeCompaction(input: {
   systemPrompt: string
   messages: readonly AgentMessage[]
   tools: readonly Tool[]
-  manualFocus?: string
   maxSummaryTokens?: number
   signal?: AbortSignal
 }): Promise<string> {
@@ -541,10 +522,7 @@ export async function summarizeCachedClaudeCompaction(input: {
     ?? DEFAULT_COMPACTION_SUMMARY_MAX_TOKENS
   const controlMessage: AgentMessage = {
     role: 'user',
-    content: renderCachedClaudeCompactionControl({
-      ...(input.manualFocus == null ? {} : { manualFocus: input.manualFocus }),
-      maxSummaryTokens,
-    }),
+    content: renderCachedClaudeCompactionControl({ maxSummaryTokens }),
   }
   const prefixMessages = input.messages.map((message) => structuredClone(message))
   const result = await input.llm.chat({

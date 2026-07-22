@@ -6,6 +6,8 @@ import {
   createPrismaAgentLedgerCheckSource,
   type AgentLedgerCheckPrismaClient,
 } from '../src/ops/agent-ledger-check.js'
+import { createLlmClient } from '../src/agent/llm-client.js'
+import { runPersonaSpoofSelfTest } from '../src/agent/persona-spoof-self-test.js'
 
 const paths = [
   'AGENTS.md',
@@ -26,6 +28,7 @@ for (const path of paths) {
 const local = runAgentDoctor({ files, env: process.env })
 let ledger: Awaited<ReturnType<typeof checkAgentLedger>> | null = null
 let ledgerError: string | null = null
+let personaSpoof: { ok: boolean; model?: string; sample?: string; error?: string } | null = null
 if (local.ok) {
   let prisma: typeof import('../src/database/client.js')['prisma'] | null = null
   try {
@@ -39,15 +42,35 @@ if (local.ok) {
   } finally {
     await prisma?.$disconnect()
   }
+
+  if (process.env.LLM_DEFAULT_PROVIDER?.trim().toLowerCase() === 'claude-code') {
+    try {
+      const probe = await runPersonaSpoofSelfTest(createLlmClient(), {
+        attempts: 3,
+        delayMs: 1_000,
+      })
+      personaSpoof = {
+        ok: true,
+        model: probe.model,
+        sample: probe.content.slice(0, 40),
+      }
+    } catch (error) {
+      personaSpoof = {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
 } else {
   ledgerError = 'ledger check skipped until local doctor errors are fixed'
 }
 
 const result = {
   ...local,
-  ok: local.ok && ledger?.ok === true,
+  ok: local.ok && ledger?.ok === true && personaSpoof?.ok !== false,
   ledger,
   ledgerError,
+  personaSpoof,
 }
 
 console.log(JSON.stringify(result, null, 2))

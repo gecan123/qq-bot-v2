@@ -7,7 +7,7 @@ import { collectStickerTool } from './tools/collect-sticker.js'
 import { createGenerateImageTool } from './tools/generate-image.js'
 import { notebookTool } from './tools/notebook.js'
 import { memoryTool } from './tools/memory.js'
-import { pauseTool } from './tools/pause.js'
+import { yieldTool } from './tools/yield.js'
 import { createScheduleTool } from './tools/schedule.js'
 import { createSendMessageTool } from './tools/send-message.js'
 import type { ScheduleRuntime } from './schedule-runtime.js'
@@ -63,9 +63,9 @@ test('tool schemas disclose custom validation constraints that JSON Schema canno
 
   const memoryJson = zodToToolJsonSchema(memoryTool.schema)
   const memoryProps = memoryJson.properties as Record<string, Record<string, unknown>>
-  assert.match(String(memoryProps.file.description), /memory 内的 \.md 相对路径/)
-  assert.match(String(memoryProps.file.description), /不允许绝对路径、反斜杠或 \.\./)
-  assert.match(String(memoryProps.replacementEntryId.description), /action=supersede_entry 时必填/)
+  assert.deepEqual(memoryProps.action.enum, ['remember', 'recall', 'correct'])
+  assert.match(String(memoryProps.action.description), /action=correct 时必须提供 file, entryId, expectedRevision, content/)
+  assert.match(String(memoryProps.file.description), /recall 命中项/)
   assert.equal('trust' in memoryProps, false)
 })
 
@@ -135,30 +135,17 @@ test('zodToOpenAIStrictToolJsonSchema makes optional object fields required and 
   })
 })
 
-test('zodToOpenAIStrictToolJsonSchema keeps pause schema strict and rest-only', () => {
-  const json = zodToOpenAIStrictToolJsonSchema(pauseTool.schema)
+test('zodToOpenAIStrictToolJsonSchema keeps yield schema strict and small', () => {
+  const json = zodToOpenAIStrictToolJsonSchema(yieldTool.schema)
 
   assert.equal(json.type, 'object')
   assert.equal('oneOf' in json, false)
   assert.equal('anyOf' in json, false)
-  assert.deepEqual(json.required, ['action', 'durationSeconds', 'reason', 'intention'])
+  assert.deepEqual(json.required, ['reason'])
 
   const props = json.properties as Record<string, Record<string, unknown>>
-  assert.equal(props.action.const, 'rest')
-  assert.equal(props.intention.type, 'object')
-  assert.deepEqual(props.intention.required, ['primaryDirection', 'alternativeDirection'])
-  const intentionProps = props.intention.properties as Record<string, Record<string, unknown>>
-  assert.equal(intentionProps.primaryDirection.type, 'string')
-  assert.equal(intentionProps.alternativeDirection.type, 'string')
-  assert.equal('waitingDirection' in intentionProps, false)
-  assert.deepEqual(props.durationSeconds, {
-    default: 60,
-    description: '自己安排的短休息秒数, 默认 60, 范围 30..600.',
-    type: 'integer',
-    minimum: 30,
-    maximum: 600,
-  })
-  assert.equal('confirmed' in props, false)
+  assert.ok(Array.isArray(props.reason.anyOf))
+  assert.deepEqual(Object.keys(props), ['reason'])
 })
 
 test('zodToOpenAIStrictToolJsonSchema removes unsupported string formats', () => {
@@ -192,9 +179,7 @@ test('schedule schema converts for both providers with actions and both at varia
     assert.equal(json.type, 'object')
     const props = json.properties as Record<string, Record<string, unknown>>
     assert.deepEqual(props.action.enum, ['create', 'list', 'get_occurrence', 'cancel'])
-    const serializedSchedule = JSON.stringify(props.schedule)
-    assert.match(serializedSchedule, /\"at\"/)
-    assert.match(serializedSchedule, /afterSeconds/)
-    assert.equal(serializedSchedule.match(/\"const\":\"at\"/g)?.length, 2)
+    assert.match(JSON.stringify(props.at), /afterSeconds/)
+    assert.match(JSON.stringify(props.afterSeconds), /at/)
   }
 })

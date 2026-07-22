@@ -3,7 +3,7 @@ import type { MessageSender } from '../../messaging/message-sender.js'
 import type { BackgroundTaskRegistry } from '../background-task-registry.js'
 import type { GroupPolicy } from '../../config/group-policies.js'
 import type { TargetMetadataMaps } from '../resolve-target-meta.js'
-import { createPauseTool } from './pause.js'
+import { createYieldTool } from './yield.js'
 import { createSendMessageTool } from './send-message.js'
 import { maybeCreateWebSearchTool } from './web-search.js'
 import { createGenerateImageTool } from './generate-image.js'
@@ -20,7 +20,6 @@ import { createInboxTool } from './inbox.js'
 import { createChatStyleTool } from './chat-style.js'
 import { createNotebookTool } from './notebook.js'
 import { createLifeJournalTool } from './life-journal.js'
-import { skillEditorTool } from './skill-editor.js'
 import { workspaceFileTool } from './workspace-file.js'
 import { createReadFileTool } from './read-file.js'
 import { createInspectMediaTool } from './inspect-media.js'
@@ -44,10 +43,7 @@ import type { LoadMemorySourceEvidence } from '../memory-evidence.js'
 import { createQqConversationTool, type QqConversationController } from './qq-conversation.js'
 import { applyBotToolPolicy } from './policies.js'
 import type { InboxReadCursors } from '../inbox-read-cursors.js'
-import { createGhTool } from './gh.js'
-import { createDbTool } from './db.js'
 import { maybeCreateMoomooSkillTool } from './moomoo-skill.js'
-import { createMetricsTool } from './metrics.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -129,7 +125,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     metadata: deps.metadata,
     groupPolicies: deps.groupPolicies,
   })
-  const pause = createPauseTool()
+  const yieldControl = createYieldTool()
   const schedule = createScheduleTool(deps.scheduleRuntime)
   const notebook = createNotebookTool({
     rootDir: deps.workspaceDir,
@@ -141,10 +137,8 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   })
   const collectSticker = collectStickerTool
   const workspaceBash = createWorkspaceBashTool({ workspaceDir: deps.workspaceDir })
-  const db = createDbTool({ groupIdWhitelist: deps.groupIds })
-  const gh = createGhTool()
   const tools: Tool[] = [
-    pause,
+    yieldControl,
     qqDirectory,
     backgroundTask,
     ...(deps.approvalManager ? [createApprovalTool(deps.approvalManager)] : []),
@@ -163,12 +157,6 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   const capabilities: DeferredToolCapability[] = []
 
   capabilities.push({
-    name: 'github',
-    description: '只读查看 GitHub 仓库：仓库概况、文件树、单文件内容和代码搜索。底层使用本机 gh，不接受原始命令，也不能修改 GitHub 状态。',
-    tools: [gh],
-  })
-
-  capabilities.push({
     name: 'qq',
     description: 'QQ 会话导航与发送；先打开当前会话，再通过 invoke 发送文本、图片或音乐.',
     tools: [qqConversation, sendMessage],
@@ -177,7 +165,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   capabilities.push(
     {
       name: 'short_term_scheduling',
-      description: '未来三天内的一次性或短周期重新唤醒；scheduled wake 只是重新评估信号，不用于等回复或机械轮询.',
+      description: '未来三天内的一次性重新唤醒；scheduled wake 只是重新评估信号，不用于等回复或机械轮询.',
       tools: [schedule],
     },
     {
@@ -253,24 +241,9 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
       tools: [workspaceFileTool, workspaceBash],
     },
     {
-      name: 'database_read',
-      description: '只读查询允许范围内的 Bot 数据库事实；使用固定 schema/query action，SQL 经过只读校验、参数化与结果上限约束.',
-      tools: [db],
-    },
-    {
-      name: 'diagnostics',
-      description: '按自然日读取 Bot 自身的 token/cache、工具调用和休息指标。',
-      tools: [createMetricsTool()],
-    },
-    {
       name: 'document_reading',
       description: '读取 QQ 收到的文件: 从 inbox 的 file mediaId 提取纯文本、PDF、Office 或 OpenDocument 内容并分页查看.',
       tools: [createReadFileTool()],
-    },
-    {
-      name: 'skill_management',
-      description: '同类多步规则反复出现、现有 skill 未覆盖且能写清使用与排除边界时，创建、校验并安装运行时 skill；一次性任务、临时笔记和当前执行状态不要做成 skill.',
-      tools: [skillEditorTool],
     },
     {
       name: 'media_inspection',

@@ -189,7 +189,7 @@ describe('merged main-agent tools', () => {
     assert.ok(names.includes('memory'))
     assert.ok(names.includes('goal'))
     assert.ok(names.includes('inbox'))
-    assert.ok(names.includes('pause'))
+    assert.ok(names.includes('yield'))
     assert.ok(names.includes('skill'))
     assert.ok(names.includes('help'))
     assert.ok(names.includes('invoke'))
@@ -266,7 +266,7 @@ describe('merged main-agent tools', () => {
       const lifeJournal = findManifestTool(manifest, 'life_journal')
 
       await memory.execute({
-        action: 'write',
+        action: 'remember',
         scope: 'self',
         title: 'runtime-wiring',
         content: '共享 coordinator',
@@ -345,6 +345,7 @@ describe('merged main-agent tools', () => {
     assert.equal(alwaysOnNames.includes('life_journal'), false)
     assert.equal(alwaysOnNames.includes('collect_sticker'), false)
     assert.ok(alwaysOnNames.includes('memory'))
+    assert.ok(alwaysOnNames.includes('yield'))
     assert.ok(alwaysOnNames.includes('goal'))
     assert.ok(alwaysOnNames.includes('chat_style'))
     assert.equal(alwaysOnNames.includes('ai_tone'), false)
@@ -354,13 +355,12 @@ describe('merged main-agent tools', () => {
     assert.deepEqual(capabilities.get('life_state'), ['notebook', 'life_journal'])
     assert.deepEqual(capabilities.get('sticker_management'), ['collect_sticker'])
     assert.deepEqual(capabilities.get('workspace_management'), ['workspace_file', 'workspace_bash'])
-    assert.deepEqual(capabilities.get('database_read'), ['db'])
-    assert.deepEqual(capabilities.get('diagnostics'), ['metrics'])
+    assert.equal(capabilities.has('database_read'), false)
+    assert.equal(capabilities.has('diagnostics'), false)
     assert.deepEqual(capabilities.get('qq'), ['qq_conversation', 'send_message'])
-    assert.deepEqual(capabilities.get('github'), ['gh'])
+    assert.equal(capabilities.has('github'), false)
     assert.deepEqual(capabilities.get('document_reading'), ['read_file'])
-    assert.deepEqual(capabilities.get('skill_management'), ['skill_editor'])
-    assert.match(capabilityDescriptions.get('skill_management') ?? '', /多步规则反复出现.*现有 skill 未覆盖.*一次性任务/)
+    assert.equal(capabilities.has('skill_management'), false)
     assert.deepEqual(capabilities.get('media_inspection'), ['inspect_media'])
     assert.ok(capabilities.get('external_research')?.includes('fetch_content'))
     if (capabilities.get('external_research')?.includes('web_search')) {
@@ -574,7 +574,7 @@ describe('merged main-agent tools', () => {
     assert.ok(text.text.length <= TASK_RESULT_TEXT_CAP_CHARS)
   })
 
-  test('memory action=write/search/read uses markdown-backed memory store', async () => {
+  test('memory remember/recall uses markdown-backed memory store', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'merged-memory-'))
     try {
       const tool = createMemoryTool({
@@ -583,23 +583,19 @@ describe('merged main-agent tools', () => {
       })
 
       const written = JSON.parse((await tool.execute({
-        action: 'write',
+        action: 'remember',
         scope: 'self',
-        title: 'working-notes',
-        content: '喜欢冷笑话',
+        content: '我喜欢冷笑话。',
       }, makeCtx())).content as string) as { ok: boolean; file: string }
       const recalled = JSON.parse((await tool.execute({
-        action: 'search',
-        keyword: '冷笑话',
-      }, makeCtx())).content as string) as { matches: { file: string; snippet: string }[] }
-      const read = JSON.parse((await tool.execute({
-        action: 'read',
-        file: written.file,
-      }, makeCtx())).content as string) as { ok: boolean; content: string }
+        action: 'recall',
+        query: '冷笑话',
+        scope: 'self',
+      }, makeCtx())).content as string) as { matches: { file: string; content: string }[] }
 
       assert.equal(written.ok, true)
       assert.equal(recalled.matches[0]!.file, 'self/self.md')
-      assert.match(read.content, /喜欢冷笑话/)
+      assert.match(recalled.matches[0]!.content, /喜欢冷笑话/)
       assert.doesNotThrow(() => zod.toJSONSchema(memoryTool.schema))
     } finally {
       await rm(workspace, { recursive: true, force: true })

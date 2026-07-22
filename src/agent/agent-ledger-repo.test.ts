@@ -183,7 +183,6 @@ function compactionPayload(overrides: Partial<CompactionLedgerPayload> = {}): Co
     isSplitTurn: false,
     previousCompactionEntryId: null,
     mailboxAttentionState: {},
-    restResumeState: null,
     ...overrides,
   }
 }

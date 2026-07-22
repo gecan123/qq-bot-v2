@@ -6,10 +6,8 @@ import type { BotEvent } from './event.js'
 import { createToolExecutor, type Tool } from './tool.js'
 import {
   createGenerateImageTaskLogHook,
-  createSendMessageAiToneHook,
   createSendMessageSafetyGuard,
   createSendMessageWorkCommitmentHook,
-  type AiTonePrecheckLogEntry,
   type GenerateImageTaskLogEntry,
 } from './tool-policy-hooks.js'
 
@@ -248,128 +246,6 @@ describe('createSendMessageWorkCommitmentHook', () => {
     assert.equal(JSON.parse(result.content as string).ok, true)
     assert.equal(calls.length, 1)
     assert.equal(goalReads, 0)
-  })
-})
-
-describe('createSendMessageAiToneHook', () => {
-  test('blocks the first two AI-tone group sends and then allows the third consecutive over-threshold send', async () => {
-    const calls: unknown[] = []
-    const logs: AiTonePrecheckLogEntry[] = []
-    const exec = createToolExecutor([createFakeSendTool(calls)], {
-      hooks: {
-        beforeTool: [createSendMessageAiToneHook({
-          getCurrentTarget: () => ({ type: 'group', groupId: 111 }),
-          predict: (text, threshold) => ({
-            prob: 0.91,
-            isAI: true,
-            label: 'AI味',
-            threshold: threshold ?? 0.75,
-            textLength: Array.from(text).length,
-          }),
-          logger: (entry) => logs.push(entry),
-        })],
-      },
-    })
-
-    const args = {
-      message: '综合来看，这个问题需要从多个维度系统性分析一下。',
-    }
-
-    const first = await exec.execute({ id: 'c1', name: 'send_message', args }, makeCtx())
-    const second = await exec.execute({ id: 'c2', name: 'send_message', args }, makeCtx())
-    const third = await exec.execute({ id: 'c3', name: 'send_message', args }, makeCtx())
-
-    assert.equal(calls.length, 1)
-    assert.equal(JSON.parse(first.content as string).ok, false)
-    assert.equal(JSON.parse(second.content as string).ok, false)
-    assert.equal(JSON.parse(third.content as string).ok, true)
-    assert.deepEqual(logs.map((entry) => entry.decision), ['blocked', 'blocked', 'allowed_after_limit'])
-    assert.deepEqual(logs.map((entry) => entry.consecutiveBlocked), [1, 2, 2])
-  })
-
-  test('logs and allows group sends that are below threshold, resetting the consecutive block count', async () => {
-    const calls: unknown[] = []
-    const logs: AiTonePrecheckLogEntry[] = []
-    let isAI = true
-    const exec = createToolExecutor([createFakeSendTool(calls)], {
-      hooks: {
-        beforeTool: [createSendMessageAiToneHook({
-          getCurrentTarget: () => ({ type: 'group', groupId: 111 }),
-          predict: (text, threshold) => ({
-            prob: isAI ? 0.9 : 0.2,
-            isAI,
-            label: isAI ? 'AI味' : '人味',
-            threshold: threshold ?? 0.75,
-            textLength: Array.from(text).length,
-          }),
-          logger: (entry) => logs.push(entry),
-        })],
-      },
-    })
-
-    await exec.execute({
-      id: 'c1',
-      name: 'send_message',
-      args: { message: '综合来看，这件事需要系统性分析一下。' },
-    }, makeCtx())
-    isAI = false
-    await exec.execute({
-      id: 'c2',
-      name: 'send_message',
-      args: { message: '就这么回事，先别上价值。' },
-    }, makeCtx())
-    isAI = true
-    await exec.execute({
-      id: 'c3',
-      name: 'send_message',
-      args: { message: '综合来看，这件事需要系统性分析一下。' },
-    }, makeCtx())
-
-    assert.equal(calls.length, 1)
-    assert.deepEqual(logs.map((entry) => entry.decision), ['blocked', 'allowed', 'blocked'])
-    assert.deepEqual(logs.map((entry) => entry.consecutiveBlocked), [1, 0, 1])
-  })
-
-  test('runs the AI-tone precheck for private and very short sends', async () => {
-    const calls: unknown[] = []
-    const logs: AiTonePrecheckLogEntry[] = []
-    let predictionCalls = 0
-    let currentTarget: { type: 'private'; userId: number } | { type: 'group'; groupId: number } = {
-      type: 'private',
-      userId: 123,
-    }
-    const exec = createToolExecutor([createFakeSendTool(calls)], {
-      hooks: {
-        beforeTool: [createSendMessageAiToneHook({
-          getCurrentTarget: () => currentTarget,
-          predict: () => {
-            predictionCalls++
-            return { prob: 1, isAI: true, label: 'AI味', threshold: 0.75, textLength: 20 }
-          },
-          logger: (entry) => logs.push(entry),
-        })],
-      },
-    })
-
-    const privateResult = await exec.execute({
-      id: 'private',
-      name: 'send_message',
-      args: { message: '综合来看，这个回复也可能很 AI。' },
-    }, makeCtx())
-    currentTarget = { type: 'group', groupId: 111 }
-    const shortGroupResult = await exec.execute({
-      id: 'short',
-      name: 'send_message',
-      args: { message: '别急' },
-    }, makeCtx())
-
-    assert.equal(calls.length, 0)
-    assert.equal(JSON.parse(privateResult.content as string).ok, false)
-    assert.equal(JSON.parse(shortGroupResult.content as string).ok, false)
-    assert.equal(predictionCalls, 2)
-    assert.deepEqual(logs.map((entry) => entry.targetType), ['private', 'group'])
-    assert.equal((logs[0] as AiTonePrecheckLogEntry & { userId?: number }).userId, 123)
-    assert.equal(logs[1]!.groupId, 111)
   })
 })
 

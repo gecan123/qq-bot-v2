@@ -41,7 +41,7 @@ const validFiles = {
   'prompts/groups.md': '# 群聊配置\n\n## 群 111\n\n- participation: mentions\n',
   'src/agent/tools/index.ts': [
     'createDeferredToolExecutor',
-    'pauseTool,',
+    'yieldTool,',
     'createSendMessageTool({',
     'createGenerateImageTool({ taskRegistry: deps.taskRegistry }),',
     'createBackgroundTaskTool({ taskRegistry: deps.taskRegistry }),',
@@ -65,8 +65,8 @@ const validFiles = {
   'prompts/system/system.md': [
     '- help: 需要浏览器、金融数据、外部研究、图片生成/抓取时, 先 action=list/describe 查看 capability 和内部工具 schema, 再 action=activate 激活对应 capability.',
     '- invoke: 调用已激活 capability 内部工具时使用, 例如 tool=browser / web_search / fetch_content / generate_image / openbb_cli.',
-    '- workspace_bash: 不确定语法先用 `help`; 数据库用 `db schema` / `db query <json>`; 每日统计用 `metrics today`; 风格用 `style global` / `style group <groupId>`; 只读查看自己仓库代码、做自审时用 cwd=repo.',
-    '- memory: 涉及具体人/群、关系、偏好、旧话题时先 action=search 翻私人笔记; 需要记下长期有用事实时 action=write.',
+    '- workspace_bash: 不确定语法先用 `help`; 风格用 `style global` / `style group <groupId>`; 只读查看自己仓库代码、做自审时用 cwd=repo.',
+    '- memory: 涉及具体人/群、关系、偏好、旧话题时先 action=recall; 需要记下长期有用事实时 action=remember.',
     '- chat_style / style: 先读取全局风格索引，再按具体主题读取。',
     '异步工具返回 taskId 后统一用 background_task action=list/get 查状态和结果',
   ].join('\n'),
@@ -95,7 +95,7 @@ const validFiles = {
   'docs/MEMORY_ARCHITECTURE.md': 'Markdown is the source of truth. No SQLite or embedding. checkpoint recovery. UNTRUSTED_DATA.\n',
   'docs/TOOLS.md': [
     '# Agent Tools',
-    '`help` `invoke` `pause` `send_message` `generate_image` `background_task` `memory` `collect_sticker` `workspace_bash` `workspace_file` `browser` `web_search`',
+    '`help` `invoke` `yield` `send_message` `generate_image` `background_task` `memory` `collect_sticker` `workspace_bash` `workspace_file` `browser` `web_search`',
     '`help` `db` `style` `openbb` `fetch` `metrics`',
   ].join('\n'),
   'docs/OPERATIONS.md': '# Operations\n',
@@ -242,7 +242,7 @@ describe('runRepoChecks', () => {
       ...validFiles,
       'docs/TOOLS.md': [
         '# Agent Tools',
-        '`help` `invoke` `pause` `send_message` `generate_image` `background_task` `memory` `workspace_bash` `workspace_file` `browser` `web_search`',
+        '`help` `invoke` `yield` `send_message` `generate_image` `background_task` `memory` `workspace_bash` `workspace_file` `browser` `web_search`',
         '`help` `db` `style` `openbb` `fetch` `metrics` `collect_sticker`',
         '`collect_sticker` belongs under `workspace_bash` for sticker collection.',
       ].join('\n'),
@@ -256,7 +256,7 @@ describe('runRepoChecks', () => {
       ...validFiles,
       'docs/TOOLS.md': [
         '# Agent Tools',
-        '`help` `invoke` `pause` `send_message` `generate_image` `background_task` `memory` `collect_sticker` `workspace_bash` `workspace_file` `browser` `web_search`',
+        '`help` `invoke` `yield` `send_message` `generate_image` `background_task` `memory` `collect_sticker` `workspace_bash` `workspace_file` `browser` `web_search`',
         '`help` `db` `style` `openbb` `fetch` `metrics`',
         '`collect_sticker` is not a `workspace_bash` subcommand.',
       ].join('\n'),

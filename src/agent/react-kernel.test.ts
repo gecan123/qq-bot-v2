@@ -435,61 +435,6 @@ describe('runReactRound', () => {
     assert.doesNotMatch(JSON.stringify(context.getSnapshot().messages), /"type":"base64"/)
   })
 
-  test('returns pause effect separately from the staged tool result content', async () => {
-    const context = createAgentContext()
-    context.appendUserMessage('pause now')
-    const eventQueue = new InMemoryEventQueue<BotEvent>()
-    const toolCall = { id: 'pause-1', name: 'pause', args: { action: 'rest' } }
-
-    const llm: LlmClient = {
-      async chat(): Promise<LlmCallOutput> {
-        return {
-          content: '',
-          toolCalls: [toolCall],
-          usage: { inputTokens: 3, cachedTokens: 0, outputTokens: 2 },
-          model: 'mock',
-          contextWindowTokens: 200_000,
-        }
-      },
-    }
-
-    const tools: ToolExecutor = {
-      list: () => [makeTool('pause', z.object({ action: z.literal('rest') }))],
-      classify: classifyExclusive,
-      async execute(): Promise<ToolExecutionResult> {
-        return {
-          content: '{"ok":true,"action":"rest"}',
-          effects: [{ type: 'pause' }],
-        } satisfies ToolExecutionResult
-      },
-    }
-
-    const result = await runReactRound({
-      systemPrompt: 'system',
-      context,
-      llm,
-      tools,
-      toolContext: { eventQueue, roundIndex: 2 },
-    })
-
-    assert.deepEqual(result.effects, [
-      { toolCallId: 'pause-1', toolName: 'pause', effect: { type: 'pause' } },
-    ])
-    assert.deepEqual(context.getSnapshot().messages, [
-      { role: 'user', content: 'pause now' },
-    ])
-    const messages = result.messagesToAppend
-    assert.deepEqual(messages, [
-      { role: 'assistant', content: '', toolCalls: [toolCall] },
-      { role: 'tool', toolCallId: 'pause-1', content: '{"ok":true,"action":"rest"}' },
-    ])
-    const toolMessage = messages[1]
-    if (toolMessage?.role !== 'tool') {
-      assert.fail('expected persisted pause result to be a tool message')
-    }
-    assert.equal('effects' in toolMessage, false)
-  })
-
   test('trusts invoked send_message effects under the effective tool identity', async () => {
     const context = createAgentContext()
     context.appendUserMessage('send it')

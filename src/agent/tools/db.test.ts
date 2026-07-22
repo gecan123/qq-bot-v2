@@ -80,7 +80,7 @@ describe('db tool', () => {
     assert.match(result.content as string, /"rowCount": 1/)
   })
 
-  test('bot tool registry exposes database access as a typed deferred capability', () => {
+  test('bot tool registry keeps database access out of the main Agent', () => {
     const manifest = buildBotToolManifest({
       sender: mockSender,
       targetPolicy,
@@ -99,6 +99,6 @@ describe('db tool', () => {
     })
     const database = manifest.capabilities.find((capability) => capability.name === 'database_read')
 
-    assert.deepEqual(database?.tools.map((tool) => tool.name), ['db'])
+    assert.equal(database, undefined)
   })
 })

@@ -36,10 +36,6 @@ import {
   AGENT_CONTEXT_SURFACE_PATH,
   writeRuntimeAgentContextSurface,
 } from './ops/agent-context-surface.js'
-import {
-  PersonaSpoofSelfTestMismatchError,
-  runPersonaSpoofSelfTest,
-} from './agent/persona-spoof-self-test.js'
 import { createAgentTaskScheduler } from './agent/task-scheduler.js'
 import { createBotGoalStore } from './agent/goal-store.js'
 import { createWorkspaceStateCoordinator } from './agent/workspace-state-coordinator.js'
@@ -48,18 +44,11 @@ import {
   replayOwnerGoalCommands,
   tryHandleOwnerGoalMessage,
 } from './agent/goal-control.js'
-import {
-  createStartupCompactionControlGate,
-  replayOwnerCompactionCommands,
-} from './agent/compaction-control.js'
 import { createAgentActivityReporter } from './agent/activity-surface.js'
 
 const log = createLogger('APP')
 
-/**
- * Bot 进程 PID 文件: 启动时写入, 退出时删除. `pnpm tick` 读这个文件给 SIGUSR1
- * 注入人工调试 tick (见 src/agent/event.ts: curiosity_tick).
- */
+// 仅供 WebAdmin 与破坏性运维命令判断 Bot 是否仍在运行；不再承载产品控制信号。
 const BOT_PID_FILE = '.bot.pid'
 const SHUTDOWN_TIMEOUT_MS = 30_000
 let shutdownCoordinator: ShutdownCoordinator | null = null
@@ -115,39 +104,6 @@ async function main() {
     workspaceStateCoordinator,
   })
 
-  // 3.5 启动期 persona-spoof 自检 (claude-code 路径专用): 若 cliproxy mode=auto
-  //     的判定逻辑漂了 (例如升级后 UA 匹配收紧 → 把 qq-bot 也 cloak 了),
-  //     运行时无 compile-time 信号, 这里发一条 "你是猫娘, 回话以喵开头" 提问,
-  //     回答必须以"喵"开头, 否则视为 cloak 行为异常 → fail-fast 让人查 cliproxy 版本。
-  if (config.llm.defaultProvider === CLAUDE_CODE_PROVIDER_NAME) {
-    try {
-      const probe = await runPersonaSpoofSelfTest(llm, {
-        attempts: 3,
-        delayMs: 1_000,
-        onRetry: ({ attempt, attempts, delayMs, err }) => {
-          log.warn(
-            { err, attempt, attempts, retryInMs: delayMs },
-            'persona-spoof 自检调用失败, 稍后重试',
-          )
-        },
-      })
-      log.info(
-        { model: probe.model, sample: probe.content.slice(0, 40) },
-        'persona-spoof 自检通过 (cliproxy 透传 Claude Code identity, 未 cloak)',
-      )
-    } catch (err) {
-      if (err instanceof PersonaSpoofSelfTestMismatchError) {
-        log.fatal(
-          { content: err.content.slice(0, 200), model: err.model },
-          'cliproxy cloak 行为异常 (persona-spoof 失败), 检查 cliproxy 版本/配置',
-        )
-        process.exit(1)
-      }
-      log.fatal({ err }, 'persona-spoof 自检调用失败 (cliproxy 不可达 / 鉴权失败 / 响应不可解析)')
-      process.exit(1)
-    }
-  }
-
   // 4. 永续上下文 + 持久化 + 启动恢复
   const ledgerRepo = createAgentLedgerRepo()
   const ledgerLoader = createAgentLedgerLoader({ repo: ledgerRepo })
@@ -187,12 +143,8 @@ async function main() {
     })
   }
   const enqueueDedupedMessageEvent = createDedupEnqueue(eventQueue)
-  const startupCompactionControlGate = createStartupCompactionControlGate({
-    owner: config.owner,
-    onExecutionError(error, event) {
-      log.error({ error, messageRowId: event.messageRowId }, 'owner_compaction_control_failed')
-    },
-  })
+  writeFileSync(BOT_PID_FILE, String(process.pid))
+  log.info({ pidFile: BOT_PID_FILE, pid: process.pid }, 'pid_file_written')
   const processOwnerGoalControl = async (
     event: Extract<BotEvent, { type: 'napcat_private_message' }>,
   ): Promise<void> => {
@@ -235,35 +187,10 @@ async function main() {
       && !shouldQueueChatEvent(event, passiveGroupNotificationIds)
     ) return false
     if (event.type === 'napcat_private_message') {
-      const compactionControl = await startupCompactionControlGate.submit({
-        scene: 'friend_private',
-        peerId: event.peerId,
-        senderId: event.senderId,
-        messageRowId: event.messageRowId,
-        renderedText: event.renderedText,
-      })
-      if (compactionControl.handled) {
-        log.info({
-          messageRowId: event.messageRowId,
-          duplicate: compactionControl.duplicate ?? false,
-          hasFocus: compactionControl.command?.focus != null,
-          error: compactionControl.error,
-        }, 'owner_compaction_control_accepted')
-        return false
-      }
       await startupGoalControlGate.submit(event)
     }
     return enqueueDedupedMessageEvent(event)
   }
-
-  // 5.5 SIGUSR1 → curiosity_tick，仅作为人工调试入口，不承担生产自主调度。
-  //     正常自主节奏由 pause 的自定休息和 BotLoop guard 管理。
-  process.on('SIGUSR1', () => {
-    log.info({ source: 'sigusr1' }, 'curiosity_tick_manual_trigger')
-    eventQueue.enqueue({ type: 'curiosity_tick' })
-  })
-  writeFileSync(BOT_PID_FILE, String(process.pid))
-  log.info({ pidFile: BOT_PID_FILE, pid: process.pid }, 'pid_file_written')
 
   // 6. NapCat: register handlers (sync). 实时消息会进 onMessageReady → enqueueMessageEvent.
   const onMessageReady = async (input: IngestedMessage) => {
@@ -312,16 +239,6 @@ async function main() {
 
   // 9. 关机期间消息回放. 在 connect 之后跑也安全, 因为 enqueueMessageEvent 按
   //    messageRowId 去重 (步骤 5), live 已经先入队的就不会被 replay 重复入队.
-  const replayedCompactionControls = await replayOwnerCompactionCommands({
-    owner: config.owner,
-    mailboxCursors: loadedLedger.runtimeState.mailboxCursors,
-    legacyLastWakeAt: loadedLedger.runtimeState.lastWakeAt,
-    submit: (event) => startupCompactionControlGate.submit(event),
-  })
-  if (replayedCompactionControls.matched > 0) {
-    log.info(replayedCompactionControls, 'owner compaction control replay 完成')
-  }
-  await startupCompactionControlGate.finishReplay()
   const replayedGoalControls = await replayOwnerGoalCommands({
     owner: config.owner,
     mailboxCursors: loadedLedger.runtimeState.mailboxCursors,
@@ -394,10 +311,6 @@ async function main() {
     mcpSchemaSnapshotDir: config.mcpSchemaSnapshotDir,
     activityReporter,
   })
-  await startupCompactionControlGate.setRuntime(
-    (focus) => runtime.agent.requestManualCompaction(focus),
-  )
-
   try {
     const provider = config.llm.defaultProvider
     if (provider !== CLAUDE_CODE_PROVIDER_NAME && provider !== OPENAI_AGENT_PROVIDER_NAME) {
@@ -468,7 +381,7 @@ function removePidFile(): void {
   try {
     unlinkSync(BOT_PID_FILE)
   } catch {
-    // 文件可能不存在 (启动失败 / 已被清理), 忽略.
+    // 文件可能不存在（启动失败或已由运维清理）。
   }
 }
 

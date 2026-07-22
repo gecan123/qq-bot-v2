@@ -23,10 +23,6 @@ import {
   type ReadyCompactionPreparation,
 } from './compaction.js'
 import {
-  renderRestResumeReminder,
-  shouldAppendRestResumeReminder,
-} from './rest-resume-reminder.js'
-import {
   captureMailboxAttentionState,
   findPendingMailboxThroughRowId,
   isMailboxAttentionStateMessage,
@@ -199,7 +195,6 @@ test('summarizeCachedClaudeCompaction appends one control message to the unchang
     systemPrompt: 'main system bytes',
     messages: prefix,
     tools: visibleTools,
-    manualFocus: 'owner focus',
     maxSummaryTokens: 2_048,
   })
 
@@ -209,7 +204,6 @@ test('summarizeCachedClaudeCompaction appends one control message to the unchang
   assert.deepEqual(request.messages.slice(0, -1), prefix)
   const control = request.messages.at(-1)
   assert.equal(control?.role, 'user')
-  assert.match(control?.role === 'user' ? control.content : '', /owner focus/)
   assert.deepEqual(request.tools, visibleTools)
   assert.deepEqual(request.cacheBreakpointMessageIndexes, [1])
   assert.equal(request.maxOutputTokens, 2_048)
@@ -358,7 +352,6 @@ test('prepareCompaction repeated run summarizes only from the previous boundary 
       isSplitTurn: false,
       previousCompactionEntryId: null,
       mailboxAttentionState: {},
-      restResumeState: null,
     },
     createdAt: LEDGER_CREATED_AT,
   }

@@ -8,11 +8,8 @@ import { mailboxKeyForEvent, renderMailboxNotification } from './mailbox.js'
  *
  * 异步来源统一渲染成字节稳定、无正文的 notification envelope。消息正文只由 inbox，
  * 后台结果只由 background_task，schedule intention 只由 schedule.get_occurrence 按需读取。
- * wake 只是内部解阻塞信号；bootstrap/curiosity_tick 仍是显式控制事件，不伪装成通知。
+ * wake 只是内部解阻塞信号；bootstrap 是显式控制事件，不伪装成通知。
  */
-export const CURIOSITY_TICK_TEXT =
-  '[好奇心 tick] 这是一次人工调试唤醒, 不是你好奇心的来源. 按当前兴趣、Goal、Agenda 和最近线索决定下一步.'
-
 export const BOOTSTRAP_TEXT =
   '[冷启动] 这是一次全新 AgentContext 的首次启动, 当前没有待回复的历史消息. 按自己的身份、兴趣、Agenda 和可验证线索决定第一步.'
 
@@ -21,12 +18,10 @@ export function renderBotEvent(event: BotEvent): string | null {
 
   if (event.type === 'bootstrap') return BOOTSTRAP_TEXT
 
-  if (event.type === 'curiosity_tick') return CURIOSITY_TICK_TEXT
-
   if (event.type === 'scheduled_wake') {
     const scheduledFor = formatBeijingIso(event.scheduledFor)
     return renderNotificationEnvelope({
-      id: `schedule:${event.scheduleId}:${event.runCount}`,
+      id: `schedule:${event.scheduleId}`,
       source: { type: 'schedule', scheduleId: event.scheduleId },
       kind: 'schedule_due',
       priority: 'normal',
@@ -39,14 +34,11 @@ export function renderBotEvent(event: BotEvent): string | null {
         args: {
           action: 'get_occurrence',
           scheduleId: event.scheduleId,
-          runCount: event.runCount,
         },
       },
       data: {
         name: event.name,
-        scheduleKind: event.scheduleKind,
         scheduledFor,
-        runCount: event.runCount,
       },
     })
   }

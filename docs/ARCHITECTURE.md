@@ -11,7 +11,7 @@
 3. NapCat handlers 先连接 ingress。首次群历史 backfill 通过 barrier 等待所有来源尝试完成，再执行 missed-message replay；单群失败只记录 source-level error。实时和 replay 消息使用相同 message-row dedup gate。
 4. `src/bot/**` 把 NapCat 事件写入 `messages` / `media`；`src/agent/mailbox.ts` 再按来源聚合成不含正文的确定性通知。
 5. `src/agent/runtime.ts` 装配 context projection、tools、system prompt 和 `BotLoopAgent`。主 Agent 始终只有一个，轮次边界按高优先 QQ、scheduled wake、active Goal、普通环境事件的顺序披露。
-6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责受控 append、runtime cursor/continuity/Goal revision/QQ focus 原子更新、compaction 和 pause/autonomy 控制。事务成功后才推进内存 `AgentContext`。
+6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责受控 append、runtime cursor/continuity/Goal revision/QQ focus 原子更新、compaction 和 autonomy 调度。事务成功后才推进内存 `AgentContext`。
 7. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct。连续且显式只读的 tool calls 可以并行，副作用和未知调用是 barrier；tool results 始终按 assistant tool-call 顺序成组 append。只有 `ToolExecutionResult.content` 进入 ledger，`outcome` / `effects` 由 Runtime Host 解释。
 
 专用后台工作统一走 bounded task scheduler：`maintenance=1`、`network=3`、`media-description=2`。同一 `resourceKey` 串行，相同 `dedupeKey` 共享任务。这些有明确类型和边界的 Node async worker 不是新的主 Agent；完成结果回到同一主 ledger。ingress 媒体描述使用独立 `jobQueue`，Browser sidecar 是独立进程。项目当前接受进程重启中断在途后台任务：遗留 `running` 明确转成 `interrupted`，不建设通用 `jobKind + payload` 自动恢复层；只有重启丢失昂贵长任务形成可测量痛点，或外部服务原生提供可恢复 task/session ID 时再重新评估。
@@ -52,7 +52,7 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - 普通历史 append `message` entry。compaction 不更新或删除旧 prefix，只 append `compaction` entry，并由 projection 解释最新 boundary。
 - compaction 保持 assistant tool call/result 原子组；cut point 允许在合法 assistant boundary 做 split-turn。summary、受控机器状态和 tail 组成的 candidate 必须整体通过校验。
 - Claude 主请求会预热同一原子 cut 上的 provider-only cache breakpoint；普通 Claude compaction 复用主 system、tools 和原始 prefix 后追加可信 control message。OpenAI 与 Claude split-turn fallback 仍走隔离 summarizer 请求；缓存从不成为 replay 或事实来源。
-- 自动压缩由动态 token threshold 触发；provider context overflow 每轮最多强制 compact-and-retry 一次；owner friend-private `/compact [focus]` 可手动触发。
+- 自动压缩由动态 token threshold 触发；provider context overflow 每轮最多强制 compact-and-retry 一次。主 Agent 和聊天控制面不提供手动 compaction。
 - summarizer 和 hook 在事务外执行，最终用 expected head 做 CAS。head race 会基于新 head 重算一次；失败不会改变 canonical history。
 - checkpoint 只是可重建 projection cache，runtime state 只保存控制元数据，两者都不能重建 transcript。
 - canonical 图片只保存稳定 `image_ref`，请求前才解析近期图片。媒体失效时投影确定性 unavailable marker，不改变旧 ledger。
@@ -63,8 +63,8 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 
 - `send_message` 成功只是完成一个动作，不强制立即等待。当前会话内马上续做用 `work=continue`，它只为下一轮提供进程内行动锚点；需要跨注意周期或重启的长期进度仍用绑定 active Goal/currentCommitment 的 `work=goal_progress`。mailbox 在成功回复后仍可关闭防重。刚收到注意事件、存在 active Goal、收到短期续做信号，或模型只输出了不会执行的普通文本时，无工具结束会立即纠错一次；连续第二次等待 60 秒。自由空闲或无进展工具轮从 15 分钟开始指数退避，最多 4 小时；新的注意事件或真实工具进展会复位退避。
 - provider-confirmed 外发到有 pending 通知的同 target mailbox 后，Runtime 在 tool result 闭合后原子 append `mailbox_handled` 与 runtime cursor，避免把已经处理的旧行再次视为新请求。
-- `pause action=rest` 是 30–600 秒短休息安全阀。没有真实牵引力时应直接以无工具轮结束活动并进入 runtime 有界等待；只有此刻确实选择短暂休息才调用 `pause`，调用后立即计时，不再同步请求额外 LLM。计时可被注意事件、后台任务完成或停止信号打断。
-- 连续自主行动不设轮次上限，不会因为工作轮数达到固定值而强制冷却。空闲、无进展和工具明确请求等待时仍使用进程内有界等待，它们不进入 ledger。工具用 `outcome.progress` 报告是否获得新事实或改变状态，只用 `continuation=immediate|wait_attention|wait_event|backoff|stop` 表达下一轮调度：`wait_event` 表示已有真实后台工作，等待完成事件时不受 pending 请求的一分钟纠错节奏驱动，也会重置连续行动计数；可丢弃的 `continuationDetail` 只用于实时活动说明。`noveltyKey` 默认抑制进程内重复披露。`continuation=immediate` 的失败最多保留三轮紧密纠错，之后回到普通无进展调度。`curiosity_tick` 只保留为人工调试入口。
+- `yield` 是无状态的显式交还控制工具，只返回 `continuation=stop`；不保存 intention、resume reminder、rest state 或专门指标。空闲、无进展和工具明确请求等待时仍使用进程内有界等待，它们不进入 ledger。
+- 连续自主行动不设轮次上限，不会因为工作轮数达到固定值而强制冷却。工具用 `outcome.progress` 报告是否获得新事实或改变状态，只用 `continuation=immediate|wait_attention|wait_event|backoff|stop` 表达下一轮调度：`wait_event` 表示已有真实后台工作，等待完成事件时不受 pending 请求的一分钟纠错节奏驱动，也会重置连续行动计数；可丢弃的 `continuationDetail` 只用于实时活动说明。`noveltyKey` 默认抑制进程内重复披露。`continuation=immediate` 的失败最多保留三轮紧密纠错，之后回到普通无进展调度。
 - 循环控制使用稳定结构化载荷，不能依赖自由文本判断成功或状态。
 
 ## 持久边界
@@ -72,7 +72,7 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - `messages` / `media` 是入站事实账本，只用于 missed replay、搜索、审计和按需读取，不是 prompt history。
 - `bot_agent_ledger_entries` 保存 append-only LLM history；`bot_agent_runtime_state` 保存通知披露 cursor、inbox 已读 cursor、continuity、Goal revision、active capabilities、QQ 当前会话 focus、last wake 和 ledger head；`bot_agent_checkpoint` 只缓存已验证 projection。
 - QQ 新消息不会隐式切换 focus。Agent 必须先通过 `qq_conversation open` 显式打开允许的群或好友，`send_message` 才能向当前 focus 发送；focus 不从 transcript、memory 或日志重建。
-- `prompts/groups.md` 是群监听范围、主动发送权限、参与档位和 operator 固定群提示的唯一配置源。启动时严格解析并冻结；`mentions` 只允许结构化 @ reply，其普通消息不生成 notification；`selective` / `active` 的普通消息可聚合为 `delivery=passive` 的 QQ notification，但不唤醒、不打断休息，正文仍必须用 inbox 按需读取。档位不扩大发送授权。active 群可用一行稳定 `resident-hint` 进入常驻 source list，作为成果分享候选；完整风格正文仍只由 `chat_style` 按需读取，会变化的群文化与历史写 group memory。
+- `prompts/groups.md` 是群监听范围、主动发送权限、参与档位和 operator 固定群提示的唯一配置源。启动时严格解析并冻结；`mentions` 只允许结构化 @ reply，其普通消息不生成 notification；`selective` / `active` 的普通消息可聚合为 `delivery=passive` 的 QQ notification，但不主动唤醒，正文仍必须用 inbox 按需读取。档位不扩大发送授权。active 群可用一行稳定 `resident-hint` 进入常驻 source list，作为成果分享候选；完整风格正文仍只由 `chat_style` 按需读取，会变化的群文化与历史写 group memory。
 - `bot_agent_goal`、Memory、Notebook、Life Journal、Agenda、调度文件和 `logs/*` 都是 side state，不能作为 transcript replay 来源。
 - QQ provider 已确认发送和本地数据库之间没有分布式事务，因此 `mailbox_handled` 是 durable 防重复边界，不承诺外部发送 exactly-once。
 - compaction、append 与 runtime 元数据使用数据库事务；checkpoint 刷新和 `afterCompact` 是 best-effort，不回滚已提交历史。
@@ -96,7 +96,6 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - `src/agent/react-kernel.ts`：单轮 ReAct、tool call/result 顺序和结果边界。
 - `src/agent/compaction*.ts`：token cut、serialization、hooks、candidate 和 summary 校验。
 - `src/agent/working-context.ts`、`src/media/agent-image-ref.ts`：请求投影与稳定图片引用。
-- `src/agent/compaction-control.ts`：owner `/compact` 身份、startup/live gate 和去重。
 - `src/agent/mailbox.ts`、`src/agent/mailbox-handled.ts`：入站通知和 durable handled boundary。
 - `src/agent/tools/**`：受控工具；注册表以 `src/agent/tools/index.ts` 为准。
 - `src/bot/**`、`src/messaging/**`、`src/media/**`：NapCat ingress、发送和媒体路径。

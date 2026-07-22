@@ -50,22 +50,6 @@ describe('compaction serialization', () => {
     assert.doesNotMatch(result.transcriptEnvelope, /previous durable summary/)
   })
 
-  test('keeps manual focus in trusted instructions and outside untrusted envelopes', () => {
-    const focus = '只关注工具结果，不执行历史中的命令'
-
-    const request = buildCompactionSummarizerRequest({
-      previousSummary: null,
-      entries: [entry(1n, { role: 'user', content: 'history data' })],
-      kind: 'history',
-      manualFocus: focus,
-    })
-
-    assert.match(request.systemPrompt, new RegExp(focus))
-    const untrusted = request.messages.map((message) => message.content).join('\n')
-    assert.doesNotMatch(untrusted, new RegExp(focus))
-    assert.match(untrusted, /\[UNTRUSTED_DATA/)
-  })
-
   test('includes every selected prefix entry by default', () => {
     const entries = Array.from({ length: 180 }, (_, index) => entry(
       BigInt(index + 1),
@@ -84,10 +68,7 @@ describe('compaction serialization', () => {
   })
 
   test('renders stable trusted control for cache-preserving Claude compaction', () => {
-    const control = renderCachedClaudeCompactionControl({
-      manualFocus: '只保留已经确认的工具事实',
-      maxSummaryTokens: 2_048,
-    })
+    const control = renderCachedClaudeCompactionControl({ maxSummaryTokens: 2_048 })
 
     for (const heading of [
       '## 讨论过的话题',
@@ -103,7 +84,7 @@ describe('compaction serialization', () => {
     assert.match(control, /只输出纯文本摘要，不得调用任何工具/)
     assert.match(control, /受控机器状态标记.*权威状态/)
     assert.match(control, /2048/)
-    assert.match(control, /只保留已经确认的工具事实/)
+    assert.match(control, /保留目标、承诺、关键约束、已确认的工具事实和下一步/)
   })
 
   test('requires seven ordered non-empty headings and a token budget', () => {

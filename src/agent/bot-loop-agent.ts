@@ -19,13 +19,6 @@ import {
 } from './compaction.js'
 import { LlmOutputTruncatedError, runReactRound, type ReactToolOutcome } from './react-kernel.js'
 import { interpretToolEffects } from './effect-interpreter.js'
-import {
-  renderInterruptedRestAttentionReminder,
-  renderRestResumeReminder,
-  captureRestResumeCompactionState,
-  shouldAppendInterruptedRestAttentionReminder,
-  shouldAppendRestResumeReminder,
-} from './rest-resume-reminder.js'
 import { createLogger } from '../logger.js'
 import {
   isHighPriorityMailboxDisclosure,
@@ -164,7 +157,6 @@ export interface BotLoopAgent {
   start(): Promise<void>
   stop(): Promise<void>
   flush(): Promise<void>
-  requestManualCompaction(focus?: string): Promise<boolean>
   /** 测试用:跑一次 runOnce 不进入 while 循环。 */
   runOnceForTest(): Promise<void>
 }
@@ -255,7 +247,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     contextTokens: number
     contextWindowTokens: number
     providerPrefixHeadEntryId?: bigint | null
-    manualFocus?: string
   }): Promise<boolean> {
     if (!deps.ledgerRepo || !deps.ledgerLoader) return false
     const options = deps.compactOptions ?? {}
@@ -318,7 +309,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         reserveTokens,
         keepRecentTokens,
         reason: input.reason,
-        ...(input.manualFocus == null ? {} : { manualFocus: input.manualFocus }),
       })
       if (preparation == null) return false
       if (preparation.status !== 'ready') {
@@ -361,9 +351,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
             systemPrompt: deps.systemPrompt,
             messages: cachedPrefix,
             tools: visibleTools,
-            ...(preparation.manualFocus == null
-              ? {}
-              : { manualFocus: preparation.manualFocus }),
             ...(options.maxSummaryTokens == null
               ? {}
               : { maxSummaryTokens: options.maxSummaryTokens }),
@@ -382,7 +369,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
           hooks: options.hooks,
           signal: compactionAbortController.signal,
           maxSummaryTokens: options.maxSummaryTokens,
-          restResumeState: captureRestResumeCompactionState(latestProjection.snapshot.messages),
         })
       } catch (err) {
         recordThresholdFailure('summarizer_failed')
@@ -580,8 +566,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     providerPrefixHeadEntryId: bigint | null
     tokensUsed: number
     toolCallCount: number
-    didPause: boolean
-    didCompleteRest: boolean
     sentTargets: MessageSentTarget[]
     workContinuationRequested: boolean
     recoverableToolFailure: boolean
@@ -666,8 +650,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       }
     }
     const {
-      didPause,
-      didCompleteRest,
       sentTargets,
       inboxReads = [],
       workContinuationRequested = false,
@@ -704,8 +686,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       providerPrefixHeadEntryId,
       tokensUsed: recoveryTokensUsed + result.tokensUsed,
       toolCallCount: result.toolCallCount,
-      didPause,
-      didCompleteRest,
       sentTargets,
       workContinuationRequested,
       recoverableToolFailure: result.toolOutcomes.some((outcome) => (
@@ -827,7 +807,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
 
   async function step(): Promise<{
     ranRound: boolean
-    didPause?: boolean
     toolCallCount?: number
     actionRequired?: boolean
     recoverableToolFailure?: boolean
@@ -891,13 +870,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       stagedContinuity,
       stagedWake,
     )
-    const visibleMessages = [...deps.context.getSnapshot().messages, ...stagedMessages]
-    const appendedInterruptedFocusReminder = drained.hadAttention
-      && disclosed > 0
-      && shouldAppendInterruptedRestAttentionReminder(visibleMessages)
-    if (appendedInterruptedFocusReminder) {
-      stagedMessages.push({ role: 'user', content: renderInterruptedRestAttentionReminder() })
-    }
     log.debug({ roundIndex: roundIndex + 1, eventsConsumed: drained.consumed, eventsDisclosed: disclosed }, 'round_start')
 
     const cursorsChanged = JSON.stringify(drained.cursors) !== JSON.stringify(mailboxCursors)
@@ -929,7 +901,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       }
     }
 
-    if (drained.consumed > 0 && disclosed === 0 && !goalMessagesAppended && !appendedInterruptedFocusReminder) {
+    if (drained.consumed > 0 && disclosed === 0 && !goalMessagesAppended) {
       return { ranRound: false }
     }
 
@@ -960,8 +932,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       providerPrefixHeadEntryId,
       tokensUsed,
       toolCallCount,
-      didPause,
-      didCompleteRest,
       sentTargets,
       workContinuationRequested,
       recoverableToolFailure,
@@ -981,9 +951,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       })
       await syncGoalState()
     }
-    const restReminderNow = didCompleteRest ? autonomy.now() : null
-    const shouldAppendRestReminder = restReminderNow != null
-      && shouldAppendRestResumeReminder(deps.context.getSnapshot().messages, restReminderNow)
     const compacted = await maybeCompact(
       inputTokens,
       contextWindowTokens,
@@ -995,15 +962,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         await appendGoalContinuation(syncedAfterCompaction.goal, 'post_compaction')
       }
     }
-    if (shouldAppendRestReminder) {
-      await commitChanges({
-        messages: [{ role: 'user', content: renderRestResumeReminder(restReminderNow) }],
-      })
-    }
     shortWorkContinuationPending = workContinuationRequested
     return {
       ranRound: true,
-      didPause,
       toolCallCount,
       recoverableToolFailure,
       onlyHelpToolCalls,
@@ -1023,7 +984,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   async function runOnce(): Promise<void> {
     const {
       ranRound,
-      didPause = false,
       toolCallCount = 0,
       actionRequired = false,
       recoverableToolFailure = false,
@@ -1038,14 +998,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       return
     }
     if (!ranRound || stopRequested) return
-
-    if (didPause) {
-      consecutiveRounds = 0
-      actionCorrectionRetryPending = false
-      recoverableToolCorrectionRounds = 0
-      idleBackoffLevel = 0
-      return
-    }
 
     consecutiveRounds++
 
@@ -1272,15 +1224,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       await syncGoalState()
       await deps.activityReporter?.flush()
     },
-    async requestManualCompaction(focus) {
-      const canonical = await deps.ledgerRepo.loadCanonicalState()
-      return compactCanonical({
-        reason: 'manual',
-        contextTokens: estimateLedgerContextTokens({ entries: canonical.entries }).tokens,
-        contextWindowTokens: lastContextWindowTokens,
-        ...(focus == null ? {} : { manualFocus: focus }),
-      })
-    },
     async runOnceForTest() {
       await step()
     },
@@ -1309,7 +1252,7 @@ function describeActivityTrigger(
     if (event.type === 'scheduled_wake') {
       return {
         kind: 'scheduled_wake',
-        label: `计划“${event.name}”到期：${event.intention}`.slice(0, 500),
+        label: `计划“${event.name}”已到期`.slice(0, 500),
         target: null,
       }
     }
@@ -1336,7 +1279,7 @@ function describeActivityTrigger(
     if (event.type === 'bootstrap') {
       return { kind: 'bootstrap', label: '首次启动，开始建立自己的初始方向', target: null }
     }
-    if (event.type === 'curiosity_tick' || event.type === 'wake') {
+    if (event.type === 'wake') {
       return { kind: 'manual_wake', label: '收到运行时唤醒信号', target: null }
     }
   }

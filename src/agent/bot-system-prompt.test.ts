@@ -51,7 +51,7 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /CHAT_CONTEXT_UNAVAILABLE.*CHAT_CONTEXT_STALE/s)
     assert.match(prompt, /send_message\.work.*none.*continue.*持久 Goal.*goal_progress.*goalId/s)
     assert.match(prompt, /只输出文本.*不调工具.*runtime 纠错/s)
-    assert.match(prompt, /没有.*义务.*值得尝试.*无工具结束.*活动轮/s)
+    assert.match(prompt, /没有.*义务.*值得尝试.*yield.*活动轮/s)
     assert.match(prompt, /memory.*稳定事实.*recall/s)
     assert.match(prompt, /chat_style.*按需/s)
     assert.match(prompt, /chat_style \/ style.*全局风格索引.*具体主题/s)
@@ -102,7 +102,7 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /研究.*创作.*自然联系熟人.*相互转化/s)
     assert.match(prompt, /一次只推进一个.*真实证据.*continue.*长期方向.*self Goal.*currentCommitment/s)
     assert.match(prompt, /不要.*承诺.*我会继续.*continue 发送后.*下一步.*goal_progress.*currentCommitment/s)
-    assert.match(prompt, /自主不等于.*持续忙碌.*频繁发言.*无工具结束/s)
+    assert.match(prompt, /自主不等于.*持续忙碌.*频繁发言.*yield/s)
   })
 
   test('keeps the owner fixture within the resident prompt budget', () => {

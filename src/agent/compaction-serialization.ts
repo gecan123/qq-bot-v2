@@ -97,14 +97,9 @@ export function buildCompactionSummarizerRequest(input: {
   previousSummary: string | null
   entries: readonly MessageAgentLedgerEntry[]
   kind: CompactionSummaryKind
-  manualFocus?: string
   maxChars?: number
 }): CompactionSummarizerRequest {
   const sources = serializeCompactionSources(input)
-  const focus = input.manualFocus?.trim()
-  const systemPrompt = focus
-    ? `${BASE_SUMMARIZER_SYSTEM_PROMPT}\n\n可信 owner 关注点：${JSON.stringify(focus)}`
-    : BASE_SUMMARIZER_SYSTEM_PROMPT
   const messages: AgentMessage[] = []
   if (sources.previousSummaryEnvelope) {
     messages.push({ role: 'user', content: sources.previousSummaryEnvelope })
@@ -116,11 +111,10 @@ export function buildCompactionSummarizerRequest(input: {
       ? SUMMARY_TRIGGER
       : '只摘要当前超大轮次的上述前缀数据，输出一段非空中文事实摘要，不要使用主历史七标题。',
   })
-  return { kind: input.kind, systemPrompt, messages }
+  return { kind: input.kind, systemPrompt: BASE_SUMMARIZER_SYSTEM_PROMPT, messages }
 }
 
 export function renderCachedClaudeCompactionControl(input: {
-  manualFocus?: string
   maxSummaryTokens?: number
 } = {}): string {
   const maxSummaryTokens = input.maxSummaryTokens
@@ -128,11 +122,9 @@ export function renderCachedClaudeCompactionControl(input: {
   if (!Number.isSafeInteger(maxSummaryTokens) || maxSummaryTokens <= 0) {
     throw new RangeError('maxSummaryTokens must be a positive safe integer')
   }
-  const focus = input.manualFocus?.trim()
   return [
     ...CACHED_CLAUDE_COMPACTION_CONTROL,
     `摘要不得超过 ${maxSummaryTokens} tokens。`,
-    ...(focus ? [`可信 owner 关注点：${JSON.stringify(focus)}`] : []),
     '[/trusted runtime compaction control]',
   ].join('\n')
 }

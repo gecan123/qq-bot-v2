@@ -70,6 +70,8 @@ describe('website path policy', () => {
     assert.equal(isAllowedWebsiteWritePath('src/content/blog/hello.md'), true)
     assert.equal(isAllowedWebsiteReadPath('src/content/blog/notes/today.mdx'), true)
     assert.equal(isAllowedWebsiteWritePath('src/content/blog/notes/today.mdx'), true)
+    assert.equal(isAllowedWebsiteReadPath('src/content/CONTENT_GUIDE.md'), true)
+    assert.equal(isAllowedWebsiteWritePath('src/content/categories.json'), true)
     assert.equal(isAllowedWebsiteReadPath('src/pages/blog/[category].astro'), true)
     assert.equal(isAllowedWebsiteWritePath('src/pages/blog/[category].astro'), true)
     assert.equal(isAllowedWebsiteReadPath('src/pages/rss.xml.js'), true)
@@ -153,6 +155,20 @@ describe('website path policy', () => {
 })
 
 describe('website tool read/write/status', () => {
+  test('guides the agent through the repository-owned category workflow', () => {
+    const tool = createWebsiteTool({
+      repoDir: '/tmp/luna-site',
+      runner: makeRunner(),
+    })
+
+    assert.match(tool.description, /src\/content\/CONTENT_GUIDE\.md/)
+    assert.match(tool.description, /src\/content\/categories\.json/)
+    assert.match(tool.description, /src\/content\/examples\/category-entry\.json/)
+    assert.match(tool.description, /src\/content\/examples\/article\.md/)
+    assert.match(tool.description, /src\/content\/blog\/<category-id>\/<article-slug>/)
+    assert.match(tool.description, /frontmatter 不写 category\/categories/)
+  })
+
   test('reads allowed files with truncation metadata', async () => {
     const repoDir = await makeSiteRepo()
     try {

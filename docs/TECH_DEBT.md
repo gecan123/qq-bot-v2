@@ -70,8 +70,8 @@ PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goa
 
 ### Usage 与 prompt cache 归因混杂
 
-- compaction、Life review、Memory maintenance 等辅助 LLM 调用仍缺少统一的 `actor/operation/taskId/goalId` 归因，不同稳定 prompt family 的 cache key 分离也没有形成统一契约。
-- Goal token budget 当前只覆盖主 Agent round 的未缓存 input + output；这些辅助 LLM 调用不进入完整任务成本。
+- compaction、Life review、Memory maintenance、Goal completion judge 等辅助 LLM 调用仍缺少统一的 `actor/operation/taskId/goalId` 归因，不同稳定 prompt family 的 cache key 分离也没有形成统一契约。
+- Goal token budget 当前只覆盖主 Agent round 的未缓存 input + output；包括完成验收在内的辅助 LLM 调用不进入完整任务成本。
 - 目标：建立统一 usage accounting 和稳定 prompt-family 分离，再明确 Goal budget 是“主循环预算”还是“目标总成本预算”。
 
 ### BotLoopAgent 职责过密

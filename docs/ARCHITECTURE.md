@@ -18,7 +18,7 @@
 
 短期调度由进程内 `ScheduleRuntime` 管理。它把 active 状态原子写入 `schedules.json`，把已触发正文写入独立 occurrence store；到期只向现有 event queue 注入内部 `scheduled_wake`，由单一 `BotLoopAgent` 转成不含 intention 的 `notification`，Agent 按需调用 `schedule get_occurrence` 打开。
 
-Goal 也不创建第二个主 Agent。`bot_agent_goal` 只保存控制状态；状态变化通过 revision 事件进入 ledger。owner Goal 可以抢占 self Goal，旧 goalId 的迟到调用会被拒绝。
+Goal 也不创建第二个主 Agent。`bot_agent_goal` 只保存控制状态；状态变化通过 revision 事件进入 ledger。owner Goal 可以抢占 self Goal，旧 goalId 的迟到调用会被拒绝。owner 和 self Goal 的 `complete` 都会触发一次独立、无工具的 LLM 验收；它只读取 untrusted envelope 中的当前 canonical projection 和本次证据，只有 `{ok:true}` 才调用 `GoalStore.complete()`，拒绝或验收调用失败都保持 Goal 活跃且同一次尝试不重试。judger 不控制 blocker、预算或下一步，也不形成第二个 Agent。
 
 ## 本机 WebAdmin
 

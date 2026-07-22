@@ -15,7 +15,7 @@
 | s09 Memory | 已满足核心 | `memory` 已有 Markdown v2、分页 read、revision、entry 更新/删除/compact；`recall` 做有界 entry 级相关召回并保留 provenance，`review` 只读提出重复/近重复/可能冲突，确认后再 mutation。Notebook 保存主题过程，Life Journal 保存经历/感受/梦，Agenda 保存当前承诺和下一步。没有无条件自动提取或自动破坏性整理，这是有意边界。 |
 | s10 System Prompt | 部分满足，适合本项目 | prompt 分 section 组装，但启动后冻结；这不完全等同教程的运行时动态拼接，但更利于当前 prompt cache 稳定性。 |
 | s11 Error Recovery | 核心已满足 | 有工具错误隔离、provider-neutral stop reason、transport/429/5xx/529/SSE overload 有界退避、`retry-after`、prompt-too-long 强制 compaction、`max_tokens` 预算升级与有界 continuation、显式同 provider fallback、round backoff、replay barrier 和幂等 shutdown。仍可补 OpenAI 错误的更细分类与恢复指标汇总。 |
-| s12 Task System | 部分满足 | 单一持久 Goal 支持 `origin=owner|self`、状态流转、revision、token/time/round 使用量、完成证据和三轮 blocker 门槛，并能跨 replay/compaction/restart 续跑；Agent 可自主建/弃 self Goal，owner Goal 可抢占。仍没有多任务图、依赖、认领或 blockedBy DAG。进程内 `todo` 继续只管当前执行计划。 |
+| s12 Task System | 部分满足 | 单一持久 Goal 支持 `origin=owner|self`、状态流转、revision、token/time/round 使用量、完成证据、独立无工具完成验收和三轮 blocker 门槛，并能跨 replay/compaction/restart 续跑；Agent 可自主建/弃 self Goal，owner Goal 可抢占。验收只读 untrusted envelope 中的 canonical projection，拒绝或不可用保持 active。仍没有多任务图、依赖、认领或 blockedBy DAG。进程内 `todo` 继续只管当前执行计划。 |
 | s13 Background Tasks | 已满足核心 | 图片生成、交易研究等异步任务会注册 task，完成后进 event queue，并用 `background_task get` 取有界结果；registry 已原子持久化、终态幂等，重启时不可恢复闭包明确标成 `interrupted`。共享执行 scheduler 仍是进程内 lane；实验阶段不建设通用 `jobKind + payload` 自动恢复层，接受在途任务因重启中断并按需重新发起。 |
 | s14 Cron Scheduler | 已满足核心 | `pause` 负责短休息；`schedule create/list/cancel` 支持 30 秒至 3 天内的一次性 `at`、固定间隔 `every` 和带 IANA 时区的 `cron`。独立 store 可跨重启恢复 timer，漏触发会合并且到期只产生稳定 `scheduled_wake` 注意事件；不包含长期 cron 平台、命令执行或 run history。 |
 | s15 Agent Teams | 未满足 | 没有持久 teammate、inbox、多个 LLM loop。 |
@@ -34,7 +34,7 @@
 5. 可调 owner approval：完成核心。默认 thin 只保护公开发布和未知 MCP 写调用；真实私聊证据、精确参数 hash、TTL、持久状态和一次性消费保持不变，必要时可切 strict/off。
 6. 安全并行：完成核心。只并行连续的显式只读调用，副作用和未知调用构成 barrier，tool result 仍按原 assistant call 顺序进入 ledger。
 7. Deferred MCP：完成 stdio 工具控制面。默认关闭、按需连接、命名空间、版本化 schema 快照、有界结果、显式只读 allowlist、默认审批和关机清理均已接入 Runtime。
-8. 单一持久 Goal：完成核心。owner 私聊控制、Agent 自建/放弃 self Goal、owner 抢占、Postgres 状态、snapshot revision、跨重启/compaction continuation、宽松保险丝、预算核算、完成证据和三轮 blocker 门槛均已接入；主前台仍严格串行。
+8. 单一持久 Goal：完成核心。owner 私聊控制、Agent 自建/放弃 self Goal、owner 抢占、Postgres 状态、snapshot revision、跨重启/compaction continuation、宽松保险丝、预算核算、完成证据、单次无工具 LLM 验收和三轮 blocker 门槛均已接入；只有验收 `{ok:true}` 才完成，主前台仍严格串行。
 
 ## 后续优先级
 

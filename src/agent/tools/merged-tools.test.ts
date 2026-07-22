@@ -21,6 +21,7 @@ import type { SendTargetPolicy } from '../send-target-policy.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
 import type { ScheduleRuntime } from '../schedule-runtime.js'
 import type { QqConversationController } from './qq-conversation.js'
+import type { GoalCompletionJudge } from '../goal-completion-judge.js'
 
 function makeCtx(): ToolContext {
   return { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 1 }
@@ -82,6 +83,12 @@ const mockScheduleRuntime: ScheduleRuntime = {
   async stop() {},
 }
 
+const acceptingGoalJudge: GoalCompletionJudge = {
+  async evaluate() {
+    return { ok: true, reason: '验收证据满足目标' }
+  },
+}
+
 const TINY_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
   'base64',
@@ -97,6 +104,27 @@ function findManifestTool(manifest: BotToolManifest, name: string): Tool {
 }
 
 describe('merged main-agent tools', () => {
+  test('requires a completion judge whenever the Goal store is configured', () => {
+    assert.throws(() => buildBotToolManifest({
+      sender: mockSender,
+      targetPolicy,
+      conversations,
+      selfNumber: 999,
+      taskRegistry: createInMemoryTaskRegistry(),
+      scheduleRuntime: mockScheduleRuntime,
+      groupIds: [],
+      metadata: { groupNames: new Map() },
+      groupPolicies: [],
+      qqDirectory: {
+        groupIds: [],
+        async loadFriends() { return [] },
+        async loadGroups() { return [] },
+      },
+      optionalTools: disabledOptionalTools,
+      goalStore: createInMemoryGoalStore(),
+    }), /goalCompletionJudge/)
+  })
+
   test('defers low-frequency state tools while keeping continuity tools always-on', () => {
     const manifest = buildBotToolManifest({
       sender: mockSender,
@@ -115,6 +143,7 @@ describe('merged main-agent tools', () => {
       },
       optionalTools: disabledOptionalTools,
       goalStore: createInMemoryGoalStore(),
+      goalCompletionJudge: acceptingGoalJudge,
     })
 
     const alwaysOnNames = manifest.alwaysOnTools.map((tool) => tool.name)
@@ -152,6 +181,7 @@ describe('merged main-agent tools', () => {
       },
       optionalTools: disabledOptionalTools,
       goalStore: createInMemoryGoalStore(),
+      goalCompletionJudge: acceptingGoalJudge,
     }).map((tool) => tool.name)
 
     assert.ok(names.includes('background_task'))
@@ -285,6 +315,7 @@ describe('merged main-agent tools', () => {
         website: mockWebsiteTool,
       },
       goalStore: createInMemoryGoalStore(),
+      goalCompletionJudge: acceptingGoalJudge,
     })
     const capabilities = new Map(manifest.capabilities.map((capability) => [
       capability.name,

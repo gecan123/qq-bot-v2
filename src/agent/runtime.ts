@@ -60,6 +60,7 @@ import {
   type McpManager,
 } from './mcp-manager.js'
 import type { GoalStore } from './goal-store.js'
+import { createGoalCompletionJudge } from './goal-completion-judge.js'
 import type { MemoryMaintenanceRuntime } from './memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
 import { createLogger } from '../logger.js'
@@ -174,8 +175,14 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     ? createMcpManagerFromConfigFile({
         path: input.mcpConfigPath,
         snapshotDir: input.mcpSchemaSnapshotDir,
-      })
+    })
     : undefined)
+  const goalCompletionJudge = input.goalStore
+    ? createGoalCompletionJudge({
+        llm: input.llm,
+        getMessages: () => input.context.getSnapshot().messages,
+      })
+    : undefined
   const targetPolicy = createSendTargetPolicy({
     groupIds,
     groupAmbientSendIds,
@@ -220,6 +227,7 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       approvalManager,
       mcpManager,
       goalStore: input.goalStore,
+      goalCompletionJudge,
       memoryMaintenance: input.memoryMaintenance,
       workspaceDir: input.workspaceDir,
       workspaceStateCoordinator: input.workspaceStateCoordinator,

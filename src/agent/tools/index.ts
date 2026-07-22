@@ -39,6 +39,7 @@ import type { McpManager } from '../mcp-manager.js'
 import { createMcpTool } from './mcp.js'
 import { createGoalTool } from './goal.js'
 import type { GoalStore } from '../goal-store.js'
+import type { GoalCompletionJudge } from '../goal-completion-judge.js'
 import type { MemoryMaintenanceRuntime } from '../memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
 import type { LoadMemorySourceEvidence } from '../memory-evidence.js'
@@ -64,6 +65,7 @@ export interface BotToolDeps {
   approvalManager?: ApprovalManager
   mcpManager?: McpManager
   goalStore?: GoalStore
+  goalCompletionJudge?: GoalCompletionJudge
   memoryMaintenance?: MemoryMaintenanceRuntime
   workspaceDir?: string
   workspaceStateCoordinator?: WorkspaceStateCoordinator
@@ -86,6 +88,9 @@ export interface BotToolManifest {
 }
 
 export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
+  if (deps.goalStore && !deps.goalCompletionJudge) {
+    throw new Error('goalCompletionJudge is required when goalStore is configured')
+  }
   const taskScheduler = deps.taskScheduler ?? createAgentTaskScheduler()
   const externalResearchFetchContent = createFetchContentTool({
     taskRegistry: deps.taskRegistry,
@@ -145,7 +150,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     qqDirectory,
     backgroundTask,
     ...(deps.approvalManager ? [createApprovalTool(deps.approvalManager)] : []),
-    ...(deps.goalStore ? [createGoalTool(deps.goalStore)] : []),
+    ...(deps.goalStore ? [createGoalTool(deps.goalStore, deps.goalCompletionJudge!)] : []),
     todoTool,
     skillTool,
     createMemoryTool({

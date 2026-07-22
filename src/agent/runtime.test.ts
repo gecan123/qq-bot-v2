@@ -6,7 +6,7 @@ import { afterEach, describe, test } from 'node:test'
 import { createAgentContext } from './agent-context.js'
 import { InMemoryEventQueue, type EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
-import type { LlmClient } from './llm-client.js'
+import type { LlmCallInput, LlmClient } from './llm-client.js'
 import { createAgentRuntime, createScheduleRuntimeLogHandler } from './runtime.js'
 import type { MessageSender } from '../messaging/message-sender.js'
 import { McpManager } from './mcp-manager.js'
@@ -51,6 +51,56 @@ describe('createAgentRuntime', () => {
     )
 
     assert.deepEqual(exceeded, {}, `Agent surface budgets exceeded: ${JSON.stringify(exceeded)}`)
+  })
+
+  test('wires a tool-free completion judge to the canonical Goal context', async () => {
+    const context = createAgentContext()
+    const goalStore = createInMemoryGoalStore()
+    await goalStore.applyControl({
+      messageRowId: 1,
+      command: { action: 'set', objective: '完成 runtime wiring', tokenBudget: null },
+    })
+    const goal = (await goalStore.get())!
+    context.appendUserMessage(JSON.stringify({
+      event: 'goal_state_changed',
+      goal: { goalId: goal.goalId },
+    }))
+    context.appendUserMessage('canonical context evidence: focused tests passed')
+    const requests: LlmCallInput[] = []
+    const runtime = createAgentRuntime({
+      ...makeRuntimeInput(),
+      context,
+      goalStore,
+      llm: {
+        async chat(input) {
+          requests.push(input)
+          return {
+            content: '{"ok":true,"reason":"canonical tool evidence satisfies the objective"}',
+            toolCalls: [],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+            stopReason: 'end_turn',
+          }
+        },
+      },
+    })
+
+    await runtime.tools.execute({
+      id: 'goal-complete-runtime',
+      name: 'goal',
+      args: { action: 'complete', goalId: goal.goalId, evidence: ['focused tests passed'] },
+    }, {
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      roundIndex: 1,
+    })
+
+    assert.equal((await goalStore.get())?.status, 'complete')
+    const toolFreeRequests = requests.filter((request) => request.tools.length === 0)
+    assert.equal(toolFreeRequests.length, 1)
+    const serializedRequest = JSON.stringify(toolFreeRequests[0]?.messages)
+    assert.match(serializedRequest, new RegExp(goal.goalId))
+    assert.match(serializedRequest, /canonical context evidence: focused tests passed/)
   })
 
   test('wires deferred tool activation state through AgentContext', async () => {

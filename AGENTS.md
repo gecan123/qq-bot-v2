@@ -14,6 +14,20 @@
 
 如果文档和代码冲突，优先相信代码、schema、测试和实际日志。
 
+## Agent skills
+
+### Issue tracker
+
+Issues、PRD 和跨会话 tickets 使用 GitHub Issues，通过 `gh` 操作。见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+使用 Matt Pocock skills 默认的五类 triage 标签。见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+采用 multi-context：bot/backend 与 `apps/admin-web` 分别维护领域上下文，由根 `CONTEXT-MAP.md` 路由。见 `docs/agents/domain.md`。
+
 ## 工作原则
 
 - 实事求是。遇到不确定的东西，先查代码、schema、测试、日志、文档或当前外部来源。

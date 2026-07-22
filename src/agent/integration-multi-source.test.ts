@@ -169,7 +169,7 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
       }),
       toolOutput('send-group', 'invoke', {
         tool: 'send_message',
-        args: { message: '在的', reply_to: 1001 },
+        args: { message: '在的', reply_to: 1001, work: { state: 'none' } },
       }),
     ])
 
@@ -282,7 +282,7 @@ describe('MVP-2 integration: mixed group + private events through one agent loop
       }),
       toolOutput('send-private', 'invoke', {
         tool: 'send_message',
-        args: { message: '私聊回复', reply_to: 2 },
+        args: { message: '私聊回复', reply_to: 2, work: { state: 'none' } },
       }),
     ])
 

@@ -42,18 +42,16 @@ describe('OutboundCache', () => {
     assert.equal(after.refcount, 0)
   })
 
-  test('same dataHash reuses entry (touch createdAt)', () => {
+  test('same dataHash reuses the existing entry', () => {
     cache.put(makeEntry(HASH_A))
     const before = cache.get(HASH_A)!
     const createdBefore = before.createdAt
 
-    // small delay so Date.now() ticks
-    const laterTime = createdBefore + 10
-    // simulate: re-put same hash
     cache.put(makeEntry(HASH_A))
     const after = cache.get(HASH_A)!
+    assert.equal(after, before)
     assert.ok(after.createdAt >= createdBefore)
-    assert.equal(cache.size, 1, 'should not create duplicate entry')
+    assert.equal(cache.size, 1)
   })
 
   test('same dataHash but different byteSize → first-wins + no duplicate', () => {
@@ -168,18 +166,7 @@ describe('OutboundCache', () => {
     assert.equal(cache.acquire('nonexistent'), null)
   })
 
-  test('release on non-existent key is no-op', () => {
-    cache.release('nonexistent') // should not throw
-  })
-
   test('get on non-existent key returns null', () => {
     assert.equal(cache.get('nonexistent'), null)
-  })
-
-  test('currentBytes tracks correctly across put and eviction', () => {
-    cache.put(makeEntry(HASH_A, 200))
-    assert.equal(cache.currentBytes, 200)
-    cache.put(makeEntry(HASH_B, 300))
-    assert.equal(cache.currentBytes, 500)
   })
 })

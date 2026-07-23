@@ -29,13 +29,6 @@ describe('createMemoryQueue', () => {
     assert.deepEqual(results, [1, 2, 3])
   })
 
-  test('defaults to 0 delay when no argument provided', () => {
-    // Just verify it constructs without error
-    const queue = createMemoryQueue()
-    queue.start()
-    queue.stop()
-  })
-
   test('runs high-priority jobs before queued low-priority jobs', async () => {
     const queue = createMemoryQueue(0)
     const results: number[] = []

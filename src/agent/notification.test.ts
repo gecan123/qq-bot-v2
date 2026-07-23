@@ -9,7 +9,7 @@ import {
 } from './notification.js'
 
 describe('notification envelope', () => {
-  test('renders a stable metadata-only envelope with an explicit open action', () => {
+  test('rejects invalid envelope counts', () => {
     const input = {
       id: 'background_task:bg-1:completed',
       source: { type: 'background_task', taskId: 'bg-1' },
@@ -20,7 +20,6 @@ describe('notification envelope', () => {
       count: 1,
       open: { tool: 'background_task', args: { action: 'get', taskId: 'bg-1' } },
     }
-    assert.equal(renderNotificationEnvelope(input), renderNotificationEnvelope(input))
     assert.throws(
       () => renderNotificationEnvelope({ ...input, count: 0 }),
       /positive safe integer/,

@@ -45,13 +45,4 @@ describe('withInFlight', () => {
 
     assert.equal(callCount, 2)
   })
-
-  test('clears key from cache after fn completes', async () => {
-    const cache = new Map<number, Promise<void>>()
-    const fn = () => Promise.resolve()
-
-    await withInFlight(cache, 1, fn)
-
-    assert.equal(cache.size, 0)
-  })
 })

@@ -74,10 +74,6 @@ describe('resolveImageHandle (ephemeralRef path)', () => {
       /expired or not found/,
     )
   })
-
-  test('releaseHandle on mediaId is no-op', () => {
-    releaseHandle({ mediaId: 999 })
-  })
 })
 
 describe('resolvePersistedImage', () => {

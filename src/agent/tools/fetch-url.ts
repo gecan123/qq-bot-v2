@@ -319,6 +319,7 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
           systemPrompt,
           messages: [{ role: 'user', content: userMessage }],
           tools: [],
+          observation: { operation: 'fetch_url.summary' },
         })
         summary = completion.content.trim()
       } catch (err) {

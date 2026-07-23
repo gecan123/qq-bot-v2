@@ -498,6 +498,7 @@ export async function summarizeCompactionCandidate(
     messages: request.messages,
     tools: [],
     signal: options.signal,
+    observation: { operation: 'compaction' },
   })
   recordTokenUsage({
     operation: 'compaction',
@@ -535,6 +536,7 @@ export async function summarizeCachedClaudeCompaction(input: {
     claudeToolChoice: 'auto',
     maxOutputTokens: maxSummaryTokens,
     signal: input.signal,
+    observation: { operation: 'compaction' },
   })
   recordTokenUsage({
     operation: 'compaction',

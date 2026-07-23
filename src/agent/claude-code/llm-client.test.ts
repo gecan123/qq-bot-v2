@@ -86,6 +86,31 @@ async function resultWithin<T, U>(
 }
 
 describe('ClaudeCodeLlmClient.chat', () => {
+  test('returns wire request and response evidence for observability', async (t) => {
+    const { fn, calls } = makeFetchMock([{
+      body: SAMPLE_TEXT_SSE,
+      headers: { 'request-id': 'request-claude-1' },
+    }])
+    t.mock.method(globalThis, 'fetch', fn)
+    const client = createClaudeCodeLlmClient({
+      model: 'claude-sonnet-4-5',
+      contextWindowTokens: 200_000,
+      baseURL: CLIPROXY_BASE_URL,
+      apiKey: CLIPROXY_API_KEY,
+    })
+
+    const output = await client.chat({
+      systemPrompt: 'persona',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [],
+    })
+
+    assert.deepEqual(output.transportTrace?.request, JSON.parse(String(calls[0]?.init.body)))
+    assert.equal((output.transportTrace?.response as { stop_reason?: string }).stop_reason, 'end_turn')
+    assert.equal(output.transportTrace?.status, 200)
+    assert.equal(output.transportTrace?.requestId, 'request-claude-1')
+  })
+
   test('forwards configured auto tool choice into the request body', async (t) => {
     const { fn, calls } = makeFetchMock([{ body: SAMPLE_TEXT_SSE }])
     t.mock.method(globalThis, 'fetch', fn)

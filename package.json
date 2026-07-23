@@ -34,6 +34,7 @@
     "peek": "tsx scripts/peek.ts",
     "peekf": "tsx scripts/peek.ts -f -n 9999",
     "browser:controller": "tsx scripts/browser-controller.ts",
+    "workspace:executor": "tsx scripts/workspace-executor.ts",
     "toollog": "tail -n 50 logs/tool-calls.ndjson",
     "toollogf": "tail -f logs/tool-calls.ndjson"
   },

@@ -43,6 +43,7 @@ export async function runPersonaSpoofSelfTest(
         systemPrompt: PERSONA_SPOOF_SELF_TEST_SYSTEM,
         messages: [{ role: 'user', content: PERSONA_SPOOF_SELF_TEST_USER }],
         tools: [],
+        observation: { operation: 'persona.self_test' },
       })
       if (!probe.content.startsWith('喵')) {
         throw new PersonaSpoofSelfTestMismatchError(probe.content, probe.model)

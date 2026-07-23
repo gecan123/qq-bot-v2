@@ -31,6 +31,7 @@
 - `media_inspection`：内部工具是 `inspect_media`，用入站 `mediaId` 或生成图 `ephemeralRef` 返回有界真实预览 image block；缺失的入站图片描述进入 `media-description` lane，当前结果标记 `descriptionStatus=pending` 而不等待模型。
 - `media_fetch`：内部 `fetch_content` 只暴露图片 URL / QQ 头像 action；激活它不会放开普通网页或 Reddit 抓取。
 - `workspace_management`：包含 `workspace_file` 和只读 `workspace_bash`。后者只允许 `pwd/ls/rg/cat/head/tail/wc`，不经过 shell；外部抓取、风格和金融分别用 typed capability。
+- `BOT_WORKSPACE_EXECUTOR_ENABLED=true` 时，`workspace_bash` 改由 `pnpm workspace:executor` 启动的 loopback sidecar 执行。HTTP 只传原始命令、逻辑 cwd 和资源请求；sidecar 重新校验 allowlist，并独立固定真实目录、PATH、超时和输出上限。未启用时使用同一 policy 的进程内 runner。
 - `document_reading`：内部工具是 `read_file`，只接受 `inbox` 返回的 `type=file` 的 `mediaId`；支持有界分页读取纯文本、PDF、DOCX、XLSX、PPTX、RTF 和 OpenDocument，不接受路径或 URL，也不执行文件内容。
 - QQ 当前会话保存在 runtime singleton 的 `qq_conversation_focus`；`inbox_read_cursors` 记录各来源实际读取到的 messages row。它们用于重启恢复运行控制状态，不是 LLM 可见事实，不写入 ledger message。focus 只由 `qq_conversation open/close` 改变，新 mailbox 不会自动切换它。
 - `invoke` 的 schema/capability resolution 是内部路由，不单独记成功 trace。对外 schema仍要求 `args` 是对象；若 provider 误传可解析为 JSON 对象的字符串，runtime 会在 schema 校验前归一化。调用只记录一次真实目标工具结果，hooks 也只围绕最终执行路径运行一次。
@@ -104,6 +105,7 @@
 ## LLM 路径
 
 - Agent chat 有 Claude-Code-compatible 和 OpenAI-agent 两条路径。除非任务明确要求，否则不要改 wire format、cache-control 或 provider identity 细节。
+- 每次 `LlmClient.chat()` provider 尝试都会 best-effort 写入 `agent_llm_calls`：包含 canonical 请求/响应、实际 wire 请求/响应、耗时、token、stop reason、request ID 和错误分类。敏感字段与 base64 图片会脱敏，单 payload 有大小上限；写入失败不影响 LLM 调用，也不进入 replay。
 - Claude-Code-compatible 路径可用 `LLM_PROVIDER_CLAUDE_THINKING_EFFORT=low|medium|high|xhigh|max` 配置 adaptive thinking effort；只有 `LLM_PROVIDER_CLAUDE_THINKING=adaptive` 时才发送 `output_config.effort`。Anthropic-compatible provider 可能宽松接受或忽略该字段，需以真实端点和评测结果判断是否生效。
 - Claude-Code-compatible 路径会对 transport、429、5xx/529 和 SSE overload 做最多两次有界重试，优先尊重 `retry-after`，并记录稳定错误分类与 request ID；401/403 和 invalid request 不重试。provider 明确返回 context/prompt too long 时，Runtime Host 强制追加 compaction entry，并只重试当前 LLM round 一次；该恢复发生在 tool call 写入 ledger 前，不重放副作用工具。
 - Claude `stop_reason` 和 OpenAI `finish_reason` 会归一化为 Runtime Host 的停止原因。`max_tokens` 先用更大的单次输出预算重试同一份 messages；仍截断时，只允许把“不含 tool call 的普通文本”作为 continuation checkpoint 写入 ledger，最多续写两次。任何截断或不完整的 tool call 都不写入、不执行。

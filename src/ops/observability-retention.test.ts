@@ -30,6 +30,10 @@ describe('purgeObservabilityData', () => {
         calls.push({ target: 'token-usage', cutoff })
         return 34
       },
+      async deleteLlmCallsBefore(cutoff) {
+        calls.push({ target: 'llm-calls', cutoff })
+        return 56
+      },
     }
 
     const report = await purgeObservabilityData({
@@ -43,10 +47,12 @@ describe('purgeObservabilityData', () => {
     assert.deepEqual(calls, [
       { target: 'tool-calls', cutoff },
       { target: 'token-usage', cutoff },
+      { target: 'llm-calls', cutoff },
     ])
     assert.equal(report.disabled, false)
     assert.equal(report.deletedToolCalls, 12)
     assert.equal(report.deletedTokenUsage, 34)
+    assert.equal(report.deletedLlmCalls, 56)
     assert.deepEqual(report.failures, [])
   })
 
@@ -55,6 +61,7 @@ describe('purgeObservabilityData', () => {
     const store: ObservabilityRetentionStore = {
       async deleteToolCallsBefore() { calls++; return 0 },
       async deleteTokenUsageBefore() { calls++; return 0 },
+      async deleteLlmCallsBefore() { calls++; return 0 },
     }
 
     const report = await purgeObservabilityData({
@@ -72,6 +79,7 @@ describe('purgeObservabilityData', () => {
     const store: ObservabilityRetentionStore = {
       async deleteToolCallsBefore() { throw new Error('tool cleanup failed') },
       async deleteTokenUsageBefore() { tokenCleanupRan = true; return 5 },
+      async deleteLlmCallsBefore() { return 0 },
     }
 
     const report = await purgeObservabilityData({
@@ -145,6 +153,7 @@ describe('purgeObservabilityData', () => {
     const store: ObservabilityRetentionStore = {
       async deleteToolCallsBefore() { databaseCalls++; return 1 },
       async deleteTokenUsageBefore() { databaseCalls++; return 2 },
+      async deleteLlmCallsBefore() { databaseCalls++; return 3 },
     }
 
     const report = await purgeObservabilityData({
@@ -154,7 +163,7 @@ describe('purgeObservabilityData', () => {
       ndjsonPaths: [badPath, goodPath],
     })
 
-    assert.equal(databaseCalls, 2)
+    assert.equal(databaseCalls, 3)
     assert.equal(await readFile(goodPath, 'utf8'), '')
     assert.equal(report.files.length, 1)
     assert.equal(report.failures.length, 1)
@@ -166,5 +175,6 @@ function emptyStore(): ObservabilityRetentionStore {
   return {
     async deleteToolCallsBefore() { return 0 },
     async deleteTokenUsageBefore() { return 0 },
+    async deleteLlmCallsBefore() { return 0 },
   }
 }

@@ -44,6 +44,9 @@ import { createQqConversationTool, type QqConversationController } from './qq-co
 import { applyBotToolPolicy } from './policies.js'
 import type { InboxReadCursors } from '../inbox-read-cursors.js'
 import { maybeCreateMoomooSkillTool } from './moomoo-skill.js'
+import { config } from '../../config/index.js'
+import { WorkspaceExecutorClient } from '../../executor/client.js'
+import type { WorkspaceCommandRunner } from '../../executor/protocol.js'
 
 export interface BotToolDeps {
   sender: MessageSender
@@ -65,6 +68,7 @@ export interface BotToolDeps {
   goalCompletionJudge?: GoalCompletionJudge
   memoryMaintenance?: MemoryMaintenanceRuntime
   workspaceDir?: string
+  workspaceCommandRunner?: WorkspaceCommandRunner
   workspaceStateCoordinator?: WorkspaceStateCoordinator
   loadMemorySourceEvidence?: LoadMemorySourceEvidence
   ownerId?: string
@@ -136,7 +140,21 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     workspaceStateCoordinator: deps.workspaceStateCoordinator,
   })
   const collectSticker = collectStickerTool
-  const workspaceBash = createWorkspaceBashTool({ workspaceDir: deps.workspaceDir })
+  const workspaceExecutorClient = config.workspaceExecutor.enabled
+    ? new WorkspaceExecutorClient({
+        baseUrl: config.workspaceExecutor.url,
+        timeoutMs: config.workspaceExecutor.timeoutMs,
+        ...(config.workspaceExecutor.token ? { token: config.workspaceExecutor.token } : {}),
+      })
+    : undefined
+  const workspaceBash = createWorkspaceBashTool({
+    workspaceDir: deps.workspaceDir,
+    ...(deps.workspaceCommandRunner
+      ? { runner: deps.workspaceCommandRunner }
+      : workspaceExecutorClient
+        ? { runner: workspaceExecutorClient.run }
+        : {}),
+  })
   const tools: Tool[] = [
     yieldControl,
     qqDirectory,

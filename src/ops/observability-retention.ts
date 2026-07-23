@@ -9,6 +9,7 @@ const log = createLogger('OBSERVABILITY_RETENTION')
 export interface ObservabilityRetentionStore {
   deleteToolCallsBefore(cutoff: Date): Promise<number>
   deleteTokenUsageBefore(cutoff: Date): Promise<number>
+  deleteLlmCallsBefore(cutoff: Date): Promise<number>
 }
 
 export type ObservabilityRetentionFailure = {
@@ -20,6 +21,7 @@ export type ObservabilityRetentionReport = {
   disabled: boolean
   deletedToolCalls: number
   deletedTokenUsage: number
+  deletedLlmCalls: number
   files: ObservabilityRetentionFileReport[]
   failures: ObservabilityRetentionFailure[]
 }
@@ -38,6 +40,10 @@ const prismaObservabilityRetentionStore: ObservabilityRetentionStore = {
   },
   async deleteTokenUsageBefore(cutoff) {
     const result = await prisma.agentTokenUsage.deleteMany({ where: { ts: { lt: cutoff } } })
+    return result.count
+  },
+  async deleteLlmCallsBefore(cutoff) {
+    const result = await prisma.agentLlmCall.deleteMany({ where: { ts: { lt: cutoff } } })
     return result.count
   },
 }
@@ -155,6 +161,7 @@ export async function purgeObservabilityData(options: {
     disabled: options.retentionDays === 0,
     deletedToolCalls: 0,
     deletedTokenUsage: 0,
+    deletedLlmCalls: 0,
     files: [],
     failures: [],
   }
@@ -174,6 +181,12 @@ export async function purgeObservabilityData(options: {
     report.deletedTokenUsage = await store.deleteTokenUsageBefore(cutoff)
   } catch (error) {
     report.failures.push({ target: 'agent_token_usage', error: errorMessage(error) })
+  }
+
+  try {
+    report.deletedLlmCalls = await store.deleteLlmCallsBefore(cutoff)
+  } catch (error) {
+    report.failures.push({ target: 'agent_llm_calls', error: errorMessage(error) })
   }
 
   for (const filePath of new Set(options.ndjsonPaths)) {
@@ -207,6 +220,7 @@ export async function purgeObservabilityData(options: {
         cutoff: formatBeijingIso(cutoff),
         deletedToolCalls: report.deletedToolCalls,
         deletedTokenUsage: report.deletedTokenUsage,
+        deletedLlmCalls: report.deletedLlmCalls,
       },
       '观测数据清理完成',
     )

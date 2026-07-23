@@ -12,6 +12,10 @@ import { createClaudeCodeLlmClient } from './claude-code/llm-client.js'
 import { createOpenAIAgentLlmClient } from './openai-agent/llm-client.js'
 import type { ClaudeThinkingConfig, ClaudeToolChoice } from './claude-code/request.js'
 import { createLogger } from '../logger.js'
+import {
+  createObservedLlmClient,
+  recordLlmCallObservation,
+} from './llm-observability.js'
 
 const log = createLogger('llm-client')
 
@@ -41,6 +45,11 @@ export interface LlmCallInput {
   maxOutputTokens?: number
   /** 可选调用级取消信号，供旁路/有界任务真正终止底层 HTTP 请求。 */
   signal?: AbortSignal
+  /** 仅供观测关联，不进入 provider request 或 canonical ledger。 */
+  observation?: {
+    operation: string
+    roundIndex?: number
+  }
 }
 
 export type LlmStopReason =
@@ -70,6 +79,13 @@ export interface LlmCallOutput {
   contextWindowTokens: number
   /** Provider-neutral 的生成停止原因；unknown 表示上游未提供或无法映射。 */
   stopReason?: LlmStopReason
+  /** Provider adapter 捕获的原始传输证据；仅供观测，不进入 AgentContext。 */
+  transportTrace?: {
+    request: unknown
+    response: unknown
+    status: number | null
+    requestId: string | null
+  }
 }
 
 export interface LlmClient {
@@ -175,11 +191,14 @@ function createProviderLlmClient(model: string, options: CreateLlmClientOptions)
     if (!openaiProvider) {
       throw new Error('需要 LLM_PROVIDER_OPENAI_URL / _API_KEY 指向 OpenAI-compatible endpoint')
     }
-    return createOpenAIAgentLlmClient({
-      model,
-      contextWindowTokens,
-      baseURL: openaiProvider.url,
-      apiKey: openaiProvider.apiKey,
+    return createObservedLlmClient({
+      client: createOpenAIAgentLlmClient({
+        model,
+        contextWindowTokens,
+        baseURL: openaiProvider.url,
+        apiKey: openaiProvider.apiKey,
+      }),
+      record: recordLlmCallObservation,
     })
   }
 
@@ -190,14 +209,17 @@ function createProviderLlmClient(model: string, options: CreateLlmClientOptions)
         `需要 LLM_PROVIDER_${CLAUDE_CODE_BASE_PROVIDER_NAME.toUpperCase()}_URL / _API_KEY 指向 cliproxy`,
       )
     }
-    return createClaudeCodeLlmClient({
-      model,
-      contextWindowTokens,
-      baseURL: claudeProvider.url,
-      apiKey: claudeProvider.apiKey,
-      toolChoice: config.llm.claudeToolChoice,
-      thinking: options.claudeThinking ?? config.llm.claudeThinking,
-      thinkingLog: { mode: config.llm.claudeThinking.log },
+    return createObservedLlmClient({
+      client: createClaudeCodeLlmClient({
+        model,
+        contextWindowTokens,
+        baseURL: claudeProvider.url,
+        apiKey: claudeProvider.apiKey,
+        toolChoice: config.llm.claudeToolChoice,
+        thinking: options.claudeThinking ?? config.llm.claudeThinking,
+        thinkingLog: { mode: config.llm.claudeThinking.log },
+      }),
+      record: recordLlmCallObservation,
     })
   }
 

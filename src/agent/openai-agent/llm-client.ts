@@ -49,17 +49,27 @@ export function createOpenAIAgentLlmClient(input: CreateOpenAIAgentLlmClientInpu
     provider: 'openai-agent',
     async chat(req: LlmCallInput): Promise<LlmCallOutput> {
       try {
+        const request = buildOpenAIAgentRequest({
+          model: input.model,
+          systemPrompt: req.systemPrompt,
+          messages: req.messages,
+          tools: req.tools,
+          maxOutputTokens: req.maxOutputTokens,
+        })
         const response = await client.chat.completions.create(
-          buildOpenAIAgentRequest({
-            model: input.model,
-            systemPrompt: req.systemPrompt,
-            messages: req.messages,
-            tools: req.tools,
-            maxOutputTokens: req.maxOutputTokens,
-          }),
+          request,
           req.signal ? { signal: req.signal } : undefined,
         )
-        return toLlmCallOutput(response, input.model, input.contextWindowTokens, req.tools)
+        const requestId = (response as unknown as { _request_id?: unknown })._request_id
+        return {
+          ...toLlmCallOutput(response, input.model, input.contextWindowTokens, req.tools),
+          transportTrace: {
+            request,
+            response,
+            status: 200,
+            requestId: typeof requestId === 'string' ? requestId : null,
+          },
+        }
       } catch (error) {
         throw normalizeOpenAIError(error, input.contextWindowTokens)
       }

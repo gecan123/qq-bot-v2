@@ -62,6 +62,7 @@ export function createGoalCompletionJudge(input: {
         ],
         tools: [],
         maxOutputTokens: 500,
+        observation: { operation: 'goal.completion_judge' },
       })
       return judgmentSchema.parse(JSON.parse(output.content.trim()))
     },

@@ -182,6 +182,37 @@ model AgentTokenUsage {
   @@map("agent_token_usage")
 }
 
+/// LLM 调用观测证据。只供诊断和 WebAdmin，不能用于重建 AgentContext 或 replay。
+model AgentLlmCall {
+  id                BigInt    @id @default(autoincrement())
+  callId            String    @unique @map("call_id") @db.Uuid
+  ts                DateTime  @db.Timestamptz(3)
+  operation         String    @db.VarChar(64)
+  roundIndex        Int?      @map("round_index")
+  provider          String    @db.VarChar(32)
+  model             String    @db.VarChar(191)
+  status            String    @db.VarChar(16)
+  durationMs        Int       @map("duration_ms")
+  canonicalRequest  Json      @map("canonical_request")
+  wireRequest       Json?     @map("wire_request")
+  canonicalResponse Json?     @map("canonical_response")
+  wireResponse      Json?     @map("wire_response")
+  requestId         String?   @map("request_id") @db.VarChar(191)
+  httpStatus        Int?      @map("http_status")
+  inputTokens       Int?      @map("input_tokens")
+  cachedTokens      Int?      @map("cached_tokens")
+  outputTokens      Int?      @map("output_tokens")
+  stopReason        String?   @map("stop_reason") @db.VarChar(64)
+  error             String?   @db.Text
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([ts(sort: Desc)])
+  @@index([operation, ts(sort: Desc)])
+  @@index([provider, model, ts(sort: Desc)])
+  @@index([status, ts(sort: Desc)])
+  @@map("agent_llm_calls")
+}
+
 /// 本地 Crypto 模拟仓唯一账户。只使用 Moomoo 行情，不连接 Crypto 交易接口。
 /// generation 每次 reset 递增；历史订单保留，当前持仓会清空。
 model CryptoPaperAccount {

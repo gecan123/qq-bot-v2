@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { SNAPSHOT_SCHEMA_VERSION } from './agent-context.types.js'
+import { SNAPSHOT_SCHEMA_VERSION, type DurableAgentMessage } from './agent-context.types.js'
 import {
   AGENT_LEDGER_SCHEMA_VERSION,
   AGENT_RUNTIME_STATE_SCHEMA_VERSION,
@@ -19,16 +19,23 @@ import type {
   StoredAgentCheckpoint,
 } from './agent-ledger-repo.js'
 import { createEmptyMailboxContinuityState } from './mailbox-continuity.js'
+import { buildWorkingContextProjection } from './working-context.js'
+import { buildClaudeCodeRequestBody } from './claude-code/request.js'
+import { buildOpenAIAgentRequest } from './openai-agent/llm-client.js'
 
 const CREATED_AT = new Date('2026-07-15T12:00:00.000Z')
 
 function messageEntry(id: bigint, content: string): AgentLedgerEntry {
+  return agentEntry(id, { role: 'user', content })
+}
+
+function agentEntry(id: bigint, message: DurableAgentMessage): AgentLedgerEntry {
   return {
     id,
     entryType: 'message',
     payload: {
       schemaVersion: AGENT_LEDGER_SCHEMA_VERSION,
-      message: { role: 'user', content },
+      message,
     },
     createdAt: CREATED_AT,
   }
@@ -215,5 +222,62 @@ describe('createAgentLedgerLoader', () => {
 
     assert.equal(loaded.checkpointStatus, 'missing')
     assert.deepEqual(loaded.projection.snapshot.messages, [{ role: 'user', content: 'hello' }])
+  })
+
+  test('cache hit, stale rebuild, and canonical replay produce byte-identical LLM requests', async () => {
+    const state = canonical([
+      agentEntry(1n, { role: 'user', content: '查一下 notes' }),
+      agentEntry(2n, {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'call-1', name: 'workspace_bash', args: { command: 'ls notes' } }],
+      }),
+      agentEntry(3n, { role: 'tool', toolCallId: 'call-1', content: '{"ok":true}' }),
+      agentEntry(4n, { role: 'assistant', content: '找到了。', toolCalls: [] }),
+    ])
+    const fake = createFakeRepo(state)
+    const loader = createAgentLedgerLoader({ repo: fake.repo })
+
+    const rebuilt = await loader.load()
+    const cached = await loader.load()
+    const staleCheckpoint = fake.checkpoint()
+    assert.ok(staleCheckpoint)
+    fake.setCheckpoint({ ...staleCheckpoint, fingerprint: 'stale' })
+    const stale = await loader.load()
+
+    assert.equal(rebuilt.checkpointStatus, 'missing')
+    assert.equal(cached.checkpointStatus, 'hit')
+    assert.equal(stale.checkpointStatus, 'stale')
+    assert.equal(
+      JSON.stringify(rebuilt.projection.snapshot),
+      JSON.stringify(cached.projection.snapshot),
+    )
+    assert.equal(
+      JSON.stringify(rebuilt.projection.snapshot),
+      JSON.stringify(stale.projection.snapshot),
+    )
+
+    const requests = await Promise.all(
+      [rebuilt, cached, stale].map(async loaded => {
+        const working = await buildWorkingContextProjection(loaded.projection.snapshot.messages)
+        return {
+          claude: buildClaudeCodeRequestBody({
+            model: 'claude-sonnet-4-6',
+            systemPrompt: 'stable system',
+            messages: working.messages,
+            tools: [],
+          }),
+          openai: buildOpenAIAgentRequest({
+            model: 'gpt-5.1',
+            systemPrompt: 'stable system',
+            messages: working.messages,
+            tools: [],
+          }),
+        }
+      }),
+    )
+    const canonicalBytes = JSON.stringify(requests[0])
+    assert.equal(JSON.stringify(requests[1]), canonicalBytes)
+    assert.equal(JSON.stringify(requests[2]), canonicalBytes)
   })
 })

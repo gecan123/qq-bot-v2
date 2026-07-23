@@ -333,6 +333,20 @@ BOT_BROWSER_ARGS=--fingerprint=12345
 
 `BOT_BROWSER_GEOIP=true` 会让 CloakBrowser 通过 `mmdb-lib` 解析代理 IP 的 timezone/locale；旋转住宅代理不稳定时，优先显式配置 `BOT_BROWSER_TIMEZONE` 和 `BOT_BROWSER_LOCALE`。Pro 版 license 走 CloakBrowser 官方环境变量 `CLOAKBROWSER_LICENSE_KEY`，不要写进 repo。
 
+### Workspace executor sidecar
+
+默认 `workspace_bash` 在 Bot 进程内运行。需要进程隔离时：
+
+```bash
+# shell 1
+BOT_WORKSPACE_EXECUTOR_ENABLED=true pnpm workspace:executor
+
+# shell 2
+BOT_WORKSPACE_EXECUTOR_ENABLED=true pnpm dev
+```
+
+两边应配置相同的 `BOT_WORKSPACE_EXECUTOR_URL` 和 `BOT_WORKSPACE_EXECUTOR_TOKEN`。URL 只接受 loopback HTTP origin。sidecar 不接受 executable、绝对 cwd 或 env；它会重新校验命令白名单，并把真实目录、PATH、单次超时和输出上限固定在 operator 配置内。
+
 ## Vibe-Trading 子 Agent / Mac
 
 Vibe-Trading 独立安装在仓库外，不把 Python 依赖和运行产物写进本仓库。上游 `zigzag` 依赖在 Python 3.12 的严格 resolver 下存在打包兼容问题；全新安装优先用 Python 3.11 + pip。当前这台机器使用的是已修复并通过 `uv pip check` 的 Python 3.12 本地 checkout，补丁说明在 `~/.local/share/vibe-trading/LOCAL_PATCH.md`。
@@ -422,4 +436,5 @@ feat fix refactor docs test chore perf ci
 
 - `logs/tool-calls.ndjson`：脱敏后的 tool call 审计。
 - token usage log path：由 `BOT_TOKEN_USAGE_LOG_PATH` 配置，默认 `logs/token-usage.ndjson`。
+- `agent_llm_calls`：脱敏、有界的 LLM canonical/wire 调用诊断；WebAdmin 行为时间线读取，不参与 replay。
 - browser action log path：由 browser sidecar 相关配置决定。

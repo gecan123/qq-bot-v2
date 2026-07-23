@@ -156,7 +156,7 @@ export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput)
         }
         throw error
       }
-      const { parsed, status } = response
+      const { parsed, status, requestId } = response
 
       // content:[] 是合法的 — 模型可以选择 end_turn 不输出任何 block。
       // 这种情况返回空 completion, BotLoop 会自然 skip 这一轮 (不 append assistant turn)。
@@ -180,7 +180,15 @@ export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput)
       }).catch((err) => {
         log.warn({ err, model: output.model }, 'claude_thinking_log_unexpected_failure')
       })
-      return output
+      return {
+        ...output,
+        transportTrace: {
+          request: body,
+          response: parsed,
+          status,
+          requestId,
+        },
+      }
     },
   }
 }
@@ -214,7 +222,7 @@ interface NormalizedRetryOptions {
 
 async function callWithRetry(
   input: CallOnceInput & { retry: NormalizedRetryOptions },
-): Promise<{ parsed: ClaudeMessageResponse; status: number }> {
+): Promise<{ parsed: ClaudeMessageResponse; status: number; requestId: string | null }> {
   for (let attempt = 0; ; attempt += 1) {
     try {
       const { response } = await callOnce(input)
@@ -247,7 +255,7 @@ async function callWithRetry(
         })
       }
 
-      return { parsed, status: response.status }
+      return { parsed, status: response.status, requestId: response.requestId }
     } catch (err) {
       if (input.signal?.aborted) throw err
       if (!(err instanceof ClaudeCodeApiError) || !err.retryable || attempt >= input.retry.maxRetries) {

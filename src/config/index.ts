@@ -179,6 +179,27 @@ function parsePositiveInteger(value: string | undefined, defaultValue: number): 
   return Math.floor(parsed)
 }
 
+function parseLoopbackHttpOrigin(name: string, value: string): string {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error(`${name} must be a valid loopback HTTP URL`)
+  }
+  if (
+    url.protocol !== 'http:'
+    || !new Set(['127.0.0.1', 'localhost', '[::1]']).has(url.hostname)
+    || url.username
+    || url.password
+    || url.search
+    || url.hash
+    || (url.pathname !== '/' && url.pathname !== '')
+  ) {
+    throw new Error(`${name} must be an origin-only loopback HTTP URL`)
+  }
+  return url.origin
+}
+
 function parseStrictPositiveInteger(name: string, value: string | undefined, defaultValue: number): number {
   if (value == null || value.trim() === '') return defaultValue
   const parsed = Number(value.trim())
@@ -570,6 +591,13 @@ export function parseConfig(
     ? env.BOT_BROWSER_ACTION_LOG_PATH.trim()
     : 'logs/browser-actions.ndjson'
   const browserActionTimeoutMs = parsePositiveInteger(env.BOT_BROWSER_ACTION_TIMEOUT_MS, 15_000)
+  const workspaceExecutorEnabled = parseBoolean(env.BOT_WORKSPACE_EXECUTOR_ENABLED, false)
+  const workspaceExecutorUrl = parseLoopbackHttpOrigin(
+    'BOT_WORKSPACE_EXECUTOR_URL',
+    env.BOT_WORKSPACE_EXECUTOR_URL?.trim() || 'http://127.0.0.1:37922',
+  )
+  const workspaceExecutorToken = env.BOT_WORKSPACE_EXECUTOR_TOKEN?.trim() || undefined
+  const workspaceExecutorTimeoutMs = parsePositiveInteger(env.BOT_WORKSPACE_EXECUTOR_TIMEOUT_MS, 7_000)
 
   return {
     databaseUrl: requireEnv(env, 'DATABASE_URL'),
@@ -626,6 +654,12 @@ export function parseConfig(
       artifactDir: browserArtifactDir,
       actionLogPath: browserActionLogPath,
       actionTimeoutMs: browserActionTimeoutMs,
+    },
+    workspaceExecutor: {
+      enabled: workspaceExecutorEnabled,
+      url: workspaceExecutorUrl,
+      token: workspaceExecutorToken,
+      timeoutMs: workspaceExecutorTimeoutMs,
     },
     openbb: parseBoolean(env.OPENBB_CLI_ENABLED, false)
       ? {

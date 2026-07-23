@@ -397,6 +397,30 @@ describe('config', () => {
     assert.equal(configured.mcpSchemaSnapshotDir, 'tmp/mcp-schemas')
   })
 
+  test('workspace executor is optional and uses a loopback sidecar', () => {
+    assert.deepEqual(parseConfig(createBaseEnv()).workspaceExecutor, {
+      enabled: false,
+      url: 'http://127.0.0.1:37922',
+      token: undefined,
+      timeoutMs: 7_000,
+    })
+    assert.deepEqual(parseConfig(createBaseEnv({
+      BOT_WORKSPACE_EXECUTOR_ENABLED: 'true',
+      BOT_WORKSPACE_EXECUTOR_URL: 'http://localhost:48000',
+      BOT_WORKSPACE_EXECUTOR_TOKEN: '  secret  ',
+      BOT_WORKSPACE_EXECUTOR_TIMEOUT_MS: '9000',
+    })).workspaceExecutor, {
+      enabled: true,
+      url: 'http://localhost:48000',
+      token: 'secret',
+      timeoutMs: 9_000,
+    })
+    assert.throws(
+      () => parseConfig(createBaseEnv({ BOT_WORKSPACE_EXECUTOR_URL: 'https://example.com' })),
+      /loopback HTTP URL/,
+    )
+  })
+
   test('openbb: 不启用 OPENBB_CLI_ENABLED → undefined', () => {
     const config = parseConfig(createBaseEnv())
     assert.equal(config.openbb, undefined)

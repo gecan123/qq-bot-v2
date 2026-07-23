@@ -18,6 +18,35 @@ function createFakeClient(response: unknown, calls: ChatCompletionCreateParamsNo
 }
 
 describe('openai-agent llm client', () => {
+  test('returns wire request and response evidence for observability', async () => {
+    const calls: ChatCompletionCreateParamsNonStreaming[] = []
+    const response = {
+      id: 'chatcmpl-1',
+      model: 'gpt-5.1',
+      choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'ok' } }],
+      usage: { prompt_tokens: 5, completion_tokens: 1, total_tokens: 6 },
+      _request_id: 'request-openai-1',
+    }
+    const client = createOpenAIAgentLlmClient({
+      model: 'gpt-5.1',
+      contextWindowTokens: 400_000,
+      baseURL: 'http://127.0.0.1:8317/v1',
+      apiKey: 'sk-local',
+      client: createFakeClient(response, calls),
+    })
+
+    const output = await client.chat({
+      systemPrompt: 'system',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [],
+    })
+
+    assert.equal(output.transportTrace?.request, calls[0])
+    assert.equal(output.transportTrace?.response, response)
+    assert.equal(output.transportTrace?.status, 200)
+    assert.equal(output.transportTrace?.requestId, 'request-openai-1')
+  })
+
   test('normalizes OpenAI context length errors for provider-neutral recovery', async () => {
     const client = createOpenAIAgentLlmClient({
       model: 'gpt-5.1',

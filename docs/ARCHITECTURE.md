@@ -14,7 +14,7 @@
 6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责受控 append、runtime cursor/continuity/Goal revision/QQ focus 原子更新、compaction 和 autonomy 调度。事务成功后才推进内存 `AgentContext`。
 7. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct。连续且显式只读的 tool calls 可以并行，副作用和未知调用是 barrier；tool results 始终按 assistant tool-call 顺序成组 append。只有 `ToolExecutionResult.content` 进入 ledger，`outcome` / `effects` 由 Runtime Host 解释。
 
-专用后台工作统一走 bounded task scheduler：`maintenance=1`、`network=3`、`media-description=2`。同一 `resourceKey` 串行，相同 `dedupeKey` 共享任务。这些有明确类型和边界的 Node async worker 不是新的主 Agent；完成结果回到同一主 ledger。ingress 媒体描述使用独立 `jobQueue`，Browser sidecar 是独立进程。项目当前接受进程重启中断在途后台任务：遗留 `running` 明确转成 `interrupted`，不建设通用 `jobKind + payload` 自动恢复层；只有重启丢失昂贵长任务形成可测量痛点，或外部服务原生提供可恢复 task/session ID 时再重新评估。
+专用后台工作统一走 bounded task scheduler：`maintenance=1`、`network=3`、`media-description=2`。同一 `resourceKey` 串行，相同 `dedupeKey` 共享任务。这些有明确类型和边界的 Node async worker 不是新的主 Agent；完成结果回到同一主 ledger。ingress 媒体描述使用独立 `jobQueue`，Browser 与可选 workspace executor sidecar 是独立进程。workspace executor 只接受原始命令和 `workspace|repo` 视图，sidecar 自己重新执行 allowlist、固定目录、最小 PATH、超时和输出上限检查。项目当前接受进程重启中断在途后台任务：遗留 `running` 明确转成 `interrupted`，不建设通用 `jobKind + payload` 自动恢复层；只有重启丢失昂贵长任务形成可测量痛点，或外部服务原生提供可恢复 task/session ID 时再重新评估。
 
 短期调度由进程内 `ScheduleRuntime` 管理。它把 active 状态原子写入 `schedules.json`，把已触发正文写入独立 occurrence store；到期只向现有 event queue 注入内部 `scheduled_wake`，由单一 `BotLoopAgent` 转成不含 intention 的 `notification`，Agent 按需调用 `schedule get_occurrence` 打开。
 
@@ -44,7 +44,7 @@ Browser → validated Server Function → operation service
 
 WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay source，不能用来重建 `AgentContext`。它默认绑定 `127.0.0.1:20030`；当前没有管理员鉴权，不得直接暴露到非可信网络。
 
-`logs/agent-activity.json` 是 Bot Runtime best-effort 原子更新的可丢弃实时观察面。它只保存进程 phase、结构化唤醒原因、等待条件、并发工具和最近完成工具，不进入 canonical ledger 或 runtime singleton；缺失、损坏、PID 不匹配或写入失败都不能改变 Agent 行为，WebAdmin 必须明确降级为“实时状态不可用”。首页的最近工具进展和 24 小时工具统计读取 `logs/tool-calls.ndjson`，按文件元数据缓存解析结果；它们只反映当前 `BOT_TOOL_AUDIT_MODE` 覆盖的调用，不能从 `agent_tool_calls` 旧表补齐或用于 replay。
+`logs/agent-activity.json` 是 Bot Runtime best-effort 原子更新的可丢弃实时观察面。它只保存进程 phase、结构化唤醒原因、等待条件、并发工具和最近完成工具，不进入 canonical ledger 或 runtime singleton；缺失、损坏、PID 不匹配或写入失败都不能改变 Agent 行为，WebAdmin 必须明确降级为“实时状态不可用”。首页的最近工具进展和 24 小时工具统计读取 `logs/tool-calls.ndjson`，按文件元数据缓存解析结果；它们只反映当前 `BOT_TOOL_AUDIT_MODE` 覆盖的调用，不能从 `agent_tool_calls` 旧表补齐或用于 replay。行为时间线还合并 `agent_llm_calls`，展示每次 provider 尝试的 canonical/wire 请求响应、耗时、token、request ID 和失败；这些记录经过脱敏与大小限制，只用于诊断。
 
 ## 永续上下文与压缩
 
@@ -73,7 +73,7 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - `bot_agent_ledger_entries` 保存 append-only LLM history；`bot_agent_runtime_state` 保存通知披露 cursor、inbox 已读 cursor、continuity、Goal revision、active capabilities、QQ 当前会话 focus、last wake 和 ledger head；`bot_agent_checkpoint` 只缓存已验证 projection。
 - QQ 新消息不会隐式切换 focus。Agent 必须先通过 `qq_conversation open` 显式打开允许的群或好友，`send_message` 才能向当前 focus 发送；focus 不从 transcript、memory 或日志重建。
 - `prompts/groups.md` 是群监听范围、主动发送权限、参与档位和 operator 固定群提示的唯一配置源。启动时严格解析并冻结；`mentions` 只允许结构化 @ reply，其普通消息不生成 notification；`selective` / `active` 的普通消息可聚合为 `delivery=passive` 的 QQ notification，但不主动唤醒，正文仍必须用 inbox 按需读取。档位不扩大发送授权。active 群可用一行稳定 `resident-hint` 进入常驻 source list，作为成果分享候选；完整风格正文仍只由 `chat_style` 按需读取，会变化的群文化与历史写 group memory。
-- `bot_agent_goal`、Memory、Notebook、Life Journal、Agenda、调度文件和 `logs/*` 都是 side state，不能作为 transcript replay 来源。
+- `bot_agent_goal`、`agent_llm_calls`、Memory、Notebook、Life Journal、Agenda、调度文件和 `logs/*` 都是 side state，不能作为 transcript replay 来源。
 - QQ provider 已确认发送和本地数据库之间没有分布式事务，因此 `mailbox_handled` 是 durable 防重复边界，不承诺外部发送 exactly-once。
 - compaction、append 与 runtime 元数据使用数据库事务；checkpoint 刷新和 `afterCompact` 是 best-effort，不回滚已提交历史。
 - `data/agent-workspace/` 是 bot 生产的 workspace 数据，不是项目源码。
@@ -98,6 +98,7 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - `src/agent/working-context.ts`、`src/media/agent-image-ref.ts`：请求投影与稳定图片引用。
 - `src/agent/mailbox.ts`、`src/agent/mailbox-handled.ts`：入站通知和 durable handled boundary。
 - `src/agent/tools/**`：受控工具；注册表以 `src/agent/tools/index.ts` 为准。
+- `src/executor/**`、`scripts/workspace-executor.ts`：可选的 loopback workspace 命令执行边界。
 - `src/bot/**`、`src/messaging/**`、`src/media/**`：NapCat ingress、发送和媒体路径。
 - `src/database/**`、`src/ops/**`：数据库 helper、运维日志和只读检查。
 - `apps/admin-web/**`：TanStack Start 本机管理面；观察 feature 只读，operations feature 通过固定 DTO、single-flight runner 和本地审计调用强类型 `src/ops` 服务；`*.functions.ts` 暴露 RPC wrapper，`*.server.ts` 保留 Prisma/env/文件 helper。

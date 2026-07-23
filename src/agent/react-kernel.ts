@@ -141,6 +141,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
         : { cacheBreakpointMessageIndexes: [cacheBreakpointMessageIndex] }),
       signal: input.signal,
       ...(maxOutputTokens != null ? { maxOutputTokens } : {}),
+      observation: { operation: 'agent.chat', roundIndex },
     })
     completions.push(completion)
     recordCompletion(roundIndex, completion)

@@ -3,11 +3,15 @@ import { mkdir } from 'node:fs/promises'
 import { isAbsolute, normalize, resolve } from 'node:path'
 import { z } from 'zod'
 import type { Tool } from '../tool.js'
+import type {
+  WorkspaceCommandRunner,
+  WorkspaceCommandResult,
+} from '../../executor/protocol.js'
 
 const DEFAULT_WORKSPACE_DIR = 'data/agent-workspace'
 const DEFAULT_TIMEOUT_MS = 5_000
 const DEFAULT_OUTPUT_CAP_CHARS = 4_000
-const DEFAULT_PATH = process.env.PATH ?? '/usr/bin:/bin'
+const DEFAULT_PATH = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin'
 
 const READ_COMMANDS = new Set(['pwd', 'ls', 'rg', 'cat', 'head', 'tail', 'wc'])
 const RG_FLAGS = new Set([
@@ -64,8 +68,16 @@ export type WorkspaceBashRunner = (input: WorkspaceBashRunInput) => Promise<Work
 export interface WorkspaceBashDeps {
   workspaceDir?: string
   repoDir?: string
-  runner?: WorkspaceBashRunner
+  runner?: WorkspaceCommandRunner
   timeoutMs?: number
+  maxOutputChars?: number
+}
+
+export interface LocalWorkspaceCommandRunnerDeps {
+  workspaceDir?: string
+  repoDir?: string
+  processRunner?: WorkspaceBashRunner
+  maxTimeoutMs?: number
   maxOutputChars?: number
 }
 
@@ -251,40 +263,66 @@ function clamp(value: string, maxChars: number): string {
   return value.length <= maxChars ? value : `${value.slice(0, maxChars)}\n[...truncated at ${maxChars} chars]`
 }
 
-export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args> {
+export function createLocalWorkspaceCommandRunner(
+  deps: LocalWorkspaceCommandRunnerDeps = {},
+): WorkspaceCommandRunner {
   const workspaceDir = resolve(deps.workspaceDir ?? DEFAULT_WORKSPACE_DIR)
   const repoDir = resolve(deps.repoDir ?? process.cwd())
+  const processRunner = deps.processRunner ?? runCommand
+  const maxTimeoutMs = deps.maxTimeoutMs ?? DEFAULT_TIMEOUT_MS
+  const maxOutputChars = deps.maxOutputChars ?? DEFAULT_OUTPUT_CAP_CHARS
+
+  return async input => {
+    const parsed = parseWorkspaceBashCommand(input.command, input.cwd)
+    if (!parsed.ok) {
+      return { ok: false, code: 'command_not_allowed', error: parsed.error }
+    }
+    if (parsed.cwd === 'workspace') await mkdir(workspaceDir, { recursive: true })
+    const result = await processRunner({
+      executable: parsed.command,
+      args: parsed.args,
+      cwd: parsed.cwd === 'repo' ? repoDir : workspaceDir,
+      env: { PATH: DEFAULT_PATH },
+      timeoutMs: Math.min(input.timeoutMs, maxTimeoutMs),
+      maxOutputChars: Math.min(input.maxOutputChars, maxOutputChars),
+    })
+    return { ok: true, ...result }
+  }
+}
+
+export function createWorkspaceBashTool(deps: WorkspaceBashDeps = {}): Tool<Args> {
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const maxOutputChars = deps.maxOutputChars ?? DEFAULT_OUTPUT_CAP_CHARS
-  const runner = deps.runner ?? runCommand
+  const runner = deps.runner ?? createLocalWorkspaceCommandRunner({
+    workspaceDir: deps.workspaceDir,
+    repoDir: deps.repoDir,
+    maxTimeoutMs: timeoutMs,
+    maxOutputChars,
+  })
 
   return {
     name: 'workspace_bash',
     description: [
       '受限只读检索工具. cwd=workspace 查看私有工作文件; cwd=repo 查看仓库源码和公开文档.',
       '只允许 pwd/ls/rg/cat/head/tail/wc，直接 spawn 固定 executable，不经过 shell.',
+      '启用独立 executor 时，sidecar 会再次执行相同白名单和资源上限检查.',
       'repo 禁止读取 .env、.git、data、logs、node_modules 和 prompts/groups.md.',
       '文件修改使用 workspace_file；数据库、指标和仓库维护交给 operator，外部内容、聊天风格和金融使用各自 typed tool.',
     ].join(' '),
     schema: argsSchema,
     async execute(args) {
-      const parsed = parseWorkspaceBashCommand(args.command, args.cwd)
-      if (!parsed.ok) {
-        const error = `command not allowed: ${parsed.error}`
-        return {
-          content: JSON.stringify({ ok: false, code: 'command_not_allowed', error }),
-          outcome: { ok: false, code: 'command_not_allowed', error, progress: false },
-        }
-      }
-      await mkdir(workspaceDir, { recursive: true })
-      const result = await runner({
-        executable: parsed.command,
-        args: parsed.args,
-        cwd: parsed.cwd === 'repo' ? repoDir : workspaceDir,
-        env: { PATH: DEFAULT_PATH },
+      const result: WorkspaceCommandResult = await runner({
+        command: args.command,
+        cwd: args.cwd,
         timeoutMs,
         maxOutputChars,
       })
+      if (!result.ok) {
+        return {
+          content: JSON.stringify(result),
+          outcome: { ok: false, code: result.code, error: result.error, progress: false },
+        }
+      }
       const ok = !result.timedOut && result.exitCode === 0
       return {
         content: JSON.stringify({

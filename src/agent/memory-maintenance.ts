@@ -136,7 +136,12 @@ export function createMemoryMaintenanceRuntime(deps: {
       let timeout: NodeJS.Timeout | undefined
       try {
         const output = await Promise.race([
-          deps.llm.chat({ ...request, systemPrompt, signal: controller.signal }),
+          deps.llm.chat({
+            ...request,
+            systemPrompt,
+            signal: controller.signal,
+            observation: { operation: 'memory.maintenance' },
+          }),
           new Promise<never>((_, reject) => {
             timeout = setTimeout(() => {
               controller.abort()

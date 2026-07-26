@@ -31,7 +31,10 @@ describe('main runtime wiring', () => {
     const source = await readFile(new URL('./index.ts', import.meta.url), 'utf8')
 
     assert.match(source, /createShutdownCoordinator/)
-    assert.match(source, /disconnectIngress:\s*disconnectNapcatForShutdown/)
+    assert.match(
+      source,
+      /disconnectIngress: config\.services\.enabled[\s\S]*\? \(\) => mailboxWatcher\?\.stop\(\)[\s\S]*: directNapcatModule!\.disconnectNapcatForShutdown/,
+    )
     assert.match(source, /stopAgent:\s*agentLifecycle\.stopAgent/)
     assert.match(source, /awaitAgent:\s*agentLifecycle\.awaitAgent/)
     assert.match(source, /drainIngress:\s*\(\) => napcatLifecycle\.drain\(\)/)

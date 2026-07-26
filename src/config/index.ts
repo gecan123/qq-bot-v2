@@ -570,6 +570,29 @@ export function parseConfig(
     ? env.BOT_BROWSER_ACTION_LOG_PATH.trim()
     : 'logs/browser-actions.ndjson'
   const browserActionTimeoutMs = parsePositiveInteger(env.BOT_BROWSER_ACTION_TIMEOUT_MS, 15_000)
+  const platformEnabled = parseBoolean(env.BOT_PLATFORM_ENABLED, false)
+  const serviceUrl = (name: string, fallback: string): string => {
+    const raw = env[name]?.trim() || fallback
+    let url: URL
+    try {
+      url = new URL(raw)
+    } catch {
+      throw new Error(`${name} must be an origin-only loopback HTTP URL with an explicit port`)
+    }
+    if (
+      url.protocol !== 'http:'
+      || !new Set(['127.0.0.1', 'localhost', '[::1]']).has(url.hostname)
+      || !url.port
+      || url.username
+      || url.password
+      || url.search
+      || url.hash
+      || (url.pathname !== '/' && url.pathname !== '')
+    ) {
+      throw new Error(`${name} must be an origin-only loopback HTTP URL with an explicit port`)
+    }
+    return url.origin
+  }
 
   return {
     databaseUrl: requireEnv(env, 'DATABASE_URL'),
@@ -626,6 +649,16 @@ export function parseConfig(
       artifactDir: browserArtifactDir,
       actionLogPath: browserActionLogPath,
       actionTimeoutMs: browserActionTimeoutMs,
+    },
+    services: {
+      enabled: platformEnabled,
+      qqGatewayUrl: serviceUrl('BOT_QQ_GATEWAY_URL', 'http://127.0.0.1:37922'),
+      mediaWorkerUrl: serviceUrl('BOT_MEDIA_WORKER_URL', 'http://127.0.0.1:37923'),
+      schedulerUrl: serviceUrl('BOT_SCHEDULER_URL', 'http://127.0.0.1:37924'),
+      agentEventsUrl: serviceUrl('BOT_AGENT_EVENTS_URL', 'http://127.0.0.1:37925'),
+      llmGatewayUrl: serviceUrl('BOT_LLM_GATEWAY_URL', 'http://127.0.0.1:37926'),
+      mailboxPollMs: parsePositiveInteger(env.BOT_MAILBOX_POLL_MS, 1_000),
+      mediaPollMs: parsePositiveInteger(env.BOT_MEDIA_POLL_MS, 1_000),
     },
     openbb: parseBoolean(env.OPENBB_CLI_ENABLED, false)
       ? {

@@ -68,6 +68,7 @@ import {
   createActivityTrackingToolExecutor,
   type AgentActivityReporter,
 } from './activity-surface.js'
+import type { GroupMuteInspector } from '../messaging/group-mute-inspector.js'
 
 const scheduleLog = createLogger('SCHEDULE')
 
@@ -95,6 +96,7 @@ export interface AgentRuntimeInput {
   ledgerLoader: AgentLedgerLoader
   initialLedgerHeadEntryId?: bigint | null
   sender: MessageSender
+  groupMuteInspector?: GroupMuteInspector
   loadFriends: () => Promise<readonly QqDirectoryFriend[]>
   loadGroups: () => Promise<readonly QqDirectoryGroup[]>
   selfNumber: number
@@ -215,6 +217,7 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
   const baseTools = createDeferredToolExecutor({
     ...buildBotToolManifest({
       sender: input.sender,
+      groupMuteInspector: input.groupMuteInspector,
       targetPolicy,
       conversations,
       taskRegistry,

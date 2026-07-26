@@ -1,4 +1,3 @@
-import { napcat } from '../bot/napcat.js'
 import { config } from '../config/index.js'
 import { formatBeijingIso } from '../utils/beijing-time.js'
 
@@ -42,5 +41,8 @@ export function createGroupMuteInspector(deps: GroupMuteInspectorDeps): GroupMut
 
 export const groupMuteInspector = createGroupMuteInspector({
   selfNumber: config.selfNumber,
-  loadGroupShutList: async (groupId) => napcat.get_group_shut_list({ group_id: groupId }),
+  loadGroupShutList: async (groupId) => {
+    const { napcat } = await import('../bot/napcat.js')
+    return napcat.get_group_shut_list({ group_id: groupId })
+  },
 })

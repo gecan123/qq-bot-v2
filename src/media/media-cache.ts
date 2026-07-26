@@ -1,6 +1,6 @@
 import { prisma } from '../database/client.js'
 import { createLogger } from '../logger.js'
-import { jobQueue } from '../queue/runtime.js'
+import { requestMediaDescription } from '../services/media-worker-client.js'
 import { computeMediaHash } from './media-hash.js'
 import type {
   ImageSegment,
@@ -258,7 +258,7 @@ async function downloadMediaIntoPlaceholder(
       },
     })
     if (!existing.descriptionRaw) {
-      jobQueue.enqueue('generate-description', { mediaId }, { priority: 'low' })
+      void requestMediaDescription(mediaId, { priority: 'low' })
     }
     return
   }
@@ -275,7 +275,7 @@ async function downloadMediaIntoPlaceholder(
         fileSize,
       },
     })
-    jobQueue.enqueue('generate-description', { mediaId }, { priority: 'low' })
+    void requestMediaDescription(mediaId, { priority: 'low' })
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       const deduped = await prisma.media.findUnique({
@@ -302,7 +302,7 @@ async function downloadMediaIntoPlaceholder(
           },
         })
         if (!deduped.descriptionRaw) {
-          jobQueue.enqueue('generate-description', { mediaId }, { priority: 'low' })
+          void requestMediaDescription(mediaId, { priority: 'low' })
         }
         return
       }

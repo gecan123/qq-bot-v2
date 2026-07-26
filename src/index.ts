@@ -1,7 +1,6 @@
 import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { prisma } from './database/client.js'
-import { connectNapcat, registerNapcatHandlers, type IngestedMessage } from './bot/core.js'
-import { disconnectNapcatForShutdown, napcat } from './bot/napcat.js'
+import type { IngestedMessage } from './bot/core.js'
 import { createLogger } from './logger.js'
 import { formatBeijingDateTime, formatBeijingIso } from './utils/beijing-time.js'
 import { jobQueue } from './queue/index.js'
@@ -45,6 +44,18 @@ import {
   tryHandleOwnerGoalMessage,
 } from './agent/goal-control.js'
 import { createAgentActivityReporter } from './agent/activity-surface.js'
+import {
+  createQqGatewayMessageSender,
+  QqGatewayClient,
+} from './services/qq-gateway-client.js'
+import {
+  createDatabaseMailboxWatcher,
+  currentMessageHighWater,
+  type DatabaseMailboxWatcher,
+} from './services/database-mailbox-watcher.js'
+import { startAgentEventsServer, type AgentEventsServer } from './services/agent-events-server.js'
+import { createRemoteScheduleRuntime } from './services/scheduler-client.js'
+import { createGroupMuteInspector } from './messaging/group-mute-inspector.js'
 
 const log = createLogger('APP')
 
@@ -77,19 +88,19 @@ async function main() {
     ],
   })
 
-  // 1. 媒体描述用的 LLM provider routing (与 agent 自身的 LLM 客户端独立)
-  const mediaProvider = buildMediaProvider(config.llm)
-  setLlmProvider(mediaProvider)
-  log.info(
-    {
-      defaultProvider: config.llm.defaultProvider,
-      defaultModel: config.llm.defaultModel,
-    },
-    'LLM media provider 已注册',
-  )
-
-  // 2. 媒体描述异步队列
-  jobQueue.start()
+  // 平台模式下媒体 provider 与队列由独立 media-worker 拥有。
+  if (!config.services.enabled) {
+    const mediaProvider = buildMediaProvider(config.llm)
+    setLlmProvider(mediaProvider)
+    log.info(
+      {
+        defaultProvider: config.llm.defaultProvider,
+        defaultModel: config.llm.defaultModel,
+      },
+      'LLM media provider 已注册',
+    )
+    jobQueue.start()
+  }
 
   // 3. Agent 自己的 LLM 客户端 (走 default provider/model, 后续可以单独换)
   const llm = createLlmClient()
@@ -192,7 +203,20 @@ async function main() {
     return enqueueDedupedMessageEvent(event)
   }
 
-  // 6. NapCat: register handlers (sync). 实时消息会进 onMessageReady → enqueueMessageEvent.
+  let mailboxWatcher: DatabaseMailboxWatcher | null = null
+  let agentEventsServer: AgentEventsServer | null = null
+  const qqGateway = config.services.enabled
+    ? new QqGatewayClient(config.services.qqGatewayUrl)
+    : null
+  const directQq = config.services.enabled ? null : await import('./bot/core.js')
+  const directNapcatModule = config.services.enabled ? null : await import('./bot/napcat.js')
+  const directNapcat = directNapcatModule?.napcat
+  const remoteMailboxHighWater = config.services.enabled
+    ? await currentMessageHighWater()
+    : 0
+
+  // 6. 单进程兼容模式仍直接注册 NapCat；平台模式由 qq-gateway 独占连接，
+  // Agent Core 从 PostgreSQL mailbox watcher 获取新事实。
   const onMessageReady = async (input: IngestedMessage) => {
     if (input.kind === 'group') {
       await enqueueMessageEvent({
@@ -221,19 +245,37 @@ async function main() {
       })
     }
   }
-  const napcatLifecycle = registerNapcatHandlers({ onMessageReady })
+  const napcatLifecycle = config.services.enabled
+    ? { initialBackfillDone: Promise.resolve(), drain: async () => undefined }
+    : directQq!.registerNapcatHandlers({ onMessageReady })
 
-  // 7. NapCat connect (D2: must be before resolveTargetMetadataMaps)
-  await connectNapcat()
-
-  // 7.5 等待首次 NapCat 历史补拉全部落库，再做 DB replay。实时消息从 connect 起已经
-  //     进入统一 dedup queue；因此这里既不会漏掉晚入库的 backfill，也不会重复披露。
-  await napcatLifecycle.initialBackfillDone
-  log.info('首次群历史消息补拉完成')
+  if (!config.services.enabled) {
+    await directQq!.connectNapcat()
+    await napcatLifecycle.initialBackfillDone
+    log.info('首次群历史消息补拉完成')
+  } else {
+    agentEventsServer = await startAgentEventsServer({
+      baseUrl: config.services.agentEventsUrl,
+      enqueue: (event) => {
+        eventQueue.enqueue(event)
+      },
+    })
+    log.info({
+      qqGatewayUrl: config.services.qqGatewayUrl,
+      agentEventsUrl: config.services.agentEventsUrl,
+    }, 'Agent Core 已进入平台服务模式')
+  }
 
   // 8. 启动元数据 (群名) — 用于拼 system prompt
   const targetMetadata = await resolveTargetMetadataMaps({
-    napcat,
+    napcat: qqGateway
+      ? {
+          get_group_info: async ({ group_id }) => {
+            const result = await qqGateway.groupInfo(group_id)
+            return { group_name: result.groupName }
+          },
+        }
+      : directNapcat!,
     groupIds: config.botTargetGroupIds,
   })
 
@@ -260,12 +302,35 @@ async function main() {
   })
   log.info({ enqueued: replayResult.enqueued }, 'replay-missed 完成')
 
+  if (config.services.enabled) {
+    mailboxWatcher = createDatabaseMailboxWatcher({
+      startAfterRowId: remoteMailboxHighWater,
+      pollMs: config.services.mailboxPollMs,
+      selfNumber: config.selfNumber,
+      groupPolicies: config.groupPolicies,
+      enqueue: async (event) => {
+        await enqueueMessageEvent(event)
+      },
+    })
+    mailboxWatcher.start()
+  }
+
   if (enqueueColdStartBootstrap(eventQueue, hasPersistedLedger)) {
     log.info('无持久 ledger 且事件队列为空，已注入冷启动 bootstrap')
   }
 
   // 10. 工具集 + bot system prompt (启动后定型, 进程内不变)
   const activityReporter = createAgentActivityReporter()
+  const sender = qqGateway ? createQqGatewayMessageSender(qqGateway) : messageSender
+  const groupMuteInspector = qqGateway
+    ? createGroupMuteInspector({
+        selfNumber: config.selfNumber,
+        loadGroupShutList: (groupId) => qqGateway.groupShutList(groupId),
+      })
+    : undefined
+  const scheduleRuntime = config.services.enabled
+    ? createRemoteScheduleRuntime(config.services.schedulerUrl)
+    : undefined
   const runtime = createAgentRuntime({
     context,
     eventQueue,
@@ -273,19 +338,24 @@ async function main() {
     ledgerRepo,
     ledgerLoader,
     initialLedgerHeadEntryId: loadedLedger.runtimeState.ledgerHeadEntryId,
-    sender: messageSender,
-    loadFriends: async () => (await napcat.get_friend_list()).map((friend) => ({
-      userId: friend.user_id,
-      nickname: friend.nickname,
-      remark: friend.remark,
-    })),
-    loadGroups: async () => (await napcat.get_group_list()).map((group) => ({
-      groupId: group.group_id,
-      groupName: group.group_name,
-      groupRemark: group.group_remark,
-      memberCount: group.member_count,
-      maxMemberCount: group.max_member_count,
-    })),
+    sender,
+    groupMuteInspector,
+    loadFriends: async () => qqGateway
+      ? qqGateway.friends()
+      : (await directNapcat!.get_friend_list()).map((friend) => ({
+          userId: friend.user_id,
+          nickname: friend.nickname,
+          remark: friend.remark,
+        })),
+    loadGroups: async () => qqGateway
+      ? qqGateway.groups()
+      : (await directNapcat!.get_group_list()).map((group) => ({
+          groupId: group.group_id,
+          groupName: group.group_name,
+          groupRemark: group.group_remark,
+          memberCount: group.member_count,
+          maxMemberCount: group.max_member_count,
+        })),
     selfNumber: config.selfNumber,
     metadata: targetMetadata,
     groupPolicies: config.groupPolicies,
@@ -305,6 +375,7 @@ async function main() {
     workspaceStateCoordinator,
     taskRegistry: persistentTasks.registry,
     scheduleStatePath: config.scheduleStatePath,
+    scheduleRuntime,
     approvalStatePath: config.approvalStatePath,
     approvalMode: config.approvalMode,
     mcpConfigPath: config.mcpConfigPath,
@@ -357,14 +428,17 @@ async function main() {
     stopAgent: () => runtime.agent.stop(),
   })
   shutdownCoordinator = createShutdownCoordinator({
-    disconnectIngress: disconnectNapcatForShutdown,
+    disconnectIngress: config.services.enabled
+      ? () => mailboxWatcher?.stop()
+      : directNapcatModule!.disconnectNapcatForShutdown,
     stopAgent: agentLifecycle.stopAgent,
     awaitAgent: agentLifecycle.awaitAgent,
     drainIngress: () => napcatLifecycle.drain(),
     stopJobs: async () => {
-      jobQueue.stop()
+      if (!config.services.enabled) jobQueue.stop()
       await runtime.stopBackgroundServices()
       await taskScheduler.drain()
+      await agentEventsServer?.close()
       removePidFile()
     },
     saveFinal: () => runtime.agent.flush(),
@@ -387,8 +461,13 @@ function removePidFile(): void {
 
 function shutdownBeforeRuntimeReady(): Promise<void> {
   fallbackShutdownPromise ??= (async () => {
-    disconnectNapcatForShutdown()
-    jobQueue.stop()
+    if (config.services.enabled) {
+      // 独立服务由 platform supervisor 关闭；Agent Core 不拥有它们的连接。
+    } else {
+      const { disconnectNapcatForShutdown } = await import('./bot/napcat.js')
+      disconnectNapcatForShutdown()
+      jobQueue.stop()
+    }
     removePidFile()
     await prisma.$disconnect()
   })()

@@ -2,8 +2,8 @@ import { prisma } from '../database/client.js'
 import { Prisma, type Message } from '../generated/prisma/client.js'
 import type { ParsedSegment, ImageSegment, VideoSegment, RecordSegment, FileSegment } from '../types/message-segments.js'
 import { isMediaDescription } from './media-description.js'
-import { jobQueue } from '../queue/runtime.js'
 import { waitForPendingMediaDownloads } from './media-cache.js'
+import { requestMediaDescription } from '../services/media-worker-client.js'
 
 type MediaSegment = ImageSegment | VideoSegment | RecordSegment | FileSegment
 type ResolvePriority = 'high' | 'normal' | 'low'
@@ -72,13 +72,15 @@ async function ensureDescriptions(refIds: number[], options: ResolveMessageOptio
   const pendingIds = pendingRows.map((row) => row.mediaId)
   if (pendingIds.length === 0) return
 
-  const priority = options.priority ?? 'high'
   const schedule = (mediaId: number): Promise<void> => {
     const existing = scheduledDescriptionJobs.get(mediaId)
     if (existing) return existing
 
-    const scheduled = jobQueue
-      .enqueueAndWait('generate-description', { mediaId }, { priority })
+    const scheduled = requestMediaDescription(mediaId, {
+      wait: true,
+      priority: options.priority ?? 'high',
+      timeoutMs: timeoutMs > 0 ? Math.max(timeoutMs, 1_000) : 120_000,
+    })
       .finally(() => {
         if (scheduledDescriptionJobs.get(mediaId) === scheduled) {
           scheduledDescriptionJobs.delete(mediaId)

@@ -373,6 +373,36 @@ describe('config', () => {
     )
   })
 
+  test('keeps platform services opt-in and parses service endpoints', () => {
+    const defaults = parseConfig(createBaseEnv())
+    assert.equal(defaults.services.enabled, false)
+    assert.equal(defaults.services.qqGatewayUrl, 'http://127.0.0.1:37922')
+    assert.equal(defaults.services.llmGatewayUrl, 'http://127.0.0.1:37926')
+
+    const configured = parseConfig(createBaseEnv({
+      BOT_PLATFORM_ENABLED: 'true',
+      BOT_QQ_GATEWAY_URL: 'http://127.0.0.1:49001',
+      BOT_MAILBOX_POLL_MS: '250',
+      BOT_MEDIA_POLL_MS: '500',
+    }))
+    assert.equal(configured.services.enabled, true)
+    assert.equal(configured.services.qqGatewayUrl, 'http://127.0.0.1:49001')
+    assert.equal(configured.services.mailboxPollMs, 250)
+    assert.equal(configured.services.mediaPollMs, 500)
+
+    for (const invalid of [
+      'https://127.0.0.1:49001',
+      'http://0.0.0.0:49001',
+      'http://127.0.0.1/path',
+      'http://127.0.0.1',
+    ]) {
+      assert.throws(
+        () => parseConfig(createBaseEnv({ BOT_QQ_GATEWAY_URL: invalid })),
+        /BOT_QQ_GATEWAY_URL must be an origin-only loopback HTTP URL with an explicit port/,
+      )
+    }
+  })
+
   test('approval state path defaults to bot workspace and accepts override', () => {
     assert.equal(
       parseConfig(createBaseEnv()).approvalStatePath,

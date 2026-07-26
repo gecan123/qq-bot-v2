@@ -1,8 +1,8 @@
 # qq-bot-v2
 
-`qq-bot-v2` 是一个基于 NapCat + Node.js + Prisma + PostgreSQL 的 QQ Agent。
+`qq-bot-v2` 是一个基于 NapCat + Node.js + Prisma + PostgreSQL 的多进程 QQ Agent。
 
-它接收 QQ 群聊和私聊消息，把入站事实写入 Postgres，并在单一持久化 `AgentContext` 上运行 `BotLoopAgent`。所有 QQ 消息都按群或联系人形成 mailbox，默认只披露带优先级的有界通知，正文由 Agent 按需读取。
+默认由本机 supervisor 管理 Agent Core、QQ Gateway、Media Worker、Scheduler 和 LLM Gateway；Browser Controller 按配置启用。只有 Agent Core 在单一持久化 `AgentContext` 上运行 `BotLoopAgent`，其他进程通过 PostgreSQL 事实边界或薄 HTTP 协作，不拥有 canonical ledger。所有 QQ 消息都按群或联系人形成 mailbox，默认只披露带优先级的有界通知，正文由 Agent 按需读取。
 
 仓库还包含 `apps/admin-web`：一个独立的只读 WebAdmin 运维面。它目前只提供 Overview，不改变 bot/backend 主线，也不是新的事实或 replay 来源。
 
@@ -65,8 +65,10 @@ pnpm dev
 ## 常用命令
 
 ```bash
-pnpm dev           # watch 模式启动 bot，文件变化会重启
-pnpm dev:once      # 单次启动 bot，不监听文件变化
+pnpm dev           # watch 模式启动多进程平台
+pnpm dev:once      # 单次启动多进程平台
+pnpm agent:dev     # watch 模式启动旧单进程兼容入口
+pnpm agent:dev:once # 单次启动旧单进程兼容入口
 pnpm build         # 编译 TypeScript
 pnpm typecheck     # 只做 TypeScript 检查
 pnpm test          # 在隔离的测试环境中运行 src/**/*.test.ts，不读取本机 .env
@@ -97,16 +99,15 @@ WebAdmin 当前只展示 ledger/runtime/Goal/token/tool-call 汇总。它不能�
 
 ## 运行形态
 
-启动流程由 `src/index.ts` 组织：
+平台启动由 `src/platform.ts` 组织，并先等待各 sidecar 健康，再启动 `src/index.ts` 中的 Agent Core：
 
-1. 加载 config、连接 Prisma，并清理过期的 message/media 与观测数据。
-2. 注册媒体描述 provider、启动 job queue，创建 Agent LLM client。
-3. 校验 canonical ledger/runtime，从 ledger 恢复 `AgentContext` projection，并创建 event queue 和 message-row dedup 路径；checkpoint 只在完全匹配时加速。
-4. 注册 NapCat handlers 并连接 NapCat；实时消息从连接成功起即可进入 dedup queue。
-5. 等待首次群历史 backfill 的所有来源尝试完成，再读取目标元数据并执行 missed-message replay；单群失败会记录错误，其余来源继续。
-6. 构建稳定工具面、system prompt 和 `BotLoopAgent`，随后进入主循环。
+1. QQ Gateway 独占 NapCat WebSocket、首次历史 backfill、好友/群查询和 QQ 外发；backfill 完成后才通过健康屏障。
+2. Media Worker 处理媒体描述，Scheduler 持有短期 timer/store，LLM Gateway 代理 provider wire 请求；每个进程写入 `logs/processes/<name>.log`。
+3. Agent Core 连接 Prisma，校验 canonical ledger/runtime，从 ledger 恢复 `AgentContext` projection，并执行 missed-message replay；checkpoint 只在完全匹配时加速。
+4. Agent Core 从 backfill 完成后的消息 high-water 启动 database mailbox watcher，通过递增 `messages.id` 接收新入站事实。
+5. Agent Core 构建稳定工具面、system prompt 和唯一 `BotLoopAgent`，随后进入主循环。
 
-`SIGINT` / `SIGTERM` 走幂等的有序退出：先断开 ingress、中止未提交 compaction、请求并等待当前 Agent round 结束、drain backfill、停止 job queue、同步最终 Goal/runtime 状态，最后断开 Prisma。每个阶段都有等待上限，单阶段失败不会跳过后续清理。
+`SIGINT` / `SIGTERM` 由 supervisor 转发给全部子进程。各进程只清理自己拥有的连接、timer、HTTP server 和数据库资源；Agent Core 仍按顺序停止 mailbox watcher、当前 Agent round 和内部 jobs，保存最终状态后断开 Prisma。
 
 主要源码区域：
 
@@ -115,6 +116,8 @@ WebAdmin 当前只展示 ledger/runtime/Goal/token/tool-call 汇总。它不能�
 - `src/database/**`：Prisma 访问和入站消息存储。
 - `src/media/**`：媒体缓存、描述、handles、出站 promotion。
 - `src/messaging/**`：出站发送路径。
+- `src/services/**`：QQ、媒体、调度、LLM 和 Agent 事件的窄服务边界。
+- `src/platform.ts`：本机进程生命周期、健康屏障和独立日志。
 - `src/browser/**`：browser sidecar protocol 和 action logs。
 - `src/ops/**`：运维日志和仓库检查。
 - `apps/admin-web/**`：独立只读 WebAdmin；数据库访问仅位于 server-only 边界。

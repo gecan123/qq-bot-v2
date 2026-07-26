@@ -4,7 +4,7 @@ import type { ToolResultContentBlock } from '../agent-context.types.js'
 import { imageHandleSchema, type ImageHandle, type ResolvedImage } from '../../media/image-handle-schema.js'
 import { resolveImageHandle, releaseHandle } from '../../media/image-handle.js'
 import { compressForContext, type CompressedImage } from '../../media/compress-for-context.js'
-import { generateDescriptionForMedia } from '../../jobs/generate-description.js'
+import { requestMediaDescription } from '../../services/media-worker-client.js'
 import { getMediaDescriptionText } from '../../media/media-description.js'
 import { prisma } from '../../database/client.js'
 import { waitForPendingMediaDownloads } from '../../media/media-cache.js'
@@ -43,7 +43,9 @@ async function loadMediaMetadata(mediaId: number): Promise<MediaMetadata | null>
 
 export function createInspectMediaTool(deps: InspectMediaDeps = {}): Tool<Args> {
   const resolveImage = deps.resolveImage ?? resolveImageHandle
-  const describeMedia = deps.describeMedia ?? generateDescriptionForMedia
+  const describeMedia = deps.describeMedia ?? ((mediaId: number) => (
+    requestMediaDescription(mediaId, { wait: true })
+  ))
   const waitForMedia = deps.waitForMedia ?? ((mediaId: number) => (
     waitForPendingMediaDownloads([mediaId], config.replyMediaTimeoutMs)
   ))

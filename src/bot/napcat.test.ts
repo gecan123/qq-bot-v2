@@ -12,10 +12,13 @@ describe('NapCat shutdown wiring', () => {
     assert.equal(context.reconnection.enable, false)
   })
 
-  test('uses the shutdown-specific disconnect path in both runtime states', async () => {
+  test('uses the owned ingress shutdown path in platform and direct modes', async () => {
     const source = await readFile(new URL('../index.ts', import.meta.url), 'utf8')
 
-    assert.match(source, /disconnectIngress: disconnectNapcatForShutdown/)
+    assert.match(
+      source,
+      /disconnectIngress: config\.services\.enabled[\s\S]*\? \(\) => mailboxWatcher\?\.stop\(\)[\s\S]*: directNapcatModule!\.disconnectNapcatForShutdown/,
+    )
     assert.match(source, /function shutdownBeforeRuntimeReady[\s\S]*disconnectNapcatForShutdown\(\)/)
   })
 })

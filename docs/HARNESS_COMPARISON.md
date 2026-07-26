@@ -19,7 +19,7 @@
 | s13 Background Tasks | 已满足核心 | 图片生成、交易研究等异步任务会注册 task，完成后进 event queue，并用 `background_task get` 取有界结果；registry 已原子持久化、终态幂等，重启时不可恢复闭包明确标成 `interrupted`。共享执行 scheduler 仍是进程内 lane；实验阶段不建设通用 `jobKind + payload` 自动恢复层，接受在途任务因重启中断并按需重新发起。 |
 | s14 Cron Scheduler | 已满足所需子集 | `schedule create/list/get_occurrence/cancel` 只支持 30 秒至 3 天内的一次性 `at` / `afterSeconds`。独立 store 可跨重启恢复 timer，到期只产生一次稳定 `scheduled_wake` 注意事件；周期调度、命令执行和 run history 留给 operator。 |
 | s15 Agent Teams | 未满足 | 没有持久 teammate、inbox、多个 LLM loop。 |
-| s16 Team Protocols | 未满足 | 没有多 Agent request/response FSM、plan approval 或 teammate shutdown handshake；当前只有单进程 runtime 的 graceful shutdown coordinator。 |
+| s16 Team Protocols | 未满足 | 没有多 Agent request/response FSM、plan approval 或 teammate shutdown handshake；当前是本机多进程 platform 加单一 Agent Core，进程拆分不等于多 Agent 协议。 |
 | s17 Autonomous Agents | 产品目标上已较强满足 | 主 Agent 在发送后继续行动，以无状态 `yield` 交回控制权，可被注意事件唤醒，并有连续轮次短暂冷却和显式 Life Journal/Agenda 连续性；不设置每日 token 预算或跨日限流。active Goal 会在每轮和 compaction 后重注入为默认主线。 |
 | s18 Worktree Isolation | 未满足 | 当前 bot 不自主改仓库源码；若以后允许 Luna 自主改代码，需要补。 |
 | s19 MCP Plugin | 已满足核心 | 配置驱动的 `mcp_connectors` 是 deferred capability；启动时不拉外部进程，首次 `tools/connect/call` 才用官方 v1 SDK 建立 stdio 连接。远端工具映射到 `mcp__server__tool`，schema 有哈希版本快照和分页结果上限，只有 operator 明确列入 `readOnlyTools` 的调用免审批，其余默认走 owner approval。暂不支持 Streamable HTTP、resources/prompts 或动态安装 plugin。 |

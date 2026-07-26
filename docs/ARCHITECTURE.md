@@ -1,22 +1,24 @@
 # 架构
 
-`qq-bot-v2` 是一个接入 NapCat 的 QQ Agent。群聊和私聊入站消息先写入 Postgres 事实账本；只有私聊和包含 `@bot` 的群消息会唤醒或打断单一串行 `BotLoopAgent`，普通群消息留在被动 inbox，等待 Agent 自主读取。正文默认由 Agent 通过 `inbox` 按需读取。
+`qq-bot-v2` 是一个接入 NapCat 的 QQ Agent。默认运行形态是一个平台 supervisor 管理多个边界清晰的本机进程：Agent Core、QQ Gateway、Media Worker、Scheduler、LLM Gateway，以及按配置启用的 Browser Controller；WebAdmin 继续独立运行。群聊和私聊入站消息先写入 Postgres 事实账本；只有私聊和包含 `@bot` 的群消息会唤醒或打断单一串行 `BotLoopAgent`，普通群消息留在被动 inbox，等待 Agent 自主读取。正文默认由 Agent 通过 `inbox` 按需读取。
 
 这是实验性新项目。除非任务明确要求历史兼容或迁移保留，否则优先选择干净的目标模型，不为旧 adapter、dual-write bridge 或旧 snapshot 增加长期兼容层。生产级高可用、长期稳定运行和自动故障恢复也不是默认目标；没有用户要求或可测量真实痛点时，不为假设性故障提前增加 HA、failover、跨重启自动续跑、复杂重试/对账或运维平台。正确性、确定性 replay、明确失败状态和外部副作用安全边界仍然必须保持。
 
 ## 核心流程
 
-1. `src/index.ts` 加载 config、连接 Prisma、执行 message/media retention，并创建 ledger repository、loader、LLM client 和 event queue。
+1. `src/platform.ts` 启动各服务、等待健康检查通过，再启动 `src/index.ts` 中的 Agent Core。每个进程写独立日志，supervisor 只负责本机生命周期，不承担业务路由。
 2. 启动恢复只从 `bot_agent_ledger_entries` 加载 canonical history，并校验 `bot_agent_runtime_state`。可丢弃的 `bot_agent_checkpoint` 只有完全匹配时才用于加速；missing、stale 或 corrupt 都从 canonical ledger 重建。
-3. NapCat handlers 先连接 ingress。首次群历史 backfill 通过 barrier 等待所有来源尝试完成，再执行 missed-message replay；单群失败只记录 source-level error。实时和 replay 消息使用相同 message-row dedup gate。
-4. `src/bot/**` 把 NapCat 事件写入 `messages` / `media`；`src/agent/mailbox.ts` 再按来源聚合成不含正文的确定性通知。
+3. QQ Gateway 独占 NapCat WebSocket、首次群历史 backfill、好友/群目录查询和 QQ 外发。首次 backfill 完成后它才对 supervisor 报告可用。
+4. `src/bot/**` 把 NapCat 事件写入 `messages` / `media`；Agent Core 先做 missed-message replay，再由 database mailbox watcher 按递增消息 ID 读取新事实，`src/agent/mailbox.ts` 按来源聚合成不含正文的确定性通知。
 5. `src/agent/runtime.ts` 装配 context projection、tools、system prompt 和 `BotLoopAgent`。主 Agent 始终只有一个，轮次边界按高优先 QQ、scheduled wake、active Goal、普通环境事件的顺序披露。
 6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责受控 append、runtime cursor/continuity/Goal revision/QQ focus 原子更新、compaction 和 autonomy 调度。事务成功后才推进内存 `AgentContext`。
 7. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct。连续且显式只读的 tool calls 可以并行，副作用和未知调用是 barrier；tool results 始终按 assistant tool-call 顺序成组 append。只有 `ToolExecutionResult.content` 进入 ledger，`outcome` / `effects` 由 Runtime Host 解释。
 
-专用后台工作统一走 bounded task scheduler：`maintenance=1`、`network=3`、`media-description=2`。同一 `resourceKey` 串行，相同 `dedupeKey` 共享任务。这些有明确类型和边界的 Node async worker 不是新的主 Agent；完成结果回到同一主 ledger。ingress 媒体描述使用独立 `jobQueue`，Browser sidecar 是独立进程。项目当前接受进程重启中断在途后台任务：遗留 `running` 明确转成 `interrupted`，不建设通用 `jobKind + payload` 自动恢复层；只有重启丢失昂贵长任务形成可测量痛点，或外部服务原生提供可恢复 task/session ID 时再重新评估。
+专用后台工作统一走有界边界。Agent Core 内部仍保留 `maintenance=1`、`network=3` 等 bounded task scheduler；入站媒体描述由独立 Media Worker 处理，并把结果写回 Postgres `media` 事实行。Browser Controller 继续作为独立进程。它们都不是新的主 Agent，也不能直接写 canonical ledger。项目当前接受进程重启中断在途后台任务，不建设通用 `jobKind + payload` 自动恢复层；只有重启丢失昂贵长任务形成可测量痛点，或外部服务原生提供可恢复 task/session ID 时再重新评估。
 
-短期调度由进程内 `ScheduleRuntime` 管理。它把 active 状态原子写入 `schedules.json`，把已触发正文写入独立 occurrence store；到期只向现有 event queue 注入内部 `scheduled_wake`，由单一 `BotLoopAgent` 转成不含 intention 的 `notification`，Agent 按需调用 `schedule get_occurrence` 打开。
+短期调度由独立 Scheduler 进程管理。它把 active 状态原子写入 `schedules.json`，把已触发正文写入独立 occurrence store；Agent Core 的 schedule tool 通过窄 HTTP client 调用它。到期时 Scheduler 只向 Agent Core 的内部事件端点投递 `scheduled_wake`，由单一 `BotLoopAgent` 转成不含 intention 的 `notification`，Agent 按需调用 `schedule get_occurrence` 打开。
+
+LLM Gateway 是透明 wire proxy，只负责 provider 上游路由、鉴权转发和不含 prompt 正文的请求状态日志。system prompt、tools、canonical/provider 请求构造、响应解析、token evidence 和 ledger commit 仍由 Agent Core 或对应 worker 负责。进程间只使用 PostgreSQL 事实边界和薄 HTTP；当前不引入 Redis、Kafka、通用 broker 或第二套 workflow engine。
 
 Goal 也不创建第二个主 Agent。`bot_agent_goal` 只保存控制状态；状态变化通过 revision 事件进入 ledger。owner Goal 可以抢占 self Goal，旧 goalId 的迟到调用会被拒绝。owner 和 self Goal 的 `complete` 都会触发一次独立、无工具的 LLM 验收；它只读取 untrusted envelope 中的当前 canonical projection 和本次证据，只有 `{ok:true}` 才调用 `GoalStore.complete()`，拒绝或验收调用失败都保持 Goal 活跃且同一次尝试不重试。judger 不控制 blocker、预算或下一步，也不形成第二个 Agent。
 
@@ -82,9 +84,9 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 
 ## 生命周期边界
 
-- 启动顺序固定为 `connect -> initial backfill barrier -> metadata -> replay -> runtime`。replay 的允许群列表显式注入，不能从可变全局 config 隐式读取。
+- 平台启动顺序固定为 `sidecars -> health barrier -> Agent Core`。QQ Gateway 内部执行 `connect -> initial backfill barrier -> ready`；Agent Core 执行 `metadata -> replay -> database mailbox watcher -> runtime`。replay 的允许群列表显式注入，不能从可变全局 config 隐式读取。
 - clean cutover 不迁移旧 `BotAgentSnapshot`；部署 schema 后使用显式 reset 命令初始化空 ledger/runtime，再启动新版本。
-- `SIGINT` / `SIGTERM` 触发同一个幂等 shutdown coordinator：断开 ingress、中止未提交 compaction、停止并等待 Agent、drain backfill、停止 jobs、同步最终 Goal/runtime 状态，最后断开数据库。
+- `SIGINT` / `SIGTERM` 先由 platform supervisor 向所有子进程转发。Agent Core 的幂等 shutdown coordinator 只停止 mailbox watcher、中止未提交 compaction、停止并等待 Agent、停止自身 jobs、同步最终 Goal/runtime 状态，最后断开自己的数据库连接；QQ Gateway、Media Worker 和 Scheduler 分别清理自己拥有的资源。
 - shutdown 各阶段 best-effort 且有超时；前一阶段失败不会阻止后续清理，Prisma disconnect 始终最后执行。
 
 ## 主要模块
@@ -98,6 +100,9 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - `src/agent/working-context.ts`、`src/media/agent-image-ref.ts`：请求投影与稳定图片引用。
 - `src/agent/mailbox.ts`、`src/agent/mailbox-handled.ts`：入站通知和 durable handled boundary。
 - `src/agent/tools/**`：受控工具；注册表以 `src/agent/tools/index.ts` 为准。
-- `src/bot/**`、`src/messaging/**`、`src/media/**`：NapCat ingress、发送和媒体路径。
+- `src/platform.ts`：本机多进程 supervisor、健康屏障和独立日志。
+- `src/services/qq-gateway.ts`、`src/services/database-mailbox-watcher.ts`：NapCat 所有权与 PostgreSQL mailbox 边界。
+- `src/services/media-worker.ts`、`src/services/scheduler.ts`、`src/services/llm-gateway.ts`：媒体、短期调度与 provider wire sidecar。
+- `src/bot/**`、`src/messaging/**`、`src/media/**`：QQ ingress、发送和媒体领域实现。
 - `src/database/**`、`src/ops/**`：数据库 helper、运维日志和只读检查。
 - `apps/admin-web/**`：TanStack Start 本机管理面；观察 feature 只读，operations feature 通过固定 DTO、single-flight runner 和本地审计调用强类型 `src/ops` 服务；`*.functions.ts` 暴露 RPC wrapper，`*.server.ts` 保留 Prisma/env/文件 helper。

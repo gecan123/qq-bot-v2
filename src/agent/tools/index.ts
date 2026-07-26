@@ -44,11 +44,13 @@ import { createQqConversationTool, type QqConversationController } from './qq-co
 import { applyBotToolPolicy } from './policies.js'
 import type { InboxReadCursors } from '../inbox-read-cursors.js'
 import { maybeCreateMoomooSkillTool } from './moomoo-skill.js'
+import type { GroupMuteInspector } from '../../messaging/group-mute-inspector.js'
 
 export interface BotToolDeps {
   sender: MessageSender
   targetPolicy: SendTargetPolicy
   conversations: QqConversationController
+  groupMuteInspector?: GroupMuteInspector
   taskRegistry: BackgroundTaskRegistry
   groupIds: readonly number[]
   selfNumber: number
@@ -113,6 +115,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     sender: deps.sender,
     targetPolicy: deps.targetPolicy,
     conversations: deps.conversations,
+    ...(deps.groupMuteInspector ? { groupMuteInspector: deps.groupMuteInspector } : {}),
   })
   const backgroundTask = createBackgroundTaskTool({ taskRegistry: deps.taskRegistry })
   const inbox = createInboxTool({

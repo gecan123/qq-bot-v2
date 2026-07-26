@@ -1,4 +1,3 @@
-import type { NCWebsocket } from 'node-napcat-ts'
 import { createLogger } from '../logger.js'
 
 const log = createLogger('META_RESOLVE')
@@ -23,7 +22,9 @@ export interface TargetMetadataMaps {
 }
 
 interface ResolveTargetMetadataMapsInput {
-  napcat: Pick<NCWebsocket, 'get_group_info'>
+  napcat: {
+    get_group_info(input: { group_id: number }): Promise<{ group_name?: string }>
+  }
   groupIds: readonly number[]
   perCallTimeoutMs?: number
 }

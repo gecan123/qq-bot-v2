@@ -1,8 +1,7 @@
-import {
-  sendSegmentsRaw,
-  type SendNapcatResult,
-  type NapcatSegment,
-  type SendTarget,
+import type {
+  SendNapcatResult,
+  NapcatSegment,
+  SendTarget,
 } from './napcat-sender.js'
 
 export interface MessageSender {
@@ -14,6 +13,7 @@ export interface MessageSender {
 
 class NapcatMessageSender implements MessageSender {
   async sendSegments(params: { target: SendTarget; segments: NapcatSegment[] }): Promise<SendNapcatResult> {
+    const { sendSegmentsRaw } = await import('./napcat-sender.js')
     return sendSegmentsRaw(params.target, params.segments)
   }
 }

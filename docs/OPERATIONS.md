@@ -50,6 +50,12 @@ pnpm agent:migrate-state-language
 ```bash
 pnpm dev
 pnpm dev:once
+pnpm agent:dev
+pnpm agent:dev:once
+pnpm qq:gateway
+pnpm media:worker
+pnpm scheduler:service
+pnpm llm:gateway
 pnpm build
 pnpm typecheck
 pnpm test
@@ -147,7 +153,11 @@ JSON 报告带当前为 `2` 的 `schemaVersion`，总占用字段是 `estimatedS
 `LLM_FALLBACK_MODEL` 默认不配置。需要时填写与 `LLM_DEFAULT_MODEL` 使用同一 `LLM_DEFAULT_PROVIDER` wire path 的模型；它只接管 overload/5xx，不用于鉴权、限流、参数错误或 context overflow。
 
 - 从仓库根目录启动，确保 `.bot.pid`、logs、prompts 和相对路径稳定。
-- `pnpm dev` 使用 watch 模式，文件变化会重启；`pnpm dev:once` 单次启动，不监听文件变化。
+- `pnpm dev` 通过 `src/platform.ts` 启动多进程 watch 模式；`pnpm dev:once` 启动同一组进程但不监听文件变化。supervisor 等待 LLM Gateway、Media Worker、Scheduler、QQ Gateway，以及按配置启用的 Browser Controller 健康后，才启动 Agent Core。
+- 各进程标准输出和错误分别追加到 `logs/processes/<process>.log`；终端只显示 supervisor 生命周期，QQ 日志不再混进 Agent Core 日志。
+- `pnpm build && pnpm start` 使用 `dist/platform.js` 启动编译后的同一平台。`pnpm agent:dev`、`pnpm agent:dev:once` 和 `pnpm agent:start` 保留单进程兼容入口，主要用于聚焦调试。
+- `pnpm qq:gateway`、`pnpm media:worker`、`pnpm scheduler:service`、`pnpm llm:gateway` 可以单独启动服务；不要与占用同一端口的 platform supervisor 同时运行。
+- `BOT_*_URL` 内部服务地址只接受带显式端口的 loopback HTTP origin；这些端点没有远程认证，不能绑定到 `0.0.0.0` 或非可信网络。
 - `.bot.pid` 只供 WebAdmin 和破坏性运维命令判断 Bot 是否仍在运行，不接受产品控制信号。
 - `pnpm agent:daily-metrics -- --date YYYY-MM-DD` 按日报告主 Agent 的 token/cache 和工具调用，不再维护 rest 专门指标；该命令属于 operator 入口，不暴露给主 Agent。
 
@@ -159,9 +169,9 @@ JSON 报告带当前为 `2` 的 `schemaVersion`，总占用字段是 `estimatedS
 BOT_SCHEDULE_STATE_PATH=data/agent-workspace/runtime/schedules.json
 ```
 
-启动 Agent 主循环前，runtime 会完整读取和校验 v2 store，再为每个一次性 `at` / `afterSeconds` job 挂 timer；停机期间已经到期的 job 在恢复后触发它唯一的 occurrence，不做周期合并。未知 version、损坏 JSON 或非法 job 会让启动显式失败；从含 recurring job 的 v1 store 切换时应在 Bot 停止后由 operator 清理旧 schedule 状态。Timer、处理或 event enqueue 异常由 `SCHEDULE` logger 记录 `scheduleId` 和原始错误。
+Scheduler 服务启动时会完整读取和校验 v2 store，再为每个一次性 `at` / `afterSeconds` job 挂 timer；Agent Core 的 schedule tool 通过 `BOT_SCHEDULER_URL` 调用它。停机期间已经到期的 job 在恢复后触发它唯一的 occurrence，不做周期合并。未知 version、损坏 JSON 或非法 job 会让服务启动显式失败；从含 recurring job 的 v1 store 切换时应在平台停止后由 operator 清理旧 schedule 状态。Timer、处理或 event delivery 异常由 `SCHEDULER_SERVICE` logger 记录 `scheduleId` 和原始错误。
 
-Graceful shutdown 在 jobs 阶段调用 `stopBackgroundServices()`：它会等待正在串行的 schedule mutation 并清除全部 timer handle，但不删除尚未完成的持久 job；下次启动继续按 store 恢复。不要在 bot 运行时手工编辑该文件。
+到期事件通过 `BOT_AGENT_EVENTS_URL` 的窄内部端点投递给 Agent Core；端点只接受 `scheduled_wake`，不能写 ledger 或提交任意 BotEvent。Scheduler graceful shutdown 会等待正在串行的 mutation 并清除 timer handle，但不删除尚未完成的持久 job；下次启动继续按 store 恢复。不要在平台运行时手工编辑该文件。
 
 ## Owner Goal
 

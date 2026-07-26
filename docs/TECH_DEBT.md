@@ -4,11 +4,13 @@
 
 ## 当前架构基线
 
-当前是单 Node.js 进程内的模块化单体，主前台只有一个串行 `BotLoopAgent`：
+当前是一个 Agent Core 加数个窄职责本机 sidecar，主前台仍只有一个串行 `BotLoopAgent`：
 
 ```text
 NapCat 入站
+  -> QQ Gateway
   -> messages / media 事实账本
+  -> Agent Core database mailbox watcher
   -> EventQueue 与 mailbox 元数据通知
   -> append-only bot_agent_ledger_entries
   -> AgentContext canonical projection
@@ -18,7 +20,7 @@ NapCat 入站
   -> ledger 与 runtime state 原子提交
 ```
 
-PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goal 和观测数据；Memory、Notebook、Life Journal、Agenda、schedule、approval 与 background task 元数据主要保存在 workspace Markdown/JSON。WebAdmin 的观察 feature 保持只读，固定 operations feature 是唯一受控写入口。
+QQ Gateway、Media Worker、Scheduler 和 LLM Gateway 通过 PostgreSQL 事实边界或薄 HTTP 与 Agent Core 协作；不使用通用 broker。只有 Agent Core 可以拥有 `AgentContext`、推进 runtime singleton 和写 canonical ledger。PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goal 和观测数据；Memory、Notebook、Life Journal、Agenda、schedule、approval 与 background task 元数据主要保存在 workspace Markdown/JSON。WebAdmin 的观察 feature 保持只读，固定 operations feature 是唯一受控写入口。
 
 现有设计的可靠性基础包括：append-only canonical history、确定性 replay、compaction CAS、tool call/result 原子组、显式 QQ target focus、集中 tool policy、渐进式披露、有界 scheduler，以及 WebAdmin 的只读观察边界和固定 operations 写入边界。下面条目是在这些契约之上的具体缺口。
 
@@ -35,9 +37,9 @@ PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goa
 - 影响：单次提交趋近 `O(N)`，长期累计成本趋近 `O(N²)`；compaction 只缩短 LLM active view，不减少 permanent ledger 的读取与 fingerprint 成本。
 - 目标：所有 append 使用 expected-head CAS；成功提交后用返回的 appended entries/runtime state 增量安装 projection；checkpoint 写入批处理或节流。启动、显式 doctor 和周期审计仍保留完整 chain 校验。增加 1 万/10 万 entry 的 benchmark 与 commit latency 指标。
 
-### 单实例是假设，但没有数据库级 fencing
+### Agent Core 单实例是假设，但没有数据库级 fencing
 
-- 证据：`src/index.ts` 直接覆盖 `.bot.pid`，没有检查旧进程、租约或互斥；两个进程会各自持有独立 `AgentContext`、NapCat handler 和自主循环。runtime row lock 只能串行化单次数据库事务，不能阻止双 loop。
+- 证据：`src/index.ts` 直接覆盖 `.bot.pid`，没有检查旧进程、租约或互斥；误启动两个 Agent Core 时会各自持有独立 `AgentContext`、database mailbox watcher 和自主循环。QQ Gateway 已独立，但 runtime row lock 仍只能串行化单次数据库事务，不能阻止双 loop。
 - `appendCompaction()` 和 `updateRuntime()` 校验 expected head，但普通 `appendMessages()` 没有 expected-head CAS。
 - 影响：误启动第二实例时可能交错写 ledger、重复处理事件或重复发送 QQ 消息。
 - 目标：启动时获取 PostgreSQL advisory lock，或实现带 fencing token 的租约；普通 append 同样校验 expected head。`.bot.pid` 只保留为诊断信息，不作为唯一互斥机制。
@@ -61,6 +63,13 @@ PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goa
 - 目标：改为规范化引用模型或安全合并行，同时保持既有 message media handle 稳定，并为并发命中相同 hash 增加数据库级测试。
 
 ## P2：可维护性与可观测性
+
+### 多进程交付仍是单机轻量契约
+
+- QQ Gateway 和 Agent Core 当前都按单实例运行；database mailbox watcher 只使用进程内 high-water cursor，没有 consumer lease。
+- Scheduler 的 job/occurrence 已持久化，但 occurrence 到 Agent Core 的投递重试仍是进程内状态；服务在 occurrence 落盘后、成功投递前崩溃时缺少恢复扫描。
+- Media Worker 没有数据库 claim/lease，当前只能运行一个实例；LLM Gateway 为保持实现简单会缓冲完整 provider 响应。
+- 这些是第一版明确限制。只有日志或故障复现证明需要时，才分别增加恢复扫描、claim/lease 或 streaming；不要先引入 Redis、Kafka、通用 outbox/broker 或集群选主。
 
 ### Startup replay 去重集合无界增长
 

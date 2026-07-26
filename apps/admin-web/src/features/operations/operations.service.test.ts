@@ -34,6 +34,12 @@ function resetPayload(scope: 'context' | 'knowledge' | 'all' = 'context'): Opera
           { name: 'life', exists: true, files: 1 },
           { name: 'notebook', exists: true, files: 1 },
         ] },
+    workspace: scope === 'all'
+      ? {
+          preservedFiles: ['.gitignore', 'README.md'],
+          entries: [{ name: 'runtime', kind: 'directory', files: 3 }],
+        }
+      : null,
   }
 }
 
@@ -47,6 +53,7 @@ function resetResult(scope: 'context' | 'knowledge' | 'all' = 'context'): Operat
     deletedGoals: 1,
     createdRuntimeState: true,
     removedDirectories: [],
+    removedWorkspaceEntries: scope === 'all' ? 1 : 0,
   }
 }
 

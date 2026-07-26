@@ -162,7 +162,7 @@ export function OperationsView({
               >
                 <option value="context">context · Ledger / Runtime / Goal</option>
                 <option value="knowledge">knowledge · Memory / Journal / Life / Notebook</option>
-                <option value="all">all · context + knowledge</option>
+                <option value="all">all · context + 全部 Agent workspace</option>
               </select>
             </label>
           )}

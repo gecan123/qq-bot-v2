@@ -51,6 +51,7 @@ export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.fr
     sideEffect: ['create_self', 'complete', 'report_blocker', 'abandon_self'],
   }),
   skill: fixed(PARALLEL_READ),
+  initiative_review: fixed(EXCLUSIVE_READ),
   memory: byAction({
     parallel: ['recall'],
     sideEffect: ['remember', 'correct'],

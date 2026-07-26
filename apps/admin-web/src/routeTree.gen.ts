@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ContextRouteImport } from './routes/context'
 import { Route as HealthRouteImport } from './routes/health'
 import { Route as LifeRouteImport } from './routes/life'
+import { Route as LogsRouteImport } from './routes/logs'
 import { Route as MemoryRouteImport } from './routes/memory'
 import { Route as MetricsRouteImport } from './routes/metrics'
 import { Route as OperationsRouteImport } from './routes/operations'
@@ -39,6 +40,11 @@ const HealthRoute = HealthRouteImport.update({
 const LifeRoute = LifeRouteImport.update({
   id: '/life',
   path: '/life',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LogsRoute = LogsRouteImport.update({
+  id: '/logs',
+  path: '/logs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MemoryRoute = MemoryRouteImport.update({
@@ -82,6 +88,7 @@ export interface FileRoutesByFullPath {
   '/context': typeof ContextRoute
   '/health': typeof HealthRoute
   '/life': typeof LifeRoute
+  '/logs': typeof LogsRoute
   '/memory': typeof MemoryRoute
   '/metrics': typeof MetricsRoute
   '/operations': typeof OperationsRoute
@@ -95,6 +102,7 @@ export interface FileRoutesByTo {
   '/context': typeof ContextRoute
   '/health': typeof HealthRoute
   '/life': typeof LifeRoute
+  '/logs': typeof LogsRoute
   '/memory': typeof MemoryRoute
   '/metrics': typeof MetricsRoute
   '/operations': typeof OperationsRoute
@@ -109,6 +117,7 @@ export interface FileRoutesById {
   '/context': typeof ContextRoute
   '/health': typeof HealthRoute
   '/life': typeof LifeRoute
+  '/logs': typeof LogsRoute
   '/memory': typeof MemoryRoute
   '/metrics': typeof MetricsRoute
   '/operations': typeof OperationsRoute
@@ -124,6 +133,7 @@ export interface FileRouteTypes {
     | '/context'
     | '/health'
     | '/life'
+    | '/logs'
     | '/memory'
     | '/metrics'
     | '/operations'
@@ -137,6 +147,7 @@ export interface FileRouteTypes {
     | '/context'
     | '/health'
     | '/life'
+    | '/logs'
     | '/memory'
     | '/metrics'
     | '/operations'
@@ -150,6 +161,7 @@ export interface FileRouteTypes {
     | '/context'
     | '/health'
     | '/life'
+    | '/logs'
     | '/memory'
     | '/metrics'
     | '/operations'
@@ -164,6 +176,7 @@ export interface RootRouteChildren {
   ContextRoute: typeof ContextRoute
   HealthRoute: typeof HealthRoute
   LifeRoute: typeof LifeRoute
+  LogsRoute: typeof LogsRoute
   MemoryRoute: typeof MemoryRoute
   MetricsRoute: typeof MetricsRoute
   OperationsRoute: typeof OperationsRoute
@@ -201,6 +214,13 @@ declare module '@tanstack/react-router' {
       path: '/life'
       fullPath: '/life'
       preLoaderRoute: typeof LifeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/logs': {
+      id: '/logs'
+      path: '/logs'
+      fullPath: '/logs'
+      preLoaderRoute: typeof LogsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/memory': {
@@ -260,6 +280,7 @@ const rootRouteChildren: RootRouteChildren = {
   ContextRoute: ContextRoute,
   HealthRoute: HealthRoute,
   LifeRoute: LifeRoute,
+  LogsRoute: LogsRoute,
   MemoryRoute: MemoryRoute,
   MetricsRoute: MetricsRoute,
   OperationsRoute: OperationsRoute,

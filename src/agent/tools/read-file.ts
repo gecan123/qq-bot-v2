@@ -1,8 +1,8 @@
 import { extname } from 'node:path'
 import { z } from 'zod'
-import { prisma } from '../../database/client.js'
 import { extractDocumentText, type DocumentFileType } from '../../media/document-text.js'
 import { formatMediaDescription } from '../../media/media-description.js'
+import { findResolvedMedia } from '../../media/media-store.js'
 import type { Tool } from '../tool.js'
 
 const DEFAULT_MAX_CHARS = 8_000
@@ -216,18 +216,7 @@ function failure(code: string, error: string): { content: string } {
 }
 
 async function defaultFindMedia(mediaId: number): Promise<FileMediaRow | null> {
-  return prisma.media.findUnique({
-    where: { mediaId },
-    select: {
-      mediaId: true,
-      data: true,
-      mediaType: true,
-      contentType: true,
-      fileName: true,
-      fileSize: true,
-      descriptionRaw: true,
-    },
-  }) as unknown as Promise<FileMediaRow | null>
+  return findResolvedMedia(mediaId)
 }
 
 async function defaultParseDocument(

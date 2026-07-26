@@ -51,7 +51,7 @@ WebAdmin 和 CLI 共同调用 `src/ops/**`。把 Bot 停止检查、预览和中
 
 | Operation | 预览 | 执行结果 |
 | --- | --- | --- |
-| `reset_state` | scope、待删除数据库记录数、待删除知识目录 | 实际删除计数、runtime singleton 重建状态 |
+| `reset_state` | scope、待删除数据库记录数、待删除知识目录；all 额外列出完整 Agent workspace 顶层条目 | 实际删除计数、workspace 删除数、runtime singleton 重建状态 |
 | `migrate_memory_v2` | 文件数、条目数、移动/隔离计划、warning | 备份目录和迁移统计 |
 | `canonicalize_memory` | 来源文件、目标文件、条目数 | 备份目录和归并统计 |
 | `migrate_state_language` | 待翻译字段分类、条目数和预计批次数 | 备份目录、翻译计数、重命名文件和修复计数 |
@@ -120,7 +120,7 @@ Memory v2 和 canonicalize 是一次性维护操作。预览表明已经达到�
 
 ### Reset preview
 
-为 reset 增加只读 preview service。context scope 统计 ledger、checkpoint、runtime 和 Goal 行；knowledge scope 统计四个目标目录。执行仍调用现有事务化 `resetAgentState`。
+为 reset 增加只读 preview service。context scope 统计 ledger、checkpoint、runtime 和 Goal 行；knowledge scope 统计四个目标目录；all scope 还列出 `agent-workspace` 中除两个契约文件外的全部待删顶层条目。执行仍调用现有事务化 `resetAgentState`。
 
 ### 中文迁移 preview
 

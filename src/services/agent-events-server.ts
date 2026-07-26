@@ -3,33 +3,78 @@ import type { BotEvent } from '../agent/event.js'
 import { closeServer, startJsonServer, writeJson } from './http.js'
 
 export interface AgentEventsServer {
+  markCommitted(events: readonly BotEvent[]): void
   close(): Promise<void>
 }
 
 export async function startAgentEventsServer(input: {
   baseUrl: string
   enqueue: (event: BotEvent) => void
+  isCommitted: (event: Extract<BotEvent, { type: 'scheduled_wake' }>) => Promise<boolean>
 }): Promise<AgentEventsServer> {
-  const acceptedSchedules = new Set<string>()
+  const pendingSchedules = new Map<string, {
+    promise: Promise<boolean>
+    resolve: (committed: boolean) => void
+  }>()
+  let closing = false
   const server: Server = await startJsonServer({
     baseUrl: input.baseUrl,
-    handler({ request, response, url, body }) {
+    async handler({ request, response, url, body }) {
       if (request.method === 'GET' && url.pathname === '/health') return { ok: true }
       if (request.method === 'POST' && url.pathname === '/events') {
         const event = parsePlatformEvent(body)
-        if (event.type === 'scheduled_wake') {
-          if (acceptedSchedules.has(event.scheduleId)) {
-            return { ok: true, duplicate: true }
-          }
-          acceptedSchedules.add(event.scheduleId)
+        if (closing) throw new Error('agent events server is closing')
+        if (await input.isCommitted(event)) {
+          return { ok: true, duplicate: true, committed: true }
         }
-        input.enqueue(event)
-        return { ok: true, duplicate: false }
+        let pending = pendingSchedules.get(event.scheduleId)
+        if (!pending) {
+          let resolve!: (committed: boolean) => void
+          const promise = new Promise<boolean>((resolvePromise) => {
+            resolve = resolvePromise
+          })
+          pending = { promise, resolve }
+          pendingSchedules.set(event.scheduleId, pending)
+          input.enqueue(event)
+        }
+        const committed = await waitForCommit(pending.promise)
+        if (!committed) throw new Error(`scheduled wake commit timed out: ${event.scheduleId}`)
+        return { ok: true, duplicate: false, committed: true }
       }
       writeJson(response, 404, { ok: false, error: 'not found' })
     },
   })
-  return { close: () => closeServer(server) }
+  return {
+    markCommitted(events) {
+      for (const event of events) {
+        if (event.type !== 'scheduled_wake') continue
+        const pending = pendingSchedules.get(event.scheduleId)
+        if (!pending) continue
+        pendingSchedules.delete(event.scheduleId)
+        pending.resolve(true)
+      }
+    },
+    async close() {
+      closing = true
+      for (const pending of pendingSchedules.values()) pending.resolve(false)
+      pendingSchedules.clear()
+      await closeServer(server)
+    },
+  }
+}
+
+async function waitForCommit(promise: Promise<boolean>): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), 25_000)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 function parsePlatformEvent(body: unknown): Extract<BotEvent, { type: 'scheduled_wake' }> {

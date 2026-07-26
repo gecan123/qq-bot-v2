@@ -14,6 +14,7 @@ export type UntrustedTranscriptPurpose =
   | 'memory_maintenance'
   | 'long_term_state_language_migration'
   | 'goal_completion'
+  | 'agent_state_advisor'
 
 export function renderUntrustedTranscript(input: {
   purpose: UntrustedTranscriptPurpose

@@ -22,6 +22,7 @@ import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.j
 import type { ScheduleRuntime } from '../schedule-runtime.js'
 import type { QqConversationController } from './qq-conversation.js'
 import type { GoalCompletionJudge } from '../goal-completion-judge.js'
+import type { LlmClient } from '../llm-client.js'
 
 function makeCtx(): ToolContext {
   return { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 1 }
@@ -72,6 +73,7 @@ const disabledOptionalTools = {
   website: null,
   webSearch: null,
   cryptoPaper: null,
+  moomoo: null,
 } as const
 
 const mockScheduleRuntime: ScheduleRuntime = {
@@ -86,6 +88,18 @@ const mockScheduleRuntime: ScheduleRuntime = {
 const acceptingGoalJudge: GoalCompletionJudge = {
   async evaluate() {
     return { ok: true, reason: '验收证据满足目标' }
+  },
+}
+
+const mockLlm: LlmClient = {
+  async chat() {
+    return {
+      content: '{"hasNegative":false,"rewritten":"正在推进"}',
+      toolCalls: [],
+      usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+      model: 'mock',
+      contextWindowTokens: 200_000,
+    }
   },
 }
 
@@ -106,6 +120,7 @@ function findManifestTool(manifest: BotToolManifest, name: string): Tool {
 describe('merged main-agent tools', () => {
   test('requires a completion judge whenever the Goal store is configured', () => {
     assert.throws(() => buildBotToolManifest({
+      llm: mockLlm,
       sender: mockSender,
       targetPolicy,
       conversations,
@@ -127,6 +142,7 @@ describe('merged main-agent tools', () => {
 
   test('defers low-frequency state tools while keeping continuity tools always-on', () => {
     const manifest = buildBotToolManifest({
+      llm: mockLlm,
       sender: mockSender,
       targetPolicy,
       conversations,
@@ -161,10 +177,12 @@ describe('merged main-agent tools', () => {
     assert.deepEqual(capabilities.get('sticker_management'), ['collect_sticker'])
     assert.ok(alwaysOnNames.includes('memory'))
     assert.ok(alwaysOnNames.includes('goal'))
+    assert.ok(alwaysOnNames.includes('initiative_review'))
   })
 
   test('buildBotTools exposes default entries and defers heavy typed tools', () => {
     const names = buildBotTools({
+      llm: mockLlm,
       sender: mockSender,
       targetPolicy,
       conversations,
@@ -191,6 +209,7 @@ describe('merged main-agent tools', () => {
     assert.ok(names.includes('inbox'))
     assert.ok(names.includes('yield'))
     assert.ok(names.includes('skill'))
+    assert.ok(names.includes('initiative_review'))
     assert.ok(names.includes('help'))
     assert.ok(names.includes('invoke'))
     assert.equal(names.includes('toolbox'), false)
@@ -244,6 +263,7 @@ describe('merged main-agent tools', () => {
     try {
       process.chdir(temporaryCwd)
       const manifest = buildBotToolManifest({
+        llm: mockLlm,
         sender: mockSender,
         targetPolicy,
         conversations,
@@ -294,6 +314,7 @@ describe('merged main-agent tools', () => {
 
   test('buildBotToolManifest groups deferred capabilities by intent', () => {
     const manifest = buildBotToolManifest({
+      llm: mockLlm,
       sender: mockSender,
       targetPolicy,
       conversations,
@@ -348,6 +369,7 @@ describe('merged main-agent tools', () => {
     assert.ok(alwaysOnNames.includes('yield'))
     assert.ok(alwaysOnNames.includes('goal'))
     assert.ok(alwaysOnNames.includes('chat_style'))
+    assert.ok(alwaysOnNames.includes('initiative_review'))
     assert.equal(alwaysOnNames.includes('ai_tone'), false)
     assert.equal(alwaysOnNames.includes('journal'), false)
     assert.equal(alwaysOnNames.includes('skill_editor'), false)

@@ -86,13 +86,15 @@ export function createAdminOperationsPort(
           const contextNeeded = result.context
             ? Object.values(result.context).some(count => count > 0)
             : false
+          const workspaceNeeded = (result.workspace?.entries.length ?? 0) > 0
           return {
             payload: {
               operation: 'reset_state',
               scope: request.scope,
-              needed: contextNeeded || knowledgeNeeded,
+              needed: contextNeeded || knowledgeNeeded || workspaceNeeded,
               context: result.context ?? null,
               knowledge: result.knowledge ?? null,
+              workspace: result.workspace ?? null,
             },
             stateFingerprint: hashState(result),
           }

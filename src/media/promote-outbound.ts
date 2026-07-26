@@ -1,5 +1,5 @@
-import { prisma } from '../database/client.js'
 import { createLogger } from '../logger.js'
+import { createMediaFromBytes } from './media-store.js'
 
 const log = createLogger('PROMOTE_OUTBOUND')
 
@@ -7,31 +7,33 @@ export interface PromoteInput {
   bytes: Buffer
   dataHash: string
   contentType: string
-  description: string
+  description?: string
+  descriptionSource?: string
   mediaType?: string
 }
 
-export async function promoteToMedia(input: PromoteInput): Promise<number> {
-  const descriptionRaw = { description: input.description, source: 'outbound' }
+export type MediaFromBytesCreator = typeof createMediaFromBytes
 
-  const row = await prisma.media.upsert({
-    where: { dataHash: input.dataHash },
-    create: {
-      data: new Uint8Array(input.bytes),
-      dataHash: input.dataHash,
-      contentType: input.contentType,
-      mediaType: input.mediaType ?? 'image',
-      fileSize: input.bytes.byteLength,
-      descriptionRaw,
-    },
-    update: {},
-    select: { mediaId: true },
+export async function promoteToMedia(
+  input: PromoteInput,
+  createMedia: MediaFromBytesCreator = createMediaFromBytes,
+): Promise<number> {
+  const descriptionRaw = input.description == null
+    ? undefined
+    : { description: input.description, source: input.descriptionSource ?? 'outbound' }
+
+  const mediaId = await createMedia({
+    bytes: input.bytes,
+    dataHash: input.dataHash,
+    contentType: input.contentType,
+    mediaType: input.mediaType ?? 'image',
+    ...(descriptionRaw == null ? {} : { descriptionRaw }),
   })
 
   log.info(
-    { mediaId: row.mediaId, dataHash: input.dataHash.slice(0, 16), byteSize: input.bytes.byteLength },
+    { mediaId, dataHash: input.dataHash.slice(0, 16), byteSize: input.bytes.byteLength },
     'promote_outbound_success',
   )
 
-  return row.mediaId
+  return mediaId
 }

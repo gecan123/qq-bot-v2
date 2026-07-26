@@ -8,10 +8,8 @@ describe('agent image refs', () => {
     const bytes = Buffer.from('durable-image')
     let captured: unknown
     const store = createAgentImageRefStore({
-      media: {
-        async upsert(args: unknown) { captured = args; return { mediaId: 42 } },
-        async findUnique() { return null },
-      },
+      async promote(input) { captured = input; return 42 },
+      async resolve() { return null },
     })
 
     const ref = await store.persist({
@@ -22,41 +20,35 @@ describe('agent image refs', () => {
     assert.deepEqual(ref, {
       type: 'image_ref', mediaId: '42', mediaType: 'image/png', description: 'saved description',
     })
-    const args = captured as {
-      where: { dataHash: string }
-      create: {
-        data: Uint8Array
-        dataHash: string
-        contentType: string
-        mediaType: string
-        fileSize: number
-        descriptionRaw: unknown
-      }
-      update: unknown
-      select: unknown
+    const input = captured as {
+      bytes: Buffer
+      dataHash: string
+      contentType: string
+      mediaType: string
+      description: string
+      descriptionSource: string
     }
-    assert.equal(args.where.dataHash, computeMediaHash(bytes))
-    assert.deepEqual(Buffer.from(args.create.data), bytes)
-    assert.equal(args.create.dataHash, computeMediaHash(bytes))
-    assert.equal(args.create.contentType, 'image/png')
-    assert.equal(args.create.mediaType, 'image')
-    assert.equal(args.create.fileSize, bytes.length)
-    assert.deepEqual(args.create.descriptionRaw, {
-      description: 'saved description', source: 'agent_tool_result',
-    })
-    assert.deepEqual(args.update, {})
-    assert.deepEqual(args.select, { mediaId: true })
+    assert.deepEqual(input.bytes, bytes)
+    assert.equal(input.dataHash, computeMediaHash(bytes))
+    assert.equal(input.contentType, 'image/png')
+    assert.equal(input.mediaType, 'image')
+    assert.equal(input.description, 'saved description')
+    assert.equal(input.descriptionSource, 'agent_tool_result')
   })
 
   test('hydrates a ref from Media and returns null when the row is unavailable', async () => {
     const bytes = Buffer.from('restored-image')
     let available = true
     const store = createAgentImageRefStore({
-      media: {
-        async upsert() { return { mediaId: 7 } },
-        async findUnique() {
-          return available ? { data: new Uint8Array(bytes), contentType: 'image/webp' } : null
-        },
+      async promote() { return 7 },
+      async resolve() {
+        return available ? {
+          bytes,
+          dataHash: computeMediaHash(bytes),
+          byteSize: bytes.byteLength,
+          contentType: 'image/webp',
+          description: '',
+        } : null
       },
     })
     const ref = { type: 'image_ref' as const, mediaId: '7', mediaType: 'image/webp' }

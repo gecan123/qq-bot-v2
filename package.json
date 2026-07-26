@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "tsx src/platform.ts --watch",
     "dev:once": "tsx src/platform.ts",
+    "dev:all": "tsx src/platform.ts --watch --web",
+    "dev:all:once": "tsx src/platform.ts --web",
     "agent:dev": "tsx watch src/index.ts",
     "agent:dev:once": "tsx src/index.ts",
     "qq:gateway": "tsx src/services/qq-gateway.ts",
@@ -79,12 +81,5 @@
     "prisma": "^7.4.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@prisma/engines",
-      "esbuild",
-      "prisma"
-    ]
   }
 }

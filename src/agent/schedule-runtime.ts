@@ -13,6 +13,7 @@ import {
   type ScheduleOccurrence,
   type ScheduleOccurrenceStore,
 } from './schedule-occurrence-store.js'
+import type { ScheduleDeliveryStore } from './schedule-delivery-store.js'
 
 export type CreateScheduleInput = ScheduleAtInput & {
   name: string
@@ -73,6 +74,7 @@ export interface ScheduleRuntimeLogEntry {
 export interface ScheduleRuntimeDependencies {
   store: ScheduleStore
   occurrenceStore?: ScheduleOccurrenceStore
+  deliveryStore?: ScheduleDeliveryStore
   eventQueue: EventQueue<BotEvent>
   now?: () => Date
   setTimer?: (callback: () => void, delayMs: number) => unknown
@@ -172,6 +174,7 @@ export function createScheduleRuntime(deps: ScheduleRuntimeDependencies): Schedu
     }
     try {
       await occurrenceStore.record(occurrence)
+      await deps.deliveryStore?.recordPending(occurrence)
       const nextJobs = [...jobs.values()].filter((candidate) => candidate.id !== id)
       await deps.store.replace(nextJobs)
       jobs = new Map(nextJobs.map((candidate) => [candidate.id, cloneJob(candidate)]))

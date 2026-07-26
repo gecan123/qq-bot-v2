@@ -14,6 +14,8 @@ export type AgentTokenOperation =
   | 'life_journal.idle_pick'
   | 'memory.maintenance'
   | 'goal.completion_judge'
+  | 'agent.state_advisor'
+  | 'agent.initiative_review'
   | 'persona.self_test'
   | 'fetch_url.summary'
   | 'long_term_state.translate'

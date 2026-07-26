@@ -2714,6 +2714,143 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.deepEqual(waits, [100, 200, 400, 400])
   })
 
+  test('three unanchored idle waits can append one concrete state-advisor thought', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('刚才讨论了一篇关于长期记忆边界的文章')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'bootstrap' })
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
+    let llmCallCount = 0
+    let advisorCallCount = 0
+    let waitCount = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat(input) {
+          llmCallCount++
+          if (llmCallCount === 4) {
+            const advice = input.messages.at(-1)
+            assert.equal(advice?.role, 'user')
+            if (advice?.role === 'user') {
+              assert.match(advice.content, /"event":"agent_state_advice".*"innerThought":/)
+            }
+            await agent.stop()
+          }
+          return {
+            content: '',
+            toolCalls: [],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools(),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      stateAdvisor: {
+        async evaluate({ consecutiveIdleRounds }) {
+          advisorCallCount++
+          assert.equal(consecutiveIdleRounds, 3)
+          return {
+            state: 'directionless',
+            reason: '近期有一个真实而具体的文章线索',
+            thought: '我想重新打开那篇文章，只确认长期记忆的边界。',
+          }
+        },
+      },
+      autonomy: {
+        idleWaitMs: 100,
+        maxIdleWaitMs: 400,
+        stateAdvisorAfterIdleRounds: 3,
+        async waitForAttentionOrTimeout() {
+          waitCount++
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 4)
+    assert.equal(waitCount, 3)
+    assert.equal(advisorCallCount, 1)
+    assert.equal(
+      ctx.getSnapshot().messages.some((message) => (
+        message.role === 'user'
+        && message.content.includes('"event":"agent_state_advice"')
+        && message.content.includes('"innerThought":"我想重新打开那篇文章')
+      )),
+      true,
+    )
+  })
+
+  test('healthy-rest assessment does not manufacture a thought', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('当前没有未完成义务')
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'bootstrap' })
+    let llmCallCount = 0
+    let advisorCallCount = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat() {
+          llmCallCount++
+          if (llmCallCount === 4) await agent.stop()
+          return {
+            content: '',
+            toolCalls: [],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools(),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      stateAdvisor: {
+        async evaluate() {
+          advisorCallCount++
+          return {
+            state: 'healthy_rest',
+            reason: '没有未完成义务，也没有近期真实线索',
+          }
+        },
+      },
+      autonomy: {
+        stateAdvisorAfterIdleRounds: 3,
+        async waitForAttentionOrTimeout() {
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(advisorCallCount, 1)
+    assert.equal(
+      ctx.getSnapshot().messages.some((message) => (
+        message.role === 'user' && message.content.includes('"event":"agent_state_advice"')
+      )),
+      false,
+    )
+  })
+
   test('successful no-progress tool call waits instead of immediately rerunning', async () => {
     const ctx = createAgentContext()
     ctx.appendUserMessage('已有上下文')

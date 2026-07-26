@@ -67,6 +67,8 @@ pnpm dev
 ```bash
 pnpm dev           # watch 模式启动多进程平台
 pnpm dev:once      # 单次启动多进程平台
+pnpm dev:all       # watch 模式启动多进程平台与 WebAdmin
+pnpm dev:all:once  # 单次启动多进程平台与 WebAdmin
 pnpm agent:dev     # watch 模式启动旧单进程兼容入口
 pnpm agent:dev:once # 单次启动旧单进程兼容入口
 pnpm build         # 编译 TypeScript

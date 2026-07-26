@@ -31,6 +31,7 @@ const resetPreview: OperationPreview = {
     needed: true,
     context: { ledgerEntries: 7, checkpoints: 1, runtimeStates: 1, goals: 1 },
     knowledge: null,
+    workspace: null,
   },
 }
 

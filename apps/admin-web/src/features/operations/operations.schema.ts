@@ -42,6 +42,15 @@ const resetKnowledgeSchema = z.object({
   }).strict()).length(4),
 }).strict()
 
+const resetWorkspaceSchema = z.object({
+  preservedFiles: z.tuple([z.literal('.gitignore'), z.literal('README.md')]),
+  entries: z.array(z.object({
+    name: z.string().min(1).max(500),
+    kind: z.enum(['directory', 'file', 'symlink', 'other']),
+    files: z.number().int().nonnegative(),
+  }).strict()).max(100),
+}).strict()
+
 const languageCountsSchema = z.object({
   memoryTitles: z.number().int().nonnegative(),
   memoryEntries: z.number().int().nonnegative(),
@@ -58,6 +67,7 @@ export const operationPreviewPayloadSchema = z.discriminatedUnion('operation', [
     needed: z.boolean(),
     context: resetContextSchema.nullable(),
     knowledge: resetKnowledgeSchema.nullable(),
+    workspace: resetWorkspaceSchema.nullable(),
   }).strict(),
   z.object({
     operation: z.literal('migrate_memory_v2'),
@@ -109,6 +119,7 @@ export const operationResultPayloadSchema = z.discriminatedUnion('operation', [
     deletedGoals: z.number().int().nonnegative(),
     createdRuntimeState: z.boolean(),
     removedDirectories: z.array(z.enum(['memory', 'journal', 'life', 'notebook'])).max(4),
+    removedWorkspaceEntries: z.number().int().nonnegative().default(0),
   }).strict(),
   z.object({
     operation: z.literal('migrate_memory_v2'),

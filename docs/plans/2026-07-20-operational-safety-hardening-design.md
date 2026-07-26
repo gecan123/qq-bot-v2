@@ -34,7 +34,7 @@ pnpm agent:reset-state -- --scope knowledge
 
 package script 继续内置 `--confirm`，直接运行底层脚本时缺少确认参数仍会拒绝。scope 缺失或未知也会拒绝，不提供隐式默认值。
 
-- `all`：执行 context 与 knowledge 两组清理。
+- `all`：执行 context 清理，并删除 `agent-workspace` 下除 `README.md`、`.gitignore` 外的全部 Agent 生成内容。
 - `context`：在数据库事务中删除 ledger、checkpoint、runtime 和 Goal，随后创建空 runtime singleton；保留长期 Markdown 状态。
 - `knowledge`：删除 Memory、遗留 Journal、Notebook 和 Life 目录；不连接或修改数据库。
 

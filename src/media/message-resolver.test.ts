@@ -8,8 +8,9 @@ import { persistMediaReferences } from './media-cache.js'
 
 const originalFindMany = prisma.media.findMany
 const originalCreate = prisma.media.create
-const originalFindUnique = prisma.media.findUnique
 const originalUpdate = prisma.media.update
+const originalBlobUpsert = prisma.mediaBlob.upsert
+const originalTransaction = prisma.$transaction
 const originalEnqueueAndWait = jobQueue.enqueueAndWait
 const originalEnqueue = jobQueue.enqueue
 const originalFetch = globalThis.fetch
@@ -39,8 +40,9 @@ function makeMessage(content: unknown): Message {
 afterEach(() => {
   prisma.media.findMany = originalFindMany
   prisma.media.create = originalCreate
-  prisma.media.findUnique = originalFindUnique
   prisma.media.update = originalUpdate
+  prisma.mediaBlob.upsert = originalBlobUpsert
+  prisma.$transaction = originalTransaction
   jobQueue.enqueueAndWait = originalEnqueueAndWait
   jobQueue.enqueue = originalEnqueue
   globalThis.fetch = originalFetch
@@ -125,7 +127,7 @@ describe('resolveMessage', () => {
   })
 
   test('waits for an in-flight media download before scheduling description generation', async () => {
-    const store = new Map<number, { mediaId: number; data: Uint8Array; descriptionRaw: unknown }>()
+    const store = new Map<number, { mediaId: number; blobId: number | null; descriptionRaw: unknown }>()
     const calls: Array<{ type: string; data: { mediaId: number }; options: { priority?: string } | undefined }> = []
     let releaseFetch!: () => void
     const fetchBlocker = new Promise<void>((resolve) => {
@@ -133,25 +135,27 @@ describe('resolveMessage', () => {
     })
 
     prisma.media.create = (async () => {
-      const row = { mediaId: 42, data: new Uint8Array(0), descriptionRaw: null }
+      const row = { mediaId: 42, blobId: null, descriptionRaw: null }
       store.set(42, row)
       return row
     }) as unknown as typeof prisma.media.create
-    prisma.media.findUnique = (async () => null) as typeof prisma.media.findUnique
-    prisma.media.update = (async (args: { where: { mediaId: number }; data: { data?: Uint8Array; descriptionRaw?: unknown } }) => {
+    prisma.$transaction = (async (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma)) as never
+    prisma.mediaBlob.upsert = (async () => ({ blobId: 9, byteSize: 3 })) as never
+    prisma.media.update = (async (args: { where: { mediaId: number }; data: { blobId?: number; descriptionRaw?: unknown } }) => {
       const row = store.get(args.where.mediaId)
       if (!row) throw new Error('missing media')
-      if (args.data.data) row.data = args.data.data
+      if (args.data.blobId) row.blobId = args.data.blobId
       if (args.data.descriptionRaw !== undefined) row.descriptionRaw = args.data.descriptionRaw
       return row
     }) as unknown as typeof prisma.media.update
-    prisma.media.findMany = (async (args: { select?: { descriptionRaw?: boolean } }) => {
+    prisma.media.findMany = (async () => {
       const row = store.get(42)
       if (!row) return []
-      if (args.select?.descriptionRaw) {
-        return row.descriptionRaw ? [{ mediaId: 42, descriptionRaw: row.descriptionRaw }] : []
-      }
-      return row.descriptionRaw ? [] : [{ mediaId: 42 }]
+      return [{
+        mediaId: 42,
+        descriptionRaw: row.descriptionRaw,
+        blob: row.blobId ? { descriptionRaw: null } : null,
+      }]
     }) as unknown as typeof prisma.media.findMany
     jobQueue.enqueue = (() => {}) as typeof jobQueue.enqueue
     jobQueue.enqueueAndWait = (async (type: string, data: { mediaId: number }, options?: { priority?: string }) => {

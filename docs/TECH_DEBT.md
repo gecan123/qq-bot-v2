@@ -57,19 +57,14 @@ QQ Gateway、Media Worker、Scheduler 和 LLM Gateway 通过 PostgreSQL 事实�
 - 影响：单元测试全部通过时，锁竞争、迁移顺序、约束差异和双 writer 行为仍可能只在部署环境暴露。
 - 目标：CI 至少运行 root test/typecheck/repo-check、WebAdmin test/typecheck/build、fresh database migration；再增加使用真实 PostgreSQL 的 concurrent writer、compaction head race 和 singleton 初始化集成测试。
 
-### 入站媒体去重仍复制 blob
-
-- 当前命中相同 `dataHash` 时会把 canonical `Media.data` 复制进新 placeholder，并保留重复 blob。
-- 目标：改为规范化引用模型或安全合并行，同时保持既有 message media handle 稳定，并为并发命中相同 hash 增加数据库级测试。
-
 ## P2：可维护性与可观测性
 
 ### 多进程交付仍是单机轻量契约
 
 - QQ Gateway 和 Agent Core 当前都按单实例运行；database mailbox watcher 只使用进程内 high-water cursor，没有 consumer lease。
-- Scheduler 的 job/occurrence 已持久化，但 occurrence 到 Agent Core 的投递重试仍是进程内状态；服务在 occurrence 落盘后、成功投递前崩溃时缺少恢复扫描。
-- Media Worker 没有数据库 claim/lease，当前只能运行一个实例；LLM Gateway 为保持实现简单会缓冲完整 provider 响应。
-- 这些是第一版明确限制。只有日志或故障复现证明需要时，才分别增加恢复扫描、claim/lease 或 streaming；不要先引入 Redis、Kafka、通用 outbox/broker 或集群选主。
+- Scheduler 使用本机持久 delivery store 恢复未确认 wake，并以 Agent canonical ledger 落账作为完成确认；它仍是单机单实例契约，不支持多主或跨机器共享状态。
+- Media Worker 的游标轮转会越过冷却中的旧行，停机也会有界等待在途描述；但它没有数据库 claim/lease，当前只能运行一个实例。LLM Gateway 为保持实现简单仍会缓冲完整 provider 响应。
+- 这些是当前明确限制。只有日志或故障复现证明需要时，才分别增加 claim/lease、streaming 或跨主机交付；不要先引入 Redis、Kafka、通用 outbox/broker 或集群选主。
 
 ### Startup replay 去重集合无界增长
 
@@ -124,7 +119,7 @@ QQ Gateway、Media Worker、Scheduler 和 LLM Gateway 通过 PostgreSQL 事实�
 3. 清理 startup dedup `Set` 的稳态无界增长。
 4. 明确 Memory evidence retention 模型。
 5. 建立 CI、fresh migration 和真实 PostgreSQL 并发测试。
-6. 再处理媒体 blob 去重、统一 usage accounting、singleton 约束和恢复 runbook。
+6. 再处理统一 usage accounting、singleton 约束和恢复 runbook。
 
 ## 持续维护
 

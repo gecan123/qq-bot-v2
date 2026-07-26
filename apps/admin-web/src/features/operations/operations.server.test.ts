@@ -37,6 +37,15 @@ function dependencies(events: string[]): AdminOperationsAdapterDependencies {
             { name: 'notebook' as const, exists: true, files: 1 },
           ] },
         } : {}),
+        ...(input.scope === 'all' ? {
+          workspace: {
+            preservedFiles: ['.gitignore', 'README.md'] as const,
+            entries: [
+              { name: 'browser', kind: 'directory' as const, files: 18 },
+              { name: 'runtime', kind: 'directory' as const, files: 3 },
+            ],
+          },
+        } : {}),
       }
     },
     async resetAgentState(input) {
@@ -49,6 +58,7 @@ function dependencies(events: string[]): AdminOperationsAdapterDependencies {
         deletedGoals: 1,
         createdRuntimeState: true,
         removedDirectories: input.scope === 'context' ? [] : ['memory', 'journal', 'life', 'notebook'],
+        removedWorkspaceEntries: input.scope === 'all' ? 2 : 0,
       }
     },
     async migrateMemoryToV2(input) {
@@ -155,6 +165,11 @@ describe('createAdminOperationsPort', () => {
     assert.equal(events.filter(event => event === 'canonical:preview').length, 1)
     assert.equal(events.filter(event => event === 'language:preview').length, 1)
     assert.equal(events.includes('language:create_translator'), false)
+    const resetPreview = previews[0]?.payload
+    assert.equal(resetPreview?.operation, 'reset_state')
+    if (resetPreview?.operation === 'reset_state') {
+      assert.equal(resetPreview.workspace?.entries.length, 2)
+    }
   })
 
   test('bounds memory preview details and uses the shared needed flag', async () => {

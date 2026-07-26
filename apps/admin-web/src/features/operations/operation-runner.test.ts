@@ -33,6 +33,7 @@ function successResult(): OperationResultPayload {
     deletedGoals: 0,
     createdRuntimeState: true,
     removedDirectories: [],
+    removedWorkspaceEntries: 0,
   }
 }
 

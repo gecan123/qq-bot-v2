@@ -23,6 +23,9 @@ export interface SendMessageDeps {
   targetPolicy: SendTargetPolicy
   conversations: QqConversationController
   groupMuteInspector?: GroupMuteInspector
+  resolveImage?: typeof resolveImageHandle
+  releaseImage?: typeof releaseHandle
+  promoteImage?: typeof promoteToMedia
 }
 const imageRefSchema = z.string().regex(/^(?:media:\d+|ephemeral:[a-f0-9]{64})$/)
 const httpsUrlSchema = z.string().url().refine((value) => new URL(value).protocol === 'https:', {
@@ -329,7 +332,7 @@ async function sendWithImage(
   const handle = args.image
   let resolved: Awaited<ReturnType<typeof resolveImageHandle>>
   try {
-    resolved = await resolveImageHandle(handle, { acquire: true })
+    resolved = await (deps.resolveImage ?? resolveImageHandle)(handle, { acquire: true })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     log.warn({ handle, error: message }, 'send_message_image_resolve_failed')
@@ -371,7 +374,7 @@ async function sendWithImage(
     } else {
       image.ephemeralRef = handle.ephemeralRef
       try {
-        image.mediaId = await promoteToMedia({
+        image.mediaId = await (deps.promoteImage ?? promoteToMedia)({
           bytes: resolved.bytes,
           dataHash: resolved.dataHash,
           contentType: resolved.contentType,
@@ -393,7 +396,7 @@ async function sendWithImage(
     }
     return { ...sendResult, content: JSON.stringify(sent) }
   } finally {
-    releaseHandle(handle)
+    ;(deps.releaseImage ?? releaseHandle)(handle)
   }
 }
 

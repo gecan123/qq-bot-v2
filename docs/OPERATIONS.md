@@ -23,7 +23,7 @@ pnpm agent:reset-state -- --scope knowledge
 pnpm agent:reset-state -- --scope all
 ```
 
-`context` 删除 `bot_agent_ledger_entries`、`bot_agent_checkpoint`、`bot_agent_runtime_state` 和 `bot_agent_goal`，再重建空 runtime singleton，保留长期知识文件。`knowledge` 只删除 `data/agent-workspace/{memory,journal,life,notebook}`，不连接数据库；其中 `journal` 只是遗留目录清理项。`all` 同时执行两类清理。三种 scope 都保留消息/媒体账本、表情池、浏览器 profile/artifact 和普通 workspace 文件。空 ledger 冷启动不会把既有消息拼成旧 prompt history。
+`context` 删除 `bot_agent_ledger_entries`、`bot_agent_checkpoint`、`bot_agent_runtime_state` 和 `bot_agent_goal`，再重建空 runtime singleton，保留 workspace。`knowledge` 只删除 `data/agent-workspace/{memory,journal,life,notebook}`，不连接数据库；其中 `journal` 只是遗留目录清理项。`all` 执行 context 清理，并删除 `data/agent-workspace/` 下除契约文件 `README.md`、`.gitignore` 外的全部 Agent 生成内容，包括长期知识、普通笔记、runtime 状态、浏览器 profile/artifact、草稿和缓存。三种 scope 都保留消息/媒体事实账本、表情池和运维日志。空 ledger 冷启动不会把既有消息拼成旧 prompt history。
 
 scope 必须显式提供，命令可重复执行；标准 package script 已内置破坏性确认参数，检测到 `.bot.pid` 对应进程仍存活时会拒绝运行。
 
@@ -154,6 +154,7 @@ JSON 报告带当前为 `2` 的 `schemaVersion`，总占用字段是 `estimatedS
 
 - 从仓库根目录启动，确保 `.bot.pid`、logs、prompts 和相对路径稳定。
 - `pnpm dev` 通过 `src/platform.ts` 启动多进程 watch 模式；`pnpm dev:once` 启动同一组进程但不监听文件变化。supervisor 等待 LLM Gateway、Media Worker、Scheduler、QQ Gateway，以及按配置启用的 Browser Controller 健康后，才启动 Agent Core。
+- `pnpm dev:all` 在 watch 模式下额外启动 WebAdmin；`pnpm dev:all:once` 不监听 Bot 源码变化。它们只合并本地生命周期，WebAdmin 不参与 ingress 或 Agent 调度。WebAdmin 的“进程日志”页按固定进程白名单读取 `logs/processes/*.log` 最后 512 KiB / 500 行，不能提交路径、命令或写入日志。
 - 各进程标准输出和错误分别追加到 `logs/processes/<process>.log`；终端只显示 supervisor 生命周期，QQ 日志不再混进 Agent Core 日志。
 - `pnpm build && pnpm start` 使用 `dist/platform.js` 启动编译后的同一平台。`pnpm agent:dev`、`pnpm agent:dev:once` 和 `pnpm agent:start` 保留单进程兼容入口，主要用于聚焦调试。
 - `pnpm qq:gateway`、`pnpm media:worker`、`pnpm scheduler:service`、`pnpm llm:gateway` 可以单独启动服务；不要与占用同一端口的 platform supervisor 同时运行。
@@ -249,8 +250,9 @@ invoke tool=mcp args={"action":"call","tool":"mcp__example__search","arguments":
 - 图片任务的 metadata/预览可随 registry 保留，但 `ephemeralRef` 属于进程内 OutboundCache；重启后结果会明确标记失效，需重新生成，不能假装原图仍可发送。
 - MCP schema 快照默认位于 `data/agent-workspace/runtime/mcp-schemas/*.json`；每次成功 discovery 原子覆盖当前版本。这里不保存远端调用结果或认证密钥。
 
-- 启动时清理 7 天前的 `messages` 和 `media`；StickerPool 正在引用的媒体受保护，不会随普通媒体清理删除。
-- 启动时默认清理 30 天前的 `agent_tool_calls`、`agent_token_usage` 以及 token/tool/fetch NDJSON 记录；用 `BOT_OBSERVABILITY_RETENTION_DAYS` 覆盖，设为 `0` 关闭这组自动清理。NDJSON 以同目录临时文件原子替换；无效 JSON、无效时间戳或缺少 `ts`/`time` 的行会保留并记录告警。数据库表和各文件独立清理，单个目标失败不会阻塞其他目标或后续启动。
+- Agent Core 启动后异步执行一次 retention，并在每天北京时间 03:00 以 single-flight 方式再次执行；清理不会阻塞 Bot 启动，停机时会取消 timer 并有界等待在途任务。
+- 每次清理删除 7 天前的 `messages` 和 `media`；StickerPool 正在引用的 Media 受保护。删除 Media 后，再清理一小时前已经无人引用且近期没有被内容 upsert 触碰的 `media_blobs`。
+- 每次清理也默认删除 30 天前的 `agent_tool_calls`、`agent_token_usage` 以及 token/tool/fetch NDJSON 记录；用 `BOT_OBSERVABILITY_RETENTION_DAYS` 覆盖，设为 `0` 关闭这组观测数据清理。NDJSON 以同目录临时文件原子替换；无效 JSON、无效时间戳或缺少 `ts`/`time` 的行会保留并记录告警。数据库表和各文件独立清理，单个目标失败不会阻塞其他目标或 Bot 启动。
 
 ## Moomoo OpenD / Mac
 
@@ -405,7 +407,7 @@ VIBE_TRADING_RESULT_MAX_CHARS=12000
 
 - `pnpm agent:doctor` 先做本地静态健康检查：必需文件、必需环境变量、agent 指令镜像、schema anchor、startup anchor 和 tool registry anchor；静态检查通过后连接 Postgres 执行同等只读 ledger 检查。`LLM_DEFAULT_PROVIDER=claude-code` 时还会在这里执行最多三次 persona-spoof 真实 LLM 探测，普通 Bot 启动不再探测。输出 JSON，任一阶段有错误时非零退出。
 - `pnpm agent:memory-check` 只读扫描 `data/agent-workspace` 下的 Memory、Notebook、Life Journal 和 Agenda Markdown，输出文件/entry 数量、Memory lifecycle、损坏格式、跨 store 重复 ID、self/unknown supersedes 与 Agenda revision；不会创建目录、默认文件或执行修复。结构问题退出 1；可用 `pnpm agent:memory-check -- --root <path>` 指定其他 workspace。
-- `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson`、`logs/tool-calls.ndjson` 和当前保留的 `logs/app*.log` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率，以及按群 `inboxReads`、`messagesRead`、`sendAttempts`、`sendBlocked`、成功 ambient/reply 和 `readToSendRate`。默认排除 `model=mock` 测试数据，显式传 `--model mock` 时才查看；当前 token operations 包括 `agent.chat`、`compaction`、`life_journal.review`、`life_journal.idle_pick` 和 `memory.maintenance`。
+- `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson`、`logs/tool-calls.ndjson` 和当前保留的 `logs/app*.log` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率，以及按群 `inboxReads`、`messagesRead`、`sendAttempts`、`sendBlocked`、成功 ambient/reply 和 `readToSendRate`。默认排除 `model=mock` 测试数据，显式传 `--model mock` 时才查看；当前 token operations 包括 `agent.chat`、`agent.state_advisor`、`agent.initiative_review`、`compaction`、`life_journal.review`、`life_journal.idle_pick` 和 `memory.maintenance`。
 - `pnpm agent:metrics <token-log> <tool-log> [app-log]` 可以汇总指定日志文件；省略 `app-log` 时自动读取当前 `logs/app*.log` 滚动文件。
 - token/cache 使用继续 best-effort 写入 Postgres `agent_token_usage`；工具调用只有 `BOT_TOOL_AUDIT_DB_ENABLED=true` 时写入 `agent_tool_calls`。写 DB 失败只记 warning，不影响 bot 执行。
 - `pnpm agent:metrics --db` 从 Postgres 汇总持久化事件；可加 `--from <iso> --to <iso> --tool <name> --operation <name> --model <name> --ok true|false --side-effect true|false` 做筛选。

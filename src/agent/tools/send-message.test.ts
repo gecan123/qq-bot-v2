@@ -8,7 +8,6 @@ import type { MessageSender } from '../../messaging/message-sender.js'
 import type { NapcatSegment, SendNapcatResult } from '../../messaging/napcat-sender.js'
 import type { GroupMuteInspection, GroupMuteInspector } from '../../messaging/group-mute-inspector.js'
 import { OutboundCache, setOutboundCacheForTest } from '../../media/outbound-cache.js'
-import { prisma } from '../../database/client.js'
 import type { QqConversationFocus } from '../agent-context.types.js'
 import type { QqConversationController } from './qq-conversation.js'
 import { createSendMessageTool } from './send-message.js'
@@ -81,12 +80,14 @@ function createAllowedTool(
   sender: MessageSender,
   current: ActiveFocus = { type: 'group', groupId: 111 },
   groupMuteInspector: GroupMuteInspector = makeMuteInspector().inspector,
+  overrides: Partial<Parameters<typeof createSendMessageTool>[0]> = {},
 ) {
   return createSendMessageTool({
     sender,
     targetPolicy: allowAllTargets,
     conversations: makeConversations(current),
     groupMuteInspector,
+    ...overrides,
   })
 }
 
@@ -416,20 +417,14 @@ describe('send_message failure diagnostics', () => {
 describe('send_message image handling', () => {
   const hash = 'a'.repeat(64)
   let cache: OutboundCache
-  let originalUpsert: typeof prisma.media.upsert
-  let originalFindUnique: typeof prisma.media.findUnique
 
   beforeEach(() => {
     cache = new OutboundCache({ maxEntries: 10, maxBytes: 100_000, ttlMs: 60_000 })
     setOutboundCacheForTest(cache)
-    originalUpsert = prisma.media.upsert
-    originalFindUnique = prisma.media.findUnique
   })
 
   afterEach(() => {
     setOutboundCacheForTest(null)
-    prisma.media.upsert = originalUpsert
-    prisma.media.findUnique = originalFindUnique
   })
 
   function putEphemeral(): void {
@@ -444,9 +439,10 @@ describe('send_message image handling', () => {
 
   test('sends an ephemeral image, persists it lazily, and releases its refcount', async () => {
     putEphemeral()
-    prisma.media.upsert = (async () => ({ mediaId: 42 })) as never
     const { sender, calls } = makeSender()
-    const tool = createAllowedTool(sender)
+    const tool = createAllowedTool(sender, undefined, undefined, {
+      promoteImage: async () => 42,
+    })
 
     const result = await tool.execute({ image: { ephemeralRef: hash }, work: noWork }, makeContext())
 
@@ -464,10 +460,11 @@ describe('send_message image handling', () => {
 
   test('keeps a successful send when lazy persistence fails', async () => {
     putEphemeral()
-    prisma.media.upsert = (async () => { throw new Error('db connection lost') }) as never
     const { sender } = makeSender()
 
-    const result = await createAllowedTool(sender).execute(
+    const result = await createAllowedTool(sender, undefined, undefined, {
+      promoteImage: async () => { throw new Error('db connection lost') },
+    }).execute(
       { image: { ephemeralRef: hash }, work: noWork },
       makeContext(),
     )
@@ -479,20 +476,21 @@ describe('send_message image handling', () => {
 
   test('does not persist an image after provider send failure', async () => {
     putEphemeral()
-    let upsertCalled = false
-    prisma.media.upsert = (async () => {
-      upsertCalled = true
-      return { mediaId: 99 }
-    }) as never
+    let promoteCalled = false
     const { sender } = makeSender({ success: false, attempts: 2 })
 
-    const result = await createAllowedTool(sender).execute(
+    const result = await createAllowedTool(sender, undefined, undefined, {
+      promoteImage: async () => {
+        promoteCalled = true
+        return 99
+      },
+    }).execute(
       { image: { ephemeralRef: hash }, work: noWork },
       makeContext(),
     )
 
     assert.equal(parse(result.content).status, 'failed')
-    assert.equal(upsertCalled, false)
+    assert.equal(promoteCalled, false)
     assert.equal(result.effects, undefined)
     assert.equal(result.outcome?.ok, false)
     assert.equal(result.outcome?.code, 'send_failed')
@@ -524,17 +522,17 @@ describe('send_message image handling', () => {
 
   test('authorizes before resolving or sending an image', async () => {
     putEphemeral()
-    let upsertCalled = false
-    prisma.media.upsert = (async () => {
-      upsertCalled = true
-      return { mediaId: 10 }
-    }) as never
+    let promoteCalled = false
     const { sender, calls } = makeSender()
     const tool = createSendMessageTool({
       sender,
       conversations: makeConversations({ type: 'group', groupId: 111 }),
       targetPolicy: {
         async authorize() { return { allowed: false, error: 'ambient send rejected' } },
+      },
+      promoteImage: async () => {
+        promoteCalled = true
+        return 10
       },
     })
 
@@ -544,21 +542,23 @@ describe('send_message image handling', () => {
     assert.equal(result.outcome?.ok, false)
     assert.equal(result.outcome?.code, 'send_rejected')
     assert.equal(calls.length, 0)
-    assert.equal(upsertCalled, false)
+    assert.equal(promoteCalled, false)
     assert.equal(cache.get(hash)?.refcount, 0)
   })
 
   test('resolves and sends a persisted media image', async () => {
-    prisma.media.findUnique = (async () => ({
-      mediaId: 7,
-      data: Buffer.from('stored-image'),
-      dataHash: 'b'.repeat(64),
-      contentType: 'image/jpeg',
-      descriptionRaw: { description: 'stored' },
-    })) as never
     const { sender, calls } = makeSender()
+    const tool = createAllowedTool(sender, undefined, undefined, {
+      resolveImage: async () => ({
+        bytes: Buffer.from('stored-image'),
+        dataHash: 'b'.repeat(64),
+        byteSize: 12,
+        contentType: 'image/jpeg',
+        description: 'stored',
+      }),
+    })
 
-    const result = await createAllowedTool(sender).execute({
+    const result = await tool.execute({
       imageRef: 'media:7',
       work: noWork,
     }, makeContext())
@@ -568,9 +568,10 @@ describe('send_message image handling', () => {
   })
 
   test('falls back to text when a persisted media image is missing', async () => {
-    prisma.media.findUnique = (async () => null) as never
     const { sender, calls } = makeSender()
-    const tool = createAllowedTool(sender, { type: 'private', userId: 10001 })
+    const tool = createAllowedTool(sender, { type: 'private', userId: 10001 }, undefined, {
+      resolveImage: async () => { throw new Error('Media not found: mediaId=1') },
+    })
 
     const result = await tool.execute({
       message: 'hi，醒着呢。咋啦',

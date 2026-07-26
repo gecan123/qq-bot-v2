@@ -2,6 +2,7 @@ import { prisma } from '../database/client.js'
 import { createLogger } from '../logger.js'
 import { requestMediaDescription } from '../services/media-worker-client.js'
 import { computeMediaHash } from './media-hash.js'
+import { attachMediaBlob } from './media-store.js'
 import type {
   ImageSegment,
   VideoSegment,
@@ -96,10 +97,6 @@ function formatError(error: unknown): Record<string, unknown> {
   return { value: String(error) }
 }
 
-function isUniqueConstraintError(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === 'P2002'
-}
-
 async function resolveMediaUrl(
   segment: MediaSegment,
   scope: MediaScope,
@@ -155,7 +152,6 @@ async function cacheMediaSegment(input: CacheInput): Promise<string | undefined>
     )
     const media = await prisma.media.create({
       data: {
-        data: new Uint8Array(0),
         mediaType,
         fileName: segment.type !== 'image' ? segment.fileName : (segment as ImageSegment).fileName,
         fileSize: fileSizeBytes,
@@ -171,7 +167,6 @@ async function cacheMediaSegment(input: CacheInput): Promise<string | undefined>
 
   const media = await prisma.media.create({
     data: {
-      data: new Uint8Array(0),
       mediaType: resolveMediaType(segment),
       fileName: segment.fileName,
       fileSize: fileSizeBytes,
@@ -234,81 +229,16 @@ async function downloadMediaIntoPlaceholder(
   const fileSize = bytes.length
   const dataHash = computeMediaHash(bytes)
 
-  const existing = await prisma.media.findUnique({
-    where: { dataHash },
-    select: {
-      data: true,
-      mediaType: true,
-      contentType: true,
-      fileName: true,
-      fileSize: true,
-      descriptionRaw: true,
-    },
+  await attachMediaBlob({
+    mediaId,
+    bytes,
+    dataHash,
+    mediaType: resolveMediaType(segment),
+    contentType,
+    fileName: segment.fileName,
+    fileSize,
   })
-  if (existing) {
-    await prisma.media.update({
-      where: { mediaId },
-      data: {
-        data: existing.data,
-        mediaType: existing.mediaType,
-        contentType: existing.contentType,
-        fileName: existing.fileName,
-        fileSize: existing.fileSize,
-        descriptionRaw: existing.descriptionRaw ?? undefined,
-      },
-    })
-    if (!existing.descriptionRaw) {
-      void requestMediaDescription(mediaId, { priority: 'low' })
-    }
-    return
-  }
-
-  try {
-    await prisma.media.update({
-      where: { mediaId },
-      data: {
-        data: new Uint8Array(bytes),
-        dataHash,
-        mediaType: resolveMediaType(segment),
-        contentType,
-        fileName: segment.fileName,
-        fileSize,
-      },
-    })
-    void requestMediaDescription(mediaId, { priority: 'low' })
-  } catch (error) {
-    if (isUniqueConstraintError(error)) {
-      const deduped = await prisma.media.findUnique({
-        where: { dataHash },
-        select: {
-          data: true,
-          mediaType: true,
-          contentType: true,
-          fileName: true,
-          fileSize: true,
-          descriptionRaw: true,
-        },
-      })
-      if (deduped) {
-        await prisma.media.update({
-          where: { mediaId },
-          data: {
-            data: deduped.data,
-            mediaType: deduped.mediaType,
-            contentType: deduped.contentType,
-            fileName: deduped.fileName,
-            fileSize: deduped.fileSize,
-            descriptionRaw: deduped.descriptionRaw ?? undefined,
-          },
-        })
-        if (!deduped.descriptionRaw) {
-          void requestMediaDescription(mediaId, { priority: 'low' })
-        }
-        return
-      }
-    }
-    throw error
-  }
+  void requestMediaDescription(mediaId, { priority: 'low' })
 }
 
 export async function waitForPendingMediaDownloads(mediaIds: number[], timeoutMs: number): Promise<void> {

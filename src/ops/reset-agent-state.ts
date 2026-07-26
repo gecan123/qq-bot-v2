@@ -4,6 +4,8 @@ import { AGENT_RUNTIME_STATE_SCHEMA_VERSION } from '../agent/agent-ledger.types.
 import { createEmptyMailboxContinuityState } from '../agent/mailbox-continuity.js'
 
 const KNOWLEDGE_DIRECTORIES = ['memory', 'journal', 'life', 'notebook'] as const
+const WORKSPACE_CONTRACT_FILES: ['.gitignore', 'README.md'] = ['.gitignore', 'README.md']
+const WORKSPACE_ENTRY_LIMIT = 100
 const RESET_SCOPES = ['all', 'context', 'knowledge'] as const
 
 export type AgentStateResetScope = (typeof RESET_SCOPES)[number]
@@ -44,6 +46,14 @@ export interface AgentStateResetPreview {
       files: number
     }>
   }
+  workspace?: {
+    preservedFiles: typeof WORKSPACE_CONTRACT_FILES
+    entries: Array<{
+      name: string
+      kind: 'directory' | 'file' | 'symlink' | 'other'
+      files: number
+    }>
+  }
 }
 
 export interface AgentStateResetResult {
@@ -54,6 +64,7 @@ export interface AgentStateResetResult {
   deletedGoals: number
   createdRuntimeState: boolean
   removedDirectories: Array<(typeof KNOWLEDGE_DIRECTORIES)[number]>
+  removedWorkspaceEntries: number
 }
 
 export function parseAgentStateResetScope(argv: readonly string[]): AgentStateResetScope {
@@ -94,6 +105,13 @@ export async function previewAgentStateReset(options: {
     }
   }
 
+  if (options.scope === 'all') {
+    preview.workspace = {
+      preservedFiles: [...WORKSPACE_CONTRACT_FILES],
+      entries: await inspectWorkspaceGeneratedEntries(options.workspaceDir),
+    }
+  }
+
   return preview
 }
 
@@ -102,6 +120,9 @@ export async function resetAgentState(options: {
   db?: AgentStateResetDb
   workspaceDir: string
 }): Promise<AgentStateResetResult> {
+  const workspaceEntries = options.scope === 'all'
+    ? await listWorkspaceGeneratedEntries(options.workspaceDir)
+    : []
   const result: AgentStateResetResult = {
     scope: options.scope,
     deletedLedgerEntries: 0,
@@ -110,6 +131,7 @@ export async function resetAgentState(options: {
     deletedGoals: 0,
     createdRuntimeState: false,
     removedDirectories: [],
+    removedWorkspaceEntries: 0,
   }
 
   if (options.scope === 'all' || options.scope === 'context') {
@@ -141,14 +163,58 @@ export async function resetAgentState(options: {
     result.createdRuntimeState = true
   }
 
-  if (options.scope === 'all' || options.scope === 'knowledge') {
+  if (options.scope === 'knowledge') {
     for (const directory of KNOWLEDGE_DIRECTORIES) {
       await rm(join(options.workspaceDir, directory), { recursive: true, force: true })
       result.removedDirectories.push(directory)
     }
   }
 
+  if (options.scope === 'all') {
+    for (const entry of workspaceEntries) {
+      await rm(join(options.workspaceDir, entry.name), { recursive: true, force: true })
+      result.removedWorkspaceEntries += 1
+    }
+    result.removedDirectories.push(...KNOWLEDGE_DIRECTORIES)
+  }
+
   return result
+}
+
+async function inspectWorkspaceGeneratedEntries(
+  workspaceDir: string,
+): Promise<NonNullable<AgentStateResetPreview['workspace']>['entries']> {
+  const entries = await listWorkspaceGeneratedEntries(workspaceDir)
+  return await Promise.all(entries.map(async entry => ({
+    name: entry.name,
+    kind: entry.isDirectory()
+      ? 'directory' as const
+      : entry.isFile()
+        ? 'file' as const
+        : entry.isSymbolicLink()
+          ? 'symlink' as const
+          : 'other' as const,
+    files: entry.isDirectory()
+      ? await countFiles(join(workspaceDir, entry.name)) ?? 0
+      : 1,
+  })))
+}
+
+async function listWorkspaceGeneratedEntries(workspaceDir: string) {
+  let entries
+  try {
+    entries = await readdir(workspaceDir, { withFileTypes: true })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+  const generated = entries
+    .filter(entry => !WORKSPACE_CONTRACT_FILES.includes(entry.name as (typeof WORKSPACE_CONTRACT_FILES)[number]))
+    .sort((left, right) => left.name.localeCompare(right.name))
+  if (generated.length > WORKSPACE_ENTRY_LIMIT) {
+    throw new Error(`reset preview workspace entry limit exceeded: ${workspaceDir}`)
+  }
+  return generated
 }
 
 async function countFiles(directory: string): Promise<number | null> {

@@ -92,7 +92,7 @@ Define `AgentStateResetScope = 'all' | 'context' | 'knowledge'`. Add tests provi
 
 - `context` deletes ledger/checkpoint/runtime/Goal and recreates runtime, without deleting directories.
 - `knowledge` deletes the four managed directories without opening a DB transaction.
-- `all` performs both groups.
+- `all` clears context plus every generated entry under `agent-workspace`, preserving only `README.md` and `.gitignore`.
 - repeated operations are idempotent.
 
 Use a fake DB whose `$transaction` records calls and fails the test if invoked for `knowledge`.
@@ -117,7 +117,7 @@ export async function resetAgentState(options: {
 }): Promise<AgentStateResetResult>
 ```
 
-Require `db` only for `all|context`. Keep the current DB transaction and empty runtime shape unchanged. Only `all|knowledge` remove `memory`, `journal`, `life`, and `notebook`.
+Require `db` only for `all|context`. Keep the current DB transaction and empty runtime shape unchanged. `knowledge` removes only `memory`, `journal`, `life`, and `notebook`; `all` removes every generated workspace entry while preserving the two directory contract files.
 
 **Step 4: Implement strict CLI parsing**
 

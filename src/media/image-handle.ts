@@ -1,32 +1,24 @@
-import { prisma } from '../database/client.js'
 import { getOutboundCache } from './outbound-cache.js'
 import type { ImageHandle, ResolvedImage } from './image-handle-schema.js'
+import { findResolvedMedia, type ResolvedMediaRecord } from './media-store.js'
 
-interface PersistedImageClient {
-  media: {
-    findUnique(args: unknown): Promise<{
-      data: Uint8Array
-      dataHash?: string | null
-      contentType?: string | null
-      descriptionRaw?: unknown
-    } | null>
-  }
-}
+export type PersistedImageResolver = (mediaId: number | string) => Promise<ResolvedImage | null>
+export type ResolvedMediaFinder = (mediaId: number) => Promise<ResolvedMediaRecord | null>
 
 export async function resolvePersistedImage(
   mediaId: number | string,
-  client: PersistedImageClient = prisma as unknown as PersistedImageClient,
+  findMedia: ResolvedMediaFinder = findResolvedMedia,
 ): Promise<ResolvedImage | null> {
   const normalized = typeof mediaId === 'string' ? Number(mediaId) : mediaId
   if (!Number.isSafeInteger(normalized) || normalized <= 0) {
     throw new Error(`invalid media id: ${String(mediaId)}`)
   }
-  const media = await client.media.findUnique({ where: { mediaId: normalized } })
+  const media = await findMedia(normalized)
   if (!media) return null
   return {
     bytes: Buffer.from(media.data),
     dataHash: media.dataHash ?? '',
-    byteSize: media.data.byteLength,
+    byteSize: media.byteSize,
     contentType: media.contentType ?? 'application/octet-stream',
     description: extractDescription(media.descriptionRaw),
   }

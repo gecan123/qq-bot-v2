@@ -29,7 +29,7 @@ describe('generateDescriptionForMedia', () => {
     const updates: any[] = []
 
     prisma.media.findUnique = (async () => ({
-      data: new Uint8Array(Buffer.from('image-bytes')),
+      blob: { data: new Uint8Array(Buffer.from('image-bytes')) },
       contentType: 'image/jpeg',
       mediaType: 'image',
       descriptionRaw: null,
@@ -39,7 +39,7 @@ describe('generateDescriptionForMedia', () => {
     prisma.media.update = (async (args: any) => {
       updates.push(args)
       return {} as any
-    }) as typeof prisma.media.update
+    }) as unknown as typeof prisma.media.update
 
     setLlmProvider({
       describeImage: async () => '平铺描述',
@@ -87,7 +87,7 @@ describe('generateDescriptionForMedia', () => {
     const warnings: Array<{ object: Record<string, unknown>; message: string | undefined }> = []
 
     prisma.media.findUnique = (async () => ({
-      data: new Uint8Array(Buffer.from('image-bytes')),
+      blob: { data: new Uint8Array(Buffer.from('image-bytes')) },
       contentType: 'image/jpeg',
       mediaType: 'image',
       descriptionRaw: null,
@@ -97,7 +97,7 @@ describe('generateDescriptionForMedia', () => {
     prisma.media.update = (async (args: any) => {
       updates.push(args)
       return {} as any
-    }) as typeof prisma.media.update
+    }) as unknown as typeof prisma.media.update
 
     jobQueue.enqueue = ((type: string, data: unknown, options?: { priority?: string }) => {
       enqueued.push({ type, data, options })
@@ -143,7 +143,7 @@ describe('generateDescriptionForMedia', () => {
     const infos: Array<{ object: Record<string, unknown>; message: string | undefined }> = []
 
     prisma.media.findUnique = (async () => ({
-      data: new Uint8Array(Buffer.from('image-bytes')),
+      blob: { data: new Uint8Array(Buffer.from('image-bytes')) },
       contentType: 'image/jpeg',
       mediaType: 'image',
       descriptionRaw: null,
@@ -152,7 +152,7 @@ describe('generateDescriptionForMedia', () => {
 
     prisma.media.update = (async () => {
       return {} as any
-    }) as typeof prisma.media.update
+    }) as unknown as typeof prisma.media.update
 
     log.info = ((object: Record<string, unknown>, message?: string) => {
       infos.push({ object, message })
@@ -201,7 +201,7 @@ describe('generateDescriptionForMedia', () => {
     const failure = { status: 400, headers: {}, requestID: null }
 
     prisma.media.findUnique = (async () => ({
-      data: new Uint8Array(Buffer.from('image-bytes')),
+      blob: { data: new Uint8Array(Buffer.from('image-bytes')) },
       contentType: 'image/jpeg',
       mediaType: 'image',
       descriptionRaw: null,
@@ -249,7 +249,7 @@ describe('generateDescriptionForMedia', () => {
     const infos: Array<{ object: Record<string, unknown>; message: string | undefined }> = []
 
     prisma.media.findUnique = (async () => ({
-      data: new Uint8Array(Buffer.from('image-bytes')),
+      blob: { data: new Uint8Array(Buffer.from('image-bytes')) },
       contentType: 'image/jpeg',
       mediaType: 'image',
       descriptionRaw: null,
@@ -258,7 +258,7 @@ describe('generateDescriptionForMedia', () => {
 
     prisma.media.update = (async () => {
       return {} as any
-    }) as typeof prisma.media.update
+    }) as unknown as typeof prisma.media.update
 
     log.info = ((object: Record<string, unknown>, message?: string) => {
       infos.push({ object, message })
@@ -309,7 +309,7 @@ describe('generateDescriptionForMedia', () => {
     const updates: any[] = []
 
     prisma.media.findUnique = (async () => ({
-      data: new Uint8Array(Buffer.from('image-bytes')),
+      blob: { data: new Uint8Array(Buffer.from('image-bytes')) },
       contentType: 'image/jpeg',
       mediaType: 'image',
       descriptionRaw: null,
@@ -319,7 +319,7 @@ describe('generateDescriptionForMedia', () => {
     prisma.media.update = (async (args: any) => {
       updates.push(args)
       return {} as any
-    }) as typeof prisma.media.update
+    }) as unknown as typeof prisma.media.update
 
     log.warn = ((object: Record<string, unknown>, message?: string) => {
       warnings.push({ object, message })
@@ -366,7 +366,7 @@ describe('generateDescriptionForMedia', () => {
     let received: any
 
     prisma.media.findUnique = (async () => ({
-      data: new Uint8Array(Buffer.from('video-bytes')),
+      blob: { data: new Uint8Array(Buffer.from('video-bytes')) },
       contentType: 'video/mp4',
       mediaType: 'video',
       descriptionRaw: null,
@@ -376,7 +376,7 @@ describe('generateDescriptionForMedia', () => {
     prisma.media.update = (async (args: any) => {
       updates.push(args)
       return {} as any
-    }) as typeof prisma.media.update
+    }) as unknown as typeof prisma.media.update
 
     setLlmProvider({
       describeImage: async () => '',
@@ -418,7 +418,7 @@ describe('generateDescriptionForMedia', () => {
     let received: any
 
     prisma.media.findUnique = (async () => ({
-      data: new Uint8Array(Buffer.from('video-bytes')),
+      blob: { data: new Uint8Array(Buffer.from('video-bytes')) },
       contentType: 'video/mp4',
       mediaType: 'video',
       descriptionRaw: null,
@@ -428,7 +428,7 @@ describe('generateDescriptionForMedia', () => {
     prisma.media.update = (async (args: any) => {
       updates.push(args)
       return {} as any
-    }) as typeof prisma.media.update
+    }) as unknown as typeof prisma.media.update
 
     setLlmProvider({
       describeImage: async () => '',
@@ -466,7 +466,7 @@ describe('generateDescriptionForMedia', () => {
     let received: any
 
     prisma.media.findUnique = (async () => ({
-      data: new Uint8Array(Buffer.from('pdf-bytes')),
+      blob: { data: new Uint8Array(Buffer.from('pdf-bytes')) },
       contentType: 'application/pdf',
       mediaType: 'file',
       descriptionRaw: null,
@@ -476,7 +476,7 @@ describe('generateDescriptionForMedia', () => {
     prisma.media.update = (async (args: any) => {
       updates.push(args)
       return {} as any
-    }) as typeof prisma.media.update
+    }) as unknown as typeof prisma.media.update
 
     setLlmProvider({
       describeImage: async () => '',
@@ -518,7 +518,7 @@ describe('generateDescriptionForMedia', () => {
     let received: any
 
     prisma.media.findUnique = (async () => ({
-      data: new Uint8Array(Buffer.from('audio-bytes')),
+      blob: { data: new Uint8Array(Buffer.from('audio-bytes')) },
       contentType: 'audio/mp4',
       mediaType: 'record',
       descriptionRaw: null,
@@ -528,7 +528,7 @@ describe('generateDescriptionForMedia', () => {
     prisma.media.update = (async (args: any) => {
       updates.push(args)
       return {} as any
-    }) as typeof prisma.media.update
+    }) as unknown as typeof prisma.media.update
 
     setLlmProvider({
       describeImage: async () => '',
@@ -565,7 +565,7 @@ describe('generateDescriptionForMedia', () => {
     let received: any
 
     prisma.media.findUnique = (async () => ({
-      data: new Uint8Array(Buffer.from('pdf-bytes')),
+      blob: { data: new Uint8Array(Buffer.from('pdf-bytes')) },
       contentType: 'application/pdf',
       mediaType: 'file',
       descriptionRaw: null,
@@ -575,7 +575,7 @@ describe('generateDescriptionForMedia', () => {
     prisma.media.update = (async (args: any) => {
       updates.push(args)
       return {} as any
-    }) as typeof prisma.media.update
+    }) as unknown as typeof prisma.media.update
 
     setLlmProvider({
       describeImage: async () => '',
@@ -612,7 +612,7 @@ describe('generateDescriptionForMedia', () => {
     const enqueued: Array<{ type: string; data: unknown; options?: { priority?: string } }> = []
 
     prisma.media.findUnique = (async () => ({
-      data: new Uint8Array(Buffer.from('video-bytes')),
+      blob: { data: new Uint8Array(Buffer.from('video-bytes')) },
       contentType: 'video/mp4',
       mediaType: 'video',
       descriptionRaw: null,
@@ -621,7 +621,7 @@ describe('generateDescriptionForMedia', () => {
 
     prisma.media.update = (async () => {
       return {} as any
-    }) as typeof prisma.media.update
+    }) as unknown as typeof prisma.media.update
 
     jobQueue.enqueue = ((type: string, data: unknown, options?: { priority?: string }) => {
       enqueued.push({ type, data, options })

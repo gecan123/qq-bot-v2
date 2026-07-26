@@ -62,6 +62,10 @@ import {
   isAttentionEvent,
   notificationRoutingForEvent,
 } from './notification.js'
+import {
+  renderAgentStateAdvice,
+  type AgentStateAdvisor,
+} from './agent-state-advisor.js'
 
 const log = createLogger('BOT_LOOP')
 
@@ -112,12 +116,17 @@ export interface BotLoopAgentDeps {
   groupParticipations?: ReadonlyMap<number, GroupParticipation>
   /** 可丢弃的实时活动观察面；不进入 ledger/runtime singleton。 */
   activityReporter?: AgentActivityReporter
+  /** 事件对应的 user message 已进入 canonical ledger 后触发。 */
+  onEventsCommitted?: (events: readonly BotEvent[]) => Promise<void> | void
+  /** 低频、只读的空闲状态判断；不持有工具或 ledger 写权限。 */
+  stateAdvisor?: AgentStateAdvisor
 }
 
 export interface BotLoopAutonomyOptions {
   idleWaitMs?: number
   maxIdleWaitMs?: number
   actionRetryWaitMs?: number
+  stateAdvisorAfterIdleRounds?: number
   now?: () => Date
   waitForAttentionOrTimeout?: (
     queue: EventQueue<BotEvent>,
@@ -131,6 +140,7 @@ const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 86_400_000
 const DEFAULT_IDLE_WAIT_MS = 15 * 60_000
 const DEFAULT_MAX_IDLE_WAIT_MS = 4 * 60 * 60_000
 const DEFAULT_ACTION_RETRY_WAIT_MS = 60_000
+const DEFAULT_STATE_ADVISOR_IDLE_ROUNDS = 3
 const DEFAULT_COMPACTION_FAILURE_BACKOFF_MS = 10 * 60_000
 const MAX_OUTPUT_CONTINUATIONS_PER_ROUND = 2
 const MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS = 3
@@ -167,6 +177,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     idleWaitMs,
     maxIdleWaitMs: Math.max(idleWaitMs, deps.autonomy?.maxIdleWaitMs ?? DEFAULT_MAX_IDLE_WAIT_MS),
     actionRetryWaitMs: Math.max(1, deps.autonomy?.actionRetryWaitMs ?? DEFAULT_ACTION_RETRY_WAIT_MS),
+    stateAdvisorAfterIdleRounds: Math.max(
+      1,
+      deps.autonomy?.stateAdvisorAfterIdleRounds ?? DEFAULT_STATE_ADVISOR_IDLE_ROUNDS,
+    ),
     now: deps.autonomy?.now ?? (() => new Date()),
     waitForAttentionOrTimeout: deps.autonomy?.waitForAttentionOrTimeout ?? waitForAttentionOrTimeout,
   }
@@ -184,6 +198,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let shortWorkContinuationPending = false
   let recoverableToolCorrectionRounds = 0
   let idleBackoffLevel = 0
+  let consecutiveUnanchoredIdleRounds = 0
   const recentToolNoveltyKeys = new Map<string, number>()
   let nextCompactionAttemptAt = 0
   let compactionAbortController = new AbortController()
@@ -572,6 +587,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     onlyHelpToolCalls: boolean
     madeToolProgress: boolean
     assistantTextOnly: boolean
+    requestedYield: boolean
     toolContinuation?: ToolContinuation
     toolContinuationDetail?: string
   }> {
@@ -695,6 +711,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         && result.toolOutcomes.every((outcome) => outcome.requestedToolName === 'help'),
       madeToolProgress: toolControl.madeProgress,
       assistantTextOnly: result.assistantTextOnly,
+      requestedYield: result.toolOutcomes.some((outcome) => (
+        outcome.toolName === 'yield' && outcome.code === 'yielded'
+      )),
       ...(toolControl.continuation ? { toolContinuation: toolControl.continuation } : {}),
       ...(toolControl.continuationDetail
         ? { toolContinuationDetail: toolControl.continuationDetail }
@@ -813,6 +832,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     onlyHelpToolCalls?: boolean
     madeToolProgress?: boolean
     assistantTextOnly?: boolean
+    requestedYield?: boolean
     toolContinuation?: ToolContinuation
     toolContinuationDetail?: string
   }> {
@@ -873,6 +893,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     log.debug({ roundIndex: roundIndex + 1, eventsConsumed: drained.consumed, eventsDisclosed: disclosed }, 'round_start')
 
     const cursorsChanged = JSON.stringify(drained.cursors) !== JSON.stringify(mailboxCursors)
+    let eventsCommitted = false
     if (stagedMessages.length > 0 || cursorsChanged || nextGoalRevision !== goalRevision) {
       try {
         await commitChanges({
@@ -884,9 +905,17 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
             lastWakeAt: stagedWake.lastWakeAt,
           },
         })
+        eventsCommitted = true
       } catch (error) {
         for (const event of drained.events) deps.eventQueue.enqueue(event)
         throw error
+      }
+    }
+    if (eventsCommitted && drained.events.length > 0) {
+      try {
+        await deps.onEventsCommitted?.(drained.events)
+      } catch (error) {
+        log.warn({ error }, 'event_commit_notification_failed')
       }
     }
 
@@ -927,6 +956,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls,
       madeToolProgress,
       assistantTextOnly,
+      requestedYield,
       toolContinuation,
       toolContinuationDetail,
     } = roundResult
@@ -959,6 +989,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls,
       madeToolProgress,
       assistantTextOnly,
+      requestedYield,
       ...(toolContinuation ? { toolContinuation } : {}),
       ...(toolContinuationDetail ? { toolContinuationDetail } : {}),
       actionRequired: goalAtRoundStart?.status === 'active'
@@ -979,6 +1010,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls = false,
       madeToolProgress = false,
       assistantTextOnly = false,
+      requestedYield = false,
       toolContinuation,
       toolContinuationDetail,
     } = await step()
@@ -989,6 +1021,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     if (!ranRound || stopRequested) return
 
     consecutiveRounds++
+    if (actionRequired || madeToolProgress) consecutiveUnanchoredIdleRounds = 0
 
     if (toolCallCount > 0) {
       const continuingCorrection = recoverableToolFailure
@@ -1023,6 +1056,11 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         )
         actionCorrectionRetryPending = false
         updateIdleBackoff(wake, true)
+        if (requestedYield && !actionRequired) {
+          await recordUnanchoredIdle(wake)
+        } else {
+          consecutiveUnanchoredIdleRounds = 0
+        }
         return
       }
       if (toolContinuation === 'wait_event') {
@@ -1046,6 +1084,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         )
         actionCorrectionRetryPending = false
         updateIdleBackoff(wake, !actionRequired)
+        if (!actionRequired) await recordUnanchoredIdle(wake)
         return
       }
       if (madeToolProgress) {
@@ -1068,6 +1107,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         )
         actionCorrectionRetryPending = false
         updateIdleBackoff(wake, !actionRequired)
+        if (!actionRequired) await recordUnanchoredIdle(wake)
         return
       }
     }
@@ -1102,6 +1142,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     log.info({ consecutiveRounds, waitMs, idleBackoffLevel, actionAnchor: 'none' }, 'no_tool_quiescent_wait')
     const wake = await waitForAttention('当前没有待处理行动，等待新消息或计划事件', waitMs)
     updateIdleBackoff(wake, true)
+    await recordUnanchoredIdle(wake)
     consecutiveRounds = 0
     recoverableToolCorrectionRounds = 0
   }
@@ -1125,6 +1166,58 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     actionCorrectionRetryPending = false
     recoverableToolCorrectionRounds = 0
     idleBackoffLevel = 0
+    consecutiveUnanchoredIdleRounds = 0
+  }
+
+  async function recordUnanchoredIdle(wake: 'attention' | 'elapsed'): Promise<void> {
+    if (wake === 'attention') {
+      consecutiveUnanchoredIdleRounds = 0
+      return
+    }
+    if (stopRequested) return
+
+    consecutiveUnanchoredIdleRounds++
+    if (
+      consecutiveUnanchoredIdleRounds < autonomy.stateAdvisorAfterIdleRounds
+      || !deps.stateAdvisor
+    ) {
+      return
+    }
+
+    const observedIdleRounds = consecutiveUnanchoredIdleRounds
+    consecutiveUnanchoredIdleRounds = 0
+    deps.activityReporter?.setPhase({
+      phase: 'thinking',
+      roundIndex,
+      detail: '连续空闲后正在做一次有界状态检查',
+    })
+    try {
+      const assessment = await deps.stateAdvisor.evaluate({
+        consecutiveIdleRounds: observedIdleRounds,
+      })
+      if (assessment.state === 'healthy_rest') {
+        log.info({
+          observedIdleRounds,
+          state: assessment.state,
+          reason: assessment.reason,
+        }, 'state_advisor_kept_rest')
+        return
+      }
+
+      await commitChanges({
+        messages: [{
+          role: 'user',
+          content: renderAgentStateAdvice(assessment),
+        }],
+      })
+      idleBackoffLevel = 0
+      log.info({
+        observedIdleRounds,
+        state: assessment.state,
+      }, 'state_advisor_advice_appended')
+    } catch (error) {
+      log.warn({ error, observedIdleRounds }, 'state_advisor_failed')
+    }
   }
 
   function currentIdleWaitMs(): number {

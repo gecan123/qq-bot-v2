@@ -1,16 +1,20 @@
+import 'dotenv/config'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { closeSync, mkdirSync, openSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 interface ServiceSpec {
   name: string
-  sourceEntry: string
+  sourceEntry?: string
   distEntry?: string
   healthUrl?: string
   optional?: boolean
+  command?: string
+  commandArgs?: string[]
 }
 
 const watch = process.argv.includes('--watch')
+const includeWebAdmin = process.argv.includes('--web')
 const compiled = import.meta.url.includes('/dist/platform.js')
 const root = process.cwd()
 const logDir = resolve(root, 'logs/processes')
@@ -21,6 +25,7 @@ const env: NodeJS.ProcessEnv = {
   BOT_PLATFORM_ENABLED: 'true',
 }
 const healthUrl = (baseUrl: string): string => `${baseUrl.replace(/\/+$/, '')}/health`
+const webAdminLaunch = packageManagerLaunch(['--filter', '@qq-bot/admin-web', 'dev'])
 const specs: ServiceSpec[] = [
   {
     name: 'llm-gateway',
@@ -52,6 +57,11 @@ const specs: ServiceSpec[] = [
     healthUrl: healthUrl(env.BOT_BROWSER_CONTROLLER_URL ?? 'http://127.0.0.1:37921'),
     optional: !enabled(env.BOT_BROWSER_ENABLED),
   },
+  ...(includeWebAdmin ? [{
+    name: 'web-admin',
+    healthUrl: 'http://127.0.0.1:20030/',
+    ...webAdminLaunch,
+  }] : []),
 ]
 
 const children = new Map<string, ChildProcess>()
@@ -90,11 +100,12 @@ function start(spec: ServiceSpec): void {
   const logPath = resolve(logDir, `${spec.name}.log`)
   const logFd = openSync(logPath, 'a')
   logFds.push(logFd)
-  const useCompiledEntry = compiled && spec.distEntry != null
-  const args = useCompiledEntry
+  const useCompiledEntry = !spec.command && compiled && spec.distEntry != null
+  const command = spec.command ?? process.execPath
+  const args = spec.commandArgs ?? (useCompiledEntry
     ? [spec.distEntry!]
-    : [...(watch ? ['--watch'] : []), '--import', 'tsx', spec.sourceEntry]
-  const child = spawn(process.execPath, args, {
+    : [...(watch ? ['--watch'] : []), '--import', 'tsx', requiredSourceEntry(spec)])
+  const child = spawn(command, args, {
     cwd: root,
     env,
     stdio: ['ignore', logFd, logFd],
@@ -163,4 +174,20 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
 
 function enabled(value: string | undefined): boolean {
   return value != null && ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
+}
+
+function requiredSourceEntry(spec: ServiceSpec): string {
+  if (!spec.sourceEntry) throw new Error(`${spec.name} is missing sourceEntry`)
+  return spec.sourceEntry
+}
+
+function packageManagerLaunch(commandArgs: string[]): Pick<ServiceSpec, 'command' | 'commandArgs'> {
+  const npmExecPath = process.env.npm_execpath
+  if (npmExecPath) {
+    return { command: process.execPath, commandArgs: [npmExecPath, ...commandArgs] }
+  }
+  return {
+    command: process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
+    commandArgs,
+  }
 }

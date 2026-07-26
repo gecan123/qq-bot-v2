@@ -200,7 +200,10 @@ export const collectStickerTool: Tool<Args> = {
       if ('mediaId' in handle) {
         const media = await prisma.media.findUnique({
           where: { mediaId: handle.mediaId },
-          select: { mediaId: true, descriptionRaw: true },
+          select: {
+            mediaId: true,
+            descriptionRaw: true,
+          },
         })
         if (!media) {
           return {

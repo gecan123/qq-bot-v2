@@ -166,6 +166,7 @@ describe('createAgentRuntime', () => {
       'approval',
       'goal',
       'skill',
+      'initiative_review',
       'memory',
       'inbox',
       'chat_style',

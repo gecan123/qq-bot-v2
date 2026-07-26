@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test, beforeEach, afterEach } from 'node:test'
 import { OutboundCache, setOutboundCacheForTest } from './outbound-cache.js'
-import { prisma } from '../database/client.js'
 import { resolveImageHandle, resolvePersistedImage, releaseHandle } from './image-handle.js'
 
 const HASH_A = 'a'.repeat(64)
@@ -78,30 +77,30 @@ describe('resolveImageHandle (ephemeralRef path)', () => {
 
 describe('resolvePersistedImage', () => {
   test('accepts a durable string media id and returns null for missing media', async () => {
-    const original = prisma.media.findUnique
     let available = true
-    prisma.media.findUnique = (async (args: { where: { mediaId: number } }) => {
-      assert.equal(args.where.mediaId, 42)
+    const findMedia = async (mediaId: number) => {
+      assert.equal(mediaId, 42)
       return available ? {
+        mediaId,
         data: new Uint8Array(Buffer.from('image')),
         dataHash: 'hash',
+        byteSize: 5,
+        mediaType: 'image',
         contentType: 'image/png',
+        fileName: null,
+        fileSize: 5,
         descriptionRaw: { description: 'saved description' },
       } : null
-    }) as never
-    try {
-      assert.deepEqual(await resolvePersistedImage('42'), {
-        bytes: Buffer.from('image'),
-        dataHash: 'hash',
-        byteSize: 5,
-        contentType: 'image/png',
-        description: 'saved description',
-      })
-      available = false
-      assert.equal(await resolvePersistedImage('42'), null)
-      await assert.rejects(() => resolvePersistedImage('not-an-id'), /invalid media id/)
-    } finally {
-      prisma.media.findUnique = original
     }
+    assert.deepEqual(await resolvePersistedImage('42', findMedia), {
+      bytes: Buffer.from('image'),
+      dataHash: 'hash',
+      byteSize: 5,
+      contentType: 'image/png',
+      description: 'saved description',
+    })
+    available = false
+    assert.equal(await resolvePersistedImage('42', findMedia), null)
+    await assert.rejects(() => resolvePersistedImage('not-an-id', findMedia), /invalid media id/)
   })
 })

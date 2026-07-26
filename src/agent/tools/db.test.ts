@@ -7,6 +7,7 @@ import { buildBotToolManifest } from './index.js'
 import type { SendTargetPolicy } from '../send-target-policy.js'
 import type { ScheduleRuntime } from '../schedule-runtime.js'
 import type { QqConversationController } from './qq-conversation.js'
+import type { LlmClient } from '../llm-client.js'
 
 const mockSender: MessageSender = {
   async sendSegments() {
@@ -35,6 +36,18 @@ const scheduleRuntime: ScheduleRuntime = {
   async getOccurrence() { return null },
   async cancel(id) { return { status: 'already_absent', id } },
   async stop() {},
+}
+
+const mockLlm: LlmClient = {
+  async chat() {
+    return {
+      content: '{"hasNegative":false,"rewritten":"正在推进"}',
+      toolCalls: [],
+      usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 1 },
+      model: 'mock',
+      contextWindowTokens: 200_000,
+    }
+  },
 }
 
 describe('db tool', () => {
@@ -82,6 +95,7 @@ describe('db tool', () => {
 
   test('bot tool registry keeps database access out of the main Agent', () => {
     const manifest = buildBotToolManifest({
+      llm: mockLlm,
       sender: mockSender,
       targetPolicy,
       conversations,

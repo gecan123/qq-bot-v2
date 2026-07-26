@@ -35,10 +35,12 @@ export interface InspectMediaDeps {
 }
 
 async function loadMediaMetadata(mediaId: number): Promise<MediaMetadata | null> {
-  return prisma.media.findUnique({
+  const media = await prisma.media.findUnique({
     where: { mediaId },
     select: { mediaType: true, descriptionRaw: true },
   })
+  if (!media) return null
+  return media
 }
 
 export function createInspectMediaTool(deps: InspectMediaDeps = {}): Tool<Args> {

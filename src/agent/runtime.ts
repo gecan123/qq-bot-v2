@@ -69,6 +69,7 @@ import {
   type AgentActivityReporter,
 } from './activity-surface.js'
 import type { GroupMuteInspector } from '../messaging/group-mute-inspector.js'
+import { createAgentStateAdvisor } from './agent-state-advisor.js'
 
 const scheduleLog = createLogger('SCHEDULE')
 
@@ -131,6 +132,8 @@ export interface AgentRuntimeInput {
   optionalTools?: BotOptionalTools
   /** 可丢弃的实时观察面；写入失败不得影响 Agent 行为。 */
   activityReporter?: AgentActivityReporter
+  /** 平台事件写入 canonical ledger 后的确认钩子。 */
+  onEventsCommitted?: (events: readonly BotEvent[]) => Promise<void> | void
 }
 
 export interface AgentRuntime {
@@ -216,6 +219,7 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
   })
   const baseTools = createDeferredToolExecutor({
     ...buildBotToolManifest({
+      llm: input.llm,
       sender: input.sender,
       groupMuteInspector: input.groupMuteInspector,
       targetPolicy,
@@ -274,6 +278,11 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     selfNumber: input.selfNumber,
     owner: input.owner,
   })
+  const stateAdvisor = createAgentStateAdvisor({
+    llm: input.llm,
+    systemPrompt,
+    getMessages: () => input.context.getSnapshot().messages,
+  })
 
   const agent = createBotLoopAgent({
     systemPrompt,
@@ -301,6 +310,8 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     eventDebounceMs: input.eventDebounceMs,
     groupParticipations,
     activityReporter: input.activityReporter,
+    onEventsCommitted: input.onEventsCommitted,
+    stateAdvisor,
   })
 
   let backgroundStartPromise: Promise<void> | null = null

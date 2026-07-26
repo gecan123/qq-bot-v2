@@ -7,12 +7,14 @@ import {
 } from '../agent/schedule-runtime.js'
 import { createPersistentScheduleStore } from '../agent/schedule-store.js'
 import { createPersistentScheduleOccurrenceStore } from '../agent/schedule-occurrence-store.js'
+import { createPersistentScheduleDeliveryStore } from '../agent/schedule-delivery-store.js'
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
 import { closeServer, requestJson, startJsonServer, writeJson } from './http.js'
 
 const log = createLogger('SCHEDULER_SERVICE')
 const pendingDeliveries = new Map<string, Extract<BotEvent, { type: 'scheduled_wake' }>>()
+const deliveryStore = createPersistentScheduleDeliveryStore(`${config.scheduleStatePath}.deliveries`)
 let deliveryTimer: ReturnType<typeof setTimeout> | null = null
 let server: Server | null = null
 let stopping = false
@@ -38,12 +40,26 @@ const deliveryQueue: EventQueue<BotEvent> = {
 const runtime = createScheduleRuntime({
   store: createPersistentScheduleStore(config.scheduleStatePath),
   occurrenceStore: createPersistentScheduleOccurrenceStore(`${config.scheduleStatePath}.occurrences`),
+  deliveryStore,
   eventQueue: deliveryQueue,
   logger: (entry) => log.warn(entry, entry.event),
 })
 
 async function main(): Promise<void> {
   await runtime.start()
+  const activeScheduleIds = new Set((await runtime.list()).map((schedule) => schedule.id))
+  for (const occurrence of await deliveryStore.loadPending()) {
+    // A crash may happen after the pending delivery is persisted but before the
+    // active schedule is removed. Its timer will finish that transition.
+    if (activeScheduleIds.has(occurrence.scheduleId)) continue
+    pendingDeliveries.set(occurrence.scheduleId, {
+      type: 'scheduled_wake',
+      scheduleId: occurrence.scheduleId,
+      name: occurrence.name,
+      scheduledFor: new Date(occurrence.scheduledFor),
+    })
+  }
+  if (pendingDeliveries.size > 0) scheduleDelivery(0)
   server = await startJsonServer({
     baseUrl: config.services.schedulerUrl,
     async handler({ request, response, url, body }) {
@@ -106,8 +122,9 @@ async function deliverPending(): Promise<void> {
             scheduledFor: event.scheduledFor.toISOString(),
           },
         },
-        timeoutMs: 5_000,
+        timeoutMs: 30_000,
       })
+      await deliveryStore.complete(scheduleId)
       pendingDeliveries.delete(scheduleId)
     } catch (error) {
       log.warn({ error, scheduleId }, 'scheduled_wake_delivery_failed_will_retry')

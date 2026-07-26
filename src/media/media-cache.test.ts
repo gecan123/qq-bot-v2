@@ -5,15 +5,17 @@ import { jobQueue } from '../queue/runtime.js'
 import { persistMediaReferences, waitForPendingMediaDownloads } from './media-cache.js'
 
 const originalCreate = prisma.media.create
-const originalFindUnique = prisma.media.findUnique
 const originalUpdate = prisma.media.update
+const originalBlobUpsert = prisma.mediaBlob.upsert
+const originalTransaction = prisma.$transaction
 const originalEnqueue = jobQueue.enqueue
 const originalFetch = globalThis.fetch
 
 afterEach(() => {
   prisma.media.create = originalCreate
-  prisma.media.findUnique = originalFindUnique
   prisma.media.update = originalUpdate
+  prisma.mediaBlob.upsert = originalBlobUpsert
+  prisma.$transaction = originalTransaction
   jobQueue.enqueue = originalEnqueue
   globalThis.fetch = originalFetch
 })
@@ -28,10 +30,11 @@ describe('persistMediaReferences', () => {
     })
 
     prisma.media.create = (async (args: unknown) => {
-      assert.deepEqual((args as { data: { data: Uint8Array } }).data.data, new Uint8Array(0))
+      assert.equal('data' in (args as { data: object }).data, false)
       return { mediaId: 42 }
     }) as typeof prisma.media.create
-    prisma.media.findUnique = (async () => null) as typeof prisma.media.findUnique
+    prisma.$transaction = (async (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma)) as never
+    prisma.mediaBlob.upsert = (async () => ({ blobId: 9, byteSize: 3 })) as never
     prisma.media.update = (async (args: unknown) => {
       updates.push(args)
       return { mediaId: 42 }
@@ -125,7 +128,8 @@ describe('persistMediaReferences', () => {
   test('resolves a group upload notice file through get_group_file_url', async () => {
     const apiCalls: unknown[] = []
     prisma.media.create = (async () => ({ mediaId: 43 })) as unknown as typeof prisma.media.create
-    prisma.media.findUnique = (async () => null) as typeof prisma.media.findUnique
+    prisma.$transaction = (async (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma)) as never
+    prisma.mediaBlob.upsert = (async () => ({ blobId: 10, byteSize: 3 })) as never
     prisma.media.update = (async () => ({ mediaId: 43 })) as unknown as typeof prisma.media.update
     jobQueue.enqueue = (() => undefined) as typeof jobQueue.enqueue
     globalThis.fetch = (async (url) => {

@@ -20,24 +20,27 @@ type MessageRow = {
 }
 type MediaRow = {
   mediaId: number
-  data: Uint8Array
   contentType: string | null
   fileName: string | null
   fileSize: number | null
   descriptionRaw: unknown
   createdAt: Date
+  blob: {
+    data: Uint8Array
+    byteSize: number
+  } | null
 }
 type StickerRow = { mediaId: number; name: string; tags: string[] }
 
 const messageSelect = { id: true, sceneKind: true, sceneExternalId: true, groupId: true, groupName: true, senderId: true, senderNickname: true, senderGroupNickname: true, sentAt: true, createdAt: true, resolvedText: true, searchText: true, rawMessage: true, mediaReferenceIds: true } as const
-const mediaSelect = { mediaId: true, data: true, contentType: true, fileName: true, fileSize: true, descriptionRaw: true, createdAt: true } as const
+const mediaSelect = { mediaId: true, contentType: true, fileName: true, fileSize: true, descriptionRaw: true, createdAt: true, blob: { select: { data: true, byteSize: true } } } as const
 
 export async function loadQqSnapshot(now = new Date()): Promise<QqSnapshot> {
   const db = getAdminPrisma()
   const [messageCount, mediaCount, stickerCount, messages, media, stickers, groups] = await Promise.all([
     db.message.count(), db.media.count(), db.stickerPool.count(),
     db.message.findMany({ orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 80, select: messageSelect }),
-    db.media.findMany({ where: { contentType: { in: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] }, OR: [{ fileSize: { lte: 300_000 } }, { fileSize: null }] }, orderBy: { createdAt: 'desc' }, take: 18, select: mediaSelect }),
+    db.media.findMany({ where: { contentType: { in: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] }, blob: { is: { byteSize: { lte: 300_000 } } } }, orderBy: { createdAt: 'desc' }, take: 18, select: mediaSelect }),
     db.stickerPool.findMany({ select: { mediaId: true, name: true, tags: true } }),
     readGroups(db),
   ])
@@ -59,7 +62,7 @@ export async function loadQqGroupSnapshot(groupId: string, now = new Date()): Pr
     db.stickerPool.findMany({ select: { mediaId: true, name: true, tags: true } }),
   ])
   const mediaIds = [...new Set(rows.flatMap(row => row.mediaReferenceIds).map(mediaIdFromReference).filter((id): id is number => id !== null))].slice(0, 40)
-  const media = mediaIds.length ? await db.media.findMany({ where: { mediaId: { in: mediaIds }, contentType: { in: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] } }, orderBy: { createdAt: 'desc' }, take: 24, select: mediaSelect }) : []
+  const media = mediaIds.length ? await db.media.findMany({ where: { mediaId: { in: mediaIds }, contentType: { in: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] }, blob: { isNot: null } }, orderBy: { createdAt: 'desc' }, take: 24, select: mediaSelect }) : []
   const stickerByMedia = new Map(stickers.map(item => [item.mediaId, item]))
   const participants = new Map<string, QqGroupSnapshot['participants'][number]>()
   for (const row of rows) {
@@ -101,7 +104,7 @@ function mapMedia(row: MediaRow, stickerByMedia: Map<number, StickerRow>): QqSna
   const sticker = stickerByMedia.get(row.mediaId)
   const contentType = row.contentType
   const mediaDescription = description(row.descriptionRaw)
-  return { id: row.mediaId, contentType, fileName: row.fileName, fileSize: row.fileSize, createdAt: row.createdAt.toISOString(), description: mediaDescription.text, descriptionIsJson: mediaDescription.isJson, dataUrl: contentType && row.data.byteLength <= 300_000 ? `data:${contentType};base64,${Buffer.from(row.data).toString('base64')}` : null, stickerName: sticker?.name ?? null, stickerTags: sticker?.tags ?? [] }
+  return { id: row.mediaId, contentType, fileName: row.fileName, fileSize: row.fileSize ?? row.blob?.byteSize ?? null, createdAt: row.createdAt.toISOString(), description: mediaDescription.text, descriptionIsJson: mediaDescription.isJson, dataUrl: contentType && row.blob && row.blob.byteSize <= 300_000 ? `data:${contentType};base64,${Buffer.from(row.blob.data).toString('base64')}` : null, stickerName: sticker?.name ?? null, stickerTags: sticker?.tags ?? [] }
 }
 
 function mediaIdFromReference(reference: string): number | null { const match = /(?:^|:)(\d+)$/.exec(reference); if (!match) return null; const value = Number(match[1]); return Number.isSafeInteger(value) && value > 0 ? value : null }

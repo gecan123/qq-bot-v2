@@ -38,20 +38,34 @@ model Message {
   @@map("messages")
 }
 
-/// 媒体二进制 + 描述缓存。jobQueue 异步生成 description_raw。
+/// 一次入站附件或持久图片 handle。blobId 在异步下载完成前允许为空。
 model Media {
-  mediaId        Int      @id @default(autoincrement()) @map("media_id")
-  data           Bytes    @map("data")
-  dataHash       String?  @map("data_hash") @db.VarChar(64)
-  mediaType      String?  @map("media_type")
-  contentType    String?  @map("content_type")
-  fileName       String?  @map("file_name")
-  fileSize       Int?     @map("file_size")
-  descriptionRaw Json?    @map("description_raw")
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  mediaId        Int        @id @default(autoincrement()) @map("media_id")
+  blobId         Int?       @map("blob_id")
+  mediaType      String?    @map("media_type")
+  contentType    String?    @map("content_type")
+  fileName       String?    @map("file_name")
+  fileSize       Int?       @map("file_size")
+  /// 保存本次附件的解析结果，或无 blob 时的状态说明。
+  descriptionRaw Json?      @map("description_raw")
+  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  blob           MediaBlob? @relation(fields: [blobId], references: [blobId], onDelete: Restrict)
 
-  @@unique([dataHash])
+  @@index([blobId])
   @@map("media")
+}
+
+/// 按 SHA-256 内容寻址的物理媒体数据；多个 Media 行共享同一个 blob。
+model MediaBlob {
+  blobId    Int      @id @default(autoincrement()) @map("blob_id")
+  dataHash  String   @unique @map("data_hash") @db.VarChar(64)
+  data      Bytes    @map("data")
+  byteSize  Int      @map("byte_size")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  touchedAt DateTime @default(now()) @map("touched_at") @db.Timestamptz(3)
+  media     Media[]
+
+  @@map("media_blobs")
 }
 
 /// LLM 历史的 canonical append-only ledger。运行时只允许追加，不更新或删除旧 entry。

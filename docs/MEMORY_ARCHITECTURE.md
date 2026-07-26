@@ -21,7 +21,7 @@
 
 | 层 | 存储 | 是否常驻 LLM | 写入入口 | 读取入口 | replay 角色 |
 | --- | --- | --- | --- | --- | --- |
-| 入站事实 | Postgres `messages` / `media` | 否 | NapCat ingress | mailbox 通知后用 `inbox` / `read_file` | 只用于 missed-message 披露和按需读取，不重建历史正文 |
+| 入站事实 | Postgres `messages` / `media`；字节在 `media_blobs` 按 hash 共享 | 否 | NapCat ingress | mailbox 通知后用 `inbox` / `read_file` | 只用于 missed-message 披露和按需读取，不重建历史正文 |
 | LLM ledger | Postgres `bot_agent_ledger_entries` | 是 | Runtime Host 受控 append / append-only compaction | 每轮自动使用 | 唯一持久 prompt history |
 | Working projection | 进程内临时视图 | 是，仅当前请求 | 从 durable ledger 确定性投影 | LLM request | 可重建，不单独持久化 |
 | Runtime 控制 | Postgres `bot_agent_runtime_state` | 否 | 与可见 append 同事务更新 | Runtime Host | 不保存或重建 transcript |
@@ -179,9 +179,9 @@ checkpoint 写失败不影响已提交的 ledger/runtime 事务；删除整张 c
 
 - `context`：删除 append-only LLM ledger、checkpoint、runtime 和 Goal，随后重建空 runtime singleton；
 - `knowledge`：只删除 workspace 下的 `memory/`、`notebook/`、`life/` 和遗留 `journal/`，不连接数据库；
-- `all`：执行上述两类清理。
+- `all`：执行 context 清理，并删除 `data/agent-workspace/` 下除 `README.md`、`.gitignore` 外的全部 Agent 生成内容；这包含 knowledge scope、普通笔记、runtime 状态、浏览器 profile/artifact、草稿和缓存。
 
-它不会删除 `messages`、`media`、表情池、普通 workspace 文件、浏览器 profile/artifact 或运维日志。因此这个命令实际是“重置 Agent 持久状态”，不只是重置长期 memory。
+它不会删除 `messages`、`media`、表情池或 `logs/` 运维日志。`context` 和 `knowledge` 是窄范围维护操作；`all` 是 Agent-owned workspace 的完整本地重置。
 
 ## 只读完整性检查
 

@@ -119,7 +119,17 @@ export function generateDescriptionForMedia(mediaId: number): Promise<void> {
 async function doGenerate(mediaId: number): Promise<void> {
   const media = await prisma.media.findUnique({
     where: { mediaId },
-    select: { data: true, contentType: true, mediaType: true, descriptionRaw: true, fileName: true },
+    select: {
+      contentType: true,
+      mediaType: true,
+      descriptionRaw: true,
+      fileName: true,
+      blob: {
+        select: {
+          data: true,
+        },
+      },
+    },
   })
 
   if (!media) {
@@ -132,6 +142,11 @@ async function doGenerate(mediaId: number): Promise<void> {
     return
   }
 
+  if (!media.blob) {
+    log.debug({ mediaId }, '媒体 blob 尚未就绪，跳过描述生成')
+    return
+  }
+
   const provider = getLlmProvider()
   if (!provider) {
     log.debug({ mediaId }, 'LLM provider 未配置，跳过描述生成')
@@ -141,7 +156,7 @@ async function doGenerate(mediaId: number): Promise<void> {
   const mediaType = media.mediaType ?? 'unknown'
 
   if (VISION_MEDIA_TYPES.has(mediaType)) {
-    const buffer = Buffer.from(media.data)
+    const buffer = Buffer.from(media.blob.data)
     if (buffer.length === 0) {
       log.debug({ mediaId }, '媒体数据为空，跳过描述生成')
       return
@@ -193,7 +208,7 @@ async function doGenerate(mediaId: number): Promise<void> {
     }
     const describeVideo = provider.describeVideo
 
-    const buffer = Buffer.from(media.data)
+    const buffer = Buffer.from(media.blob.data)
     if (buffer.length === 0) {
       log.debug({ mediaId }, '视频数据为空，跳过')
       return
@@ -242,7 +257,7 @@ async function doGenerate(mediaId: number): Promise<void> {
     }
     const transcribeAudio = provider.transcribeAudio
 
-    const buffer = Buffer.from(media.data)
+    const buffer = Buffer.from(media.blob.data)
     if (buffer.length === 0) {
       log.debug({ mediaId }, '语音数据为空，跳过')
       return
@@ -294,7 +309,7 @@ async function doGenerate(mediaId: number): Promise<void> {
     }
     const describePdf = provider.describePdf
 
-    const buffer = Buffer.from(media.data)
+    const buffer = Buffer.from(media.blob.data)
     if (buffer.length === 0) {
       log.debug({ mediaId }, 'PDF 数据为空，跳过')
       return

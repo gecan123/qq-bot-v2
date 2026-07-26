@@ -45,8 +45,11 @@ import { applyBotToolPolicy } from './policies.js'
 import type { InboxReadCursors } from '../inbox-read-cursors.js'
 import { maybeCreateMoomooSkillTool } from './moomoo-skill.js'
 import type { GroupMuteInspector } from '../../messaging/group-mute-inspector.js'
+import type { LlmClient } from '../llm-client.js'
+import { createInitiativeReviewTool } from './initiative-review.js'
 
 export interface BotToolDeps {
+  llm: LlmClient
   sender: MessageSender
   targetPolicy: SendTargetPolicy
   conversations: QqConversationController
@@ -128,6 +131,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     metadata: deps.metadata,
     groupPolicies: deps.groupPolicies,
   })
+  const initiativeReview = createInitiativeReviewTool({ llm: deps.llm })
   const yieldControl = createYieldTool()
   const schedule = createScheduleTool(deps.scheduleRuntime)
   const notebook = createNotebookTool({
@@ -147,6 +151,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     ...(deps.approvalManager ? [createApprovalTool(deps.approvalManager)] : []),
     ...(deps.goalStore ? [createGoalTool(deps.goalStore, deps.goalCompletionJudge!)] : []),
     skillTool,
+    initiativeReview,
     createMemoryTool({
       workspaceDir: deps.workspaceDir,
       maintenance: deps.memoryMaintenance,

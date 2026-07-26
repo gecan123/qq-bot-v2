@@ -14,6 +14,7 @@
 - 表情包：`collect_sticker`（收藏、移除、列表、搜索和随机候选）。
 - 外部内容：typed `fetch_content`、配置后可用的 `web_search` 和 `openbb_cli`；配置官方 Moomoo Skill 后由 `moomoo_skill` 查询行情、账户并操作普通证券模拟仓；配置 `CRYPTO_PAPER_ENABLED=true` 后，typed `crypto_paper` 使用 Moomoo Crypto 行情维护本地模拟资金、持仓和成交。
 - 风格和文本判断：`chat_style` 按需读取聊天约束、风格和群定制；发送路径不再运行阻塞式 AI 腔分类器。
+- 主动性自检：`initiative_review` 是默认可见的只读 LLM 工具。只有当主 Agent 准备以“以后再说”“不打扰”“算了”“先歇着”等理由停下仍可立即推进的方向时，才把完整第一人称想法交给它；已经在推进、只是客观描述状态、确实没有当前方向或健康交还控制时不调用。它返回稳定的 `hasNegative` / `rewritten`，结果作为普通 tool result 进入 ledger；工具本身不保存会话状态，也不在每轮隐藏执行。
 - 运行时工作：`background_task`（通用异步任务 list/get；get 的文本结果有通用上限）、只读 `workspace_bash`；普通私有工作文件通过 deferred `workspace_management` 内的 `workspace_file` 修改。任务 registry 持久化到 `BOT_BACKGROUND_TASK_STATE_PATH`；所有遗留 running 在重启时明确变成 `interrupted`。完成/失败 notification 不复制 description、summary 或结果正文，只携带状态和 `background_task get` 打开动作。当前定时唤醒不走 task registry，而由上述独立 schedule/occurrence store 恢复。
 - 持久目标：`goal` 支持 `get/create_self/replan/complete/report_blocker/abandon_self`。self Goal 创建时必须同时提交当前具体承诺 `currentCommitment`；owner Goal 初始没有承诺时由 Agent 先 `replan`。完成步骤或路线失效后更新承诺；完整目标提交证据后还要通过一次无工具验收，拒绝 reason 或 unavailable 状态会作为普通 tool result 指引后续，只有验收通过后注意力才重新回到普通自主选择。
 - 审批控制：`approval action=list|status|approve|cancel`。默认 `BOT_APPROVAL_MODE=thin`，只拦网站 `publish` 和未声明只读的 MCP 调用；本地 memory/notebook/Life Journal/workspace 删除和网站本地删除不等待审批。被拦调用会返回 `approvalId`；owner 私聊发送精确文本 `批准 <approvalId>` 后，用消息 `rowId` 批准并以相同参数重试。审批默认 10 分钟过期且只能消费一次。需要旧的全量本地审批时设 `strict`，快速实验可设 `off`。
@@ -108,7 +109,8 @@
 - Claude-Code-compatible 路径会对 transport、429、5xx/529 和 SSE overload 做最多两次有界重试，优先尊重 `retry-after`，并记录稳定错误分类与 request ID；401/403 和 invalid request 不重试。provider 明确返回 context/prompt too long 时，Runtime Host 强制追加 compaction entry，并只重试当前 LLM round 一次；该恢复发生在 tool call 写入 ledger 前，不重放副作用工具。
 - Claude `stop_reason` 和 OpenAI `finish_reason` 会归一化为 Runtime Host 的停止原因。`max_tokens` 先用更大的单次输出预算重试同一份 messages；仍截断时，只允许把“不含 tool call 的普通文本”作为 continuation checkpoint 写入 ledger，最多续写两次。任何截断或不完整的 tool call 都不写入、不执行。
 - 可用 `LLM_FALLBACK_MODEL` 显式配置同一 wire provider 的备用模型。只在主模型内部重试耗尽后的 overload/5xx 上切换一次；auth、rate limit、invalid request 和 context overflow 不切换，显式场景模型也不会继承主 Agent fallback。
-- 主 Agent、compaction、Memory maintenance、Goal judge、startup persona probe、`fetch_url` 摘要和长期状态翻译统一经 `observeLlmCall()` 记录一次调用。成功、失败和取消都生成独立 callId；evidence 只保留四段结构摘要与 SHA-256 指纹，用工具名和 block 类型判断工具是在 canonical 组装、wire 翻译、provider 返回还是统一解析阶段丢失。不得把 prompt/response 正文、工具参数、图片数据、provider headers 或错误 message 放进 evidence；观察写入失败不能影响原调用，也不能成为 replay、compaction 或 prompt 的输入。
+- 主 Agent、compaction、Memory maintenance、Goal judge、主动性自检、startup persona probe、`fetch_url` 摘要和长期状态翻译统一经 `observeLlmCall()` 记录一次调用。成功、失败和取消都生成独立 callId；evidence 只保留四段结构摘要与 SHA-256 指纹，用工具名和 block 类型判断工具是在 canonical 组装、wire 翻译、provider 返回还是统一解析阶段丢失。不得把 prompt/response 正文、工具参数、图片数据、provider headers 或错误 message 放进 evidence；观察写入失败不能影响原调用，也不能成为 replay、compaction 或 prompt 的输入。
+- `initiative_review` 的固定规则原文位于 `prompts/tools/initiative-review.md`，每次只把本次独白作为 user message 追加。Claude-Code-compatible 路径因此复用现有最后 system block 的 1h cache breakpoint；是否真正命中仍以 `operation=agent.initiative_review` 的 `cachedTokens` 为准。OpenAI-compatible provider 是否缓存由对应上游决定。缓存只复用固定输入前缀，不是工具状态或长期记忆。
 - 媒体描述使用 `src/llm/**` 下的 routing provider，和 agent chat client 分离。
 - 优先使用渐进式披露：system prompt 只放稳定边界和入口，长手册和可变数据放到工具或文件后面。
 - Agent chat 发送前会从 durable ledger projection 构建 working context；默认保留最近三个带图片的 tool result，更旧图片替换为稳定 marker 并记录 `working_context_projected`，不会改写 canonical ledger。

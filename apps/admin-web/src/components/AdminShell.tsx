@@ -7,13 +7,14 @@ import {
   HeartPulse,
   LayoutDashboard,
   MessageCircleMore,
+  ScrollText,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   type LucideIcon,
 } from 'lucide-react'
 
-type NavigationItem = { to: '/' | '/context' | '/timeline' | '/life' | '/memory' | '/qq' | '/metrics' | '/health' | '/operations'; label: string; hint: string; icon: LucideIcon }
+type NavigationItem = { to: '/' | '/context' | '/timeline' | '/life' | '/memory' | '/qq' | '/metrics' | '/logs' | '/health' | '/operations'; label: string; hint: string; icon: LucideIcon }
 
 const observationNavigation: NavigationItem[] = [
   { to: '/', label: '现在', hint: 'Live cockpit', icon: LayoutDashboard },
@@ -23,6 +24,7 @@ const observationNavigation: NavigationItem[] = [
   { to: '/memory', label: 'Memory / Life', hint: 'Knowledge', icon: BookOpenText },
   { to: '/qq', label: 'QQ / Media', hint: 'Inbox', icon: MessageCircleMore },
   { to: '/metrics', label: '指标', hint: 'Usage', icon: Gauge },
+  { to: '/logs', label: '进程日志', hint: 'Live tail', icon: ScrollText },
   { to: '/health', label: '系统健康', hint: 'Integrity', icon: ShieldCheck },
 ]
 

@@ -14,6 +14,7 @@ import { buildMediaProvider } from './llm/media-provider.js'
 import { messageSender } from './messaging/message-sender.js'
 
 import { purgeOldData } from './database/retention.js'
+import { createDailyRetentionRunner, type DailyRetentionRunner } from './database/retention-runner.js'
 import { createAgentContext } from './agent/agent-context.js'
 import { InMemoryEventQueue } from './agent/event-queue.js'
 import { shouldQueueChatEvent, type BotEvent } from './agent/event.js'
@@ -26,6 +27,7 @@ import { replayMissedMessages } from './agent/replay-missed.js'
 import { resolveTargetMetadataMaps } from './agent/resolve-target-meta.js'
 import { createDedupEnqueue } from './agent/dedup-enqueue.js'
 import { createAgentRuntime } from './agent/runtime.js'
+import { renderBotEvent } from './agent/render-event.js'
 import { createPersistentTaskRegistry } from './agent/background-task-registry.js'
 import { enqueueColdStartBootstrap } from './agent/cold-start-bootstrap.js'
 import { createShutdownCoordinator, type ShutdownCoordinator } from './ops/shutdown.js'
@@ -64,6 +66,7 @@ const BOT_PID_FILE = '.bot.pid'
 const SHUTDOWN_TIMEOUT_MS = 30_000
 let shutdownCoordinator: ShutdownCoordinator | null = null
 let fallbackShutdownPromise: Promise<void> | null = null
+let retentionRunner: DailyRetentionRunner | null = null
 
 async function main() {
   log.info(
@@ -76,17 +79,6 @@ async function main() {
   await prisma.$connect()
   setTokenUsageDbPersistenceEnabled(true)
   log.info('数据库已连接')
-
-  // 0. 启动期清理 7 天前的 Message + Media
-  await purgeOldData()
-  await purgeObservabilityData({
-    retentionDays: config.observabilityRetentionDays,
-    ndjsonPaths: [
-      config.tokenUsageLogPath,
-      config.toolCallLogPath,
-      config.fetchLogPath,
-    ],
-  })
 
   // 平台模式下媒体 provider 与队列由独立 media-worker 拥有。
   if (!config.services.enabled) {
@@ -259,6 +251,16 @@ async function main() {
       enqueue: (event) => {
         eventQueue.enqueue(event)
       },
+      isCommitted: async (event) => {
+        const rendered = renderBotEvent(event)
+        if (rendered == null) return false
+        const canonical = await ledgerRepo.loadCanonicalState()
+        return canonical.entries.some((entry) => (
+          entry.entryType === 'message'
+          && entry.payload.message.role === 'user'
+          && entry.payload.message.content === rendered
+        ))
+      },
     })
     log.info({
       qqGatewayUrl: config.services.qqGatewayUrl,
@@ -381,6 +383,9 @@ async function main() {
     mcpConfigPath: config.mcpConfigPath,
     mcpSchemaSnapshotDir: config.mcpSchemaSnapshotDir,
     activityReporter,
+    onEventsCommitted: (events) => {
+      agentEventsServer?.markCommitted(events)
+    },
   })
   try {
     const provider = config.llm.defaultProvider
@@ -427,6 +432,7 @@ async function main() {
     startAgent: () => runtime.agent.start(),
     stopAgent: () => runtime.agent.stop(),
   })
+  retentionRunner = createDailyRetentionRunner({ run: runRetentionMaintenance })
   shutdownCoordinator = createShutdownCoordinator({
     disconnectIngress: config.services.enabled
       ? () => mailboxWatcher?.stop()
@@ -435,6 +441,7 @@ async function main() {
     awaitAgent: agentLifecycle.awaitAgent,
     drainIngress: () => napcatLifecycle.drain(),
     stopJobs: async () => {
+      await retentionRunner?.stop()
       if (!config.services.enabled) jobQueue.stop()
       await runtime.stopBackgroundServices()
       await taskScheduler.drain()
@@ -448,7 +455,30 @@ async function main() {
       log.error(error, 'shutdown_phase_failed')
     },
   })
+  retentionRunner.start()
   await agentLifecycle.start()
+}
+
+async function runRetentionMaintenance(): Promise<void> {
+  const errors: unknown[] = []
+  try {
+    await purgeOldData()
+  } catch (error) {
+    errors.push(error)
+  }
+  try {
+    await purgeObservabilityData({
+      retentionDays: config.observabilityRetentionDays,
+      ndjsonPaths: [
+        config.tokenUsageLogPath,
+        config.toolCallLogPath,
+        config.fetchLogPath,
+      ],
+    })
+  } catch (error) {
+    errors.push(error)
+  }
+  if (errors.length > 0) throw new AggregateError(errors, 'retention maintenance failed')
 }
 
 function removePidFile(): void {
@@ -461,6 +491,7 @@ function removePidFile(): void {
 
 function shutdownBeforeRuntimeReady(): Promise<void> {
   fallbackShutdownPromise ??= (async () => {
+    await retentionRunner?.stop()
     if (config.services.enabled) {
       // 独立服务由 platform supervisor 关闭；Agent Core 不拥有它们的连接。
     } else {

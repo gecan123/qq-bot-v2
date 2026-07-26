@@ -1,5 +1,5 @@
 import { prisma } from '../database/client.js'
-import { Prisma, type Message } from '../generated/prisma/client.js'
+import type { Message } from '../generated/prisma/client.js'
 import type { ParsedSegment, ImageSegment, VideoSegment, RecordSegment, FileSegment } from '../types/message-segments.js'
 import { isMediaDescription } from './media-description.js'
 import { waitForPendingMediaDownloads } from './media-cache.js'
@@ -66,10 +66,15 @@ async function ensureDescriptions(refIds: number[], options: ResolveMessageOptio
   }
 
   const pendingRows = await prisma.media.findMany({
-    where: { mediaId: { in: refIds }, descriptionRaw: { equals: Prisma.AnyNull } },
-    select: { mediaId: true },
+    where: { mediaId: { in: refIds } },
+    select: {
+      mediaId: true,
+      descriptionRaw: true,
+    },
   })
-  const pendingIds = pendingRows.map((row) => row.mediaId)
+  const pendingIds = pendingRows
+    .filter((row) => !isMediaDescription(row.descriptionRaw))
+    .map((row) => row.mediaId)
   if (pendingIds.length === 0) return
 
   const schedule = (mediaId: number): Promise<void> => {
@@ -112,7 +117,10 @@ async function resolveDescriptions(segments: ParsedSegment[], refIds: number[]):
 
   const mediaRows = await prisma.media.findMany({
     where: { mediaId: { in: refIds } },
-    select: { mediaId: true, descriptionRaw: true },
+    select: {
+      mediaId: true,
+      descriptionRaw: true,
+    },
   })
 
   const descriptionMap = new Map<string, Record<string, unknown>>()

@@ -64,6 +64,7 @@ Issues、PRD 和跨会话 tickets 使用 GitHub Issues，通过 `gh` 操作。�
 - `data/agent-workspace/` 是 bot 自己生产内容的区域，默认不是项目源码。除非用户明确要求，否则不要提交这里的生成物。
 - 有副作用的工具要格外谨慎：`send_message`、图片生成/下载、notebook/life_journal/memory/sticker 工具、browser 写操作，以及未来任何会写 DB 或外部服务的工具。
 - WebAdmin 的观察 feature 保持只读；唯一写入口是固定 operations feature，必须经过预览、确认、Bot 停止检查、single-flight runner 和本地审计，禁止通用 shell、SQL、命令名或路径输入。
+- Codex、Claude Code 等开发助手在开发期间不得自动启动或重启本项目的真实 Bot/Agent 运行实例；任何启动或重启（包括验证、应用改动或故障恢复）都必须先向用户请求并获得当次明确确认，且执行前检查现有实例，避免并行运行多个实例。
 - 除非任务明确需要真实运行，否则不要启动会连接外部服务、QQ/NapCat、浏览器 sidecar、数据库或长期驻留的真实进程；优先使用静态检查、focused test、日志和已有运行证据。
 - 确需启动真实进程时，必须用可控方式运行，记录 PID/端口/log，任务结束前主动关闭，并用 `.bot.pid`、`ps`、`lsof` 或相关日志复查确认没有遗留进程。
 

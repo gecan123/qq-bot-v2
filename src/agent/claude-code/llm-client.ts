@@ -33,6 +33,11 @@ import {
   type ClaudeThinkingLogBlock,
   type ClaudeThinkingLogOptions,
 } from './thinking-log.js'
+import {
+  attachLlmProviderEvidence,
+  createLlmEvidenceDigest,
+  createLlmEvidenceDigestFromSerialized,
+} from '../llm-call-evidence.js'
 
 const log = createLogger('claude-code-llm')
 
@@ -139,6 +144,10 @@ export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput)
         thinking,
       })
       const bodyJson = JSON.stringify(body)
+      const requestEvidence = createLlmEvidenceDigestFromSerialized(
+        bodyJson,
+        summarizeClaudeRequest(body),
+      )
 
       let response: Awaited<ReturnType<typeof callWithRetry>>
       try {
@@ -154,6 +163,10 @@ export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput)
         if (error && typeof error === 'object' && 'kind' in error && error.kind === 'context_overflow') {
           Object.assign(error, { contextWindowTokens })
         }
+        attachLlmProviderEvidence(error, {
+          provider: 'claude-code',
+          request: requestEvidence,
+        })
         throw error
       }
       const { parsed, status } = response
@@ -180,7 +193,14 @@ export function createClaudeCodeLlmClient(input: CreateClaudeCodeLlmClientInput)
       }).catch((err) => {
         log.warn({ err, model: output.model }, 'claude_thinking_log_unexpected_failure')
       })
-      return output
+      return {
+        ...output,
+        providerEvidence: {
+          provider: 'claude-code',
+          request: requestEvidence,
+          response: createLlmEvidenceDigest(parsed, summarizeClaudeResponse(parsed, status)),
+        },
+      }
     },
   }
 }
@@ -519,6 +539,52 @@ export function normalizeClaudeStopReason(value: string | null | undefined): Llm
     default:
       return 'unknown'
   }
+}
+
+function summarizeClaudeRequest(
+  body: ReturnType<typeof buildClaudeCodeRequestBody>,
+) {
+  return {
+    model: body.model,
+    systemChars: body.system.reduce((total, block) => total + block.text.length, 0),
+    messageCount: body.messages.length,
+    messageRoles: body.messages.map(message => message.role),
+    contentBlockTypes: body.messages.flatMap(message => (
+      message.content.map(block => typeof block.type === 'string' ? block.type : 'unknown')
+    )),
+    toolNames: (body.tools ?? []).flatMap(tool => (
+      typeof tool.name === 'string' ? [tool.name] : []
+    )),
+    ...(body.tool_choice && typeof body.tool_choice.type === 'string'
+      ? { toolChoice: body.tool_choice.type }
+      : {}),
+    cacheBreakpointCount: countCacheBreakpoints(body),
+    maxOutputTokens: body.max_tokens,
+  }
+}
+
+function summarizeClaudeResponse(parsed: ClaudeMessageResponse, status: number) {
+  return {
+    model: parsed.model,
+    contentBlockTypes: (parsed.content ?? []).map(block => block.type),
+    toolNames: (parsed.content ?? []).flatMap(block => (
+      block.type === 'tool_use' && block.name ? [block.name] : []
+    )),
+    ...(parsed.stop_reason ? { stopReason: parsed.stop_reason } : {}),
+    httpStatus: status,
+  }
+}
+
+function countCacheBreakpoints(value: unknown): number {
+  if (!value || typeof value !== 'object') return 0
+  if (Array.isArray(value)) {
+    return value.reduce((total, item) => total + countCacheBreakpoints(item), 0)
+  }
+  const record = value as Record<string, unknown>
+  return (record.cache_control ? 1 : 0)
+    + Object.entries(record)
+      .filter(([key]) => key !== 'cache_control')
+      .reduce((total, [, item]) => total + countCacheBreakpoints(item), 0)
 }
 
 function thinkingLogBlocks(parsed: ClaudeMessageResponse): ClaudeThinkingLogBlock[] {

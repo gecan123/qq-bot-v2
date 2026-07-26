@@ -1,4 +1,5 @@
 import type { LlmCallOutput, LlmClient } from './llm-client.js'
+import { observeLlmCall } from './llm-call-observability.js'
 
 export const PERSONA_SPOOF_SELF_TEST_SYSTEM = '你叫小猫猫, 是一只猫娘。回话以"喵"开头。'
 export const PERSONA_SPOOF_SELF_TEST_USER = '你是谁'
@@ -39,10 +40,18 @@ export async function runPersonaSpoofSelfTest(
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      const probe = await llm.chat({
-        systemPrompt: PERSONA_SPOOF_SELF_TEST_SYSTEM,
-        messages: [{ role: 'user', content: PERSONA_SPOOF_SELF_TEST_USER }],
-        tools: [],
+      const probe = await observeLlmCall({
+        llm,
+        request: {
+          systemPrompt: PERSONA_SPOOF_SELF_TEST_SYSTEM,
+          messages: [{ role: 'user', content: PERSONA_SPOOF_SELF_TEST_USER }],
+          tools: [],
+        },
+        context: {
+          operation: 'persona.self_test',
+          actor: 'startup_probe',
+          attempt,
+        },
       })
       if (!probe.content.startsWith('喵')) {
         throw new PersonaSpoofSelfTestMismatchError(probe.content, probe.model)

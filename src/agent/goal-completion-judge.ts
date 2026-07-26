@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { AgentMessage } from './agent-context.types.js'
 import type { AgentGoal } from './goal-store.js'
 import type { LlmClient } from './llm-client.js'
+import { observeLlmCall } from './llm-call-observability.js'
 import { renderUntrustedTranscript } from './untrusted-transcript.js'
 
 const judgmentSchema = z.object({
@@ -42,26 +43,34 @@ export function createGoalCompletionJudge(input: {
         messages,
         maxChars: Number.MAX_SAFE_INTEGER,
       })
-      const output = await input.llm.chat({
-        systemPrompt: GOAL_COMPLETION_JUDGE_SYSTEM_PROMPT,
-        messages: [
-          { role: 'user', content: transcript },
-          {
-            role: 'user',
-            content: JSON.stringify({
-              instruction: '只根据上面的 transcript evidence 判断当前 Goal 是否已经完成。只返回规定 JSON。',
-              goal: {
-                goalId: goal.goalId,
-                origin: goal.origin,
-                objective: goal.objective,
-                completionCriteria: goal.completionCriteria,
-              },
-              submittedEvidence: evidence,
-            }),
-          },
-        ],
-        tools: [],
-        maxOutputTokens: 500,
+      const output = await observeLlmCall({
+        llm: input.llm,
+        request: {
+          systemPrompt: GOAL_COMPLETION_JUDGE_SYSTEM_PROMPT,
+          messages: [
+            { role: 'user', content: transcript },
+            {
+              role: 'user',
+              content: JSON.stringify({
+                instruction: '只根据上面的 transcript evidence 判断当前 Goal 是否已经完成。只返回规定 JSON。',
+                goal: {
+                  goalId: goal.goalId,
+                  origin: goal.origin,
+                  objective: goal.objective,
+                  completionCriteria: goal.completionCriteria,
+                },
+                submittedEvidence: evidence,
+              }),
+            },
+          ],
+          tools: [],
+          maxOutputTokens: 500,
+        },
+        context: {
+          operation: 'goal.completion_judge',
+          actor: 'goal_judge',
+          goalId: goal.goalId,
+        },
       })
       return judgmentSchema.parse(JSON.parse(output.content.trim()))
     },

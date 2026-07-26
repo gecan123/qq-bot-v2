@@ -44,7 +44,7 @@ Browser → validated Server Function → operation service
 
 WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay source，不能用来重建 `AgentContext`。它默认绑定 `127.0.0.1:20030`；当前没有管理员鉴权，不得直接暴露到非可信网络。
 
-`logs/agent-activity.json` 是 Bot Runtime best-effort 原子更新的可丢弃实时观察面。它只保存进程 phase、结构化唤醒原因、等待条件、并发工具和最近完成工具，不进入 canonical ledger 或 runtime singleton；缺失、损坏、PID 不匹配或写入失败都不能改变 Agent 行为，WebAdmin 必须明确降级为“实时状态不可用”。首页的最近工具进展和 24 小时工具统计读取 `logs/tool-calls.ndjson`，按文件元数据缓存解析结果；它们只反映当前 `BOT_TOOL_AUDIT_MODE` 覆盖的调用，不能从 `agent_tool_calls` 旧表补齐或用于 replay。
+`logs/agent-activity.json` 是 Bot Runtime best-effort 原子更新的可丢弃实时观察面。它只保存进程 phase、结构化唤醒原因、等待条件、并发工具和最近完成工具，不进入 canonical ledger 或 runtime singleton；缺失、损坏、PID 不匹配或写入失败都不能改变 Agent 行为，WebAdmin 必须明确降级为“实时状态不可用”。首页的最近工具进展和 24 小时工具统计读取 `logs/tool-calls.ndjson`，按文件元数据缓存解析结果；它们只反映当前 `BOT_TOOL_AUDIT_MODE` 覆盖的调用，不能从 `agent_tool_calls` 旧表补齐或用于 replay。`agent_token_usage` 同时承担有保留期的逐调用 LLM 观察面：每次调用记录 callId、actor/operation、provider/model、成功/失败/取消、耗时、stop reason、token/cache，以及 canonical request、provider request、provider response、canonical response 四段结构摘要与 SHA-256 指纹。四段 evidence 不保存 prompt、response、工具参数或错误正文；WebAdmin Context 页面只读展示最近记录，它们同样不是 replay source。
 
 ## 永续上下文与压缩
 

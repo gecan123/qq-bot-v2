@@ -22,6 +22,11 @@ import type {
 import type { Tool } from '../tool.js'
 import { stripNullsFromOptionalFields, zodToOpenAIStrictToolJsonSchema } from '../tool-schema.js'
 import { recordCurrentTokenUsage } from '../../llm/token-usage.js'
+import {
+  attachLlmProviderEvidence,
+  createLlmEvidenceDigest,
+  createLlmEvidenceDigestFromSerialized,
+} from '../llm-call-evidence.js'
 
 export interface CreateOpenAIAgentLlmClientInput {
   model: string
@@ -48,20 +53,38 @@ export function createOpenAIAgentLlmClient(input: CreateOpenAIAgentLlmClientInpu
   return {
     provider: 'openai-agent',
     async chat(req: LlmCallInput): Promise<LlmCallOutput> {
+      const body = buildOpenAIAgentRequest({
+        model: input.model,
+        systemPrompt: req.systemPrompt,
+        messages: req.messages,
+        tools: req.tools,
+        maxOutputTokens: req.maxOutputTokens,
+      })
+      const requestEvidence = createLlmEvidenceDigestFromSerialized(
+        JSON.stringify(body),
+        summarizeOpenAIRequest(body),
+      )
       try {
         const response = await client.chat.completions.create(
-          buildOpenAIAgentRequest({
-            model: input.model,
-            systemPrompt: req.systemPrompt,
-            messages: req.messages,
-            tools: req.tools,
-            maxOutputTokens: req.maxOutputTokens,
-          }),
+          body,
           req.signal ? { signal: req.signal } : undefined,
         )
-        return toLlmCallOutput(response, input.model, input.contextWindowTokens, req.tools)
+        const output = toLlmCallOutput(response, input.model, input.contextWindowTokens, req.tools)
+        return {
+          ...output,
+          providerEvidence: {
+            provider: 'openai-agent',
+            request: requestEvidence,
+            response: createLlmEvidenceDigest(response, summarizeOpenAIResponse(response)),
+          },
+        }
       } catch (error) {
-        throw normalizeOpenAIError(error, input.contextWindowTokens)
+        const normalized = normalizeOpenAIError(error, input.contextWindowTokens)
+        attachLlmProviderEvidence(normalized, {
+          provider: 'openai-agent',
+          request: requestEvidence,
+        })
+        throw normalized
       }
     },
   }
@@ -259,6 +282,47 @@ export function normalizeOpenAIStopReason(value: string | null | undefined): Llm
       return 'content_filter'
     default:
       return 'unknown'
+  }
+}
+
+function summarizeOpenAIRequest(
+  body: ChatCompletionCreateParamsNonStreaming,
+) {
+  return {
+    model: body.model,
+    messageCount: body.messages.length,
+    messageRoles: body.messages.map(message => message.role),
+    toolNames: (body.tools ?? []).flatMap(tool => (
+      tool.type === 'function' ? [tool.function.name] : []
+    )),
+    ...(typeof body.tool_choice === 'string'
+      ? { toolChoice: body.tool_choice }
+      : body.tool_choice && 'type' in body.tool_choice
+        ? { toolChoice: String(body.tool_choice.type) }
+        : {}),
+    cacheBreakpointCount: body.prompt_cache_key ? 1 : 0,
+    ...(body.max_completion_tokens != null
+      ? { maxOutputTokens: body.max_completion_tokens }
+      : {}),
+  }
+}
+
+function summarizeOpenAIResponse(response: ChatCompletion) {
+  const toolNames = response.choices.flatMap(choice => (
+    choice.message.tool_calls ?? []
+  )).flatMap(call => (
+    call.type === 'function' ? [call.function.name] : []
+  ))
+  return {
+    model: response.model,
+    contentBlockTypes: response.choices.flatMap(choice => [
+      ...(typeof choice.message.content === 'string' && choice.message.content.length > 0 ? ['text'] : []),
+      ...((choice.message.tool_calls?.length ?? 0) > 0 ? ['tool_call'] : []),
+    ]),
+    toolNames,
+    ...(response.choices[0]?.finish_reason
+      ? { stopReason: response.choices[0].finish_reason }
+      : {}),
   }
 }
 

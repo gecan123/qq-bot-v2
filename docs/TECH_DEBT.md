@@ -68,11 +68,12 @@ PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goa
 - 这个集合只用于 startup replay 与 live ingest 的重叠窗口；稳态继续积累没有额外正确性收益。
 - 目标：在 replay barrier 完成后清空/关闭去重，或改成有界窗口并记录大小指标。
 
-### Usage 与 prompt cache 归因混杂
+### Goal 总成本与非 Agent LLM 路径尚未统一
 
-- compaction、Life review、Memory maintenance、Goal completion judge 等辅助 LLM 调用仍缺少统一的 `actor/operation/taskId/goalId` 归因，不同稳定 prompt family 的 cache key 分离也没有形成统一契约。
+- `LlmClient` 路径已经统一记录 callId、actor/operation/taskId/goalId、provider/model、成功/失败/取消、耗时、stop reason、token/cache 和不含正文的四段结构 evidence；主 Agent、compaction、Memory maintenance、Goal completion judge、startup probe、`fetch_url` 摘要与长期状态翻译均已接入。
+- Life Journal 和媒体描述等 `src/llm/openai-adapter.ts` 路径仍主要使用 AsyncLocal usage 聚合，没有进入同一逐调用 trace；不同稳定 prompt family 的 cache key 分离也没有形成统一契约。
 - Goal token budget 当前只覆盖主 Agent round 的未缓存 input + output；包括完成验收在内的辅助 LLM 调用不进入完整任务成本。
-- 目标：建立统一 usage accounting 和稳定 prompt-family 分离，再明确 Goal budget 是“主循环预算”还是“目标总成本预算”。
+- 目标：决定是否让非 `LlmClient` 路径复用同一安全 trace，再建立稳定 prompt-family 分离，并明确 Goal budget 是“主循环预算”还是“目标总成本预算”。
 
 ### BotLoopAgent 职责过密
 

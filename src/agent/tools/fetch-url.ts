@@ -6,6 +6,7 @@ import { config } from '../../config/index.js'
 import { logFetch } from '../../ops/fetch-log.js'
 import { createLogger } from '../../logger.js'
 import { createLlmClient } from '../llm-client.js'
+import { observeLlmCall } from '../llm-call-observability.js'
 import { formatBeijingIso } from '../../utils/beijing-time.js'
 
 const log = createLogger('TOOL_FETCH_URL')
@@ -315,10 +316,17 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
       let summary = ''
       let summarizeFailed = false
       try {
-        const completion = await llm.chat({
-          systemPrompt,
-          messages: [{ role: 'user', content: userMessage }],
-          tools: [],
+        const completion = await observeLlmCall({
+          llm,
+          request: {
+            systemPrompt,
+            messages: [{ role: 'user', content: userMessage }],
+            tools: [],
+          },
+          context: {
+            operation: 'fetch_url.summary',
+            actor: 'tool_helper',
+          },
         })
         summary = completion.content.trim()
       } catch (err) {

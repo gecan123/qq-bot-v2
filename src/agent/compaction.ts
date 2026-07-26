@@ -1,7 +1,7 @@
 import type { AgentMessage } from './agent-context.types.js'
 import { createLlmClient, type LlmClient } from './llm-client.js'
 import type { Tool } from './tool.js'
-import { recordTokenUsage } from './token-stats.js'
+import { observeLlmCall } from './llm-call-observability.js'
 import {
   captureMailboxAttentionState,
   isMailboxAttentionStateMessage,
@@ -493,18 +493,18 @@ export async function summarizeCompactionCandidate(
   options: { signal?: AbortSignal; llm?: ReturnType<typeof createLlmClient> } = {},
 ): Promise<string> {
   const llm = options.llm ?? createLlmClient()
-  const result = await llm.chat({
-    systemPrompt: request.systemPrompt,
-    messages: request.messages,
-    tools: [],
-    signal: options.signal,
-  })
-  recordTokenUsage({
-    operation: 'compaction',
-    inputTokens: result.usage.inputTokens,
-    cachedTokens: result.usage.cachedTokens,
-    outputTokens: result.usage.outputTokens,
-    model: result.model,
+  const result = await observeLlmCall({
+    llm,
+    request: {
+      systemPrompt: request.systemPrompt,
+      messages: request.messages,
+      tools: [],
+      signal: options.signal,
+    },
+    context: {
+      operation: 'compaction',
+      actor: 'compactor',
+    },
   })
   return result.content.trim()
 }
@@ -525,23 +525,23 @@ export async function summarizeCachedClaudeCompaction(input: {
     content: renderCachedClaudeCompactionControl({ maxSummaryTokens }),
   }
   const prefixMessages = input.messages.map((message) => structuredClone(message))
-  const result = await input.llm.chat({
-    systemPrompt: input.systemPrompt,
-    messages: [...prefixMessages, controlMessage],
-    tools: [...input.tools],
-    ...(prefixMessages.length === 0
-      ? {}
-      : { cacheBreakpointMessageIndexes: [prefixMessages.length - 1] }),
-    claudeToolChoice: 'auto',
-    maxOutputTokens: maxSummaryTokens,
-    signal: input.signal,
-  })
-  recordTokenUsage({
-    operation: 'compaction',
-    inputTokens: result.usage.inputTokens,
-    cachedTokens: result.usage.cachedTokens,
-    outputTokens: result.usage.outputTokens,
-    model: result.model,
+  const result = await observeLlmCall({
+    llm: input.llm,
+    request: {
+      systemPrompt: input.systemPrompt,
+      messages: [...prefixMessages, controlMessage],
+      tools: [...input.tools],
+      ...(prefixMessages.length === 0
+        ? {}
+        : { cacheBreakpointMessageIndexes: [prefixMessages.length - 1] }),
+      claudeToolChoice: 'auto',
+      maxOutputTokens: maxSummaryTokens,
+      signal: input.signal,
+    },
+    context: {
+      operation: 'compaction',
+      actor: 'compactor',
+    },
   })
   throwIfCompactionAborted(input.signal)
   if (result.toolCalls.length > 0) {

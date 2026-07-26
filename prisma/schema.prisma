@@ -163,22 +163,36 @@ model AgentToolCall {
   @@map("agent_tool_calls")
 }
 
-/// Agent token/cache 使用观测事件。覆盖主聊天、compaction 和 Life Journal review。
+/// 一次 LLM 调用的只读观测事件。evidence 只保存结构摘要和指纹，不保存 prompt/response 正文。
 model AgentTokenUsage {
   id           BigInt   @id @default(autoincrement())
   ts           DateTime @db.Timestamptz(3)
+  callId       String?  @unique @map("call_id") @db.Uuid
   operation    String   @db.VarChar(64)
+  actor        String?  @db.VarChar(64)
   roundIndex   Int?     @map("round_index")
+  provider     String?  @db.VarChar(64)
+  status       String   @default("succeeded") @db.VarChar(32)
+  durationMs   Int?     @map("duration_ms")
+  stopReason   String?  @map("stop_reason") @db.VarChar(64)
+  errorKind    String?  @map("error_kind") @db.VarChar(191)
+  goalId       String?  @map("goal_id") @db.VarChar(191)
+  taskId       String?  @map("task_id") @db.VarChar(191)
+  attempt      Int?
   model        String   @db.VarChar(191)
   inputTokens  Int?     @map("input_tokens")
   cachedTokens Int?     @map("cached_tokens")
   outputTokens Int?     @map("output_tokens")
   cacheHitRate Float?   @map("cache_hit_rate")
+  evidence     Json?
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@index([ts(sort: Desc)])
   @@index([operation, ts(sort: Desc)])
   @@index([model, ts(sort: Desc)])
+  @@index([actor, ts(sort: Desc)])
+  @@index([provider, ts(sort: Desc)])
+  @@index([status, ts(sort: Desc)])
   @@map("agent_token_usage")
 }
 

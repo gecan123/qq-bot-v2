@@ -8,7 +8,6 @@ import type {
   ToolExecutionResult,
   ToolExecutor,
 } from './tool.js'
-import { recordTokenUsage } from './token-stats.js'
 import { createLogger } from '../logger.js'
 import {
   buildWorkingContextProjection,
@@ -18,6 +17,7 @@ import { isParallelSafeToolCall } from './tool-concurrency.js'
 import { toDurableAgentMessage } from './durable-agent-message.js'
 import type { AgentImageRefStore } from '../media/agent-image-ref.js'
 import { selectCompactionCacheBreakpointMessageIndex } from './compaction.js'
+import { observeLlmCall } from './llm-call-observability.js'
 
 const log = createLogger('REACT_KERNEL')
 
@@ -132,18 +132,26 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
   let completion: LlmCallOutput
 
   while (true) {
-    completion = await input.llm.chat({
-      systemPrompt: input.systemPrompt,
-      messages: workingContext.messages,
-      tools: visibleTools,
-      ...(cacheBreakpointMessageIndex == null
-        ? {}
-        : { cacheBreakpointMessageIndexes: [cacheBreakpointMessageIndex] }),
-      signal: input.signal,
-      ...(maxOutputTokens != null ? { maxOutputTokens } : {}),
+    completion = await observeLlmCall({
+      llm: input.llm,
+      request: {
+        systemPrompt: input.systemPrompt,
+        messages: workingContext.messages,
+        tools: visibleTools,
+        ...(cacheBreakpointMessageIndex == null
+          ? {}
+          : { cacheBreakpointMessageIndexes: [cacheBreakpointMessageIndex] }),
+        signal: input.signal,
+        ...(maxOutputTokens != null ? { maxOutputTokens } : {}),
+      },
+      context: {
+        operation: 'agent.chat',
+        actor: 'main_agent',
+        roundIndex,
+        attempt: completions.length + 1,
+      },
     })
     completions.push(completion)
-    recordCompletion(roundIndex, completion)
 
     if (completion.stopReason === 'model_context_window_exceeded') {
       throw new LlmContextWindowStopError(completion.contextWindowTokens)
@@ -289,17 +297,6 @@ function takeParallelSafeBatch(
     batch.push(call)
   }
   return batch
-}
-
-function recordCompletion(roundIndex: number, completion: LlmCallOutput): void {
-  recordTokenUsage({
-    operation: 'agent.chat',
-    roundIndex,
-    inputTokens: completion.usage.inputTokens,
-    cachedTokens: completion.usage.cachedTokens,
-    outputTokens: completion.usage.outputTokens,
-    model: completion.model,
-  })
 }
 
 /**

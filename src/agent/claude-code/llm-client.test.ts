@@ -255,6 +255,11 @@ describe('ClaudeCodeLlmClient.chat', () => {
     assert.equal(out.toolCalls[0]?.id, 'tu_1')
     assert.equal(out.toolCalls[0]?.name, 'send_message')
     assert.deepEqual(out.toolCalls[0]?.args, { text: 'hi' })
+    assert.equal(out.providerEvidence?.provider, 'claude-code')
+    assert.deepEqual(out.providerEvidence?.request.summary.toolNames, [])
+    assert.deepEqual(out.providerEvidence?.response?.summary.toolNames, ['send_message'])
+    assert.match(out.providerEvidence?.request.fingerprint ?? '', /^[a-f0-9]{64}$/)
+    assert.match(out.providerEvidence?.response?.fingerprint ?? '', /^[a-f0-9]{64}$/)
   })
 
   test('maps thinking blocks to nativeBlocks and raw thinking log without adding to content', async (t) => {

@@ -108,6 +108,7 @@
 - Claude-Code-compatible 路径会对 transport、429、5xx/529 和 SSE overload 做最多两次有界重试，优先尊重 `retry-after`，并记录稳定错误分类与 request ID；401/403 和 invalid request 不重试。provider 明确返回 context/prompt too long 时，Runtime Host 强制追加 compaction entry，并只重试当前 LLM round 一次；该恢复发生在 tool call 写入 ledger 前，不重放副作用工具。
 - Claude `stop_reason` 和 OpenAI `finish_reason` 会归一化为 Runtime Host 的停止原因。`max_tokens` 先用更大的单次输出预算重试同一份 messages；仍截断时，只允许把“不含 tool call 的普通文本”作为 continuation checkpoint 写入 ledger，最多续写两次。任何截断或不完整的 tool call 都不写入、不执行。
 - 可用 `LLM_FALLBACK_MODEL` 显式配置同一 wire provider 的备用模型。只在主模型内部重试耗尽后的 overload/5xx 上切换一次；auth、rate limit、invalid request 和 context overflow 不切换，显式场景模型也不会继承主 Agent fallback。
+- 主 Agent、compaction、Memory maintenance、Goal judge、startup persona probe、`fetch_url` 摘要和长期状态翻译统一经 `observeLlmCall()` 记录一次调用。成功、失败和取消都生成独立 callId；evidence 只保留四段结构摘要与 SHA-256 指纹，用工具名和 block 类型判断工具是在 canonical 组装、wire 翻译、provider 返回还是统一解析阶段丢失。不得把 prompt/response 正文、工具参数、图片数据、provider headers 或错误 message 放进 evidence；观察写入失败不能影响原调用，也不能成为 replay、compaction 或 prompt 的输入。
 - 媒体描述使用 `src/llm/**` 下的 routing provider，和 agent chat client 分离。
 - 优先使用渐进式披露：system prompt 只放稳定边界和入口，长手册和可变数据放到工具或文件后面。
 - Agent chat 发送前会从 durable ledger projection 构建 working context；默认保留最近三个带图片的 tool result，更旧图片替换为稳定 marker 并记录 `working_context_projected`，不会改写 canonical ledger。

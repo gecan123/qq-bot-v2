@@ -4,6 +4,7 @@ import { createLogger } from '../logger.js'
 import type { AgentMetricsFilters, AgentMetricsSummary } from './agent-metrics.js'
 import { resolveExcludedMetricModels, summarizeAgentMetrics } from './agent-metrics.js'
 import type { AgentTokenOperation } from '../agent/token-stats.js'
+import type { LlmCallTraceEvidence } from '../agent/llm-call-evidence.js'
 import { formatBeijingIso } from '../utils/beijing-time.js'
 
 const log = createLogger('AGENT_OBSERVABILITY_DB')
@@ -22,13 +23,24 @@ export interface AgentToolCallEvent {
 
 export interface AgentTokenUsageEvent {
   ts: string
+  callId?: string
   operation: AgentTokenOperation
+  actor?: string
   roundIndex?: number
+  provider?: string
+  status?: 'succeeded' | 'failed' | 'aborted'
+  durationMs?: number
+  stopReason?: string
+  errorKind?: string
+  goalId?: string
+  taskId?: string
+  attempt?: number
   inputTokens: number | null
   cachedTokens: number | null
   outputTokens: number | null
   model: string
   cacheHitRate?: number
+  evidence?: LlmCallTraceEvidence
 }
 
 interface AgentObservabilityDbClient {
@@ -84,23 +96,45 @@ export function buildInsertAgentTokenUsageSql(entry: AgentTokenUsageEvent): Pris
   return Prisma.sql`
     INSERT INTO "agent_token_usage" (
       "ts",
+      "call_id",
       "operation",
+      "actor",
       "round_index",
+      "provider",
+      "status",
+      "duration_ms",
+      "stop_reason",
+      "error_kind",
+      "goal_id",
+      "task_id",
+      "attempt",
       "model",
       "input_tokens",
       "cached_tokens",
       "output_tokens",
-      "cache_hit_rate"
+      "cache_hit_rate",
+      "evidence"
     )
     VALUES (
       ${new Date(entry.ts)},
+      ${entry.callId ?? null},
       ${entry.operation},
+      ${entry.actor ?? null},
       ${entry.roundIndex ?? null},
+      ${entry.provider ?? null},
+      ${entry.status ?? 'succeeded'},
+      ${entry.durationMs ?? null},
+      ${entry.stopReason ?? null},
+      ${entry.errorKind ?? null},
+      ${entry.goalId ?? null},
+      ${entry.taskId ?? null},
+      ${entry.attempt ?? null},
       ${entry.model},
       ${entry.inputTokens},
       ${entry.cachedTokens},
       ${entry.outputTokens},
-      ${entry.cacheHitRate ?? null}
+      ${entry.cacheHitRate ?? null},
+      CAST(${entry.evidence ? JSON.stringify(entry.evidence) : null} AS JSONB)
     )
   `
 }
@@ -127,7 +161,10 @@ export function recordAgentToolCallEvent(entry: AgentToolCallEvent): void {
 
 export function recordAgentTokenUsageEvent(entry: AgentTokenUsageEvent): void {
   persistAgentTokenUsageEvent(entry).catch((err) => {
-    log.warn({ err, operation: entry.operation, model: entry.model }, 'agent_token_usage_db_write_failed')
+    log.warn(
+      { err, callId: entry.callId, operation: entry.operation, model: entry.model },
+      'agent_token_usage_db_write_failed',
+    )
   })
 }
 

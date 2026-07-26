@@ -11,6 +11,7 @@ import {
   type MemoryMaintenanceSnapshot,
 } from './memory-store.js'
 import { recordTokenUsage, type TokenUsageEntry } from './token-stats.js'
+import { observeLlmCall } from './llm-call-observability.js'
 import { createTaskScheduler, type TaskScheduler } from './task-scheduler.js'
 import type { Tool } from './tool.js'
 import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
@@ -131,12 +132,22 @@ export function createMemoryMaintenanceRuntime(deps: {
       ],
       tools: [maintenanceResultTool],
     }
-    const chat = async (systemPrompt: string) => {
+    const chat = async (systemPrompt: string, attempt: number) => {
       const controller = new AbortController()
       let timeout: NodeJS.Timeout | undefined
       try {
         const output = await Promise.race([
-          deps.llm.chat({ ...request, systemPrompt, signal: controller.signal }),
+          observeLlmCall({
+            llm: deps.llm,
+            request: { ...request, systemPrompt, signal: controller.signal },
+            context: {
+              operation: 'memory.maintenance',
+              actor: 'memory_maintenance',
+              attempt,
+              taskId: activeFile ?? undefined,
+            },
+            dependencies: { record: recordUsage },
+          }),
           new Promise<never>((_, reject) => {
             timeout = setTimeout(() => {
               controller.abort()
@@ -144,27 +155,15 @@ export function createMemoryMaintenanceRuntime(deps: {
             }, reviewTimeoutMs)
           }),
         ])
-        try {
-          recordUsage({
-            operation: 'memory.maintenance',
-            roundIndex: 0,
-            inputTokens: output.usage.inputTokens,
-            cachedTokens: output.usage.cachedTokens,
-            outputTokens: output.usage.outputTokens,
-            model: output.model,
-          })
-        } catch (error) {
-          log.warn({ err: error }, 'memory_maintenance_usage_record_failed')
-        }
         return output
       } finally {
         if (timeout) clearTimeout(timeout)
       }
     }
-    const first = await chat(MAINTENANCE_SYSTEM_PROMPT)
+    const first = await chat(MAINTENANCE_SYSTEM_PROMPT, 1)
     const parsedFirst = parseMaintenanceResult(first)
     if (parsedFirst) return parsedFirst
-    const retry = await chat(`${MAINTENANCE_SYSTEM_PROMPT}\n\n上一次输出无效。现在只调用 memory_maintenance_result 一次。`)
+    const retry = await chat(`${MAINTENANCE_SYSTEM_PROMPT}\n\n上一次输出无效。现在只调用 memory_maintenance_result 一次。`, 2)
     const parsedRetry = parseMaintenanceResult(retry)
     if (!parsedRetry) throw new Error('memory maintenance reviewer returned invalid structured output twice')
     return parsedRetry

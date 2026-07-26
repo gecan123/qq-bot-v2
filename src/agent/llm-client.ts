@@ -12,6 +12,7 @@ import { createClaudeCodeLlmClient } from './claude-code/llm-client.js'
 import { createOpenAIAgentLlmClient } from './openai-agent/llm-client.js'
 import type { ClaudeThinkingConfig, ClaudeToolChoice } from './claude-code/request.js'
 import { createLogger } from '../logger.js'
+import type { LlmProviderEvidence } from './llm-call-evidence.js'
 
 const log = createLogger('llm-client')
 
@@ -70,6 +71,8 @@ export interface LlmCallOutput {
   contextWindowTokens: number
   /** Provider-neutral 的生成停止原因；unknown 表示上游未提供或无法映射。 */
   stopReason?: LlmStopReason
+  /** 仅含结构摘要和 SHA-256 指纹的 provider 证据；不含 prompt/response 正文。 */
+  providerEvidence?: LlmProviderEvidence
 }
 
 export interface LlmClient {

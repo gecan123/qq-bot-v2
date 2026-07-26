@@ -3,6 +3,7 @@ import { hasChineseNarrative } from '../agent/long-term-language.js'
 import type { LlmClient } from '../agent/llm-client.js'
 import type { Tool } from '../agent/tool.js'
 import { renderUntrustedTranscript } from '../agent/untrusted-transcript.js'
+import { observeLlmCall } from '../agent/llm-call-observability.js'
 import {
   LONG_TERM_TRANSLATION_MAX_BATCH_CHARS,
   LONG_TERM_TRANSLATION_MAX_BATCH_ITEMS,
@@ -102,11 +103,27 @@ async function translateBatch(
     claudeToolChoice: 'any' as const,
     maxOutputTokens: 8_000,
   }
-  const first = parseResult(await llm.chat(request), items)
+  const first = parseResult(await observeLlmCall({
+    llm,
+    request,
+    context: {
+      operation: 'long_term_state.translate',
+      actor: 'operator_migration',
+      attempt: 1,
+    },
+  }), items)
   if (first) return first
-  const retry = parseResult(await llm.chat({
-    ...request,
-    systemPrompt: `${SYSTEM_PROMPT}\n\n上一次输出无效。这次必须逐个返回全部 key，且每个 text 都以中文为叙述载体。`,
+  const retry = parseResult(await observeLlmCall({
+    llm,
+    request: {
+      ...request,
+      systemPrompt: `${SYSTEM_PROMPT}\n\n上一次输出无效。这次必须逐个返回全部 key，且每个 text 都以中文为叙述载体。`,
+    },
+    context: {
+      operation: 'long_term_state.translate',
+      actor: 'operator_migration',
+      attempt: 2,
+    },
   }), items)
   if (!retry) throw new Error('long-term state translator returned invalid structured output twice')
   return retry

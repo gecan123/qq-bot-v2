@@ -1,7 +1,12 @@
 import { z } from 'zod'
 
+const evidenceDigestSchema = z.object({
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  toolNames: z.array(z.string()),
+}).strict()
+
 export const contextSnapshotSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   generatedAt: z.iso.datetime({ offset: true }),
   ledger: z.object({
     total: z.number().int().nonnegative(),
@@ -23,6 +28,27 @@ export const contextSnapshotSchema = z.object({
     outputTokens: z.number().nullable(),
     cacheHitRate: z.number().nullable(),
   }).strict().nullable(),
+  recentLlmCalls: z.array(z.object({
+    callId: z.string().uuid(),
+    ts: z.iso.datetime({ offset: true }),
+    operation: z.string(),
+    actor: z.string().nullable(),
+    provider: z.string().nullable(),
+    model: z.string(),
+    status: z.enum(['succeeded', 'failed', 'aborted']),
+    durationMs: z.number().int().nonnegative().nullable(),
+    stopReason: z.string().nullable(),
+    errorKind: z.string().nullable(),
+    inputTokens: z.number().int().nonnegative().nullable(),
+    cachedTokens: z.number().int().nonnegative().nullable(),
+    outputTokens: z.number().int().nonnegative().nullable(),
+    evidence: z.object({
+      canonicalRequest: evidenceDigestSchema.nullable(),
+      providerRequest: evidenceDigestSchema.nullable(),
+      providerResponse: evidenceDigestSchema.nullable(),
+      canonicalResponse: evidenceDigestSchema.nullable(),
+    }).strict().nullable(),
+  }).strict()),
   entries: z.array(z.object({
     id: z.string(),
     entryType: z.string(),

@@ -4,13 +4,37 @@ import { contextSnapshotSchema, type ContextSnapshot } from './context.schema.js
 
 export async function loadContextSnapshot(now = new Date()): Promise<ContextSnapshot> {
   const db = getAdminPrisma()
-  const [total, rows, grouped, checkpoint, runtime, usage] = await Promise.all([
+  const [total, rows, grouped, checkpoint, runtime, usage, recentLlmCalls] = await Promise.all([
     db.botAgentLedgerEntry.count(),
     db.botAgentLedgerEntry.findMany({ orderBy: { id: 'desc' }, take: 80 }),
     db.botAgentLedgerEntry.groupBy({ by: ['entryType'], _count: { _all: true }, orderBy: { _count: { entryType: 'desc' } } }),
     db.botAgentCheckpoint.findUnique({ where: { id: 1 }, select: { throughEntryId: true, updatedAt: true } }),
     db.botAgentRuntimeState.findUnique({ where: { id: 1 }, select: { ledgerHeadEntryId: true, goalRevision: true, updatedAt: true } }),
-    db.agentTokenUsage.findFirst({ where: { operation: 'agent.chat' }, orderBy: [{ ts: 'desc' }, { id: 'desc' }] }),
+    db.agentTokenUsage.findFirst({
+      where: { operation: 'agent.chat', status: 'succeeded' },
+      orderBy: [{ ts: 'desc' }, { id: 'desc' }],
+    }),
+    db.agentTokenUsage.findMany({
+      where: { callId: { not: null } },
+      orderBy: [{ ts: 'desc' }, { id: 'desc' }],
+      take: 30,
+      select: {
+        callId: true,
+        ts: true,
+        operation: true,
+        actor: true,
+        provider: true,
+        model: true,
+        status: true,
+        durationMs: true,
+        stopReason: true,
+        errorKind: true,
+        inputTokens: true,
+        cachedTokens: true,
+        outputTokens: true,
+        evidence: true,
+      },
+    }),
   ])
   const warnings: string[] = []
   const headId = rows[0]?.id.toString() ?? null
@@ -19,7 +43,7 @@ export async function loadContextSnapshot(now = new Date()): Promise<ContextSnap
   if (checkpoint?.throughEntryId && headId && checkpoint.throughEntryId > BigInt(headId)) warnings.push('Checkpoint throughEntryId 超过 canonical ledger head。')
 
   return contextSnapshotSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: now.toISOString(),
     ledger: {
       total,
@@ -37,12 +61,61 @@ export async function loadContextSnapshot(now = new Date()): Promise<ContextSnap
       ts: usage.ts.toISOString(), model: usage.model, inputTokens: usage.inputTokens,
       cachedTokens: usage.cachedTokens, outputTokens: usage.outputTokens, cacheHitRate: usage.cacheHitRate,
     },
+    recentLlmCalls: recentLlmCalls.flatMap(row => row.callId === null ? [] : [{
+      callId: row.callId,
+      ts: row.ts.toISOString(),
+      operation: row.operation,
+      actor: row.actor,
+      provider: row.provider,
+      model: row.model,
+      status: normalizeCallStatus(row.status),
+      durationMs: row.durationMs,
+      stopReason: row.stopReason,
+      errorKind: row.errorKind,
+      inputTokens: row.inputTokens,
+      cachedTokens: row.cachedTokens,
+      outputTokens: row.outputTokens,
+      evidence: readEvidence(row.evidence),
+    }]),
     entries: rows.map(row => ({
       id: row.id.toString(), entryType: row.entryType, createdAt: row.createdAt.toISOString(),
       role: readRole(row.payload), preview: safePreview(row.payload),
     })),
     warnings,
   })
+}
+
+function normalizeCallStatus(value: string): 'succeeded' | 'failed' | 'aborted' {
+  return value === 'failed' || value === 'aborted' ? value : 'succeeded'
+}
+
+function readEvidence(value: unknown): ContextSnapshot['recentLlmCalls'][number]['evidence'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  return {
+    canonicalRequest: readEvidenceDigest(record.canonicalRequest),
+    providerRequest: readEvidenceDigest(record.providerRequest),
+    providerResponse: readEvidenceDigest(record.providerResponse),
+    canonicalResponse: readEvidenceDigest(record.canonicalResponse),
+  }
+}
+
+function readEvidenceDigest(
+  value: unknown,
+): NonNullable<ContextSnapshot['recentLlmCalls'][number]['evidence']>['canonicalRequest'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (typeof record.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(record.fingerprint)) {
+    return null
+  }
+  const summary = record.summary
+  const candidates = summary && typeof summary === 'object' && !Array.isArray(summary)
+    ? (summary as Record<string, unknown>).toolNames
+    : null
+  const toolNames = Array.isArray(candidates)
+    ? candidates.filter((item): item is string => typeof item === 'string').slice(0, 64)
+    : []
+  return { fingerprint: record.fingerprint, toolNames }
 }
 
 function readRole(value: unknown): string | null {

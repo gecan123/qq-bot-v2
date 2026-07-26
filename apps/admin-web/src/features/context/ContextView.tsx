@@ -1,6 +1,10 @@
-import { JsonBlock, PageHeader, Panel, StatCard, StatGrid, StatusBadge, WarningList } from '../../components/AdminUi.js'
-import { formatCount, formatPercent, formatTimestamp } from '../../lib/format.js'
+import { EmptyState, JsonBlock, PageHeader, Panel, StatCard, StatGrid, StatusBadge, WarningList } from '../../components/AdminUi.js'
+import { formatCount, formatDuration, formatPercent, formatTimestamp } from '../../lib/format.js'
 import type { ContextSnapshot } from './context.schema.js'
+
+type EvidenceDigest = NonNullable<
+  NonNullable<ContextSnapshot['recentLlmCalls'][number]['evidence']>['canonicalRequest']
+>
 
 export function ContextView({ snapshot, isRefreshing, refreshFailed }: { snapshot: ContextSnapshot; isRefreshing: boolean; refreshFailed: boolean }) {
   const usage = snapshot.latestUsage
@@ -23,8 +27,69 @@ export function ContextView({ snapshot, isRefreshing, refreshFailed }: { snapsho
         <Panel title="Runtime projection 指针"><dl className="space-y-2 text-sm"><Metric label="Runtime head" value={snapshot.runtime.ledgerHeadId ?? '—'} /><Metric label="Goal revision" value={String(snapshot.runtime.goalRevision ?? '—')} /><Metric label="Runtime updated" value={formatTimestamp(snapshot.runtime.updatedAt)} /></dl></Panel>
       </div>
     </div>
+    <Panel
+      className="mt-4"
+      title="最近 LLM 调用"
+      description="只读结构证据：四段指纹、工具名、耗时与停止原因；不保存 prompt、response 正文，也不参与 replay。"
+    >
+      {snapshot.recentLlmCalls.length === 0
+        ? <EmptyState>暂无带 callId 的 LLM 调用记录；旧 usage 行不会伪装成 trace。</EmptyState>
+        : <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead><tr className="border-b text-xs text-stone-500">
+                <th className="p-2">时间 / 调用</th>
+                <th className="p-2">归属</th>
+                <th className="p-2">Provider</th>
+                <th className="p-2">结果</th>
+                <th className="p-2">Tokens</th>
+                <th className="p-2">四段证据</th>
+              </tr></thead>
+              <tbody>{snapshot.recentLlmCalls.map(call => <tr key={call.callId} className="border-b border-stone-100 align-top">
+                <td className="whitespace-nowrap p-2 text-xs">
+                  {formatTimestamp(call.ts)}
+                  <div className="font-mono text-stone-500">{call.callId.slice(0, 8)}</div>
+                </td>
+                <td className="p-2">
+                  <strong>{call.operation}</strong>
+                  <div className="text-xs text-stone-500">{call.actor ?? '未归因'}</div>
+                </td>
+                <td className="p-2">
+                  <span>{call.provider ?? '未知 provider'} · {call.model}</span>
+                  <div className="text-xs text-stone-500">{formatDuration(call.durationMs)}</div>
+                </td>
+                <td className="p-2">
+                  <StatusBadge tone={call.status === 'succeeded' ? 'good' : call.status === 'aborted' ? 'warn' : 'bad'}>{call.status}</StatusBadge>
+                  <div className="mt-1 text-xs text-stone-500">{call.stopReason ?? call.errorKind ?? '—'}</div>
+                </td>
+                <td className="whitespace-nowrap p-2 text-xs">
+                  {formatCount(call.inputTokens)} in<br/>
+                  {formatCount(call.cachedTokens)} cached<br/>
+                  {formatCount(call.outputTokens)} out
+                </td>
+                <td className="min-w-64 p-2">
+                  {call.evidence
+                    ? <div className="grid gap-1 text-xs">
+                        <Evidence label="C→" value={call.evidence.canonicalRequest}/>
+                        <Evidence label="P→" value={call.evidence.providerRequest}/>
+                        <Evidence label="P←" value={call.evidence.providerResponse}/>
+                        <Evidence label="C←" value={call.evidence.canonicalResponse}/>
+                      </div>
+                    : <span className="text-xs text-stone-500">无结构证据</span>}
+                </td>
+              </tr>)}</tbody>
+            </table>
+          </div>}
+    </Panel>
     <WarningList warnings={snapshot.warnings} />
   </>
 }
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="flex justify-between gap-3"><dt className="text-stone-500">{label}</dt><dd className="m-0 break-all text-right font-medium">{value}</dd></div> }
+
+function Evidence({ label, value }: { label: string; value: EvidenceDigest | null }) {
+  if (!value) return <div className="text-stone-400">{label} —</div>
+  return <div>
+    <span className="mr-2 font-mono text-stone-500">{label} {value.fingerprint.slice(0, 8)}</span>
+    {value.toolNames.length > 0 && <span>{value.toolNames.join(', ')}</span>}
+  </div>
+}

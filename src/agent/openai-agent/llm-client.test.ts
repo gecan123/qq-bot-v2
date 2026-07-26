@@ -173,6 +173,11 @@ describe('openai-agent llm client', () => {
     assert.equal(result.model, 'gpt-5.1-2025-11-13')
     assert.equal(result.contextWindowTokens, 400_000)
     assert.equal(result.stopReason, 'tool_use')
+    assert.equal(result.providerEvidence?.provider, 'openai-agent')
+    assert.deepEqual(result.providerEvidence?.request.summary.toolNames, [])
+    assert.deepEqual(result.providerEvidence?.response?.summary.toolNames, ['wait'])
+    assert.match(result.providerEvidence?.request.fingerprint ?? '', /^[a-f0-9]{64}$/)
+    assert.match(result.providerEvidence?.response?.fingerprint ?? '', /^[a-f0-9]{64}$/)
   })
 
   test('maps length to max_tokens and forwards call-level output budget', async () => {

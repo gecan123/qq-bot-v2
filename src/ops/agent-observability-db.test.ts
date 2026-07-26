@@ -36,29 +36,54 @@ describe('agent observability db SQL', () => {
     ])
   })
 
-  test('builds token-usage insert with cache hit rate', () => {
+  test('builds an LLM-call insert with trace metadata and content-free evidence', () => {
     const sql = buildInsertAgentTokenUsageSql({
       ts: '2026-06-26T10:00:00.000Z',
+      callId: '11111111-1111-4111-8111-111111111111',
       operation: 'agent.chat',
+      actor: 'main_agent',
       roundIndex: 8,
+      provider: 'claude-code',
+      status: 'succeeded',
+      durationMs: 125,
+      stopReason: 'tool_use',
       inputTokens: 100,
       cachedTokens: 80,
       outputTokens: 10,
       model: 'gpt-5',
       cacheHitRate: 0.8,
+      evidence: {
+        canonicalRequest: {
+          fingerprint: 'a'.repeat(64),
+          summary: { messageCount: 1, toolNames: ['inbox'] },
+        },
+      },
     })
 
     assert.match(sql.sql, /INSERT INTO "agent_token_usage"/)
+    assert.match(sql.sql, /"call_id"/)
+    assert.match(sql.sql, /"evidence"/)
     assert.match(sql.sql, /"cache_hit_rate"/)
     assert.deepEqual(sql.values, [
       new Date('2026-06-26T10:00:00.000Z'),
+      '11111111-1111-4111-8111-111111111111',
       'agent.chat',
+      'main_agent',
       8,
+      'claude-code',
+      'succeeded',
+      125,
+      'tool_use',
+      null,
+      null,
+      null,
+      null,
       'gpt-5',
       100,
       80,
       10,
       0.8,
+      `{"canonicalRequest":{"fingerprint":"${'a'.repeat(64)}","summary":{"messageCount":1,"toolNames":["inbox"]}}}`,
     ])
   })
 

@@ -5,8 +5,59 @@ const evidenceDigestSchema = z.object({
   toolNames: z.array(z.string()),
 }).strict()
 
+const contextEntryBaseSchema = z.object({
+  id: z.string(),
+  entryType: z.string(),
+  createdAt: z.iso.datetime({ offset: true }),
+  rawPreview: z.string(),
+}).strict()
+
+const contextMessageEntrySchema = contextEntryBaseSchema.extend({
+  kind: z.literal('message'),
+  entryType: z.literal('message'),
+  role: z.enum(['user', 'assistant', 'tool']),
+  summary: z.string(),
+  toolCalls: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+  }).strict()),
+  toolCallId: z.string().nullable(),
+  toolName: z.string().nullable(),
+  parentEntryId: z.string().nullable(),
+  result: z.object({
+    ok: z.boolean().nullable(),
+    status: z.string().nullable(),
+    code: z.string().nullable(),
+    reason: z.string().nullable(),
+  }).strict().nullable(),
+}).strict()
+
+const contextCompactionEntrySchema = contextEntryBaseSchema.extend({
+  kind: z.literal('compaction'),
+  entryType: z.literal('compaction'),
+  role: z.null(),
+  summary: z.string(),
+  reason: z.string().nullable(),
+  firstKeptEntryId: z.string().nullable(),
+  tokensBefore: z.number().int().nonnegative().nullable(),
+  estimatedTokensAfter: z.number().int().nonnegative().nullable(),
+  isSplitTurn: z.boolean().nullable(),
+}).strict()
+
+const contextUnknownEntrySchema = contextEntryBaseSchema.extend({
+  kind: z.literal('unknown'),
+  role: z.null(),
+  parseError: z.string(),
+}).strict()
+
+export const contextLedgerEntrySchema = z.discriminatedUnion('kind', [
+  contextMessageEntrySchema,
+  contextCompactionEntrySchema,
+  contextUnknownEntrySchema,
+])
+
 export const contextSnapshotSchema = z.object({
-  schemaVersion: z.literal(2),
+  schemaVersion: z.literal(3),
   generatedAt: z.iso.datetime({ offset: true }),
   ledger: z.object({
     total: z.number().int().nonnegative(),
@@ -49,13 +100,7 @@ export const contextSnapshotSchema = z.object({
       canonicalResponse: evidenceDigestSchema.nullable(),
     }).strict().nullable(),
   }).strict()),
-  entries: z.array(z.object({
-    id: z.string(),
-    entryType: z.string(),
-    createdAt: z.iso.datetime({ offset: true }),
-    role: z.string().nullable(),
-    preview: z.string(),
-  }).strict()),
+  entries: z.array(contextLedgerEntrySchema),
   warnings: z.array(z.string()),
 }).strict()
 

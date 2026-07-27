@@ -7,7 +7,7 @@ import type { ContextSnapshot } from './context.schema.js'
 import { ContextView } from './ContextView.js'
 
 const snapshot: ContextSnapshot = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   generatedAt: '2026-07-26T08:00:00.000Z',
   ledger: {
     total: 12,
@@ -82,5 +82,114 @@ describe('ContextView LLM calls', () => {
     assert.ok(screen.getByText('server'))
     assert.ok(screen.getAllByText('inbox').length >= 1)
     assert.equal(screen.queryByText(/prompt body|response body/), null)
+  })
+})
+
+describe('ContextView ledger entries', () => {
+  test('shows the message role as the primary meaning and keeps raw payload available on demand', () => {
+    render(<ContextView
+      snapshot={{
+        ...snapshot,
+        entries: [{
+          kind: 'message',
+          id: '43',
+          entryType: 'message',
+          createdAt: '2026-07-26T07:59:40.000Z',
+          role: 'tool',
+          summary: '已完成当前动作，等待新输入。',
+          toolCalls: [],
+          toolCallId: 'call-yield',
+          toolName: 'yield',
+          parentEntryId: '42',
+          result: {
+            ok: true,
+            status: 'yielded',
+            code: null,
+            reason: '已完成当前动作，等待新输入。',
+          },
+          rawPreview: JSON.stringify({
+            schemaVersion: 1,
+            message: {
+              role: 'tool',
+              toolCallId: 'call-yield',
+              content: JSON.stringify({
+                ok: true,
+                status: 'yielded',
+                reason: '已完成当前动作，等待新输入。',
+              }),
+            },
+          }),
+        }],
+      }}
+      isRefreshing={false}
+      refreshFailed={false}
+    />)
+
+    assert.ok(screen.getByText('工具结果'))
+    assert.ok(screen.getByText('Ledger: message'))
+    assert.ok(screen.getByText('查看原始 JSON'))
+  })
+
+  test('renders assistant and tool entries as one readable turn and summarizes compaction', () => {
+    render(<ContextView
+      snapshot={{
+        ...snapshot,
+        entries: [{
+          kind: 'message',
+          id: '42',
+          entryType: 'message',
+          createdAt: '2026-07-26T07:59:39.000Z',
+          role: 'assistant',
+          summary: '',
+          toolCalls: [{ id: 'call-yield', name: 'yield' }],
+          toolCallId: null,
+          toolName: null,
+          parentEntryId: null,
+          result: null,
+          rawPreview: '{}',
+        }, {
+          kind: 'message',
+          id: '43',
+          entryType: 'message',
+          createdAt: '2026-07-26T07:59:40.000Z',
+          role: 'tool',
+          summary: '已完成当前动作，等待新输入。',
+          toolCalls: [],
+          toolCallId: 'call-yield',
+          toolName: 'yield',
+          parentEntryId: '42',
+          result: {
+            ok: true,
+            status: 'yielded',
+            code: null,
+            reason: '已完成当前动作，等待新输入。',
+          },
+          rawPreview: '{}',
+        }, {
+          kind: 'compaction',
+          id: '41',
+          entryType: 'compaction',
+          createdAt: '2026-07-26T07:50:00.000Z',
+          role: null,
+          summary: '保留最近一次工具回合。',
+          reason: 'threshold',
+          firstKeptEntryId: '30',
+          tokensBefore: 12_000,
+          estimatedTokensAfter: 4_000,
+          isSplitTurn: false,
+          rawPreview: '{}',
+        }],
+      }}
+      isRefreshing={false}
+      refreshFailed={false}
+    />)
+
+    assert.ok(screen.getByText('Agent 工具请求'))
+    assert.ok(screen.getAllByText('yield').length >= 1)
+    assert.ok(screen.getByText('已完成当前动作，等待新输入。'))
+    assert.ok(screen.getByText('关联调用 #42'))
+    assert.ok(screen.getByText('压缩边界'))
+    assert.ok(screen.getByText('threshold · 12,000 → 4,000 tokens'))
+    assert.ok(screen.getByText('保留最近一次工具回合。'))
   })
 })

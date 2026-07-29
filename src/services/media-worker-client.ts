@@ -13,9 +13,9 @@ export function requestMediaDescription(
   if (!config.services.enabled) {
     const priority = options.priority ?? (options.wait ? 'high' : 'low')
     if (options.wait) {
-      return jobQueue.enqueueAndWait('generate-description', { mediaId }, { priority })
+      return jobQueue.enqueueAndWait('generate-description', { mediaId }, { priority, maxAttempts: 1 })
     }
-    jobQueue.enqueue('generate-description', { mediaId }, { priority })
+    jobQueue.enqueue('generate-description', { mediaId }, { priority, maxAttempts: 1 })
     return Promise.resolve()
   }
 

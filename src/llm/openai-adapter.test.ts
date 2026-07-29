@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
 import { describe, test } from 'node:test'
 import { OpenAIProvider } from './openai-adapter.js'
 
@@ -8,6 +9,45 @@ describe('OpenAIProvider media file inputs', () => {
       () => new OpenAIProvider('AIzaSy-invalid-key', 'sk-local', 'gpt-5.1'),
       /Invalid LLM baseURL/,
     )
+  })
+
+  test('does not automatically retry failed media uploads', async (t) => {
+    let requestCount = 0
+    const server = createServer((_request, response) => {
+      requestCount += 1
+      response.writeHead(500, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({
+        error: {
+          message: 'upstream unavailable',
+          type: 'server_error',
+          code: 'internal_server_error',
+        },
+      }))
+    })
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', () => {
+        server.off('error', reject)
+        resolve()
+      })
+    })
+    t.after(() => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve())
+    }))
+    const address = server.address()
+    assert.ok(address && typeof address === 'object')
+
+    const provider = new OpenAIProvider(
+      `http://127.0.0.1:${address.port}/v1`,
+      'sk-local',
+      'gpt-5.6-luna',
+    )
+    await assert.rejects(() => provider.describeImage({
+      image: Buffer.from('image-bytes'),
+      contentType: 'image/jpeg',
+    }))
+
+    assert.equal(requestCount, 1)
   })
 
   test('describeImage requests structured output and formats moderate rich description text', async () => {

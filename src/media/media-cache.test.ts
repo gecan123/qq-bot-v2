@@ -76,9 +76,40 @@ describe('persistMediaReferences', () => {
       {
         type: 'generate-description',
         data: { mediaId: 42 },
-        options: { priority: 'low' },
+        options: { priority: 'low', maxAttempts: 1 },
       },
     ])
+  })
+
+  test('does not automatically describe videos after downloading them', async () => {
+    const enqueued: unknown[] = []
+
+    prisma.media.create = (async () => ({ mediaId: 44 })) as unknown as typeof prisma.media.create
+    prisma.$transaction = (async (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma)) as never
+    prisma.mediaBlob.upsert = (async () => ({ blobId: 11, byteSize: 3 })) as never
+    prisma.media.update = (async () => ({ mediaId: 44 })) as unknown as typeof prisma.media.update
+    jobQueue.enqueue = ((...args: unknown[]) => {
+      enqueued.push(args)
+    }) as typeof jobQueue.enqueue
+    globalThis.fetch = (async () => {
+      return new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { 'content-type': 'video/mp4' },
+      })
+    }) as typeof fetch
+
+    const result = await persistMediaReferences({
+      content: [{ type: 'video', url: 'https://example.test/a.mp4', fileName: 'a.mp4' }],
+      scope: { kind: 'group', groupId: 1 },
+      messageId: 101,
+      senderId: 200,
+      napcat: {} as never,
+    })
+
+    await waitForPendingMediaDownloads([44], 1_000)
+
+    assert.deepEqual(result.mediaReferenceIds, ['44'])
+    assert.deepEqual(enqueued, [])
   })
 
   test('persists media nested inside a forwarded child message', async () => {

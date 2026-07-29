@@ -2,6 +2,7 @@ export type JobPriority = 'high' | 'normal' | 'low'
 
 export interface JobEnqueueOptions {
   priority?: JobPriority
+  maxAttempts?: number
 }
 
 export interface Job<T extends string = string, D = unknown> {

@@ -81,7 +81,7 @@ describe('generateDescriptionForMedia', () => {
     })
   })
 
-  test('does not persist blank image descriptions, leaves pending for retry', async () => {
+  test('does not persist blank image descriptions', async () => {
     const updates: any[] = []
     const enqueued: Array<{ type: string; data: unknown; options?: { priority?: string } }> = []
     const warnings: Array<{ object: Record<string, unknown>; message: string | undefined }> = []
@@ -304,7 +304,7 @@ describe('generateDescriptionForMedia', () => {
     assert.equal(infos[0]?.object.model, 'gpt-5.4-mini')
   })
 
-  test('logs llm response when image description result has invalid shape (does not persist, leaves pending for retry)', async () => {
+  test('logs llm response when image description result has invalid shape and does not persist it', async () => {
     const warnings: Array<{ object: Record<string, unknown>; message: string | undefined }> = []
     const updates: any[] = []
 

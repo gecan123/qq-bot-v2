@@ -633,7 +633,7 @@ export function parseConfig(
     mcpSchemaSnapshotDir,
     /**
      * 队列有事件时, drainEvents 前等更多事件堆积的毫秒数. 合并连续消息进同一轮 LLM
-     * 调用. 默认 3s 覆盖常见连续输入; 媒体 readiness 在事件入队前单独处理. 非正值或
+     * 调用. 默认 3s 覆盖常见连续输入; 媒体引用在事件入队前完成稳定渲染. 非正值或
      * 非数字 fallback 默认. 测试通过 `eventDebounceMs: 0` 直接传给 createBotLoopAgent 绕过.
      */
     eventDebounceMs,
@@ -658,7 +658,6 @@ export function parseConfig(
       agentEventsUrl: serviceUrl('BOT_AGENT_EVENTS_URL', 'http://127.0.0.1:37925'),
       llmGatewayUrl: serviceUrl('BOT_LLM_GATEWAY_URL', 'http://127.0.0.1:37926'),
       mailboxPollMs: parsePositiveInteger(env.BOT_MAILBOX_POLL_MS, 1_000),
-      mediaPollMs: parsePositiveInteger(env.BOT_MEDIA_POLL_MS, 1_000),
     },
     openbb: parseBoolean(env.OPENBB_CLI_ENABLED, false)
       ? {

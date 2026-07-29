@@ -2,17 +2,8 @@ import { prisma } from '../database/client.js'
 import type { Message } from '../generated/prisma/client.js'
 import type { ParsedSegment, ImageSegment, VideoSegment, RecordSegment, FileSegment } from '../types/message-segments.js'
 import { isMediaDescription } from './media-description.js'
-import { waitForPendingMediaDownloads } from './media-cache.js'
-import { requestMediaDescription } from '../services/media-worker-client.js'
 
 type MediaSegment = ImageSegment | VideoSegment | RecordSegment | FileSegment
-type ResolvePriority = 'high' | 'normal' | 'low'
-const scheduledDescriptionJobs = new Map<number, Promise<void>>()
-
-export interface ResolveMessageOptions {
-  timeoutMs?: number
-  priority?: ResolvePriority
-}
 
 function hasReferenceId(segment: ParsedSegment): segment is MediaSegment & { referenceId: string } {
   return (
@@ -56,62 +47,6 @@ function applyDescriptions(
   })
 }
 
-async function ensureDescriptions(refIds: number[], options: ResolveMessageOptions): Promise<void> {
-  if (refIds.length === 0) return
-
-  const startedAt = Date.now()
-  const timeoutMs = options.timeoutMs ?? 0
-  if (timeoutMs > 0) {
-    await waitForPendingMediaDownloads(refIds, timeoutMs)
-  }
-
-  const pendingRows = await prisma.media.findMany({
-    where: { mediaId: { in: refIds } },
-    select: {
-      mediaId: true,
-      descriptionRaw: true,
-    },
-  })
-  const pendingIds = pendingRows
-    .filter((row) => !isMediaDescription(row.descriptionRaw))
-    .map((row) => row.mediaId)
-  if (pendingIds.length === 0) return
-
-  const schedule = (mediaId: number): Promise<void> => {
-    const existing = scheduledDescriptionJobs.get(mediaId)
-    if (existing) return existing
-
-    const scheduled = requestMediaDescription(mediaId, {
-      wait: true,
-      priority: options.priority ?? 'high',
-      timeoutMs: timeoutMs > 0 ? Math.max(timeoutMs, 1_000) : 120_000,
-    })
-      .finally(() => {
-        if (scheduledDescriptionJobs.get(mediaId) === scheduled) {
-          scheduledDescriptionJobs.delete(mediaId)
-        }
-      })
-
-    scheduledDescriptionJobs.set(mediaId, scheduled)
-    return scheduled
-  }
-
-  if (timeoutMs <= 0) {
-    for (const mediaId of pendingIds) {
-      void schedule(mediaId).catch(() => {})
-    }
-    return
-  }
-
-  const remainingMs = Math.max(0, timeoutMs - (Date.now() - startedAt))
-  const timeout = new Promise<void>((resolve) => setTimeout(resolve, remainingMs))
-  const all = Promise.allSettled(
-    pendingIds.map((mediaId) => schedule(mediaId)),
-  )
-
-  await Promise.race([all, timeout])
-}
-
 async function resolveDescriptions(segments: ParsedSegment[], refIds: number[]): Promise<ParsedSegment[]> {
   if (refIds.length === 0) return segments
 
@@ -131,10 +66,9 @@ async function resolveDescriptions(segments: ParsedSegment[], refIds: number[]):
   return applyDescriptions(segments, descriptionMap)
 }
 
-export async function resolveMessage(message: Message, options: ResolveMessageOptions = {}): Promise<ParsedSegment[]> {
+export async function resolveMessage(message: Message): Promise<ParsedSegment[]> {
   const segments = message.content as unknown as ParsedSegment[]
   const refIds = collectReferenceIds(segments)
 
-  await ensureDescriptions(refIds, options)
   return resolveDescriptions(segments, refIds)
 }

@@ -75,6 +75,25 @@ describe('createMemoryQueue', () => {
     assert.deepEqual(results, [7])
   })
 
+  test('maxAttempts=1 disables queue retries', async () => {
+    const queue = createMemoryQueue(0)
+    let attempts = 0
+
+    queue.register('generate-description', async () => {
+      attempts += 1
+      throw new Error('media description failed')
+    })
+
+    queue.start()
+    await assert.rejects(
+      queue.enqueueAndWait('generate-description', { mediaId: 42 }, { maxAttempts: 1 }),
+      /media description failed/,
+    )
+    queue.stop()
+
+    assert.equal(attempts, 1)
+  })
+
   test('includes job data in retry warning logs', async () => {
     const queue = createMemoryQueue(0)
     const warnings: Array<{ object: Record<string, unknown>; message: string }> = []

@@ -383,12 +383,10 @@ describe('config', () => {
       BOT_PLATFORM_ENABLED: 'true',
       BOT_QQ_GATEWAY_URL: 'http://127.0.0.1:49001',
       BOT_MAILBOX_POLL_MS: '250',
-      BOT_MEDIA_POLL_MS: '500',
     }))
     assert.equal(configured.services.enabled, true)
     assert.equal(configured.services.qqGatewayUrl, 'http://127.0.0.1:49001')
     assert.equal(configured.services.mailboxPollMs, 250)
-    assert.equal(configured.services.mediaPollMs, 500)
 
     for (const invalid of [
       'https://127.0.0.1:49001',

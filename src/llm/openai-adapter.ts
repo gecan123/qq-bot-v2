@@ -137,7 +137,8 @@ export class OpenAIProvider implements LlmProvider {
         options: { reasoningEffort?: OpenAiReasoningEffort } = {},
     ) {
         assertValidBaseURL(baseURL)
-        this.client = new OpenAI({ baseURL, apiKey })
+        // 媒体描述是 best-effort。请求体可能包含数 MiB Base64，失败时不能由 SDK 隐式重传。
+        this.client = new OpenAI({ baseURL, apiKey, maxRetries: 0 })
         this.model = model
         this.reasoningEffort = options.reasoningEffort
     }

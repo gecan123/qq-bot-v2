@@ -14,7 +14,7 @@
 6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责受控 append、runtime cursor/continuity/Goal revision/QQ focus 原子更新、compaction 和 autonomy 调度。事务成功后才推进内存 `AgentContext`。
 7. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct。连续且显式只读的 tool calls 可以并行，副作用和未知调用是 barrier；tool results 始终按 assistant tool-call 顺序成组 append。只有 `ToolExecutionResult.content` 进入 ledger，`outcome` / `effects` 由 Runtime Host 解释。
 
-专用后台工作统一走有界边界。Agent Core 内部仍保留 `maintenance=1`、`network=3` 等 bounded task scheduler；入站媒体描述由独立 Media Worker 处理，并把结果写回 Postgres `media` 事实行。Browser Controller 继续作为独立进程。它们都不是新的主 Agent，也不能直接写 canonical ledger。项目当前接受进程重启中断在途后台任务，不建设通用 `jobKind + payload` 自动恢复层；只有重启丢失昂贵长任务形成可测量痛点，或外部服务原生提供可恢复 task/session ID 时再重新评估。
+专用后台工作统一走有界边界。Agent Core 内部仍保留 `maintenance=1`、`network=3` 等 bounded task scheduler；入站媒体描述由独立 Media Worker 处理，并把结果写回 Postgres `media` 事实行。媒体描述是可缺失的 best-effort 增强：消息渲染只读取当时已有描述，不等待、不触发生成；新图片/贴纸下载后最多自动请求一次，视频、语音和文件不自动生成描述。Media Worker 不扫描历史空描述，也不自动重试失败调用。Browser Controller 继续作为独立进程。它们都不是新的主 Agent，也不能直接写 canonical ledger。项目当前接受进程重启中断在途后台任务，不建设通用 `jobKind + payload` 自动恢复层；只有重启丢失昂贵长任务形成可测量痛点，或外部服务原生提供可恢复 task/session ID 时再重新评估。
 
 短期调度由独立 Scheduler 进程管理。它把 active 状态原子写入 `schedules.json`，把已触发正文写入独立 occurrence store，并在删除 active job 前把待投递 wake 写入本机 delivery store；Agent Core 的 schedule tool 通过窄 HTTP client 调用它。到期时 Scheduler 只向 Agent Core 的内部事件端点投递 `scheduled_wake`，由单一 `BotLoopAgent` 转成不含 intention 的 `notification`。内部端点只在该 notification 已写入 canonical ledger 后确认，Scheduler 再删除 delivery；进程重启会恢复未确认项，Agent 则用 canonical ledger 做幂等确认。Agent 按需调用 `schedule get_occurrence` 打开正文。
 

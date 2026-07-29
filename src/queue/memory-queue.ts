@@ -21,6 +21,7 @@ interface JobWaiter {
 
 interface QueuedJob extends Job {
   waiters: JobWaiter[]
+  maxAttempts: number
 }
 
 const PRIORITY_ORDER: Record<JobPriority, number> = {
@@ -31,6 +32,14 @@ const PRIORITY_ORDER: Record<JobPriority, number> = {
 
 function resolvePriority(options?: JobEnqueueOptions): JobPriority {
   return options?.priority ?? 'normal'
+}
+
+function resolveMaxAttempts(options?: JobEnqueueOptions): number {
+  const value = options?.maxAttempts ?? MAX_ATTEMPTS
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error('maxAttempts must be a positive safe integer')
+  }
+  return value
 }
 
 function pushByPriority(queue: QueuedJob[], job: QueuedJob) {
@@ -76,7 +85,7 @@ export function createMemoryQueue(interJobDelayMs = 0): JobQueue {
       for (const waiter of job.waiters) waiter.resolve()
       job.waiters.length = 0
     } catch (error) {
-      if (job.attempts >= MAX_ATTEMPTS) {
+      if (job.attempts >= job.maxAttempts) {
         log.error(
           { ...getJobContext(job.data), jobId: job.id, type: job.type, error },
           '任务重试次数耗尽，丢弃',
@@ -120,6 +129,7 @@ export function createMemoryQueue(interJobDelayMs = 0): JobQueue {
         createdAt: Date.now(),
         attempts: 0,
         priority: resolvePriority(options),
+        maxAttempts: resolveMaxAttempts(options),
         waiters: [],
       }
       pushByPriority(queue, job)
@@ -136,6 +146,7 @@ export function createMemoryQueue(interJobDelayMs = 0): JobQueue {
           createdAt: Date.now(),
           attempts: 0,
           priority: resolvePriority(options),
+          maxAttempts: resolveMaxAttempts(options),
           waiters: [{ resolve, reject }],
         }
         pushByPriority(queue, job)

@@ -4,16 +4,9 @@ import { prisma } from '../database/client.js'
 import type { Message } from '../generated/prisma/client.js'
 import { jobQueue } from '../queue/runtime.js'
 import { resolveMessage } from './message-resolver.js'
-import { persistMediaReferences } from './media-cache.js'
 
 const originalFindMany = prisma.media.findMany
-const originalCreate = prisma.media.create
-const originalUpdate = prisma.media.update
-const originalBlobUpsert = prisma.mediaBlob.upsert
-const originalTransaction = prisma.$transaction
 const originalEnqueueAndWait = jobQueue.enqueueAndWait
-const originalEnqueue = jobQueue.enqueue
-const originalFetch = globalThis.fetch
 
 function makeMessage(content: unknown): Message {
   return {
@@ -39,170 +32,48 @@ function makeMessage(content: unknown): Message {
 
 afterEach(() => {
   prisma.media.findMany = originalFindMany
-  prisma.media.create = originalCreate
-  prisma.media.update = originalUpdate
-  prisma.mediaBlob.upsert = originalBlobUpsert
-  prisma.$transaction = originalTransaction
   jobQueue.enqueueAndWait = originalEnqueueAndWait
-  jobQueue.enqueue = originalEnqueue
-  globalThis.fetch = originalFetch
 })
 
 describe('resolveMessage', () => {
-  test('enqueues description generation without waiting when timeoutMs is 0', async () => {
-    const calls: Array<{ type: string; data: { mediaId: number }; options: { priority?: string } | undefined }> = []
+  test('does not enqueue missing descriptions while resolving a message', async () => {
+    const calls: unknown[] = []
 
     prisma.media.findMany = (async () => {
-      return [{ mediaId: 42 }]
+      return [{ mediaId: 42, descriptionRaw: null }]
     }) as unknown as typeof prisma.media.findMany
-
-    jobQueue.enqueueAndWait = (async (type: string, data: { mediaId: number }, options?: { priority?: string }) => {
-      calls.push({ type, data, options })
+    jobQueue.enqueueAndWait = (async (...args: unknown[]) => {
+      calls.push(args)
     }) as typeof jobQueue.enqueueAndWait
 
-    const resolved = await resolveMessage(makeMessage([{ type: 'video', referenceId: '42' }]), {
-      timeoutMs: 0,
-    })
+    const resolved = await resolveMessage(makeMessage([{ type: 'video', referenceId: '42' }]))
 
-    assert.deepEqual(calls, [
-      { type: 'generate-description', data: { mediaId: 42 }, options: { priority: 'high' } },
-    ])
+    assert.deepEqual(calls, [])
     assert.deepEqual(resolved, [{ type: 'video', referenceId: '42' }])
   })
 
-  test('reuses the same background generation job across repeated timeoutMs=0 reads', async () => {
-    const calls: Array<{ type: string; data: { mediaId: number }; options: { priority?: string } | undefined }> = []
-    let release!: () => void
-    const blocker = new Promise<void>((resolve) => {
-      release = resolve
-    })
+  test('uses an already persisted description without scheduling background work', async () => {
+    const calls: unknown[] = []
 
     prisma.media.findMany = (async () => {
-      return [{ mediaId: 42 }]
+      return [{ mediaId: 42, descriptionRaw: { description: '已有描述', summary: '摘要' } }]
     }) as unknown as typeof prisma.media.findMany
-
-    jobQueue.enqueueAndWait = (async (type: string, data: { mediaId: number }, options?: { priority?: string }) => {
-      calls.push({ type, data, options })
-      await blocker
+    jobQueue.enqueueAndWait = (async (...args: unknown[]) => {
+      calls.push(args)
     }) as typeof jobQueue.enqueueAndWait
 
-    await Promise.all([
-      resolveMessage(makeMessage([{ type: 'video', referenceId: '42' }]), { timeoutMs: 0 }),
-      resolveMessage(makeMessage([{ type: 'video', referenceId: '42' }]), { timeoutMs: 0 }),
-    ])
+    const resolved = await resolveMessage(makeMessage([{ type: 'image', referenceId: '42' }]))
 
-    assert.equal(calls.length, 1)
-    release()
-    await blocker
-  })
-
-  test('waits for description generation when timeoutMs is positive', async () => {
-    const calls: Array<{ type: string; data: { mediaId: number }; options: { priority?: string } | undefined }> = []
-    let findManyCount = 0
-
-    prisma.media.findMany = (async () => {
-      findManyCount += 1
-      if (findManyCount === 1) return [{ mediaId: 42 }]
-      return [{ mediaId: 42, descriptionRaw: { description: '视频描述', summary: '摘要' } }]
-    }) as unknown as typeof prisma.media.findMany
-
-    jobQueue.enqueueAndWait = (async (type: string, data: { mediaId: number }, options?: { priority?: string }) => {
-      calls.push({ type, data, options })
-    }) as typeof jobQueue.enqueueAndWait
-
-    const resolved = await resolveMessage(makeMessage([{ type: 'video', referenceId: '42' }]), {
-      timeoutMs: 1000,
-    })
-
-    assert.deepEqual(calls, [
-      { type: 'generate-description', data: { mediaId: 42 }, options: { priority: 'high' } },
-    ])
-    assert.deepEqual(resolved, [
-      {
-        type: 'video',
-        referenceId: '42',
-        mediaDescription: { description: '视频描述', summary: '摘要' },
-      },
-    ])
-  })
-
-  test('waits for an in-flight media download before scheduling description generation', async () => {
-    const store = new Map<number, { mediaId: number; blobId: number | null; descriptionRaw: unknown }>()
-    const calls: Array<{ type: string; data: { mediaId: number }; options: { priority?: string } | undefined }> = []
-    let releaseFetch!: () => void
-    const fetchBlocker = new Promise<void>((resolve) => {
-      releaseFetch = resolve
-    })
-
-    prisma.media.create = (async () => {
-      const row = { mediaId: 42, blobId: null, descriptionRaw: null }
-      store.set(42, row)
-      return row
-    }) as unknown as typeof prisma.media.create
-    prisma.$transaction = (async (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma)) as never
-    prisma.mediaBlob.upsert = (async () => ({ blobId: 9, byteSize: 3 })) as never
-    prisma.media.update = (async (args: { where: { mediaId: number }; data: { blobId?: number; descriptionRaw?: unknown } }) => {
-      const row = store.get(args.where.mediaId)
-      if (!row) throw new Error('missing media')
-      if (args.data.blobId) row.blobId = args.data.blobId
-      if (args.data.descriptionRaw !== undefined) row.descriptionRaw = args.data.descriptionRaw
-      return row
-    }) as unknown as typeof prisma.media.update
-    prisma.media.findMany = (async () => {
-      const row = store.get(42)
-      if (!row) return []
-      return [{
-        mediaId: 42,
-        descriptionRaw: row.descriptionRaw,
-        blob: row.blobId ? { descriptionRaw: null } : null,
-      }]
-    }) as unknown as typeof prisma.media.findMany
-    jobQueue.enqueue = (() => {}) as typeof jobQueue.enqueue
-    jobQueue.enqueueAndWait = (async (type: string, data: { mediaId: number }, options?: { priority?: string }) => {
-      calls.push({ type, data, options })
-      await prisma.media.update({
-        where: { mediaId: data.mediaId },
-        data: { descriptionRaw: { description: '下载后描述' } },
-      })
-    }) as typeof jobQueue.enqueueAndWait
-    globalThis.fetch = (async () => {
-      await fetchBlocker
-      return new Response(new Uint8Array([1, 2, 3]), { status: 200 })
-    }) as typeof fetch
-
-    const mediaResult = await persistMediaReferences({
-      content: [{ type: 'image', url: 'https://example.test/a.png' }],
-      scope: { kind: 'group', groupId: 1 },
-      messageId: 100,
-      senderId: 200,
-      napcat: {} as never,
-    })
-    const resolving = resolveMessage(makeMessage(mediaResult.content), { timeoutMs: 1000 })
-
-    await new Promise((resolve) => setTimeout(resolve, 20))
     assert.deepEqual(calls, [])
-
-    releaseFetch()
-    const resolved = await resolving
-
-    assert.deepEqual(calls, [
-      { type: 'generate-description', data: { mediaId: 42 }, options: { priority: 'high' } },
-    ])
-    assert.deepEqual(resolved, [
-      {
-        type: 'image',
-        referenceId: '42',
-        url: undefined,
-        mediaDescription: { description: '下载后描述' },
-      },
-    ])
+    assert.deepEqual(resolved, [{
+      type: 'image',
+      referenceId: '42',
+      mediaDescription: { description: '已有描述', summary: '摘要' },
+    }])
   })
 
-  test('resolves descriptions for media nested inside forwarded messages', async () => {
-    let findManyCount = 0
+  test('resolves persisted descriptions for media nested inside forwarded messages', async () => {
     prisma.media.findMany = (async () => {
-      findManyCount += 1
-      if (findManyCount === 1) return []
       return [{ mediaId: 42, descriptionRaw: { description: '转发图片描述' } }]
     }) as unknown as typeof prisma.media.findMany
 
@@ -213,7 +84,7 @@ describe('resolveMessage', () => {
         senderId: '101',
         content: [{ type: 'image', referenceId: '42' }],
       }],
-    }]), { timeoutMs: 1000 })
+    }]))
 
     assert.deepEqual(resolved, [{
       type: 'forward',

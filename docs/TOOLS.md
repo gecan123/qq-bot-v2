@@ -111,7 +111,7 @@
 - 可用 `LLM_FALLBACK_MODEL` 显式配置同一 wire provider 的备用模型。只在主模型内部重试耗尽后的 overload/5xx 上切换一次；auth、rate limit、invalid request 和 context overflow 不切换，显式场景模型也不会继承主 Agent fallback。
 - 主 Agent、compaction、Memory maintenance、Goal judge、主动性自检、startup persona probe、`fetch_url` 摘要和长期状态翻译统一经 `observeLlmCall()` 记录一次调用。成功、失败和取消都生成独立 callId；evidence 只保留四段结构摘要与 SHA-256 指纹，用工具名和 block 类型判断工具是在 canonical 组装、wire 翻译、provider 返回还是统一解析阶段丢失。不得把 prompt/response 正文、工具参数、图片数据、provider headers 或错误 message 放进 evidence；观察写入失败不能影响原调用，也不能成为 replay、compaction 或 prompt 的输入。
 - `initiative_review` 的固定规则原文位于 `prompts/tools/initiative-review.md`，每次只把本次独白作为 user message 追加。Claude-Code-compatible 路径因此复用现有最后 system block 的 1h cache breakpoint；是否真正命中仍以 `operation=agent.initiative_review` 的 `cachedTokens` 为准。OpenAI-compatible provider 是否缓存由对应上游决定。缓存只复用固定输入前缀，不是工具状态或长期记忆。
-- 媒体描述使用 `src/llm/**` 下的 routing provider，和 agent chat client 分离。
+- 媒体描述使用 `src/llm/**` 下的 routing provider，和 agent chat client 分离。它是可缺失的 best-effort 增强：自动路径只对新图片/贴纸尝试一次，不扫描历史 backlog，不做 SDK 或队列重试；视频、语音和文件只允许显式按需调用。
 - 优先使用渐进式披露：system prompt 只放稳定边界和入口，长手册和可变数据放到工具或文件后面。
 - Agent chat 发送前会从 durable ledger projection 构建 working context；默认保留最近三个带图片的 tool result，更旧图片替换为稳定 marker 并记录 `working_context_projected`，不会改写 canonical ledger。
 - runtime 当前不会在 `agent.chat` 前隐藏执行 Memory recall。主 Agent 在上下文不足时显式调用 `memory recall`；person/group 带具体 `id` 做定向召回，已有足够且未冲突的上下文时不重复调用。返回结果作为普通 tool result 进入 durable ledger，replay 不重新扫描可变 Markdown。未来若评估主动 recall，也必须使用有界 scope、弱匹配返回空并先把结果持久化，不能动态拼进 system prompt。

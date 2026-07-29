@@ -238,7 +238,10 @@ async function downloadMediaIntoPlaceholder(
     fileName: segment.fileName,
     fileSize,
   })
-  void requestMediaDescription(mediaId, { priority: 'low' })
+  // 自动描述只保留图片/贴纸的一次 best-effort 尝试。视频、语音和文件不自动生成描述。
+  if (segment.type === 'image') {
+    void requestMediaDescription(mediaId, { priority: 'low' })
+  }
 }
 
 export async function waitForPendingMediaDownloads(mediaIds: number[], timeoutMs: number): Promise<void> {

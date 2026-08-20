@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import type { LlmCallInput, LlmCallOutput } from './llm-client.js'
 import {
+  AGENT_STATE_ADVISOR_MAX_TIMEOUT_MS,
   createAgentStateAdvisor,
   renderAgentStateAdvice,
 } from './agent-state-advisor.js'
@@ -35,11 +36,40 @@ describe('AgentStateAdvisor', () => {
 
     const request = requests[0]
     assert.deepEqual(request?.tools, [])
-    assert.equal(request?.maxOutputTokens, 300)
+    assert.equal(request?.maxOutputTokens, undefined)
+    assert.equal(AGENT_STATE_ADVISOR_MAX_TIMEOUT_MS, 60 * 60_000)
     assert.match(request?.systemPrompt ?? '', /只读状态顾问/)
     assert.match(userMessageContent(request, 0), /真实线索 64/)
     assert.doesNotMatch(userMessageContent(request, 0), /真实线索 0(?:\\D|$)/)
     assert.match(userMessageContent(request, 1), /"consecutiveIdleRounds":3/)
+  })
+
+  test('retries one empty truncated response without imposing a token limit', async () => {
+    const requests: LlmCallInput[] = []
+    const advisor = createAgentStateAdvisor({
+      llm: {
+        async chat(input) {
+          requests.push(input)
+          if (requests.length === 1) return output('', 'max_tokens')
+          return output(JSON.stringify({
+            state: 'directionless',
+            reason: '近期仍有一条具体创作线索',
+            thought: '我想把那段没有写完的开头补成一个完整场景。',
+          }))
+        },
+      },
+      systemPrompt: '',
+      getMessages: () => [{ role: 'user', content: '近期上下文' }],
+    })
+
+    assert.deepEqual(await advisor.evaluate({ consecutiveIdleRounds: 3 }), {
+      state: 'directionless',
+      reason: '近期仍有一条具体创作线索',
+      thought: '我想把那段没有写完的开头补成一个完整场景。',
+    })
+    assert.equal(requests.length, 2)
+    assert.equal(requests.every(request => request.maxOutputTokens === undefined), true)
+    assert.match(userMessageContent(requests[1], 2), /state_advisor_output_retry/)
   })
 
   test('renders thought and anxiety advice as controlled non-task events', () => {
@@ -62,9 +92,11 @@ describe('AgentStateAdvisor', () => {
   })
 
   test('rejects malformed or embellished advisor output', async () => {
+    let calls = 0
     const advisor = createAgentStateAdvisor({
       llm: {
         async chat() {
+          calls++
           return output('```json\n{"state":"healthy_rest","reason":"没有牵引力"}\n```')
         },
       },
@@ -73,17 +105,21 @@ describe('AgentStateAdvisor', () => {
     })
 
     await assert.rejects(advisor.evaluate({ consecutiveIdleRounds: 3 }))
+    assert.equal(calls, 2)
   })
 })
 
-function output(content: string): LlmCallOutput {
+function output(
+  content: string,
+  stopReason: LlmCallOutput['stopReason'] = 'end_turn',
+): LlmCallOutput {
   return {
     content,
     toolCalls: [],
     usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
     model: 'mock',
     contextWindowTokens: 200_000,
-    stopReason: 'end_turn',
+    stopReason,
   }
 }
 

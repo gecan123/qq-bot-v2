@@ -65,8 +65,8 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 
 - `send_message` 成功只是完成一个动作，不强制立即等待。当前会话内马上续做用 `work=continue`，它只为下一轮提供进程内行动锚点；需要跨注意周期或重启的长期进度仍用绑定 active Goal/currentCommitment 的 `work=goal_progress`。mailbox 在成功回复后仍可关闭防重。刚收到注意事件、存在 active Goal、收到短期续做信号，或模型只输出了不会执行的普通文本时，无工具结束会立即纠错一次；连续第二次等待 60 秒。自由空闲或无进展工具轮从 15 分钟开始指数退避，最多 4 小时；新的注意事件或真实工具进展会复位退避。
 - provider-confirmed 外发到有 pending 通知的同 target mailbox 后，Runtime 在 tool result 闭合后原子 append `mailbox_handled` 与 runtime cursor，避免把已经处理的旧行再次视为新请求。
-- `yield` 是无状态的显式交还控制工具，只返回 `continuation=stop`；不保存 intention、resume reminder、rest state 或专门指标。空闲、无进展和工具明确请求等待时仍使用进程内有界等待，它们不进入 ledger。
-- 连续三次没有 Goal、pending attention、真实工具进展或后台 `wait_event` 锚点的空闲等待后，Runtime 才调用一次无工具、只读的状态顾问。它只看有界的近期 canonical transcript：`healthy_rest` 保持休息且不写入上下文；`directionless` 产生一个从近期真实线索长出的第一人称小念头；`anxiety_loop` 只给一个停止重复的收敛动作。后两者由 Runtime 以 `agent_state_advice` 受控消息 append，顾问本身没有 ledger 写权限，也不是第二个 Agent。
+- `yield` 是无状态的显式交还控制工具，只返回 `continuation=stop`；不保存 intention、resume reminder、rest state 或专门指标。第一次无行动锚点的 `yield` 等待自然结束后，Runtime 会 append 一条稳定的 `runtime_correction`，要求下一次 `yield` 前先加载 `autonomous_life` 做一次有界方向搜索；找到真实牵引力就直接行动，确实没有才继续等待。空闲、无进展和工具明确请求等待时仍使用进程内有界等待，等待状态本身不进入 ledger。
+- 连续三次没有 Goal、pending attention、真实工具进展或后台 `wait_event` 锚点的空闲等待后，Runtime 才调用一次无工具、只读的状态顾问。它只看有界的近期 canonical transcript：`healthy_rest` 保持休息且不写入上下文；`directionless` 产生一个从近期真实线索长出的第一人称小念头；`anxiety_loop` 只给一个停止重复的收敛动作。后两者由 Runtime 以 `agent_state_advice` 受控消息 append，顾问本身没有 ledger 写权限，也不是第二个 Agent。顾问不设置额外的 per-call 输出 token 上限，整次检查最多运行一小时；空正文、截断或非法 JSON 会在同一时间预算内重试一次。最终失败会记录真实异常、复位 idle backoff，并由 Runtime append `autonomous_life` 方向搜索兜底。
 - 连续自主行动不设轮次上限，不会因为工作轮数达到固定值而强制冷却。工具用 `outcome.progress` 报告是否获得新事实或改变状态，只用 `continuation=immediate|wait_attention|wait_event|backoff|stop` 表达下一轮调度：`wait_event` 表示已有真实后台工作，等待完成事件时不受 pending 请求的一分钟纠错节奏驱动，也会重置连续行动计数；可丢弃的 `continuationDetail` 只用于实时活动说明。`noveltyKey` 默认抑制进程内重复披露。`continuation=immediate` 的失败最多保留三轮紧密纠错，之后回到普通无进展调度。
 - 循环控制使用稳定结构化载荷，不能依赖自由文本判断成功或状态。
 

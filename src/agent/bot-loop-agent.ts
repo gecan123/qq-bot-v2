@@ -152,6 +152,15 @@ const ASSISTANT_TEXT_ONLY_CORRECTION = JSON.stringify({
   code: 'assistant_text_without_tool',
   instruction: '上一轮只输出了普通 assistant 文本；它不会发送给任何人，也不会执行其中的计划。若仍有工作，现在调用具体工具；若确实没有待处理行动，以空内容且无工具调用结束。',
 })
+const AUTONOMOUS_LIFE_DIRECTION_SEARCH_CORRECTION = JSON.stringify({
+  event: 'runtime_correction',
+  code: 'autonomous_life_direction_search_required',
+  requiredTool: {
+    name: 'skill',
+    args: { action: 'load', name: 'autonomous_life' },
+  },
+  instruction: '在再次 yield 前，先加载 autonomous_life，基于近期真实线索做一次有界方向搜索。找到有牵引力且可立即执行的一步就直接行动；确实没有方向时才 yield。',
+})
 const defaultKeepAlive = {
   open() {
     const timer = setInterval(() => {}, DEFAULT_KEEP_ALIVE_INTERVAL_MS)
@@ -1057,7 +1066,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         actionCorrectionRetryPending = false
         updateIdleBackoff(wake, true)
         if (requestedYield && !actionRequired) {
-          await recordUnanchoredIdle(wake)
+          await recordUnanchoredIdle(wake, 'yield')
         } else {
           consecutiveUnanchoredIdleRounds = 0
         }
@@ -1169,7 +1178,22 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     consecutiveUnanchoredIdleRounds = 0
   }
 
-  async function recordUnanchoredIdle(wake: 'attention' | 'elapsed'): Promise<void> {
+  async function appendAutonomousLifeDirectionSearch(
+    trigger: 'yield_elapsed' | 'state_advisor_failed',
+  ): Promise<void> {
+    await commitChanges({
+      messages: [{
+        role: 'user',
+        content: AUTONOMOUS_LIFE_DIRECTION_SEARCH_CORRECTION,
+      }],
+    })
+    log.info({ trigger }, 'autonomous_life_direction_search_appended')
+  }
+
+  async function recordUnanchoredIdle(
+    wake: 'attention' | 'elapsed',
+    source: 'yield' | 'other' = 'other',
+  ): Promise<void> {
     if (wake === 'attention') {
       consecutiveUnanchoredIdleRounds = 0
       return
@@ -1177,6 +1201,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     if (stopRequested) return
 
     consecutiveUnanchoredIdleRounds++
+    if (source === 'yield' && consecutiveUnanchoredIdleRounds === 1) {
+      await appendAutonomousLifeDirectionSearch('yield_elapsed')
+    }
     if (
       consecutiveUnanchoredIdleRounds < autonomy.stateAdvisorAfterIdleRounds
       || !deps.stateAdvisor
@@ -1216,7 +1243,16 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         state: assessment.state,
       }, 'state_advisor_advice_appended')
     } catch (error) {
-      log.warn({ error, observedIdleRounds }, 'state_advisor_failed')
+      idleBackoffLevel = 0
+      log.warn({ err: error, observedIdleRounds }, 'state_advisor_failed')
+      try {
+        await appendAutonomousLifeDirectionSearch('state_advisor_failed')
+      } catch (fallbackError) {
+        log.error(
+          { err: fallbackError, observedIdleRounds },
+          'state_advisor_fallback_append_failed',
+        )
+      }
     }
   }
 

@@ -2714,6 +2714,119 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.deepEqual(waits, [100, 200, 400, 400])
   })
 
+  test('one elapsed unanchored yield appends a bounded autonomous-life direction search', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('已有上下文')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'bootstrap' })
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
+    let llmCalls = 0
+    let sawDirectionSearch = false
+    let agent: ReturnType<typeof createBotLoopAgent>
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat(input) {
+          llmCalls++
+          if (llmCalls === 2) {
+            sawDirectionSearch = input.messages.some(message => (
+              message.role === 'user'
+              && message.content.includes('"code":"autonomous_life_direction_search_required"')
+              && message.content.includes('"name":"autonomous_life"')
+            ))
+            await agent.stop()
+          }
+          return {
+            content: '',
+            toolCalls: llmCalls === 1
+              ? [{ id: 'yield-1', name: 'yield', args: {} }]
+              : [],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools({
+        yield: async () => ({
+          content: '{"ok":true,"status":"yielded"}',
+          outcome: { ok: true, code: 'yielded', progress: false, continuation: 'stop' },
+        }),
+      }),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        idleWaitMs: 100,
+        maxIdleWaitMs: 400,
+        async waitForAttentionOrTimeout() {
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCalls, 2)
+    assert.equal(sawDirectionSearch, true)
+  })
+
+  test('state-advisor failure resets idle backoff and appends a safe direction-search fallback', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage('近期仍有真实线索')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    eventQueue.enqueue({ type: 'bootstrap' })
+    const waits: number[] = []
+    const { repo, loader } = makeMockLedgerHarness(ctx.getSnapshot().messages)
+    let agent: ReturnType<typeof createBotLoopAgent>
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+        model: 'mock',
+        contextWindowTokens: 200_000,
+      }]),
+      tools: makeMockTools(),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      stateAdvisor: {
+        async evaluate() {
+          throw new Error('advisor returned empty output after retry')
+        },
+      },
+      autonomy: {
+        idleWaitMs: 100,
+        maxIdleWaitMs: 400,
+        stateAdvisorAfterIdleRounds: 1,
+        async waitForAttentionOrTimeout(_queue, timeoutMs) {
+          waits.push(timeoutMs)
+          if (waits.length === 2) await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.deepEqual(waits, [100, 100])
+    assert.equal(
+      ctx.getSnapshot().messages.some(message => (
+        message.role === 'user'
+        && message.content.includes('"code":"autonomous_life_direction_search_required"')
+      )),
+      true,
+    )
+  })
+
   test('three unanchored idle waits can append one concrete state-advisor thought', async () => {
     const ctx = createAgentContext()
     ctx.appendUserMessage('刚才讨论了一篇关于长期记忆边界的文章')

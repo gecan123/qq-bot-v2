@@ -6,7 +6,13 @@ import { renderUntrustedTranscript } from './untrusted-transcript.js'
 
 const MAX_RECENT_MESSAGES = 60
 const MAX_TRANSCRIPT_CHARS = 30_000
-const DEFAULT_TIMEOUT_MS = 45_000
+const MAX_OUTPUT_ATTEMPTS = 2
+export const AGENT_STATE_ADVISOR_MAX_TIMEOUT_MS = 60 * 60_000
+const DEFAULT_TIMEOUT_MS = AGENT_STATE_ADVISOR_MAX_TIMEOUT_MS
+const OUTPUT_RETRY_MESSAGE = JSON.stringify({
+  event: 'state_advisor_output_retry',
+  instruction: '上一次调用没有形成合法的状态 JSON。继续完成思考，只在普通正文中返回规定 JSON，不要 Markdown 或额外文字。',
+})
 
 const assessmentSchema = z.discriminatedUnion('state', [
   z.object({
@@ -53,7 +59,10 @@ export function createAgentStateAdvisor(input: {
   getMessages: () => AgentMessage[]
   timeoutMs?: number
 }): AgentStateAdvisor {
-  const timeoutMs = Math.max(1, input.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+  const timeoutMs = Math.min(
+    AGENT_STATE_ADVISOR_MAX_TIMEOUT_MS,
+    Math.max(1, input.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+  )
   return {
     async evaluate({ consecutiveIdleRounds }) {
       const messages = input.getMessages().slice(-MAX_RECENT_MESSAGES)
@@ -65,37 +74,86 @@ export function createAgentStateAdvisor(input: {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), timeoutMs)
       try {
-        const output = await observeLlmCall({
-          llm: input.llm,
-          request: {
-            systemPrompt: `${input.systemPrompt}\n\n${STATE_ADVISOR_INSTRUCTION}`,
-            messages: [
-              { role: 'user', content: transcript },
-              {
-                role: 'user',
-                content: JSON.stringify({
-                  event: 'state_advisor_check',
-                  trigger: 'consecutive_unanchored_idle',
-                  consecutiveIdleRounds,
-                  instruction: '根据上面的近期历史，只返回规定 JSON。',
-                }),
-              },
-            ],
-            tools: [],
-            maxOutputTokens: 300,
-            signal: controller.signal,
+        const requestMessages: AgentMessage[] = [
+          { role: 'user', content: transcript },
+          {
+            role: 'user',
+            content: JSON.stringify({
+              event: 'state_advisor_check',
+              trigger: 'consecutive_unanchored_idle',
+              consecutiveIdleRounds,
+              instruction: '根据上面的近期历史，只返回规定 JSON。',
+            }),
           },
-          context: {
-            operation: 'agent.state_advisor',
-            actor: 'state_advisor',
-          },
-        })
-        return assessmentSchema.parse(JSON.parse(output.content.trim()))
+        ]
+        let lastOutputError: AgentStateAdvisorOutputError | null = null
+        for (let attempt = 1; attempt <= MAX_OUTPUT_ATTEMPTS; attempt++) {
+          const output = await observeLlmCall({
+            llm: input.llm,
+            request: {
+              systemPrompt: `${input.systemPrompt}\n\n${STATE_ADVISOR_INSTRUCTION}`,
+              messages: attempt === 1
+                ? requestMessages
+                : [...requestMessages, { role: 'user', content: OUTPUT_RETRY_MESSAGE }],
+              tools: [],
+              signal: controller.signal,
+            },
+            context: {
+              operation: 'agent.state_advisor',
+              actor: 'state_advisor',
+            },
+          })
+          try {
+            return parseAssessmentOutput(output.content, output.stopReason)
+          } catch (error) {
+            if (!(error instanceof AgentStateAdvisorOutputError)) throw error
+            lastOutputError = error
+            if (attempt === MAX_OUTPUT_ATTEMPTS || controller.signal.aborted) throw error
+          }
+        }
+        throw lastOutputError ?? new AgentStateAdvisorOutputError('状态顾问没有产生可解析输出')
       } finally {
         clearTimeout(timer)
       }
     },
   }
+}
+
+class AgentStateAdvisorOutputError extends Error {
+  constructor(message: string, options: { cause?: unknown } = {}) {
+    super(message, options)
+    this.name = 'AgentStateAdvisorOutputError'
+  }
+}
+
+function parseAssessmentOutput(
+  content: string,
+  stopReason: string | undefined,
+): AgentStateAssessment {
+  const trimmed = content.trim()
+  if (trimmed.length === 0) {
+    throw new AgentStateAdvisorOutputError(
+      `状态顾问正文为空（stopReason=${stopReason ?? 'unknown'}）`,
+    )
+  }
+  let parsedJson: unknown
+  try {
+    parsedJson = JSON.parse(trimmed)
+  } catch (cause) {
+    throw new AgentStateAdvisorOutputError(
+      `状态顾问没有返回合法 JSON（stopReason=${stopReason ?? 'unknown'}）`,
+      { cause },
+    )
+  }
+  const parsed = assessmentSchema.safeParse(parsedJson)
+  if (!parsed.success) {
+    throw new AgentStateAdvisorOutputError(
+      `状态顾问 JSON 不符合 schema：${parsed.error.issues.map(issue => (
+        `${issue.path.join('.') || '<root>'}: ${issue.message}`
+      )).join('; ')}`,
+    )
+  }
+  return parsed.data
 }
 
 export function renderAgentStateAdvice(assessment: Exclude<

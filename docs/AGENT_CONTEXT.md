@@ -59,7 +59,7 @@
 - `mailbox_handled` 只表示这批入站已经回应，不表示回应中承诺的工作已完成。`send_message.work=continue` 只在进程内为下一轮保留短期行动锚点，不跨重启；`work=goal_progress` 必须绑定当前 active Goal 且其 `currentCommitment` 非空，否则 before-tool hook 以 `work_commitment_required` 拒绝外发。进度消息可以关闭 mailbox 防重，长期行动锚点仍由 Goal revision/continuation 契约跨轮与跨重启保留。
 - owner 和 self Goal 的 `complete` 在状态写入前各执行一次独立、无工具 LLM 验收。judger 只读取当前 canonical projection：优先从当前 goalId 首次出现处截取，marker 已被 compaction 移出时使用完整 projection；transcript 包在 untrusted envelope 中，不能从日志、Goal side table、Memory 或其他可变 side state 重建证据。
 - 只有严格解析出的 `{ok:true}` 才允许调用 `GoalStore.complete()`；`ok:false`、provider 或协议失败都不改变 Goal 状态，同一次尝试不自动重试。拒绝或不可用原因只通过正常 `goal` tool result 进入 ledger；judger 不决定 blocker，也不创建第二个 Agent。
-- 空闲状态顾问同样只读取有界的 canonical projection，且没有工具、运行状态或 ledger 写权限。`healthy_rest` 和失败结果不追加任何消息；只有严格解析出的 `directionless` / `anxiety_loop` 结果由 Runtime Host append 一条 `event=agent_state_advice`，提交后才成为可 replay 的 LLM history。该消息明确是可放弃的念头或建议，不是 Goal、外部命令或新的权威状态。
+- 空闲状态顾问同样只读取有界的 canonical projection，且没有工具、运行状态或 ledger 写权限。顾问调用不施加额外输出 token 上限，最多运行一小时；空正文、截断或非法 JSON 在同一时间预算内重试一次。`healthy_rest` 不追加消息；严格解析出的 `directionless` / `anxiety_loop` 由 Runtime Host append 一条 `event=agent_state_advice`。顾问最终失败时，Runtime Host 不把错误或不可信输出写入 history，只复位进程内 idle backoff，并 append 一条固定 `event=runtime_correction, code=autonomous_life_direction_search_required` 的方向搜索兜底。受控消息提交后才成为可 replay 的 LLM history，且不是 Goal、外部命令或新的权威状态。
 - 不实现 pi 风格 session tree。QQ 外发、mailbox cursor、Goal revision 和工具副作用需要一条可审计的线性时间线；分叉历史会让“哪条分支已发送/已处理”失去唯一答案。并行工作只通过有明确类型和边界的 background task 完成，结果回到主 ledger。
 
 ## 代码地图

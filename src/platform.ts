@@ -18,6 +18,7 @@ const includeWebAdmin = process.argv.includes('--web')
 const compiled = import.meta.url.includes('/dist/platform.js')
 const root = process.cwd()
 const logDir = resolve(root, 'logs/processes')
+const WEB_ADMIN_URL = 'http://127.0.0.1:20030/'
 mkdirSync(logDir, { recursive: true })
 
 const env: NodeJS.ProcessEnv = {
@@ -59,7 +60,7 @@ const specs: ServiceSpec[] = [
   },
   ...(includeWebAdmin ? [{
     name: 'web-admin',
-    healthUrl: 'http://127.0.0.1:20030/',
+    healthUrl: WEB_ADMIN_URL,
     ...webAdminLaunch,
   }] : []),
 ]
@@ -86,6 +87,7 @@ try {
     process.stdout.write(
       `[platform] started ${[...children.keys()].join(', ')}; logs: ${logDir}\n`,
     )
+    if (includeWebAdmin) process.stdout.write(`[platform] WebAdmin: ${WEB_ADMIN_URL}\n`)
   }
 } catch (error) {
   process.stderr.write(`[platform] startup failed: ${String(error)}\n`)

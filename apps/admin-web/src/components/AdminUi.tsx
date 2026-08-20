@@ -1,4 +1,4 @@
-import { AlertTriangle, Clock3, LoaderCircle, Radio } from 'lucide-react'
+import { AlertTriangle, Clock3, LoaderCircle, Radio, Search, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { formatTimestamp } from '../lib/format.js'
 
@@ -73,6 +73,21 @@ export function StatusBadge({ children, tone = 'neutral' }: {
 
 export function EmptyState({ children }: { children: ReactNode }) {
   return <div className="empty-state"><span className="empty-state-dot" />{children}</div>
+}
+
+export function SearchInput({ value, onChange, label, placeholder = '搜索' }: {
+  value: string
+  onChange(value: string): void
+  label: string
+  placeholder?: string
+}) {
+  return (
+    <label className="filter-search">
+      <Search size={15} aria-hidden="true" />
+      <input aria-label={label} value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} />
+      {value && <button type="button" aria-label={`清空${label}`} onClick={() => onChange('')}><X size={14} /></button>}
+    </label>
+  )
 }
 
 export function WarningList({ warnings }: { warnings: string[] }) {

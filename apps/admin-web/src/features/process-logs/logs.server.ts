@@ -46,7 +46,7 @@ export async function loadProcessLogSnapshot(
   const selected = sources.find(source => source.id === selectedSource)!
   if (!selected.exists) {
     return processLogSnapshotSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: 2,
       generatedAt: now.toISOString(),
       selectedSource,
       sources,
@@ -79,7 +79,7 @@ export async function loadProcessLogSnapshot(
       ...(parsed.lineLimitTruncated ? [`页面只显示最后 ${MAX_TAIL_LINES} 行。`] : []),
     ]
     return processLogSnapshotSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: 2,
       generatedAt: now.toISOString(),
       selectedSource,
       sources,
@@ -90,7 +90,7 @@ export async function loadProcessLogSnapshot(
     })
   } catch {
     return processLogSnapshotSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: 2,
       generatedAt: now.toISOString(),
       selectedSource,
       sources,

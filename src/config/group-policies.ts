@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export const GROUP_POLICIES_PATH = './prompts/groups.md'
 export const GROUP_PARTICIPATION_MODES = ['mentions', 'selective', 'active'] as const
@@ -96,9 +97,26 @@ export function parseGroupPoliciesMarkdown(
   return policies.sort((left, right) => left.id - right.id)
 }
 
-export function loadGroupPolicies(filePath = GROUP_POLICIES_PATH): readonly GroupPolicy[] {
-  const resolved = resolve(filePath)
+export function loadGroupPolicies(filePath?: string): readonly GroupPolicy[] {
+  const resolved = filePath == null
+    ? resolveDefaultGroupPoliciesPath()
+    : resolve(filePath)
   return parseGroupPoliciesMarkdown(readFileSync(resolved, 'utf8'), resolved)
+}
+
+function resolveDefaultGroupPoliciesPath(): string {
+  const moduleRelativeUrl = new URL('../../prompts/groups.md', import.meta.url)
+  if (moduleRelativeUrl.protocol === 'file:') return fileURLToPath(moduleRelativeUrl)
+
+  let directory = process.cwd()
+  while (true) {
+    const candidate = resolve(directory, GROUP_POLICIES_PATH)
+    if (existsSync(candidate)) return candidate
+
+    const parent = dirname(directory)
+    if (parent === directory) return resolve(process.cwd(), GROUP_POLICIES_PATH)
+    directory = parent
+  }
 }
 
 export function groupPolicyAllowsAmbient(

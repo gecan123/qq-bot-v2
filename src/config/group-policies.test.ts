@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
+import { cwd } from 'node:process'
 import { describe, test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 import {
   groupPolicyAllowsAmbient,
+  loadGroupPolicies,
   parseGroupPoliciesMarkdown,
 } from './group-policies.js'
 
@@ -43,6 +46,20 @@ describe('group policies', () => {
 
   test('allows a document with no group sections for private-chat-only mode', () => {
     assert.deepEqual(parseGroupPoliciesMarkdown('# 群聊配置\n\n暂无监听群。'), [])
+  })
+
+  test('loads the default policy file independently of the process working directory', () => {
+    const originalCwd = cwd()
+    const repositoryPolicyPath = fileURLToPath(new URL('../../prompts/groups.md', import.meta.url))
+    const adminWebDirectory = fileURLToPath(new URL('../../apps/admin-web/', import.meta.url))
+    const expected = loadGroupPolicies(repositoryPolicyPath)
+
+    try {
+      process.chdir(adminWebDirectory)
+      assert.deepEqual(loadGroupPolicies(), expected)
+    } finally {
+      process.chdir(originalCwd)
+    }
   })
 
   test('rejects invalid headings, ids, duplicate groups, missing modes, and unknown modes', () => {

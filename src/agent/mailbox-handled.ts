@@ -1,6 +1,5 @@
 import type { AgentMessage } from './agent-context.types.js'
-
-const MAILBOX_KEY_PATTERN = /^qq_(?:group|private):\d+$/
+import { isMailboxKey } from './mailbox.js'
 
 export interface MailboxAttentionCursorState {
   disclosedThroughRowId: number
@@ -95,7 +94,7 @@ export function hasPendingPrivateMailboxAttention(
   messages: readonly AgentMessage[],
 ): boolean {
   return Object.entries(captureMailboxAttentionState(messages)).some(([mailbox, cursors]) => (
-    mailbox.startsWith('qq_private:')
+    (mailbox.startsWith('qq_private:') || mailbox.includes(':private:'))
     && cursors.disclosedThroughRowId > cursors.handledThroughRowId
   ))
 }
@@ -191,10 +190,6 @@ function assertMailboxKey(mailbox: string): void {
   if (!isMailboxKey(mailbox)) {
     throw new TypeError(`invalid mailbox key: ${mailbox}`)
   }
-}
-
-function isMailboxKey(value: unknown): value is string {
-  return typeof value === 'string' && MAILBOX_KEY_PATTERN.test(value)
 }
 
 function isPositiveSafeInteger(value: unknown): value is number {

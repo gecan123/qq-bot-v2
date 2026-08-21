@@ -210,7 +210,7 @@ function renderEntry(entry: MemoryEntry): string {
     `aliases: ${JSON.stringify(entry.aliases)}`,
     ...(entry.validUntil ? [`validUntil: ${entry.validUntil}`] : []),
     `supersedes: ${JSON.stringify(entry.supersedes)}`,
-    ...(entry.sourceMessageIds.length > 0 ? [`sourceMessageIds: ${entry.sourceMessageIds.join(',')}`] : []),
+    ...(entry.sourceMessageRowIds.length > 0 ? [`sourceMessageRowIds: ${entry.sourceMessageRowIds.join(',')}`] : []),
     ...(entry.assertedByIds.length > 0 ? [`assertedByIds: ${entry.assertedByIds.join(',')}`] : []),
     ...(entry.evidenceKind ? [`evidenceKind: ${entry.evidenceKind}`] : []),
     ...(entry.memoryKind ? [`memoryKind: ${entry.memoryKind}`] : []),

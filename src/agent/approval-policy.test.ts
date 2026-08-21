@@ -26,9 +26,10 @@ function setup() {
     now: () => new Date('2026-07-12T00:00:00.000Z'),
     loadEvidence: async () => ({
       rowId: 8,
-      sceneKind: 'qq_private',
-      sceneExternalId: '123',
-      senderId: 123n,
+      conversation: {
+        platform: 'qq' as const, accountId: '456', kind: 'private' as const, externalId: '123',
+      },
+      senderExternalId: '123',
       text: '批准 approval-1',
       sentAt: new Date('2026-07-12T00:00:01.000Z'),
     }),

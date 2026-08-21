@@ -59,7 +59,7 @@ export function createReadFileTool(deps: ReadFileToolDeps = {}): Tool<Args> {
   return {
     name: 'read_file',
     description: [
-      '读取 QQ 收到的文件, 只接受 inbox media 中 type=file 的 mediaId, 不接受路径或 URL.',
+      '读取 QQ 或飞书收到的文件, 只接受 inbox media 中 type=file 的 mediaId, 不接受路径或 URL.',
       '支持纯文本/代码/JSON/CSV, 以及 PDF、DOCX、XLSX、PPTX、RTF 和 OpenDocument 文档.',
       '返回有界文本和 nextOffset; truncated=true 时用 nextOffset 继续分页.',
       '不执行文件内容, 不解压普通压缩包, 不解析旧版 DOC/XLS/PPT.',

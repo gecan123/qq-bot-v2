@@ -224,7 +224,7 @@ export interface WriteMemoryInput {
   id?: string
   title?: string
   content: string
-  sourceMessageIds?: number[]
+  sourceMessageRowIds?: number[]
 }
 
 export interface SearchMemoryInput {
@@ -438,8 +438,8 @@ function replaceUpdatedAt(raw: string, updatedAt: string): string {
 }
 
 function renderBullet(now: Date, input: WriteMemoryInput): string {
-  const suffix = input.sourceMessageIds?.length
-    ? ` (sourceMessageIds: ${input.sourceMessageIds.join(',')})`
+  const suffix = input.sourceMessageRowIds?.length
+    ? ` (sourceMessageRowIds: ${input.sourceMessageRowIds.join(',')})`
     : ''
   return `- ${now.toISOString()}: ${input.content.trim()}${suffix}\n`
 }
@@ -725,7 +725,7 @@ const argsSchema = z.discriminatedUnion('action', [
     id: idSchema.optional().describe('person/group 需要: QQ 号或群号. topic/self 通常不需要.'),
     title: z.string().trim().min(1).max(80).optional().describe('self/topic 可选: 文件主题标题.'),
     content: z.string().trim().min(1).max(500).describe('要记下来的内容. ≤500 字, 用自己的话写, 一条记一件事.'),
-    sourceMessageIds: z.array(z.number().int()).optional().describe('可选: 来源 Message.id 列表, 仅供人工排查.'),
+    sourceMessageRowIds: z.array(z.number().int()).optional().describe('可选: 来源 Message.id 列表, 仅供人工排查.'),
   }),
   z.object({
     action: z.literal('search').describe('搜索长期记忆.'),
@@ -770,7 +770,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
               id: args.id == null ? undefined : String(args.id),
               title: args.title,
               content: args.content,
-              sourceMessageIds: args.sourceMessageIds,
+              sourceMessageRowIds: args.sourceMessageRowIds,
             },
           )
           log.info({
@@ -778,7 +778,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
             scope: result.scope,
             title: result.title,
             contentLength: args.content.length,
-            sourceCount: args.sourceMessageIds?.length ?? 0,
+            sourceCount: args.sourceMessageRowIds?.length ?? 0,
           }, 'memory_written')
           return { content: JSON.stringify(result) }
         }

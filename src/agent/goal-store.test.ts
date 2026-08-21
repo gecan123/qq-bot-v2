@@ -437,11 +437,11 @@ describe('goal control and store', () => {
       query = args
       return [
         {
-          id: 11, senderId: 100n, sceneExternalId: '100',
+          rowId: 11, senderExternalId: '100', conversationExternalId: '100',
           searchText: '/goal 完成离线恢复', resolvedText: '/goal 完成离线恢复',
         },
         {
-          id: 12, senderId: 100n, sceneExternalId: '100',
+          rowId: 12, senderExternalId: '100', conversationExternalId: '100',
           searchText: '/goal pause', resolvedText: '/goal pause',
         },
       ]
@@ -450,7 +450,8 @@ describe('goal control and store', () => {
       const store = createInMemoryGoalStore()
       const result = await replayOwnerGoalCommands({
         owner: { qq: 100, name: 'owner' },
-        mailboxCursors: { 'qq_private:100': 10 },
+        selfNumber: 999,
+        mailboxCursors: { 'qq:999:private:100': 10 },
         legacyLastWakeAt: null,
         goalStore: store,
       })
@@ -459,7 +460,7 @@ describe('goal control and store', () => {
       assert.equal((await store.get())?.objective, '完成离线恢复')
       assert.equal((await store.get())?.status, 'paused')
       assert.equal(
-        (query as { where: { id: { gt: number } } }).where.id.gt,
+        (query as { where: { rowId: { gt: number } } }).where.rowId.gt,
         10,
       )
     } finally {

@@ -43,7 +43,7 @@ export function renderBotEvent(event: BotEvent): string | null {
     })
   }
 
-  if (event.type === 'napcat_message') {
+  if (event.type === 'chat_message' || event.type === 'napcat_message') {
     return renderMailboxNotification(mailboxKeyForEvent(event)!, [event])
   }
 

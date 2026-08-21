@@ -36,7 +36,7 @@
 - 每次最多三条。
 - `scope` 只允许 `self|person|group|topic`。
 - person/group 必须提供明确目标 ID；topic 必须提供稳定 title。
-- 有可用的入站 Message row ID 时保留为 `sourceMessageIds`。
+- 有可用的入站 Message row ID 时保留为 `sourceMessageRowIds`。
 - 内容用 Luna 自己的话压缩表达，不复制长聊天原文。
 - 普通寒暄、一次性饮食天气、未证实传闻、临时安排和研究过程不写长期 Memory。
 - store 自身的内容去重、路径约束、revision/CAS 和 writer 串行化继续生效。

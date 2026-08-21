@@ -79,7 +79,7 @@ const MAINTENANCE_SYSTEM_PROMPT = `你是 Luna 的长期记忆整理器，只维
 - 当前输入只属于一个文件和一个 context；stable 只表示该 context 内较稳定，绝不等于跨群人物核心。不得把场景观察提升到其他人物文件，也不得把个人职业、偏好、身份合并成群体记忆。
 - scope=group 时只保留群体整体的规则、节奏、共同话题、文化、历史或结构；scope=person 时只整理该人物 core 或当前群/私聊场景。legacy_unscoped 只允许保守整理和标疑，不得自动升级为 core。
 - 一条 stable 只表达一个可复用结论，不写“今日总结”“记忆库存”或机械工具流水。
-- promote 至少需要两个不同 sourceMessageIds；单一来源不得自动晋升。
+- promote 至少需要两个不同 sourceMessageRowIds；单一来源不得自动晋升。
 - 不同主题不得为了减少条数而硬合并；互相否定时必须 mark_disputed，不得 merge 成确定事实。
 - disputed、superseded 不参加普通 promote/merge/discard；stable 不得 discard。
 - merge 是替代原条目，不要保留“原文 + 摘要 + 摘要的总结”。
@@ -311,7 +311,7 @@ function validateMaintenanceOperations(
         if (entry.tier !== 'recent' || entry.status !== 'active') {
           throw new Error(`reviewer attempted to promote a non-recent-active memory entry: ${id}`)
         }
-        if (new Set(entry.sourceMessageIds).size < 2) {
+        if (new Set(entry.sourceMessageRowIds).size < 2) {
           throw new Error(`reviewer attempted to promote memory without two distinct sources: ${id}`)
         }
       }

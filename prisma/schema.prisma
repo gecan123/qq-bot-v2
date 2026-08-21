@@ -7,34 +7,38 @@ datasource db {
   provider = "postgresql"
 }
 
-/// 群消息 + 私聊事实账本。NapCat 入站 → upsert。bot 永远只读不改写。
-/// resolvedText 在媒体描述完成后回填一次（一次性冻结）。
-///
-/// sceneKind = 'qq_group':   groupId 必填, sceneExternalId = ''
-/// sceneKind = 'qq_private': groupId = null, sceneExternalId = String(peerId)
-/// 见 src/database/messages.ts 入库前 invariant assert。
+/// QQ + 飞书共享的追加式聊天事实账本。
+/// eventKind = message | edit | recall；同一平台事件通过 eventExternalId 幂等。
+/// resolvedText 只允许媒体描述 worker 在为空时冻结一次。
 model Message {
-  id                  Int       @id @default(autoincrement())
-  sceneKind           String    @default("qq_group") @map("scene_kind") @db.VarChar(32)
-  sceneExternalId     String    @default("") @map("scene_external_id") @db.VarChar(191)
-  groupId             BigInt?   @map("group_id")
-  groupName           String?   @map("group_name") @db.VarChar(255)
-  mediaReferenceIds   String[]  @default([]) @map("media_reference_ids")
-  messageId           BigInt    @map("message_id")
-  senderId            BigInt    @map("sender_id")
-  senderNickname      String?   @map("sender_nickname") @db.VarChar(100)
-  senderGroupNickname String?   @map("sender_group_nickname") @db.VarChar(100)
-  content             Json      @map("content")
-  rawContent          Json?     @map("raw_content")
-  rawMessage          String?   @map("raw_message") @db.Text
-  searchText          String    @default("") @map("search_text") @db.Text
-  resolvedText        String?   @map("resolved_text") @db.Text
-  sentAt              DateTime? @map("sent_at") @db.Timestamptz(3)
-  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  rowId                  Int       @id @default(autoincrement()) @map("row_id")
+  eventKind              String    @map("event_kind") @db.VarChar(16)
+  eventExternalId        String    @map("event_external_id") @db.VarChar(255)
+  platform               String    @db.VarChar(16)
+  accountId              String    @map("account_id") @db.VarChar(191)
+  conversationKind       String    @map("conversation_kind") @db.VarChar(16)
+  conversationExternalId String    @map("conversation_external_id") @db.VarChar(255)
+  conversationName       String?   @map("conversation_name") @db.VarChar(255)
+  mediaReferenceIds      String[]  @default([]) @map("media_reference_ids")
+  messageExternalId      String    @map("message_external_id") @db.VarChar(255)
+  replyToExternalId      String?   @map("reply_to_external_id") @db.VarChar(255)
+  rootExternalId         String?   @map("root_external_id") @db.VarChar(255)
+  threadExternalId       String?   @map("thread_external_id") @db.VarChar(255)
+  senderExternalId       String    @map("sender_external_id") @db.VarChar(255)
+  senderName             String?   @map("sender_name") @db.VarChar(100)
+  senderConversationName String?   @map("sender_conversation_name") @db.VarChar(100)
+  content                Json      @map("content")
+  rawContent             Json?     @map("raw_content")
+  rawMessage             String?   @map("raw_message") @db.Text
+  searchText             String    @default("") @map("search_text") @db.Text
+  resolvedText           String?   @map("resolved_text") @db.Text
+  sentAt                 DateTime? @map("sent_at") @db.Timestamptz(3)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  @@unique([sceneKind, sceneExternalId, messageId])
-  @@index([groupId, createdAt(sort: Desc)])
-  @@index([sceneKind, sceneExternalId, createdAt(sort: Desc)])
+  @@unique([platform, accountId, eventExternalId])
+  @@index([platform, accountId, conversationKind, conversationExternalId, rowId])
+  @@index([platform, accountId, messageExternalId, rowId])
+  @@index([platform, accountId, senderExternalId, rowId])
   @@map("messages")
 }
 
@@ -87,7 +91,7 @@ model BotAgentRuntimeState {
   inboxReadCursors       Json      @map("inbox_read_cursors")
   mailboxContinuity      Json      @map("mailbox_continuity")
   goalRevision           Int       @map("goal_revision")
-  qqConversationFocus    Json?     @map("qq_conversation_focus")
+  conversationFocus      Json?     @map("conversation_focus")
   lastWakeAt             DateTime? @map("last_wake_at") @db.Timestamptz(6)
   ledgerHeadEntryId      BigInt?   @map("ledger_head_entry_id")
   updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)

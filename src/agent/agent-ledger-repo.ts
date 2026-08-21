@@ -1,5 +1,5 @@
 import { prisma } from '../database/client.js'
-import type { DurableAgentMessage, QqConversationFocus } from './agent-context.types.js'
+import type { DurableAgentMessage, ConversationFocus } from './agent-context.types.js'
 import {
   AGENT_LEDGER_SCHEMA_VERSION,
   type AgentLedgerEntry,
@@ -32,7 +32,7 @@ interface RuntimeStorageRow {
   inboxReadCursors: unknown
   mailboxContinuity: unknown
   goalRevision: number
-  qqConversationFocus: unknown
+  conversationFocus: unknown
   lastWakeAt: Date | null
   ledgerHeadEntryId: bigint | null
   updatedAt: Date
@@ -78,7 +78,7 @@ export interface AgentRuntimePatch {
   inboxReadCursors?: InboxReadCursors
   mailboxContinuity?: MailboxContinuityState
   goalRevision?: number
-  qqConversationFocus?: QqConversationFocus
+  conversationFocus?: ConversationFocus
   lastWakeAt?: Date | null
 }
 
@@ -280,7 +280,7 @@ async function loadRuntimeState(client: AgentLedgerPersistenceClient): Promise<A
     inboxReadCursors: row.inboxReadCursors,
     mailboxContinuity: row.mailboxContinuity,
     goalRevision: row.goalRevision,
-    qqConversationFocus: row.qqConversationFocus,
+    conversationFocus: row.conversationFocus,
     lastWakeAt: row.lastWakeAt,
     ledgerHeadEntryId: row.ledgerHeadEntryId,
   })
@@ -304,8 +304,8 @@ async function persistRuntimeState(
   if (patch?.inboxReadCursors !== undefined) data.inboxReadCursors = next.inboxReadCursors as never
   if (patch?.mailboxContinuity !== undefined) data.mailboxContinuity = next.mailboxContinuity as never
   if (patch?.goalRevision !== undefined) data.goalRevision = next.goalRevision
-  if (patch && Object.hasOwn(patch, 'qqConversationFocus')) {
-    data.qqConversationFocus = next.qqConversationFocus as never
+  if (patch && Object.hasOwn(patch, 'conversationFocus')) {
+    data.conversationFocus = next.conversationFocus as never
   }
   if (patch && Object.hasOwn(patch, 'lastWakeAt')) data.lastWakeAt = next.lastWakeAt
   const row = await client.botAgentRuntimeState.update({
@@ -318,7 +318,7 @@ async function persistRuntimeState(
     inboxReadCursors: row.inboxReadCursors,
     mailboxContinuity: row.mailboxContinuity,
     goalRevision: row.goalRevision,
-    qqConversationFocus: row.qqConversationFocus,
+    conversationFocus: row.conversationFocus,
     lastWakeAt: row.lastWakeAt,
     ledgerHeadEntryId: row.ledgerHeadEntryId,
   })
@@ -353,8 +353,8 @@ function definedRuntimePatch(patch: AgentRuntimePatch | undefined): AgentRuntime
   if (patch.inboxReadCursors !== undefined) defined.inboxReadCursors = patch.inboxReadCursors
   if (patch.mailboxContinuity !== undefined) defined.mailboxContinuity = patch.mailboxContinuity
   if (patch.goalRevision !== undefined) defined.goalRevision = patch.goalRevision
-  if (Object.hasOwn(patch, 'qqConversationFocus')) {
-    defined.qqConversationFocus = patch.qqConversationFocus
+  if (Object.hasOwn(patch, 'conversationFocus')) {
+    defined.conversationFocus = patch.conversationFocus
   }
   if (Object.hasOwn(patch, 'lastWakeAt')) defined.lastWakeAt = patch.lastWakeAt
   return defined

@@ -2,7 +2,7 @@
 
 ## 背景
 
-当前 `memory` 工具是 `action=write/search` 的统一入口，底层转发到 `remember` / `recall`，并通过 Prisma `memory_entries` 表保存 `{targetKind, targetId, content, sourceMessageIds, createdAt}`。这个模型适合“关于某个人/某个群的私人笔记”，但不适合 Luna 自己做事时形成的长期记忆，例如工作偏好、项目线索、踩坑记录、阶段性经验和主题资料。
+当前 `memory` 工具是 `action=write/search` 的统一入口，底层转发到 `remember` / `recall`，并通过 Prisma `memory_entries` 表保存 `{targetKind, targetId, content, sourceMessageRowIds, createdAt}`。这个模型适合“关于某个人/某个群的私人笔记”，但不适合 Luna 自己做事时形成的长期记忆，例如工作偏好、项目线索、踩坑记录、阶段性经验和主题资料。
 
 本设计把 `memory` 从联系人/群聊备忘录升级为本地 Markdown 记忆库。第一步只替换存储和工具语义，不实现自动记忆提取、预取、Dream 反思或自动合并去重。
 

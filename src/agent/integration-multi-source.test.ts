@@ -1,305 +1,145 @@
-/**
- * End-to-end smoke test for MVP-2 multi-source flow:
- *
- *   group event A + private event from peer X + group event B
- *     → render-event labels each correctly
- *     → all QQ messages become priority-aware inbox notifications
- *     → LLM (mocked) opens the intended conversation
- *     → tool execution invokes send_message using the durable conversation focus
- *     → group/private cross-source events do NOT leak into each other
- */
 import assert from 'node:assert/strict'
-import { describe, test } from 'node:test'
+import { test } from 'node:test'
+import type { ConversationRef } from '../chat/conversation.js'
+import type { MessageDelivery } from '../messaging/message-delivery.js'
 import { createAgentContext } from './agent-context.js'
+import { createBotLoopAgent } from './bot-loop-agent.js'
+import type { ConversationSendPolicy } from './conversation-send-policy.js'
 import { InMemoryEventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
+import type { LlmCallOutput, LlmClient } from './llm-client.js'
 import { renderBotEvent } from './render-event.js'
-import { createBotLoopAgent } from './bot-loop-agent.js'
-import { createDeferredToolExecutor } from './tool.js'
-import { createSendMessageTool } from './tools/send-message.js'
-import { createQqConversationController, createQqConversationTool } from './tools/qq-conversation.js'
-import type { LlmClient, LlmCallOutput } from './llm-client.js'
 import { createTestAgentLedger } from './test-support/agent-ledger.js'
-import type { MessageSender } from '../messaging/message-sender.js'
-import type { SendNapcatResult } from '../messaging/napcat-sender.js'
-import type { SendTargetPolicy } from './send-target-policy.js'
+import { createDeferredToolExecutor } from './tool.js'
+import { createConversationController, createConversationTool } from './tools/conversation.js'
+import { createSendMessageTool } from './tools/send-message.js'
 
-interface RecordedSend {
-  fn: 'sendSegments'
-  args: unknown
+const qqPrivate: ConversationRef = {
+  platform: 'qq', accountId: '10000', kind: 'private', externalId: '20000',
+}
+const feishuPrivate: ConversationRef = {
+  platform: 'feishu', accountId: 'cli_1', kind: 'private', externalId: 'oc_owner',
 }
 
-function makeMockSender(): { sender: MessageSender; calls: RecordedSend[] } {
-  const calls: RecordedSend[] = []
-  const ok: SendNapcatResult = { success: true, attempts: 1, providerMessageId: 99 }
+function messageEvent(input: {
+  rowId: number
+  conversation: ConversationRef
+  sender: string
+}): Extract<BotEvent, { type: 'chat_message' }> {
   return {
-    calls,
-    sender: {
-      async sendSegments(args) {
-        calls.push({ fn: 'sendSegments', args })
-        return ok
-      },
-    },
+    type: 'chat_message',
+    eventKind: 'message',
+    messageRowId: input.rowId,
+    conversation: input.conversation,
+    messageExternalId: `message-${input.rowId}`,
+    senderExternalId: input.sender,
+    senderName: input.sender,
+    mentionedSelf: true,
+    sentAt: new Date(`2026-08-20T00:00:0${input.rowId}.000Z`),
+    renderedText: `hidden-${input.rowId}`,
   }
 }
 
-const allowAllTargets: SendTargetPolicy = {
-  async authorize() {
-    return { allowed: true }
-  },
-}
-
-function makeMockLlm(outputs: LlmCallOutput[]): LlmClient {
-  let i = 0
-  return {
-    async chat() {
-      const next = outputs[i] ?? outputs[outputs.length - 1]
-      i++
-      if (!next) throw new Error('mock LLM ran out of scripted outputs')
-      return next
-    },
-  }
-}
-
-function makeQqTools(context: ReturnType<typeof createAgentContext>, sender: MessageSender) {
-  let focus = context.getSnapshot().qqConversationFocus
-  const conversations = createQqConversationController({
-    state: {
-      get: () => focus,
-      set: (next) => { focus = next },
-    },
-    groupIds: [111, 222],
-    async loadGroups() {
-      return [
-        { groupId: 111, groupName: '阳光厨房' },
-        { groupId: 222, groupName: '技术群' },
-      ]
-    },
-    async loadFriends() {
-      return [{ userId: 10001, nickname: 'Alice', remark: '' }]
-    },
-  })
-  const tools = createDeferredToolExecutor({
-    alwaysOnTools: [],
-    capabilities: [{
-      name: 'qq',
-      description: 'QQ conversations and sending',
-      tools: [
-        createQqConversationTool(conversations),
-        createSendMessageTool({ sender, targetPolicy: allowAllTargets, conversations }),
-      ],
-    }],
-  })
-  return {
-    tools,
-    getFocus: () => focus,
-    syncFocus: (next: typeof focus) => { focus = next },
-  }
-}
-
-function toolOutput(id: string, name: 'help' | 'invoke', args: Record<string, unknown>): LlmCallOutput {
+function toolOutput(id: string, tool: string, args: Record<string, unknown>): LlmCallOutput {
   return {
     content: '',
-    toolCalls: [{ id, name, args }],
+    toolCalls: [{ id, name: 'invoke', args: { tool, args } }],
     usage: { inputTokens: 100, cachedTokens: 80, outputTokens: 20 },
     model: 'mock',
     contextWindowTokens: 200_000,
   }
 }
 
-describe('MVP-2 integration: mixed group + private events through one agent loop', () => {
-  test('three events render as distinct mailbox notifications and a successful send appends its handled marker', async () => {
-    const ctx = createAgentContext()
-    const eventQueue = new InMemoryEventQueue<BotEvent>()
+test('QQ and Feishu events share one BotLoop, durable ledger and explicit focus', async () => {
+  const context = createAgentContext()
+  const eventQueue = new InMemoryEventQueue<BotEvent>()
+  eventQueue.enqueue(messageEvent({ rowId: 1, conversation: qqPrivate, sender: '20000' }))
+  eventQueue.enqueue(messageEvent({ rowId: 2, conversation: feishuPrivate, sender: 'ou_owner' }))
 
-    eventQueue.enqueue({
-      type: 'napcat_message',
-      messageRowId: 1,
-      groupId: 111,
-      groupName: '阳光厨房',
-      messageId: 1001,
-      senderId: 100,
-      senderNickname: '张三',
-      mentionedSelf: true,
-      sentAt: new Date('2026-05-04T01:00:00Z'),
-      renderedText: '在吗',
-    })
-    eventQueue.enqueue({
-      type: 'napcat_private_message',
-      messageRowId: 2,
-      peerId: 10001,
-      messageId: 2001,
-      senderId: 10001,
-      senderNickname: 'Alice',
-      mentionedSelf: true,
-      sentAt: new Date('2026-05-04T01:00:01Z'),
-      renderedText: '私聊问个事',
-    })
-    eventQueue.enqueue({
-      type: 'napcat_message',
-      messageRowId: 3,
-      groupId: 222,
-      groupName: '技术群',
-      messageId: 1002,
-      senderId: 200,
-      senderNickname: '李四',
-      mentionedSelf: false,
-      sentAt: new Date('2026-05-04T01:00:02Z'),
-      renderedText: '今天天气好',
-    })
+  const outputs = [
+    toolOutput('open-feishu', 'conversation', { action: 'open', target: feishuPrivate }),
+    toolOutput('send-feishu', 'send_message', {
+      message: '飞书回复', reply_to: 'om_2', work: { state: 'none' },
+    }),
+  ]
+  let outputIndex = 0
+  const llm: LlmClient = {
+    async chat() {
+      const output = outputs[outputIndex++]
+      if (!output) throw new Error('mock LLM ran out of outputs')
+      return output
+    },
+  }
 
-    // The model opens the exact mailbox conversation, then sends through invoke.
-    const llm = makeMockLlm([
-      toolOutput('open-group', 'invoke', {
-        tool: 'qq_conversation',
-        args: { action: 'open', target: { type: 'group', groupId: 111 } },
-      }),
-      toolOutput('send-group', 'invoke', {
-        tool: 'send_message',
-        args: { message: '在的', reply_to: 1001, work: { state: 'none' } },
-      }),
-    ])
-
-    const { sender, calls } = makeMockSender()
-    const qq = makeQqTools(ctx, sender)
-
-    const ledger = createTestAgentLedger()
-    const agent = createBotLoopAgent({
-      systemPrompt: 'integration test',
-      context: ctx,
-      eventQueue,
-      llm,
-      tools: qq.tools,
-      ledgerRepo: ledger.repo,
-      ledgerLoader: ledger.loader,
-      getQqConversationFocus: qq.getFocus,
-      syncQqConversationFocus: qq.syncFocus,
-      renderEvent: renderBotEvent,
-      eventDebounceMs: 0,
-      compactOptions: { reserveTokens: 0 },
-    })
-
-    await agent.runOnceForTest()
-    await agent.runOnceForTest()
-
-    const messages = ctx.getSnapshot().messages
-    assert.deepEqual(messages.map((message) => message.role), [
-      'user',
-      'user',
-      'user',
-      'assistant',
-      'tool',
-      'assistant',
-      'tool',
-      'user',
-    ])
-
-    const notificationMessages = messages.slice(0, 3)
-    assert.ok(notificationMessages.every((message) => message.role === 'user'))
-    const notifications = notificationMessages.map((message) => JSON.parse(message.content))
-    assert.deepEqual(notifications.map(({ data, priority }) => ({ mailbox: data.mailbox, priority })), [
-      { mailbox: 'qq_group:111', priority: 'high' },
-      { mailbox: 'qq_private:10001', priority: 'high' },
-      { mailbox: 'qq_group:222', priority: 'normal' },
-    ])
-    assert.equal(notifications[0]!.data.qqSource.groupName, '阳光厨房')
-    assert.equal(notifications[1]!.data.qqSource.senderName, 'Alice')
-    assert.equal(notifications[2]!.data.qqSource.groupName, '技术群')
-    assert.doesNotMatch(notificationMessages.map((message) => message.content).join('\n'), /在吗|私聊问个事|今天天气好/)
-
-    const handledMarker = messages[7]
-    assert.ok(handledMarker?.role === 'user')
-    assert.deepEqual(JSON.parse(handledMarker.content), {
-      event: 'mailbox_handled',
-      mailbox: 'qq_group:111',
-      throughRowId: 1,
-    })
-
-    assert.deepEqual(ctx.getSnapshot().qqConversationFocus, { type: 'group', groupId: 111 })
-    assert.deepEqual(ledger.canonical().runtimeState.qqConversationFocus, {
-      type: 'group',
-      groupId: 111,
-    })
-    // The invoked send_message tool should have used the unified segment sender, scoped to group 111.
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0]!.fn, 'sendSegments')
-    const args = calls[0]!.args as { target: { type: string; groupId: number }; segments: Array<{ type: string; data: Record<string, unknown> }> }
-    assert.deepEqual(args.target, { type: 'group', groupId: 111 })
-    assert.equal(args.segments[0]?.type, 'reply')
-    assert.equal(args.segments[0]?.data.id, '1001')
+  let focus: ConversationRef | null = null
+  const conversations = createConversationController({
+    state: { get: () => focus, set: (value) => { focus = value } },
+    loadConversations: async () => [
+      { target: qqPrivate, displayName: 'QQ 主人' },
+      { target: feishuPrivate, displayName: '飞书主人' },
+    ],
+  })
+  const deliveries: Parameters<MessageDelivery['send']>[0][] = []
+  const delivery: MessageDelivery = {
+    async send(request) {
+      deliveries.push(request)
+      return { status: 'sent', providerMessageId: 'om_sent' }
+    },
+  }
+  const targetPolicy: ConversationSendPolicy = {
+    async authorize() { return { allowed: true } },
+  }
+  const tools = createDeferredToolExecutor({
+    alwaysOnTools: [],
+    capabilities: [{
+      name: 'chat',
+      description: 'cross-platform chat',
+      tools: [
+        createConversationTool(conversations),
+        createSendMessageTool({ delivery, targetPolicy, conversations }),
+      ],
+    }],
+  })
+  const ledger = createTestAgentLedger()
+  const agent = createBotLoopAgent({
+    systemPrompt: 'integration test',
+    context,
+    eventQueue,
+    llm,
+    tools,
+    ledgerRepo: ledger.repo,
+    ledgerLoader: ledger.loader,
+    getConversationFocus: () => focus,
+    syncConversationFocus: (value) => { focus = value },
+    renderEvent: renderBotEvent,
+    eventDebounceMs: 0,
+    compactOptions: { reserveTokens: 0 },
   })
 
-  test('private target reaches sendPrivateMessage; group event in same batch does not leak into the private send', async () => {
-    const ctx = createAgentContext()
-    const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({
-      type: 'napcat_message',
-      messageRowId: 1,
-      groupId: 111,
-      groupName: '群A',
-      messageId: 1,
-      senderId: 100,
-      senderNickname: 'GroupUser',
-      mentionedSelf: false,
-      sentAt: new Date(),
-      renderedText: '群里有人说话',
-    })
-    eventQueue.enqueue({
-      type: 'napcat_private_message',
-      messageRowId: 2,
-      peerId: 10001,
-      messageId: 2,
-      senderId: 10001,
-      senderNickname: 'Alice',
-      mentionedSelf: true,
-      sentAt: new Date(),
-      renderedText: '私聊问问题',
-    })
+  await agent.runOnceForTest()
+  await agent.runOnceForTest()
 
-    const llm = makeMockLlm([
-      toolOutput('open-private', 'invoke', {
-        tool: 'qq_conversation',
-        args: { action: 'open', target: { type: 'private', userId: 10001 } },
-      }),
-      toolOutput('send-private', 'invoke', {
-        tool: 'send_message',
-        args: { message: '私聊回复', reply_to: 2, work: { state: 'none' } },
-      }),
-    ])
-
-    const { sender, calls } = makeMockSender()
-    const qq = makeQqTools(ctx, sender)
-
-    const ledger = createTestAgentLedger()
-    const agent = createBotLoopAgent({
-      systemPrompt: '',
-      context: ctx,
-      eventQueue,
-      llm,
-      tools: qq.tools,
-      ledgerRepo: ledger.repo,
-      ledgerLoader: ledger.loader,
-      getQqConversationFocus: qq.getFocus,
-      syncQqConversationFocus: qq.syncFocus,
-      renderEvent: renderBotEvent,
-      eventDebounceMs: 0,
-      compactOptions: { reserveTokens: 0 },
-    })
-
-    await agent.runOnceForTest()
-    await agent.runOnceForTest()
-
-    assert.deepEqual(ctx.getSnapshot().qqConversationFocus, { type: 'private', userId: 10001 })
-    assert.deepEqual(ledger.canonical().runtimeState.qqConversationFocus, {
-      type: 'private',
-      userId: 10001,
-    })
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0]!.fn, 'sendSegments')
-    const args = calls[0]!.args as { target: { type: string; userId: number }; segments: Array<{ type: string; data: Record<string, unknown> }> }
-    assert.deepEqual(args.target, { type: 'private', userId: 10001 })
-    // The text must be the LLM's intended private reply, NOT something from the group event.
-    assert.equal(args.segments[1]?.data.text, '私聊回复')
-    assert.equal(args.segments[0]?.data.id, '2')
-  })
+  const messages = context.getSnapshot().messages
+  const notifications = messages
+    .filter((message): message is typeof message & { content: string } => (
+      message.role === 'user'
+      && typeof message.content === 'string'
+      && message.content.includes('"kind":"inbox_update"')
+    ))
+    .map((message) => JSON.parse(message.content) as { data: { mailbox: string } })
+  assert.deepEqual(notifications.map((item) => item.data.mailbox), [
+    'qq:10000:private:20000',
+    'feishu:cli_1:private:oc_owner',
+  ])
+  assert.deepEqual(focus, feishuPrivate)
+  assert.deepEqual(ledger.canonical().runtimeState.conversationFocus, feishuPrivate)
+  assert.deepEqual(deliveries, [{
+    actionId: deliveries[0]!.actionId,
+    target: feishuPrivate,
+    text: '飞书回复',
+    replyToExternalId: 'om_2',
+  }])
+  assert.ok(messages.some((message) => message.role === 'user' && message.content === JSON.stringify({
+    event: 'mailbox_handled', mailbox: 'feishu:cli_1:private:oc_owner', throughRowId: 2,
+  })))
 })

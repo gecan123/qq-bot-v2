@@ -229,13 +229,13 @@ describe('memory maintenance runtime', () => {
       scope: 'self',
       title: 'evidence',
       content: '只有一次出现的线索',
-      sourceMessageIds: [101],
+      sourceMessageRowIds: [101],
     })
     await writeMemoryEntry({ rootDir, id: () => 'other-entry' }, {
       scope: 'self',
       title: 'evidence',
       content: '用于触发整理的另一条线索',
-      sourceMessageIds: [102],
+      sourceMessageRowIds: [102],
     })
     const llm: LlmClient = {
       async chat() {

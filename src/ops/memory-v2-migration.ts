@@ -216,10 +216,10 @@ async function migrateEntry(input: {
 }): Promise<MemoryEntry> {
   let assertedByIds = input.entry.assertedByIds
   let evidenceKind = input.entry.evidenceKind
-  if (input.entry.sourceMessageIds.length > 0 && input.loadSourceEvidence) {
-    const rows = await input.loadSourceEvidence(input.entry.sourceMessageIds)
+  if (input.entry.sourceMessageRowIds.length > 0 && input.loadSourceEvidence) {
+    const rows = await input.loadSourceEvidence(input.entry.sourceMessageRowIds)
     const found = new Set(rows.map((row) => row.rowId))
-    const missing = input.entry.sourceMessageIds.filter((id) => !found.has(id))
+    const missing = input.entry.sourceMessageRowIds.filter((id) => !found.has(id))
     if (missing.length > 0) input.warnings.push(`${input.sourceFile}#${input.entry.id}: missing Message rows ${missing.join(',')}`)
     if (rows.length > 0) {
       try {
@@ -235,9 +235,16 @@ async function migrateEntry(input: {
         })
         assertedByIds = assertedByIds.length > 0 ? assertedByIds : derived.assertedByIds
         evidenceKind = evidenceKind ?? derived.evidenceKind
+        const derivedLegacyContext = derived.context.kind === 'conversation'
+          ? {
+              kind: derived.context.conversation.kind === 'group' ? 'qq_group' : 'qq_private',
+              id: derived.context.conversation.externalId,
+            }
+          : null
         if (input.context && input.context.kind !== 'legacy_unscoped'
           && input.context.kind !== 'core'
-          && (derived.context.kind !== input.context.kind || derived.context.id !== input.context.id)) {
+          && input.context.kind !== 'conversation'
+          && (derivedLegacyContext?.kind !== input.context.kind || derivedLegacyContext.id !== input.context.id)) {
           input.warnings.push(`${input.sourceFile}#${input.entry.id}: evidence context differs from destination`)
         }
       } catch (error) {
@@ -364,7 +371,7 @@ function renderEntry(entry: MemoryEntry): string {
     `aliases: ${JSON.stringify(entry.aliases)}`,
     ...(entry.validUntil ? [`validUntil: ${entry.validUntil}`] : []),
     `supersedes: ${JSON.stringify(entry.supersedes)}`,
-    ...(entry.sourceMessageIds.length > 0 ? [`sourceMessageIds: ${entry.sourceMessageIds.join(',')}`] : []),
+    ...(entry.sourceMessageRowIds.length > 0 ? [`sourceMessageRowIds: ${entry.sourceMessageRowIds.join(',')}`] : []),
     ...(entry.assertedByIds.length > 0 ? [`assertedByIds: ${entry.assertedByIds.join(',')}`] : []),
     ...(entry.evidenceKind ? [`evidenceKind: ${entry.evidenceKind}`] : []),
     ...(entry.memoryKind ? [`memoryKind: ${entry.memoryKind}`] : []),

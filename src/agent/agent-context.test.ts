@@ -51,7 +51,7 @@ describe('createAgentContext', () => {
     const projection = {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       messages: [{ role: 'user' as const, content: 'projected' }],
-      qqConversationFocus: null,
+      conversationFocus: null,
     }
 
     ctx.installProjection(projection)
@@ -60,13 +60,13 @@ describe('createAgentContext', () => {
     assert.deepEqual(ctx.exportPersistedSnapshot(), {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       messages: [{ role: 'user', content: 'projected' }],
-      qqConversationFocus: null,
+      conversationFocus: null,
     })
     assert.throws(
       () => ctx.installProjection({
         schemaVersion: SNAPSHOT_SCHEMA_VERSION,
         messages: [{ role: 'tool', toolCallId: 'orphan', content: 'bad' }],
-        qqConversationFocus: null,
+        conversationFocus: null,
       }),
       /projection integrity validation failed/,
     )
@@ -87,41 +87,43 @@ describe('createAgentContext', () => {
     ctx2.installProjection(persisted)
     assert.deepEqual(ctx2.getSnapshot(), {
       messages: persisted.messages,
-      qqConversationFocus: null,
+      conversationFocus: null,
     })
   })
 
-  test('QQ conversation focus is cloned and only changes through complete projection installs', () => {
+  test('conversation focus is cloned and only changes through complete projection installs', () => {
     const ctx = createAgentContext()
     const projection = {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       messages: [{ role: 'user' as const, content: 'before' }],
-      qqConversationFocus: { type: 'group' as const, groupId: 123 },
+      conversationFocus: {
+        platform: 'qq' as const, accountId: '999', kind: 'group' as const, externalId: '123',
+      },
     }
 
     ctx.installProjection(projection)
-    projection.qqConversationFocus.groupId = 456
-    assert.deepEqual(ctx.getSnapshot().qqConversationFocus, { type: 'group', groupId: 123 })
+    projection.conversationFocus.externalId = '456'
+    assert.equal(ctx.getSnapshot().conversationFocus?.externalId, '123')
 
     const snapshot = ctx.getSnapshot()
-    if (snapshot.qqConversationFocus?.type === 'group') {
-      snapshot.qqConversationFocus.groupId = 789
+    if (snapshot.conversationFocus?.kind === 'group') {
+      snapshot.conversationFocus.externalId = '789'
     }
-    assert.deepEqual(ctx.getSnapshot().qqConversationFocus, { type: 'group', groupId: 123 })
+    assert.equal(ctx.getSnapshot().conversationFocus?.externalId, '123')
 
     const persisted = ctx.exportPersistedSnapshot()
     const restored = createAgentContext()
     restored.installProjection(persisted)
-    assert.deepEqual(restored.getSnapshot().qqConversationFocus, { type: 'group', groupId: 123 })
+    assert.equal(restored.getSnapshot().conversationFocus?.externalId, '123')
 
     restored.installProjection({
       ...persisted,
       messages: [{ role: 'user', content: 'summary' }],
     })
-    assert.deepEqual(restored.getSnapshot().qqConversationFocus, { type: 'group', groupId: 123 })
+    assert.equal(restored.getSnapshot().conversationFocus?.externalId, '123')
 
-    restored.installProjection({ ...persisted, qqConversationFocus: null })
-    assert.equal(restored.getSnapshot().qqConversationFocus, null)
+    restored.installProjection({ ...persisted, conversationFocus: null })
+    assert.equal(restored.getSnapshot().conversationFocus, null)
   })
 
   test('cloning isolates assistant tool call args', () => {

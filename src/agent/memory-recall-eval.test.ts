@@ -52,7 +52,7 @@ function entry(
     createdAt: '2026-07-01T08:00:00.000+08:00',
     updatedAt: '2026-07-01T08:00:00.000+08:00',
     content,
-    sourceMessageIds: [],
+    sourceMessageRowIds: [],
     assertedByIds: [],
     tier: 'recent',
     status: 'active',

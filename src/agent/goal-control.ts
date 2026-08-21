@@ -1,6 +1,7 @@
 import type { BotOwner } from '../config/index.js'
 import { prisma } from '../database/client.js'
 import type { MailboxCursors } from './mailbox.js'
+import { conversationKey } from '../chat/conversation.js'
 import {
   MAX_GOAL_OBJECTIVE_CHARS,
   MAX_GOAL_TOKEN_BUDGET,
@@ -97,15 +98,21 @@ export async function tryHandleOwnerGoalMessage(input: {
 
 export async function replayOwnerGoalCommands(input: {
   owner: BotOwner | null
+  selfNumber: number
   mailboxCursors: Readonly<MailboxCursors>
   legacyLastWakeAt: Date | null
   goalStore: GoalStore
 }): Promise<{ matched: number; handled: number }> {
   if (!input.owner) return { matched: 0, handled: 0 }
-  const mailboxKey = `qq_private:${input.owner.qq}`
+  const mailboxKey = conversationKey({
+    platform: 'qq',
+    accountId: String(input.selfNumber),
+    kind: 'private',
+    externalId: String(input.owner.qq),
+  })
   const cursor = input.mailboxCursors[mailboxKey]
   const boundary = cursor != null
-    ? { id: { gt: cursor } }
+    ? { rowId: { gt: cursor } }
     : input.legacyLastWakeAt
       ? { createdAt: { gt: input.legacyLastWakeAt } }
       : null
@@ -113,17 +120,20 @@ export async function replayOwnerGoalCommands(input: {
 
   const rows = await prisma.message.findMany({
     where: {
-      sceneKind: 'qq_private',
-      sceneExternalId: String(input.owner.qq),
-      senderId: BigInt(input.owner.qq),
+      platform: 'qq',
+      accountId: String(input.selfNumber),
+      conversationKind: 'private',
+      conversationExternalId: String(input.owner.qq),
+      senderExternalId: String(input.owner.qq),
+      eventKind: 'message',
       searchText: { startsWith: '/goal', mode: 'insensitive' },
       ...boundary,
     },
-    orderBy: { id: 'asc' },
+    orderBy: { rowId: 'asc' },
     select: {
-      id: true,
-      senderId: true,
-      sceneExternalId: true,
+      rowId: true,
+      senderExternalId: true,
+      conversationExternalId: true,
       searchText: true,
       resolvedText: true,
     },
@@ -133,9 +143,9 @@ export async function replayOwnerGoalCommands(input: {
   for (const row of rows) {
     const result = await tryHandleOwnerGoalMessage({
       owner: input.owner,
-      peerId: Number(row.sceneExternalId),
-      senderId: Number(row.senderId),
-      messageRowId: row.id,
+      peerId: Number(row.conversationExternalId),
+      senderId: Number(row.senderExternalId),
+      messageRowId: row.rowId,
       renderedText: row.resolvedText ?? row.searchText ?? '',
       goalStore: input.goalStore,
     })

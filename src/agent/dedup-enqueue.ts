@@ -23,7 +23,11 @@ export interface DedupEnqueue {
 export function createDedupEnqueue(queue: EventQueue<BotEvent>): DedupEnqueue {
   const seenMessageRowIds = new Set<number>()
   const fn = ((event: BotEvent): boolean => {
-    if (event.type === 'napcat_message' || event.type === 'napcat_private_message') {
+    if (
+      event.type === 'chat_message'
+      || event.type === 'napcat_message'
+      || event.type === 'napcat_private_message'
+    ) {
       if (seenMessageRowIds.has(event.messageRowId)) return false
       seenMessageRowIds.add(event.messageRowId)
     }

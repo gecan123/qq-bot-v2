@@ -28,7 +28,7 @@ interface FakeState {
     inboxReadCursors: unknown
     mailboxContinuity: unknown
     goalRevision: number
-    qqConversationFocus: unknown
+    conversationFocus: unknown
     lastWakeAt: Date | null
     ledgerHeadEntryId: bigint | null
     updatedAt: Date
@@ -52,7 +52,7 @@ function initialRuntime(): AgentRuntimeState {
     inboxReadCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
-    qqConversationFocus: null,
+    conversationFocus: null,
     lastWakeAt: null,
     ledgerHeadEntryId: null,
   }
@@ -356,18 +356,20 @@ describe('createAgentLedgerRepo', () => {
     const updated = await repo.updateRuntime({
       expectedHeadEntryId: null,
       patch: {
-        qqConversationFocus: { type: 'private', userId: 2002 },
+        conversationFocus: { platform: 'qq', accountId: '999', kind: 'private', externalId: '2002' },
         lastWakeAt: new Date('2026-07-15T12:30:00.000Z'),
       },
     })
 
-    assert.deepEqual(updated.qqConversationFocus, { type: 'private', userId: 2002 })
+    assert.deepEqual(updated.conversationFocus, {
+      platform: 'qq', accountId: '999', kind: 'private', externalId: '2002',
+    })
     assert.equal(updated.lastWakeAt?.toISOString(), '2026-07-15T12:30:00.000Z')
     const cleared = await repo.updateRuntime({
       expectedHeadEntryId: null,
-      patch: { qqConversationFocus: null },
+      patch: { conversationFocus: null },
     })
-    assert.equal(cleared.qqConversationFocus, null)
+    assert.equal(cleared.conversationFocus, null)
     await assert.rejects(
       repo.updateRuntime({ expectedHeadEntryId: 99n, patch: { lastWakeAt: null } }),
       AgentLedgerHeadChangedError,

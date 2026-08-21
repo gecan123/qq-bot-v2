@@ -6,6 +6,7 @@ import { logToolCall, summarizeToolArgs } from '../ops/tool-call-log.js'
 import { stripNullsFromOptionalFields, zodToToolJsonSchema } from './tool-schema.js'
 import { createLogger } from '../logger.js'
 import { formatBeijingIso } from '../utils/beijing-time.js'
+import type { ConversationRef } from '../chat/conversation.js'
 
 const log = createLogger('TOOL_EXECUTOR')
 
@@ -79,9 +80,7 @@ export interface ToolExecutionOutcome {
   noveltyKey?: string
 }
 
-export type MessageSentTarget =
-  | { type: 'group'; groupId: number }
-  | { type: 'private'; userId: number }
+export type MessageSentTarget = ConversationRef
 
 export interface InboxReadEffect {
   mailbox: string

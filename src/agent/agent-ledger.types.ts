@@ -1,7 +1,7 @@
 import type {
   DurableAgentMessage,
   PersistedAgentSnapshot,
-  QqConversationFocus,
+  ConversationFocus,
 } from './agent-context.types.js'
 import type { MailboxAttentionState } from './mailbox-handled.js'
 import type { MailboxContinuityState } from './mailbox-continuity.js'
@@ -52,7 +52,7 @@ export interface AgentRuntimeState {
   inboxReadCursors: InboxReadCursors
   mailboxContinuity: MailboxContinuityState
   goalRevision: number
-  qqConversationFocus: QqConversationFocus
+  conversationFocus: ConversationFocus
   lastWakeAt: Date | null
   ledgerHeadEntryId: bigint | null
 }

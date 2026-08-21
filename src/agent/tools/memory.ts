@@ -15,6 +15,8 @@ import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.j
 import { CHINESE_NARRATIVE_ERROR, hasChineseNarrative } from '../long-term-language.js'
 import { createToolResultProgressTracker } from '../tool-progress.js'
 import { deriveMemoryEvidence, type LoadMemorySourceEvidence } from '../memory-evidence.js'
+import type { ConversationRef, ParticipantRef } from '../../chat/conversation.js'
+import { conversationKey } from '../../chat/conversation.js'
 
 const log = createLogger('TOOL_MEMORY')
 const DEFAULT_WORKSPACE_DIR = 'data/agent-workspace'
@@ -31,12 +33,14 @@ const groupMemoryKindSchema = z.enum([
 ])
 const idSchema = z.union([z.string(), z.number()])
 const recallIdSchema = z.union([
-  z.string().trim().min(1).regex(/^[A-Za-z0-9_-]+$/),
+  z.string().trim().min(1),
   z.number().int().positive().safe(),
 ])
 const recallContextSchema = z.object({
-  type: z.enum(['group', 'private']),
-  id: recallIdSchema,
+  platform: z.enum(['qq', 'feishu']),
+  accountId: z.string().min(1),
+  kind: z.enum(['group', 'private']),
+  externalId: z.string().min(1),
 }).strict()
 const memoryFileSchema = z.string().trim().min(1).max(200).refine(
   (file) => file.endsWith('.md')
@@ -51,14 +55,14 @@ const chineseMemoryTitleSchema = z.string().trim().min(1).max(80)
   .refine(hasChineseNarrative, CHINESE_NARRATIVE_ERROR)
 
 function requireEvidenceForEntityFile(
-  value: { file: string; sourceMessageIds?: number[] },
+  value: { file: string; sourceMessageRowIds?: number[] },
   ctx: z.RefinementCtx,
 ): void {
-  if (/^(?:people|groups)\//.test(value.file) && !value.sourceMessageIds?.length) {
+  if (/^(?:people|groups)\//.test(value.file) && !value.sourceMessageRowIds?.length) {
     ctx.addIssue({
       code: 'custom',
-      path: ['sourceMessageIds'],
-      message: 'people/groups memory correction 必须提供 sourceMessageIds',
+      path: ['sourceMessageRowIds'],
+      message: 'people/groups memory correction 必须提供 sourceMessageRowIds',
     })
   }
 }
@@ -67,19 +71,19 @@ const argsSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('remember').describe('写入一条长期记忆。'),
     scope: scopeSchema,
-    id: idSchema.optional().describe('person/group 需要 QQ 号或群号。'),
+    id: idSchema.optional().describe('person 使用稳定参与者 key；group 使用 conversation key。'),
     title: chineseMemoryTitleSchema.optional().describe('topic 必填稳定中文主题标签；self 可选。'),
     content: chineseMemoryContentSchema.describe('用中文叙述，一条只记一件事。'),
-    sourceMessageIds: z.array(z.number().int().positive()).min(1).max(20).optional()
-      .describe('person/group 必填：支撑事实的真实 messages.id。'),
+    sourceMessageRowIds: z.array(z.number().int().positive()).min(1).max(20).optional()
+      .describe('person/group 必填：支撑事实的真实 messages.rowId。'),
     memoryKind: z.union([personMemoryKindSchema, groupMemoryKindSchema]).optional(),
     evidenceKind: evidenceKindSchema.optional(),
   }).strict().superRefine((value, ctx) => {
-    if ((value.scope === 'person' || value.scope === 'group') && !value.sourceMessageIds?.length) {
+    if ((value.scope === 'person' || value.scope === 'group') && !value.sourceMessageRowIds?.length) {
       ctx.addIssue({
         code: 'custom',
-        path: ['sourceMessageIds'],
-        message: `scope=${value.scope} remember 必须提供 sourceMessageIds`,
+        path: ['sourceMessageRowIds'],
+        message: `scope=${value.scope} remember 必须提供 sourceMessageRowIds`,
       })
     }
     if (value.scope === 'person' && !personMemoryKindSchema.safeParse(value.memoryKind).success) {
@@ -120,7 +124,7 @@ const argsSchema = z.discriminatedUnion('action', [
     expectedRevision: z.string().regex(/^[a-f0-9]{64}$/)
       .describe('来自同一次 recall 命中项的 revision。'),
     content: chineseMemoryContentSchema,
-    sourceMessageIds: z.array(z.number().int().positive()).min(1).max(20).optional(),
+    sourceMessageRowIds: z.array(z.number().int().positive()).min(1).max(20).optional(),
   }).strict().superRefine(requireEvidenceForEntityFile),
 ])
 
@@ -134,6 +138,7 @@ export interface MemoryToolDeps {
   workspaceStateCoordinator?: WorkspaceStateCoordinator
   loadSourceEvidence?: LoadMemorySourceEvidence
   ownerId?: string
+  ownerIdentities?: readonly ParticipantRef[]
 }
 
 export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
@@ -152,28 +157,29 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
       '长期记忆只提供 remember、recall、correct 三个动作。',
       '上下文不足且涉及旧事、偏好、稳定事实或经验时 recall；写前先 recall，避免重复。',
       'recall 命中项直接包含 file、entryId 和 revision；确认事实错误时用这三项调用 correct。',
-      'person recall 必须传 QQ 与当前 group/private context；group recall 传群 id；不传 scope/id 才跨范围探索。',
-      'person/group 的 remember 或 correct 必须引用真实 sourceMessageIds。内部 maintenance 负责 review、promote、compact 和冲突整理。',
+      'person recall 必须传稳定参与者 ID 与当前平台 context；group recall 的 id 使用 conversation list 返回的会话 key；不传 scope/id 才跨范围探索。',
+      'person/group 的 remember 或 correct 必须引用真实 sourceMessageRowIds。内部 maintenance 负责 review、promote、compact 和冲突整理。',
     ].join(' '),
     schema: argsSchema,
     async execute(args) {
       try {
         let derivedEvidence: ReturnType<typeof deriveMemoryEvidence> | undefined
-        if ('sourceMessageIds' in args && args.sourceMessageIds?.length && deps.loadSourceEvidence) {
-          const rows = await deps.loadSourceEvidence(args.sourceMessageIds)
+        if ('sourceMessageRowIds' in args && args.sourceMessageRowIds?.length && deps.loadSourceEvidence) {
+          const rows = await deps.loadSourceEvidence(args.sourceMessageRowIds)
           const existing = new Set(rows.map((row) => row.rowId))
-          const missing = args.sourceMessageIds.filter((id) => !existing.has(id))
+          const missing = args.sourceMessageRowIds.filter((id) => !existing.has(id))
           if (missing.length > 0) {
-            const error = `sourceMessageIds contain unknown message rows: ${missing.join(',')}`
+            const error = `sourceMessageRowIds contain unknown message rows: ${missing.join(',')}`
             return {
-              content: JSON.stringify({ ok: false, code: 'invalid_evidence', error, missingSourceMessageIds: missing }),
+              content: JSON.stringify({ ok: false, code: 'invalid_evidence', error, missingSourceMessageRowIds: missing }),
               outcome: { ok: false, code: 'invalid_evidence', error, progress: false, continuation: 'immediate' },
             }
           }
           derivedEvidence = deriveMemoryEvidence({
             rows,
-            ...(memorySubjectId(args) ? { subjectId: memorySubjectId(args) } : {}),
+            ...(memorySubjectKey(args) ? { subjectKey: memorySubjectKey(args) } : {}),
             ...(deps.ownerId ? { ownerId: deps.ownerId } : {}),
+            ...(deps.ownerIdentities ? { ownerIdentities: deps.ownerIdentities } : {}),
             ...('evidenceKind' in args && args.evidenceKind ? { requestedKind: args.evidenceKind } : {}),
           })
           assertEvidenceContextMatchesTarget(args, derivedEvidence.context)
@@ -183,10 +189,12 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
           const result = await writeMemoryEntry(storeOptions, {
             scope: args.scope as MemoryScope,
             id: args.id == null ? undefined : String(args.id),
-            ...(args.scope === 'person' && derivedEvidence ? { context: derivedEvidence.context } : {}),
+            ...((args.scope === 'person' || args.scope === 'group') && derivedEvidence
+              ? { context: toStoreContext(derivedEvidence.context) }
+              : {}),
             title: args.title,
             content: args.content,
-            sourceMessageIds: args.sourceMessageIds,
+            sourceMessageRowIds: args.sourceMessageRowIds,
             assertedByIds: derivedEvidence?.assertedByIds,
             evidenceKind: derivedEvidence?.evidenceKind,
             memoryKind: args.memoryKind as MemoryKind | undefined,
@@ -216,7 +224,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
           entryId: args.entryId,
           expectedRevision: args.expectedRevision,
           content: args.content,
-          sourceMessageIds: args.sourceMessageIds,
+          sourceMessageRowIds: args.sourceMessageRowIds,
           assertedByIds: derivedEvidence?.assertedByIds,
           evidenceKind: derivedEvidence?.evidenceKind,
         })
@@ -245,36 +253,53 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
   }
 }
 
-function memorySubjectId(args: Args): string | undefined {
-  if (args.action === 'remember' && args.scope === 'person') return String(args.id ?? '')
-  if (args.action === 'correct') return /^people\/([^/]+)\//.exec(args.file)?.[1]
+function memorySubjectKey(args: Args): string | undefined {
+  if (args.action === 'remember' && args.scope === 'person') {
+    const id = String(args.id ?? '')
+    if (id === 'owner') return 'owner'
+    return id
+  }
+  if (args.action === 'correct') {
+    const encoded = /^people\/([^/]+)\//.exec(args.file)?.[1]
+    return encoded ? decodeURIComponent(encoded) : undefined
+  }
   return undefined
 }
 
-function toMemoryContext(value: { type: 'group' | 'private'; id: string | number }): ConversationMemoryContext {
-  return value.type === 'group'
-    ? { kind: 'qq_group', id: String(value.id) }
-    : { kind: 'qq_private', id: String(value.id) }
+function toMemoryContext(value: ConversationRef): ConversationMemoryContext {
+  return { kind: 'conversation', conversation: value }
 }
 
-function assertEvidenceContextMatchesTarget(args: Args, context: ConversationMemoryContext): void {
+function toStoreContext(
+  context: ReturnType<typeof deriveMemoryEvidence>['context'],
+): ConversationMemoryContext | { kind: 'core' } {
+  return context.kind === 'owner_core'
+    ? { kind: 'core' }
+    : { kind: 'conversation', conversation: context.conversation }
+}
+
+function assertEvidenceContextMatchesTarget(
+  args: Args,
+  context: ReturnType<typeof deriveMemoryEvidence>['context'],
+): void {
+  if (context.kind === 'owner_core') return
   if (args.action === 'remember' && args.scope === 'group') {
-    if (context.kind !== 'qq_group' || context.id !== String(args.id ?? '')) {
+    if (
+      context.conversation.kind !== 'group'
+      || conversationKey(context.conversation) !== String(args.id ?? '')
+    ) {
       throw new MemoryStoreError('invalid_input', 'group memory evidence must come from the same group')
     }
     return
   }
   if (args.action !== 'correct') return
-  const group = /^people\/[^/]+\/groups\/([^/]+)\.md$/.exec(args.file)
-  const privatePeer = /^people\/[^/]+\/private\/([^/]+)\.md$/.exec(args.file)
+  const conversation = /^people\/[^/]+\/conversations\/([^/]+)\.md$/.exec(args.file)
   const groupFile = /^groups\/([^/]+)\.md$/.exec(args.file)
-  if (group && (context.kind !== 'qq_group' || context.id !== group[1])) {
-    throw new MemoryStoreError('invalid_input', 'person memory evidence context does not match the target group file')
+  const encodedKey = encodeURIComponent(conversationKey(context.conversation))
+  if (conversation && encodedKey !== conversation[1]) {
+    throw new MemoryStoreError('invalid_input', 'person memory evidence context does not match the target conversation file')
   }
-  if (privatePeer && (context.kind !== 'qq_private' || context.id !== privatePeer[1])) {
-    throw new MemoryStoreError('invalid_input', 'person memory evidence context does not match the target private file')
-  }
-  if (groupFile && (context.kind !== 'qq_group' || context.id !== groupFile[1])) {
+  if (groupFile && (context.conversation.kind !== 'group' || encodedKey !== groupFile[1])) {
     throw new MemoryStoreError('invalid_input', 'group memory evidence must come from the same group')
   }
 }

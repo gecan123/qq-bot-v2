@@ -1,5 +1,5 @@
 import { SNAPSHOT_SCHEMA_VERSION, type PersistedAgentSnapshot } from './agent-context.types.js'
-import type { MailboxCursors } from './mailbox.js'
+import { isMailboxKey, type MailboxCursors } from './mailbox.js'
 
 export interface BotSnapshotIntegrityInput {
   snapshot: PersistedAgentSnapshot
@@ -35,7 +35,7 @@ export function validateBotSnapshotIntegrity(input: BotSnapshotIntegrityInput): 
   if (!Array.isArray(snapshot.messages)) {
     errors.push('snapshot.messages must be an array')
   }
-  validateQqConversationFocus(snapshot.qqConversationFocus, errors)
+  validateConversationFocus(snapshot.conversationFocus, errors)
   validateMessages(messages, errors, warnings)
   validateMailboxCursors(mailboxCursors, errors)
   validateMailboxContinuity(input.mailboxContinuity, errors)
@@ -60,30 +60,31 @@ export function validateBotSnapshotIntegrity(input: BotSnapshotIntegrityInput): 
   }
 }
 
-function validateQqConversationFocus(value: unknown, errors: string[]): void {
+function validateConversationFocus(value: unknown, errors: string[]): void {
   if (value === null) return
   if (!isRecord(value)) {
-    errors.push('snapshot.qqConversationFocus must be null or an object')
+    errors.push('snapshot.conversationFocus must be null or an object')
     return
   }
 
-  if (value.type === 'group') {
-    validateExactKeys(value, ['type', 'groupId'], 'snapshot.qqConversationFocus', errors)
-    if (!Number.isSafeInteger(value.groupId) || (value.groupId as number) <= 0) {
-      errors.push('snapshot.qqConversationFocus.groupId must be a positive safe integer')
-    }
-    return
+  validateExactKeys(
+    value,
+    ['platform', 'accountId', 'kind', 'externalId'],
+    'snapshot.conversationFocus',
+    errors,
+  )
+  if (value.platform !== 'qq' && value.platform !== 'feishu') {
+    errors.push('snapshot.conversationFocus.platform must be qq or feishu')
   }
-
-  if (value.type === 'private') {
-    validateExactKeys(value, ['type', 'userId'], 'snapshot.qqConversationFocus', errors)
-    if (!Number.isSafeInteger(value.userId) || (value.userId as number) <= 0) {
-      errors.push('snapshot.qqConversationFocus.userId must be a positive safe integer')
-    }
-    return
+  if (value.kind !== 'group' && value.kind !== 'private') {
+    errors.push('snapshot.conversationFocus.kind must be group or private')
   }
-
-  errors.push('snapshot.qqConversationFocus.type must be group or private')
+  if (typeof value.accountId !== 'string' || !value.accountId.trim()) {
+    errors.push('snapshot.conversationFocus.accountId must be a non-empty string')
+  }
+  if (typeof value.externalId !== 'string' || !value.externalId.trim()) {
+    errors.push('snapshot.conversationFocus.externalId must be a non-empty string')
+  }
 }
 
 function validateExactKeys(
@@ -259,7 +260,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function validateMailboxCursors(entries: Array<[string, unknown]>, errors: string[]): void {
   for (const [key, value] of entries) {
-    if (!/^qq_(?:group|private):\d+$/.test(key)) {
+    if (!isMailboxKey(key)) {
       errors.push(`mailboxCursors.${key} has invalid key`)
     }
     if (!Number.isSafeInteger(value) || (value as number) < 0) {
@@ -292,7 +293,7 @@ function validateMailboxContinuity(value: unknown, errors: string[]): void {
     return
   }
   for (const [key, anchor] of Object.entries(mailboxes as Record<string, unknown>)) {
-    if (!/^qq_(?:group|private):\d+$/.test(key)) {
+    if (!isMailboxKey(key)) {
       errors.push(`mailboxContinuity.mailboxes.${key} has invalid key`)
       continue
     }

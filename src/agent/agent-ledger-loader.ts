@@ -104,7 +104,7 @@ export function fingerprintCanonicalAgentState(canonical: CanonicalAgentState): 
       inboxReadCursors: canonical.runtimeState.inboxReadCursors,
       mailboxContinuity: canonical.runtimeState.mailboxContinuity,
       goalRevision: canonical.runtimeState.goalRevision,
-      qqConversationFocus: canonical.runtimeState.qqConversationFocus,
+      conversationFocus: canonical.runtimeState.conversationFocus,
       lastWakeAt: canonical.runtimeState.lastWakeAt?.toISOString() ?? null,
       ledgerHeadEntryId: canonical.runtimeState.ledgerHeadEntryId?.toString() ?? null,
     },
@@ -179,7 +179,7 @@ function isPersistedSnapshot(value: unknown): value is PersistedAgentSnapshot {
   if (!isRecord(value) || !hasExactKeys(value, [
     'schemaVersion',
     'messages',
-    'qqConversationFocus',
+    'conversationFocus',
   ])) return false
   return value.schemaVersion === SNAPSHOT_SCHEMA_VERSION
     && Array.isArray(value.messages)

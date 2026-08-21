@@ -401,6 +401,28 @@ describe('config', () => {
     }
   })
 
+  test('keeps Feishu opt-in and requires credentials only when enabled', () => {
+    assert.equal(parseConfig(createBaseEnv()).feishu, undefined)
+    const configured = parseConfig(createBaseEnv({
+      BOT_FEISHU_ENABLED: 'true',
+      BOT_FEISHU_APP_ID: 'cli_123',
+      BOT_FEISHU_APP_SECRET: 'secret',
+      BOT_FEISHU_GROUP_IDS: 'oc_1, oc_2',
+      BOT_OWNER_FEISHU_OPEN_ID: 'ou_owner',
+    }))
+    assert.deepEqual(configured.feishu, {
+      appId: 'cli_123',
+      appSecret: 'secret',
+      groupIds: ['oc_1', 'oc_2'],
+      ownerOpenId: 'ou_owner',
+      gatewayUrl: 'http://127.0.0.1:37927',
+    })
+    assert.throws(
+      () => parseConfig(createBaseEnv({ BOT_FEISHU_ENABLED: 'true' })),
+      /BOT_FEISHU_APP_ID/,
+    )
+  })
+
   test('approval state path defaults to bot workspace and accepts override', () => {
     assert.equal(
       parseConfig(createBaseEnv()).approvalStatePath,

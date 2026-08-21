@@ -73,7 +73,7 @@ export function projectAgentLedger(input: {
     snapshot: {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       messages: projectedMessages,
-      qqConversationFocus: runtimeState.qqConversationFocus,
+      conversationFocus: runtimeState.conversationFocus,
     },
   }
 }
@@ -181,7 +181,7 @@ export function parseAgentRuntimeState(value: unknown): AgentRuntimeState {
     'inboxReadCursors',
     'mailboxContinuity',
     'goalRevision',
-    'qqConversationFocus',
+    'conversationFocus',
     'lastWakeAt',
     'ledgerHeadEntryId',
   ], [], path)
@@ -217,27 +217,36 @@ export function parseAgentRuntimeState(value: unknown): AgentRuntimeState {
       `${path}.mailboxContinuity`,
     ) as unknown as AgentRuntimeState['mailboxContinuity'],
     goalRevision: requireNonNegativeSafeInteger(state.goalRevision, `${path}.goalRevision`),
-    qqConversationFocus: parseQqConversationFocus(
-      state.qqConversationFocus,
-      `${path}.qqConversationFocus`,
+    conversationFocus: parseConversationFocus(
+      state.conversationFocus,
+      `${path}.conversationFocus`,
     ),
     lastWakeAt: state.lastWakeAt == null ? null : new Date(state.lastWakeAt.getTime()),
     ledgerHeadEntryId: state.ledgerHeadEntryId,
   }
 }
 
-function parseQqConversationFocus(value: unknown, path: string): AgentRuntimeState['qqConversationFocus'] {
+function parseConversationFocus(value: unknown, path: string): AgentRuntimeState['conversationFocus'] {
   if (value === null) return null
   const focus = requireRecord(value, path)
-  if (focus.type === 'group') {
-    requireExactKeys(focus, ['type', 'groupId'], [], path)
-    return { type: 'group', groupId: requirePositiveSafeInteger(focus.groupId, `${path}.groupId`) }
+  requireExactKeys(
+    focus,
+    ['platform', 'accountId', 'kind', 'externalId'],
+    [],
+    path,
+  )
+  if (focus.platform !== 'qq' && focus.platform !== 'feishu') {
+    throw new AgentLedgerIntegrityError(`${path}.platform must be qq or feishu`)
   }
-  if (focus.type === 'private') {
-    requireExactKeys(focus, ['type', 'userId'], [], path)
-    return { type: 'private', userId: requirePositiveSafeInteger(focus.userId, `${path}.userId`) }
+  if (focus.kind !== 'group' && focus.kind !== 'private') {
+    throw new AgentLedgerIntegrityError(`${path}.kind must be group or private`)
   }
-  throw new AgentLedgerIntegrityError(`${path}.type must be group or private`)
+  return {
+    platform: focus.platform,
+    accountId: requireNonEmptyString(focus.accountId, `${path}.accountId`),
+    kind: focus.kind,
+    externalId: requireNonEmptyString(focus.externalId, `${path}.externalId`),
+  }
 }
 
 function parseDurableAgentMessage(value: unknown, path: string): DurableAgentMessage {
@@ -444,7 +453,7 @@ function assertSnapshotIntegrity(
   const snapshot = {
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
     messages: [...messages],
-    qqConversationFocus: runtimeState.qqConversationFocus,
+    conversationFocus: runtimeState.conversationFocus,
   }
   const result = validateBotSnapshotIntegrity({
     snapshot,
@@ -510,6 +519,13 @@ function requirePositiveSafeInteger(value: unknown, path: string): number {
   const parsed = requireNonNegativeSafeInteger(value, path)
   if (parsed === 0) throw new AgentLedgerIntegrityError(`${path} must be positive`)
   return parsed
+}
+
+function requireNonEmptyString(value: unknown, path: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new AgentLedgerIntegrityError(`${path} must be a non-empty string`)
+  }
+  return value
 }
 
 function cloneJsonObject(value: unknown, path: string): Record<string, unknown> {

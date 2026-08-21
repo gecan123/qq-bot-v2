@@ -105,7 +105,7 @@ function makeMockLedgerHarness(
     inboxReadCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
-    qqConversationFocus: null,
+    conversationFocus: null,
     lastWakeAt: null,
     ledgerHeadEntryId: entries.at(-1)?.id ?? null,
   }
@@ -211,7 +211,7 @@ function makeCanonicalCompactionHarness(
     inboxReadCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
-    qqConversationFocus: null,
+    conversationFocus: null,
     lastWakeAt: null,
     ledgerHeadEntryId: entries.at(-1)?.id ?? null,
   }
@@ -880,7 +880,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       tools: makeMockTools({
         send_message: async () => ({
           content: '{"ok":true,"status":"sent"}',
-          effects: [{ type: 'message_sent', target: { type: 'private', userId: 9001 } }],
+          effects: [{ type: 'message_sent', target: { platform: 'qq', accountId: 'bot', kind: 'private', externalId: '9001' } }],
         }),
       }),
       ledgerRepo: repo,
@@ -934,7 +934,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       tools: makeMockTools({
         send_message: async () => ({
           content: '{"ok":true,"status":"sent"}',
-          effects: [{ type: 'message_sent', target: { type: 'private', userId: 9001 } }],
+          effects: [{ type: 'message_sent', target: { platform: 'qq', accountId: 'bot', kind: 'private', externalId: '9001' } }],
         }),
       }),
       ledgerRepo: repo,
@@ -990,7 +990,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
         inbox: async () => ({ content: '{"ok":true,"messages":[]}' }),
         send_message: async () => ({
           content: '{"ok":true,"status":"sent"}',
-          effects: [{ type: 'message_sent', target: { type: 'private', userId: 9001 } }],
+          effects: [{ type: 'message_sent', target: { platform: 'qq', accountId: 'bot', kind: 'private', externalId: '9001' } }],
         }),
       }),
       ledgerRepo: repo,
@@ -1074,7 +1074,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
           return {
             content: '{"ok":true,"status":"sent"}',
             outcome: { ok: true, code: 'sent', progress: true },
-            effects: [{ type: 'message_sent', target: { type: 'private', userId: 9001 } }],
+            effects: [{ type: 'message_sent', target: { platform: 'qq', accountId: 'bot', kind: 'private', externalId: '9001' } }],
           }
         },
       }),
@@ -1157,7 +1157,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       tools: makeMockTools({
         send_message: async () => ({
           content: '{"ok":true,"status":"sent"}',
-          effects: [{ type: 'message_sent', target: { type: 'private', userId: 9002 } }],
+          effects: [{ type: 'message_sent', target: { platform: 'qq', accountId: 'bot', kind: 'private', externalId: '9002' } }],
         }),
       }),
       ledgerRepo: repo,
@@ -1199,7 +1199,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       tools: makeMockTools({
         send_message: async () => ({
           content: '{"ok":true,"status":"sent"}',
-          effects: [{ type: 'message_sent', target: { type: 'private', userId: 9001 } }],
+          effects: [{ type: 'message_sent', target: { platform: 'qq', accountId: 'bot', kind: 'private', externalId: '9001' } }],
         }),
       }),
       ledgerRepo: repo,
@@ -3052,7 +3052,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
           content: '{"ok":true,"status":"sent"}',
           effects: [{
             type: 'message_sent',
-            target: { type: 'private', userId: 9001 },
+            target: { platform: 'qq', accountId: 'bot', kind: 'private', externalId: '9001' },
             continueWork: true,
           }],
           outcome: { ok: true, progress: true },
@@ -3509,7 +3509,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
           id: 'c1',
           name: 'send_message',
           args: {
-            target: { type: 'private', userId: 10001 },
+            target: { platform: 'qq', accountId: 'bot', kind: 'private', externalId: '10001' },
             mode: 'ambient',
             text: '收到。\n\n*思考: 这段不能进长期上下文。*',
             replyToMessageId: null,

@@ -6,12 +6,13 @@ import { createDedupEnqueue } from './dedup-enqueue.js'
 
 function makeGroupEvent(rowId: number): BotEvent {
   return {
-    type: 'napcat_message',
+    type: 'chat_message',
+    eventKind: 'message',
     messageRowId: rowId,
-    groupId: 111,
-    messageId: 1000 + rowId,
-    senderId: 100,
-    senderNickname: 'a',
+    conversation: { platform: 'qq', accountId: '999', kind: 'group', externalId: '111' },
+    messageExternalId: String(1000 + rowId),
+    senderExternalId: '100',
+    senderName: 'a',
     mentionedSelf: false,
     sentAt: new Date('2026-05-04T00:00:00Z'),
     renderedText: 't',
@@ -20,12 +21,13 @@ function makeGroupEvent(rowId: number): BotEvent {
 
 function makePrivateEvent(rowId: number): BotEvent {
   return {
-    type: 'napcat_private_message',
+    type: 'chat_message',
+    eventKind: 'message',
     messageRowId: rowId,
-    peerId: 10001,
-    messageId: 2000 + rowId,
-    senderId: 10001,
-    senderNickname: 'p',
+    conversation: { platform: 'feishu', accountId: 'cli_1', kind: 'private', externalId: 'oc_1' },
+    messageExternalId: String(2000 + rowId),
+    senderExternalId: 'ou_1',
+    senderName: 'p',
     mentionedSelf: true,
     sentAt: new Date('2026-05-04T00:00:00Z'),
     renderedText: 'pt',
@@ -70,7 +72,7 @@ describe('createDedupEnqueue — replay × live overlap by messageRowId', () => 
   })
 
   test('group rowId 7 and private rowId 7 are different events (rowId is global, but if collision happens, dedup is still correct since rowId IS the PK)', () => {
-    // The Message PK `id` is globally unique across qq_group / qq_private. So if we
+    // The Message PK `rowId` is globally unique across every platform. So if we
     // ever see rowId=7 twice, they are the same row regardless of scene. Dedup is correct.
     const q = new InMemoryEventQueue<BotEvent>()
     const enq = createDedupEnqueue(q)
@@ -78,7 +80,7 @@ describe('createDedupEnqueue — replay × live overlap by messageRowId', () => 
     enq(makeGroupEvent(7))
     const collision = enq(makePrivateEvent(7))
 
-    assert.equal(collision, false, 'same rowId across scenes should still dedup (Message.id is global PK)')
+    assert.equal(collision, false, 'same rowId across platforms should still dedup (Message.rowId is global PK)')
     assert.equal(q.size(), 1)
   })
 

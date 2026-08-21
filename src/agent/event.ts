@@ -9,7 +9,27 @@
  *
  * 所有 napcat_* 事件: renderedText 已在 ingest 时一次性冻结 (含媒体描述), 字节稳定.
  */
-export type BotEvent =
+import type { ConversationRef } from '../chat/conversation.js'
+import { conversationKey } from '../chat/conversation.js'
+import type { MessageFactKind } from '../database/messages.js'
+
+export interface ChatMessageEvent {
+  type: 'chat_message'
+  eventKind: MessageFactKind
+  messageRowId: number
+  conversation: ConversationRef
+  conversationName?: string
+  messageExternalId: string
+  senderExternalId: string
+  senderName: string
+  mentionedSelf: boolean
+  sentAt: Date
+  renderedText: string
+  replyToExternalId?: string
+  threadExternalId?: string
+}
+
+type LegacyQqMessageEvent =
   | {
       type: 'napcat_message'
       messageRowId: number
@@ -39,6 +59,10 @@ export type BotEvent =
       /** 已渲染好的纯文本内容(含 [图片: ...] 媒体描述), 字节稳定。 */
       renderedText: string
     }
+
+export type BotEvent =
+  | ChatMessageEvent
+  | LegacyQqMessageEvent
   | { type: 'wake' }
   | { type: 'bootstrap' }
   | {
@@ -61,6 +85,7 @@ export type BotEvent =
       mailboxKey: string
       priority: 'high' | 'normal'
       source:
+        | { type: 'conversation'; conversation: ConversationRef; name: string | null; senderName: string | null }
         | { type: 'group'; groupId: number; groupName: string | null }
         | { type: 'private'; peerId: number; senderName: string }
       count: number
@@ -71,14 +96,13 @@ export type BotEvent =
       timeRange: { from: Date; to: Date }
     }
 
-export type ChatMessageEvent = Extract<
-  BotEvent,
-  { type: 'napcat_message' | 'napcat_private_message' }
->
+type QueueableChatEvent = ChatMessageEvent | LegacyQqMessageEvent
 
 /** 只有私聊或群内结构化 @ 才有资格进入会打断主循环的注意事件队列。 */
-export function isChatAttentionEvent(event: ChatMessageEvent): boolean {
-  return event.type === 'napcat_private_message' || event.mentionedSelf
+export function isChatAttentionEvent(event: QueueableChatEvent): boolean {
+  return event.type === 'chat_message'
+    ? event.eventKind !== 'message' || event.conversation.kind === 'private' || event.mentionedSelf
+    : event.type === 'napcat_private_message' || event.mentionedSelf
 }
 
 /**
@@ -86,9 +110,11 @@ export function isChatAttentionEvent(event: ChatMessageEvent): boolean {
  * passive 只决定下一次自然轮次能否看到 badge，不会因此成为 attention。
  */
 export function shouldQueueChatEvent(
-  event: ChatMessageEvent,
-  passiveGroupIds: ReadonlySet<number>,
+  event: QueueableChatEvent,
+  passiveSources: ReadonlySet<string | number>,
 ): boolean {
   return isChatAttentionEvent(event)
-    || (event.type === 'napcat_message' && passiveGroupIds.has(event.groupId))
+    || (event.type === 'chat_message'
+      ? event.conversation.kind === 'group' && passiveSources.has(conversationKey(event.conversation))
+      : event.type === 'napcat_message' && passiveSources.has(event.groupId))
 }

@@ -54,7 +54,7 @@ Add a Zod candidate schema with:
   id?: string
   title?: string
   content: string
-  sourceMessageIds?: number[]
+  sourceMessageRowIds?: number[]
 }
 ```
 

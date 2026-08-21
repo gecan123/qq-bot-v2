@@ -53,6 +53,7 @@ pnpm dev:once
 pnpm agent:dev
 pnpm agent:dev:once
 pnpm qq:gateway
+pnpm feishu:gateway
 pnpm media:worker
 pnpm scheduler:service
 pnpm llm:gateway
@@ -153,14 +154,20 @@ JSON 报告带当前为 `2` 的 `schemaVersion`，总占用字段是 `estimatedS
 `LLM_FALLBACK_MODEL` 默认不配置。需要时填写与 `LLM_DEFAULT_MODEL` 使用同一 `LLM_DEFAULT_PROVIDER` wire path 的模型；它只接管 overload/5xx，不用于鉴权、限流、参数错误或 context overflow。
 
 - 从仓库根目录启动，确保 `.bot.pid`、logs、prompts 和相对路径稳定。
-- `pnpm dev` 通过 `src/platform.ts` 启动多进程 watch 模式；`pnpm dev:once` 启动同一组进程但不监听文件变化。supervisor 等待 LLM Gateway、Media Worker、Scheduler、QQ Gateway，以及按配置启用的 Browser Controller 健康后，才启动 Agent Core。
+- `pnpm dev` 通过 `src/platform.ts` 启动多进程 watch 模式；`pnpm dev:once` 启动同一组进程但不监听文件变化。supervisor 等待 LLM Gateway、Media Worker、Scheduler、QQ Gateway，以及按配置启用的 Feishu Gateway 和 Browser Controller 健康后，才启动 Agent Core。
 - `pnpm dev:all` 在 watch 模式下额外启动 WebAdmin；`pnpm dev:all:once` 不监听 Bot 源码变化。它们只合并本地生命周期，WebAdmin 不参与 ingress 或 Agent 调度。WebAdmin 的“进程日志”页按固定进程白名单读取 `logs/processes/*.log` 最后 512 KiB / 500 行，不能提交路径、命令或写入日志。
-- 各进程标准输出和错误分别追加到 `logs/processes/<process>.log`；终端只显示 supervisor 生命周期，QQ 日志不再混进 Agent Core 日志。
+- 各进程标准输出和错误分别追加到 `logs/processes/<process>.log`；终端只显示 supervisor 生命周期，平台 Gateway 日志不再混进 Agent Core 日志。
 - `pnpm build && pnpm start` 使用 `dist/platform.js` 启动编译后的同一平台。`pnpm agent:dev`、`pnpm agent:dev:once` 和 `pnpm agent:start` 保留单进程兼容入口，主要用于聚焦调试。
-- `pnpm qq:gateway`、`pnpm media:worker`、`pnpm scheduler:service`、`pnpm llm:gateway` 可以单独启动服务；不要与占用同一端口的 platform supervisor 同时运行。
+- `pnpm qq:gateway`、`pnpm feishu:gateway`、`pnpm media:worker`、`pnpm scheduler:service`、`pnpm llm:gateway` 可以单独启动服务；不要与占用同一端口的 platform supervisor 同时运行。
 - `BOT_*_URL` 内部服务地址只接受带显式端口的 loopback HTTP origin；这些端点没有远程认证，不能绑定到 `0.0.0.0` 或非可信网络。
 - `.bot.pid` 只供 WebAdmin 和破坏性运维命令判断 Bot 是否仍在运行，不接受产品控制信号。
 - `pnpm agent:daily-metrics -- --date YYYY-MM-DD` 按日报告主 Agent 的 token/cache 和工具调用，不再维护 rest 专门指标；该命令属于 operator 入口，不暴露给主 Agent。
+
+### 飞书接入
+
+飞书默认关闭。启用时配置 `BOT_FEISHU_ENABLED=true`、`BOT_FEISHU_APP_ID`、`BOT_FEISHU_APP_SECRET`，并用逗号分隔的 `BOT_FEISHU_GROUP_IDS` 明确允许群聊 `chat_id`。可选 `BOT_OWNER_FEISHU_OPEN_ID` 只把主人飞书身份与 QQ 主人统一为 Memory 的 `owner`；当前 `/goal` 和审批控制面仍只接受主人 QQ 私聊。`BOT_FEISHU_GATEWAY_URL` 默认是 `http://127.0.0.1:37927`，必须保持 loopback。
+
+飞书应用需在开放平台启用机器人能力、长连接事件订阅和消息/资源所需权限。Gateway 用官方 SDK 的 WebSocket 接收事件，图片和文件下载后进入现有 `media` / `media_blobs`，单文件上限 20MB。收到的 `receive_v1` 若 `update_time > create_time` 会保存为 edit；首次真实切换还需验证用户后续编辑是否由飞书再次投递。当前不导入旧飞书历史，也不在重启后补拉停机窗口；不要把 Feishu Gateway 的 ready 状态理解成历史已对账。
 
 ## 短期调度
 
@@ -240,8 +247,8 @@ invoke tool=mcp args={"action":"call","tool":"mcp__example__search","arguments":
 - logs 写在 `logs/` 下，是运维证据，不是 replay 输入。
 - 仓库对外展示的机器可读时间统一为北京时间 `YYYY-MM-DDTHH:mm:ss.SSS+08:00`；PostgreSQL `timestamptz` 仍保存绝对时刻。
 - 启动时当前 system prompt 会写入 `logs/system-prompt.txt`，便于检查。
-- 启动恢复会先连接 NapCat，并等待首次群历史 backfill 的所有来源尝试完成，再执行 missed-message replay；单群补拉失败记录 source-level error，其余来源和 replay 继续。
-- `SIGINT` / `SIGTERM` 会触发幂等 graceful shutdown：停止 ingress、中止未提交 compaction、等待当前 round、drain backfill、停止 jobs、同步最终 Goal/runtime 状态，最后断开数据库。关闭 NapCat WebSocket 时会先禁用 SDK 自动重连，避免退出流程被重新建立的连接拖住；单阶段超时或失败会记录 `shutdown_phase_failed`，并继续后续清理。
+- 启动恢复会先连接 NapCat，并等待 QQ 首次群历史 backfill 的所有来源尝试完成，再执行已有数据库事实的 missed-message replay；单群补拉失败记录 source-level error，其余来源和 replay 继续。飞书当前只从 WebSocket ready 后接收新事件，不做历史导入或重启补拉。
+- `SIGINT` / `SIGTERM` 会触发幂等 graceful shutdown：停止 ingress、中止未提交 compaction、等待当前 round、drain backfill/飞书会话队列、停止 jobs、同步最终 Goal/runtime 状态，最后断开数据库。关闭 NapCat WebSocket 时会先禁用 SDK 自动重连，避免退出流程被重新建立的连接拖住；单阶段超时或失败会记录 `shutdown_phase_failed`，并继续后续清理。
 
 ## 数据保留
 

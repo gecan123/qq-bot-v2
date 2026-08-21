@@ -53,7 +53,50 @@ function privateEvent(input: {
   }
 }
 
+function platformEvent(input: {
+  rowId: number
+  platform: 'qq' | 'feishu'
+  accountId: string
+  conversationId: string
+  eventKind?: 'message' | 'edit' | 'recall'
+}): Extract<BotEvent, { type: 'chat_message' }> {
+  return {
+    type: 'chat_message',
+    eventKind: input.eventKind ?? 'message',
+    messageRowId: input.rowId,
+    conversation: {
+      platform: input.platform,
+      accountId: input.accountId,
+      kind: 'group',
+      externalId: input.conversationId,
+    },
+    messageExternalId: `message-${input.rowId}`,
+    senderExternalId: `sender-${input.rowId}`,
+    senderName: `sender-${input.rowId}`,
+    mentionedSelf: false,
+    sentAt: new Date(`2026-07-03T00:02:${String(input.rowId).padStart(2, '0')}Z`),
+    renderedText: `body-${input.rowId}`,
+  }
+}
+
 describe('mailbox disclosure planning', () => {
+  test('isolates conversations by platform and account while preserving local row order', () => {
+    const qq = platformEvent({ rowId: 1, platform: 'qq', accountId: '10000', conversationId: 'shared' })
+    const feishu = platformEvent({ rowId: 2, platform: 'feishu', accountId: 'cli_1', conversationId: 'shared' })
+    const qqAgain = platformEvent({ rowId: 3, platform: 'qq', accountId: '10000', conversationId: 'shared' })
+
+    const result = planMailboxDisclosures([qq, feishu, qqAgain], {})
+
+    assert.deepEqual(result.disclosures, [
+      { kind: 'mailbox', mailboxKey: 'qq:10000:group:shared', events: [qq, qqAgain] },
+      { kind: 'mailbox', mailboxKey: 'feishu:cli_1:group:shared', events: [feishu] },
+    ])
+    assert.deepEqual(result.cursors, {
+      'qq:10000:group:shared': 3,
+      'feishu:cli_1:group:shared': 2,
+    })
+  })
+
   test('groups every QQ message by source mailbox, including mentioned group messages', () => {
     const mentioned = groupEvent({ rowId: 1, groupId: 111, text: 'mentioned group', mentionedSelf: true })
     const firstAlice = privateEvent({ rowId: 2, peerId: 9001, text: 'SECRET_ONE' })
@@ -167,6 +210,21 @@ describe('mailbox disclosure planning', () => {
     assert.doesNotMatch(rendered, /mentioned|rowIds/)
   })
 
+  test('marks lifecycle corrections high priority even without a group mention', () => {
+    const edited = platformEvent({
+      rowId: 15,
+      platform: 'feishu',
+      accountId: 'cli_1',
+      conversationId: 'oc_1',
+      eventKind: 'edit',
+    })
+
+    const payload = JSON.parse(renderMailboxNotification('feishu:cli_1:group:oc_1', [edited]))
+
+    assert.equal(payload.priority, 'high')
+    assert.equal(payload.delivery, 'interrupt')
+  })
+
   test('discloses configured group participation without exposing message bodies', () => {
     const events = [
       groupEvent({ rowId: 15, groupId: 111, text: 'DO_NOT_DISCLOSE_CHATTY_BODY' }),
@@ -261,6 +319,37 @@ describe('mailbox disclosure planning', () => {
       limit: MAILBOX_BACKLOG_RECENT_LIMIT,
     })
     assert.doesNotMatch(rendered, /Alice.+SECRET|SECRET/)
+  })
+
+  test('keeps a Feishu replay backlog platform scoped', () => {
+    const conversation = {
+      platform: 'feishu' as const,
+      accountId: 'cli_1',
+      kind: 'group' as const,
+      externalId: 'oc_1',
+    }
+    const rendered = renderMailboxBacklogNotification({
+      type: 'mailbox_backlog',
+      mailboxKey: 'feishu:cli_1:group:oc_1',
+      priority: 'normal',
+      source: { type: 'conversation', conversation, name: '飞书群', senderName: 'Alice' },
+      count: 150,
+      firstRowId: 20,
+      throughRowId: 220,
+      recentAfterRowId: 170,
+      senderCount: 10,
+      timeRange: {
+        from: new Date('2026-07-03T01:00:00Z'),
+        to: new Date('2026-07-03T02:00:00Z'),
+      },
+    })
+    const payload = JSON.parse(rendered)
+
+    assert.equal(payload.id, 'feishu:feishu:cli_1:group:oc_1:220')
+    assert.deepEqual(payload.source, { type: 'feishu', mailbox: 'feishu:cli_1:group:oc_1' })
+    assert.deepEqual(payload.data.conversation, { ...conversation, name: '飞书群' })
+    assert.equal(payload.data.qqSource, undefined)
+    assert.deepEqual(payload.open.args.conversation, conversation)
   })
 
   test('discloses configured group participation for replay backlog notifications', () => {

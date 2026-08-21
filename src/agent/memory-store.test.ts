@@ -116,7 +116,7 @@ describe('memory-store', () => {
         'aliases: ["常用别名","alias,with,comma"]',
         'validUntil: 2026-12-31T23:59:59.000+08:00',
         'supersedes: ["entry-old"]',
-        'sourceMessageIds: 11,12',
+        'sourceMessageRowIds: 11,12',
         '-->',
         '- 完整字段不会在 Markdown round-trip 中丢失',
         '<!-- /memory-entry -->',
@@ -142,7 +142,7 @@ describe('memory-store', () => {
           createdAt: '2026-07-01T08:00:00.000+08:00',
           updatedAt: '2026-07-02T08:00:00.000+08:00',
           content: '完整字段不会在 Markdown round-trip 中丢失',
-          sourceMessageIds: [11, 12],
+          sourceMessageRowIds: [11, 12],
           assertedByIds: [],
           tier: 'stable',
           status: 'disputed',
@@ -155,7 +155,7 @@ describe('memory-store', () => {
           createdAt: '2026-06-01T08:00:00.000+08:00',
           updatedAt: '2026-06-01T08:00:00.000+08:00',
           content: '旧格式条目仍然可读',
-          sourceMessageIds: [],
+          sourceMessageRowIds: [],
           assertedByIds: [],
           tier: 'recent',
           status: 'active',
@@ -287,7 +287,11 @@ describe('memory-store', () => {
       })
       const group = await writeMemoryEntry({ rootDir, now }, {
         scope: 'group',
-        id: '98765',
+        id: 'qq:bot:group:98765',
+        context: {
+          kind: 'conversation',
+          conversation: { platform: 'qq', accountId: 'bot', kind: 'group', externalId: '98765' },
+        },
         content: '这个群聊 AI 工具很多',
       })
       const topic = await writeMemoryEntry({ rootDir, now }, {
@@ -297,7 +301,7 @@ describe('memory-store', () => {
       })
 
       assert.equal(person.file, 'people/12345/groups/98765.md')
-      assert.equal(group.file, 'groups/98765.md')
+      assert.equal(group.file, 'groups/qq%3Abot%3Agroup%3A98765.md')
       assert.equal(topic.file, 'topics/topics.md')
       const topicRead = await readMemoryFile({ rootDir }, { file: 'topics/topics.md' })
       assert.equal(topicRead.ok, true)
@@ -376,10 +380,10 @@ describe('memory-store', () => {
       let nextId = 0
       const options = { rootDir, id: () => `dedupe-${++nextId}` }
       const first = await writeMemoryEntry(options, {
-        scope: 'person', id: '123', context: { kind: 'core' }, content: '主人喜欢短句', sourceMessageIds: [1],
+        scope: 'person', id: '123', context: { kind: 'core' }, content: '主人喜欢短句', sourceMessageRowIds: [1],
       })
       const second = await writeMemoryEntry(options, {
-        scope: 'person', id: '123', context: { kind: 'core' }, content: '主人喜欢短句', sourceMessageIds: [2],
+        scope: 'person', id: '123', context: { kind: 'core' }, content: '主人喜欢短句', sourceMessageRowIds: [2],
       })
       const read = await readMemoryFile({ rootDir }, { file: 'people/123/core.md' })
 
@@ -462,13 +466,13 @@ describe('memory-store', () => {
         id: () => `entry-${++index}`,
       }
       await writeMemoryEntry(options, {
-        scope: 'person', id: '123', context: { kind: 'core' }, content: '主人喜欢手冲咖啡', sourceMessageIds: [10],
+        scope: 'person', id: '123', context: { kind: 'core' }, content: '主人喜欢手冲咖啡', sourceMessageRowIds: [10],
       })
       await writeMemoryEntry(options, {
-        scope: 'person', id: '123', context: { kind: 'core' }, content: '主人最近在研究 TypeScript', sourceMessageIds: [11],
+        scope: 'person', id: '123', context: { kind: 'core' }, content: '主人最近在研究 TypeScript', sourceMessageRowIds: [11],
       })
       await writeMemoryEntry(options, {
-        scope: 'topic', title: '咖啡器具', content: '咖啡滤杯需要预热', sourceMessageIds: [12],
+        scope: 'topic', title: '咖啡器具', content: '咖啡滤杯需要预热', sourceMessageRowIds: [12],
       })
 
       const result = await recallMemoryEntries({ rootDir }, {
@@ -480,7 +484,7 @@ describe('memory-store', () => {
       })
 
       assert.equal(result.matches[0]?.entryId, 'entry-1')
-      assert.deepEqual(result.matches[0]?.sourceMessageIds, [10])
+      assert.deepEqual(result.matches[0]?.sourceMessageRowIds, [10])
       assert.equal(result.matches[0]!.score > 0, true)
       assert.equal(result.matches[0]!.matchedTerms.includes('主人'), true)
       assert.equal(result.matches.some((match) => match.entryId === 'entry-3'), false)
@@ -493,8 +497,16 @@ describe('memory-store', () => {
       const options = { rootDir, id: () => `targeted-${++index}` }
       await writeMemoryEntry(options, { scope: 'person', id: '10001', context: { kind: 'core' }, content: '喜欢无糖拿铁' })
       await writeMemoryEntry(options, { scope: 'person', id: '10002', context: { kind: 'core' }, content: '喜欢无糖拿铁' })
-      await writeMemoryEntry(options, { scope: 'group', id: '20001', content: '群里约定周五复盘' })
-      await writeMemoryEntry(options, { scope: 'group', id: '20002', content: '群里约定周五复盘' })
+      await writeMemoryEntry(options, {
+        scope: 'group', id: 'qq:bot:group:20001',
+        context: { kind: 'conversation', conversation: { platform: 'qq', accountId: 'bot', kind: 'group', externalId: '20001' } },
+        content: '群里约定周五复盘',
+      })
+      await writeMemoryEntry(options, {
+        scope: 'group', id: 'qq:bot:group:20002',
+        context: { kind: 'conversation', conversation: { platform: 'qq', accountId: 'bot', kind: 'group', externalId: '20002' } },
+        content: '群里约定周五复盘',
+      })
 
       const person = await recallMemoryEntries({ rootDir }, {
         query: '无糖拿铁',
@@ -505,7 +517,7 @@ describe('memory-store', () => {
       const group = await recallMemoryEntries({ rootDir }, {
         query: '周五复盘',
         scope: 'group',
-        id: '20001',
+        id: 'qq:bot:group:20001',
       })
       const missing = await recallMemoryEntries({ rootDir }, {
         query: '无糖拿铁',
@@ -515,7 +527,7 @@ describe('memory-store', () => {
       })
 
       assert.deepEqual(person.matches.map((match) => match.file), ['people/10002/core.md'])
-      assert.deepEqual(group.matches.map((match) => match.file), ['groups/20001.md'])
+      assert.deepEqual(group.matches.map((match) => match.file), ['groups/qq%3Abot%3Agroup%3A20001.md'])
       assert.deepEqual(missing.matches, [])
     })
   })
@@ -569,13 +581,13 @@ describe('memory-store', () => {
         id: () => `review-${++index}`,
       }
       await writeMemoryEntry(options, {
-        scope: 'person', id: '123', context: { kind: 'core' }, content: '主人喜欢喝手冲咖啡并且每天自己磨豆再慢慢冲煮', sourceMessageIds: [20],
+        scope: 'person', id: '123', context: { kind: 'core' }, content: '主人喜欢喝手冲咖啡并且每天自己磨豆再慢慢冲煮', sourceMessageRowIds: [20],
       })
       await writeMemoryEntry(options, {
-        scope: 'person', id: '123', context: { kind: 'core' }, content: '主人喜欢喝手冲咖啡而且每天自己磨豆再慢慢冲煮', sourceMessageIds: [21],
+        scope: 'person', id: '123', context: { kind: 'core' }, content: '主人喜欢喝手冲咖啡而且每天自己磨豆再慢慢冲煮', sourceMessageRowIds: [21],
       })
       await writeMemoryEntry(options, {
-        scope: 'person', id: '123', context: { kind: 'core' }, content: '主人不喜欢喝手冲咖啡而且每天自己磨豆再慢慢冲煮', sourceMessageIds: [22],
+        scope: 'person', id: '123', context: { kind: 'core' }, content: '主人不喜欢喝手冲咖啡而且每天自己磨豆再慢慢冲煮', sourceMessageRowIds: [22],
       })
       const file = join(rootDir, 'memory', 'people', '123', 'core.md')
       const before = await readFile(file, 'utf8')
@@ -841,7 +853,7 @@ describe('memory-store', () => {
         id: () => 'evidence-1',
       }
       await writeMemoryEntry(options, {
-        scope: 'self', title: 'evidence', content: '跨天仍然有用的方法', sourceMessageIds: [101],
+        scope: 'self', title: 'evidence', content: '跨天仍然有用的方法', sourceMessageRowIds: [101],
       })
       let snapshot = await inspectMemoryFileForMaintenance({ rootDir }, 'self/self.md')
       await assert.rejects(
@@ -854,7 +866,7 @@ describe('memory-store', () => {
       )
 
       await writeMemoryEntry(options, {
-        scope: 'self', title: 'evidence', content: '跨天仍然有用的方法', sourceMessageIds: [102],
+        scope: 'self', title: 'evidence', content: '跨天仍然有用的方法', sourceMessageRowIds: [102],
       })
       snapshot = await inspectMemoryFileForMaintenance({ rootDir }, 'self/self.md')
       await applyMemoryMaintenance(options, {

@@ -192,12 +192,12 @@ describe('createAgentRuntime', () => {
     const externalResearch = payload.capabilities.find((item: { name: string }) => item.name === 'external_research')
     const skillManagement = payload.capabilities.find((item: { name: string }) => item.name === 'skill_management')
     const mcpConnectors = payload.capabilities.find((item: { name: string }) => item.name === 'mcp_connectors')
-    const qq = payload.capabilities.find((item: { name: string }) => item.name === 'qq')
+    const chat = payload.capabilities.find((item: { name: string }) => item.name === 'chat')
     const shortTermScheduling = payload.capabilities.find((item: { name: string }) => item.name === 'short_term_scheduling')
     const lifeState = payload.capabilities.find((item: { name: string }) => item.name === 'life_state')
     const stickerManagement = payload.capabilities.find((item: { name: string }) => item.name === 'sticker_management')
     assert.deepEqual(mcpConnectors.tools, ['mcp'])
-    assert.deepEqual(qq.tools, ['qq_conversation', 'send_message'])
+    assert.deepEqual(chat.tools, ['conversation', 'send_message'])
     assert.deepEqual(shortTermScheduling.tools, ['schedule'])
     assert.deepEqual(lifeState.tools, ['notebook', 'life_journal'])
     assert.deepEqual(stickerManagement.tools, ['collect_sticker'])
@@ -228,7 +228,7 @@ describe('createAgentRuntime', () => {
     assert.equal(scheduleStops, 1)
   })
 
-  test('opens and sends through the deferred qq capability using runtime-local focus', async () => {
+  test('opens and sends through the deferred chat capability using runtime-local focus', async () => {
     const context = createAgentContext()
     const sent: Parameters<MessageSender['sendSegments']>[0][] = []
     const runtime = createAgentRuntime({
@@ -248,8 +248,10 @@ describe('createAgentRuntime', () => {
       id: 'open-private',
       name: 'invoke',
       args: {
-        tool: 'qq_conversation',
-        args: { action: 'open', target: { type: 'private', userId: 2002 } },
+        tool: 'conversation',
+        args: { action: 'open', target: {
+          platform: 'qq', accountId: '9999', kind: 'private', externalId: '2002',
+        } },
       },
     }, {
       eventQueue: new InMemoryEventQueue<BotEvent>(),
@@ -270,16 +272,15 @@ describe('createAgentRuntime', () => {
     const current = await runtime.tools.execute({
       id: 'current-private',
       name: 'invoke',
-      args: { tool: 'qq_conversation', args: { action: 'current' } },
+      args: { tool: 'conversation', args: { action: 'current' } },
     }, {
       eventQueue: new InMemoryEventQueue<BotEvent>(),
       roundIndex: 1,
     })
     assert.deepEqual(JSON.parse(current.content as string).current, {
-      type: 'private',
-      userId: 2002,
+      platform: 'qq', accountId: '9999', kind: 'private', externalId: '2002',
     })
-    assert.equal(context.getSnapshot().qqConversationFocus, null)
+    assert.equal(context.getSnapshot().conversationFocus, null)
     assert.deepEqual(sent, [{
       target: { type: 'private', userId: 2002 },
       segments: [
@@ -287,7 +288,7 @@ describe('createAgentRuntime', () => {
         { type: 'text', data: { text: 'hi' } },
       ],
     }])
-    assert.match(send.content as string, /"providerMessageId":77/)
+    assert.match(send.content as string, /"providerMessageId":"77"/)
   })
 
   test('lets a pending private mailbox response bypass the ambient cooldown without reply_to', async () => {
@@ -312,8 +313,10 @@ describe('createAgentRuntime', () => {
       id: 'open-private',
       name: 'invoke',
       args: {
-        tool: 'qq_conversation',
-        args: { action: 'open', target: { type: 'private', userId: 2002 } },
+        tool: 'conversation',
+        args: { action: 'open', target: {
+          platform: 'qq', accountId: '9999', kind: 'private', externalId: '2002',
+        } },
       },
     }, toolContext)
     await runtime.tools.execute({

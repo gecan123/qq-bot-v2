@@ -46,6 +46,11 @@ export function renderNotificationEnvelope(input: NotificationEnvelopeInput): st
 }
 
 export function notificationRoutingForEvent(event: BotEvent): NotificationRouting | null {
+  if (event.type === 'chat_message') {
+    return event.conversation.kind === 'private' || event.mentionedSelf
+      ? { priority: 'high', delivery: 'interrupt' }
+      : { priority: 'normal', delivery: 'passive' }
+  }
   if (event.type === 'napcat_private_message') {
     return { priority: 'high', delivery: 'interrupt' }
   }

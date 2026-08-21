@@ -593,6 +593,20 @@ export function parseConfig(
     }
     return url.origin
   }
+  const feishu = parseBoolean(env.BOT_FEISHU_ENABLED, false)
+    ? {
+        appId: requireEnv(env, 'BOT_FEISHU_APP_ID').trim(),
+        appSecret: requireEnv(env, 'BOT_FEISHU_APP_SECRET').trim(),
+        groupIds: (env.BOT_FEISHU_GROUP_IDS ?? '')
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean),
+        ...(env.BOT_OWNER_FEISHU_OPEN_ID?.trim()
+          ? { ownerOpenId: env.BOT_OWNER_FEISHU_OPEN_ID.trim() }
+          : {}),
+        gatewayUrl: serviceUrl('BOT_FEISHU_GATEWAY_URL', 'http://127.0.0.1:37927'),
+      }
+    : undefined
 
   return {
     databaseUrl: requireEnv(env, 'DATABASE_URL'),
@@ -607,6 +621,7 @@ export function parseConfig(
     selfNumber: parsePositiveSafeInteger('SELF_NUMBER', requireEnv(env, 'SELF_NUMBER')),
     /** Owner (创造者) — 渲染 [关系基线] 用. null = 未配置 → 那段不渲染. */
     owner: parseOwner(env),
+    feishu,
     nodeEnv: env.NODE_ENV || 'development',
     replyMediaTimeoutMs: parsePositiveInteger(env.REPLY_MEDIA_TIMEOUT_MS, 15_000),
     jobInterDelayMs: parsePositiveInteger(env.JOB_INTER_DELAY_MS, 200),

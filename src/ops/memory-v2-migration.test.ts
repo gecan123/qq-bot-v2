@@ -34,11 +34,12 @@ describe('memory v2 migration', () => {
         async loadSourceEvidence(ids) {
           return ids.map((rowId) => ({
             rowId,
-            sceneKind: 'qq_group' as const,
-            sceneExternalId: '',
-            groupId: 20001,
-            messageId: String(rowId * 10),
-            senderId: '10002',
+            platform: 'qq' as const,
+            accountId: '99999',
+            conversationKind: 'group' as const,
+            conversationExternalId: '20001',
+            messageExternalId: String(rowId * 10),
+            senderExternalId: '10002',
             sentAt: CREATED_AT,
           }))
         },
@@ -117,7 +118,7 @@ describe('memory v2 migration', () => {
   })
 })
 
-function oldEntry(id: string, content: string, sourceMessageIds: number[]): string {
+function oldEntry(id: string, content: string, sourceMessageRowIds: number[]): string {
   return [
     '<!-- memory-entry',
     `id: ${id}`,
@@ -127,7 +128,7 @@ function oldEntry(id: string, content: string, sourceMessageIds: number[]): stri
     'status: active',
     'aliases: []',
     'supersedes: []',
-    ...(sourceMessageIds.length > 0 ? [`sourceMessageIds: ${sourceMessageIds.join(',')}`] : []),
+    ...(sourceMessageRowIds.length > 0 ? [`sourceMessageRowIds: ${sourceMessageRowIds.join(',')}`] : []),
     '-->',
     `- ${content}`,
     '<!-- /memory-entry -->',

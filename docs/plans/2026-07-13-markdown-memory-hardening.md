@@ -396,7 +396,7 @@ export interface MemoryEntry {
   createdAt: string
   updatedAt: string
   content: string
-  sourceMessageIds: number[]
+  sourceMessageRowIds: number[]
   tier: 'recent' | 'stable'
   status: MemoryStatus
   aliases: string[]
@@ -559,7 +559,7 @@ type MemoryMaintenanceOperation =
 
 代码层强制规则优先于 LLM 输出：
 
-- `promote` 至少需要两个不同 `sourceMessageIds`，否则拒绝该 operation。
+- `promote` 至少需要两个不同 `sourceMessageRowIds`，否则拒绝该 operation。
 - `discard` 只允许 recent + active。
 - stable、disputed、superseded 都不得自动 discard。
 - 检测到明显否定关系时拒绝 merge，转成 disputed proposal。

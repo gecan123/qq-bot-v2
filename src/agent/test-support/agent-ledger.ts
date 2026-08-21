@@ -39,7 +39,7 @@ export function createTestAgentLedger(input: {
     mailboxCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
-    qqConversationFocus: null,
+    conversationFocus: null,
     lastWakeAt: null,
     ...structuredClone(input.runtimeState ?? {}),
     inboxReadCursors: structuredClone(input.runtimeState?.inboxReadCursors ?? {}),

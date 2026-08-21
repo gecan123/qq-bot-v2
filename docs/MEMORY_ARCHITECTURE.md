@@ -21,7 +21,7 @@
 
 | 层 | 存储 | 是否常驻 LLM | 写入入口 | 读取入口 | replay 角色 |
 | --- | --- | --- | --- | --- | --- |
-| 入站事实 | Postgres `messages` / `media`；字节在 `media_blobs` 按 hash 共享 | 否 | NapCat ingress | mailbox 通知后用 `inbox` / `read_file` | 只用于 missed-message 披露和按需读取，不重建历史正文 |
+| 入站事实 | Postgres `messages` / `media`；字节在 `media_blobs` 按 hash 共享 | 否 | QQ / 飞书 ingress | mailbox 通知后用 `inbox` / `read_file` | 只用于 missed-message 披露和按需读取，不重建历史正文 |
 | LLM ledger | Postgres `bot_agent_ledger_entries` | 是 | Runtime Host 受控 append / append-only compaction | 每轮自动使用 | 唯一持久 prompt history |
 | Working projection | 进程内临时视图 | 是，仅当前请求 | 从 durable ledger 确定性投影 | LLM request | 可重建，不单独持久化 |
 | Runtime 控制 | Postgres `bot_agent_runtime_state` | 否 | 与可见 append 同事务更新 | Runtime Host | 不保存或重建 transcript |
@@ -33,13 +33,14 @@
 | Goal 控制状态 | Postgres `bot_agent_goal` | 否；revision 事件可见 | owner 命令或 `goal` tool | Runtime Host / `goal get` | 不能重建 transcript |
 | 运维证据 | `logs/*`、观测表 | 否 | runtime best-effort | 运维命令 | 永远不是 replay 或记忆来源 |
 
-mailbox cursors、continuity、goal revision、QQ focus、last wake 和 ledger head 保存在 runtime singleton，但属于运行控制状态，不属于 LLM 可见记忆。完整不变量见 `docs/AGENT_CONTEXT.md`。
+mailbox cursors、continuity、goal revision、跨平台 conversation focus、last wake 和 ledger head 保存在 runtime singleton，但属于运行控制状态，不属于 LLM 可见记忆。完整不变量见 `docs/AGENT_CONTEXT.md`。
 
 ## 总体数据流
 
 ```mermaid
 flowchart LR
-  N["NapCat 入站"] --> F["messages / media 事实账本"]
+  Q["QQ 入站"] --> F["messages / media 事实账本"]
+  L["飞书入站"] --> F
   F --> B["mailbox 元数据通知"]
   B --> C["append-only LLM ledger"]
   F --> I["inbox / read_file"]
@@ -84,11 +85,11 @@ flowchart LR
 
 ### Memory
 
-- scope 为 `self|person|group|topic`。主 Agent 只使用 `remember|recall|correct`。`self` 与 `topic` 分别只有 `self/self.md`、`topics/topics.md` 两个 canonical 文件；remember 的 title 作为 entry alias 参与 recall，不决定文件路径。Memory v2 把人物主体与观察场景正交建模：跨场景人物核心位于 `people/<qq>/core.md`，群内观察位于 `people/<qq>/groups/<group>.md`，私聊观察位于 `people/<qq>/private/<peer>.md`；`groups/<group>.md` 只保存群体整体。无法还原场景的旧人物事实进入 `people/<qq>/unscoped.md` 隔离区，不参与普通人物 recall。
-- 每个 entry 带稳定 ID、北京时间、`sourceMessageIds`、`assertedByIds`、`evidenceKind`、语义 `memoryKind` 和 `tier=recent|stable`。人物与群文件都保留“谁说的、在哪个场景说的”，subject 不再与 claimant 混为一谈。
+- scope 为 `self|person|group|topic`。主 Agent 只使用 `remember|recall|correct`。`self` 与 `topic` 分别只有 `self/self.md`、`topics/topics.md` 两个 canonical 文件；remember 的 title 作为 entry alias 参与 recall，不决定文件路径。Memory v2 把人物主体与观察场景正交建模：人物用稳定 participant key 标识，平台会话观察位于 `people/<participant>/conversations/<encoded-conversation-key>.md`，跨会话人物核心位于 `people/<participant>/core.md`，群体整体位于 `groups/<encoded-conversation-key>.md`。普通 QQ、飞书用户和群彼此隔离；只有配置的主人 QQ/飞书身份会统一折叠为 `owner`，且只有主人本人陈述可进入 owner core。旧 QQ 路径只作为现有数据的读取兼容，不是新写入目标。
+- 每个 entry 带稳定 ID、北京时间、`sourceMessageRowIds`、`assertedByIds`、`evidenceKind`、语义 `memoryKind` 和 `tier=recent|stable`。人物与群文件都保留“谁说的、在哪个场景说的”，subject 不再与 claimant 混为一谈。
 - 普通 remember 先生成 recent；完全相同内容在同文件内去重。
-- person/group 的 remember 和 correct 必须引用真实存在的 `Message.id`；runtime 从消息行推导 context、claimant 和 `self_report|owner_assertion|third_party_report`，不会要求“关于某人的证据必须由本人发送”。普通人物写入总是先落来源场景，不会直接升级成 core。群写入只接受同群来源，并只允许 `group_*` 语义；个人职业、偏好、身份仍归 person。`correct` 用 recall 返回的 entry ID 与文件 revision，原子 supersede 旧 entry 并创建 replacement。
-- `recall` 做确定性 lexical scoring。person recall 必须提供 QQ `id` 和当前 `group|private` context，只读取 `people/<id>/core.md` 与当前场景文件；不会把另一个群里的观察混进来。group recall 只读取 `groups/<id>.md`。`self|topic` recall 禁止提供 `id`；scope 和 id 都不传时保留跨范围探索。
+- person/group 的 remember 和 correct 必须引用真实存在的 `Message.rowId`；runtime 从消息行推导 conversation、claimant 和 `self_report|owner_assertion|third_party_report`，不会要求“关于某人的证据必须由本人发送”。普通人物写入总是先落来源会话，不会直接升级成 core。群写入只接受同一 conversation key 的来源，并只允许 `group_*` 语义；个人职业、偏好、身份仍归 person。`correct` 用 recall 返回的 entry ID 与文件 revision，原子 supersede 旧 entry 并创建 replacement。
+- `recall` 做确定性 lexical scoring。person recall 必须提供 participant key 与当前 conversation context，只读取 `people/<id>/core.md` 与当前会话文件；不会把另一个平台或群里的观察混进来。group recall 的 `id` 是 `conversation list` 返回的 conversation key，只读取对应群文件。`self|topic` recall 禁止提供 `id`；scope 和 id 都不传时保留跨范围探索。
 - review、promote、merge、discard 和 compact 属于内部 maintenance 或 deferred admin，不暴露给主 Agent。maintenance 产生新的 stable entry 时保留 supersedes 链；已 superseded 内容不参与 recall 或 maintenance 阈值。
 - 显式 mutation 和自动 maintenance 都使用文件 revision；stable 不会被自动 discard。
 
@@ -115,7 +116,7 @@ flowchart LR
 ## 读取与披露
 
 - `AgentContext` 每轮自动可见；其他层都不是常驻 prompt。
-- 当前聊天上下文不足，且问题涉及具体人、群、旧话题、偏好、稳定事实或自己做过的经验时，主 Agent 应优先 `memory recall`；上下文已有足够且未冲突的信息时不要重复召回。具体人物和群必须分别带当前 QQ 号或群号定向 recall。
+- 当前聊天上下文不足，且问题涉及具体人、群、旧话题、偏好、稳定事实或自己做过的经验时，主 Agent 应优先 `memory recall`；上下文已有足够且未冲突的信息时不要重复召回。具体人物和群必须分别带 participant key 或 conversation key 以及当前 context 定向 recall。
 - 要继续一条研究、阅读、市场或项目主线时，用 Notebook 的 list/search/read。
 - 要理解近期主观连续性时，用 Life Journal；要决定下一步时优先读 Agenda。
 - mailbox 只通知“哪里有新事实”，消息正文继续通过 `inbox` 有界读取。
@@ -193,7 +194,7 @@ checkpoint 写失败不影响已提交的 ledger/runtime 事务；删除整张 c
 
 ## 当前改进顺序
 
-1. **跨层 provenance**：memory 目前只能结构化引用 Message.id。以后若稳定结论来自 Notebook 或 Life Journal，可增加受控 source ref，而不是把来源写进自由文本。
+1. **跨层 provenance**：memory 目前只能结构化引用 `Message.rowId`。以后若稳定结论来自 Notebook 或 Life Journal，可增加受控 source ref，而不是把来源写进自由文本。
 2. **跨进程互斥**：当前协调器只覆盖单进程。只有确认存在多 writer 部署需求时，再增加进程锁或单 writer service，不提前引入分布式锁。
 3. **主动 recall 决策门**：先观察主 Agent 是否真的频繁漏掉必要的显式 recall；没有真实收益证据就保持当前工具调用方式。即使启用，也必须把结果写入 ledger，不能做隐藏动态注入。
 4. **可选检索索引决策门**：先用 `agent:memory-check` 和实际召回日志观察 Markdown 扫描的规模、延迟与相关性；只有出现可复现瓶颈后，才评估 SQLite FTS/BM25 或 embedding。派生索引必须可从 Markdown 重建。

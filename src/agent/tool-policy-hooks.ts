@@ -2,7 +2,9 @@ import { createHash } from 'node:crypto'
 import type { AfterToolHook, BeforeToolHook } from './tool.js'
 import { createLogger } from '../logger.js'
 import { normalizeSendText } from './tools/send-message.js'
-import type { QqConversationFocus } from './agent-context.types.js'
+import type { ConversationFocus } from './agent-context.types.js'
+import type { ConversationRef } from '../chat/conversation.js'
+import { conversationKey } from '../chat/conversation.js'
 
 const log = createLogger('TOOL_POLICY_HOOKS')
 
@@ -34,9 +36,7 @@ export interface SendMessageWorkCommitmentHookOptions {
   getCurrentGoal: () => Promise<SendMessageGoalBinding | null>
 }
 
-type SendMessageAiToneTarget =
-  | { type: 'group'; groupId: number }
-  | { type: 'private'; userId: number }
+type SendMessageAiToneTarget = ConversationRef
 
 interface GenerateImageHookArgs {
   prompt?: unknown
@@ -55,8 +55,8 @@ interface GenerateImageTaskLogHookOptions {
 }
 
 export interface SendMessageSafetyGuardOptions {
-  getCurrentTarget: () => QqConversationFocus
-  hasPendingPrivateMailbox?: (userId: number) => boolean
+  getCurrentTarget: () => ConversationFocus
+  hasPendingPrivateMailbox?: (target: ConversationRef) => boolean
   nowMs?: () => number
   privateAmbientCooldownMs?: number
   ambientDuplicateWindowMs?: number
@@ -124,7 +124,7 @@ export function createSendMessageSafetyGuard(
     1,
     options.ambientDuplicateWindowMs ?? DEFAULT_AMBIENT_DUPLICATE_WINDOW_MS,
   )
-  const lastPrivateAmbientAt = new Map<number, number>()
+  const lastPrivateAmbientAt = new Map<string, number>()
   const lastAmbientTextAt = new Map<string, number>()
 
   const beforeTool: BeforeToolHook = ({ call }) => {
@@ -148,8 +148,8 @@ export function createSendMessageSafetyGuard(
       }
     }
 
-    if (target?.type !== 'private') return
-    const lastAt = lastPrivateAmbientAt.get(target.userId)
+    if (target?.kind !== 'private') return
+    const lastAt = lastPrivateAmbientAt.get(conversationKey(target))
     if (lastAt != null && now - lastAt < privateAmbientCooldownMs) {
       return rejectSendMessage(
         'private_ambient_cooldown',
@@ -172,7 +172,7 @@ export function createSendMessageSafetyGuard(
     if (isReplySend(args, target, options.hasPendingPrivateMailbox)) return
 
     const now = nowMs()
-    if (target?.type === 'private') lastPrivateAmbientAt.set(target.userId, now)
+    if (target?.kind === 'private') lastPrivateAmbientAt.set(conversationKey(target), now)
     if (typeof args.message !== 'string') return
     const normalized = normalizeSendText(args.message).trim()
     if (normalized.length > 0) lastAmbientTextAt.set(hashText(normalized), now)
@@ -187,7 +187,7 @@ function isReplySend(
   hasPendingPrivateMailbox: SendMessageSafetyGuardOptions['hasPendingPrivateMailbox'],
 ): boolean {
   if (args.reply_to != null) return true
-  return target?.type === 'private' && hasPendingPrivateMailbox?.(target.userId) === true
+  return target?.kind === 'private' && hasPendingPrivateMailbox?.(target) === true
 }
 
 function parseSendMessageWorkBinding(value: unknown):
@@ -232,13 +232,15 @@ export function createGenerateImageTaskLogHook(options: GenerateImageTaskLogHook
 function parseSendMessageAiToneTarget(target: unknown): SendMessageAiToneTarget | null {
   if (!target || typeof target !== 'object' || Array.isArray(target)) return null
   const value = target as Record<string, unknown>
-  if (value.type === 'group' && typeof value.groupId === 'number') {
-    return { type: 'group', groupId: value.groupId }
+  if (value.platform !== 'qq' && value.platform !== 'feishu') return null
+  if (value.kind !== 'group' && value.kind !== 'private') return null
+  if (typeof value.accountId !== 'string' || typeof value.externalId !== 'string') return null
+  return {
+    platform: value.platform,
+    accountId: value.accountId,
+    kind: value.kind,
+    externalId: value.externalId,
   }
-  if (value.type === 'private' && typeof value.userId === 'number') {
-    return { type: 'private', userId: value.userId }
-  }
-  return null
 }
 
 function parseJsonObject(value: string): Record<string, unknown> | null {

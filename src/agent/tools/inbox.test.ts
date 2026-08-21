@@ -1,391 +1,208 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { createInboxTool, INBOX_OUTPUT_CAP_CHARS, type InboxMessageRow } from './inbox.js'
+import type { ToolContext } from '../tool.js'
+import type { BotEvent } from '../event.js'
+import { InMemoryEventQueue } from '../event-queue.js'
+import {
+  createInboxTool,
+  INBOX_OUTPUT_CAP_CHARS,
+  type InboxMessageRow,
+  type InboxToolDeps,
+} from './inbox.js'
+
+const qqGroup = {
+  platform: 'qq' as const,
+  accountId: '10000',
+  kind: 'group' as const,
+  externalId: '20000',
+}
+const feishuOwner = {
+  platform: 'feishu' as const,
+  accountId: 'cli_1',
+  kind: 'private' as const,
+  externalId: 'oc_owner',
+}
+
+function context(): ToolContext {
+  return { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 0 }
+}
 
 function row(input: {
-  id: number
-  kind?: 'qq_group' | 'qq_private'
-  sourceId?: string
-  text?: string
+  rowId: number
+  conversation?: typeof qqGroup | typeof feishuOwner
+  eventKind?: 'message' | 'edit' | 'recall'
   content?: unknown
+  text?: string
 }): InboxMessageRow {
-  const kind = input.kind ?? 'qq_group'
-  const sourceId = input.sourceId ?? '111'
+  const conversation = input.conversation ?? qqGroup
   return {
-    id: input.id,
-    sceneKind: kind,
-    sceneExternalId: kind === 'qq_private' ? sourceId : '',
-    groupId: kind === 'qq_group' ? BigInt(sourceId) : null,
-    groupName: kind === 'qq_group' ? '测试群' : null,
-    messageId: BigInt(10_000 + input.id),
-    senderId: BigInt(kind === 'qq_group' ? 123 : sourceId),
-    senderNickname: 'sender',
-    senderGroupNickname: null,
-    resolvedText: input.text ?? `message-${input.id}`,
-    searchText: input.text ?? `message-${input.id}`,
-    content: input.content ?? [{ type: 'text', content: input.text ?? `message-${input.id}` }],
-    sentAt: new Date(`2026-07-03T00:00:${String(input.id % 60).padStart(2, '0')}Z`),
-    createdAt: new Date(`2026-07-03T00:00:${String(input.id % 60).padStart(2, '0')}Z`),
+    rowId: input.rowId,
+    eventKind: input.eventKind ?? 'message',
+    platform: conversation.platform,
+    accountId: conversation.accountId,
+    conversationKind: conversation.kind,
+    conversationExternalId: conversation.externalId,
+    conversationName: conversation.kind === 'group' ? '测试群' : null,
+    messageExternalId: conversation.platform === 'qq' ? String(1000 + input.rowId) : `om_${input.rowId}`,
+    senderExternalId: conversation.platform === 'qq' ? '30000' : 'ou_owner',
+    senderName: 'Alice',
+    senderConversationName: null,
+    content: input.content ?? [{ type: 'text', content: input.text ?? `text-${input.rowId}` }],
+    resolvedText: input.text ?? `text-${input.rowId}`,
+    searchText: input.text ?? `text-${input.rowId}`,
+    sentAt: null,
+    createdAt: new Date(Date.parse('2026-08-21T00:00:00Z') + input.rowId * 1_000),
   }
 }
 
+function tool(overrides: Partial<InboxToolDeps> = {}) {
+  return createInboxTool({
+    allowedConversations: [qqGroup, feishuOwner],
+    selfExternalIds: { qq: '10000', feishu: 'ou_bot' },
+    findMessages: async () => [],
+    ...overrides,
+  })
+}
+
+function parse(content: unknown): Record<string, any> {
+  return JSON.parse(content as string)
+}
+
 describe('inbox tool', () => {
-  test('reads an explicit monitored group in ascending row order', async () => {
+  test('reads an allowed conversation in ascending local row order', async () => {
     const calls: unknown[] = []
-    const tool = createInboxTool({
-      groupIds: [111],
-      selfNumber: 999,
-      async findMessages(args) {
+    const inbox = tool({
+      findMessages: async (args) => {
         calls.push(args)
-        return [row({ id: 11 }), row({ id: 12 })]
+        return [row({ rowId: 11 }), row({ rowId: 12 })]
       },
     })
 
-    const result = await tool.execute({
+    const result = await inbox.execute({
       action: 'read',
-      source: 'group',
-      groupId: 111,
+      conversation: qqGroup,
       afterRowId: 10,
       limit: 2,
-    }, undefined as never)
+    }, context())
+    const payload = parse(result.content)
 
     assert.deepEqual(calls, [{
-      where: { sceneKind: 'qq_group', groupId: 111n, id: { gt: 10 } },
-      orderBy: { id: 'asc' },
+      where: {
+        platform: 'qq',
+        accountId: '10000',
+        conversationKind: 'group',
+        conversationExternalId: '20000',
+        rowId: { gt: 10 },
+      },
+      orderBy: { rowId: 'asc' },
       take: 2,
     }])
-    const payload = JSON.parse(result.content as string) as {
-      messages: Array<{ rowId: number; text: string; replyable: boolean }>
-    }
-    assert.deepEqual(payload.messages.map((message) => message.rowId), [11, 12])
-    assert.equal(payload.messages[0]!.text, 'message-11')
-    assert.equal(payload.messages[0]!.replyable, true)
-    assert.equal(result.outcome?.progress, true)
+    assert.deepEqual(payload.messages.map((message: any) => message.rowId), [11, 12])
+    assert.equal(payload.messages[0].mailbox, 'qq:10000:group:20000')
+    assert.equal(payload.messages[0].messageExternalId, '1011')
     assert.deepEqual(result.effects, [{
       type: 'inbox_read',
-      mailbox: 'qq_group:111',
+      mailbox: 'qq:10000:group:20000',
       throughRowId: 12,
     }])
-
-    const repeated = await tool.execute({
-      action: 'read',
-      source: 'group',
-      groupId: 111,
-      afterRowId: 10,
-      limit: 2,
-    }, undefined as never)
-    assert.deepEqual(repeated.outcome, {
-      ok: true,
-      code: 'unchanged',
-      progress: false,
-    })
   })
 
-  test('empty mailbox read is an explicit no-progress result', async () => {
-    const tool = createInboxTool({
-      groupIds: [111],
-      selfNumber: 999,
-      async findMessages() { return [] },
+  test('renders edits and recalls as explicit corrections', async () => {
+    const inbox = tool({
+      findMessages: async () => [
+        row({ rowId: 20, conversation: feishuOwner, eventKind: 'edit', text: '新正文' }),
+        row({ rowId: 21, conversation: feishuOwner, eventKind: 'recall', text: '' }),
+      ],
     })
 
-    const result = await tool.execute({
+    const result = await inbox.execute({
       action: 'read',
-      source: 'group',
-      groupId: 111,
-      afterRowId: 10,
-    }, undefined as never)
+      conversation: feishuOwner,
+      afterRowId: 19,
+    }, context())
+    const payload = parse(result.content)
 
-    assert.deepEqual(result.outcome, { ok: true, code: 'empty', progress: false })
+    assert.equal(payload.messages[0].text, '[消息已编辑: om_20]\n新正文')
+    assert.equal(payload.messages[1].text, '[消息已撤回: om_21]')
+    assert.equal(payload.messages[0].replyable, true)
+    assert.equal(payload.messages[1].replyable, false)
   })
 
-  test('exposes structured mention targets without treating plain-text @你 as a bot mention', async () => {
-    const tool = createInboxTool({
-      groupIds: [111],
-      selfNumber: 3999414673,
-      async findMessages() {
-        return [
-          row({ id: 1, text: '@你人呢' }),
-          row({ id: 2, text: '@2070979806', content: [{ type: 'at', targetId: '2070979806' }] }),
-          row({ id: 3, text: '@3999414673', content: [{ type: 'at', targetId: '3999414673' }] }),
-        ]
-      },
+  test('exposes structured mentions and media handles without guessing from plain text', async () => {
+    const inbox = tool({
+      findMessages: async () => [row({
+        rowId: 30,
+        text: '@你 看文件',
+        content: [
+          { type: 'text', content: '@你 看文件' },
+          { type: 'at', targetId: '10000' },
+          { type: 'image', referenceId: '42', fileName: 'photo.png', fileSize: '123' },
+          { type: 'file', referenceId: '43', fileName: 'report.pdf', fileSize: '456' },
+        ],
+      })],
     })
 
-    const result = await tool.execute({
+    const result = await inbox.execute({
       action: 'read',
-      source: 'group',
-      groupId: 111,
-    }, undefined as never)
-    const payload = JSON.parse(result.content as string) as {
-      messages: Array<{ mentionedSelf: boolean; mentionTargets: string[] }>
-    }
+      conversation: qqGroup,
+    }, context())
+    const message = parse(result.content).messages[0]
 
-    assert.deepEqual(payload.messages.map(({ mentionedSelf, mentionTargets }) => ({
-      mentionedSelf,
-      mentionTargets,
-    })), [
-      { mentionedSelf: false, mentionTargets: [] },
-      { mentionedSelf: false, mentionTargets: ['2070979806'] },
-      { mentionedSelf: true, mentionTargets: ['3999414673'] },
+    assert.equal(message.mentionedSelf, true)
+    assert.deepEqual(message.mentionTargets, ['10000'])
+    assert.deepEqual(message.media, [
+      { type: 'image', mediaId: 42, fileName: 'photo.png', fileSize: '123' },
+      { type: 'file', mediaId: 43, fileName: 'report.pdf', fileSize: '456' },
     ])
   })
 
-  test('exposes valid media handles in original segment order', async () => {
-    const tool = createInboxTool({
-      groupIds: [111],
-      selfNumber: 999,
-      async findMessages() {
-        return [
-          row({
-            id: 1,
-            content: [
-              { type: 'text', content: '看看' },
-              { type: 'image', referenceId: '101' },
-              { type: 'video', referenceId: '102' },
-              { type: 'record', referenceId: '103' },
-              { type: 'file', referenceId: '104', fileName: 'report.pdf', fileSize: '12345' },
-              { type: 'face', referenceId: '105' },
-              { type: 'image' },
-              { type: 'image', referenceId: '0' },
-              { type: 'image', referenceId: '-1' },
-              { type: 'image', referenceId: '1.5' },
-              { type: 'image', referenceId: 'not-a-number' },
-            ],
-          }),
-          row({ id: 2 }),
-        ]
-      },
-    })
-
-    assert.match(tool.description, /media.*mediaId/)
-
-    const result = await tool.execute({
+  test('rejects conversations outside the configured allowlist', async () => {
+    const result = await tool().execute({
       action: 'read',
-      source: 'group',
-      groupId: 111,
-    }, undefined as never)
-    const payload = JSON.parse(result.content as string) as {
-      messages: Array<{ media: Array<{ type: string; mediaId: number }> }>
-    }
+      conversation: { ...qqGroup, externalId: '99999' },
+    }, context())
 
-    assert.deepEqual(payload.messages[0]!.media, [
-      { type: 'image', mediaId: 101 },
-      { type: 'video', mediaId: 102 },
-      { type: 'record', mediaId: 103 },
-      { type: 'file', mediaId: 104, fileName: 'report.pdf', fileSize: '12345' },
-    ])
-    assert.deepEqual(payload.messages[1]!.media, [])
+    assert.deepEqual(parse(result.content), {
+      ok: false,
+      error: 'conversation=qq:10000:group:99999 is not allowed',
+    })
   })
 
-  test('exposes media handles nested inside forwarded messages', async () => {
-    const tool = createInboxTool({
-      groupIds: [111],
-      selfNumber: 999,
-      async findMessages() {
-        return [row({
-          id: 1,
-          content: [{
-            type: 'forward',
-            forwardId: 'forward-1',
-            items: [
-              { content: [{ type: 'image', referenceId: '201' }] },
-              {
-                content: [{
-                  type: 'forward',
-                  forwardId: 'forward-2',
-                  items: [{ content: [{ type: 'video', referenceId: '202' }] }],
-                }],
-              },
-            ],
-          }],
-        })]
-      },
+  test('lists pending mailboxes across platforms using persisted read cursors', async () => {
+    const inbox = tool({
+      getReadCursors: () => ({
+        'qq:10000:group:20000': 5,
+        'feishu:cli_1:private:oc_owner': 9,
+      }),
+      findMessages: async () => [
+        row({ rowId: 10, conversation: feishuOwner }),
+        row({ rowId: 8 }),
+        row({ rowId: 4 }),
+      ],
     })
 
-    const result = await tool.execute({
-      action: 'read',
-      source: 'group',
-      groupId: 111,
-    }, undefined as never)
-    const payload = JSON.parse(result.content as string) as {
-      messages: Array<{ media: Array<{ type: string; mediaId: number }> }>
-    }
-
-    assert.deepEqual(payload.messages[0]!.media, [
-      { type: 'image', mediaId: 201 },
-      { type: 'video', mediaId: 202 },
+    const payload = parse((await inbox.execute({ action: 'list' }, context())).content)
+    assert.deepEqual(payload.mailboxes.map((mailbox: any) => [
+      mailbox.mailbox,
+      mailbox.latestRowId,
+      mailbox.lastReadRowId,
+    ]), [
+      ['feishu:cli_1:private:oc_owner', 10, 9],
+      ['qq:10000:group:20000', 8, 5],
     ])
   })
 
-  test('rejects reads from groups outside the monitored allowlist', async () => {
-    let queried = false
-    const tool = createInboxTool({
-      groupIds: [111],
-      selfNumber: 999,
-      async findMessages() {
-        queried = true
-        return []
-      },
-    })
-
-    const result = await tool.execute({ action: 'read', source: 'group', groupId: 222 }, undefined as never)
-
-    assert.equal(queried, false)
-    assert.match(result.content as string, /groupId=222 is not monitored/)
-  })
-
-  test('reads an explicit private mailbox without the group allowlist', async () => {
-    const calls: unknown[] = []
-    const tool = createInboxTool({
-      groupIds: [],
-      selfNumber: 999,
-      async findMessages(args) {
-        calls.push(args)
-        return [row({ id: 7, kind: 'qq_private', sourceId: '9001' })]
-      },
-    })
-
-    const result = await tool.execute({
+  test('caps large outputs', async () => {
+    const rows = Array.from({ length: 20 }, (_, index) => row({
+      rowId: 100 + index,
+      text: `message-${index}-${'x'.repeat(3_000)}`,
+    }))
+    const result = await tool({ findMessages: async () => rows }).execute({
       action: 'read',
-      source: 'private',
-      peerId: 9001,
-      afterRowId: 0,
-    }, undefined as never)
-
-    assert.deepEqual(calls, [{
-      where: { sceneKind: 'qq_private', sceneExternalId: '9001', id: { gt: 0 } },
-      orderBy: { id: 'asc' },
-      take: 20,
-    }])
-    assert.match(result.content as string, /qq_private:9001/)
-  })
-
-  test('returns compensated prior messages separately from the new mailbox batch', async () => {
-    const calls: unknown[] = []
-    const tool = createInboxTool({
-      groupIds: [],
-      selfNumber: 999,
-      async findMessages(args) {
-        calls.push(args)
-        const idFilter = args.where.id as { gt?: number; lte?: number }
-        if (idFilter.gt != null) {
-          return [row({ id: 30, kind: 'qq_private', sourceId: '9001', text: 'current' })]
-        }
-        return [
-          row({ id: 29, kind: 'qq_private', sourceId: '9001', text: 'previous-nearest' }),
-          row({ id: 28, kind: 'qq_private', sourceId: '9001', text: 'previous-older' }),
-        ]
-      },
-    })
-
-    const result = await tool.execute({
-      action: 'read',
-      source: 'private',
-      peerId: 9001,
-      afterRowId: 29,
-      contextBefore: 2,
-      limit: 1,
-    }, undefined as never)
-
-    assert.deepEqual(calls, [
-      {
-        where: { sceneKind: 'qq_private', sceneExternalId: '9001', id: { gt: 29 } },
-        orderBy: { id: 'asc' },
-        take: 1,
-      },
-      {
-        where: { sceneKind: 'qq_private', sceneExternalId: '9001', id: { lte: 29 } },
-        orderBy: { id: 'desc' },
-        take: 2,
-      },
-    ])
-    const payload = JSON.parse(result.content as string) as {
-      requestedContextBefore: number
-      previousMessages: Array<{ rowId: number; text: string }>
-      messages: Array<{ rowId: number; text: string }>
-    }
-    assert.equal(payload.requestedContextBefore, 2)
-    assert.deepEqual(payload.previousMessages.map((message) => message.rowId), [28, 29])
-    assert.deepEqual(payload.messages.map((message) => message.rowId), [30])
-  })
-
-  test('lists one latest entry per allowed mailbox', async () => {
-    const tool = createInboxTool({
-      groupIds: [111],
-      selfNumber: 999,
-      async findMessages() {
-        return [
-          row({ id: 5, sourceId: '111' }),
-          row({ id: 4, sourceId: '111' }),
-          row({ id: 3, kind: 'qq_private', sourceId: '9001' }),
-        ]
-      },
-    })
-
-    const result = await tool.execute({ action: 'list' }, undefined as never)
-    const payload = JSON.parse(result.content as string) as { mailboxes: Array<{ mailbox: string; latestRowId: number }> }
-
-    assert.deepEqual(payload.mailboxes, [
-      { mailbox: 'qq_group:111', label: '测试群', latestRowId: 5, lastReadRowId: 0 },
-      { mailbox: 'qq_private:9001', label: 'sender', latestRowId: 3, lastReadRowId: 0 },
-    ])
-  })
-
-  test('lists only pending sources and reads from the persisted cursor by default', async () => {
-    const calls: unknown[] = []
-    const readCursors = { 'qq_group:111': 4, 'qq_private:9001': 3 }
-    const tool = createInboxTool({
-      groupIds: [111],
-      selfNumber: 999,
-      getReadCursors: () => readCursors,
-      async findMessages(args) {
-        calls.push(args)
-        if (args.orderBy.id === 'desc') {
-          return [
-            row({ id: 5, sourceId: '111' }),
-            row({ id: 3, kind: 'qq_private', sourceId: '9001' }),
-          ]
-        }
-        return [row({ id: 5, sourceId: '111' })]
-      },
-    })
-
-    const listed = await tool.execute({ action: 'list' }, undefined as never)
-    const listPayload = JSON.parse(listed.content as string) as {
-      mailboxes: Array<{ mailbox: string }>
-    }
-    assert.deepEqual(listPayload.mailboxes.map(({ mailbox }) => mailbox), ['qq_group:111'])
-
-    await tool.execute({ action: 'read', source: 'group', groupId: 111 }, undefined as never)
-    assert.deepEqual(calls.at(-1), {
-      where: { sceneKind: 'qq_group', groupId: 111n, id: { gt: 4 } },
-      orderBy: { id: 'asc' },
-      take: 20,
-    })
-  })
-
-  test('caps read output even when stored messages are large', async () => {
-    const tool = createInboxTool({
-      groupIds: [111],
-      selfNumber: 999,
-      async findMessages() {
-        return Array.from({ length: 20 }, (_, index) => row({
-          id: index + 1,
-          text: `body-${index}-${'x'.repeat(2_000)}`,
-        }))
-      },
-    })
-
-    const result = await tool.execute({ action: 'read', source: 'group', groupId: 111 }, undefined as never)
+      conversation: qqGroup,
+    }, context())
 
     assert.ok((result.content as string).length <= INBOX_OUTPUT_CAP_CHARS)
-    assert.match(result.content as string, /"truncated": true/)
-    const payload = JSON.parse(result.content as string) as { messages: Array<{ rowId: number }> }
-    assert.deepEqual(result.effects, [{
-      type: 'inbox_read',
-      mailbox: 'qq_group:111',
-      throughRowId: payload.messages.at(-1)!.rowId,
-    }])
-    assert.ok(payload.messages.at(-1)!.rowId < 20, '未展示的截断行不能被标成已读')
+    assert.equal(parse(result.content).truncated, true)
   })
 })

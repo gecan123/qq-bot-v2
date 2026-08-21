@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { formatBeijingIso } from '../utils/beijing-time.js'
 import type { BotOwner } from '../config/index.js'
+import type { ConversationRef } from '../chat/conversation.js'
 
 export type ApprovalStatus = 'pending' | 'approved' | 'consumed' | 'cancelled' | 'expired'
 
@@ -22,9 +23,8 @@ export interface ApprovalRequest {
 
 export interface ApprovalEvidence {
   rowId: number
-  sceneKind: string
-  sceneExternalId: string
-  senderId: bigint
+  conversation: ConversationRef
+  senderExternalId: string
   text: string
   sentAt: Date
 }
@@ -145,9 +145,10 @@ export function createApprovalManager(input: CreateApprovalManagerInput): Approv
       const evidence = await input.loadEvidence(messageRowId)
       if (!evidence) throw new Error(`approval evidence message not found: ${messageRowId}`)
       if (
-        evidence.sceneKind !== 'qq_private'
-        || evidence.sceneExternalId !== String(input.owner.qq)
-        || evidence.senderId !== BigInt(input.owner.qq)
+        evidence.conversation.platform !== 'qq'
+        || evidence.conversation.kind !== 'private'
+        || evidence.conversation.externalId !== String(input.owner.qq)
+        || evidence.senderExternalId !== String(input.owner.qq)
       ) {
         throw new Error('approval evidence must be a private message from the configured owner')
       }

@@ -5,8 +5,6 @@ export const MAILBOX_LIGHT_CONTEXT_BEFORE = 1
 export const MAILBOX_FULL_CONTEXT_BEFORE = 8
 
 const MAILBOX_CONTINUITY_SCHEMA_VERSION = 1
-const MAILBOX_KEY_PATTERN = /^qq_(?:group|private):\d+$/
-
 export interface MailboxContinuityAnchor {
   lastMessageAtMs: number
   roundSeq: number
@@ -50,7 +48,7 @@ export function parseMailboxContinuityState(value: unknown): MailboxContinuitySt
   const rawMailboxes = obj.mailboxes
   if (rawMailboxes && typeof rawMailboxes === 'object' && !Array.isArray(rawMailboxes)) {
     for (const [key, rawAnchor] of Object.entries(rawMailboxes as Record<string, unknown>)) {
-      if (!MAILBOX_KEY_PATTERN.test(key)) continue
+      if (!isMailboxKey(key)) continue
       const anchor = parseAnchor(rawAnchor)
       if (anchor) mailboxes[key] = anchor
     }
@@ -176,3 +174,4 @@ function nonNegativeInteger(value: unknown): number | null {
 function nullableNonNegativeInteger(value: unknown): number | null {
   return value == null ? null : nonNegativeInteger(value)
 }
+import { isMailboxKey } from './mailbox.js'

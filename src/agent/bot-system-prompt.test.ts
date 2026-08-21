@@ -47,7 +47,7 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /high\+interrupt.*normal\+passive/s)
     assert.match(prompt, /throughRowId.*backlog.*data\.readArgs/s)
     assert.match(prompt, /mentionedSelf.*mentionTargets/s)
-    assert.match(prompt, /help describe.*qq_conversation open.*send_message/s)
+    assert.match(prompt, /help describe.*conversation open.*send_message/s)
     assert.match(prompt, /CHAT_CONTEXT_UNAVAILABLE.*CHAT_CONTEXT_STALE/s)
     assert.match(prompt, /send_message\.work.*none.*continue.*持久 Goal.*goal_progress.*goalId/s)
     assert.match(prompt, /只输出文本.*不调工具.*runtime 纠错/s)

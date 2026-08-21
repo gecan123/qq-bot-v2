@@ -8,16 +8,18 @@ describe('interpretToolEffects', () => {
       {
         toolCallId: 'send-1',
         toolName: 'send_message',
-        effect: { type: 'message_sent', target: { type: 'private', userId: 123 } },
+        effect: { type: 'message_sent', target: {
+          platform: 'qq', accountId: '999', kind: 'private', externalId: '123',
+        } },
       },
       {
         toolCallId: 'inbox-1',
         toolName: 'inbox',
-        effect: { type: 'inbox_read', mailbox: 'qq_private:123', throughRowId: 42 },
+        effect: { type: 'inbox_read', mailbox: 'qq:999:private:123', throughRowId: 42 },
       },
     ]), {
-      sentTargets: [{ type: 'private', userId: 123 }],
-      inboxReads: [{ mailbox: 'qq_private:123', throughRowId: 42 }],
+      sentTargets: [{ platform: 'qq', accountId: '999', kind: 'private', externalId: '123' }],
+      inboxReads: [{ mailbox: 'qq:999:private:123', throughRowId: 42 }],
     })
   })
 
@@ -25,7 +27,9 @@ describe('interpretToolEffects', () => {
     assert.deepEqual(interpretToolEffects([{
       toolCallId: 'lookup-1',
       toolName: 'lookup',
-      effect: { type: 'message_sent', target: { type: 'group', groupId: 123 } },
+      effect: { type: 'message_sent', target: {
+        platform: 'qq', accountId: '999', kind: 'group', externalId: '123',
+      } },
     }]), { sentTargets: [] })
   })
 })

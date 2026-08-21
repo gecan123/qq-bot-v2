@@ -10,6 +10,7 @@ import {
   createSendMessageWorkCommitmentHook,
   type GenerateImageTaskLogEntry,
 } from './tool-policy-hooks.js'
+import type { ConversationRef } from '../chat/conversation.js'
 
 function makeCtx() {
   return {
@@ -30,16 +31,15 @@ const sendMessageSchema = z.object({
 
 function createFakeSendTool(
   calls: unknown[],
-  effectTarget: { type: 'group'; groupId: number } | { type: 'private'; userId: number } = {
-    type: 'private',
-    userId: 123,
+  effectTarget: ConversationRef = {
+    platform: 'qq', accountId: '999', kind: 'private', externalId: '123',
   },
 ): Tool<z.infer<typeof sendMessageSchema>> {
   return {
     name: 'send_message',
     description: 'send',
     schema: sendMessageSchema,
-    async execute(args) {
+    async execute(args, _ctx) {
       calls.push(args)
       return {
         content: JSON.stringify({ ok: true, sent: true }),
@@ -53,7 +53,9 @@ describe('createSendMessageSafetyGuard', () => {
   test('guards successful ambient sends while exempting replies and rejected attempts', async () => {
     const calls: unknown[] = []
     let nowMs = Date.parse('2026-07-14T12:00:00.000Z')
-    const target = { type: 'private' as const, userId: 123 }
+    const target = {
+      platform: 'qq' as const, accountId: '999', kind: 'private' as const, externalId: '123',
+    }
     const guard = createSendMessageSafetyGuard({
       nowMs: () => nowMs,
       getCurrentTarget: () => target,
@@ -100,11 +102,13 @@ describe('createSendMessageSafetyGuard', () => {
 
   test('treats a send to a pending private mailbox as a reply without requiring reply_to', async () => {
     const calls: unknown[] = []
-    let pendingUserId: number | null = null
-    const target = { type: 'private' as const, userId: 123 }
+    let pendingExternalId: string | null = null
+    const target = {
+      platform: 'qq' as const, accountId: '999', kind: 'private' as const, externalId: '123',
+    }
     const guard = createSendMessageSafetyGuard({
       getCurrentTarget: () => target,
-      hasPendingPrivateMailbox: (userId) => userId === pendingUserId,
+      hasPendingPrivateMailbox: (conversation) => conversation.externalId === pendingExternalId,
     })
     const exec = createToolExecutor([createFakeSendTool(calls)], {
       hooks: {
@@ -116,11 +120,11 @@ describe('createSendMessageSafetyGuard', () => {
     await exec.execute({
       id: 'ambient', name: 'send_message', args: { message: '早上好' },
     }, makeCtx())
-    pendingUserId = 123
+    pendingExternalId = '123'
     const response = await exec.execute({
       id: 'response', name: 'send_message', args: { message: '我今天想继续看那篇论文' },
     }, makeCtx())
-    pendingUserId = null
+    pendingExternalId = null
     const ambientAgain = await exec.execute({
       id: 'ambient-again', name: 'send_message', args: { message: '又想起一件事' },
     }, makeCtx())

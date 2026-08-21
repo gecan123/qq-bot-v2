@@ -28,7 +28,7 @@ function scopeKey(input: PendingReadyMessage): string {
 
 export function createMessageReadyDispatcher(deps: MessageReadyDispatcherDeps): MessageReadyDispatcher {
   const chains = new Map<string, Promise<void>>()
-  const loadMessage = deps.loadMessage ?? ((messageRowId) => prisma.message.findUnique({ where: { id: messageRowId } }))
+  const loadMessage = deps.loadMessage ?? ((messageRowId) => prisma.message.findUnique({ where: { rowId: messageRowId } }))
   const ensureReady = deps.ensureReady ?? defaultEnsureReady
 
   async function deliver(input: PendingReadyMessage): Promise<void> {

@@ -461,7 +461,7 @@ describe('runReactRound', () => {
       async execute() {
         return {
           content: '{"ok":true}',
-          effects: [{ type: 'message_sent', target: { type: 'private', userId: 123 } }],
+          effects: [{ type: 'message_sent', target: { platform: 'qq', accountId: 'bot', kind: 'private', externalId: '123' } }],
         }
       },
     }
@@ -477,10 +477,10 @@ describe('runReactRound', () => {
     assert.deepEqual(round.effects, [{
       toolCallId: 'send-1',
       toolName: 'send_message',
-      effect: { type: 'message_sent', target: { type: 'private', userId: 123 } },
+      effect: { type: 'message_sent', target: { platform: 'qq', accountId: 'bot', kind: 'private', externalId: '123' } },
     }])
     assert.deepEqual(interpretToolEffects(round.effects).sentTargets, [
-      { type: 'private', userId: 123 },
+      { platform: 'qq', accountId: 'bot', kind: 'private', externalId: '123' },
     ])
   })
 

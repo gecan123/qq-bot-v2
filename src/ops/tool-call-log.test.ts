@@ -55,7 +55,7 @@ describe('tool-call-log side effect classification', () => {
   test('fails closed for unknown tools/actions and covers runtime state mutations', () => {
     assert.equal(isSideEffectTool('unknown_future_tool', {}), true)
     assert.equal(isSideEffectTool('schedule', { action: 'create' }), true)
-    assert.equal(isSideEffectTool('qq_conversation', { action: 'open' }), true)
+    assert.equal(isSideEffectTool('conversation', { action: 'open' }), true)
     assert.equal(isSideEffectTool('approval', { action: 'approve' }), true)
     assert.equal(isSideEffectTool('memory', { action: 'mark_disputed' }), true)
     assert.equal(isSideEffectTool('fetch_content', { action: 'future_action' }), true)

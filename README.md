@@ -12,10 +12,10 @@
 
 - `bot_agent_ledger_entries` 是唯一持久 LLM history source；`AgentContext` 是其当前内存 projection。
 - `messages` 是入站事实账本。它服务于搜索、媒体解析、审计和 replay recovery，但不能替代 `AgentContext`。
-- `bot_agent_runtime_state` 保存 mailbox cursors、continuity、Goal revision、active capabilities、QQ 当前会话 focus、last wake 和 ledger head，但不保存或重建 transcript；`bot_agent_checkpoint` 只是可丢弃的 projection cache。
+- `bot_agent_runtime_state` 保存 mailbox cursors、continuity、Goal revision、active capabilities、跨平台 conversation focus、last wake 和 ledger head，但不保存或重建 transcript；`bot_agent_checkpoint` 只是可丢弃的 projection cache。
 - 新的 LLM 可见事实只能通过受控 append 或 compaction 进入；compaction 把完整待压缩 prefix 交给摘要器，只追加新的 boundary entry，不更新或删除旧历史。
 - late media description 和 side table 更新不得改写已经 append 的历史。
-- 对外 QQ 发言必须先用 `qq_conversation open` 显式打开 target，再走 `send_message`；新 mailbox 不会自动切换当前会话。
+- 对外 QQ / 飞书发言必须先用 `conversation open` 显式打开 target，再走 `send_message`；新 mailbox 不会自动切换当前会话。
 - 工具日志和其它 `logs/*.ndjson` 是运维旁路，不是 prompt replay 输入。
 
 详细不变量见 `docs/AGENT_CONTEXT.md`。
@@ -103,10 +103,10 @@ WebAdmin 当前只展示 ledger/runtime/Goal/token/tool-call 汇总。它不能�
 
 平台启动由 `src/platform.ts` 组织，并先等待各 sidecar 健康，再启动 `src/index.ts` 中的 Agent Core：
 
-1. QQ Gateway 独占 NapCat WebSocket、首次历史 backfill、好友/群查询和 QQ 外发；backfill 完成后才通过健康屏障。
+1. QQ Gateway 独占 NapCat WebSocket、首次历史 backfill、好友/群查询和 QQ 外发；按配置启用的 Feishu Gateway 独占官方 WebSocket、媒体下载和飞书外发；各自 ready 后才通过健康屏障。
 2. Media Worker 处理媒体描述，Scheduler 持有短期 timer/store，LLM Gateway 代理 provider wire 请求；每个进程写入 `logs/processes/<name>.log`。
 3. Agent Core 连接 Prisma，校验 canonical ledger/runtime，从 ledger 恢复 `AgentContext` projection，并执行 missed-message replay；checkpoint 只在完全匹配时加速。
-4. Agent Core 从 backfill 完成后的消息 high-water 启动 database mailbox watcher，通过递增 `messages.id` 接收新入站事实。
+4. Agent Core 从 backfill 完成后的消息 high-water 启动 database mailbox watcher，通过递增 `messages.rowId` 接收 QQ / 飞书新入站事实。
 5. Agent Core 构建稳定工具面、system prompt 和唯一 `BotLoopAgent`，随后进入主循环。
 
 `SIGINT` / `SIGTERM` 由 supervisor 转发给全部子进程。各进程只清理自己拥有的连接、timer、HTTP server 和数据库资源；Agent Core 仍按顺序停止 mailbox watcher、当前 Agent round 和内部 jobs，保存最终状态后断开 Prisma。

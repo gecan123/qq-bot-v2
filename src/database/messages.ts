@@ -6,128 +6,301 @@ import { segmentsToPlainText } from '../utils/segment-text.js'
 import { createLogger } from '../logger.js'
 import { formatBeijingIso } from '../utils/beijing-time.js'
 import type { MemoryEvidenceRow } from '../agent/memory-evidence.js'
+import type { ConversationRef } from '../chat/conversation.js'
 
 const log = createLogger('DB')
 
-export type MessageSceneKind = 'qq_group' | 'qq_private'
+export type MessageFactKind = 'message' | 'edit' | 'recall'
 
-export interface InsertMessageParams {
-  sceneKind?: MessageSceneKind
-  sceneExternalId?: string | number
-  /**
-   * 群消息: QQ 群号 (必填). 私聊: 必须传 null (持久化 group_id 列也是 null).
-   * 历史/默认 sceneKind='qq_group' 时仍要求非 null.
-   */
-  groupId: number | null
-  groupName?: string
+export interface AppendMessageFactParams {
+  eventKind: MessageFactKind
+  /** 平台事件的稳定幂等键；必须能区分原消息、编辑版本和撤回。 */
+  eventExternalId: string
+  conversation: ConversationRef
+  conversationName?: string
   mediaReferenceIds?: string[]
-  messageId: number
-  senderId: number
-  senderNickname: string
-  senderGroupNickname?: string
+  messageExternalId: string
+  replyToExternalId?: string
+  rootExternalId?: string
+  threadExternalId?: string
+  senderExternalId: string
+  senderName?: string
+  senderConversationName?: string
   content: ParsedSegment[]
   rawContent?: unknown
   rawMessage?: string
-  /** QQ 消息发送时间（Unix 秒） */
+  /** 平台事件时间（Unix 秒）。 */
   sentAt?: number
 }
 
-interface ResolvedScene {
-  sceneKind: MessageSceneKind
-  sceneExternalId: string
-  groupIdValue: bigint | null
-}
-
-function resolveMessageScene(params: InsertMessageParams): ResolvedScene {
-  const sceneKind: MessageSceneKind = params.sceneKind ?? 'qq_group'
-
-  if (sceneKind === 'qq_group') {
-    if (params.groupId == null) {
-      throw new Error('insertMessage invariant: sceneKind=qq_group requires non-null groupId')
-    }
-    const externalIdInput = params.sceneExternalId
-    const sceneExternalId = externalIdInput == null ? '' : String(externalIdInput)
-    if (sceneExternalId !== '') {
-      throw new Error('insertMessage invariant: sceneKind=qq_group requires sceneExternalId="" (got non-empty)')
-    }
-    return {
-      sceneKind,
-      sceneExternalId,
-      groupIdValue: BigInt(params.groupId),
-    }
-  }
-
-  // qq_private
-  if (params.groupId != null) {
-    throw new Error('insertMessage invariant: sceneKind=qq_private requires groupId=null')
-  }
-  if (params.sceneExternalId == null || String(params.sceneExternalId).trim() === '') {
-    throw new Error('insertMessage invariant: sceneKind=qq_private requires non-empty sceneExternalId (peerId)')
-  }
-  return {
-    sceneKind,
-    sceneExternalId: String(params.sceneExternalId),
-    groupIdValue: null,
-  }
-}
-
-export interface PersistedMessageInsertResult {
-  id: number
+export interface PersistedMessageFact {
+  rowId: number
   createdAt: Date
   sentAt: Date | null
 }
 
-export async function freezeResolvedTextIfUnset(messageId: number, resolvedText: string): Promise<void> {
+function requireExternalId(value: string, field: string): string {
+  const normalized = value.trim()
+  if (normalized.length === 0) throw new Error(`appendMessageFact invariant: ${field} must not be empty`)
+  return normalized
+}
+
+export function buildMessageFactUpsertReturningSql(params: AppendMessageFactParams): Prisma.Sql {
+  const eventExternalId = requireExternalId(params.eventExternalId, 'eventExternalId')
+  const accountId = requireExternalId(params.conversation.accountId, 'conversation.accountId')
+  const conversationExternalId = requireExternalId(
+    params.conversation.externalId,
+    'conversation.externalId',
+  )
+  const messageExternalId = requireExternalId(params.messageExternalId, 'messageExternalId')
+  const senderExternalId = requireExternalId(params.senderExternalId, 'senderExternalId')
+  const mediaReferenceIds = params.mediaReferenceIds ?? []
+  const content = sanitizeJsonValue(params.content) ?? []
+  const rawContent = sanitizeJsonValue(params.rawContent)
+  const searchText = segmentsToPlainText(params.content)
+  const initialResolvedText = mediaReferenceIds.length > 0 ? null : searchText
+
+  return Prisma.sql`
+    INSERT INTO "messages" (
+      "event_kind",
+      "event_external_id",
+      "platform",
+      "account_id",
+      "conversation_kind",
+      "conversation_external_id",
+      "conversation_name",
+      "media_reference_ids",
+      "message_external_id",
+      "reply_to_external_id",
+      "root_external_id",
+      "thread_external_id",
+      "sender_external_id",
+      "sender_name",
+      "sender_conversation_name",
+      "content",
+      "raw_content",
+      "raw_message",
+      "search_text",
+      "resolved_text",
+      "sent_at",
+      "created_at"
+    ) VALUES (
+      ${params.eventKind},
+      ${eventExternalId},
+      ${params.conversation.platform},
+      ${accountId},
+      ${params.conversation.kind},
+      ${conversationExternalId},
+      ${params.conversationName ?? null},
+      ${mediaReferenceIds},
+      ${messageExternalId},
+      ${params.replyToExternalId ?? null},
+      ${params.rootExternalId ?? null},
+      ${params.threadExternalId ?? null},
+      ${senderExternalId},
+      ${params.senderName ?? null},
+      ${params.senderConversationName ?? null},
+      ${jsonSql(content)},
+      ${jsonSql(rawContent)},
+      ${params.rawMessage ?? null},
+      ${searchText},
+      ${initialResolvedText},
+      ${timestampSql(params.sentAt, Prisma.sql`NULL`)},
+      ${timestampSql(params.sentAt, Prisma.sql`CURRENT_TIMESTAMP`)}
+    )
+    ON CONFLICT ("platform", "account_id", "event_external_id") DO UPDATE SET
+      "event_external_id" = EXCLUDED."event_external_id"
+    RETURNING row_id AS "rowId", created_at AS "createdAt", sent_at AS "sentAt"
+  `
+}
+
+export async function appendMessageFact(
+  params: AppendMessageFactParams,
+): Promise<PersistedMessageFact> {
+  const rows = await prisma.$queryRaw<PersistedMessageFact[]>(buildMessageFactUpsertReturningSql(params))
+  const row = rows[0]
+  if (!row) throw new Error('appendMessageFact did not return persisted row')
+  log.debug({
+    rowId: row.rowId,
+    platform: params.conversation.platform,
+    eventKind: params.eventKind,
+    messageExternalId: params.messageExternalId,
+  }, 'Message fact saved')
+  return row
+}
+
+export async function freezeResolvedTextIfUnset(messageRowId: number, resolvedText: string): Promise<void> {
   await prisma.message.updateMany({
     where: {
-      id: messageId,
+      rowId: messageRowId,
       resolvedText: null,
     },
     data: { resolvedText },
   })
 }
 
-export async function findExistingMessageIds(groupId: number, messageIds: number[]): Promise<Set<number>> {
+export async function findExistingMessageExternalIds(
+  conversation: ConversationRef,
+  messageExternalIds: readonly string[],
+): Promise<Set<string>> {
   const rows = await prisma.message.findMany({
     where: {
-      groupId: BigInt(groupId),
-      sceneKind: 'qq_group',
-      messageId: { in: messageIds.map(BigInt) },
+      platform: conversation.platform,
+      accountId: conversation.accountId,
+      conversationKind: conversation.kind,
+      conversationExternalId: conversation.externalId,
+      eventKind: 'message',
+      messageExternalId: { in: [...messageExternalIds] },
     },
-    select: { messageId: true },
+    select: { messageExternalId: true },
   })
-  return new Set(rows.map((r) => Number(r.messageId)))
+  return new Set(rows.map((row) => row.messageExternalId))
+}
+
+export async function findLatestMessageFact(input: {
+  platform: ConversationRef['platform']
+  accountId: string
+  messageExternalId: string
+  conversationExternalId?: string
+}): Promise<{
+  conversation: ConversationRef
+  conversationName?: string
+  senderExternalId: string
+  senderName?: string
+} | null> {
+  const row = await prisma.message.findFirst({
+    where: {
+      platform: input.platform,
+      accountId: input.accountId,
+      messageExternalId: input.messageExternalId,
+      eventKind: { in: ['message', 'edit'] },
+      ...(input.conversationExternalId
+        ? { conversationExternalId: input.conversationExternalId }
+        : {}),
+    },
+    orderBy: { rowId: 'desc' },
+    select: {
+      conversationKind: true,
+      conversationExternalId: true,
+      conversationName: true,
+      senderExternalId: true,
+      senderName: true,
+    },
+  })
+  if (!row) return null
+  return {
+    conversation: {
+      platform: input.platform,
+      accountId: input.accountId,
+      kind: conversationKindFromDb(row.conversationKind),
+      externalId: row.conversationExternalId,
+    },
+    ...(row.conversationName ? { conversationName: row.conversationName } : {}),
+    senderExternalId: row.senderExternalId,
+    ...(row.senderName ? { senderName: row.senderName } : {}),
+  }
+}
+
+export async function findObservedConversations(input: {
+  platform: ConversationRef['platform']
+  accountId: string
+}): Promise<Array<{ target: ConversationRef; displayName: string }>> {
+  const rows = await prisma.message.findMany({
+    where: {
+      platform: input.platform,
+      accountId: input.accountId,
+      eventKind: { in: ['message', 'edit'] },
+    },
+    orderBy: { rowId: 'desc' },
+    distinct: ['conversationKind', 'conversationExternalId'],
+    select: {
+      conversationKind: true,
+      conversationExternalId: true,
+      conversationName: true,
+      senderName: true,
+    },
+  })
+  return rows.map((row) => ({
+    target: {
+      platform: input.platform,
+      accountId: input.accountId,
+      kind: conversationKindFromDb(row.conversationKind),
+      externalId: row.conversationExternalId,
+    },
+    displayName: row.conversationName ?? row.senderName ?? row.conversationExternalId,
+  }))
+}
+
+export async function isObservedConversation(conversation: ConversationRef): Promise<boolean> {
+  return await prisma.message.count({
+    where: {
+      platform: conversation.platform,
+      accountId: conversation.accountId,
+      conversationKind: conversation.kind,
+      conversationExternalId: conversation.externalId,
+      eventKind: { in: ['message', 'edit'] },
+    },
+  }) > 0
+}
+
+export async function isMessageInConversation(
+  conversation: ConversationRef,
+  messageExternalId: string,
+): Promise<boolean> {
+  return await prisma.message.count({
+    where: {
+      platform: conversation.platform,
+      accountId: conversation.accountId,
+      conversationKind: conversation.kind,
+      conversationExternalId: conversation.externalId,
+      messageExternalId,
+      eventKind: { in: ['message', 'edit'] },
+    },
+  }) > 0
 }
 
 export async function findMemoryEvidenceRows(
-  sourceMessageIds: readonly number[],
+  sourceMessageRowIds: readonly number[],
 ): Promise<MemoryEvidenceRow[]> {
-  if (sourceMessageIds.length === 0) return []
+  if (sourceMessageRowIds.length === 0) return []
   const rows = await prisma.message.findMany({
     where: {
-      id: { in: [...new Set(sourceMessageIds)] },
+      rowId: { in: [...new Set(sourceMessageRowIds)] },
+      eventKind: 'message',
     },
-    orderBy: { id: 'asc' },
+    orderBy: { rowId: 'asc' },
     select: {
-      id: true,
-      sceneKind: true,
-      sceneExternalId: true,
-      groupId: true,
-      messageId: true,
-      senderId: true,
+      rowId: true,
+      platform: true,
+      accountId: true,
+      conversationKind: true,
+      conversationExternalId: true,
+      messageExternalId: true,
+      senderExternalId: true,
       sentAt: true,
       createdAt: true,
     },
   })
   return rows.map((row) => ({
-    rowId: row.id,
-    sceneKind: row.sceneKind as 'qq_group' | 'qq_private',
-    sceneExternalId: row.sceneExternalId,
-    groupId: row.groupId == null ? null : Number(row.groupId),
-    messageId: String(row.messageId),
-    senderId: String(row.senderId),
+    rowId: row.rowId,
+    platform: chatPlatformFromDb(row.platform),
+    accountId: row.accountId,
+    conversationKind: conversationKindFromDb(row.conversationKind),
+    conversationExternalId: row.conversationExternalId,
+    messageExternalId: row.messageExternalId,
+    senderExternalId: row.senderExternalId,
     sentAt: formatBeijingIso(row.sentAt ?? row.createdAt),
   }))
+}
+
+function chatPlatformFromDb(value: string): ConversationRef['platform'] {
+  if (value === 'qq' || value === 'feishu') return value
+  throw new Error(`Unsupported message platform: ${value}`)
+}
+
+function conversationKindFromDb(value: string): ConversationRef['kind'] {
+  if (value === 'group' || value === 'private') return value
+  throw new Error(`Unsupported conversation kind: ${value}`)
 }
 
 export async function findObservedQqIdentityRows(userId: number, limit = 200): Promise<Array<{
@@ -139,25 +312,26 @@ export async function findObservedQqIdentityRows(userId: number, limit = 200): P
   seenAt: Date
 }>> {
   const rows = await prisma.message.findMany({
-    where: { senderId: BigInt(userId) },
-    orderBy: { id: 'desc' },
+    where: { platform: 'qq', senderExternalId: String(userId), eventKind: 'message' },
+    orderBy: { rowId: 'desc' },
     take: Math.min(Math.max(1, limit), 500),
     select: {
-      id: true,
-      senderNickname: true,
-      senderGroupNickname: true,
-      groupId: true,
-      groupName: true,
+      rowId: true,
+      senderName: true,
+      senderConversationName: true,
+      conversationKind: true,
+      conversationExternalId: true,
+      conversationName: true,
       sentAt: true,
       createdAt: true,
     },
   })
   return rows.map((row) => ({
-    rowId: row.id,
-    senderNickname: row.senderNickname,
-    senderGroupNickname: row.senderGroupNickname,
-    groupId: row.groupId == null ? null : Number(row.groupId),
-    groupName: row.groupName,
+    rowId: row.rowId,
+    senderNickname: row.senderName,
+    senderGroupNickname: row.senderConversationName,
+    groupId: row.conversationKind === 'group' ? Number(row.conversationExternalId) : null,
+    groupName: row.conversationName,
     seenAt: row.sentAt ?? row.createdAt,
   }))
 }
@@ -166,44 +340,48 @@ export async function findObservedQqIdentityRows(userId: number, limit = 200): P
  * 判断可引用的群消息是否通过 QQ 结构化 at 明确提到了指定用户。
  * 发送授权必须基于持久化入站事实，而不是 LLM 提供的 mode 或正文猜测。
  */
-export async function isGroupMessageMentioningUser(
-  groupId: number,
-  messageId: number,
-  userId: number,
+export async function isConversationMessageMentioningUser(
+  conversation: ConversationRef,
+  messageExternalId: string,
+  userExternalId: string,
 ): Promise<boolean> {
-  const row = await prisma.message.findUnique({
+  if (conversation.kind !== 'group') return false
+  const row = await prisma.message.findFirst({
     where: {
-      sceneKind_sceneExternalId_messageId: {
-        sceneKind: 'qq_group',
-        sceneExternalId: '',
-        messageId: BigInt(messageId),
-      },
+      platform: conversation.platform,
+      accountId: conversation.accountId,
+      conversationKind: 'group',
+      conversationExternalId: conversation.externalId,
+      eventKind: { in: ['message', 'edit'] },
+      messageExternalId,
     },
-    select: { groupId: true, content: true },
+    orderBy: { rowId: 'desc' },
+    select: { content: true },
   })
-  if (row?.groupId !== BigInt(groupId) || !Array.isArray(row.content)) return false
+  if (!row || !Array.isArray(row.content)) return false
   return row.content.some((segment) => {
     if (!segment || typeof segment !== 'object' || Array.isArray(segment)) return false
     const value = segment as Record<string, unknown>
-    return value.type === 'at' && value.targetId === String(userId)
+    return value.type === 'at' && value.targetId === userExternalId
   })
 }
 
 export async function findApprovalEvidenceMessage(rowId: number): Promise<{
   rowId: number
-  sceneKind: string
-  sceneExternalId: string
-  senderId: bigint
+  conversation: ConversationRef
+  senderExternalId: string
   text: string
   sentAt: Date
 } | null> {
   const row = await prisma.message.findUnique({
-    where: { id: rowId },
+    where: { rowId },
     select: {
-      id: true,
-      sceneKind: true,
-      sceneExternalId: true,
-      senderId: true,
+      rowId: true,
+      platform: true,
+      accountId: true,
+      conversationKind: true,
+      conversationExternalId: true,
+      senderExternalId: true,
       resolvedText: true,
       searchText: true,
       sentAt: true,
@@ -212,10 +390,14 @@ export async function findApprovalEvidenceMessage(rowId: number): Promise<{
   })
   if (!row) return null
   return {
-    rowId: row.id,
-    sceneKind: row.sceneKind,
-    sceneExternalId: row.sceneExternalId,
-    senderId: row.senderId,
+    rowId: row.rowId,
+    conversation: {
+      platform: chatPlatformFromDb(row.platform),
+      accountId: row.accountId,
+      kind: conversationKindFromDb(row.conversationKind),
+      externalId: row.conversationExternalId,
+    },
+    senderExternalId: row.senderExternalId,
     text: row.resolvedText ?? row.searchText,
     sentAt: row.sentAt ?? row.createdAt,
   }
@@ -263,108 +445,4 @@ function sanitizeJsonValue(value: unknown): Prisma.InputJsonValue | null | undef
   }
 
   return String(value)
-}
-
-export function buildMessageUpsertSql(params: InsertMessageParams): Prisma.Sql {
-  const scene = resolveMessageScene(params)
-  const mediaReferenceIds = params.mediaReferenceIds ?? []
-  const searchText = segmentsToPlainText(params.content)
-  const initialResolvedText = mediaReferenceIds.length > 0 ? null : searchText
-  const content = sanitizeJsonValue(params.content) ?? []
-  const rawContent = sanitizeJsonValue(params.rawContent)
-  const updates: Prisma.Sql[] = [
-    Prisma.sql`"group_name" = ${params.groupName ?? null}`,
-    Prisma.sql`"media_reference_ids" = ${mediaReferenceIds}`,
-    Prisma.sql`"sender_nickname" = ${params.senderNickname}`,
-    Prisma.sql`"sender_group_nickname" = ${params.senderGroupNickname ?? null}`,
-    Prisma.sql`"content" = ${jsonSql(content)}`,
-    Prisma.sql`"search_text" = ${searchText}`,
-  ]
-
-  if (params.rawContent !== undefined) {
-    updates.push(Prisma.sql`"raw_content" = ${jsonSql(rawContent)}`)
-  }
-
-  if (params.rawMessage !== undefined) {
-    updates.push(Prisma.sql`"raw_message" = ${params.rawMessage}`)
-  }
-
-  if (params.sentAt !== undefined) {
-    updates.push(Prisma.sql`"sent_at" = ${timestampSql(params.sentAt, Prisma.sql`NULL`)}`)
-  }
-
-  return Prisma.sql`
-    INSERT INTO "messages" (
-      "scene_kind",
-      "scene_external_id",
-      "group_id",
-      "group_name",
-      "media_reference_ids",
-      "message_id",
-      "sender_id",
-      "sender_nickname",
-      "sender_group_nickname",
-      "content",
-      "raw_content",
-      "raw_message",
-      "search_text",
-      "resolved_text",
-      "sent_at",
-      "created_at"
-    ) VALUES (
-      ${scene.sceneKind},
-      ${scene.sceneExternalId},
-      ${scene.groupIdValue},
-      ${params.groupName ?? null},
-      ${mediaReferenceIds},
-      ${BigInt(params.messageId)},
-      ${BigInt(params.senderId)},
-      ${params.senderNickname},
-      ${params.senderGroupNickname ?? null},
-      ${jsonSql(content)},
-      ${jsonSql(rawContent)},
-      ${params.rawMessage ?? null},
-      ${searchText},
-      ${initialResolvedText},
-      ${timestampSql(params.sentAt, Prisma.sql`NULL`)},
-      ${timestampSql(params.sentAt, Prisma.sql`CURRENT_TIMESTAMP`)}
-    )
-    ON CONFLICT ("scene_kind", "scene_external_id", "message_id") DO UPDATE SET
-    ${Prisma.join(updates, ', ')}
-  `
-}
-
-export function buildMessageUpsertReturningSql(params: InsertMessageParams): Prisma.Sql {
-  return Prisma.sql`${buildMessageUpsertSql(params)} RETURNING id, created_at AS "createdAt", sent_at AS "sentAt"`
-}
-
-export async function insertMessage(params: InsertMessageParams): Promise<PersistedMessageInsertResult> {
-  const mediaReferenceIds = params.mediaReferenceIds ?? []
-  const content = sanitizeJsonValue(params.content) ?? []
-  const rawContent = sanitizeJsonValue(params.rawContent)
-
-  try {
-    const rows = await prisma.$queryRaw<PersistedMessageInsertResult[]>(buildMessageUpsertReturningSql(params))
-    const row = rows[0]
-    if (!row) {
-      throw new Error('insertMessage did not return persisted row')
-    }
-    log.debug({ messageId: params.messageId, imageReferences: mediaReferenceIds.length }, 'Message saved')
-    return row
-  } catch (error) {
-    log.error(
-      {
-        error,
-        messageId: params.messageId,
-        payload: {
-          groupId: params.groupId,
-          mediaReferenceIds,
-          content,
-          rawContent,
-        },
-      },
-      'Failed to save message'
-    )
-    throw error
-  }
 }

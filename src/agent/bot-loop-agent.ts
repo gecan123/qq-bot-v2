@@ -1,5 +1,6 @@
 import type { AgentContext } from './agent-context.js'
-import type { AgentMessage, QqConversationFocus } from './agent-context.types.js'
+import type { AgentMessage, ConversationFocus } from './agent-context.types.js'
+import { conversationKey } from '../chat/conversation.js'
 import { isLlmContextOverflowError, isLlmUsageLimitError, type LlmClient } from './llm-client.js'
 import type { MessageSentTarget, ToolContinuation, ToolExecutor } from './tool.js'
 import type { EventQueue } from './event-queue.js'
@@ -90,9 +91,9 @@ export interface BotLoopAgentDeps {
   /** 从 runtime singleton 恢复的 goal control revision；只控制 LLM 可见状态事件的去重。 */
   initialGoalRevision?: number
   initialLedgerHeadEntryId?: bigint | null
-  /** QQ 会话焦点也是 runtime control state，与可见 tool result 同事务落盘。 */
-  getQqConversationFocus?: () => QqConversationFocus
-  syncQqConversationFocus?: (focus: QqConversationFocus) => void
+  /** 跨平台会话焦点也是 runtime control state，与可见 tool result 同事务落盘。 */
+  getConversationFocus?: () => ConversationFocus
+  syncConversationFocus?: (focus: ConversationFocus) => void
   /** 单一持久 goal 控制面；不存在时保持旧自主循环行为。 */
   goalStore?: GoalStore
   /**
@@ -219,7 +220,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     inboxReadCursors: InboxReadCursors
     mailboxContinuity: MailboxContinuityState
     goalRevision: number
-    qqConversationFocus: QqConversationFocus
+    conversationFocus: ConversationFocus
     lastWakeAt: Date | null
     ledgerHeadEntryId: bigint | null
   }): void {
@@ -229,7 +230,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     goalRevision = input.goalRevision
     lastWakeAt = input.lastWakeAt == null ? null : new Date(input.lastWakeAt)
     ledgerHeadEntryId = input.ledgerHeadEntryId
-    deps.syncQqConversationFocus?.(input.qqConversationFocus)
+    deps.syncConversationFocus?.(input.conversationFocus)
     deps.syncInboxReadCursors?.(input.inboxReadCursors)
   }
 
@@ -260,7 +261,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       }
       await reloadProjectionFromCanonical()
     } catch (error) {
-      deps.syncQqConversationFocus?.(deps.context.getSnapshot().qqConversationFocus)
+      deps.syncConversationFocus?.(deps.context.getSnapshot().conversationFocus)
       deps.syncInboxReadCursors?.(inboxReadCursors)
       throw error
     }
@@ -512,8 +513,15 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     let disclosed = 0
     for (const disclosure of disclosures) {
       if (disclosure.kind === 'backlog') {
-        const participation = disclosure.event.source.type === 'group'
-          ? deps.groupParticipations?.get(disclosure.event.source.groupId)
+        const groupId = disclosure.event.source.type === 'group'
+          ? disclosure.event.source.groupId
+          : disclosure.event.source.type === 'conversation'
+            && disclosure.event.source.conversation.platform === 'qq'
+            && disclosure.event.source.conversation.kind === 'group'
+            ? Number(disclosure.event.source.conversation.externalId)
+            : null
+        const participation = groupId != null && Number.isSafeInteger(groupId)
+          ? deps.groupParticipations?.get(groupId)
           : undefined
         messages.push({
           role: 'user',
@@ -535,8 +543,15 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       if (disclosure.kind === 'mailbox') {
         const latestMessageAtMs = disclosure.events.at(-1)!.sentAt.getTime()
         const firstEvent = disclosure.events[0]!
-        const participation = firstEvent.type === 'napcat_message'
-          ? deps.groupParticipations?.get(firstEvent.groupId)
+        const groupId = firstEvent.type === 'napcat_message'
+          ? firstEvent.groupId
+          : firstEvent.type === 'chat_message'
+            && firstEvent.conversation.platform === 'qq'
+            && firstEvent.conversation.kind === 'group'
+            ? Number(firstEvent.conversation.externalId)
+            : null
+        const participation = groupId != null && Number.isSafeInteger(groupId)
+          ? deps.groupParticipations?.get(groupId)
           : undefined
         const compensation = decideMailboxCompensation(
           continuity,
@@ -699,8 +714,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       runtimePatch: {
         mailboxContinuity: nextContinuity,
         ...(inboxReads.length > 0 ? { inboxReadCursors: nextInboxReadCursors } : {}),
-        ...(deps.getQqConversationFocus
-          ? { qqConversationFocus: deps.getQqConversationFocus() }
+        ...(deps.getConversationFocus
+          ? { conversationFocus: deps.getConversationFocus() }
           : {}),
       },
     })
@@ -787,9 +802,16 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     const seenMailboxes = new Set<string>()
     const markers: AgentMessage[] = []
     for (const target of sentTargets) {
-      const mailbox = target.type === 'group'
-        ? `qq_group:${target.groupId}`
-        : `qq_private:${target.userId}`
+      const canonicalMailbox = conversationKey(target)
+      const legacyMailbox = target.platform === 'qq'
+        ? `qq_${target.kind}:${target.externalId}`
+        : null
+      const mailbox = findPendingMailboxThroughRowId(messages, canonicalMailbox) != null
+        ? canonicalMailbox
+        : legacyMailbox
+          && findPendingMailboxThroughRowId(messages, legacyMailbox) != null
+          ? legacyMailbox
+          : canonicalMailbox
       if (seenMailboxes.has(mailbox)) continue
       seenMailboxes.add(mailbox)
 
@@ -1382,6 +1404,16 @@ function describeActivityTrigger(
       }
     }
     if (event.type === 'mailbox_backlog') {
+      if (event.source.type === 'conversation') {
+        return {
+          kind: event.source.conversation.kind === 'group' ? 'group_mention' : 'private_message',
+          label: `恢复了 ${event.source.name || event.source.conversation.externalId} 的 ${event.count} 条待处理通知`,
+          target: {
+            type: event.source.conversation.kind,
+            id: event.source.conversation.externalId,
+          },
+        }
+      }
       return event.source.type === 'group'
         ? {
             kind: 'group_mention',

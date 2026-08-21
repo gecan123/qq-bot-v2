@@ -53,6 +53,13 @@ const specs: ServiceSpec[] = [
     healthUrl: healthUrl(env.BOT_QQ_GATEWAY_URL ?? 'http://127.0.0.1:37922'),
   },
   {
+    name: 'feishu-gateway',
+    sourceEntry: 'src/services/feishu-gateway.ts',
+    distEntry: 'dist/services/feishu-gateway.js',
+    healthUrl: healthUrl(env.BOT_FEISHU_GATEWAY_URL ?? 'http://127.0.0.1:37927'),
+    optional: !enabled(env.BOT_FEISHU_ENABLED),
+  },
+  {
     name: 'browser-controller',
     sourceEntry: 'scripts/browser-controller.ts',
     healthUrl: healthUrl(env.BOT_BROWSER_CONTROLLER_URL ?? 'http://127.0.0.1:37921'),

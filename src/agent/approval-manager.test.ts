@@ -19,9 +19,10 @@ function statePath(): string {
 function evidence(overrides: Partial<ApprovalEvidence> = {}): ApprovalEvidence {
   return {
     rowId: 42,
-    sceneKind: 'qq_private',
-    sceneExternalId: '12345',
-    senderId: 12345n,
+    conversation: {
+      platform: 'qq', accountId: '54321', kind: 'private', externalId: '12345',
+    },
+    senderExternalId: '12345',
     text: '批准 apr-1',
     sentAt: new Date('2026-07-12T00:00:10.000Z'),
     ...overrides,
@@ -48,7 +49,7 @@ describe('approval manager', () => {
     if (first.allowed) assert.fail('expected approval request')
     assert.equal(first.request?.id, 'apr-1')
 
-    currentEvidence = evidence({ senderId: 999n })
+    currentEvidence = evidence({ senderExternalId: '999' })
     await assert.rejects(
       manager.approve({ approvalId: 'apr-1', messageRowId: 42 }),
       /configured owner/,

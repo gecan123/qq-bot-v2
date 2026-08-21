@@ -115,7 +115,7 @@ export async function checkAgentMemory(options: {
     expired: parsedMemoryEntries.filter(({ entry }) => entry.validUntil != null && Date.parse(entry.validUntil) < nowMs).length,
     disputed: parsedMemoryEntries.filter(({ entry }) => entry.status === 'disputed').length,
     superseded: parsedMemoryEntries.filter(({ entry }) => entry.status === 'superseded').length,
-    stableWithoutSources: parsedMemoryEntries.filter(({ entry }) => entry.tier === 'stable' && entry.sourceMessageIds.length === 0).length,
+    stableWithoutSources: parsedMemoryEntries.filter(({ entry }) => entry.tier === 'stable' && entry.sourceMessageRowIds.length === 0).length,
   }
   const issues = {
     corruptOrUnsupportedFiles: [...new Set(corruptOrUnsupportedFiles)].sort(),

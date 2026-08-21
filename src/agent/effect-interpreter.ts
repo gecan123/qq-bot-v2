@@ -1,6 +1,7 @@
 import type { ReactToolEffect } from './react-kernel.js'
 import type { InboxReadEffect, MessageSentTarget } from './tool.js'
 import { createLogger } from '../logger.js'
+import { conversationKey } from '../chat/conversation.js'
 
 const log = createLogger('EFFECT_INTERPRETER')
 
@@ -29,9 +30,7 @@ export function interpretToolEffects(effects: ReactToolEffect[]): EffectInterpre
           break
         }
         if (item.effect.continueWork === true) workContinuationRequested = true
-        const key = target.type === 'group'
-          ? `qq_group:${target.groupId}`
-          : `qq_private:${target.userId}`
+        const key = conversationKey(target)
         if (seenSentTargets.has(key)) break
         seenSentTargets.add(key)
         sentTargets.push(target)
@@ -43,7 +42,7 @@ export function interpretToolEffects(effects: ReactToolEffect[]): EffectInterpre
           break
         }
         if (
-          !/^qq_(?:group|private):\d+$/.test(item.effect.mailbox)
+          !/^(?:(?:qq|feishu):[^:]+:(?:group|private):[^:]+|qq_(?:group|private):\d+)$/.test(item.effect.mailbox)
           || !isPositiveSafeInteger(item.effect.throughRowId)
         ) {
           logRejectedEffect(item, 'invalid_inbox_cursor')
@@ -71,15 +70,17 @@ export function interpretToolEffects(effects: ReactToolEffect[]): EffectInterpre
 function parseMessageSentTarget(value: unknown): MessageSentTarget | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const target = value as Record<string, unknown>
-  if (target.type === 'group') {
-    if (!hasExactKeys(target, ['type', 'groupId']) || !isPositiveSafeInteger(target.groupId)) return null
-    return { type: 'group', groupId: target.groupId }
+  if (!hasExactKeys(target, ['platform', 'accountId', 'kind', 'externalId'])) return null
+  if (target.platform !== 'qq' && target.platform !== 'feishu') return null
+  if (target.kind !== 'group' && target.kind !== 'private') return null
+  if (typeof target.accountId !== 'string' || !target.accountId) return null
+  if (typeof target.externalId !== 'string' || !target.externalId) return null
+  return {
+    platform: target.platform,
+    accountId: target.accountId,
+    kind: target.kind,
+    externalId: target.externalId,
   }
-  if (target.type === 'private') {
-    if (!hasExactKeys(target, ['type', 'userId']) || !isPositiveSafeInteger(target.userId)) return null
-    return { type: 'private', userId: target.userId }
-  }
-  return null
 }
 
 function hasExactKeys(value: Record<string, unknown>, expected: string[]): boolean {

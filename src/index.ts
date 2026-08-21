@@ -58,6 +58,13 @@ import {
 import { startAgentEventsServer, type AgentEventsServer } from './services/agent-events-server.js'
 import { createRemoteScheduleRuntime } from './services/scheduler-client.js'
 import { createGroupMuteInspector } from './messaging/group-mute-inspector.js'
+import { createMessageDelivery } from './messaging/message-delivery.js'
+import { createQqDeliveryAdapter } from './messaging/qq-delivery-adapter.js'
+import {
+  createFeishuDeliveryAdapter,
+  FeishuGatewayClient,
+} from './services/feishu-gateway-client.js'
+import { conversationKey } from './chat/conversation.js'
 
 const log = createLogger('APP')
 
@@ -148,9 +155,13 @@ async function main() {
   const enqueueDedupedMessageEvent = createDedupEnqueue(eventQueue)
   writeFileSync(BOT_PID_FILE, String(process.pid))
   log.info({ pidFile: BOT_PID_FILE, pid: process.pid }, 'pid_file_written')
-  const processOwnerGoalControl = async (
-    event: Extract<BotEvent, { type: 'napcat_private_message' }>,
-  ): Promise<void> => {
+  type OwnerGoalControlEvent = {
+    messageRowId: number
+    peerId: number
+    senderId: number
+    renderedText: string
+  }
+  const processOwnerGoalControl = async (event: OwnerGoalControlEvent): Promise<void> => {
     try {
       const control = await tryHandleOwnerGoalMessage({
         owner: config.owner,
@@ -177,20 +188,43 @@ async function main() {
     }
   }
   const startupGoalControlGate = createStartupGoalControlGate(processOwnerGoalControl)
-  const passiveGroupNotificationIds = new Set(
-    config.groupPolicies
-      .filter((policy) => policy.participation !== 'mentions')
-      .map((policy) => policy.id),
-  )
+  const passiveGroupNotificationSources = new Set<string | number>()
+  for (const policy of config.groupPolicies) {
+    if (policy.participation === 'mentions') continue
+    passiveGroupNotificationSources.add(policy.id)
+    passiveGroupNotificationSources.add(conversationKey({
+      platform: 'qq',
+      accountId: String(config.selfNumber),
+      kind: 'group',
+      externalId: String(policy.id),
+    }))
+  }
   const enqueueMessageEvent = async (event: BotEvent): Promise<boolean> => {
-    // mentions 群的普通消息只保存在 messages/inbox；selective/active 群进入 passive
-    // notification，但不会打断等待或休息。私聊和明确 @ bot 才是 attention。
+    // 普通群消息默认只保存在 messages/inbox；QQ selective/active 群额外进入
+    // passive notification。私聊、明确 @ bot 与消息生命周期更正才是 attention。
     if (
-      (event.type === 'napcat_message' || event.type === 'napcat_private_message')
-      && !shouldQueueChatEvent(event, passiveGroupNotificationIds)
+      (event.type === 'chat_message'
+        || event.type === 'napcat_message'
+        || event.type === 'napcat_private_message')
+      && !shouldQueueChatEvent(event, passiveGroupNotificationSources)
     ) return false
     if (event.type === 'napcat_private_message') {
       await startupGoalControlGate.submit(event)
+    } else if (
+      event.type === 'chat_message'
+      && event.conversation.platform === 'qq'
+      && event.conversation.kind === 'private'
+    ) {
+      const peerId = Number(event.conversation.externalId)
+      const senderId = Number(event.senderExternalId)
+      if (Number.isSafeInteger(peerId) && Number.isSafeInteger(senderId)) {
+        await startupGoalControlGate.submit({
+          messageRowId: event.messageRowId,
+          peerId,
+          senderId,
+          renderedText: event.renderedText,
+        })
+      }
     }
     return enqueueDedupedMessageEvent(event)
   }
@@ -200,9 +234,30 @@ async function main() {
   const qqGateway = config.services.enabled
     ? new QqGatewayClient(config.services.qqGatewayUrl)
     : null
+  const feishuGateway = config.feishu
+    ? new FeishuGatewayClient(config.feishu.gatewayUrl)
+    : null
+  const feishuHealth = feishuGateway ? await feishuGateway.health() : null
+  const feishuConversations = feishuGateway ? await feishuGateway.conversations() : []
   const directQq = config.services.enabled ? null : await import('./bot/core.js')
   const directNapcatModule = config.services.enabled ? null : await import('./bot/napcat.js')
   const directNapcat = directNapcatModule?.napcat
+  const loadQqFriends = async () => qqGateway
+    ? qqGateway.friends()
+    : (await directNapcat!.get_friend_list()).map((friend) => ({
+        userId: friend.user_id,
+        nickname: friend.nickname,
+        remark: friend.remark,
+      }))
+  const loadQqGroups = async () => qqGateway
+    ? qqGateway.groups()
+    : (await directNapcat!.get_group_list()).map((group) => ({
+        groupId: group.group_id,
+        groupName: group.group_name,
+        groupRemark: group.group_remark,
+        memberCount: group.member_count,
+        maxMemberCount: group.max_member_count,
+      }))
   const remoteMailboxHighWater = config.services.enabled
     ? await currentMessageHighWater()
     : 0
@@ -210,32 +265,24 @@ async function main() {
   // 6. 单进程兼容模式仍直接注册 NapCat；平台模式由 qq-gateway 独占连接，
   // Agent Core 从 PostgreSQL mailbox watcher 获取新事实。
   const onMessageReady = async (input: IngestedMessage) => {
-    if (input.kind === 'group') {
-      await enqueueMessageEvent({
-        type: 'napcat_message',
-        messageRowId: input.messageRowId,
-        groupId: input.groupId,
-        groupName: input.groupName,
-        messageId: input.messageId,
-        senderId: input.senderId,
-        senderNickname: input.senderNickname,
-        mentionedSelf: input.mentionedSelf,
-        sentAt: input.sentAt,
-        renderedText: input.renderedText,
-      })
-    } else {
-      await enqueueMessageEvent({
-        type: 'napcat_private_message',
-        messageRowId: input.messageRowId,
-        peerId: input.peerId,
-        messageId: input.messageId,
-        senderId: input.senderId,
-        senderNickname: input.senderNickname,
-        mentionedSelf: true,
-        sentAt: input.sentAt,
-        renderedText: input.renderedText,
-      })
-    }
+    await enqueueMessageEvent({
+      type: 'chat_message',
+      eventKind: input.eventKind ?? 'message',
+      messageRowId: input.messageRowId,
+      conversation: {
+        platform: 'qq',
+        accountId: String(config.selfNumber),
+        kind: input.kind,
+        externalId: String(input.kind === 'group' ? input.groupId : input.peerId),
+      },
+      ...(input.kind === 'group' && input.groupName ? { conversationName: input.groupName } : {}),
+      messageExternalId: String(input.messageId),
+      senderExternalId: String(input.senderId),
+      senderName: input.senderNickname,
+      mentionedSelf: input.kind === 'private' || input.mentionedSelf,
+      sentAt: input.sentAt,
+      renderedText: input.renderedText,
+    })
   }
   const napcatLifecycle = config.services.enabled
     ? { initialBackfillDone: Promise.resolve(), drain: async () => undefined }
@@ -285,6 +332,7 @@ async function main() {
   //    messageRowId 去重 (步骤 5), live 已经先入队的就不会被 replay 重复入队.
   const replayedGoalControls = await replayOwnerGoalCommands({
     owner: config.owner,
+    selfNumber: config.selfNumber,
     mailboxCursors: loadedLedger.runtimeState.mailboxCursors,
     legacyLastWakeAt: loadedLedger.runtimeState.lastWakeAt,
     goalStore,
@@ -293,14 +341,35 @@ async function main() {
     log.info(replayedGoalControls, 'owner goal control replay 完成')
   }
   await startupGoalControlGate.finishReplay()
+  const qqFriends = await loadQqFriends()
+  const allowedConversations = [
+    ...config.botTargetGroupIds.map((groupId) => ({
+      platform: 'qq' as const,
+      accountId: String(config.selfNumber),
+      kind: 'group' as const,
+      externalId: String(groupId),
+    })),
+    ...qqFriends.map((friend) => ({
+      platform: 'qq' as const,
+      accountId: String(config.selfNumber),
+      kind: 'private' as const,
+      externalId: String(friend.userId),
+    })),
+    ...feishuConversations.map((item) => item.target),
+  ]
+  const selfExternalIds = {
+    qq: String(config.selfNumber),
+    ...(feishuHealth ? { feishu: feishuHealth.botOpenId } : {}),
+  }
   const replayResult = await replayMissedMessages({
     mailboxCursors: loadedLedger.runtimeState.mailboxCursors,
     legacyLastWakeAt: loadedLedger.runtimeState.lastWakeAt,
   }, {
     enqueueMessageEvent,
-    selfNumber: config.selfNumber,
-    groupIds: config.botTargetGroupIds,
-    passiveGroupIds: [...passiveGroupNotificationIds],
+    allowedConversations,
+    selfExternalIds,
+    passiveConversationKeys: [...passiveGroupNotificationSources]
+      .filter((source): source is string => typeof source === 'string'),
   })
   log.info({ enqueued: replayResult.enqueued }, 'replay-missed 完成')
 
@@ -310,6 +379,8 @@ async function main() {
       pollMs: config.services.mailboxPollMs,
       selfNumber: config.selfNumber,
       groupPolicies: config.groupPolicies,
+      selfExternalIds,
+      allowedConversationKeys: new Set(allowedConversations.map(conversationKey)),
       enqueue: async (event) => {
         await enqueueMessageEvent(event)
       },
@@ -324,6 +395,10 @@ async function main() {
   // 10. 工具集 + bot system prompt (启动后定型, 进程内不变)
   const activityReporter = createAgentActivityReporter()
   const sender = qqGateway ? createQqGatewayMessageSender(qqGateway) : messageSender
+  const delivery = createMessageDelivery([
+    createQqDeliveryAdapter(sender),
+    ...(feishuGateway ? [createFeishuDeliveryAdapter(feishuGateway)] : []),
+  ])
   const groupMuteInspector = qqGateway
     ? createGroupMuteInspector({
         selfNumber: config.selfNumber,
@@ -341,23 +416,26 @@ async function main() {
     ledgerLoader,
     initialLedgerHeadEntryId: loadedLedger.runtimeState.ledgerHeadEntryId,
     sender,
+    delivery,
     groupMuteInspector,
-    loadFriends: async () => qqGateway
-      ? qqGateway.friends()
-      : (await directNapcat!.get_friend_list()).map((friend) => ({
-          userId: friend.user_id,
-          nickname: friend.nickname,
-          remark: friend.remark,
-        })),
-    loadGroups: async () => qqGateway
-      ? qqGateway.groups()
-      : (await directNapcat!.get_group_list()).map((group) => ({
-          groupId: group.group_id,
-          groupName: group.group_name,
-          groupRemark: group.group_remark,
-          memberCount: group.member_count,
-          maxMemberCount: group.max_member_count,
-        })),
+    loadFriends: loadQqFriends,
+    loadGroups: loadQqGroups,
+    loadAdditionalConversations: feishuGateway
+      ? () => feishuGateway.conversations()
+      : undefined,
+    selfExternalIds,
+    ownerIdentities: [
+      ...(config.owner == null ? [] : [{
+        platform: 'qq' as const,
+        accountId: String(config.selfNumber),
+        externalId: String(config.owner.qq),
+      }]),
+      ...(config.feishu?.ownerOpenId ? [{
+        platform: 'feishu' as const,
+        accountId: config.feishu.appId,
+        externalId: config.feishu.ownerOpenId,
+      }] : []),
+    ],
     selfNumber: config.selfNumber,
     metadata: targetMetadata,
     groupPolicies: config.groupPolicies,

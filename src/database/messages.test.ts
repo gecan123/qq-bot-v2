@@ -15,12 +15,13 @@ describe('memory evidence lookup', () => {
     ;(prisma.message as unknown as { findMany: (args: unknown) => Promise<unknown[]> }).findMany = async (args) => {
       captured = args
       return [{
-        id: 10,
-        sceneKind: 'qq_group',
-        sceneExternalId: '',
-        groupId: 20001n,
-        messageId: 900n,
-        senderId: 99999n,
+        rowId: 10,
+        platform: 'qq',
+        accountId: '10000',
+        conversationKind: 'group',
+        conversationExternalId: '20001',
+        messageExternalId: '900',
+        senderExternalId: '99999',
         sentAt: new Date('2026-07-01T00:00:00.000Z'),
         createdAt: new Date('2026-07-01T00:00:01.000Z'),
       }]
@@ -30,23 +31,25 @@ describe('memory evidence lookup', () => {
 
     assert.deepEqual(result, [{
       rowId: 10,
-      sceneKind: 'qq_group',
-      sceneExternalId: '',
-      groupId: 20001,
-      messageId: '900',
-      senderId: '99999',
+      platform: 'qq',
+      accountId: '10000',
+      conversationKind: 'group',
+      conversationExternalId: '20001',
+      messageExternalId: '900',
+      senderExternalId: '99999',
       sentAt: '2026-07-01T08:00:00.000+08:00',
     }])
     assert.deepEqual(captured, {
-      where: { id: { in: [10, 11] } },
-      orderBy: { id: 'asc' },
+      where: { rowId: { in: [10, 11] }, eventKind: 'message' },
+      orderBy: { rowId: 'asc' },
       select: {
-        id: true,
-        sceneKind: true,
-        sceneExternalId: true,
-        groupId: true,
-        messageId: true,
-        senderId: true,
+        rowId: true,
+        platform: true,
+        accountId: true,
+        conversationKind: true,
+        conversationExternalId: true,
+        messageExternalId: true,
+        senderExternalId: true,
         sentAt: true,
         createdAt: true,
       },

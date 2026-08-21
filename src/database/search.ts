@@ -16,16 +16,19 @@ export async function searchMessages(
 ): Promise<SearchResult[]> {
   const rows = await prisma.message.findMany({
     where: {
-      groupId: BigInt(groupId),
+      platform: 'qq',
+      conversationKind: 'group',
+      conversationExternalId: String(groupId),
+      eventKind: 'message',
       searchText: { contains: keyword, mode: 'insensitive' },
     },
-    orderBy: { messageId: 'desc' },
+    orderBy: { rowId: 'desc' },
     take: limit,
     select: {
-      messageId: true,
-      senderId: true,
-      senderNickname: true,
-      senderGroupNickname: true,
+      messageExternalId: true,
+      senderExternalId: true,
+      senderName: true,
+      senderConversationName: true,
       searchText: true,
       sentAt: true,
       createdAt: true,
@@ -34,9 +37,9 @@ export async function searchMessages(
 
   return rows
     .map((r) => ({
-      messageId: Number(r.messageId),
-      senderId: Number(r.senderId),
-      senderName: r.senderGroupNickname ?? r.senderNickname ?? String(r.senderId),
+      messageId: Number(r.messageExternalId),
+      senderId: Number(r.senderExternalId),
+      senderName: r.senderConversationName ?? r.senderName ?? r.senderExternalId,
       time: getMessageTimestamp(r).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }),
       text: r.searchText,
     }))
@@ -55,21 +58,28 @@ export async function lookupGroupMember(
 ): Promise<MemberLookupResult[]> {
   const rows = await prisma.message.findMany({
     where: {
-      groupId: BigInt(groupId),
+      platform: 'qq',
+      conversationKind: 'group',
+      conversationExternalId: String(groupId),
+      eventKind: 'message',
       OR: [
-        { senderNickname: { contains: name, mode: 'insensitive' } },
-        { senderGroupNickname: { contains: name, mode: 'insensitive' } },
+        { senderName: { contains: name, mode: 'insensitive' } },
+        { senderConversationName: { contains: name, mode: 'insensitive' } },
       ],
     },
     take: 10,
-    distinct: ['senderId'],
+    distinct: ['senderExternalId'],
     orderBy: { createdAt: 'desc' },
-    select: { senderId: true, senderNickname: true, senderGroupNickname: true },
+    select: {
+      senderExternalId: true,
+      senderName: true,
+      senderConversationName: true,
+    },
   })
 
   return rows.map((r) => ({
-    senderId: Number(r.senderId),
-    senderNickname: r.senderNickname,
-    senderGroupNickname: r.senderGroupNickname,
+    senderId: Number(r.senderExternalId),
+    senderNickname: r.senderName,
+    senderGroupNickname: r.senderConversationName,
   }))
 }

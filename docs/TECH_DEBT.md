@@ -7,8 +7,8 @@
 当前是一个 Agent Core 加数个窄职责本机 sidecar，主前台仍只有一个串行 `BotLoopAgent`：
 
 ```text
-NapCat 入站
-  -> QQ Gateway
+QQ / 飞书入站
+  -> QQ Gateway / Feishu Gateway
   -> messages / media 事实账本
   -> Agent Core database mailbox watcher
   -> EventQueue 与 mailbox 元数据通知
@@ -20,9 +20,9 @@ NapCat 入站
   -> ledger 与 runtime state 原子提交
 ```
 
-QQ Gateway、Media Worker、Scheduler 和 LLM Gateway 通过 PostgreSQL 事实边界或薄 HTTP 与 Agent Core 协作；不使用通用 broker。只有 Agent Core 可以拥有 `AgentContext`、推进 runtime singleton 和写 canonical ledger。PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goal 和观测数据；Memory、Notebook、Life Journal、Agenda、schedule、approval 与 background task 元数据主要保存在 workspace Markdown/JSON。WebAdmin 的观察 feature 保持只读，固定 operations feature 是唯一受控写入口。
+QQ Gateway、Feishu Gateway、Media Worker、Scheduler 和 LLM Gateway 通过 PostgreSQL 事实边界或薄 HTTP 与 Agent Core 协作；不使用通用 broker。只有 Agent Core 可以拥有 `AgentContext`、推进 runtime singleton 和写 canonical ledger。PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goal 和观测数据；Memory、Notebook、Life Journal、Agenda、schedule、approval 与 background task 元数据主要保存在 workspace Markdown/JSON。WebAdmin 的观察 feature 保持只读，固定 operations feature 是唯一受控写入口。
 
-现有设计的可靠性基础包括：append-only canonical history、确定性 replay、compaction CAS、tool call/result 原子组、显式 QQ target focus、集中 tool policy、渐进式披露、有界 scheduler，以及 WebAdmin 的只读观察边界和固定 operations 写入边界。下面条目是在这些契约之上的具体缺口。
+现有设计的可靠性基础包括：append-only canonical history、确定性 replay、compaction CAS、tool call/result 原子组、显式跨平台 conversation focus、集中 tool policy、渐进式披露、有界 scheduler，以及 WebAdmin 的只读观察边界和固定 operations 写入边界。下面条目是在这些契约之上的具体缺口。
 
 ## P0：已确认正确性缺陷
 
@@ -41,12 +41,12 @@ QQ Gateway、Media Worker、Scheduler 和 LLM Gateway 通过 PostgreSQL 事实�
 
 - 证据：`src/index.ts` 直接覆盖 `.bot.pid`，没有检查旧进程、租约或互斥；误启动两个 Agent Core 时会各自持有独立 `AgentContext`、database mailbox watcher 和自主循环。QQ Gateway 已独立，但 runtime row lock 仍只能串行化单次数据库事务，不能阻止双 loop。
 - `appendCompaction()` 和 `updateRuntime()` 校验 expected head，但普通 `appendMessages()` 没有 expected-head CAS。
-- 影响：误启动第二实例时可能交错写 ledger、重复处理事件或重复发送 QQ 消息。
+- 影响：误启动第二实例时可能交错写 ledger、重复处理事件或重复向 QQ/飞书发送消息。
 - 目标：启动时获取 PostgreSQL advisory lock，或实现带 fencing token 的租约；普通 append 同样校验 expected head。`.bot.pid` 只保留为诊断信息，不作为唯一互斥机制。
 
 ### Memory provenance 与 7 天事实保留策略冲突
 
-- 证据：person/group Memory 写入要求真实 `messages.id` 作为 `sourceMessageIds`，但 `src/database/retention.ts` 固定删除 7 天前的所有 Message 行。
+- 证据：person/group Memory 写入要求真实 `messages.rowId` 作为 `sourceMessageRowIds`，但 `src/database/retention.ts` 固定删除 7 天前的所有 Message 行。
 - 影响：长期 Memory 仍保留来源 ID，但过期后无法复核陈述者、场景和证据语义，provenance 退化为悬空引用。
 - 目标：明确唯一策略并写入契约：延长/配置 Message retention、保护被长期状态引用的证据行，或在 Memory entry 中保存最小不可变证据快照/hash 并明确 provenance horizon。选择前不要默认宣称长期来源可永久验证。
 
@@ -61,10 +61,20 @@ QQ Gateway、Media Worker、Scheduler 和 LLM Gateway 通过 PostgreSQL 事实�
 
 ### 多进程交付仍是单机轻量契约
 
-- QQ Gateway 和 Agent Core 当前都按单实例运行；database mailbox watcher 只使用进程内 high-water cursor，没有 consumer lease。
+- QQ Gateway、Feishu Gateway 和 Agent Core 当前都按单实例运行；database mailbox watcher 只使用进程内 high-water cursor，没有 consumer lease。
 - Scheduler 使用本机持久 delivery store 恢复未确认 wake，并以 Agent canonical ledger 落账作为完成确认；它仍是单机单实例契约，不支持多主或跨机器共享状态。
 - Media Worker 的游标轮转会越过冷却中的旧行，停机也会有界等待在途描述；但它没有数据库 claim/lease，当前只能运行一个实例。LLM Gateway 为保持实现简单仍会缓冲完整 provider 响应。
 - 这些是当前明确限制。只有日志或故障复现证明需要时，才分别增加 claim/lease、streaming 或跨主机交付；不要先引入 Redis、Kafka、通用 outbox/broker 或集群选主。
+
+### TODO：飞书重启窗口尚未补拉
+
+- Feishu Gateway 当前只消费官方 WebSocket ready 之后的新事件；没有历史导入，也没有按时间窗或游标补拉停机期间消息。
+- 这是为保持第一版简单而接受的明确缺口。只有真实漏消息证据出现后，再设计有界 restart backfill 与幂等对账；不要顺带引入独立 egress、通用 outbox、复杂重试或平台降级状态机。
+
+### 飞书编辑事件需要实机契约验证
+
+- 当前 Gateway 把 `im.message.receive_v1` 中 `update_time > create_time` 的 payload 追加为 `edit` 事实；当前 Node SDK 事件类型只有消息接收和撤回，没有单独的消息编辑事件声明。
+- 因此代码已能处理收到的编辑态 payload，但尚未用真实飞书连接证明“用户在首次入库后编辑消息”会再次触发接收事件。切换时应把它列入 smoke test；若平台不重投，再基于实际 OpenAPI 能力增加有界查询，不先建设轮询平台或历史同步系统。
 
 ### Startup replay 去重集合无界增长
 

@@ -44,7 +44,7 @@ export interface CanonicalAgentStatePrismaClient {
       inboxReadCursors: unknown
       mailboxContinuity: unknown
       goalRevision: number
-      qqConversationFocus: unknown
+      conversationFocus: unknown
       lastWakeAt: Date | null
       ledgerHeadEntryId: bigint | null
     }>
@@ -92,7 +92,7 @@ export async function loadCanonicalAgentState(
       inboxReadCursors: runtime.inboxReadCursors,
       mailboxContinuity: runtime.mailboxContinuity,
       goalRevision: runtime.goalRevision,
-      qqConversationFocus: runtime.qqConversationFocus,
+      conversationFocus: runtime.conversationFocus,
       lastWakeAt: runtime.lastWakeAt,
       ledgerHeadEntryId: runtime.ledgerHeadEntryId,
     } as CanonicalAgentState['runtimeState'],

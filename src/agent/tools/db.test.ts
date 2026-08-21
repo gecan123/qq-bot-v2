@@ -6,7 +6,7 @@ import { createDbTool } from './db.js'
 import { buildBotToolManifest } from './index.js'
 import type { SendTargetPolicy } from '../send-target-policy.js'
 import type { ScheduleRuntime } from '../schedule-runtime.js'
-import type { QqConversationController } from './qq-conversation.js'
+import type { ConversationController } from './conversation.js'
 import type { LlmClient } from '../llm-client.js'
 
 const mockSender: MessageSender = {
@@ -21,7 +21,7 @@ const targetPolicy: SendTargetPolicy = {
   },
 }
 
-const conversations: QqConversationController = {
+const conversations: ConversationController = {
   getCurrent() { return null },
   async resolveCurrent() { return { ok: false, code: 'CHAT_CONTEXT_UNAVAILABLE' } },
   async open() { return { ok: false, code: 'CHAT_TARGET_UNAVAILABLE', current: null } },

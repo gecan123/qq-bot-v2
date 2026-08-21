@@ -25,7 +25,11 @@ import { createReadFileTool } from './read-file.js'
 import { createInspectMediaTool } from './inspect-media.js'
 import { maybeCreateCryptoPaperTool } from './crypto-paper.js'
 import { maybeCreateTradingAgentTool } from './trading-agent.js'
+import type { ConversationSendPolicy } from '../conversation-send-policy.js'
+import type { MessageDelivery } from '../../messaging/message-delivery.js'
 import type { SendTargetPolicy } from '../send-target-policy.js'
+import { createMessageDelivery } from '../../messaging/message-delivery.js'
+import { createQqDeliveryAdapter } from '../../messaging/qq-delivery-adapter.js'
 import { createAgentTaskScheduler, type TaskScheduler } from '../task-scheduler.js'
 import { createQqDirectoryTool, type QqDirectoryDeps } from './qq-directory.js'
 import { createScheduleTool } from './schedule.js'
@@ -40,7 +44,9 @@ import type { GoalCompletionJudge } from '../goal-completion-judge.js'
 import type { MemoryMaintenanceRuntime } from '../memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
 import type { LoadMemorySourceEvidence } from '../memory-evidence.js'
-import { createQqConversationTool, type QqConversationController } from './qq-conversation.js'
+import { createConversationTool, type ConversationController } from './conversation.js'
+import type { ConversationSummary } from './conversation.js'
+import type { ParticipantRef } from '../../chat/conversation.js'
 import { applyBotToolPolicy } from './policies.js'
 import type { InboxReadCursors } from '../inbox-read-cursors.js'
 import { maybeCreateMoomooSkillTool } from './moomoo-skill.js'
@@ -51,8 +57,9 @@ import { createInitiativeReviewTool } from './initiative-review.js'
 export interface BotToolDeps {
   llm: LlmClient
   sender: MessageSender
-  targetPolicy: SendTargetPolicy
-  conversations: QqConversationController
+  targetPolicy: ConversationSendPolicy | SendTargetPolicy
+  delivery?: MessageDelivery
+  conversations: ConversationController
   groupMuteInspector?: GroupMuteInspector
   taskRegistry: BackgroundTaskRegistry
   groupIds: readonly number[]
@@ -73,6 +80,9 @@ export interface BotToolDeps {
   workspaceStateCoordinator?: WorkspaceStateCoordinator
   loadMemorySourceEvidence?: LoadMemorySourceEvidence
   ownerId?: string
+  ownerIdentities?: readonly ParticipantRef[]
+  additionalConversations?: () => Promise<readonly ConversationSummary[]>
+  selfExternalIds?: Partial<Record<'qq' | 'feishu', string>>
 }
 
 export interface BotOptionalTools {
@@ -113,17 +123,31 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     () => maybeCreateTradingAgentTool({ taskRegistry: deps.taskRegistry }) ?? null,
   )
   const qqDirectory = createQqDirectoryTool(deps.qqDirectory)
-  const qqConversation = createQqConversationTool(deps.conversations)
+  const conversation = createConversationTool(deps.conversations)
   const sendMessage = createSendMessageTool({
-    sender: deps.sender,
-    targetPolicy: deps.targetPolicy,
+    delivery: deps.delivery ?? createMessageDelivery([createQqDeliveryAdapter(deps.sender)]),
+    targetPolicy: deps.targetPolicy as ConversationSendPolicy,
     conversations: deps.conversations,
     ...(deps.groupMuteInspector ? { groupMuteInspector: deps.groupMuteInspector } : {}),
   })
   const backgroundTask = createBackgroundTaskTool({ taskRegistry: deps.taskRegistry })
   const inbox = createInboxTool({
-    groupIds: deps.groupIds,
-    selfNumber: deps.selfNumber,
+    loadAllowedConversations: async () => [
+      ...deps.groupIds.map((groupId) => ({
+        platform: 'qq' as const,
+        accountId: String(deps.selfNumber),
+        kind: 'group' as const,
+        externalId: String(groupId),
+      })),
+      ...(await deps.qqDirectory.loadFriends()).map((friend) => ({
+        platform: 'qq' as const,
+        accountId: String(deps.selfNumber),
+        kind: 'private' as const,
+        externalId: String(friend.userId),
+      })),
+      ...(await deps.additionalConversations?.() ?? []).map((item) => item.target),
+    ],
+    selfExternalIds: { qq: String(deps.selfNumber), ...deps.selfExternalIds },
     ...(deps.getInboxReadCursors ? { getReadCursors: deps.getInboxReadCursors } : {}),
   })
   const chatStyle = createChatStyleTool({
@@ -158,6 +182,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
       workspaceStateCoordinator: deps.workspaceStateCoordinator,
       loadSourceEvidence: deps.loadMemorySourceEvidence,
       ownerId: deps.ownerId,
+      ownerIdentities: deps.ownerIdentities,
     }),
     inbox,
     chatStyle,
@@ -165,9 +190,9 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   const capabilities: DeferredToolCapability[] = []
 
   capabilities.push({
-    name: 'qq',
-    description: 'QQ 会话导航与发送；先打开当前会话，再通过 invoke 发送文本、图片或音乐.',
-    tools: [qqConversation, sendMessage],
+    name: 'chat',
+    description: 'QQ / 飞书会话导航与发送；先打开当前会话，再通过 invoke 发送文本、图片或 QQ 音乐.',
+    tools: [conversation, sendMessage],
   })
 
   capabilities.push(
@@ -250,7 +275,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     },
     {
       name: 'document_reading',
-      description: '读取 QQ 收到的文件: 从 inbox 的 file mediaId 提取纯文本、PDF、Office 或 OpenDocument 内容并分页查看.',
+      description: '读取 QQ 或飞书收到的文件: 从 inbox 的 file mediaId 提取纯文本、PDF、Office 或 OpenDocument 内容并分页查看.',
       tools: [createReadFileTool()],
     },
     {

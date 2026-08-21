@@ -28,9 +28,9 @@ export async function ensureMessageReadyForAgent(message: Message): Promise<{
   const text = segmentsToPlainText(resolvedSegments)
 
   try {
-    await freezeResolvedTextIfUnset(message.id, text)
+    await freezeResolvedTextIfUnset(message.rowId, text)
   } catch (err) {
-    log.warn({ err, messageId: message.id }, 'freezeResolvedTextIfUnset failed; proceeding anyway')
+    log.warn({ err, messageRowId: message.rowId }, 'freezeResolvedTextIfUnset failed; proceeding anyway')
   }
 
   return { renderedText: text, fromFrozen: false }

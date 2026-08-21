@@ -3,7 +3,7 @@ import type {
   ClaudeAssistantNativeBlock,
   DurableAgentMessage,
   PersistedAgentSnapshot,
-  QqConversationFocus,
+  ConversationFocus,
   ToolResultContent,
   ToolResultContentBlock,
 } from './agent-context.types.js'
@@ -15,7 +15,7 @@ export type {
   ClaudeAssistantNativeBlock,
   DurableAgentMessage,
   PersistedAgentSnapshot,
-  QqConversationFocus,
+  ConversationFocus,
   ToolResultContent,
 } from './agent-context.types.js'
 
@@ -31,7 +31,7 @@ export type {
 export interface AgentContext {
   getSnapshot(): {
     messages: DurableAgentMessage[]
-    qqConversationFocus: QqConversationFocus
+    conversationFocus: ConversationFocus
   }
   appendUserMessage(content: string): void
   appendAssistantTurn(turn: {
@@ -53,16 +53,16 @@ interface CreateAgentContextOptions {
 
 export function createAgentContext(options: CreateAgentContextOptions = {}): AgentContext {
   let messages: DurableAgentMessage[] = options.initialMessages ? cloneMessages(options.initialMessages) : []
-  let qqConversationFocus: QqConversationFocus = null
+  let conversationFocus: ConversationFocus = null
 
   const impl: AgentContext = {
     getSnapshot(): {
       messages: DurableAgentMessage[]
-      qqConversationFocus: QqConversationFocus
+      conversationFocus: ConversationFocus
     } {
       return {
         messages: cloneMessages(messages),
-        qqConversationFocus: cloneQqConversationFocus(qqConversationFocus),
+        conversationFocus: cloneConversationFocus(conversationFocus),
       }
     },
     appendUserMessage(content: string): void {
@@ -100,30 +100,27 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
         throw new Error(`projection integrity validation failed: ${validation.errors.join('; ')}`)
       }
       const nextMessages = cloneMessages(snapshot.messages)
-      const nextQqConversationFocus = cloneQqConversationFocus(snapshot.qqConversationFocus)
+      const nextConversationFocus = cloneConversationFocus(snapshot.conversationFocus)
       messages = nextMessages
-      qqConversationFocus = nextQqConversationFocus
+      conversationFocus = nextConversationFocus
     },
     exportPersistedSnapshot(): PersistedAgentSnapshot {
       return {
         schemaVersion: SNAPSHOT_SCHEMA_VERSION,
         messages: cloneMessages(messages),
-        qqConversationFocus: cloneQqConversationFocus(qqConversationFocus),
+        conversationFocus: cloneConversationFocus(conversationFocus),
       }
     },
     reset(): void {
       messages = []
-      qqConversationFocus = null
+      conversationFocus = null
     },
   }
   return impl
 }
 
-function cloneQqConversationFocus(focus: QqConversationFocus): QqConversationFocus {
-  if (focus == null) return null
-  return focus.type === 'group'
-    ? { type: 'group', groupId: focus.groupId }
-    : { type: 'private', userId: focus.userId }
+function cloneConversationFocus(focus: ConversationFocus): ConversationFocus {
+  return focus == null ? null : { ...focus }
 }
 
 function cloneMessages(input: DurableAgentMessage[]): DurableAgentMessage[] {

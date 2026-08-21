@@ -30,11 +30,15 @@ import type { TargetMetadataMaps } from './resolve-target-meta.js'
 import { groupPolicyAllowsAmbient, type GroupPolicy } from '../config/group-policies.js'
 import type { BotOwner } from '../config/index.js'
 import type { MessageSender } from '../messaging/message-sender.js'
+import { createMessageDelivery, type MessageDelivery } from '../messaging/message-delivery.js'
+import { createQqDeliveryAdapter } from '../messaging/qq-delivery-adapter.js'
+import type { ConversationSendPolicy } from './conversation-send-policy.js'
+import { conversationKey } from '../chat/conversation.js'
 import {
   findApprovalEvidenceMessage,
   findMemoryEvidenceRows,
   findObservedQqIdentityRows,
-  isGroupMessageMentioningUser,
+  isConversationMessageMentioningUser,
 } from '../database/messages.js'
 import type { TaskScheduler } from './task-scheduler.js'
 import type { QqDirectoryFriend, QqDirectoryGroup } from './tools/qq-directory.js'
@@ -62,7 +66,8 @@ import { createGoalCompletionJudge } from './goal-completion-judge.js'
 import type { MemoryMaintenanceRuntime } from './memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
 import { createLogger } from '../logger.js'
-import { createQqConversationController } from './tools/qq-conversation.js'
+import { createConversationController, type ConversationSummary } from './tools/conversation.js'
+import type { ParticipantRef } from '../chat/conversation.js'
 import { findPendingMailboxThroughRowId } from './mailbox-handled.js'
 import {
   createActivityTrackingToolExecutor,
@@ -97,9 +102,14 @@ export interface AgentRuntimeInput {
   ledgerLoader: AgentLedgerLoader
   initialLedgerHeadEntryId?: bigint | null
   sender: MessageSender
+  delivery?: MessageDelivery
+  sendPolicy?: ConversationSendPolicy
   groupMuteInspector?: GroupMuteInspector
   loadFriends: () => Promise<readonly QqDirectoryFriend[]>
   loadGroups: () => Promise<readonly QqDirectoryGroup[]>
+  loadAdditionalConversations?: () => Promise<readonly ConversationSummary[]>
+  selfExternalIds?: Partial<Record<'qq' | 'feishu', string>>
+  ownerIdentities?: readonly ParticipantRef[]
   selfNumber: number
   metadata: TargetMetadataMaps
   groupPolicies: readonly GroupPolicy[]
@@ -145,7 +155,7 @@ export interface AgentRuntime {
 }
 
 export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
-  let qqConversationFocus = input.context.getSnapshot().qqConversationFocus
+  let conversationFocus = input.context.getSnapshot().conversationFocus
   let inboxReadCursors: InboxReadCursors = { ...input.initialInboxReadCursors }
   const groupIds = input.groupPolicies.map((policy) => policy.id)
   const groupAmbientSendIds = new Set(
@@ -184,43 +194,96 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
         getMessages: () => input.context.getSnapshot().messages,
       })
     : undefined
-  const targetPolicy = createSendTargetPolicy({
+  const qqTargetPolicy = createSendTargetPolicy({
     groupIds,
     groupAmbientSendIds,
     loadFriendIds: async () => (await input.loadFriends()).map((friend) => friend.userId),
-    isGroupReplyToSelf: ({ groupId, messageId }) => isGroupMessageMentioningUser(
-      groupId,
-      messageId,
-      input.selfNumber,
+    isGroupReplyToSelf: ({ groupId, messageId }) => isConversationMessageMentioningUser(
+      {
+        platform: 'qq',
+        accountId: String(input.selfNumber),
+        kind: 'group',
+        externalId: String(groupId),
+      },
+      String(messageId),
+      String(input.selfNumber),
     ),
   })
-  const conversations = createQqConversationController({
+  const targetPolicy: ConversationSendPolicy = input.sendPolicy ?? {
+    async authorize(request) {
+      if (request.target.platform === 'feishu') {
+        const available = await input.loadAdditionalConversations?.() ?? []
+        return available.some((item) => conversationKey(item.target) === conversationKey(request.target))
+          ? { allowed: true }
+          : { allowed: false, error: 'Feishu conversation is not available' }
+      }
+      if (request.target.platform !== 'qq') {
+        return { allowed: false, error: `platform=${request.target.platform} is not configured for sending` }
+      }
+      const externalId = Number(request.target.externalId)
+      if (!Number.isSafeInteger(externalId) || externalId <= 0) {
+        return { allowed: false, error: 'QQ target id must be a positive integer' }
+      }
+      return qqTargetPolicy.authorize({
+        target: request.target.kind === 'group'
+          ? { type: 'group', groupId: externalId }
+          : { type: 'private', userId: externalId },
+        mode: request.mode,
+        replyToMessageId: request.replyToExternalId == null
+          ? undefined
+          : Number(request.replyToExternalId),
+      })
+    },
+  }
+  const delivery = input.delivery
+    ?? createMessageDelivery([createQqDeliveryAdapter(input.sender)])
+  const conversations = createConversationController({
     state: {
-      get: () => qqConversationFocus,
+      get: () => conversationFocus,
       set: (focus) => {
-        qqConversationFocus = focus == null
-          ? null
-          : focus.type === 'group'
-            ? { type: 'group', groupId: focus.groupId }
-            : { type: 'private', userId: focus.userId }
+        conversationFocus = focus == null ? null : { ...focus }
       },
     },
-    groupIds,
-    loadGroups: input.loadGroups,
-    loadFriends: input.loadFriends,
+    loadConversations: async () => [
+      ...(await input.loadGroups())
+        .filter((group) => groupIds.includes(group.groupId))
+        .map((group) => ({
+          target: {
+            platform: 'qq' as const,
+            accountId: String(input.selfNumber),
+            kind: 'group' as const,
+            externalId: String(group.groupId),
+          },
+          displayName: group.groupName,
+        })),
+      ...(await input.loadFriends()).map((friend) => ({
+        target: {
+          platform: 'qq' as const,
+          accountId: String(input.selfNumber),
+          kind: 'private' as const,
+          externalId: String(friend.userId),
+        },
+        displayName: friend.remark || friend.nickname,
+      })),
+      ...(await input.loadAdditionalConversations?.() ?? []),
+    ],
   })
-  const getCurrentQqTarget = () => conversations.getCurrent()
+  const getCurrentTarget = () => conversations.getCurrent()
   const sendMessageSafetyGuard = createSendMessageSafetyGuard({
-    getCurrentTarget: getCurrentQqTarget,
-    hasPendingPrivateMailbox: (userId) => findPendingMailboxThroughRowId(
-      input.context.getSnapshot().messages,
-      `qq_private:${userId}`,
-    ) != null,
+    getCurrentTarget,
+    hasPendingPrivateMailbox: (target) => {
+      const messages = input.context.getSnapshot().messages
+      if (findPendingMailboxThroughRowId(messages, conversationKey(target)) != null) return true
+      return target.platform === 'qq' && target.kind === 'private'
+        ? findPendingMailboxThroughRowId(messages, `qq_private:${target.externalId}`) != null
+        : false
+    },
   })
   const baseTools = createDeferredToolExecutor({
     ...buildBotToolManifest({
       llm: input.llm,
       sender: input.sender,
+      delivery,
       groupMuteInspector: input.groupMuteInspector,
       targetPolicy,
       conversations,
@@ -248,6 +311,9 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       },
       loadMemorySourceEvidence: findMemoryEvidenceRows,
       ownerId: input.owner == null ? undefined : String(input.owner.qq),
+      ownerIdentities: input.ownerIdentities,
+      additionalConversations: input.loadAdditionalConversations,
+      selfExternalIds: input.selfExternalIds,
     }),
     trace: {
       path: input.toolCallLogPath,
@@ -293,9 +359,9 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     ledgerRepo: input.ledgerRepo,
     ledgerLoader: input.ledgerLoader,
     initialLedgerHeadEntryId: input.initialLedgerHeadEntryId,
-    getQqConversationFocus: () => qqConversationFocus,
-    syncQqConversationFocus: (focus) => {
-      qqConversationFocus = focus
+    getConversationFocus: () => conversationFocus,
+    syncConversationFocus: (focus) => {
+      conversationFocus = focus
     },
     initialMailboxCursors: input.initialMailboxCursors ?? {},
     initialInboxReadCursors: input.initialInboxReadCursors ?? {},

@@ -1,6 +1,6 @@
 import { napcat } from './napcat.js'
 import { parseMessageWithForwards } from './message-parser.js'
-import { findExistingMessageIds, insertMessage } from '../database/messages.js'
+import { appendMessageFact, findExistingMessageExternalIds } from '../database/messages.js'
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
 import { persistMediaReferences } from '../media/media-cache.js'
@@ -9,6 +9,8 @@ import { createMessageReadyDispatcher, type MessageReadyDispatcher } from './mes
 import { createBackfillScheduler } from './startup-backfill.js'
 import type { ParsedSegment } from '../types/message-segments.js'
 import { groupUploadSyntheticMessageId, type GroupUploadNotice } from './group-upload.js'
+import { persistMessageRecall } from '../services/message-recall.js'
+import type { MessageFactKind } from '../database/messages.js'
 
 const ingressLog = createLogger('INGRESS')
 const napcatLog = createLogger('NAPCAT')
@@ -18,6 +20,7 @@ const BACKFILL_COUNT = 50
 export type IngestedMessage =
   | {
       kind: 'group'
+      eventKind?: MessageFactKind
       messageRowId: number
       groupId: number
       groupName?: string
@@ -30,6 +33,7 @@ export type IngestedMessage =
     }
   | {
       kind: 'private'
+      eventKind?: MessageFactKind
       messageRowId: number
       peerId: number
       messageId: number
@@ -85,36 +89,33 @@ async function processMessage(
     napcat,
   })
 
-  const persisted = await insertMessage(
-    scope.kind === 'group'
-      ? {
-          sceneKind: 'qq_group',
-          groupId: scope.groupId,
-          groupName,
-          mediaReferenceIds: mediaResult.mediaReferenceIds,
-          messageId: parsed.messageId,
-          senderId: parsed.senderId,
-          senderNickname: parsed.senderNickname,
-          senderGroupNickname: parsed.senderGroupNickname,
-          content: mediaResult.content,
-          rawContent: qqMsg.message,
-          rawMessage: qqMsg.raw_message,
-          sentAt: parsed.time,
-        }
-      : {
-          sceneKind: 'qq_private',
-          sceneExternalId: String(scope.peerId),
-          groupId: null,
-          mediaReferenceIds: mediaResult.mediaReferenceIds,
-          messageId: parsed.messageId,
-          senderId: parsed.senderId,
-          senderNickname: parsed.senderNickname,
-          content: mediaResult.content,
-          rawContent: qqMsg.message,
-          rawMessage: qqMsg.raw_message,
-          sentAt: parsed.time,
-        },
+  const conversation = {
+    platform: 'qq' as const,
+    accountId: String(config.selfNumber),
+    kind: scope.kind,
+    externalId: String(scope.kind === 'group' ? scope.groupId : scope.peerId),
+  }
+  const replySegment = mediaResult.content.find(
+    (segment): segment is Extract<ParsedSegment, { type: 'reply' }> => segment.type === 'reply',
   )
+  const persisted = await appendMessageFact({
+    eventKind: 'message',
+    eventExternalId: `message:${scope.kind}:${conversation.externalId}:${parsed.messageId}`,
+    conversation,
+    ...(groupName ? { conversationName: groupName } : {}),
+    mediaReferenceIds: mediaResult.mediaReferenceIds,
+    messageExternalId: String(parsed.messageId),
+    ...(replySegment ? { replyToExternalId: replySegment.messageId } : {}),
+    senderExternalId: String(parsed.senderId),
+    senderName: parsed.senderNickname,
+    ...(parsed.senderGroupNickname
+      ? { senderConversationName: parsed.senderGroupNickname }
+      : {}),
+    content: mediaResult.content,
+    rawContent: qqMsg.message,
+    rawMessage: qqMsg.raw_message,
+    sentAt: parsed.time,
+  })
 
   const mentionedSelf = mediaResult.content.some(
     (segment) => segment.type === 'at' && segment.targetId === String(config.selfNumber),
@@ -128,7 +129,7 @@ async function processMessage(
         groupId: scope.groupId,
         groupName,
         messageId: parsed.messageId,
-        messageRowId: persisted.id,
+        messageRowId: persisted.rowId,
         senderId: parsed.senderId,
         senderNickname: parsed.senderGroupNickname ?? parsed.senderNickname,
         mentionedSelf,
@@ -144,7 +145,7 @@ async function processMessage(
         flow: 'private_message_ingress',
         peerId: scope.peerId,
         messageId: parsed.messageId,
-        messageRowId: persisted.id,
+        messageRowId: persisted.rowId,
         senderId: parsed.senderId,
         senderNickname: parsed.senderNickname,
         ...summarizeSegments(mediaResult.content),
@@ -157,7 +158,7 @@ async function processMessage(
   if (scope.kind === 'group') {
     options.readyDispatcher?.schedule({
       kind: 'group',
-      messageRowId: persisted.id,
+      messageRowId: persisted.rowId,
       groupId: scope.groupId,
       groupName,
       messageId: parsed.messageId,
@@ -169,7 +170,7 @@ async function processMessage(
   } else {
     options.readyDispatcher?.schedule({
       kind: 'private',
-      messageRowId: persisted.id,
+      messageRowId: persisted.rowId,
       peerId: scope.peerId,
       messageId: parsed.messageId,
       senderId: parsed.senderId,
@@ -216,15 +217,21 @@ async function processGroupUpload(
     senderId: context.user_id,
     napcat,
   })
-  const persisted = await insertMessage({
-    sceneKind: 'qq_group',
-    groupId: context.group_id,
-    groupName,
+  const persisted = await appendMessageFact({
+    eventKind: 'message',
+    eventExternalId: `message:group:${context.group_id}:${messageId}`,
+    conversation: {
+      platform: 'qq',
+      accountId: String(config.selfNumber),
+      kind: 'group',
+      externalId: String(context.group_id),
+    },
+    ...(groupName ? { conversationName: groupName } : {}),
     mediaReferenceIds: mediaResult.mediaReferenceIds,
-    messageId,
-    senderId: context.user_id,
-    senderNickname,
-    senderGroupNickname,
+    messageExternalId: String(messageId),
+    senderExternalId: String(context.user_id),
+    senderName: senderNickname,
+    ...(senderGroupNickname ? { senderConversationName: senderGroupNickname } : {}),
     content: mediaResult.content,
     rawContent: { noticeType: 'group_upload', file: context.file },
     rawMessage: `[群文件上传: ${context.file.name}]`,
@@ -237,7 +244,7 @@ async function processGroupUpload(
     groupId: context.group_id,
     groupName,
     messageId,
-    messageRowId: persisted.id,
+    messageRowId: persisted.rowId,
     senderId: context.user_id,
     senderNickname: senderGroupNickname ?? senderNickname,
     fileId: context.file.id,
@@ -248,7 +255,7 @@ async function processGroupUpload(
 
   options.readyDispatcher?.schedule({
     kind: 'group',
-    messageRowId: persisted.id,
+    messageRowId: persisted.rowId,
     groupId: context.group_id,
     groupName,
     messageId,
@@ -264,11 +271,16 @@ async function backfillGroupMessages(groupId: number): Promise<void> {
     group_id: groupId,
     count: BACKFILL_COUNT,
   })
-  const allMessageIds = messages.map((m) => m.message_id)
-  const existingIds = await findExistingMessageIds(groupId, allMessageIds)
+  const allMessageIds = messages.map((m) => String(m.message_id))
+  const existingIds = await findExistingMessageExternalIds({
+    platform: 'qq',
+    accountId: String(config.selfNumber),
+    kind: 'group',
+    externalId: String(groupId),
+  }, allMessageIds)
 
   for (const msg of messages) {
-    if (existingIds.has(msg.message_id)) continue
+    if (existingIds.has(String(msg.message_id))) continue
     try {
       // backfill 不传 onMessageReady, 历史消息只入库, 不进 LLM 视野。
       // 启动恢复只覆盖 mailbox cursor / legacy lastWakeAt 边界后的消息。
@@ -381,6 +393,41 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): Napc
     groupChains.set(groupId, next)
   })
 
+  napcat.on('notice.group_recall', (context) => {
+    if (!config.botTargetGroupIds.includes(context.group_id)) return
+    const groupId = context.group_id
+    const prev = groupChains.get(groupId) ?? Promise.resolve()
+    const next = prev.then(async () => {
+      const result = await persistMessageRecall({
+        platform: 'qq',
+        accountId: String(config.selfNumber),
+        eventExternalId: `recall:group:${groupId}:${context.message_id}:${context.time}`,
+        messageExternalId: String(context.message_id),
+        conversationExternalId: String(groupId),
+        recalledAt: context.time,
+        rawContent: context,
+      })
+      if (!result) {
+        ingressLog.warn({ groupId, messageId: context.message_id }, '撤回原消息未入库')
+        return
+      }
+      readyDispatcher.schedule({
+        kind: 'group',
+        eventKind: 'recall',
+        messageRowId: result.rowId,
+        groupId,
+        messageId: context.message_id,
+        senderId: context.user_id,
+        senderNickname: String(context.user_id),
+        mentionedSelf: true,
+        sentAt: result.sentAt ?? result.createdAt,
+      })
+    }).catch((error) => {
+      ingressLog.error({ error, groupId, messageId: context.message_id }, '处理群消息撤回失败')
+    })
+    groupChains.set(groupId, next)
+  })
+
   const privateChains = new Map<number, Promise<void>>()
 
   napcat.on('message.private', (context) => {
@@ -393,6 +440,39 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): Napc
       } catch (error) {
         ingressLog.error({ error, peer: peerId, msgId: context.message_id }, '处理私聊消息失败')
       }
+    })
+    privateChains.set(peerId, next)
+  })
+
+  napcat.on('notice.friend_recall', (context) => {
+    const peerId = context.user_id
+    const prev = privateChains.get(peerId) ?? Promise.resolve()
+    const next = prev.then(async () => {
+      const result = await persistMessageRecall({
+        platform: 'qq',
+        accountId: String(config.selfNumber),
+        eventExternalId: `recall:private:${peerId}:${context.message_id}:${context.time}`,
+        messageExternalId: String(context.message_id),
+        conversationExternalId: String(peerId),
+        recalledAt: context.time,
+        rawContent: context,
+      })
+      if (!result) {
+        ingressLog.warn({ peerId, messageId: context.message_id }, '撤回原私聊消息未入库')
+        return
+      }
+      readyDispatcher.schedule({
+        kind: 'private',
+        eventKind: 'recall',
+        messageRowId: result.rowId,
+        peerId,
+        messageId: context.message_id,
+        senderId: peerId,
+        senderNickname: String(peerId),
+        sentAt: result.sentAt ?? result.createdAt,
+      })
+    }).catch((error) => {
+      ingressLog.error({ error, peerId, messageId: context.message_id }, '处理私聊消息撤回失败')
     })
     privateChains.set(peerId, next)
   })

@@ -77,7 +77,7 @@ export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.fr
   workspace_bash: fixed(PARALLEL_READ),
   db: fixed(PARALLEL_READ),
   metrics: fixed(PARALLEL_READ),
-  qq_conversation: byAction({
+  conversation: byAction({
     exclusive: ['list', 'current'],
     sideEffect: ['open', 'close'],
   }),

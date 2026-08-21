@@ -65,7 +65,7 @@ function state(entries: AgentLedgerEntry[]): CanonicalAgentState {
     inboxReadCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
     goalRevision: 0,
-    qqConversationFocus: null,
+    conversationFocus: null,
     lastWakeAt: null,
     ledgerHeadEntryId: entries.at(-1)?.id ?? null,
   }
@@ -173,7 +173,7 @@ describe('checkAgentLedger', () => {
         snapshot: {
           schemaVersion: SNAPSHOT_SCHEMA_VERSION,
           messages: [{ role: 'user', content: 'one' }],
-          qqConversationFocus: null,
+          conversationFocus: null,
         },
         activeEntryCount: 1,
         permanentEntryCount: 1,

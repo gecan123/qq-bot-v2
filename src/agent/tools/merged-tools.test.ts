@@ -20,7 +20,7 @@ import { OutboundCache, setOutboundCacheForTest } from '../../media/outbound-cac
 import type { SendTargetPolicy } from '../send-target-policy.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
 import type { ScheduleRuntime } from '../schedule-runtime.js'
-import type { QqConversationController } from './qq-conversation.js'
+import type { ConversationController } from './conversation.js'
 import type { GoalCompletionJudge } from '../goal-completion-judge.js'
 import type { LlmClient } from '../llm-client.js'
 
@@ -40,7 +40,7 @@ const targetPolicy: SendTargetPolicy = {
   },
 }
 
-const conversations: QqConversationController = {
+const conversations: ConversationController = {
   getCurrent() { return null },
   async resolveCurrent() { return { ok: false, code: 'CHAT_CONTEXT_UNAVAILABLE' } },
   async open() { return { ok: false, code: 'CHAT_TARGET_UNAVAILABLE', current: null } },
@@ -379,7 +379,7 @@ describe('merged main-agent tools', () => {
     assert.deepEqual(capabilities.get('workspace_management'), ['workspace_file', 'workspace_bash'])
     assert.equal(capabilities.has('database_read'), false)
     assert.equal(capabilities.has('diagnostics'), false)
-    assert.deepEqual(capabilities.get('qq'), ['qq_conversation', 'send_message'])
+    assert.deepEqual(capabilities.get('chat'), ['conversation', 'send_message'])
     assert.equal(capabilities.has('github'), false)
     assert.deepEqual(capabilities.get('document_reading'), ['read_file'])
     assert.equal(capabilities.has('skill_management'), false)

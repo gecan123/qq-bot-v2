@@ -3,16 +3,20 @@ import { mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'n
 import { dirname, join, normalize, resolve } from 'node:path'
 import { compareTimestampsDesc, formatBeijingCompact, formatBeijingIso } from '../utils/beijing-time.js'
 import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
+import type { ConversationRef } from '../chat/conversation.js'
+import { conversationKey } from '../chat/conversation.js'
 
 export type MemoryScope = 'self' | 'person' | 'group' | 'topic'
 export type MemoryTier = 'recent' | 'stable'
 export type MemoryStatus = 'active' | 'disputed' | 'superseded'
 export type MemoryContext =
   | { kind: 'core' }
+  | { kind: 'conversation'; conversation: ConversationRef }
   | { kind: 'qq_group'; id: string }
   | { kind: 'qq_private'; id: string }
   | { kind: 'legacy_unscoped' }
 export type ConversationMemoryContext =
+  | { kind: 'conversation'; conversation: ConversationRef }
   | { kind: 'qq_group'; id: string }
   | { kind: 'qq_private'; id: string }
 export type MemoryEvidenceKind =
@@ -52,7 +56,7 @@ export interface WriteMemoryInput {
   context?: MemoryContext
   title?: string
   content: string
-  sourceMessageIds?: number[]
+  sourceMessageRowIds?: number[]
   assertedByIds?: string[]
   evidenceKind?: MemoryEvidenceKind
   memoryKind?: MemoryKind
@@ -112,7 +116,7 @@ export interface MemoryEntry {
   createdAt: string
   updatedAt: string
   content: string
-  sourceMessageIds: number[]
+  sourceMessageRowIds: number[]
   assertedByIds: string[]
   evidenceKind?: MemoryEvidenceKind
   memoryKind?: MemoryKind
@@ -170,7 +174,7 @@ export interface MemoryRecallResult {
     entryId: string
     createdAt: string
     content: string
-    sourceMessageIds: number[]
+    sourceMessageRowIds: number[]
     assertedByIds: string[]
     evidenceKind?: MemoryEvidenceKind
     memoryKind?: MemoryKind
@@ -193,7 +197,7 @@ export interface MemoryReviewResult {
     file: string
     entryIds: [string, string]
     contents: [string, string]
-    sourceMessageIds: number[]
+    sourceMessageRowIds: number[]
     confidence: number
     reason: string
     next: string
@@ -299,9 +303,9 @@ export async function writeMemoryEntry(
     const inputAliases = aliasesForInput(input, title)
     const duplicate = entries.find((entry) => normalizeSearchText(entry.content) === normalizedContent)
     if (duplicate) {
-      const sourceMessageIds = [...new Set([
-        ...duplicate.sourceMessageIds,
-        ...(input.sourceMessageIds ?? []),
+      const sourceMessageRowIds = [...new Set([
+        ...duplicate.sourceMessageRowIds,
+        ...(input.sourceMessageRowIds ?? []),
       ])]
       const assertedByIds = [...new Set([
         ...duplicate.assertedByIds,
@@ -312,14 +316,14 @@ export async function writeMemoryEntry(
         ? {
             ...entry,
             updatedAt: nowIso,
-            sourceMessageIds,
+            sourceMessageRowIds,
             assertedByIds,
             aliases,
             evidenceKind: entry.evidenceKind ?? input.evidenceKind,
             memoryKind: entry.memoryKind ?? input.memoryKind,
           }
         : entry)
-      const deduplicatedRaw = sourceMessageIds.length === duplicate.sourceMessageIds.length
+      const deduplicatedRaw = sourceMessageRowIds.length === duplicate.sourceMessageRowIds.length
         && assertedByIds.length === duplicate.assertedByIds.length
         && aliases.length === duplicate.aliases.length
         && (duplicate.evidenceKind != null || input.evidenceKind == null)
@@ -348,7 +352,7 @@ export async function writeMemoryEntry(
       createdAt: nowIso,
       updatedAt: nowIso,
       content: input.content.trim(),
-      sourceMessageIds: input.sourceMessageIds ?? [],
+      sourceMessageRowIds: input.sourceMessageRowIds ?? [],
       assertedByIds: input.assertedByIds ?? [],
       ...(input.evidenceKind ? { evidenceKind: input.evidenceKind } : {}),
       ...(input.memoryKind ? { memoryKind: input.memoryKind } : {}),
@@ -516,7 +520,7 @@ export async function recallMemoryEntries(
         entryId: entry.id,
         createdAt: entry.createdAt,
         content: entry.content,
-        sourceMessageIds: entry.sourceMessageIds,
+        sourceMessageRowIds: entry.sourceMessageRowIds,
         assertedByIds: entry.assertedByIds,
         ...(entry.evidenceKind ? { evidenceKind: entry.evidenceKind } : {}),
         ...(entry.memoryKind ? { memoryKind: entry.memoryKind } : {}),
@@ -607,9 +611,9 @@ export async function proposeMemoryReview(
         file: left.file,
         entryIds: [left.entry.id, right.entry.id],
         contents: [left.entry.content, right.entry.content],
-        sourceMessageIds: [...new Set([
-          ...left.entry.sourceMessageIds,
-          ...right.entry.sourceMessageIds,
+        sourceMessageRowIds: [...new Set([
+          ...left.entry.sourceMessageRowIds,
+          ...right.entry.sourceMessageRowIds,
         ])],
         confidence: Number((exact ? 1 : similarity).toFixed(3)),
         reason: relation === 'possible_conflict'
@@ -681,7 +685,7 @@ export async function updateMemoryEntry(
     entryId: string
     expectedRevision: string
     content: string
-    sourceMessageIds?: number[]
+    sourceMessageRowIds?: number[]
     assertedByIds?: string[]
     aliases?: string[]
     evidenceKind?: MemoryEvidenceKind
@@ -696,7 +700,7 @@ export async function updateMemoryEntry(
           ...entry,
           updatedAt,
           content: input.content.trim(),
-          sourceMessageIds: [...new Set([...entry.sourceMessageIds, ...(input.sourceMessageIds ?? [])])],
+          sourceMessageRowIds: [...new Set([...entry.sourceMessageRowIds, ...(input.sourceMessageRowIds ?? [])])],
           assertedByIds: [...new Set([...entry.assertedByIds, ...(input.assertedByIds ?? [])])],
           aliases: input.aliases == null ? entry.aliases : [...new Set(input.aliases)],
           evidenceKind: input.evidenceKind ?? entry.evidenceKind,
@@ -713,7 +717,7 @@ export async function correctMemoryEntry(
     entryId: string
     expectedRevision: string
     content: string
-    sourceMessageIds?: number[]
+    sourceMessageRowIds?: number[]
     assertedByIds?: string[]
     evidenceKind?: MemoryEvidenceKind
     memoryKind?: MemoryKind
@@ -743,7 +747,7 @@ export async function correctMemoryEntry(
       createdAt: nowIso,
       updatedAt: nowIso,
       content: input.content.trim(),
-      sourceMessageIds: [...new Set(input.sourceMessageIds ?? [])],
+      sourceMessageRowIds: [...new Set(input.sourceMessageRowIds ?? [])],
       assertedByIds: [...new Set(input.assertedByIds ?? [])],
       ...(input.evidenceKind ? { evidenceKind: input.evidenceKind } : {}),
       ...(input.memoryKind ? { memoryKind: input.memoryKind } : {}),
@@ -864,7 +868,7 @@ export async function compactMemoryEntries(
       createdAt: nowIso,
       updatedAt: nowIso,
       content: input.content.trim(),
-      sourceMessageIds: [...new Set(selected.flatMap((entry) => entry.sourceMessageIds))],
+      sourceMessageRowIds: [...new Set(selected.flatMap((entry) => entry.sourceMessageRowIds))],
       assertedByIds: [...new Set(selected.flatMap((entry) => entry.assertedByIds))],
       evidenceKind: commonEvidenceKind(selected),
       memoryKind: commonMemoryKind(selected),
@@ -990,7 +994,7 @@ async function applyMemoryMaintenanceUnlocked(
       if (entry.status !== 'active') {
         throw new MemoryStoreError('invalid_selection', `automatic maintenance can only promote recent active entries: ${entry.id}`)
       }
-      if (new Set(entry.sourceMessageIds).size < 2) {
+      if (new Set(entry.sourceMessageRowIds).size < 2) {
         throw new MemoryStoreError(
           'invalid_selection',
           `automatic maintenance promotion requires at least two distinct source messages: ${entry.id}`,
@@ -1060,7 +1064,7 @@ async function applyMemoryMaintenanceUnlocked(
       createdAt: nowIso,
       updatedAt: nowIso,
       content: operation.content.trim(),
-      sourceMessageIds: [...new Set(selected.flatMap((entry) => entry.sourceMessageIds))],
+      sourceMessageRowIds: [...new Set(selected.flatMap((entry) => entry.sourceMessageRowIds))],
       assertedByIds: [...new Set(selected.flatMap((entry) => entry.assertedByIds))],
       evidenceKind: commonEvidenceKind(selected),
       memoryKind: commonMemoryKind(selected),
@@ -1203,30 +1207,36 @@ function fileForInput(input: WriteMemoryInput): string {
     const personId = requiredId(input)
     const context = input.context
     if (!context) throw new MemoryStoreError('invalid_input', 'person memory requires context')
-    if (context.kind === 'core') return `people/${personId}/core.md`
-    if (context.kind === 'legacy_unscoped') return `people/${personId}/unscoped.md`
-    const contextId = requiredContextId(context)
-    return context.kind === 'qq_group'
-      ? `people/${personId}/groups/${contextId}.md`
-      : `people/${personId}/private/${contextId}.md`
+    if (context.kind === 'core') return `people/${safeSegment(personId)}/core.md`
+    if (context.kind === 'legacy_unscoped') return `people/${safeSegment(personId)}/unscoped.md`
+    if (context.kind === 'qq_group') return `people/${safeSegment(personId)}/groups/${safeSegment(context.id)}.md`
+    if (context.kind === 'qq_private') return `people/${safeSegment(personId)}/private/${safeSegment(context.id)}.md`
+    return `people/${safeSegment(personId)}/conversations/${conversationSegment(context)}.md`
   }
-  if (input.scope === 'group') return `groups/${requiredId(input)}.md`
+  if (input.scope === 'group') {
+    if (input.context?.kind !== 'conversation' || input.context.conversation.kind !== 'group') {
+      throw new MemoryStoreError('invalid_input', 'group memory requires a group conversation context')
+    }
+    return `groups/${conversationSegment(input.context)}.md`
+  }
   if (input.scope === 'topic') return TOPIC_MEMORY_FILE
   return SELF_MEMORY_FILE
 }
 
-function requiredContextId(context: ConversationMemoryContext): string {
-  const value = context.id.trim()
-  if (!/^[A-Za-z0-9_-]+$/.test(value)) {
-    throw new MemoryStoreError('invalid_input', `memory context id is invalid: ${context.id}`)
-  }
-  return value
+function conversationSegment(context: ConversationMemoryContext): string {
+  if (context.kind !== 'conversation') return safeSegment(context.id)
+  return safeSegment(conversationKey(context.conversation))
+}
+
+function safeSegment(value: string): string {
+  const normalized = value.trim()
+  if (!normalized) throw new MemoryStoreError('invalid_input', 'memory path segment must not be empty')
+  return encodeURIComponent(normalized)
 }
 
 function requiredId(input: WriteMemoryInput): string {
   const value = input.id?.trim()
   if (!value) throw new MemoryStoreError('invalid_input', `${input.scope} memory requires id`)
-  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new MemoryStoreError('invalid_input', `${input.scope} id is invalid`)
   return value
 }
 
@@ -1234,20 +1244,18 @@ function filesForRecall(input: RecallMemoryInput): string[] | null {
   if (input.scope === 'person' || input.scope === 'group') {
     const id = input.id?.trim()
     if (!id) throw new MemoryStoreError('invalid_input', `${input.scope} recall requires id`)
-    if (!/^[A-Za-z0-9_-]+$/.test(id)) {
-      throw new MemoryStoreError('invalid_input', `${input.scope} recall id is invalid`)
-    }
     if (input.scope === 'group') {
       if (input.context != null) throw new MemoryStoreError('invalid_input', 'group recall does not accept context')
-      return [`groups/${id}.md`]
+      return [`groups/${safeSegment(id)}.md`]
     }
     if (!input.context) throw new MemoryStoreError('invalid_input', 'person recall requires context')
-    const contextId = requiredContextId(input.context)
     return [
-      `people/${id}/core.md`,
-      input.context.kind === 'qq_group'
-        ? `people/${id}/groups/${contextId}.md`
-        : `people/${id}/private/${contextId}.md`,
+      `people/${safeSegment(id)}/core.md`,
+      input.context.kind === 'conversation'
+        ? `people/${safeSegment(id)}/conversations/${conversationSegment(input.context)}.md`
+        : input.context.kind === 'qq_group'
+          ? `people/${safeSegment(id)}/groups/${safeSegment(input.context.id)}.md`
+          : `people/${safeSegment(id)}/private/${safeSegment(input.context.id)}.md`,
     ]
   }
   if ((input.scope === 'self' || input.scope === 'topic') && (input.id != null || input.context != null)) {
@@ -1288,9 +1296,16 @@ function renderNewFile(input: WriteMemoryInput, title: string, updatedAt: string
     `scope: ${input.scope}`,
     ...(input.id?.trim() ? [`entityId: ${input.id.trim()}`] : []),
     ...(input.context ? [`contextKind: ${input.context.kind}`] : []),
-    ...(input.context && (input.context.kind === 'qq_group' || input.context.kind === 'qq_private')
-      ? [`contextId: ${input.context.id}`]
-      : []),
+    ...(input.context?.kind === 'conversation'
+      ? [
+          `contextPlatform: ${input.context.conversation.platform}`,
+          `contextAccountId: ${input.context.conversation.accountId}`,
+          `contextConversationKind: ${input.context.conversation.kind}`,
+          `contextExternalId: ${input.context.conversation.externalId}`,
+        ]
+      : input.context && (input.context.kind === 'qq_group' || input.context.kind === 'qq_private')
+        ? [`contextId: ${input.context.id}`]
+        : []),
     `title: ${title}`,
     `updatedAt: ${updatedAt}`,
     'aliases: []',
@@ -1334,7 +1349,7 @@ function renderMemoryEntry(entry: MemoryEntry): string {
     `aliases: ${JSON.stringify(entry.aliases)}`,
     ...(entry.validUntil ? [`validUntil: ${entry.validUntil}`] : []),
     `supersedes: ${JSON.stringify(entry.supersedes)}`,
-    ...(entry.sourceMessageIds.length > 0 ? [`sourceMessageIds: ${entry.sourceMessageIds.join(',')}`] : []),
+    ...(entry.sourceMessageRowIds.length > 0 ? [`sourceMessageRowIds: ${entry.sourceMessageRowIds.join(',')}`] : []),
     ...(entry.assertedByIds.length > 0 ? [`assertedByIds: ${entry.assertedByIds.join(',')}`] : []),
     ...(entry.evidenceKind ? [`evidenceKind: ${entry.evidenceKind}`] : []),
     ...(entry.memoryKind ? [`memoryKind: ${entry.memoryKind}`] : []),
@@ -1389,7 +1404,7 @@ function parseMemoryEntries(raw: string): MemorySegment[] {
       createdAt,
       updatedAt,
       content: body.slice(2).trim(),
-      sourceMessageIds: parseSourceIds(fields.get('sourceMessageIds')),
+      sourceMessageRowIds: parseSourceIds(fields.get('sourceMessageRowIds')),
       assertedByIds: parseIdList(fields.get('assertedByIds')),
       ...(isMemoryEvidenceKind(fields.get('evidenceKind'))
         ? { evidenceKind: fields.get('evidenceKind') as MemoryEvidenceKind }
@@ -1557,6 +1572,23 @@ function parseMarkdownMemory(raw: string): {
     else if (record.contextKind === 'legacy_unscoped') context = { kind: 'legacy_unscoped' }
     else if ((record.contextKind === 'qq_group' || record.contextKind === 'qq_private') && record.contextId) {
       context = { kind: record.contextKind, id: record.contextId }
+    }
+    else if (
+      record.contextKind === 'conversation'
+      && (record.contextPlatform === 'qq' || record.contextPlatform === 'feishu')
+      && record.contextAccountId
+      && (record.contextConversationKind === 'group' || record.contextConversationKind === 'private')
+      && record.contextExternalId
+    ) {
+      context = {
+        kind: 'conversation',
+        conversation: {
+          platform: record.contextPlatform,
+          accountId: record.contextAccountId,
+          kind: record.contextConversationKind,
+          externalId: record.contextExternalId,
+        },
+      }
     } else return null
   }
   return {

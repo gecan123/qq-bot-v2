@@ -7,7 +7,7 @@
 - 对话控制：`yield`。当当前方向已经完成、暂时没有可执行下一步或应把控制权交回等待机制时调用；它立即返回 `continuation=stop`，不保存 intention、resume reminder 或休息状态。无工具轮仍由 runtime 的有界等待处理。
 - 短期调度：`schedule action=create|list|get_occurrence|cancel`，active job 的公开 ID 字段统一为 `id`。`create` 只接受一次性 `at` 或 `afterSeconds`，触发必须位于 30 秒到 3 天内，最多 20 个 active job。同名同时间创建幂等返回 `existing`，同名不同时间返回冲突及已有 `id`，需先 cancel；`list` 返回有界公开摘要。active 状态保存在 schedule store，触发正文只写一次 occurrence store；到期 notification 只给名称、时间和 `get_occurrence` 打开参数，不执行预存命令。它是 normal+interrupt，轮次边界低于 high notification、高于 active Goal 和 passive notification。
 - 持久目标：`goal action=get|create_self|complete|report_blocker|abandon_self`。没有未完成 Goal 时，Agent 可以为自己的兴趣直接创建 `origin=self` 的持久目标，必须给出真实 `motivation` 和可核验 `completionCriteria`；默认预算 1,000,000 tokens，单个上限 10,000,000，60 秒冷却和滚动 24 小时最多 64 个只是失控保险丝。Agent 可以放弃 self Goal，但不能放弃 owner Goal。配置的 owner 仍可用私聊 `/goal` 创建、暂停、恢复或取消，owner Goal 会直接抢占 self Goal。轮次边界优先级是 high+interrupt notification > normal+interrupt notification > active Goal > passive notification；前台仍是单一串行 BotLoop，等待后台或外部输入时可以做其他事情。`complete` 必须提交逐项真实证据，并对 owner/self Goal 各执行一次独立、无工具的 LLM 验收；只有 `{ok:true}` 才落完成状态，拒绝或验收不可用会保持 Goal 活跃且本次不重试。同一 blocker 每个连续 Goal round 用相同 `blockerKey` 报告，第三轮才转 `blocked`。Goal token budget 按主 Agent 未缓存 input 加 output 计量；judger 等辅助 LLM 使用量尚未计入。只有明确的 provider 硬额度/账单上限才转 `usage_limited`，普通临时 429 仍走已有有界重试和 round backoff。
-- QQ 发送位于 deferred `qq` capability：用 `help action=describe` 查看 schema 后，直接 `invoke qq_conversation open` 显式打开允许的群或好友，最后 `invoke send_message` 发送文本、图片、图文或受控音乐卡片。`work` 必填：无后续承诺用 `state=none`；当前会话内马上续做用 `state=continue`，只保护下一轮且不跨重启；持久 Goal 的进度消息用 `state=goal_progress + goalId`，并由 before-tool hook 确认该 Goal 当前 active 且有 `currentCommitment`。
+- QQ 与飞书发送位于 deferred `chat` capability：用 `help action=describe` 查看 schema 后，直接 `invoke conversation open` 显式打开允许的群或好友，最后 `invoke send_message` 发送文本、图片、图文或受控音乐卡片。`work` 必填：无后续承诺用 `state=none`；当前会话内马上续做用 `state=continue`，只保护下一轮且不跨重启；持久 Goal 的进度消息用 `state=goal_progress + goalId`，并由 before-tool hook 确认该 Goal 当前 active 且有 `currentCommitment`。
 - QQ 目录：`qq_directory`（分页列出/搜索 NapCat 当前全部好友；群目录只披露当前已加入且配置在 `prompts/groups.md` 的群；`profile` 按 QQ 号合并当前目录名和消息事实账本中观察到的历史群名片/昵称）。
 - 稳定按需壳：`help`（`list` / `describe` capability 或内部工具 schema）和 `invoke`（直接调用按需内部工具）。安全仍由目标工具 schema、policy 和 approval 约束，不持久化激活状态。
 - 知识和历史：`memory`（稳定长期记忆）、`notebook`（按稳定 topic 维护研究/阅读/市场/项目过程）、`life_journal`（经历、感受、梦和 Agenda）、`skill`、`inbox`（list/read 多来源消息正文）。四类长期状态的人类可读叙述必须以中文为载体，技术标识可保留原文但要放进中文说明；结构字段、ID 和 Agenda 固定分区名保持原样。
@@ -33,7 +33,7 @@
 - `media_fetch`：内部 `fetch_content` 只暴露图片 URL / QQ 头像 action；激活它不会放开普通网页或 Reddit 抓取。
 - `workspace_management`：包含 `workspace_file` 和只读 `workspace_bash`。后者只允许 `pwd/ls/rg/cat/head/tail/wc`，不经过 shell；外部抓取、风格和金融分别用 typed capability。
 - `document_reading`：内部工具是 `read_file`，只接受 `inbox` 返回的 `type=file` 的 `mediaId`；支持有界分页读取纯文本、PDF、DOCX、XLSX、PPTX、RTF 和 OpenDocument，不接受路径或 URL，也不执行文件内容。
-- QQ 当前会话保存在 runtime singleton 的 `qq_conversation_focus`；`inbox_read_cursors` 记录各来源实际读取到的 messages row。它们用于重启恢复运行控制状态，不是 LLM 可见事实，不写入 ledger message。focus 只由 `qq_conversation open/close` 改变，新 mailbox 不会自动切换它。
+- 跨平台当前会话保存在 runtime singleton 的 `conversation_focus`；`inbox_read_cursors` 记录各来源实际读取到的 messages row。它们用于重启恢复运行控制状态，不是 LLM 可见事实，不写入 ledger message。focus 只由 `conversation open/close` 改变，新 mailbox 不会自动切换它。
 - `invoke` 的 schema/capability resolution 是内部路由，不单独记成功 trace。对外 schema仍要求 `args` 是对象；若 provider 误传可解析为 JSON 对象的字符串，runtime 会在 schema 校验前归一化。调用只记录一次真实目标工具结果，hooks 也只围绕最终执行路径运行一次。
 
 ## 结果契约
@@ -67,21 +67,21 @@
 
 ## 安全规则
 
-- 对外 QQ 发言必须走 `send_message`。
-- `send_message` 的 target 必须由当前 QQ focus 明确给出。不能从 memory、消息文本或日志推断 target；切换来源时必须重新 `qq_conversation open`。
+- 对外 QQ 或飞书发言必须走统一 `send_message`，底层由 `MessageDelivery` 路由到平台 adapter。每次动作使用稳定 UUID；结果只可能是 `sent`、`failed` 或 `delivery_unknown`，后两者都不会伪装成功或自动重试。
+- `send_message` 的 target 必须由当前 conversation focus 明确给出。不能从 memory、消息文本或日志推断 target；切换来源时必须重新 `conversation open`。
 - `send_message.music` 只接受 qq/163/kugou/kuwo/migu 的歌曲 ID，或字段受限且 URL 必须为 HTTPS 的 custom 音乐卡片；不接受任意 JSON 卡片。
 - assistant text 是内部历史/推理，不是公开发送通道。
 - `send_message` 成功不会隐式结束 Agent 当前活动；下一轮可以继续行动、无工具结束活动，或显式调用 `yield` 交回控制权。
 - content-only 且无 tool call 的 assistant 输出不会发送或执行。Runtime 会追加受控 `runtime_correction` 并立即重试一次；连续第二次进入一分钟可打断等待，防止既假完成又紧密空转。
-- `prompts/groups.md` 是群策略唯一来源。普通群消息永远不会唤醒或打断 Agent：`mentions` 群只进入被动 inbox，`selective` / `active` 群可以额外形成 passive notification，在下一次自然轮次披露来源、数量和 inbox 打开动作。私聊和 QQ 结构化 at 明确提到 bot 的群消息才是 interrupt attention。`mentions` 只允许结构化 @ reply；`selective` / `active` 允许 Agent 主动读取 inbox 后 ambient。引用普通群消息不能绕过 `mentions`；私聊目标必须是 NapCat 当前好友。未授权会明确拒绝，不会模拟成功。
-- 私聊的主动发言冷却只限制没有同 target pending mailbox 的真正 ambient send。对新入站私聊的回复不必为了绕过冷却而添加 `reply_to`；`reply_to` 只用于 QQ 引用展示。
+- QQ 群策略仍以 `prompts/groups.md` 为唯一来源：普通群消息不唤醒或打断 Agent；`mentions` 群只进入被动 inbox，`selective` / `active` 群可以额外形成 passive notification。飞书群以 `BOT_FEISHU_GROUP_IDS` 明确 allowlist；普通消息被动入库，结构化 @bot、编辑和撤回可以形成 attention。QQ 私聊目标必须是 NapCat 当前好友；飞书群目标必须在 allowlist，私聊目标必须已经由 Gateway 观察到。未授权会明确拒绝，不会模拟成功。
+- 私聊的主动发言冷却只限制没有同 target pending mailbox 的真正 ambient send。对新入站私聊的回复不必为了绕过冷却而添加 `reply_to`；`reply_to` 用于对应平台的引用/回复展示。
 - `qq_directory` 是只读目录。`list_friends` / `search_friends` 覆盖 NapCat 当前全部好友，因此这些结果都可作为 private `send_message` target；`list_groups` 只返回 NapCat 当前群列表与 `prompts/groups.md` 群 section 的交集，不扩大群监听或发送授权。`profile` 以 QQ 号为主键，把当前好友 remark/nickname 与 `messages` 中同一 sender 的群名片、sender nickname、出现群和时间合并为带来源的 identity view；它不把昵称当权限或稳定事实。结果有条数上限和 offset 分页，不提供加删好友、加退群或群管理动作。
 - 群 `send_message` 最终失败后才按需查询机器人自身的当前禁言状态；确认命中时 tool result 返回 `reason=group_muted` 和可用的 `mutedUntil`，否则返回 `reason=send_failed`。该事实不缓存，也不会阻止后续真实发送。
 - 外部工具必须保留输出上限和超时；审计强度由 `BOT_TOOL_AUDIT_MODE` 控制，开发默认只记副作用。
 - 默认 thin 审批只保护公开发布和未知 MCP 写操作，不阻塞本地内容快速迭代。`strict` 才额外审批 memory/notebook/Life Journal/workspace 删除和网站本地删除；`off` 关闭统一 approval hook，但不会关闭 target、revision、路径、schema、超时和 allowlist 等工具自身边界。
 - MCP 配置是 operator 权限面，不由 Agent 修改。`readOnlyTools` 必须逐个写远端原始 tool name；远端 `readOnlyHint` 只作为展示信息，不能自动获得信任。未列出的工具即使自称只读，也默认审批。
 - `inbox list` 只列出最近扫描窗口内 `latestRowId > lastReadRowId` 的待读来源；`read` 未显式传 `afterRowId` 时从持久已读 cursor 继续，并只推进到本次有界输出实际展示的最后一行。群读取必须显式指定监听白名单内的 groupId；私聊读取必须显式指定 peerId。read 结果用结构化 `media[].mediaId` 披露入站媒体 handle，整体仍有行数和字符上限，并作为普通 tool result 进入 AgentContext。群文件上传 notice 会用稳定的负数 synthetic messageId 落入同一 mailbox，此时 `replyable=false`，只能 ambient 回复。
-- `read_file` 位于 deferred `document_reading` capability 内，只能解析已落库的 QQ 文件 handle；单次返回和可解析输入都有上限，压缩包与旧版 DOC/XLS/PPT 明确拒绝。
+- `read_file` 位于 deferred `document_reading` capability 内，只能解析已落库的消息文件 handle；QQ 与飞书媒体都先进入统一 `media` / `media_blobs` 后才能读取。单次返回和可解析输入都有上限，压缩包与旧版 DOC/XLS/PPT 明确拒绝。
 - `workspace_bash` 的 workspace/repo 文件命令都只读且不经过 shell；只允许 `pwd/ls/rg/cat/head/tail/wc`。普通文件修改必须走 `workspace_file`，不能用它访问数据库、网络、金融、风格或指标。repo view 不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
 - `moomoo_skill` 只路由到固定 `skills/moomooapi/scripts/**` 下的代码内 allowlist。三个交易写脚本必须显式传唯一的 `--trd-env SIMULATE`；`REAL`、`--confirmed`、加密货币、组合订单、任意 Python/脚本路径和实时订阅长进程都会被拒绝。
 - `crypto_paper` 是独立 typed tool，只调用 Moomoo `get_snapshot.py` 获取 `CC.*USD` 买一/卖一行情，不创建 Crypto 交易 context。`buy` / `sell` 需要幂等 `clientOrderId`，资金和持仓在单个 serializable PostgreSQL transaction 中更新；`reset` 清空当前持仓并递增 generation，但保留历史订单。查询不是副作用，买卖和重置进入工具审计。
@@ -90,7 +90,7 @@
 - `notebook action=write|list|search|read|update|delete|compact` 把研究、阅读、市场观察、项目过程和其他主题笔记存到 `notebook/<kind>/YYYY-MM.md`。每条记录必须有稳定单行 topic 和稳定 ID；list/search 可按 kind/topic 过滤，read 返回月文件 revision，修改要求最新 revision 并原子写回。compact 只允许同 kind、同月、同 topic 的记录。过程信息写 Notebook，稳定结论写 memory，经历、感受和梦写 Life Journal。
 - `life_journal action=write|read_recent|read_day|read_entry|update|delete|compact|read_agenda|write_agenda` 让主 agent 显式维护 Life Journal 和 Agenda。完整 compact 前用 `read_entry` 或分页 `read_day` 获取原文；修改要求最新 revision。只有看见明确空白、重复或结构污染时才做有界整理。主循环没有旁路 Life reviewer，不会自动从每轮工具结果写 Journal、Agenda 或 Memory。
 - `collect_sticker` 位于 deferred `sticker_management` capability，不是 `workspace_bash` 子命令；`action=collect|list|search|random|remove` 必填。`remove` 只删除表情池记录，不删除原始 Media。
-- `memory` 对主 Agent 只暴露 `remember|recall|correct`，使用 `data/agent-workspace/memory/` 的 v2 Markdown；Markdown 是事实来源，没有 SQLite/FTS 或 embedding 索引。`self` 固定写入 `self/self.md`，`topic` 固定写入 `topics/topics.md`；调用时的 title 作为 entry alias 保留并参与 recall。人物以 QQ 为主体，普通事实按来源场景落入 `people/<qq>/groups/<group>.md` 或 `people/<qq>/private/<peer>.md`，只有经明确确认的跨场景事实才属于 `people/<qq>/core.md`。person/group remember 必须提供真实 `sourceMessageIds` 和对应 `memoryKind`；runtime 从 Message row 推导 context、`assertedByIds` 和证据语义。person recall 必须带 QQ `id` 和当前 `context`，group recall 只带群号；每个 recall match 同时返回 entry ID 与文件 revision，可直接交给 `correct` 做一次 revision-checked 原子替换。
+- `memory` 对主 Agent 只暴露 `remember|recall|correct`，使用 `data/agent-workspace/memory/` 的 v2 Markdown；Markdown 是事实来源，没有 SQLite/FTS 或 embedding 索引。`self` 固定写入 `self/self.md`，`topic` 固定写入 `topics/topics.md`；调用时的 title 作为 entry alias 保留并参与 recall。人物使用平台中立 participant key，普通事实按来源会话落入 `people/<participant>/conversations/<encoded-conversation-key>.md`；群体事实落入 `groups/<encoded-conversation-key>.md`。只有配置的主人 QQ/飞书身份会统一为 `owner` 并允许主人自述进入 `people/owner/core.md`，其他用户和群保持平台隔离。person/group remember 必须提供真实 `sourceMessageRowIds` 和对应 `memoryKind`；runtime 从 Message row 推导 context、`assertedByIds` 和证据语义。person recall 必须带 participant key 和当前 `context`，group recall 使用 `conversation list` 返回的 conversation key；每个 match 同时返回 entry ID 与文件 revision，可直接交给 `correct` 做 revision-checked 原子替换。
 - 每次成功创建 recent entry 后，memory maintenance 会检查当前文件：recent 至少 8 条、recent 正文至少 4000 字符、或 lexical review 找到重复/冲突时，才把它放进共享单并发 `maintenance` lane。专用关闭 thinking 的 reviewer 只返回受 schema 约束的 `promote / merge / discard`，store 校验 entryId、禁止自动删除 stable，并按 revision 一次原子应用；阈值以下不调用 LLM，revision 冲突会用最新文件重新排队。这个 side-data 维护不改写 `AgentContext`，也不参与 replay。
 - `skill` 从 `docs/agent-skills/` 读取 curated Markdown，并有输出上限。它披露不熟悉的专项规则、安全边界和标准工作流，不承担当前执行状态。
 - `website` 位于 deferred `website` capability 内；`status` / `read` 是只读操作，`write` / `delete` / `move` / `publish` 是副作用操作并进入工具审计。它不能修改依赖、构建配置、CI、Vercel 配置或网站仓库的隐藏文件。

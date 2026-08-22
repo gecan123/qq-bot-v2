@@ -34,9 +34,6 @@ export function classifyApprovalRequirement(
   if (toolName === 'website' && action === 'delete') {
     return { reason: '删除个人网站内容' }
   }
-  if (toolName === 'skill_editor' && action === 'install') {
-    return { reason: '安装新的运行时 skill' }
-  }
   return null
 }
 

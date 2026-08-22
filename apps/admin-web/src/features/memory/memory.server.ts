@@ -90,8 +90,33 @@ function knowledgeKind(file: string): KnowledgeKind | null {
 
 async function readProvenance(sourceIds: number[]): Promise<MemorySnapshot['provenance']> {
   if (!sourceIds.length) return []
-  const messages = await getAdminPrisma().message.findMany({ where: { id: { in: sourceIds } }, select: { id: true, sceneKind: true, sceneExternalId: true, groupId: true, senderId: true, senderNickname: true, sentAt: true, createdAt: true, resolvedText: true, searchText: true }, orderBy: { id: 'desc' } })
-  return messages.map(row => ({ id: row.id, scene: row.sceneKind === 'qq_group' ? `群 ${row.groupId ?? '—'}` : `私聊 ${row.sceneExternalId}`, sender: row.senderNickname ?? row.senderId.toString(), sentAt: (row.sentAt ?? row.createdAt).toISOString(), text: (row.resolvedText || row.searchText).slice(0, 500) }))
+  const messages = await getAdminPrisma().message.findMany({
+    where: { rowId: { in: sourceIds } },
+    select: {
+      rowId: true,
+      platform: true,
+      conversationKind: true,
+      conversationExternalId: true,
+      conversationName: true,
+      senderExternalId: true,
+      senderName: true,
+      senderConversationName: true,
+      sentAt: true,
+      createdAt: true,
+      resolvedText: true,
+      searchText: true,
+    },
+    orderBy: { rowId: 'desc' },
+  })
+  return messages.map(row => ({
+    id: row.rowId,
+    scene: row.conversationKind === 'group'
+      ? `${row.platform} 群 ${row.conversationName ?? row.conversationExternalId}`
+      : `${row.platform} 私聊 ${row.conversationExternalId}`,
+    sender: row.senderConversationName ?? row.senderName ?? row.senderExternalId,
+    sentAt: (row.sentAt ?? row.createdAt).toISOString(),
+    text: (row.resolvedText || row.searchText).slice(0, 500),
+  }))
 }
 
 async function walk(root: string): Promise<string[]> { try { const rows = await readdir(root, { withFileTypes: true }); return (await Promise.all(rows.map(row => row.isDirectory() ? walk(join(root, row.name)) : row.name.endsWith('.md') ? [join(root, row.name)] : []))).flat() } catch { return [] } }
@@ -103,12 +128,13 @@ function parseEntries(raw: string, file: string, fileId: string, kind: Knowledge
 function parseMemory(raw: string, file: string, fileId: string, textLimit: number | null): MemorySnapshot['entries'] {
   const rows: MemorySnapshot['entries'] = []
   const regex = /<!-- memory-entry\s*([\s\S]*?)-->\s*([\s\S]*?)<!-- \/memory-entry -->/g
-  for (const match of raw.matchAll(regex)) { const meta = match[1]; rows.push({ id: field(meta, 'id') ?? `${file}:${rows.length + 1}`, fileId, file, tier: field(meta, 'tier'), status: field(meta, 'status'), evidenceKind: field(meta, 'evidenceKind'), updatedAt: field(meta, 'updatedAt'), sourceMessageIds: numericArray(meta, 'sourceMessageIds'), text: limit(match[2].replace(/^\s*[-*]\s*/, '').trim(), textLimit) }) }
+  for (const match of raw.matchAll(regex)) { const meta = match[1]; rows.push({ id: field(meta, 'id') ?? `${file}:${rows.length + 1}`, fileId, file, tier: field(meta, 'tier'), status: field(meta, 'status'), evidenceKind: field(meta, 'evidenceKind'), updatedAt: field(meta, 'updatedAt'), sourceMessageIds: sourceMessageRowIds(meta), text: limit(match[2].replace(/^\s*[-*]\s*/, '').trim(), textLimit) }) }
   return rows
 }
 
-function parseJournal(raw: string, file: string, fileId: string, kind: 'journal' | 'notebook', textLimit: number | null): MemorySnapshot['entries'] { const chunks = raw.split(/(?=^##\s+)/m).filter(part => part.trim()); return chunks.slice(0, 300).map((part, index) => ({ id: `${file}:${index + 1}`, fileId, file, tier: kind, status: null, evidenceKind: null, updatedAt: null, sourceMessageIds: numericArray(part, 'sourceMessageIds'), text: limit(part.trim(), textLimit) })) }
+function parseJournal(raw: string, file: string, fileId: string, kind: 'journal' | 'notebook', textLimit: number | null): MemorySnapshot['entries'] { const chunks = raw.split(/(?=^##\s+)/m).filter(part => part.trim()); return chunks.slice(0, 300).map((part, index) => ({ id: `${file}:${index + 1}`, fileId, file, tier: kind, status: null, evidenceKind: null, updatedAt: null, sourceMessageIds: sourceMessageRowIds(part), text: limit(part.trim(), textLimit) })) }
 function parseFrontMatter(raw: string): Record<string, string> { const match = /^---\s*\n([\s\S]*?)\n---/.exec(raw); if (!match) return {}; const result: Record<string, string> = {}; for (const line of match[1].split('\n')) { const separator = line.indexOf(':'); if (separator <= 0) continue; result[line.slice(0, separator).trim()] = line.slice(separator + 1).trim().replace(/^"|"$/g, '') } return result }
 function field(raw: string, key: string): string | null { return new RegExp(`^${key}:\\s*(.+)$`, 'm').exec(raw)?.[1]?.trim().replace(/^"|"$/g, '') ?? null }
-function numericArray(raw: string, key: string): number[] { const value = new RegExp(`^${key}:\\s*\\[([^\\]]*)\\]`, 'm').exec(raw)?.[1]; return value ? value.split(',').map(item => Number(item.trim())).filter(Number.isSafeInteger) : [] }
+function sourceMessageRowIds(raw: string): number[] { const current = numericArray(raw, 'sourceMessageRowIds'); return current.length > 0 ? current : numericArray(raw, 'sourceMessageIds') }
+function numericArray(raw: string, key: string): number[] { const match = new RegExp(`^${key}:\\s*(?:\\[([^\\]]*)\\]|(.+))$`, 'm').exec(raw); const value = match?.[1] ?? match?.[2]; return value ? value.split(',').map(item => Number(item.trim())).filter(Number.isSafeInteger) : [] }
 function limit(value: string, max: number | null): string { return max === null || value.length <= max ? value : `${value.slice(0, max)}…` }

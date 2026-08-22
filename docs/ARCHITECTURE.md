@@ -1,6 +1,6 @@
 # 架构
 
-`qq-bot-v2` 是一个同时接入 QQ 与飞书的单 Agent runtime。默认运行形态是一个平台 supervisor 管理多个边界清晰的本机进程：Agent Core、QQ Gateway、按配置启用的 Feishu Gateway、Media Worker、Scheduler、LLM Gateway，以及按配置启用的 Browser Controller；WebAdmin 保持业务独立，但本地开发可用 `pnpm dev:all` 交给同一 supervisor 管理生命周期。两个平台的群聊和私聊入站事件都先写入同一套 Postgres 事实账本，再由同一个串行 `BotLoopAgent` 消费并写入唯一 canonical ledger。私聊、结构化 `@bot`、编辑和撤回可以形成 attention；普通群消息留在被动 inbox，正文默认由 Agent 通过 `inbox` 按需读取。
+`qq-bot-v2` 是一个同时接入 QQ 与飞书的单 Agent runtime。默认运行形态是一个平台 supervisor 管理多个边界清晰的本机进程：Agent Core、QQ Gateway、按配置启用的 Feishu Gateway、Media Worker，以及按配置启用的 Browser Controller；WebAdmin 保持业务独立，但本地开发可用 `pnpm dev:all` 交给同一 supervisor 管理生命周期。短期调度在 Agent Core 内部运行，Agent Core 与 Media Worker 直接调用配置的 LLM provider。两个平台的群聊和私聊入站事件都先写入同一套 Postgres 事实账本，再由同一个串行 `BotLoopAgent` 消费并写入唯一 canonical ledger。私聊、结构化 `@bot`、编辑和撤回可以形成 attention；普通群消息留在被动 inbox，正文默认由 Agent 通过 `inbox` 按需读取。
 
 这是实验性新项目。除非任务明确要求历史兼容或迁移保留，否则优先选择干净的目标模型，不为旧 adapter、dual-write bridge 或旧 snapshot 增加长期兼容层。生产级高可用、长期稳定运行和自动故障恢复也不是默认目标；没有用户要求或可测量真实痛点时，不为假设性故障提前增加 HA、failover、跨重启自动续跑、复杂重试/对账或运维平台。正确性、确定性 replay、明确失败状态和外部副作用安全边界仍然必须保持。
 
@@ -16,9 +16,9 @@
 
 专用后台工作统一走有界边界。Agent Core 内部仍保留 `maintenance=1`、`network=3` 等 bounded task scheduler；入站媒体描述由独立 Media Worker 处理，并把结果写回 Postgres `media` 事实行。媒体描述是可缺失的 best-effort 增强：消息渲染只读取当时已有描述，不等待、不触发生成；新图片/贴纸下载后最多自动请求一次，视频、语音和文件不自动生成描述。Media Worker 不扫描历史空描述，也不自动重试失败调用。Browser Controller 继续作为独立进程。它们都不是新的主 Agent，也不能直接写 canonical ledger。项目当前接受进程重启中断在途后台任务，不建设通用 `jobKind + payload` 自动恢复层；只有重启丢失昂贵长任务形成可测量痛点，或外部服务原生提供可恢复 task/session ID 时再重新评估。
 
-短期调度由独立 Scheduler 进程管理。它把 active 状态原子写入 `schedules.json`，把已触发正文写入独立 occurrence store，并在删除 active job 前把待投递 wake 写入本机 delivery store；Agent Core 的 schedule tool 通过窄 HTTP client 调用它。到期时 Scheduler 只向 Agent Core 的内部事件端点投递 `scheduled_wake`，由单一 `BotLoopAgent` 转成不含 intention 的 `notification`。内部端点只在该 notification 已写入 canonical ledger 后确认，Scheduler 再删除 delivery；进程重启会恢复未确认项，Agent 则用 canonical ledger 做幂等确认。Agent 按需调用 `schedule get_occurrence` 打开正文。
+短期调度是 Agent Core 内部的持久深模块。`ScheduleRuntime` 把 active 状态原子写入 `schedules.json`，把已触发正文写入 occurrence store，并在删除 active job 前把待投递 wake 写入 delivery store；到期时直接向同进程 `EventQueue` 投递 `scheduled_wake`，由单一 `BotLoopAgent` 转成不含 intention 的 `notification`。该 notification 写入 canonical ledger 后，Runtime 才删除 pending delivery；进程重启会检查 active schedule、pending delivery 和 canonical ledger，重放尚未提交的 wake，并清理已经提交但尚未确认的 delivery。Agent 按需调用 `schedule get_occurrence` 打开正文。
 
-LLM Gateway 是透明 wire proxy，只负责 provider 上游路由、鉴权转发和不含 prompt 正文的请求状态日志。system prompt、tools、canonical/provider 请求构造、响应解析、token evidence 和 ledger commit 仍由 Agent Core 或对应 worker 负责。进程间只使用 PostgreSQL 事实边界和薄 HTTP；当前不引入 Redis、Kafka、通用 broker 或第二套 workflow engine。
+Agent Core 和 Media Worker 直接使用 provider 注册表中的 URL/API Key；system prompt、tools、canonical/provider 请求构造、响应解析、token evidence 和 ledger commit 仍由各自现有 client 负责，不经过本机 LLM 转发进程。进程间只使用 PostgreSQL 事实边界和必要的薄 HTTP；当前不引入 Redis、Kafka、通用 broker 或第二套 workflow engine。
 
 Goal 也不创建第二个主 Agent。`bot_agent_goal` 只保存控制状态；状态变化通过 revision 事件进入 ledger。owner Goal 可以抢占 self Goal，旧 goalId 的迟到调用会被拒绝。owner 和 self Goal 的 `complete` 都会触发一次独立、无工具的 LLM 验收；它只读取 untrusted envelope 中的当前 canonical projection 和本次证据，只有 `{ok:true}` 才调用 `GoalStore.complete()`，拒绝或验收调用失败都保持 Goal 活跃且同一次尝试不重试。judger 不控制 blocker、预算或下一步，也不形成第二个 Agent。
 
@@ -40,9 +40,9 @@ Browser → validated Server Function → operation service
         → local run state / audit log
 ```
 
-浏览器只消费经过 Zod 校验的 DTO；BigInt 转十进制字符串，Date 转 ISO 8601。Prisma、环境变量和数据库连接只存在于 server-only 模块，client bundle 有静态边界检查和构建产物秘密扫描。观察 feature 全部只读；唯一写入口是 `features/operations/operations.server.ts` 对 reset、Memory v2、Memory canonicalization 和长期状态中文迁移四种强类型服务的调用。浏览器不能提交命令、脚本参数、SQL、工作目录或文件路径。
+浏览器只消费经过 Zod 校验的 DTO；BigInt 转十进制字符串，Date 转 ISO 8601。Prisma、环境变量和数据库连接只存在于 server-only 模块，client bundle 有静态边界检查和构建产物秘密扫描。观察 feature 全部只读；唯一写入口是 `features/operations/operations.server.ts` 对固定 `reset_state` 服务的调用。浏览器不能提交命令、脚本参数、SQL、工作目录或文件路径。
 
-每次写操作先生成短期预览和 SHA-256 指纹，要求 operator 输入服务端确认短语；执行前重新检查 Bot 已停止、重建预览并核对指纹。同一时刻最多一个任务。run state 原子写入 `logs/admin-operation-state.json`，transition 审计追加到 `logs/admin-operations.ndjson`；WebAdmin 重启时旧 `running` 记录转为 `interrupted`，不会盲目续跑。三种迁移使用底层自动备份，reset 没有自动恢复路径；WebAdmin 不会停止或重启 Bot。
+每次 reset 先生成短期预览和 SHA-256 指纹，要求 operator 输入服务端确认短语；执行前重新检查 Bot 已停止、重建预览并核对指纹。同一时刻最多一个任务。run state 原子写入 `logs/admin-operation-state.json`，transition 审计追加到 `logs/admin-operations.ndjson`；WebAdmin 重启时旧 `running` 记录转为 `interrupted`，不会盲目续跑。reset 没有自动恢复路径，WebAdmin 也不会停止或重启 Bot。
 
 WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay source，不能用来重建 `AgentContext`。它默认绑定 `127.0.0.1:20030`；当前没有管理员鉴权，不得直接暴露到非可信网络。
 
@@ -87,7 +87,7 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 
 - 平台启动顺序固定为 `sidecars -> health barrier -> Agent Core`。QQ Gateway 内部执行 `connect -> initial backfill barrier -> ready`；启用飞书时 Feishu Gateway 执行 `bot identity -> WebSocket -> ready`，当前不补拉停机期间的飞书历史。Agent Core 执行 `metadata -> replay -> database mailbox watcher -> runtime`。replay 的允许会话列表显式注入，不能从可变全局 config 隐式读取。
 - clean cutover 不迁移旧 `BotAgentSnapshot`；部署 schema 后使用显式 reset 命令初始化空 ledger/runtime，再启动新版本。
-- `SIGINT` / `SIGTERM` 先由 platform supervisor 向所有子进程转发。Agent Core 的幂等 shutdown coordinator 只停止 mailbox watcher、中止未提交 compaction、停止并等待 Agent、停止每日 retention runner 和自身 jobs、同步最终 Goal/runtime 状态，最后断开自己的数据库连接；QQ Gateway、Feishu Gateway、Media Worker 和 Scheduler 分别清理自己拥有的资源。
+- `SIGINT` / `SIGTERM` 先由 platform supervisor 向所有子进程转发。Agent Core 的幂等 shutdown coordinator 停止 mailbox watcher、中止未提交 compaction、停止并等待 Agent、停止每日 retention runner、进程内 ScheduleRuntime 和自身 jobs、同步最终 Goal/runtime 状态，最后断开自己的数据库连接；QQ Gateway、Feishu Gateway 和 Media Worker 分别清理自己拥有的资源。
 - shutdown 各阶段 best-effort 且有超时；前一阶段失败不会阻止后续清理，Prisma disconnect 始终最后执行。
 
 ## 主要模块
@@ -103,7 +103,8 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - `src/agent/tools/**`：受控工具；注册表以 `src/agent/tools/index.ts` 为准。
 - `src/platform.ts`：本机多进程 supervisor、健康屏障和独立日志。
 - `src/services/qq-gateway.ts`、`src/services/feishu-gateway.ts`、`src/services/database-mailbox-watcher.ts`：平台连接所有权与 PostgreSQL mailbox 边界。
-- `src/services/media-worker.ts`、`src/services/scheduler.ts`、`src/services/llm-gateway.ts`：媒体、短期调度与 provider wire sidecar。
+- `src/agent/schedule-*.ts`：进程内短期调度、occurrence、pending delivery 和重启恢复。
+- `src/services/media-worker.ts`：独立媒体描述 worker，直接调用媒体 provider。
 - `src/bot/**`、`src/services/feishu-*.ts`、`src/messaging/**`、`src/media/**`：QQ/飞书 ingress、发送和媒体领域实现。
 - `src/database/**`、`src/ops/**`：数据库 helper、运维日志和只读检查。
 - `apps/admin-web/**`：TanStack Start 本机管理面；观察 feature 只读，operations feature 通过固定 DTO、single-flight runner 和本地审计调用强类型 `src/ops` 服务；`*.functions.ts` 暴露 RPC wrapper，`*.server.ts` 保留 Prisma/env/文件 helper。

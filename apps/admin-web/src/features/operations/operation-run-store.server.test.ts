@@ -17,27 +17,23 @@ function run(status: OperationRun['status']): OperationRun {
     schemaVersion: 1,
     id: 'run-1',
     writerPid: 42,
-    request: { operation: 'migrate_state_language' },
+    request: { operation: 'reset_state', scope: 'context' },
     previewFingerprint: 'a'.repeat(64),
     status,
     createdAt: '2026-07-21T10:00:00.000Z',
     startedAt: status === 'queued' ? null : '2026-07-21T10:00:01.000Z',
     finishedAt: status === 'succeeded' ? '2026-07-21T10:00:02.000Z' : null,
-    progress: status === 'running' ? { phase: 'translating', completed: 1, total: 2 } : null,
+    progress: status === 'running' ? { phase: 'resetting', completed: 0, total: 1 } : null,
     result: status === 'succeeded' ? {
-      operation: 'migrate_state_language',
-      backupDir: '/repo/data/agent-workspace/db-backups/one',
-      repairedNestedJournalEntries: 0,
-      translated: {
-        memoryTitles: 1,
-        memoryEntries: 1,
-        notebookTopics: 0,
-        notebookEntries: 0,
-        lifeJournalEntries: 0,
-        agendaItems: 0,
-      },
-      renamedMemoryFiles: 1,
-      translatedItems: 2,
+      operation: 'reset_state',
+      scope: 'context',
+      deletedLedgerEntries: 7,
+      deletedCheckpoints: 1,
+      deletedRuntimeStates: 1,
+      deletedGoals: 1,
+      createdRuntimeState: true,
+      removedDirectories: [],
+      removedWorkspaceEntries: 0,
     } : null,
     error: null,
   }
@@ -95,7 +91,7 @@ describe('createOperationRunFileStore', () => {
     const auditLines = auditRaw.trim().split('\n')
     assert.equal(auditLines.length, 2)
     for (const line of auditLines) assert.equal(line, JSON.stringify(JSON.parse(line)))
-    assert.doesNotMatch(auditRaw, /previewBody|translation text|Migration notes/)
+    assert.doesNotMatch(auditRaw, /previewBody|ledger payload|workspace content/)
     assert.match(auditRaw, /previewFingerprint/)
   })
 

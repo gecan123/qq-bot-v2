@@ -31,10 +31,13 @@ const phaseLabels: Record<OverviewSnapshot['activity']['phase'], string> = {
 export function OverviewView({ snapshot, isRefreshing, refreshFailed }: OverviewViewProps) {
   const usage = snapshot.latestAgentUsage
   const activity = snapshot.activity
+  const currentGoal = isCurrentGoal(snapshot.goal) ? snapshot.goal : null
   const status = phaseLabels[activity.phase]
   const tone = phaseTone(activity.phase)
   const currentStep = describeCurrentStep(snapshot)
   const nextStep = describeNextStep(snapshot)
+  const recentActions = snapshot.recentActions.slice(0, 5)
+  const olderActions = snapshot.recentActions.slice(5)
 
   return <>
     <PageHeader
@@ -50,7 +53,7 @@ export function OverviewView({ snapshot, isRefreshing, refreshFailed }: Overview
         <div className="current-status">
           <span className="current-status-icon" aria-hidden="true">{phaseIcon(activity.phase)}</span>
           <div>
-            <p className="current-status-label">A 当前状态</p>
+            <p className="current-status-label">Agent 状态</p>
             <h2>{status}</h2>
           </div>
         </div>
@@ -64,9 +67,9 @@ export function OverviewView({ snapshot, isRefreshing, refreshFailed }: Overview
 
       <div className="current-activity-body">
         <div className="current-primary">
-          <p className="current-eyebrow">当前目标</p>
+          <p className="current-eyebrow">{currentGoal ? '当前目标' : snapshot.goal ? '最近目标' : '当前目标'}</p>
           <h3>{snapshot.goal?.objective ?? '暂无持久 Goal'}</h3>
-          {snapshot.goal && <div className="current-goal-meta"><StatusBadge tone={snapshot.goal.status === 'active' ? 'good' : 'warn'}>{snapshot.goal.status}</StatusBadge><span>{formatCount(snapshot.goal.tokensUsed)} tokens · revision {snapshot.goal.revision}</span></div>}
+          {snapshot.goal && <div className="current-goal-meta"><StatusBadge tone={goalTone(snapshot.goal.status)}>{snapshot.goal.status}</StatusBadge><span>{formatCount(snapshot.goal.tokensUsed)} tokens · revision {snapshot.goal.revision}</span></div>}
 
           <div className="current-step">
             <span className="current-step-marker" aria-hidden="true" />
@@ -89,7 +92,7 @@ export function OverviewView({ snapshot, isRefreshing, refreshFailed }: Overview
       </div>
 
       {!activity.available && (
-        <div className="activity-unavailable"><AlertTriangle size={15} /><span>Bot 尚未发布实时活动面，或该状态属于已经停止的旧进程。重启 Bot 后这里会开始显示实时阶段；下方已完成记录仍可查看。</span></div>
+        <div className="activity-unavailable"><AlertTriangle size={15} /><span>当前没有可确认的实时活动，可能是 Bot 已停止或观察数据尚未生成。下方历史记录仍可查看。</span></div>
       )}
     </section>
 
@@ -97,54 +100,53 @@ export function OverviewView({ snapshot, isRefreshing, refreshFailed }: Overview
       <Panel title="最近进展" description="来自本地工具审计日志；参数、ID 和 round 默认折叠，具体覆盖范围取决于当前审计模式。">
         {snapshot.recentActions.length === 0
           ? <div className="empty-state"><span className="empty-state-dot" />暂无已完成工具记录</div>
-          : <ol className="activity-feed">
-              {snapshot.recentActions.map(action => (
-                <li key={action.id} className="activity-feed-item">
-                  <span className={`activity-feed-icon ${action.ok ? 'activity-feed-icon--ok' : 'activity-feed-icon--bad'}`} aria-hidden="true">{action.ok ? <Check size={13} /> : <X size={13} />}</span>
-                  <div className="activity-feed-content">
-                    <div className="activity-feed-heading"><strong>{action.title}</strong><time>{formatTimestamp(action.at)}</time></div>
-                    <p>{action.detail}</p>
-                    <div className="activity-feed-meta"><span>{formatDuration(action.durationMs)}</span>{action.sideEffect && <StatusBadge tone="warn">产生副作用</StatusBadge>}{!action.ok && <StatusBadge tone="bad">失败</StatusBadge>}</div>
-                    <details className="activity-evidence">
-                      <summary><ChevronRight size={12} />技术细节</summary>
-                      <JsonBlock value={{ tool: action.toolName, toolCallId: action.toolCallId, roundIndex: action.roundIndex, args: action.argsSummary }} variant="preview" />
-                    </details>
-                  </div>
-                </li>
-              ))}
-            </ol>}
+          : <>
+              <ol className="activity-feed">{recentActions.map(action => <ActivityItem key={action.id} action={action} />)}</ol>
+              {olderActions.length > 0 && <details className="activity-feed-more"><summary>查看另外 {olderActions.length} 条记录</summary><ol className="activity-feed activity-feed--more">{olderActions.map(action => <ActivityItem key={action.id} action={action} />)}</ol></details>}
+            </>}
       </Panel>
 
       <div className="space-y-4">
-        <Panel title="当前承诺" description="只使用持久 Goal 的结构化 commitment，不从日志猜测意图。">
-          {snapshot.goal?.currentCommitment
-            ? <dl className="commitment-card"><CurrentFact label="动作" value={snapshot.goal.currentCommitment.action} /><CurrentFact label="为什么" value={snapshot.goal.currentCommitment.reason} /><CurrentFact label="预期证据" value={snapshot.goal.currentCommitment.expectedEvidence} /></dl>
+        <Panel title="下一步与等待" description="只展示持久 Goal 和 Runtime 明确记录的内容，不从日志猜测意图。">
+          {currentGoal?.currentCommitment
+            ? <dl className="commitment-card"><CurrentFact label="动作" value={currentGoal.currentCommitment.action} /><CurrentFact label="为什么" value={currentGoal.currentCommitment.reason} /><CurrentFact label="预期证据" value={currentGoal.currentCommitment.expectedEvidence} /></dl>
             : <div className="empty-state"><span className="empty-state-dot" />当前没有结构化 commitment</div>}
-        </Panel>
-        <Panel title="等待条件">
-          <dl className="commitment-card">
-            <CurrentFact label="当前说明" value={activity.detail ?? '—'} />
-            <CurrentFact label="最晚等待到" value={formatTimestamp(activity.waitUntil)} />
-          </dl>
+          {(activity.detail || activity.waitUntil) && <dl className="commitment-card mt-3"><CurrentFact label="等待说明" value={activity.detail ?? '—'} /><CurrentFact label="最晚等待到" value={formatTimestamp(activity.waitUntil)} /></dl>}
         </Panel>
       </div>
     </div>
 
-    <div className="mt-4"><StatGrid>
-      <StatCard label="Ledger" value={formatCount(snapshot.ledger.entryCount)} detail={`Head #${snapshot.ledger.headEntryId ?? '—'} · ${snapshot.ledger.latestEntryType ?? '无 entry'}`} />
-      <StatCard label="Audited tools · 24h" value={formatCount(snapshot.tools24h.calls)} detail={`${snapshot.tools24h.failed} failed`} tone={snapshot.tools24h.failed ? 'warn' : 'good'} />
-      <StatCard label="Latest input" value={formatCount(usage?.inputTokens ?? null)} detail={usage?.model ?? '暂无 agent.chat usage'} />
-      <StatCard label="Cache hit" value={formatPercent(usage?.cacheHitRate ?? null)} detail={`${formatCount(usage?.cachedTokens ?? null)} cached`} />
-    </StatGrid></div>
-
-    <Panel className="mt-4" title="技术下钻" description="只有需要核对证据或排障时，再进入底层页面。"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <Jump to="/context" title="Ledger 调试" detail="投影边界、entry 构成、最近原始历史" />
-      <Jump to="/timeline" title="原始事件" detail="工具、token 与 ledger 的逐条记录" />
-      <Jump to="/life" title="生命状态" detail="Goal、Agenda、Schedule、后台任务" />
-      <Jump to="/health" title="系统健康" detail="进程提示、DB、完整性、迁移" />
-    </div></Panel>
+    <details className="overview-technical">
+      <summary>运行指标与技术证据</summary>
+      <div className="mt-4"><StatGrid>
+        <StatCard label="Ledger" value={formatCount(snapshot.ledger.entryCount)} detail={`Head #${snapshot.ledger.headEntryId ?? '—'} · ${snapshot.ledger.latestEntryType ?? '无 entry'}`} />
+        <StatCard label="Audited tools · 24h" value={formatCount(snapshot.tools24h.calls)} detail={`${snapshot.tools24h.failed} failed`} tone={snapshot.tools24h.failed ? 'warn' : 'good'} />
+        <StatCard label="Latest input" value={formatCount(usage?.inputTokens ?? null)} detail={usage?.model ?? '暂无 agent.chat usage'} />
+        <StatCard label="Cache hit" value={formatPercent(usage?.cacheHitRate ?? null)} detail={`${formatCount(usage?.cachedTokens ?? null)} cached`} />
+      </StatGrid></div>
+      <Panel className="mt-4" title="继续调查" description="需要核对证据或排障时，再进入底层页面。"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Jump to="/context" title="Ledger" detail="投影边界、entry 构成、最近原始历史" />
+        <Jump to="/timeline" title="事件时间线" detail="工具、token 与 ledger 的逐条记录" />
+        <Jump to="/life" title="Goal 与计划" detail="Goal、Agenda、Schedule、后台任务" />
+        <Jump to="/health" title="系统健康" detail="进程提示、DB、完整性、迁移" />
+      </div></Panel>
+    </details>
     <WarningList warnings={snapshot.warnings} />
   </>
+}
+
+function ActivityItem({ action }: { action: OverviewSnapshot['recentActions'][number] }) {
+  return (
+    <li className="activity-feed-item">
+      <span className={`activity-feed-icon ${action.ok ? 'activity-feed-icon--ok' : 'activity-feed-icon--bad'}`} aria-hidden="true">{action.ok ? <Check size={13} /> : <X size={13} />}</span>
+      <div className="activity-feed-content">
+        <div className="activity-feed-heading"><strong>{action.title}</strong><time>{formatTimestamp(action.at)}</time></div>
+        <p>{action.detail}</p>
+        <div className="activity-feed-meta"><span>{formatDuration(action.durationMs)}</span>{action.sideEffect && <StatusBadge tone="warn">产生副作用</StatusBadge>}{!action.ok && <StatusBadge tone="bad">失败</StatusBadge>}</div>
+        <details className="activity-evidence"><summary><ChevronRight size={12} />技术细节</summary><JsonBlock value={{ tool: action.toolName, toolCallId: action.toolCallId, roundIndex: action.roundIndex, args: action.argsSummary }} variant="preview" /></details>
+      </div>
+    </li>
+  )
 }
 
 function CurrentFact({ label, value }: { label: string; value: string }) {
@@ -158,12 +160,12 @@ function Jump({ to, title, detail }: { to: '/context' | '/timeline' | '/life' | 
 function describeCurrentStep(snapshot: OverviewSnapshot): string {
   const tool = snapshot.activity.activeTools[0]
   if (tool) return describeActiveTool(tool.toolName, tool.argsSummary)
-  if (snapshot.goal?.currentCommitment) return snapshot.goal.currentCommitment.action
+  if (isCurrentGoal(snapshot.goal) && snapshot.goal.currentCommitment) return snapshot.goal.currentCommitment.action
   return snapshot.activity.detail ?? (snapshot.activity.available ? '正在等待 Agent 更新下一步' : '无法确认实时步骤')
 }
 
 function describeNextStep(snapshot: OverviewSnapshot): string {
-  if (snapshot.goal?.currentCommitment) return snapshot.goal.currentCommitment.expectedEvidence
+  if (isCurrentGoal(snapshot.goal) && snapshot.goal.currentCommitment) return snapshot.goal.currentCommitment.expectedEvidence
   if (snapshot.activity.phase === 'waiting') return snapshot.activity.detail ?? '等待新的注意事件'
   if (snapshot.activity.activeTools.length > 0) return '工具完成后保存结果，再由 Agent 决定下一步'
   return '等待下一条结构化活动状态'
@@ -192,16 +194,27 @@ function formatRuntime(snapshot: OverviewSnapshot): string {
 }
 
 function phaseTone(phase: OverviewSnapshot['activity']['phase']): ActivityTone {
-  if (phase === 'error' || phase === 'unavailable') return 'bad'
-  if (phase === 'waiting' || phase === 'resting' || phase === 'stopping') return 'warn'
+  if (phase === 'error') return 'bad'
+  if (phase === 'stopping') return 'warn'
   if (phase === 'thinking' || phase === 'tool' || phase === 'committing' || phase === 'starting') return 'info'
-  if (phase === 'stopped') return 'neutral'
+  if (phase === 'stopped' || phase === 'unavailable') return 'neutral'
   return 'good'
 }
 
 function phaseIcon(phase: OverviewSnapshot['activity']['phase']) {
   if (phase === 'thinking' || phase === 'committing' || phase === 'starting') return <LoaderCircle className="animate-spin" size={20} />
   if (phase === 'tool') return <Wrench size={20} />
-  if (phase === 'error' || phase === 'unavailable') return <AlertTriangle size={20} />
+  if (phase === 'error') return <AlertTriangle size={20} />
   return <Circle size={18} />
+}
+
+function isCurrentGoal(goal: OverviewSnapshot['goal']): goal is NonNullable<OverviewSnapshot['goal']> {
+  return Boolean(goal && !['completed', 'abandoned', 'cancelled'].includes(goal.status))
+}
+
+function goalTone(status: string): ActivityTone {
+  if (status === 'active') return 'good'
+  if (['completed'].includes(status)) return 'info'
+  if (['abandoned', 'cancelled'].includes(status)) return 'neutral'
+  return 'warn'
 }

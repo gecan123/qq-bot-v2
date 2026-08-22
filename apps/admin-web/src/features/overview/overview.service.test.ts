@@ -23,7 +23,7 @@ function createFakeDb(focus: unknown): OverviewDb {
     botAgentRuntimeState: {
       async findUnique() {
         return {
-          qqConversationFocus: focus,
+          conversationFocus: focus,
           lastWakeAt: new Date('2026-07-20T07:59:00.000Z'),
           updatedAt: new Date('2026-07-20T07:59:30.000Z'),
         }
@@ -119,7 +119,7 @@ const activity: AgentActivitySurface = {
 describe('loadOverviewSnapshot', () => {
   test('serializes a read-only overview snapshot from the query port', async () => {
     const result = await loadOverviewSnapshot(
-      createFakeDb({ type: 'group', groupId: 123 }),
+      createFakeDb({ platform: 'qq', accountId: '789', kind: 'group', externalId: '123' }),
       now,
       { status: 'available', surface: activity },
       toolActivity,
@@ -145,7 +145,7 @@ describe('loadOverviewSnapshot', () => {
 
   test('drops an invalid runtime focus and reports a warning', async () => {
     const result = await loadOverviewSnapshot(
-      createFakeDb({ type: 'group', groupId: 'bad' }),
+      createFakeDb({ platform: 'qq', accountId: '789', kind: 'invalid', externalId: 'bad' }),
       now,
       { status: 'missing' },
       { ...toolActivity, warnings: ['工具审计模式为 side_effects；最近进展只包含副作用调用。'] },
@@ -153,7 +153,7 @@ describe('loadOverviewSnapshot', () => {
 
     assert.equal(result.runtime.focus, null)
     assert.equal(result.activity.phase, 'unavailable')
-    assert.ok(result.warnings.includes('runtime.qqConversationFocus invalid'))
+    assert.ok(result.warnings.includes('runtime.conversationFocus invalid'))
     assert.ok(result.warnings.includes('工具审计模式为 side_effects；最近进展只包含副作用调用。'))
   })
 })

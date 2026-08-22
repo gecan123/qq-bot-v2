@@ -81,7 +81,7 @@ describe('OverviewView', () => {
     assert.ok(screen.getByText('建立当前活动观察面'))
     assert.ok(screen.getByText('收到 Alice 的私聊'))
     assert.ok(screen.getByText('搜索了网络信息'))
-    assert.ok(screen.getByText('Ledger'))
+    assert.ok(screen.getByText('Ledger', { selector: '.stat-label' }))
     assert.ok(screen.getByText('12'))
     assert.ok(screen.getByText('Head #42 · compaction'))
     assert.ok(screen.getByText('群 123'))
@@ -126,5 +126,29 @@ describe('OverviewView', () => {
     assert.ok(screen.getByText('Runtime 状态缺失'))
     assert.ok(screen.getByText('暂无持久 Goal'))
     assert.ok(screen.getByText('实时状态不可用'))
+    assert.ok(screen.getByRole('region', { name: 'Agent 当前活动' }).classList.contains('current-activity--neutral'))
+  })
+
+  test('labels an inactive Goal as recent context instead of the current task', () => {
+    render(
+      <OverviewView
+        snapshot={{
+          ...snapshot,
+          goal: { ...snapshot.goal!, status: 'abandoned' },
+          activity: {
+            ...snapshot.activity,
+            available: false,
+            sourceStatus: 'stale',
+            phase: 'unavailable',
+            activeTools: [],
+          },
+        }}
+        isRefreshing={false}
+        refreshFailed={false}
+      />,
+    )
+
+    assert.ok(screen.getByText('最近目标'))
+    assert.equal(screen.queryByText('当前目标'), null)
   })
 })

@@ -75,8 +75,6 @@ export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.fr
     sideEffect: ['buy', 'sell', 'reset'],
   }),
   workspace_bash: fixed(PARALLEL_READ),
-  db: fixed(PARALLEL_READ),
-  metrics: fixed(PARALLEL_READ),
   conversation: byAction({
     exclusive: ['list', 'current'],
     sideEffect: ['open', 'close'],
@@ -87,7 +85,6 @@ export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.fr
     sideEffect: ['connect', 'tools', 'call', 'disconnect'],
   }),
   browser: fixed(EXCLUSIVE_SIDE_EFFECT),
-  gh: fixed(PARALLEL_READ),
   openbb_cli: fixed(PARALLEL_READ),
   moomoo_skill: (args) => {
     const command = typeof args.command === 'string' ? args.command.trim() : ''
@@ -120,10 +117,6 @@ export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.fr
     sideEffect: ['write', 'replace', 'delete', 'move'],
   }),
   read_file: fixed(PARALLEL_READ),
-  skill_editor: byAction({
-    exclusive: ['validate', 'list_drafts', 'read_draft'],
-    sideEffect: ['draft', 'install', 'delete_draft'],
-  }),
   inspect_media: fixed(EXCLUSIVE_READ),
   generate_image: fixed(EXCLUSIVE_SIDE_EFFECT),
 })

@@ -20,7 +20,7 @@ QQ / 飞书入站
   -> ledger 与 runtime state 原子提交
 ```
 
-QQ Gateway、Feishu Gateway、Media Worker、Scheduler 和 LLM Gateway 通过 PostgreSQL 事实边界或薄 HTTP 与 Agent Core 协作；不使用通用 broker。只有 Agent Core 可以拥有 `AgentContext`、推进 runtime singleton 和写 canonical ledger。PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goal 和观测数据；Memory、Notebook、Life Journal、Agenda、schedule、approval 与 background task 元数据主要保存在 workspace Markdown/JSON。WebAdmin 的观察 feature 保持只读，固定 operations feature 是唯一受控写入口。
+QQ Gateway、Feishu Gateway 和 Media Worker 通过 PostgreSQL 事实边界或薄 HTTP 与 Agent Core 协作；不使用通用 broker。短期 ScheduleRuntime、occurrence 与 pending delivery 都由 Agent Core 进程内持有，Agent Core 和 Media Worker 直接调用配置的 LLM provider。只有 Agent Core 可以拥有 `AgentContext`、推进 runtime singleton 和写 canonical ledger。PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goal 和观测数据；Memory、Notebook、Life Journal、Agenda、schedule、approval 与 background task 元数据主要保存在 workspace Markdown/JSON。WebAdmin 的观察 feature 保持只读，固定 operations feature 是唯一受控写入口。
 
 现有设计的可靠性基础包括：append-only canonical history、确定性 replay、compaction CAS、tool call/result 原子组、显式跨平台 conversation focus、集中 tool policy、渐进式披露、有界 scheduler，以及 WebAdmin 的只读观察边界和固定 operations 写入边界。下面条目是在这些契约之上的具体缺口。
 
@@ -44,12 +44,6 @@ QQ Gateway、Feishu Gateway、Media Worker、Scheduler 和 LLM Gateway 通过 Po
 - 影响：误启动第二实例时可能交错写 ledger、重复处理事件或重复向 QQ/飞书发送消息。
 - 目标：启动时获取 PostgreSQL advisory lock，或实现带 fencing token 的租约；普通 append 同样校验 expected head。`.bot.pid` 只保留为诊断信息，不作为唯一互斥机制。
 
-### Memory provenance 与 7 天事实保留策略冲突
-
-- 证据：person/group Memory 写入要求真实 `messages.rowId` 作为 `sourceMessageRowIds`，但 `src/database/retention.ts` 固定删除 7 天前的所有 Message 行。
-- 影响：长期 Memory 仍保留来源 ID，但过期后无法复核陈述者、场景和证据语义，provenance 退化为悬空引用。
-- 目标：明确唯一策略并写入契约：延长/配置 Message retention、保护被长期状态引用的证据行，或在 Memory entry 中保存最小不可变证据快照/hash 并明确 provenance horizon。选择前不要默认宣称长期来源可永久验证。
-
 ### 缺少真实 PostgreSQL 并发与迁移验证
 
 - 现有 ledger repository 测试主要使用 fake client，能覆盖事务意图，但不能证明 PostgreSQL 行锁、CAS race 和隔离行为。
@@ -62,8 +56,8 @@ QQ Gateway、Feishu Gateway、Media Worker、Scheduler 和 LLM Gateway 通过 Po
 ### 多进程交付仍是单机轻量契约
 
 - QQ Gateway、Feishu Gateway 和 Agent Core 当前都按单实例运行；database mailbox watcher 只使用进程内 high-water cursor，没有 consumer lease。
-- Scheduler 使用本机持久 delivery store 恢复未确认 wake，并以 Agent canonical ledger 落账作为完成确认；它仍是单机单实例契约，不支持多主或跨机器共享状态。
-- Media Worker 的游标轮转会越过冷却中的旧行，停机也会有界等待在途描述；但它没有数据库 claim/lease，当前只能运行一个实例。LLM Gateway 为保持实现简单仍会缓冲完整 provider 响应。
+- Agent Core 内的 ScheduleRuntime 使用本机持久 delivery store 恢复未确认 wake，并以 canonical ledger 落账作为完成确认；它仍是单机单实例契约，不支持多主或跨机器共享状态。
+- Media Worker 的游标轮转会越过冷却中的旧行，停机也会有界等待在途描述；但它没有数据库 claim/lease，当前只能运行一个实例。Agent Core 与 Media Worker 直连 provider，不提供独立 wire proxy 的统一请求字节日志。
 - 这些是当前明确限制。只有日志或故障复现证明需要时，才分别增加 claim/lease、streaming 或跨主机交付；不要先引入 Redis、Kafka、通用 outbox/broker 或集群选主。
 
 ### TODO：飞书重启窗口尚未补拉
@@ -75,12 +69,6 @@ QQ Gateway、Feishu Gateway、Media Worker、Scheduler 和 LLM Gateway 通过 Po
 
 - 当前 Gateway 把 `im.message.receive_v1` 中 `update_time > create_time` 的 payload 追加为 `edit` 事实；当前 Node SDK 事件类型只有消息接收和撤回，没有单独的消息编辑事件声明。
 - 因此代码已能处理收到的编辑态 payload，但尚未用真实飞书连接证明“用户在首次入库后编辑消息”会再次触发接收事件。切换时应把它列入 smoke test；若平台不重投，再基于实际 OpenAPI 能力增加有界查询，不先建设轮询平台或历史同步系统。
-
-### Startup replay 去重集合无界增长
-
-- `src/agent/dedup-enqueue.ts` 把所有见过的 Message row ID 永久放入进程内 `Set`。
-- 这个集合只用于 startup replay 与 live ingest 的重叠窗口；稳态继续积累没有额外正确性收益。
-- 目标：在 replay barrier 完成后清空/关闭去重，或改成有界窗口并记录大小指标。
 
 ### Goal 总成本与非 Agent LLM 路径尚未统一
 
@@ -124,12 +112,10 @@ QQ Gateway、Feishu Gateway、Media Worker、Scheduler 和 LLM Gateway 通过 Po
 
 ## 推荐偿还顺序
 
-1. 增加数据库级单实例 fencing，并让普通 ledger append 使用 expected-head CAS。
-2. 把 ledger commit 改为增量 projection，增加规模 benchmark。
-3. 清理 startup dedup `Set` 的稳态无界增长。
-4. 明确 Memory evidence retention 模型。
-5. 建立 CI、fresh migration 和真实 PostgreSQL 并发测试。
-6. 再处理统一 usage accounting、singleton 约束和恢复 runbook。
+1. 先观察长期 ledger 的真实 commit latency；出现可复现变慢后，再改为增量 projection 并增加规模 benchmark。
+2. 单机个人部署继续依赖运维约束只启动一个 Agent Core；只有出现误启动双实例的真实问题时，再增加数据库级 fencing 和普通 append CAS。
+3. 根据个人使用周期调整 `BOT_INBOUND_RETENTION_DAYS`；当前契约明确 provenance 只在该窗口内保证原文可回查。
+4. CI、fresh migration、真实 PostgreSQL 并发测试、统一 usage accounting、singleton 约束和恢复 runbook 都按真实痛点择需建设，不作为个人项目默认门槛。
 
 ## 持续维护
 

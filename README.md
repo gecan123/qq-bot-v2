@@ -2,7 +2,7 @@
 
 `qq-bot-v2` 是一个基于 NapCat + Node.js + Prisma + PostgreSQL 的多进程 QQ Agent。
 
-默认由本机 supervisor 管理 Agent Core、QQ Gateway、Media Worker、Scheduler 和 LLM Gateway；Browser Controller 按配置启用。只有 Agent Core 在单一持久化 `AgentContext` 上运行 `BotLoopAgent`，其他进程通过 PostgreSQL 事实边界或薄 HTTP 协作，不拥有 canonical ledger。所有 QQ 消息都按群或联系人形成 mailbox，默认只披露带优先级的有界通知，正文由 Agent 按需读取。
+默认由本机 supervisor 管理 Agent Core、QQ Gateway 和 Media Worker；Feishu Gateway 与 Browser Controller 按配置启用。只有 Agent Core 在单一持久化 `AgentContext` 上运行 `BotLoopAgent`，其他进程通过 PostgreSQL 事实边界或薄 HTTP 协作，不拥有 canonical ledger。短期调度作为 Agent Core 内部深模块运行，Agent Core 与 Media Worker 直接调用配置的 LLM provider。所有 QQ 消息都按群或联系人形成 mailbox，默认只披露带优先级的有界通知，正文由 Agent 按需读取。
 
 仓库还包含 `apps/admin-web`：一个独立的只读 WebAdmin 运维面。它目前只提供 Overview，不改变 bot/backend 主线，也不是新的事实或 replay 来源。
 
@@ -104,8 +104,8 @@ WebAdmin 当前只展示 ledger/runtime/Goal/token/tool-call 汇总。它不能�
 平台启动由 `src/platform.ts` 组织，并先等待各 sidecar 健康，再启动 `src/index.ts` 中的 Agent Core：
 
 1. QQ Gateway 独占 NapCat WebSocket、首次历史 backfill、好友/群查询和 QQ 外发；按配置启用的 Feishu Gateway 独占官方 WebSocket、媒体下载和飞书外发；各自 ready 后才通过健康屏障。
-2. Media Worker 处理媒体描述，Scheduler 持有短期 timer/store，LLM Gateway 代理 provider wire 请求；每个进程写入 `logs/processes/<name>.log`。
-3. Agent Core 连接 Prisma，校验 canonical ledger/runtime，从 ledger 恢复 `AgentContext` projection，并执行 missed-message replay；checkpoint 只在完全匹配时加速。
+2. Media Worker 处理媒体描述并直接调用媒体 provider；每个进程写入 `logs/processes/<name>.log`。
+3. Agent Core 连接 Prisma，校验 canonical ledger/runtime，从 ledger 恢复 `AgentContext` projection，恢复进程内短期 schedule 与未确认 delivery，并执行 missed-message replay；checkpoint 只在完全匹配时加速。
 4. Agent Core 从 backfill 完成后的消息 high-water 启动 database mailbox watcher，通过递增 `messages.rowId` 接收 QQ / 飞书新入站事实。
 5. Agent Core 构建稳定工具面、system prompt 和唯一 `BotLoopAgent`，随后进入主循环。
 
@@ -118,7 +118,7 @@ WebAdmin 当前只展示 ledger/runtime/Goal/token/tool-call 汇总。它不能�
 - `src/database/**`：Prisma 访问和入站消息存储。
 - `src/media/**`：媒体缓存、描述、handles、出站 promotion。
 - `src/messaging/**`：出站发送路径。
-- `src/services/**`：QQ、媒体、调度、LLM 和 Agent 事件的窄服务边界。
+- `src/services/**`：QQ、飞书和媒体等需要独立连接或慢任务所有权的窄服务边界。
 - `src/platform.ts`：本机进程生命周期、健康屏障和独立日志。
 - `src/browser/**`：browser sidecar protocol 和 action logs。
 - `src/ops/**`：运维日志和仓库检查。

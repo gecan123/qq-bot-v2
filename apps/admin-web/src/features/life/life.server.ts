@@ -10,7 +10,7 @@ export async function loadLifeSnapshot(now = new Date()): Promise<LifeSnapshot> 
   const workspace = getWorkspaceRoot()
   const [goal, runtime, inboxReadCount, agendaRaw, schedulesRaw, tasksRaw] = await Promise.all([
     db.botAgentGoal.findUnique({ where: { id: 1 } }),
-    db.botAgentRuntimeState.findUnique({ where: { id: 1 }, select: { lastWakeAt: true, updatedAt: true, qqConversationFocus: true, mailboxCursors: true } }),
+    db.botAgentRuntimeState.findUnique({ where: { id: 1 }, select: { lastWakeAt: true, updatedAt: true, conversationFocus: true, mailboxCursors: true } }),
     readInboxReadCursorCount(db),
     readOptional(join(workspace, 'life', 'agenda.md')),
     readJson(join(workspace, 'runtime', 'schedules.json')),
@@ -42,7 +42,7 @@ export async function loadLifeSnapshot(now = new Date()): Promise<LifeSnapshot> 
     schedules, backgroundTasks,
     runtime: {
       lastWakeAt: runtime?.lastWakeAt?.toISOString() ?? null, updatedAt: runtime?.updatedAt.toISOString() ?? null,
-      focus: runtime?.qqConversationFocus ?? null, mailboxCount: objectSize(runtime?.mailboxCursors),
+      focus: runtime?.conversationFocus ?? null, mailboxCount: objectSize(runtime?.mailboxCursors),
       inboxReadCount,
     }, notes,
   })

@@ -1,7 +1,6 @@
 import { OpenAIProvider } from './openai-adapter.js'
 import { RoutingProvider, type RoutingScenario } from './routing-provider.js'
 import type { OpenAiReasoningEffort } from '../config/index.js'
-import { llmGatewayProviderUrl } from '../services/llm-routing.js'
 
 interface MediaProviderConfig {
   defaultProvider: string
@@ -18,10 +17,7 @@ const CLAUDE_CODE_PROVIDER_NAME = 'claude-code'
 const OPENAI_AGENT_PROVIDER_NAME = 'openai-agent'
 const OPENAI_AGENT_BASE_PROVIDER_NAME = 'openai'
 
-export function buildMediaProvider(
-  llm: MediaProviderConfig,
-  options: { gatewayUrl?: string } = {},
-): RoutingProvider {
+export function buildMediaProvider(llm: MediaProviderConfig): RoutingProvider {
   const { defaultProvider: defaultProviderName, defaultModel, providers, scenarios } = llm
   let mediaDefaultName = defaultProviderName
 
@@ -40,9 +36,7 @@ export function buildMediaProvider(
   const defaultProviderConfig = providers[mediaDefaultName]
   if (!defaultProviderConfig) throw new Error(`Default LLM provider not found: ${mediaDefaultName}`)
   const defaultProvider = new OpenAIProvider(
-    options.gatewayUrl
-      ? llmGatewayProviderUrl(options.gatewayUrl, mediaDefaultName)
-      : defaultProviderConfig.url,
+    defaultProviderConfig.url,
     defaultProviderConfig.apiKey,
     defaultModel,
   )
@@ -57,9 +51,7 @@ export function buildMediaProvider(
     const providerConfig = providers[providerName]
     if (!providerConfig) throw new Error(`LLM scenario ${key} references unknown provider: ${providerName}`)
     routes[key] = new OpenAIProvider(
-      options.gatewayUrl
-        ? llmGatewayProviderUrl(options.gatewayUrl, providerName)
-        : providerConfig.url,
+      providerConfig.url,
       providerConfig.apiKey,
       scenario.model ?? defaultModel,
       { reasoningEffort: scenario.reasoningEffort },

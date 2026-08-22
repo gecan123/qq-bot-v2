@@ -74,13 +74,13 @@ function fakePort(input: {
     async preview(request) {
       previewRequests.push(request)
       return {
-        payload: input.preview ?? resetPayload(request.operation === 'reset_state' ? request.scope : 'context'),
+        payload: input.preview ?? resetPayload(request.scope),
         stateFingerprint: input.stateFingerprint ?? 'a'.repeat(64),
       }
     },
     async execute(request, _progress: OperationProgressReporter) {
       executeRequests.push(request)
-      return resetResult(request.operation === 'reset_state' ? request.scope : 'context')
+      return resetResult(request.scope)
     },
   }
 }
@@ -95,25 +95,16 @@ function service(port: AdminOperationsPort, overrides: { now?: () => Date; id?: 
 }
 
 describe('operationRequestSchema', () => {
-  test('accepts only the four fixed operation shapes', () => {
+  test('accepts only typed reset requests', () => {
     assert.deepEqual(operationRequestSchema.parse({ operation: 'reset_state', scope: 'all' }), {
       operation: 'reset_state',
       scope: 'all',
     })
-    for (const operation of [
-      'migrate_memory_v2',
-      'canonicalize_memory',
-      'migrate_state_language',
-    ] as const) {
-      assert.deepEqual(operationRequestSchema.parse({ operation }), { operation })
-    }
-  })
-
-  test('rejects command names, paths, extra properties, and unknown operations', () => {
     for (const value of [
       { operation: 'reset_state', scope: 'all', command: 'rm' },
-      { operation: 'migrate_memory_v2', rootDir: '/tmp/other' },
-      { operation: 'canonicalize_memory', script: 'anything' },
+      { operation: 'migrate_memory_v2' },
+      { operation: 'canonicalize_memory' },
+      { operation: 'migrate_state_language' },
       { operation: 'shell', command: 'pnpm test' },
     ]) {
       assert.equal(operationRequestSchema.safeParse(value).success, false)
@@ -140,28 +131,7 @@ describe('createAdminOperationsService', () => {
       scope: 'knowledge',
     })
 
-    assert.match(preview.confirmationPhrase, /knowledge/)
-  })
-
-  test('marks a migration with no changes as unnecessary', async () => {
-    const port = fakePort({
-      preview: {
-        operation: 'migrate_memory_v2',
-        needed: false,
-        filesBefore: 2,
-        filesAfter: 2,
-        entries: 3,
-        movedPersonEntries: 0,
-        quarantinedPersonEntries: 0,
-        changes: [],
-        warnings: [],
-        truncated: { changes: 0, warnings: 0 },
-      },
-    })
-
-    const preview = await service(port).createPreview({ operation: 'migrate_memory_v2' })
-
-    assert.equal(preview.payload.needed, false)
+    assert.equal(preview.confirmationPhrase, 'RESET knowledge')
   })
 
   test('rejects a mismatched confirmation phrase', async () => {
@@ -192,7 +162,7 @@ describe('createAdminOperationsService', () => {
     const preview = await admin.createPreview({ operation: 'reset_state', scope: 'context' })
     port.preview = async request => ({
       payload: {
-        ...resetPayload(request.operation === 'reset_state' ? request.scope : 'context'),
+        ...resetPayload(request.scope),
         context: { ledgerEntries: 8, checkpoints: 1, runtimeStates: 1, goals: 1 },
       },
       stateFingerprint: 'b'.repeat(64),
@@ -209,7 +179,7 @@ describe('createAdminOperationsService', () => {
     const admin = service(port)
     const preview = await admin.createPreview({ operation: 'reset_state', scope: 'context' })
     port.preview = async request => ({
-      payload: resetPayload(request.operation === 'reset_state' ? request.scope : 'context'),
+      payload: resetPayload(request.scope),
       stateFingerprint: 'b'.repeat(64),
     })
 
@@ -231,7 +201,7 @@ describe('createAdminOperationsService', () => {
     )
   })
 
-  test('executes only the typed operation stored in the preview', async () => {
+  test('executes only the typed reset stored in the preview', async () => {
     const port = fakePort()
     const admin = service(port)
     const preview = await admin.createPreview({ operation: 'reset_state', scope: 'all' })

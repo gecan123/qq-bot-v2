@@ -56,6 +56,8 @@ import {
   createInMemoryScheduleOccurrenceStore,
   createPersistentScheduleOccurrenceStore,
 } from './schedule-occurrence-store.js'
+import { createPersistentScheduleDeliveryStore } from './schedule-delivery-store.js'
+import { createScheduleDeliveryCoordinator } from './schedule-delivery-coordinator.js'
 import { createApprovalManager, type ApprovalManager } from './approval-manager.js'
 import {
   createMcpManagerFromConfigFile,
@@ -167,6 +169,27 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     input.groupPolicies.map((policy) => [policy.id, policy.participation]),
   )
   const taskRegistry = input.taskRegistry ?? createInMemoryTaskRegistry()
+  const scheduleDeliveryStore = input.scheduleRuntime == null && input.scheduleStatePath
+    ? createPersistentScheduleDeliveryStore(`${input.scheduleStatePath}.deliveries`)
+    : null
+  let committedScheduleMessagesPromise: Promise<Set<string>> | null = null
+  const scheduleDeliveryCoordinator = scheduleDeliveryStore
+    ? createScheduleDeliveryCoordinator({
+        eventQueue: input.eventQueue,
+        deliveryStore: scheduleDeliveryStore,
+        isCommitted: async (event) => {
+          committedScheduleMessagesPromise ??= input.ledgerRepo.loadCanonicalState().then((canonical) => new Set(
+            canonical.entries.flatMap((entry) => (
+              entry.entryType === 'message' && entry.payload.message.role === 'user'
+                ? [entry.payload.message.content]
+                : []
+            )),
+          ))
+          const rendered = renderBotEvent(event)
+          return rendered != null && (await committedScheduleMessagesPromise).has(rendered)
+        },
+      })
+    : null
   const scheduleRuntime = input.scheduleRuntime ?? createScheduleRuntime({
     store: input.scheduleStatePath
       ? createPersistentScheduleStore(input.scheduleStatePath)
@@ -174,7 +197,8 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     occurrenceStore: input.scheduleStatePath
       ? createPersistentScheduleOccurrenceStore(`${input.scheduleStatePath}.occurrences`)
       : createInMemoryScheduleOccurrenceStore(),
-    eventQueue: input.eventQueue,
+    ...(scheduleDeliveryStore ? { deliveryStore: scheduleDeliveryStore } : {}),
+    eventQueue: scheduleDeliveryCoordinator?.eventQueue ?? input.eventQueue,
     logger: input.scheduleLogger ?? createScheduleRuntimeLogHandler(),
   })
   const approvalManager = input.approvalManager ?? createApprovalManager({
@@ -376,11 +400,21 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     eventDebounceMs: input.eventDebounceMs,
     groupParticipations,
     activityReporter: input.activityReporter,
-    onEventsCommitted: input.onEventsCommitted,
+    onEventsCommitted: async (events) => {
+      if (scheduleDeliveryCoordinator) {
+        try {
+          await scheduleDeliveryCoordinator.markCommitted(events)
+        } catch (error) {
+          scheduleLog.error({ err: error }, 'schedule_delivery_commit_cleanup_failed')
+        }
+      }
+      await input.onEventsCommitted?.(events)
+    },
     stateAdvisor,
   })
 
   let backgroundStartPromise: Promise<void> | null = null
+  let scheduleRuntimeStarted = false
   let backgroundStopPromise: Promise<void> | null = null
   let backgroundStopRequested = false
 
@@ -395,9 +429,22 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
         )
       }
       if (backgroundStartPromise) return backgroundStartPromise
-      const startAttempt = scheduleRuntime.start()
+      const startAttempt = (async () => {
+        await scheduleRuntime.start()
+        scheduleRuntimeStarted = true
+        if (scheduleDeliveryCoordinator) {
+          const activeScheduleIds = new Set(
+            (await scheduleRuntime.list()).map((schedule) => schedule.id),
+          )
+          try {
+            await scheduleDeliveryCoordinator.replayPending(activeScheduleIds)
+          } finally {
+            committedScheduleMessagesPromise = null
+          }
+        }
+      })()
       backgroundStartPromise = startAttempt.catch((error: unknown) => {
-        backgroundStartPromise = null
+        if (!scheduleRuntimeStarted) backgroundStartPromise = null
         if (input.scheduleStatePath) {
           throw new Error(
             `Failed to start schedule runtime from ${JSON.stringify(input.scheduleStatePath)}`,

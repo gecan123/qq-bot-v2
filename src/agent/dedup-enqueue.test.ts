@@ -107,4 +107,22 @@ describe('createDedupEnqueue — replay × live overlap by messageRowId', () => 
 
     assert.equal(enq.seenCount(), 3)
   })
+
+  test('finishReplay releases seen row IDs and disables steady-state tracking', () => {
+    const q = new InMemoryEventQueue<BotEvent>()
+    const enq = createDedupEnqueue(q)
+
+    enq(makeGroupEvent(1))
+    enq(makeGroupEvent(2))
+    assert.equal(enq.seenCount(), 2)
+
+    enq.finishReplay()
+    enq.finishReplay()
+
+    assert.equal(enq.seenCount(), 0)
+    assert.equal(enq(makeGroupEvent(1)), true)
+    assert.equal(enq(makeGroupEvent(1)), true)
+    assert.equal(enq.seenCount(), 0)
+    assert.equal(q.size(), 4)
+  })
 })

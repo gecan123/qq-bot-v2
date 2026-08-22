@@ -117,7 +117,7 @@ describe('createOperationRunner', () => {
       now: () => new Date('2026-07-21T10:00:00.000Z'),
       id: () => 'run-progress',
       execute: async (_input, report) => {
-        await report({ phase: 'translating', completed: 1, total: 3 })
+        await report({ phase: 'resetting', completed: 1, total: 1 })
         return gate.promise
       },
     })
@@ -126,9 +126,9 @@ describe('createOperationRunner', () => {
     await waitFor(() => runner.snapshot().activeRun?.progress?.completed === 1)
 
     assert.deepEqual(runner.snapshot().activeRun?.progress, {
-      phase: 'translating',
+      phase: 'resetting',
       completed: 1,
-      total: 3,
+      total: 1,
     })
     assert.equal(store.writes.some(state => state.activeRun?.progress?.completed === 1), true)
     gate.resolve(successResult())
@@ -145,7 +145,6 @@ describe('createOperationRunner', () => {
       execute: async () => {
         throw Object.assign(new Error(`secret:${'x'.repeat(800)}`), {
           code: 'database_failed',
-          backupDir: '/repo/data/agent-workspace/db-backups/memory-v2-safe',
         })
       },
       reportError(report) { reports.push(report) },
@@ -157,7 +156,6 @@ describe('createOperationRunner', () => {
     assert.equal(run.error?.code, 'operation_failed')
     assert.equal(run.error?.message, 'Operation failed. Inspect the local WebAdmin logs before retrying.')
     assert.doesNotMatch(run.error?.message ?? '', /secret/)
-    assert.equal(run.error?.backupDir, '/repo/data/agent-workspace/db-backups/memory-v2-safe')
     assert.equal(run.result, null)
     assert.equal(reports[0]?.phase, 'execution')
     assert.match((reports[0]?.error as Error).message, /secret/)
@@ -205,7 +203,7 @@ describe('createOperationRunner', () => {
         schemaVersion: 1,
         id: 'old-run',
         writerPid: 11,
-        request: { operation: 'canonicalize_memory' },
+        request: { operation: 'reset_state', scope: 'knowledge' },
         previewFingerprint: 'b'.repeat(64),
         status: 'running',
         createdAt: '2026-07-21T09:58:00.000Z',

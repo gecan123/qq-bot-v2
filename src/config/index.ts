@@ -516,6 +516,11 @@ export function parseConfig(
   const toolCallLogPath = env.BOT_TOOL_CALL_LOG_PATH && env.BOT_TOOL_CALL_LOG_PATH.trim().length > 0
     ? env.BOT_TOOL_CALL_LOG_PATH.trim()
     : 'logs/tool-calls.ndjson'
+  const inboundRetentionDays = parseStrictPositiveInteger(
+    'BOT_INBOUND_RETENTION_DAYS',
+    env.BOT_INBOUND_RETENTION_DAYS,
+    7,
+  )
   const observabilityRetentionDays = parseStrictNonNegativeInteger(
     'BOT_OBSERVABILITY_RETENTION_DAYS',
     env.BOT_OBSERVABILITY_RETENTION_DAYS,
@@ -636,6 +641,8 @@ export function parseConfig(
     tokenUsageLogPath,
     /** Unified tool-call NDJSON sidecar log path. Override via BOT_TOOL_CALL_LOG_PATH env. */
     toolCallLogPath,
+    /** Inbound messages/media retention in days. */
+    inboundRetentionDays,
     /** Observability DB/NDJSON retention in days. Zero disables automatic cleanup. */
     observabilityRetentionDays,
     toolAuditMode,
@@ -669,9 +676,6 @@ export function parseConfig(
       enabled: platformEnabled,
       qqGatewayUrl: serviceUrl('BOT_QQ_GATEWAY_URL', 'http://127.0.0.1:37922'),
       mediaWorkerUrl: serviceUrl('BOT_MEDIA_WORKER_URL', 'http://127.0.0.1:37923'),
-      schedulerUrl: serviceUrl('BOT_SCHEDULER_URL', 'http://127.0.0.1:37924'),
-      agentEventsUrl: serviceUrl('BOT_AGENT_EVENTS_URL', 'http://127.0.0.1:37925'),
-      llmGatewayUrl: serviceUrl('BOT_LLM_GATEWAY_URL', 'http://127.0.0.1:37926'),
       mailboxPollMs: parsePositiveInteger(env.BOT_MAILBOX_POLL_MS, 1_000),
     },
     openbb: parseBoolean(env.OPENBB_CLI_ENABLED, false)

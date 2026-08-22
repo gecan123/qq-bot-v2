@@ -27,7 +27,6 @@ import { replayMissedMessages } from './agent/replay-missed.js'
 import { resolveTargetMetadataMaps } from './agent/resolve-target-meta.js'
 import { createDedupEnqueue } from './agent/dedup-enqueue.js'
 import { createAgentRuntime } from './agent/runtime.js'
-import { renderBotEvent } from './agent/render-event.js'
 import { createPersistentTaskRegistry } from './agent/background-task-registry.js'
 import { enqueueColdStartBootstrap } from './agent/cold-start-bootstrap.js'
 import { createShutdownCoordinator, type ShutdownCoordinator } from './ops/shutdown.js'
@@ -55,8 +54,6 @@ import {
   currentMessageHighWater,
   type DatabaseMailboxWatcher,
 } from './services/database-mailbox-watcher.js'
-import { startAgentEventsServer, type AgentEventsServer } from './services/agent-events-server.js'
-import { createRemoteScheduleRuntime } from './services/scheduler-client.js'
 import { createGroupMuteInspector } from './messaging/group-mute-inspector.js'
 import { createMessageDelivery } from './messaging/message-delivery.js'
 import { createQqDeliveryAdapter } from './messaging/qq-delivery-adapter.js'
@@ -230,7 +227,6 @@ async function main() {
   }
 
   let mailboxWatcher: DatabaseMailboxWatcher | null = null
-  let agentEventsServer: AgentEventsServer | null = null
   const qqGateway = config.services.enabled
     ? new QqGatewayClient(config.services.qqGatewayUrl)
     : null
@@ -293,25 +289,8 @@ async function main() {
     await napcatLifecycle.initialBackfillDone
     log.info('首次群历史消息补拉完成')
   } else {
-    agentEventsServer = await startAgentEventsServer({
-      baseUrl: config.services.agentEventsUrl,
-      enqueue: (event) => {
-        eventQueue.enqueue(event)
-      },
-      isCommitted: async (event) => {
-        const rendered = renderBotEvent(event)
-        if (rendered == null) return false
-        const canonical = await ledgerRepo.loadCanonicalState()
-        return canonical.entries.some((entry) => (
-          entry.entryType === 'message'
-          && entry.payload.message.role === 'user'
-          && entry.payload.message.content === rendered
-        ))
-      },
-    })
     log.info({
       qqGatewayUrl: config.services.qqGatewayUrl,
-      agentEventsUrl: config.services.agentEventsUrl,
     }, 'Agent Core 已进入平台服务模式')
   }
 
@@ -372,6 +351,7 @@ async function main() {
       .filter((source): source is string => typeof source === 'string'),
   })
   log.info({ enqueued: replayResult.enqueued }, 'replay-missed 完成')
+  enqueueDedupedMessageEvent.finishReplay()
 
   if (config.services.enabled) {
     mailboxWatcher = createDatabaseMailboxWatcher({
@@ -404,9 +384,6 @@ async function main() {
         selfNumber: config.selfNumber,
         loadGroupShutList: (groupId) => qqGateway.groupShutList(groupId),
       })
-    : undefined
-  const scheduleRuntime = config.services.enabled
-    ? createRemoteScheduleRuntime(config.services.schedulerUrl)
     : undefined
   const runtime = createAgentRuntime({
     context,
@@ -455,15 +432,11 @@ async function main() {
     workspaceStateCoordinator,
     taskRegistry: persistentTasks.registry,
     scheduleStatePath: config.scheduleStatePath,
-    scheduleRuntime,
     approvalStatePath: config.approvalStatePath,
     approvalMode: config.approvalMode,
     mcpConfigPath: config.mcpConfigPath,
     mcpSchemaSnapshotDir: config.mcpSchemaSnapshotDir,
     activityReporter,
-    onEventsCommitted: (events) => {
-      agentEventsServer?.markCommitted(events)
-    },
   })
   try {
     const provider = config.llm.defaultProvider
@@ -523,7 +496,6 @@ async function main() {
       if (!config.services.enabled) jobQueue.stop()
       await runtime.stopBackgroundServices()
       await taskScheduler.drain()
-      await agentEventsServer?.close()
       removePidFile()
     },
     saveFinal: () => runtime.agent.flush(),
@@ -540,7 +512,7 @@ async function main() {
 async function runRetentionMaintenance(): Promise<void> {
   const errors: unknown[] = []
   try {
-    await purgeOldData()
+    await purgeOldData({ retentionDays: config.inboundRetentionDays })
   } catch (error) {
     errors.push(error)
   }

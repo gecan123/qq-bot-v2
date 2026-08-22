@@ -28,8 +28,8 @@
 | Projection cache | Postgres `bot_agent_checkpoint` | 否 | ledger commit 后 best-effort 刷新 | 启动 loader | 可丢弃、可从 ledger 重建 |
 | 长期语义记忆 | `data/agent-workspace/memory/` | 否 | `memory` tool；十分钟异步状态 review；有界 maintenance | `recall/search/list/read` | side-data，不参与 replay |
 | 主题过程 | `data/agent-workspace/notebook/` | 否 | `notebook` tool | `list/search/read` | side-data，不参与 replay |
-| 主观经历 | `data/agent-workspace/life/journal/` | 否 | `life_journal` tool；异步 round review | `read_recent/read_day/read_entry` | side-data，不参与 replay |
-| 当前生活状态 | `data/agent-workspace/life/agenda.md` | 否 | `life_journal write_agenda`；异步 round review | `read_agenda` | side-data，不参与 replay |
+| 主观经历 | `data/agent-workspace/life/journal/` | 否 | `life_journal` tool | `read_recent/read_day/read_entry` | side-data，不参与 replay |
+| 当前生活状态 | `data/agent-workspace/life/agenda.md` | 否 | `life_journal write_agenda` | `read_agenda` | side-data，不参与 replay |
 | Goal 控制状态 | Postgres `bot_agent_goal` | 否；revision 事件可见 | owner 命令或 `goal` tool | Runtime Host / `goal get` | 不能重建 transcript |
 | 运维证据 | `logs/*`、观测表 | 否 | runtime best-effort | 运维命令 | 永远不是 replay 或记忆来源 |
 
@@ -60,9 +60,6 @@ flowchart LR
   K -->|"tool result"| C
   J -->|"tool result"| C
 
-  C -->|"本轮有界 delta"| R["异步 Life review"]
-  R --> LJ
-  R --> A
   MM --> MR["异步 memory maintenance"]
   MR --> MM
 ```
@@ -88,7 +85,7 @@ flowchart LR
 - scope 为 `self|person|group|topic`。主 Agent 只使用 `remember|recall|correct`。`self` 与 `topic` 分别只有 `self/self.md`、`topics/topics.md` 两个 canonical 文件；remember 的 title 作为 entry alias 参与 recall，不决定文件路径。Memory v2 把人物主体与观察场景正交建模：人物用稳定 participant key 标识，平台会话观察位于 `people/<participant>/conversations/<encoded-conversation-key>.md`，跨会话人物核心位于 `people/<participant>/core.md`，群体整体位于 `groups/<encoded-conversation-key>.md`。普通 QQ、飞书用户和群彼此隔离；只有配置的主人 QQ/飞书身份会统一折叠为 `owner`，且只有主人本人陈述可进入 owner core。旧 QQ 路径只作为现有数据的读取兼容，不是新写入目标。
 - 每个 entry 带稳定 ID、北京时间、`sourceMessageRowIds`、`assertedByIds`、`evidenceKind`、语义 `memoryKind` 和 `tier=recent|stable`。人物与群文件都保留“谁说的、在哪个场景说的”，subject 不再与 claimant 混为一谈。
 - 普通 remember 先生成 recent；完全相同内容在同文件内去重。
-- person/group 的 remember 和 correct 必须引用真实存在的 `Message.rowId`；runtime 从消息行推导 conversation、claimant 和 `self_report|owner_assertion|third_party_report`，不会要求“关于某人的证据必须由本人发送”。普通人物写入总是先落来源会话，不会直接升级成 core。群写入只接受同一 conversation key 的来源，并只允许 `group_*` 语义；个人职业、偏好、身份仍归 person。`correct` 用 recall 返回的 entry ID 与文件 revision，原子 supersede 旧 entry 并创建 replacement。
+- person/group 的 remember 和 correct 必须在写入时引用真实存在的 `Message.rowId`；runtime 从消息行推导 conversation、claimant 和 `self_report|owner_assertion|third_party_report`，不会要求“关于某人的证据必须由本人发送”。普通人物写入总是先落来源会话，不会直接升级成 core。群写入只接受同一 conversation key 的来源，并只允许 `group_*` 语义；个人职业、偏好、身份仍归 person。`correct` 用 recall 返回的 entry ID 与文件 revision，原子 supersede 旧 entry 并创建 replacement。原始 Message 只在 `BOT_INBOUND_RETENTION_DAYS` 配置的窗口内保证可复核；过期后的 rowId 是历史来源标识，不承诺永久回查原文。
 - `recall` 做确定性 lexical scoring。person recall 必须提供 participant key 与当前 conversation context，只读取 `people/<id>/core.md` 与当前会话文件；不会把另一个平台或群里的观察混进来。group recall 的 `id` 是 `conversation list` 返回的 conversation key，只读取对应群文件。`self|topic` recall 禁止提供 `id`；scope 和 id 都不传时保留跨范围探索。
 - review、promote、merge、discard 和 compact 属于内部 maintenance 或 deferred admin，不暴露给主 Agent。maintenance 产生新的 stable entry 时保留 supersedes 链；已 superseded 内容不参与 recall 或 maintenance 阈值。
 - 显式 mutation 和自动 maintenance 都使用文件 revision；stable 不会被自动 discard。
@@ -103,15 +100,15 @@ flowchart LR
 ### Life Journal
 
 - 路径为 `life/journal/YYYY-MM-DD.md`，当前格式是显式 v2。
-- `kind=reflection|dream` 表示内容语义，`source=manual|round|compact` 表示产生方式。
-- 自动 round review 只会产生 reflection；dream 只由显式工具写入。
+- `kind=reflection|dream` 表示内容语义，`source=manual|round|compact` 表示产生方式；`round` 仅用于兼容已有条目，当前 runtime 不再自动创建。
+- reflection 和 dream 都由显式工具写入；dream 不参与非 dream 条目的 compact。
 - update/delete/compact 需要最新日文件 revision；全是 dream 的 compact 才继续标记 dream。
 
 ### Agenda
 
 - 单文件 `life/agenda.md` 表示“现在仍有效的状态”，不是 append-only 历史。
 - 主 Agent 显式修改时必须先 read，再带最新 revision 覆盖完整 Agenda。
-- 异步 Life review 会读取 Agenda，也可能更新它。`yield` 不读取 Agenda 或 Journal，也不会同步请求额外 LLM；没有牵引力时由主循环以无工具轮或 yield 结束当前活动。
+- Agenda 只由显式 `life_journal` 工具更新。`yield` 不读取 Agenda 或 Journal，也不会同步请求额外 LLM；没有牵引力时由主循环以无工具轮或 yield 结束当前活动。
 
 ## 读取与披露
 
@@ -143,7 +140,7 @@ runtime 当前不会在 `agent.chat` 前自动预取 Memory，也不会把检索
 
 ## 自动维护
 
-compaction、Memory maintenance 和 Life review 都会把历史正文或 side-data 视为不可信数据，而不是下一层 prompt 指令。OpenAI compaction、Claude split-turn fallback 和 maintenance/review 请求使用 `[UNTRUSTED_DATA ...]` 信封，再附加独立、固定的操作指令。Claude 普通 compaction 为复用主 prompt cache，保留主 system、tools 和原始 working-context prefix，并只追加可信压缩 control message；任何返回的 tool call 都不会执行。两种形态中的“忽略规则”“调用工具”等历史文字都只能被摘要或分析，不能改变任务。
+compaction 和 Memory maintenance 都会把历史正文或 side-data 视为不可信数据，而不是下一层 prompt 指令。OpenAI compaction、Claude split-turn fallback 和 maintenance 请求使用 `[UNTRUSTED_DATA ...]` 信封，再附加独立、固定的操作指令。Claude 普通 compaction 为复用主 prompt cache，保留主 system、tools 和原始 working-context prefix，并只追加可信压缩 control message；任何返回的 tool call 都不会执行。两种形态中的“忽略规则”“调用工具”等历史文字都只能被摘要或分析，不能改变任务。
 
 ### Memory maintenance
 

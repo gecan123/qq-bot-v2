@@ -43,15 +43,17 @@ const prismaRetentionStore: RetentionStore = {
 }
 
 /**
- * 删除 7 天前零点之前的 Message / Media，再回收无人引用的旧 Blob。
+ * 删除配置保留窗口之前的 Message / Media，再回收无人引用的旧 Blob。
  * 由 retention runner 在启动后异步执行，并于每天北京时间 03:00 重复。
  */
 export async function purgeOldData(options: {
   now?: () => Date
+  retentionDays?: number
   store?: RetentionStore
 } = {}): Promise<void> {
   const now = options.now?.() ?? new Date()
-  const cutoff = beijingStartOfDayDaysAgo(now, 7)
+  const retentionDays = options.retentionDays ?? 7
+  const cutoff = beijingStartOfDayDaysAgo(now, retentionDays)
   const orphanBlobCutoff = new Date(now.getTime() - ORPHAN_BLOB_GRACE_MS)
   const store = options.store ?? prismaRetentionStore
 

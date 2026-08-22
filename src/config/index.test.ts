@@ -46,6 +46,18 @@ if (!configModule) throw new Error('Failed to import config module')
 const { parseConfig } = configModule
 
 describe('config', () => {
+  test('parses inbound fact retention days', () => {
+    assert.equal(parseConfig(createBaseEnv()).inboundRetentionDays, 7)
+    assert.equal(parseConfig(createBaseEnv({ BOT_INBOUND_RETENTION_DAYS: '90' })).inboundRetentionDays, 90)
+
+    for (const value of ['0', '-1', '1.5', 'abc']) {
+      assert.throws(
+        () => parseConfig(createBaseEnv({ BOT_INBOUND_RETENTION_DAYS: value })),
+        /Invalid BOT_INBOUND_RETENTION_DAYS/,
+      )
+    }
+  })
+
   test('parses observability retention days with zero as an explicit disable', () => {
     assert.equal(parseConfig(createBaseEnv()).observabilityRetentionDays, 30)
     assert.equal(parseConfig(createBaseEnv({ BOT_OBSERVABILITY_RETENTION_DAYS: '90' })).observabilityRetentionDays, 90)
@@ -377,7 +389,7 @@ describe('config', () => {
     const defaults = parseConfig(createBaseEnv())
     assert.equal(defaults.services.enabled, false)
     assert.equal(defaults.services.qqGatewayUrl, 'http://127.0.0.1:37922')
-    assert.equal(defaults.services.llmGatewayUrl, 'http://127.0.0.1:37926')
+    assert.equal(defaults.services.mediaWorkerUrl, 'http://127.0.0.1:37923')
 
     const configured = parseConfig(createBaseEnv({
       BOT_PLATFORM_ENABLED: 'true',

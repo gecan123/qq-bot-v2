@@ -13,7 +13,6 @@ import { createOpenAIAgentLlmClient } from './openai-agent/llm-client.js'
 import type { ClaudeThinkingConfig, ClaudeToolChoice } from './claude-code/request.js'
 import { createLogger } from '../logger.js'
 import type { LlmProviderEvidence } from './llm-call-evidence.js'
-import { llmGatewayProviderUrl } from '../services/llm-routing.js'
 
 const log = createLogger('llm-client')
 
@@ -182,9 +181,7 @@ function createProviderLlmClient(model: string, options: CreateLlmClientOptions)
     return createOpenAIAgentLlmClient({
       model,
       contextWindowTokens,
-      baseURL: config.services.enabled
-        ? llmGatewayProviderUrl(config.services.llmGatewayUrl, OPENAI_AGENT_BASE_PROVIDER_NAME)
-        : openaiProvider.url,
+      baseURL: openaiProvider.url,
       apiKey: openaiProvider.apiKey,
     })
   }
@@ -199,9 +196,7 @@ function createProviderLlmClient(model: string, options: CreateLlmClientOptions)
     return createClaudeCodeLlmClient({
       model,
       contextWindowTokens,
-      baseURL: config.services.enabled
-        ? llmGatewayProviderUrl(config.services.llmGatewayUrl, CLAUDE_CODE_BASE_PROVIDER_NAME)
-        : claudeProvider.url,
+      baseURL: claudeProvider.url,
       apiKey: claudeProvider.apiKey,
       toolChoice: config.llm.claudeToolChoice,
       thinking: options.claudeThinking ?? config.llm.claudeThinking,

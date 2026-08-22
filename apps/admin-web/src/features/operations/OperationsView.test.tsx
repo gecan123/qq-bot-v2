@@ -35,43 +35,17 @@ const resetPreview: OperationPreview = {
   },
 }
 
-const noOpMemoryPreview: OperationPreview = {
-  ...resetPreview,
-  id: 'preview-memory',
-  request: { operation: 'migrate_memory_v2' },
-  confirmationPhrase: 'MIGRATE MEMORY V2',
-  payload: {
-    operation: 'migrate_memory_v2',
-    needed: false,
-    filesBefore: 2,
-    filesAfter: 2,
-    entries: 3,
-    movedPersonEntries: 0,
-    quarantinedPersonEntries: 0,
-    changes: [],
-    warnings: [],
-    truncated: { changes: 0, warnings: 0 },
-  },
-}
-
 afterEach(cleanup)
 
 describe('OperationsView', () => {
-  test('shows four fixed operation cards without command or path inputs', () => {
+  test('shows only reset state without command or path inputs', () => {
     renderView()
 
     assert.ok(screen.getByText('重置 Agent 状态'))
-    assert.ok(screen.getByText('迁移 Memory V2'))
-    assert.ok(screen.getByText('归并 Memory 文件'))
-    assert.ok(screen.getByText('迁移长期状态语言'))
+    assert.equal(screen.queryByText('迁移 Memory V2'), null)
+    assert.equal(screen.queryByText('归并 Memory 文件'), null)
+    assert.equal(screen.queryByText('迁移长期状态语言'), null)
     assert.equal(screen.queryByLabelText(/命令|command|路径|path/i), null)
-  })
-
-  test('marks an unnecessary migration and disables execution', () => {
-    renderView({ preview: noOpMemoryPreview })
-
-    assert.ok(screen.getAllByText('无需执行').length >= 1)
-    assert.equal((screen.getByRole('button', { name: '执行操作' }) as HTMLButtonElement).disabled, true)
   })
 
   test('shows a live Bot block reason and disables execution', () => {
@@ -104,7 +78,7 @@ describe('OperationsView', () => {
     assert.deepEqual(submitted, { previewId: 'preview-reset', confirmation: 'RESET context' })
   })
 
-  test('invalidates an old preview when the selected operation or reset scope changes', () => {
+  test('invalidates an old preview when the reset scope changes', () => {
     renderView({ preview: resetPreview })
     const execute = screen.getByRole('button', { name: '执行操作' }) as HTMLButtonElement
     const confirmation = screen.getByLabelText('确认短语')
@@ -112,14 +86,9 @@ describe('OperationsView', () => {
     fireEvent.change(confirmation, { target: { value: 'RESET context' } })
     assert.equal(execute.disabled, false)
 
-    fireEvent.click(screen.getByRole('button', { name: /迁移 Memory V2/ }))
-    assert.equal(execute.disabled, true)
-    assert.ok(screen.getByText(/当前选择已变化，请重新生成预览/))
-
-    fireEvent.click(screen.getByRole('button', { name: /重置 Agent 状态/ }))
     fireEvent.change(screen.getByLabelText('重置范围'), { target: { value: 'all' } })
     assert.equal(execute.disabled, true)
-    assert.ok(screen.getByText(/当前选择已变化，请重新生成预览/))
+    assert.ok(screen.getByText(/当前范围已变化，请重新生成预览/))
   })
 
   test('asks for a new preview after stale-preview rejection', () => {
@@ -131,31 +100,19 @@ describe('OperationsView', () => {
   test('renders running progress and distinct terminal outcomes', () => {
     const { rerender } = renderView({ run: operationRun('running') })
     assert.ok(screen.getByText('正在执行'))
-    assert.ok(screen.getByText('1 / 3'))
+    assert.ok(screen.getByText('0 / 1'))
 
     rerender(view({ run: operationRun('succeeded') }))
     assert.ok(screen.getByText('执行成功'))
-    assert.ok(screen.getByText('/repo/data/agent-workspace/db-backups/memory-v2'))
+    assert.ok(screen.getByText(/结果已通过 schema 校验/))
 
     rerender(view({ run: operationRun('failed') }))
     assert.ok(screen.getByText('执行失败'))
-    assert.ok(screen.getByText('migration failed safely'))
-    assert.ok(screen.getByText('/repo/data/agent-workspace/db-backups/failed-memory-v2'))
+    assert.ok(screen.getByText('reset failed safely'))
 
     rerender(view({ run: operationRun('interrupted') }))
     assert.ok(screen.getByText('执行被中断'))
-    assert.ok(screen.getByText(/检查备份和当前状态后再决定是否重试/))
-  })
-
-  test('keeps a persisted backup path visible in recent history after reload', () => {
-    renderView({
-      snapshot: {
-        ...snapshot,
-        recentRuns: [operationRun('failed')],
-      },
-    })
-
-    assert.ok(screen.getByText('/repo/data/agent-workspace/db-backups/failed-memory-v2'))
+    assert.ok(screen.getByText(/检查当前状态后再决定是否重试/))
   })
 })
 
@@ -164,7 +121,7 @@ function operationRun(status: OperationRun['status']): OperationRun {
     schemaVersion: 1,
     id: `run-${status}`,
     writerPid: 42,
-    request: { operation: 'migrate_memory_v2' },
+    request: { operation: 'reset_state', scope: 'all' },
     previewFingerprint: 'b'.repeat(64),
     status,
     createdAt: '2026-07-21T10:00:00.000Z',
@@ -172,23 +129,20 @@ function operationRun(status: OperationRun['status']): OperationRun {
     finishedAt: ['succeeded', 'failed', 'interrupted'].includes(status)
       ? '2026-07-21T10:00:03.000Z'
       : null,
-    progress: status === 'running' ? { phase: 'migrating_memory', completed: 1, total: 3 } : null,
+    progress: status === 'running' ? { phase: 'resetting', completed: 0, total: 1 } : null,
     result: status === 'succeeded' ? {
-      operation: 'migrate_memory_v2',
-      backupDir: '/repo/data/agent-workspace/db-backups/memory-v2',
-      filesBefore: 2,
-      filesAfter: 3,
-      entries: 4,
-      movedPersonEntries: 1,
-      quarantinedPersonEntries: 1,
-      warnings: 0,
+      operation: 'reset_state',
+      scope: 'all',
+      deletedLedgerEntries: 7,
+      deletedCheckpoints: 1,
+      deletedRuntimeStates: 1,
+      deletedGoals: 1,
+      createdRuntimeState: true,
+      removedDirectories: ['memory', 'journal', 'life', 'notebook'],
+      removedWorkspaceEntries: 3,
     } : null,
     error: status === 'failed'
-      ? {
-          code: 'migration_failed',
-          message: 'migration failed safely',
-          backupDir: '/repo/data/agent-workspace/db-backups/failed-memory-v2',
-        }
+      ? { code: 'operation_failed', message: 'reset failed safely' }
       : status === 'interrupted'
         ? { code: 'process_interrupted', message: 'process exited' }
         : null,

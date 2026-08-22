@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { access, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, test } from 'node:test'
@@ -14,6 +14,7 @@ import { createInMemoryGoalStore } from './goal-store.js'
 import type { ScheduleRuntime, ScheduleRuntimeLogEntry } from './schedule-runtime.js'
 import { createTestAgentLedger } from './test-support/agent-ledger.js'
 import { buildAgentContextSurface } from '../ops/agent-context-surface.js'
+import { renderBotEvent } from './render-event.js'
 
 const tempDirs: string[] = []
 
@@ -385,6 +386,82 @@ describe('createAgentRuntime', () => {
       await runtime?.stopBackgroundServices()
       process.chdir(originalCwd)
     }
+  })
+
+  test('persists schedule occurrences and pending deliveries before enqueueing a due wake', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agent-runtime-schedule-delivery-'))
+    tempDirs.push(dir)
+    const scheduleStatePath = join(dir, 'schedules.json')
+    const scheduledFor = new Date(Date.now() - 1_000).toISOString()
+    await writeFile(scheduleStatePath, JSON.stringify({
+      version: 2,
+      schedules: [{
+        id: 'due-schedule',
+        name: 'due schedule',
+        intention: 'open the persisted occurrence',
+        at: scheduledFor,
+        createdAt: new Date(Date.now() - 61_000).toISOString(),
+      }],
+    }), 'utf8')
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    const runtime = createAgentRuntime({
+      ...makeRuntimeInput(),
+      eventQueue,
+      scheduleStatePath,
+    })
+
+    await runtime.startBackgroundServices()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    const event = eventQueue.dequeue()
+    assert.equal(event?.type, 'scheduled_wake')
+    const occurrences = JSON.parse(await readFile(`${scheduleStatePath}.occurrences`, 'utf8'))
+    const deliveries = JSON.parse(await readFile(`${scheduleStatePath}.deliveries`, 'utf8'))
+    assert.equal(occurrences.occurrences[0]?.scheduleId, 'due-schedule')
+    assert.equal(deliveries.pending[0]?.scheduleId, 'due-schedule')
+    await runtime.stopBackgroundServices()
+  })
+
+  test('replays only uncommitted inactive schedule deliveries during startup', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agent-runtime-schedule-replay-'))
+    tempDirs.push(dir)
+    const scheduleStatePath = join(dir, 'schedules.json')
+    await writeFile(scheduleStatePath, '{"version":2,"schedules":[]}', 'utf8')
+    const scheduledFor = '2026-08-03T12:00:00.000Z'
+    const committedEvent: Extract<BotEvent, { type: 'scheduled_wake' }> = {
+      type: 'scheduled_wake',
+      scheduleId: 'committed',
+      name: 'committed schedule',
+      scheduledFor: new Date(scheduledFor),
+    }
+    await writeFile(`${scheduleStatePath}.deliveries`, JSON.stringify({
+      version: 1,
+      pending: [
+        { scheduleId: 'committed', name: 'committed schedule', intention: 'done', scheduledFor },
+        { scheduleId: 'replay', name: 'replay schedule', intention: 'resume', scheduledFor },
+      ],
+    }), 'utf8')
+    const ledger = createTestAgentLedger({
+      messages: [{ role: 'user', content: renderBotEvent(committedEvent)! }],
+    })
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    const runtime = createAgentRuntime({
+      ...makeRuntimeInput(),
+      eventQueue,
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      scheduleStatePath,
+    })
+
+    await runtime.startBackgroundServices()
+
+    const replayed = eventQueue.dequeue()
+    assert.equal(replayed?.type, 'scheduled_wake')
+    assert.equal(replayed?.type === 'scheduled_wake' ? replayed.scheduleId : null, 'replay')
+    assert.equal(eventQueue.dequeue(), null)
+    const deliveries = JSON.parse(await readFile(`${scheduleStatePath}.deliveries`, 'utf8'))
+    assert.deepEqual(deliveries.pending.map((item: { scheduleId: string }) => item.scheduleId), ['replay'])
+    await runtime.stopBackgroundServices()
   })
 
   test('propagates persistent schedule startup failures and allows a later retry', async () => {

@@ -3,9 +3,7 @@ import { z } from 'zod'
 export const PROCESS_LOG_SOURCES = [
   'agent-core',
   'qq-gateway',
-  'llm-gateway',
   'media-worker',
-  'scheduler',
   'browser-controller',
   'web-admin',
 ] as const

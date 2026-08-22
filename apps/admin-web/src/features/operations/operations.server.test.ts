@@ -9,14 +9,12 @@ import {
   type AdminOperationsAdapterDependencies,
 } from './operations.server.js'
 import { createAdminOperationsService } from './operations.service.js'
-import type { OperationRequest } from './operations.schema.js'
 
 function dependencies(events: string[]): AdminOperationsAdapterDependencies {
   return {
     repositoryRoot: '/repo',
     workspaceRoot: '/repo/data/agent-workspace',
     db: {} as AdminOperationsAdapterDependencies['db'],
-    loadMemoryEvidence: async () => [],
     async inspectBot() {
       events.push('inspect_bot')
       return { stopped: true, pid: null, reason: 'no_process' }
@@ -61,241 +59,26 @@ function dependencies(events: string[]): AdminOperationsAdapterDependencies {
         removedWorkspaceEntries: input.scope === 'all' ? 2 : 0,
       }
     },
-    async migrateMemoryToV2(input) {
-      events.push(`memory:${input.apply === true ? 'execute' : 'preview'}`)
-      return {
-        ok: true,
-        applied: input.apply === true,
-        needed: true,
-        stateFingerprint: 'a'.repeat(64),
-        ...(input.apply === true ? { backupDir: '/repo/data/agent-workspace/db-backups/memory-v2' } : {}),
-        filesBefore: 2,
-        filesAfter: 3,
-        entries: 4,
-        movedPersonEntries: 1,
-        quarantinedPersonEntries: 1,
-        changes: [{ from: 'groups/1.md', to: 'people/2/groups/1.md', entryId: 'entry-1', reason: 'person_extracted_from_group' }],
-        warnings: [],
-      }
-    },
-    async canonicalizeSelfTopicMemory(input) {
-      events.push(`canonical:${input.apply === true ? 'execute' : 'preview'}`)
-      return {
-        ok: true,
-        applied: input.apply === true,
-        needed: true,
-        stateFingerprint: 'b'.repeat(64),
-        ...(input.apply === true ? { backupDir: '/repo/data/agent-workspace/db-backups/canonical' } : {}),
-        filesBefore: 4,
-        filesAfter: 2,
-        entries: 5,
-        consolidatedFiles: 4,
-        sourceFiles: ['self/a.md', 'topics/b.md'],
-        targets: ['self/self.md', 'topics/topics.md'],
-      }
-    },
-    async planLongTermStateLanguageMigration() {
-      events.push('language:preview')
-      return {
-        totalItems: 2,
-        estimatedBatches: 1,
-        counts: {
-          memoryTitles: 1,
-          memoryEntries: 1,
-          notebookTopics: 0,
-          notebookEntries: 0,
-          lifeJournalEntries: 0,
-          agendaItems: 0,
-        },
-        items: [
-          { key: 'memory:title', text: 'Old title', kind: 'title' },
-          { key: 'memory:entry', text: 'Old entry', kind: 'content' },
-        ],
-        stateFingerprint: createHash('sha256').update('language-state').digest('hex'),
-        repairableJournalEntries: 0,
-      }
-    },
-    async createLanguageTranslator() {
-      events.push('language:create_translator')
-      return async (items, onProgress) => {
-        onProgress?.({ completedBatches: 1, totalBatches: 1 })
-        return items.map(item => ({ key: item.key, text: '中文结果' }))
-      }
-    },
-    async migrateLongTermStateToChinese(input) {
-      events.push('language:execute')
-      await input.translate([
-        { key: 'memory:title', text: 'Old title', kind: 'title' },
-      ])
-      return {
-        backupDir: '/repo/data/agent-workspace/db-backups/language',
-        repairedNestedJournalEntries: 0,
-        translated: {
-          memoryTitles: 1,
-          memoryEntries: 1,
-          notebookTopics: 0,
-          notebookEntries: 0,
-          lifeJournalEntries: 0,
-          agendaItems: 0,
-        },
-        renamedMemoryFiles: [{ from: 'self/old.md', to: 'self/new.md' }],
-        translatedItems: 2,
-      }
-    },
   }
 }
 
 describe('createAdminOperationsPort', () => {
-  test('maps each preview request exactly once and never creates the LLM translator', async () => {
+  test('previews reset state without mutating it', async () => {
     const events: string[] = []
-    const port = createAdminOperationsPort(dependencies(events))
-    const requests: OperationRequest[] = [
-      { operation: 'reset_state', scope: 'all' },
-      { operation: 'migrate_memory_v2' },
-      { operation: 'canonicalize_memory' },
-      { operation: 'migrate_state_language' },
-    ]
-
-    const previews = []
-    for (const request of requests) previews.push(await port.preview(request))
-
-    assert.deepEqual(previews.map(preview => preview.payload.operation), requests.map(request => request.operation))
-    assert.equal(events.filter(event => event === 'preview_reset:all').length, 1)
-    assert.equal(events.filter(event => event === 'memory:preview').length, 1)
-    assert.equal(events.filter(event => event === 'canonical:preview').length, 1)
-    assert.equal(events.filter(event => event === 'language:preview').length, 1)
-    assert.equal(events.includes('language:create_translator'), false)
-    const resetPreview = previews[0]?.payload
-    assert.equal(resetPreview?.operation, 'reset_state')
-    if (resetPreview?.operation === 'reset_state') {
-      assert.equal(resetPreview.workspace?.entries.length, 2)
-    }
-  })
-
-  test('bounds memory preview details and uses the shared needed flag', async () => {
-    const events: string[] = []
-    const deps = dependencies(events)
-    deps.migrateMemoryToV2 = async input => ({
-      ok: true,
-      applied: input.apply === true,
-      needed: false,
-      stateFingerprint: 'a'.repeat(64),
-      filesBefore: 2,
-      filesAfter: 2,
-      entries: 70,
-      movedPersonEntries: 0,
-      quarantinedPersonEntries: 0,
-      changes: Array.from({ length: 70 }, (_, index) => ({
-        from: `self/${index}.md`,
-        to: `self/${index}.md`,
-        entryId: `entry-${index}`,
-        reason: 'format_upgrade' as const,
-      })),
-      warnings: Array.from({ length: 25 }, (_, index) => `warning-${index}`),
+    const preview = await createAdminOperationsPort(dependencies(events)).preview({
+      operation: 'reset_state',
+      scope: 'all',
     })
 
-    const preview = await createAdminOperationsPort(deps).preview({ operation: 'migrate_memory_v2' })
-
-    assert.equal(preview.payload.operation, 'migrate_memory_v2')
-    if (preview.payload.operation === 'migrate_memory_v2') {
-      assert.equal(preview.payload.needed, false)
-      assert.equal(preview.payload.changes.length, 50)
-      assert.equal(preview.payload.warnings.length, 20)
-      assert.deepEqual(preview.payload.truncated, { changes: 20, warnings: 5 })
-    }
+    assert.equal(preview.payload.operation, 'reset_state')
+    assert.equal(preview.payload.scope, 'all')
+    assert.equal(preview.payload.needed, true)
+    assert.equal(preview.payload.workspace?.entries.length, 2)
+    assert.match(preview.stateFingerprint, /^[a-f0-9]{64}$/)
+    assert.deepEqual(events, ['preview_reset:all'])
   })
 
-  test('keeps server-only state changes in the fingerprint when bounded payloads stay equal', async () => {
-    const events: string[] = []
-    const deps = dependencies(events)
-    let hiddenState = 'first'
-    deps.migrateMemoryToV2 = async input => ({
-      ok: true,
-      applied: input.apply === true,
-      needed: true,
-      stateFingerprint: createHash('sha256').update(hiddenState).digest('hex'),
-      filesBefore: 70,
-      filesAfter: 70,
-      entries: 70,
-      movedPersonEntries: 0,
-      quarantinedPersonEntries: 0,
-      changes: Array.from({ length: 70 }, (_, index) => ({
-        from: `self/${index}.md`,
-        to: `self/${index}.md`,
-        entryId: `entry-${index}`,
-        reason: 'format_upgrade' as const,
-      })),
-      warnings: [],
-    })
-    const port = createAdminOperationsPort(deps)
-
-    const first = await port.preview({ operation: 'migrate_memory_v2' })
-    hiddenState = 'changed-item-after-browser-cap'
-    const second = await port.preview({ operation: 'migrate_memory_v2' })
-
-    assert.deepEqual(second.payload, first.payload)
-    assert.notEqual(second.stateFingerprint, first.stateFingerprint)
-  })
-
-  test('fingerprints raw language items without returning their text to the browser', async () => {
-    const events: string[] = []
-    const deps = dependencies(events)
-    let text = 'Old title'
-    deps.planLongTermStateLanguageMigration = async () => ({
-      totalItems: 1,
-      estimatedBatches: 1,
-      counts: {
-        memoryTitles: 1,
-        memoryEntries: 0,
-        notebookTopics: 0,
-        notebookEntries: 0,
-        lifeJournalEntries: 0,
-        agendaItems: 0,
-      },
-      items: [{ key: 'memory:title', text, kind: 'title' }],
-      stateFingerprint: createHash('sha256').update(text).digest('hex'),
-      repairableJournalEntries: 0,
-    })
-    const port = createAdminOperationsPort(deps)
-
-    const first = await port.preview({ operation: 'migrate_state_language' })
-    text = 'Different private title'
-    const second = await port.preview({ operation: 'migrate_state_language' })
-
-    assert.deepEqual(second.payload, first.payload)
-    assert.doesNotMatch(JSON.stringify(second.payload), /Different private title/)
-    assert.notEqual(second.stateFingerprint, first.stateFingerprint)
-  })
-
-  test('marks a repair-only language plan as needed without exposing journal bytes', async () => {
-    const deps = dependencies([])
-    deps.planLongTermStateLanguageMigration = async () => ({
-      totalItems: 0,
-      estimatedBatches: 0,
-      counts: {
-        memoryTitles: 0,
-        memoryEntries: 0,
-        notebookTopics: 0,
-        notebookEntries: 0,
-        lifeJournalEntries: 0,
-        agendaItems: 0,
-      },
-      items: [],
-      stateFingerprint: createHash('sha256').update('repair-only-journal').digest('hex'),
-      repairableJournalEntries: 1,
-    })
-
-    const preview = await createAdminOperationsPort(deps).preview({ operation: 'migrate_state_language' })
-
-    assert.equal(preview.payload.operation, 'migrate_state_language')
-    if (preview.payload.operation === 'migrate_state_language') {
-      assert.equal(preview.payload.needed, true)
-      assert.equal(preview.payload.repairableJournalEntries, 1)
-    }
-    assert.doesNotMatch(JSON.stringify(preview.payload), /repair-only-journal/)
-  })
-
-  test('revalidates the preview, then guards the Bot, then calls only the selected mutation', async () => {
+  test('revalidates the preview, guards the Bot, and executes only reset', async () => {
     const events: string[] = []
     const port = createAdminOperationsPort(dependencies(events))
     const admin = createAdminOperationsService(port, {
@@ -304,7 +87,7 @@ describe('createAdminOperationsPort', () => {
       hash: value => createHash('sha256').update(value).digest('hex'),
       previewTtlMs: 60_000,
     })
-    const preview = await admin.createPreview({ operation: 'canonicalize_memory' })
+    const preview = await admin.createPreview({ operation: 'reset_state', scope: 'knowledge' })
     events.length = 0
 
     const result = await admin.execute(
@@ -312,32 +95,14 @@ describe('createAdminOperationsPort', () => {
       async () => undefined,
     )
 
-    assert.equal(result.operation, 'canonicalize_memory')
+    assert.equal(result.operation, 'reset_state')
+    assert.equal(result.scope, 'knowledge')
     assert.deepEqual(events, [
       'inspect_bot',
-      'canonical:preview',
+      'preview_reset:knowledge',
       'assert_bot_stopped',
-      'canonical:execute',
+      'execute_reset:knowledge',
     ])
-  })
-
-  test('constructs the language translator only after the execute guard and reports progress', async () => {
-    const events: string[] = []
-    const port = createAdminOperationsPort(dependencies(events))
-    const progress: unknown[] = []
-
-    const result = await port.execute(
-      { operation: 'migrate_state_language' },
-      value => { progress.push(value) },
-    )
-
-    assert.equal(result.operation, 'migrate_state_language')
-    assert.deepEqual(events, [
-      'assert_bot_stopped',
-      'language:execute',
-      'language:create_translator',
-    ])
-    assert.deepEqual(progress, [{ phase: 'translating', completed: 1, total: 1 }])
   })
 })
 

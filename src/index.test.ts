@@ -16,6 +16,13 @@ describe('main runtime wiring', () => {
     assert.match(source, /scheduleStatePath:\s*config\.scheduleStatePath/)
   })
 
+  test('keeps scheduling inside Agent Core without remote scheduler or event HTTP adapters', async () => {
+    const source = await readFile(new URL('./index.ts', import.meta.url), 'utf8')
+
+    assert.match(source, /scheduleStatePath:\s*config\.scheduleStatePath/)
+    assert.doesNotMatch(source, /createRemoteScheduleRuntime|startAgentEventsServer|agentEventsServer/)
+  })
+
   test('routes startup and shutdown through the startup lifecycle gate', async () => {
     const source = await readFile(new URL('./index.ts', import.meta.url), 'utf8')
 
@@ -49,6 +56,15 @@ describe('main runtime wiring', () => {
     assert.match(source, /enqueueColdStartBootstrap\(eventQueue, hasPersistedLedger\)/)
   })
 
+  test('releases startup replay dedup state before steady-state mailbox watching', async () => {
+    const source = await readFile(new URL('./index.ts', import.meta.url), 'utf8')
+    const finishReplayIndex = source.indexOf('enqueueDedupedMessageEvent.finishReplay()')
+    const mailboxWatcherIndex = source.indexOf('mailboxWatcher = createDatabaseMailboxWatcher({')
+
+    assert.ok(finishReplayIndex > 0)
+    assert.ok(mailboxWatcherIndex > finishReplayIndex)
+  })
+
   test('runs data and observability retention through the stoppable daily runner', async () => {
     const source = await readFile(new URL('./index.ts', import.meta.url), 'utf8')
 
@@ -56,7 +72,7 @@ describe('main runtime wiring', () => {
     assert.match(source, /retentionRunner = createDailyRetentionRunner\(\{ run: runRetentionMaintenance \}\)/)
     assert.match(source, /retentionRunner\.start\(\)/)
     assert.match(source, /await retentionRunner\?\.stop\(\)/)
-    assert.match(source, /await purgeOldData\(\)/)
+    assert.match(source, /await purgeOldData\(\{ retentionDays: config\.inboundRetentionDays \}\)/)
     assert.match(source, /import \{ purgeObservabilityData \} from '\.\/ops\/observability-retention\.js'/)
     assert.match(
       source,

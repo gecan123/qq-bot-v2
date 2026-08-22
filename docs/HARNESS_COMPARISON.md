@@ -10,7 +10,7 @@
 | s04 Hooks | 部分满足，方向正确 | 已有 executor 级 `beforeTool` / `afterTool` hook，以及 compaction 的 `beforeCompact` / `afterCompact`；还没有 `UserPromptSubmit`、`Stop` 或统一的全生命周期 registry。 |
 | s05 TodoWrite | 有意不实现 | 当前连续执行状态由主循环和 tool result 直接承接，跨重启工作只使用 Goal；删除独立 Todo 避免第三套计划状态。 |
 | s06 Subagent | 有意不提供通用能力 | 通用 clean-context subagent 已移除，避免维护第二套多轮 LLM 控制流；`trading_agent` 继续作为边界明确的专用金融研究 worker，主前台仍只有一个通用 LLM loop。 |
-| s07 Skill Loading | 已满足核心 | 主 Agent 有有界的 `skill list/load`；`skill_editor` 只保留在 operator 维护面，不进入 runtime Agent。仍没有多 skill root 或自动相关选择。 |
+| s07 Skill Loading | 已满足核心 | 主 Agent 有有界的 `skill list/load`；skill 内容由开发者直接维护在 `docs/agent-skills/`，不提供运行时编辑器。仍没有多 skill root 或自动相关选择。 |
 | s08 Context Compact | 已满足核心 | 有 token threshold/overflow 触发的摘要 compaction、完整 prefix summarization、safe cut、CAS append-only boundary 和 `beforeCompact` / `afterCompact` hooks，避免切开 tool call/result；完整 transcript 保留在 permanent ledger，LLM 请求另有 working-context 投影，旧图片只在视图中降级。聊天控制面不再提供 `/compact`。 |
 | s09 Memory | 已满足核心 | 主 Agent 的 `memory` 只暴露 `remember/recall/correct`；recall 做有界 entry 级相关召回并返回 provenance/revision，整理、晋升和合并由内部 maintenance 或 operator 处理。Notebook 保存主题过程，Life Journal 保存经历/感受/梦，Agenda 保存当前承诺和下一步。 |
 | s10 System Prompt | 部分满足，适合本项目 | prompt 分 section 组装，但启动后冻结；这不完全等同教程的运行时动态拼接，但更利于当前 prompt cache 稳定性。 |

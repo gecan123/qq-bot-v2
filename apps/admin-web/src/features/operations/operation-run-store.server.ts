@@ -68,7 +68,7 @@ function auditEvent(state: OperationRunState, run: ReturnType<typeof operationRu
     schemaVersion: 1,
     runId: run.id,
     operation: run.request.operation,
-    ...(run.request.operation === 'reset_state' ? { scope: run.request.scope } : {}),
+    scope: run.request.scope,
     previewFingerprint: run.previewFingerprint,
     at: state.updatedAt,
     status: run.status,

@@ -227,15 +227,9 @@ function safeError(error: unknown): OperationSafeError {
   const record = error && typeof error === 'object' ? error as Record<string, unknown> : {}
   const rawCode = typeof record.code === 'string' ? record.code : 'operation_failed'
   const code = PUBLIC_ERROR_CODES.has(rawCode) ? rawCode : 'operation_failed'
-  const backupDir = typeof record.backupDir === 'string'
-    && record.backupDir.length > 0
-    && record.backupDir.length <= 500
-    ? record.backupDir
-    : undefined
   return {
     code,
     message: publicErrorMessage(code),
-    ...(backupDir ? { backupDir } : {}),
   }
 }
 

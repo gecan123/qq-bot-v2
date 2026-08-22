@@ -82,7 +82,7 @@ export function createAdminOperationsService(
         fingerprint: fingerprint(request, payload, stateFingerprint, options.hash),
         request,
         bot,
-        confirmationPhrase: confirmationPhrase(request),
+        confirmationPhrase: `RESET ${request.scope}`,
         payload,
       })
       previews.set(preview.id, preview)
@@ -140,15 +140,6 @@ export function createAdminOperationsService(
   }
 }
 
-function confirmationPhrase(request: OperationRequest): string {
-  switch (request.operation) {
-    case 'reset_state': return `RESET ${request.scope}`
-    case 'migrate_memory_v2': return 'MIGRATE MEMORY V2'
-    case 'canonicalize_memory': return 'CANONICALIZE MEMORY'
-    case 'migrate_state_language': return 'MIGRATE STATE LANGUAGE'
-  }
-}
-
 function fingerprint(
   request: OperationRequest,
   payload: OperationPreviewPayload,
@@ -186,14 +177,7 @@ function assertPayloadMatchesRequest(
   request: OperationRequest,
   payload: OperationPreviewPayload,
 ): void {
-  if (request.operation !== payload.operation) {
-    throw new AdminOperationError('operation_mismatch', 'preview payload operation does not match request')
-  }
-  if (
-    request.operation === 'reset_state'
-    && payload.operation === 'reset_state'
-    && request.scope !== payload.scope
-  ) {
+  if (request.scope !== payload.scope) {
     throw new AdminOperationError('operation_mismatch', 'reset preview scope does not match request')
   }
 }

@@ -14,10 +14,7 @@ let stopping = false
 
 async function main(): Promise<void> {
   await prisma.$connect()
-  setLlmProvider(buildMediaProvider(
-    config.llm,
-    config.services.enabled ? { gatewayUrl: config.services.llmGatewayUrl } : {},
-  ))
+  setLlmProvider(buildMediaProvider(config.llm))
   server = await startJsonServer({
     baseUrl: config.services.mediaWorkerUrl,
     async handler({ request, response, url, body }) {

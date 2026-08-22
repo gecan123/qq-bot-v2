@@ -29,24 +29,6 @@ scope 必须显式提供，命令可重复执行；标准 package script 已内�
 
 从旧 snapshot 版本 clean cutover 时不做历史迁移：先部署并生成新 schema，停止旧 bot，执行上面的显式 reset，再启动新版本。不要 dual-write 或从 `messages` / 日志重建旧 transcript。
 
-### 迁移旧长期状态为中文
-
-先停止 bot，再运行：
-
-```bash
-pnpm agent:migrate-state-language
-```
-
-该命令只迁移 `data/agent-workspace/{memory,notebook,life}` 中的人类可读 title/topic/content/事项正文，保留 entry ID、时间、tier/status/source、QQ 号、结构字段和固定英文分区名。命令先在 `data/agent-workspace/db-backups/long-term-language-*` 建立可恢复副本，再用当前 LLM 做有界结构化翻译；翻译结果必须逐项对应并通过中文载体校验，写入使用 revision/CAS 或原子替换。检测到 `.bot.pid` 对应进程仍存活时会拒绝迁移。
-
-### 迁移 Memory v2 场景模型
-
-先用 `tsx scripts/migrate-memory-v2.ts` 只读预览；确认后停止 bot，再运行 `pnpm agent:migrate-memory-v2`。迁移会先备份到 `data/agent-workspace/db-backups/memory-v2-*`，再原子替换 memory 目录：群文件中的显式个人事实移动到该人物的来源群场景；旧人物文件中无法还原来源场景的条目进入 `unscoped.md`，并以 `legacy_unverified/disputed` 隔离；其余文件升级为 v2 并保留 entry ID、时间、tier/status、source 和 supersedes。迁移后运行 `pnpm agent:memory-check`。
-
-### 归并 Self / Topic Memory 文件
-
-先用 `pnpm exec tsx scripts/canonicalize-memory-files.ts` 只读预览；确认后停止 bot，再运行 `pnpm agent:canonicalize-memory`。命令把所有 `self/*.md` 无损归并到 `self/self.md`，把所有 `topics/*.md` 无损归并到 `topics/topics.md`；旧文件 title 会进入对应 entry aliases，继续参与 recall。应用前会备份到 `data/agent-workspace/db-backups/memory-canonical-*`，并在临时目录验证全部 Memory 文件后原子替换。迁移后运行 `pnpm agent:memory-check`。
-
 ```bash
 pnpm dev
 pnpm dev:once
@@ -55,8 +37,6 @@ pnpm agent:dev:once
 pnpm qq:gateway
 pnpm feishu:gateway
 pnpm media:worker
-pnpm scheduler:service
-pnpm llm:gateway
 pnpm build
 pnpm typecheck
 pnpm test
@@ -73,8 +53,6 @@ pnpm agent:memory-check
 pnpm agent:ledger-check
 pnpm agent:context
 pnpm agent:reset-state -- --scope context
-pnpm agent:migrate-state-language
-pnpm agent:canonicalize-memory
 pnpm --silent agent:context -- --json
 pnpm db:generate
 pnpm db:migrate
@@ -86,12 +64,7 @@ pnpm toollogf
 
 ### WebAdmin（本机管理模式）
 
-`apps/admin-web` 的“现在”首页展示实时活动、Goal commitment 与最近工具进展，其他观察页面提供 Ledger、原始事件、生命状态、Memory、QQ、指标和健康下钻。“管理操作”页面只开放以下四种固定维护操作：
-
-- `reset_state`：选择 `context`、`knowledge` 或 `all`；没有自动恢复路径。
-- `migrate_memory_v2`：升级 Memory 场景模型，执行时创建 `memory-v2-*` 备份。
-- `canonicalize_memory`：归并 Self / Topic Memory，执行时创建 `memory-canonical-*` 备份。
-- `migrate_state_language`：分批迁移长期状态中文叙述，执行时创建 `long-term-language-*` 备份。
+`apps/admin-web` 的“现在”首页展示实时活动、Goal commitment 与最近工具进展，其他观察页面提供 Ledger、原始事件、生命状态、Memory、QQ、指标和健康下钻。“管理操作”页面只开放固定 `reset_state`：选择 `context`、`knowledge` 或 `all`，且没有自动恢复路径。一次性 Memory/语言迁移已经退出正式运维面。
 
 观察数据流是：
 
@@ -107,9 +80,9 @@ Browser → validated Server Function → operation service
         → local run state / audit log
 ```
 
-每次写入必须先生成只读预览。operator 检查影响范围和 warning 后，输入服务端返回的精确确认短语；服务端再次确认 Bot 已停止，重新生成预览并核对 SHA-256 指纹，状态漂移时返回 `preview_stale` 并要求重新预览。WebAdmin 不会发送 signal，也不会自动停止或重启 Bot。任意写任务运行时拒绝第二个任务。
+每次写入必须先生成只读预览。operator 检查影响范围后，输入服务端返回的精确确认短语；服务端再次确认 Bot 已停止，重新生成预览并核对 SHA-256 指纹，状态漂移时返回 `preview_stale` 并要求重新预览。WebAdmin 不会发送 signal，也不会自动停止或重启 Bot。任意写任务运行时拒绝第二个任务。
 
-任务状态是 `queued`、`running`、`succeeded`、`failed` 或 `interrupted`。当前 state 原子写入 `logs/admin-operation-state.json`，每次 transition 追加到 `logs/admin-operations.ndjson`；日志只保存有界结果摘要，不记录 LLM 输入、长期状态正文、密钥或完整数据库 payload。WebAdmin 重启时，上一进程遗留的 active run 标记为 `interrupted`；operator 必须结合备份和健康检查判断是否重试，系统不会自动续跑。
+任务状态是 `queued`、`running`、`succeeded`、`failed` 或 `interrupted`。当前 state 原子写入 `logs/admin-operation-state.json`，每次 transition 追加到 `logs/admin-operations.ndjson`；日志只保存有界结果摘要，不记录长期状态正文、密钥或完整数据库 payload。WebAdmin 重启时，上一进程遗留的 active run 标记为 `interrupted`；operator 必须检查当前状态后再决定是否重试，系统不会自动续跑。
 
 实时 phase 另由 Bot Runtime 原子写入 `logs/agent-activity.json`。WebAdmin 会同时核对 `.bot.pid`；PID 缺失、不可达或不匹配时不展示旧文件为“正在执行”。该观察面不参与 replay，Bot 重启后才会开始产生新版实时状态。
 
@@ -154,11 +127,11 @@ JSON 报告带当前为 `2` 的 `schemaVersion`，总占用字段是 `estimatedS
 `LLM_FALLBACK_MODEL` 默认不配置。需要时填写与 `LLM_DEFAULT_MODEL` 使用同一 `LLM_DEFAULT_PROVIDER` wire path 的模型；它只接管 overload/5xx，不用于鉴权、限流、参数错误或 context overflow。
 
 - 从仓库根目录启动，确保 `.bot.pid`、logs、prompts 和相对路径稳定。
-- `pnpm dev` 通过 `src/platform.ts` 启动多进程 watch 模式；`pnpm dev:once` 启动同一组进程但不监听文件变化。supervisor 等待 LLM Gateway、Media Worker、Scheduler、QQ Gateway，以及按配置启用的 Feishu Gateway 和 Browser Controller 健康后，才启动 Agent Core。
+- `pnpm dev` 通过 `src/platform.ts` 启动多进程 watch 模式；`pnpm dev:once` 启动同一组进程但不监听文件变化。supervisor 等待 Media Worker、QQ Gateway，以及按配置启用的 Feishu Gateway 和 Browser Controller 健康后，才启动 Agent Core。短期调度在 Agent Core 内部启动，LLM 请求由 Agent Core 与 Media Worker 直接发给 provider。
 - `pnpm dev:all` 在 watch 模式下额外启动 WebAdmin；`pnpm dev:all:once` 不监听 Bot 源码变化。它们只合并本地生命周期，WebAdmin 不参与 ingress 或 Agent 调度。WebAdmin 的“进程日志”页按固定进程白名单读取 `logs/processes/*.log` 最后 512 KiB / 500 行，不能提交路径、命令或写入日志。
 - 各进程标准输出和错误分别追加到 `logs/processes/<process>.log`；终端只显示 supervisor 生命周期，平台 Gateway 日志不再混进 Agent Core 日志。
 - `pnpm build && pnpm start` 使用 `dist/platform.js` 启动编译后的同一平台。`pnpm agent:dev`、`pnpm agent:dev:once` 和 `pnpm agent:start` 保留单进程兼容入口，主要用于聚焦调试。
-- `pnpm qq:gateway`、`pnpm feishu:gateway`、`pnpm media:worker`、`pnpm scheduler:service`、`pnpm llm:gateway` 可以单独启动服务；不要与占用同一端口的 platform supervisor 同时运行。
+- `pnpm qq:gateway`、`pnpm feishu:gateway`、`pnpm media:worker` 可以单独启动服务；不要与占用同一端口的 platform supervisor 同时运行。
 - `BOT_*_URL` 内部服务地址只接受带显式端口的 loopback HTTP origin；这些端点没有远程认证，不能绑定到 `0.0.0.0` 或非可信网络。
 - `.bot.pid` 只供 WebAdmin 和破坏性运维命令判断 Bot 是否仍在运行，不接受产品控制信号。
 - `pnpm agent:daily-metrics -- --date YYYY-MM-DD` 按日报告主 Agent 的 token/cache 和工具调用，不再维护 rest 专门指标；该命令属于 operator 入口，不暴露给主 Agent。
@@ -177,9 +150,9 @@ JSON 报告带当前为 `2` 的 `schemaVersion`，总占用字段是 `estimatedS
 BOT_SCHEDULE_STATE_PATH=data/agent-workspace/runtime/schedules.json
 ```
 
-Scheduler 服务启动时会完整读取和校验 v2 store，再为每个一次性 `at` / `afterSeconds` job 挂 timer；Agent Core 的 schedule tool 通过 `BOT_SCHEDULER_URL` 调用它。停机期间已经到期的 job 在恢复后触发它唯一的 occurrence，不做周期合并。未知 version、损坏 JSON 或非法 job 会让服务启动显式失败；从含 recurring job 的 v1 store 切换时应在平台停止后由 operator 清理旧 schedule 状态。Timer、处理或 event delivery 异常由 `SCHEDULER_SERVICE` logger 记录 `scheduleId` 和原始错误。
+Agent Core 启动时完整读取和校验 v2 store，再为每个一次性 `at` / `afterSeconds` job 挂 timer；schedule tool 直接调用同进程 `ScheduleRuntime`。停机期间已经到期的 job 在恢复后触发它唯一的 occurrence，不做周期合并。未知 version、损坏 JSON 或非法 job 会让 Agent Core 启动显式失败；从含 recurring job 的 v1 store 切换时应在平台停止后由 operator 清理旧 schedule 状态。Timer、处理或 event delivery 异常由 `SCHEDULE` logger 记录 `scheduleId` 和原始错误。
 
-到期事件通过 `BOT_AGENT_EVENTS_URL` 的窄内部端点投递给 Agent Core；端点只接受 `scheduled_wake`，不能写 ledger 或提交任意 BotEvent。Scheduler graceful shutdown 会等待正在串行的 mutation 并清除 timer handle，但不删除尚未完成的持久 job；下次启动继续按 store 恢复。不要在平台运行时手工编辑该文件。
+同目录还维护 `${BOT_SCHEDULE_STATE_PATH}.occurrences` 和 `${BOT_SCHEDULE_STATE_PATH}.deliveries`。到期流程先持久化 occurrence 和 pending delivery，再删除 active job 并直接 enqueue `scheduled_wake`；该事件写入 canonical ledger 后才删除 pending delivery。启动时会跳过仍 active 的 pending 项、重放尚未提交的 delivery，并根据 canonical ledger 清理已经提交的项，因此不需要独立 Scheduler、Agent Events HTTP 端点或内部调度 URL。graceful shutdown 会等待串行 mutation 并清除 timer handle，但不删除尚未完成的持久 job 或 pending delivery。不要在运行期间手工编辑这三个文件。
 
 ## Owner Goal
 
@@ -258,7 +231,7 @@ invoke tool=mcp args={"action":"call","tool":"mcp__example__search","arguments":
 - MCP schema 快照默认位于 `data/agent-workspace/runtime/mcp-schemas/*.json`；每次成功 discovery 原子覆盖当前版本。这里不保存远端调用结果或认证密钥。
 
 - Agent Core 启动后异步执行一次 retention，并在每天北京时间 03:00 以 single-flight 方式再次执行；清理不会阻塞 Bot 启动，停机时会取消 timer 并有界等待在途任务。
-- 每次清理删除 7 天前的 `messages` 和 `media`；StickerPool 正在引用的 Media 受保护。删除 Media 后，再清理一小时前已经无人引用且近期没有被内容 upsert 触碰的 `media_blobs`。
+- 每次清理删除 `BOT_INBOUND_RETENTION_DAYS` 窗口之前的 `messages` 和 `media`，默认 7 天；个人长期使用可按需改为 30 或 90 天。StickerPool 正在引用的 Media 受保护。Memory 中的 `sourceMessageRowIds` 只在该窗口内保证可回查原文，过期后保留为历史来源标识。删除 Media 后，再清理一小时前已经无人引用且近期没有被内容 upsert 触碰的 `media_blobs`。
 - 每次清理也默认删除 30 天前的 `agent_tool_calls`、`agent_token_usage` 以及 token/tool/fetch NDJSON 记录；用 `BOT_OBSERVABILITY_RETENTION_DAYS` 覆盖，设为 `0` 关闭这组观测数据清理。NDJSON 以同目录临时文件原子替换；无效 JSON、无效时间戳或缺少 `ts`/`time` 的行会保留并记录告警。数据库表和各文件独立清理，单个目标失败不会阻塞其他目标或 Bot 启动。
 
 ## Moomoo OpenD / Mac

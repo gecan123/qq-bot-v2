@@ -11,6 +11,6 @@ description: 不确定工具语法、deferred capability、参数 schema 或正�
 - `help action=list`: 查看按需 capability。
 - `help action=describe tool=<name>`: 查看内部工具说明和参数 schema。
 - `invoke tool=<name> args=<object>`: 直接调用按需工具；目标 schema、policy 和 approval 仍然生效。
-- 数据库用 `db`，指标用 `metrics`，聊天风格用 `chat_style`，外部抓取用 `fetch_content`；不要从 `workspace_bash` 绕行。
+- 消息正文用 `inbox`，长期事实用 `memory`，聊天风格用 `chat_style`，外部抓取用 `fetch_content`；数据库与指标只通过 WebAdmin 或 operator CLI 查看，不是主 Agent 工具。不要从 `workspace_bash` 绕行。
 
 对外 QQ 发言只能用 `send_message`。异步工具返回 `taskId` 或收到后台任务完成事件后，用 `background_task action=list/get` 查状态和结果。

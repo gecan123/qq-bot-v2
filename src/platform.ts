@@ -29,22 +29,10 @@ const healthUrl = (baseUrl: string): string => `${baseUrl.replace(/\/+$/, '')}/h
 const webAdminLaunch = packageManagerLaunch(['--filter', '@qq-bot/admin-web', 'dev'])
 const specs: ServiceSpec[] = [
   {
-    name: 'llm-gateway',
-    sourceEntry: 'src/services/llm-gateway.ts',
-    distEntry: 'dist/services/llm-gateway.js',
-    healthUrl: healthUrl(env.BOT_LLM_GATEWAY_URL ?? 'http://127.0.0.1:37926'),
-  },
-  {
     name: 'media-worker',
     sourceEntry: 'src/services/media-worker.ts',
     distEntry: 'dist/services/media-worker.js',
     healthUrl: healthUrl(env.BOT_MEDIA_WORKER_URL ?? 'http://127.0.0.1:37923'),
-  },
-  {
-    name: 'scheduler',
-    sourceEntry: 'src/services/scheduler.ts',
-    distEntry: 'dist/services/scheduler.js',
-    healthUrl: healthUrl(env.BOT_SCHEDULER_URL ?? 'http://127.0.0.1:37924'),
   },
   {
     name: 'qq-gateway',

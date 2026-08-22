@@ -6,7 +6,7 @@
 
 - 对话控制：`yield`。当当前方向已经完成、暂时没有可执行下一步或应把控制权交回等待机制时调用；它立即返回 `continuation=stop`，不保存 intention、resume reminder 或休息状态。无工具轮仍由 runtime 的有界等待处理。
 - 短期调度：`schedule action=create|list|get_occurrence|cancel`，active job 的公开 ID 字段统一为 `id`。`create` 只接受一次性 `at` 或 `afterSeconds`，触发必须位于 30 秒到 3 天内，最多 20 个 active job。同名同时间创建幂等返回 `existing`，同名不同时间返回冲突及已有 `id`，需先 cancel；`list` 返回有界公开摘要。active 状态保存在 schedule store，触发正文只写一次 occurrence store；到期 notification 只给名称、时间和 `get_occurrence` 打开参数，不执行预存命令。它是 normal+interrupt，轮次边界低于 high notification、高于 active Goal 和 passive notification。
-- 持久目标：`goal action=get|create_self|complete|report_blocker|abandon_self`。没有未完成 Goal 时，Agent 可以为自己的兴趣直接创建 `origin=self` 的持久目标，必须给出真实 `motivation` 和可核验 `completionCriteria`；默认预算 1,000,000 tokens，单个上限 10,000,000，60 秒冷却和滚动 24 小时最多 64 个只是失控保险丝。Agent 可以放弃 self Goal，但不能放弃 owner Goal。配置的 owner 仍可用私聊 `/goal` 创建、暂停、恢复或取消，owner Goal 会直接抢占 self Goal。轮次边界优先级是 high+interrupt notification > normal+interrupt notification > active Goal > passive notification；前台仍是单一串行 BotLoop，等待后台或外部输入时可以做其他事情。`complete` 必须提交逐项真实证据，并对 owner/self Goal 各执行一次独立、无工具的 LLM 验收；只有 `{ok:true}` 才落完成状态，拒绝或验收不可用会保持 Goal 活跃且本次不重试。同一 blocker 每个连续 Goal round 用相同 `blockerKey` 报告，第三轮才转 `blocked`。Goal token budget 按主 Agent 未缓存 input 加 output 计量；judger 等辅助 LLM 使用量尚未计入。只有明确的 provider 硬额度/账单上限才转 `usage_limited`，普通临时 429 仍走已有有界重试和 round backoff。
+- 持久目标：`goal action=get|create_self|replan|complete|report_blocker|abandon_self`。没有未完成 Goal 时，Agent 可以为自己的兴趣直接创建 `origin=self` 的持久目标，必须给出真实 `motivation`、可核验 `completionCriteria` 和立即执行的 `currentCommitment`；owner Goal 初始没有承诺时由 Agent 先 `replan`。默认预算 1,000,000 tokens，单个上限 10,000,000，60 秒冷却和滚动 24 小时最多 64 个只是失控保险丝。Agent 可以放弃 self Goal，但不能放弃 owner Goal。配置的 owner 仍可用私聊 `/goal` 创建、暂停、恢复或取消，owner Goal 会直接抢占 self Goal。轮次边界优先级是 high+interrupt notification > normal+interrupt notification > active Goal > passive notification；前台仍是单一串行 BotLoop，等待后台或外部输入时可以做其他事情。`complete` 必须提交逐项真实证据，并对 owner/self Goal 各执行一次独立、无工具的 LLM 验收；只有 `{ok:true}` 才落完成状态，拒绝或验收不可用会保持 Goal 活跃且本次不重试。同一 blocker 每个连续 Goal round 用相同 `blockerKey` 报告，第三轮才转 `blocked`。Goal token budget 按主 Agent 未缓存 input 加 output 计量；judger 等辅助 LLM 使用量尚未计入。只有明确的 provider 硬额度/账单上限才转 `usage_limited`，普通临时 429 仍走已有有界重试和 round backoff。
 - QQ 与飞书发送位于 deferred `chat` capability：用 `help action=describe` 查看 schema 后，直接 `invoke conversation open` 显式打开允许的群或好友，最后 `invoke send_message` 发送文本、图片、图文或受控音乐卡片。`work` 必填：无后续承诺用 `state=none`；当前会话内马上续做用 `state=continue`，只保护下一轮且不跨重启；持久 Goal 的进度消息用 `state=goal_progress + goalId`，并由 before-tool hook 确认该 Goal 当前 active 且有 `currentCommitment`。
 - QQ 目录：`qq_directory`（分页列出/搜索 NapCat 当前全部好友；群目录只披露当前已加入且配置在 `prompts/groups.md` 的群；`profile` 按 QQ 号合并当前目录名和消息事实账本中观察到的历史群名片/昵称）。
 - 稳定按需壳：`help`（`list` / `describe` capability 或内部工具 schema）和 `invoke`（直接调用按需内部工具）。安全仍由目标工具 schema、policy 和 approval 约束，不持久化激活状态。
@@ -16,7 +16,6 @@
 - 风格和文本判断：`chat_style` 按需读取聊天约束、风格和群定制；发送路径不再运行阻塞式 AI 腔分类器。
 - 主动性自检：`initiative_review` 是默认可见的只读 LLM 工具。只有当主 Agent 准备以“以后再说”“不打扰”“算了”“先歇着”等理由停下仍可立即推进的方向时，才把完整第一人称想法交给它；已经在推进、只是客观描述状态、确实没有当前方向或健康交还控制时不调用。它返回稳定的 `hasNegative` / `rewritten`，结果作为普通 tool result 进入 ledger；工具本身不保存会话状态，也不在每轮隐藏执行。
 - 运行时工作：`background_task`（通用异步任务 list/get；get 的文本结果有通用上限）、只读 `workspace_bash`；普通私有工作文件通过 deferred `workspace_management` 内的 `workspace_file` 修改。任务 registry 持久化到 `BOT_BACKGROUND_TASK_STATE_PATH`；所有遗留 running 在重启时明确变成 `interrupted`。完成/失败 notification 不复制 description、summary 或结果正文，只携带状态和 `background_task get` 打开动作。当前定时唤醒不走 task registry，而由上述独立 schedule/occurrence store 恢复。
-- 持久目标：`goal` 支持 `get/create_self/replan/complete/report_blocker/abandon_self`。self Goal 创建时必须同时提交当前具体承诺 `currentCommitment`；owner Goal 初始没有承诺时由 Agent 先 `replan`。完成步骤或路线失效后更新承诺；完整目标提交证据后还要通过一次无工具验收，拒绝 reason 或 unavailable 状态会作为普通 tool result 指引后续，只有验收通过后注意力才重新回到普通自主选择。
 - 审批控制：`approval action=list|status|approve|cancel`。默认 `BOT_APPROVAL_MODE=thin`，只拦网站 `publish` 和未声明只读的 MCP 调用；本地 memory/notebook/Life Journal/workspace 删除和网站本地删除不等待审批。被拦调用会返回 `approvalId`；owner 私聊发送精确文本 `批准 <approvalId>` 后，用消息 `rowId` 批准并以相同参数重试。审批默认 10 分钟过期且只能消费一次。需要旧的全量本地审批时设 `strict`，快速实验可设 `off`。
 
 ## Deferred capability
@@ -100,7 +99,6 @@
 - Bash 类能力必须保留 command allowlist、固定 workspace、最小 env 和输出/时间上限；敏感访问应通过专门脚本或 capability wrapper。审计可按开发阶段调薄，不能用关闭审计替代执行边界。
 - `workspace_bash` 和 deferred tools 必须保留现有上限、preview compression、cache 和 timeout；网络与外部程序只通过专用 typed wrapper。
 - 有副作用的工具要格外谨慎：`send_message`、图片生成/下载、notebook/life_journal/memory/sticker 工具、browser 写操作，以及未来任何会写 DB 或外部服务的工具。
-- `db`、`metrics`、`gh` 和 `skill_editor` 的受控实现可以供 WebAdmin、脚本或 operator 复用，但不在主 Agent registry/capability manifest 中；相关维护通过运维入口执行。
 
 ## LLM 路径
 

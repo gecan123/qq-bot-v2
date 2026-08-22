@@ -47,6 +47,27 @@ describe('purgeOldData', () => {
     ])
   })
 
+  test('uses a caller-provided inbound retention window', async () => {
+    let messageCutoff: Date | undefined
+    const store: RetentionStore = {
+      async listProtectedMediaIds() { return [] },
+      async deleteMessagesBefore(cutoff) {
+        messageCutoff = cutoff
+        return 0
+      },
+      async deleteMediaBefore() { return 0 },
+      async deleteOrphanBlobsBefore() { return 0 },
+    }
+
+    await purgeOldData({
+      now: () => new Date('2026-07-16T04:30:00.000Z'),
+      retentionDays: 30,
+      store,
+    })
+
+    assert.deepEqual(messageCutoff, new Date('2026-06-15T16:00:00.000Z'))
+  })
+
   test('calculates the retention boundary in Beijing regardless of process timezone', () => {
     assert.deepEqual(
       beijingStartOfDayDaysAgo(new Date('2026-07-16T15:59:59.999Z'), 7),

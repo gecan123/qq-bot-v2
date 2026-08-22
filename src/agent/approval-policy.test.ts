@@ -89,8 +89,6 @@ describe('owner approval policy', () => {
 
   test('classifies only explicitly high-risk destructive actions', () => {
     assert.ok(classifyApprovalRequirement('website', { action: 'publish' }))
-    assert.equal(classifyApprovalRequirement('skill_editor', { action: 'install' }), null)
-    assert.ok(classifyApprovalRequirement('skill_editor', { action: 'install' }, 'strict'))
     assert.ok(classifyApprovalRequirement('memory', { action: 'delete' }, 'strict'))
     assert.ok(classifyApprovalRequirement('notebook', { action: 'delete' }, 'strict'))
     assert.equal(classifyApprovalRequirement('website', { action: 'publish' }, 'off'), null)

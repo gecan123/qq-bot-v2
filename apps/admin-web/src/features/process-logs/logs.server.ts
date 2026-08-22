@@ -15,9 +15,7 @@ const MAX_TAIL_LINES = 500
 const SOURCE_LABELS: Record<ProcessLogSource, string> = {
   'agent-core': 'Agent Core',
   'qq-gateway': 'QQ Gateway',
-  'llm-gateway': 'LLM Gateway',
   'media-worker': 'Media Worker',
-  scheduler: 'Scheduler',
   'browser-controller': 'Browser Controller',
   'web-admin': 'WebAdmin',
 }

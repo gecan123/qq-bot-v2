@@ -1,18 +1,13 @@
 import { z } from 'zod'
 
 const isoDateSchema = z.iso.datetime({ offset: true })
-const safePathSchema = z.string().min(1).max(500)
 const operationIdSchema = z.string().min(1).max(100)
+const resetScopeSchema = z.enum(['context', 'knowledge', 'all'])
 
-export const operationRequestSchema = z.discriminatedUnion('operation', [
-  z.object({
-    operation: z.literal('reset_state'),
-    scope: z.enum(['context', 'knowledge', 'all']),
-  }).strict(),
-  z.object({ operation: z.literal('migrate_memory_v2') }).strict(),
-  z.object({ operation: z.literal('canonicalize_memory') }).strict(),
-  z.object({ operation: z.literal('migrate_state_language') }).strict(),
-])
+export const operationRequestSchema = z.object({
+  operation: z.literal('reset_state'),
+  scope: resetScopeSchema,
+}).strict()
 
 export const botProcessStatusSchema = z.discriminatedUnion('stopped', [
   z.object({
@@ -51,103 +46,26 @@ const resetWorkspaceSchema = z.object({
   }).strict()).max(100),
 }).strict()
 
-const languageCountsSchema = z.object({
-  memoryTitles: z.number().int().nonnegative(),
-  memoryEntries: z.number().int().nonnegative(),
-  notebookTopics: z.number().int().nonnegative(),
-  notebookEntries: z.number().int().nonnegative(),
-  lifeJournalEntries: z.number().int().nonnegative(),
-  agendaItems: z.number().int().nonnegative(),
+export const operationPreviewPayloadSchema = z.object({
+  operation: z.literal('reset_state'),
+  scope: resetScopeSchema,
+  needed: z.boolean(),
+  context: resetContextSchema.nullable(),
+  knowledge: resetKnowledgeSchema.nullable(),
+  workspace: resetWorkspaceSchema.nullable(),
 }).strict()
 
-export const operationPreviewPayloadSchema = z.discriminatedUnion('operation', [
-  z.object({
-    operation: z.literal('reset_state'),
-    scope: z.enum(['context', 'knowledge', 'all']),
-    needed: z.boolean(),
-    context: resetContextSchema.nullable(),
-    knowledge: resetKnowledgeSchema.nullable(),
-    workspace: resetWorkspaceSchema.nullable(),
-  }).strict(),
-  z.object({
-    operation: z.literal('migrate_memory_v2'),
-    needed: z.boolean(),
-    filesBefore: z.number().int().nonnegative(),
-    filesAfter: z.number().int().nonnegative(),
-    entries: z.number().int().nonnegative(),
-    movedPersonEntries: z.number().int().nonnegative(),
-    quarantinedPersonEntries: z.number().int().nonnegative(),
-    changes: z.array(z.object({
-      from: safePathSchema,
-      to: safePathSchema,
-      entryId: z.string().min(1).max(200),
-      reason: z.enum(['format_upgrade', 'person_quarantine', 'person_extracted_from_group']),
-    }).strict()).max(50),
-    warnings: z.array(z.string().max(500)).max(20),
-    truncated: z.object({
-      changes: z.number().int().nonnegative(),
-      warnings: z.number().int().nonnegative(),
-    }).strict(),
-  }).strict(),
-  z.object({
-    operation: z.literal('canonicalize_memory'),
-    needed: z.boolean(),
-    filesBefore: z.number().int().nonnegative(),
-    filesAfter: z.number().int().nonnegative(),
-    entries: z.number().int().nonnegative(),
-    consolidatedFiles: z.number().int().nonnegative(),
-    sourceFiles: z.array(safePathSchema).max(100),
-    targetFiles: z.array(safePathSchema).max(2),
-  }).strict(),
-  z.object({
-    operation: z.literal('migrate_state_language'),
-    needed: z.boolean(),
-    totalItems: z.number().int().nonnegative(),
-    estimatedBatches: z.number().int().nonnegative(),
-    repairableJournalEntries: z.number().int().nonnegative(),
-    counts: languageCountsSchema,
-  }).strict(),
-])
-
-export const operationResultPayloadSchema = z.discriminatedUnion('operation', [
-  z.object({
-    operation: z.literal('reset_state'),
-    scope: z.enum(['context', 'knowledge', 'all']),
-    deletedLedgerEntries: z.number().int().nonnegative(),
-    deletedCheckpoints: z.number().int().nonnegative(),
-    deletedRuntimeStates: z.number().int().nonnegative(),
-    deletedGoals: z.number().int().nonnegative(),
-    createdRuntimeState: z.boolean(),
-    removedDirectories: z.array(z.enum(['memory', 'journal', 'life', 'notebook'])).max(4),
-    removedWorkspaceEntries: z.number().int().nonnegative().default(0),
-  }).strict(),
-  z.object({
-    operation: z.literal('migrate_memory_v2'),
-    backupDir: safePathSchema.nullable(),
-    filesBefore: z.number().int().nonnegative(),
-    filesAfter: z.number().int().nonnegative(),
-    entries: z.number().int().nonnegative(),
-    movedPersonEntries: z.number().int().nonnegative(),
-    quarantinedPersonEntries: z.number().int().nonnegative(),
-    warnings: z.number().int().nonnegative(),
-  }).strict(),
-  z.object({
-    operation: z.literal('canonicalize_memory'),
-    backupDir: safePathSchema.nullable(),
-    filesBefore: z.number().int().nonnegative(),
-    filesAfter: z.number().int().nonnegative(),
-    entries: z.number().int().nonnegative(),
-    consolidatedFiles: z.number().int().nonnegative(),
-  }).strict(),
-  z.object({
-    operation: z.literal('migrate_state_language'),
-    backupDir: safePathSchema,
-    repairedNestedJournalEntries: z.number().int().nonnegative(),
-    translated: languageCountsSchema,
-    renamedMemoryFiles: z.number().int().nonnegative(),
-    translatedItems: z.number().int().nonnegative(),
-  }).strict(),
-])
+export const operationResultPayloadSchema = z.object({
+  operation: z.literal('reset_state'),
+  scope: resetScopeSchema,
+  deletedLedgerEntries: z.number().int().nonnegative(),
+  deletedCheckpoints: z.number().int().nonnegative(),
+  deletedRuntimeStates: z.number().int().nonnegative(),
+  deletedGoals: z.number().int().nonnegative(),
+  createdRuntimeState: z.boolean(),
+  removedDirectories: z.array(z.enum(['memory', 'journal', 'life', 'notebook'])).max(4),
+  removedWorkspaceEntries: z.number().int().nonnegative().default(0),
+}).strict()
 
 export const operationPreviewSchema = z.object({
   schemaVersion: z.literal(1),
@@ -175,7 +93,6 @@ export const operationProgressSchema = z.object({
 export const operationSafeErrorSchema = z.object({
   code: z.string().min(1).max(100),
   message: z.string().min(1).max(500),
-  backupDir: safePathSchema.optional(),
 }).strict()
 
 export const operationRunSchema = z.object({
@@ -220,17 +137,10 @@ export const operationRunSchema = z.object({
   if ((run.status === 'failed' || run.status === 'interrupted') && run.error === null) {
     context.addIssue({ code: 'custom', path: ['error'], message: 'failed or interrupted run requires an error' })
   }
-  if ((run.status === 'queued' || run.status === 'running') && run.error !== null) {
+  if (active && run.error !== null) {
     context.addIssue({ code: 'custom', path: ['error'], message: 'active run cannot have an error' })
   }
-  if (run.result && run.result.operation !== run.request.operation) {
-    context.addIssue({ code: 'custom', path: ['result', 'operation'], message: 'result operation must match request' })
-  }
-  if (
-    run.result?.operation === 'reset_state'
-    && run.request.operation === 'reset_state'
-    && run.result.scope !== run.request.scope
-  ) {
+  if (run.result && run.result.scope !== run.request.scope) {
     context.addIssue({ code: 'custom', path: ['result', 'scope'], message: 'reset result scope must match request' })
   }
 })

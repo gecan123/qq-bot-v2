@@ -14,7 +14,7 @@ export interface OverviewDb {
   }
   botAgentRuntimeState: {
     findUnique(input: object): Promise<{
-      qqConversationFocus: unknown
+      conversationFocus: unknown
       lastWakeAt: Date | null
       updatedAt: Date
     } | null>
@@ -64,7 +64,7 @@ export async function loadOverviewSnapshot(
     }),
     db.botAgentRuntimeState.findUnique({
       where: { id: 1 },
-      select: { qqConversationFocus: true, lastWakeAt: true, updatedAt: true },
+      select: { conversationFocus: true, lastWakeAt: true, updatedAt: true },
     }),
     db.botAgentGoal.findUnique({
       where: { id: 1 },
@@ -94,7 +94,7 @@ export async function loadOverviewSnapshot(
   ])
 
   const warnings: string[] = [...toolActivity.warnings]
-  const focus = parseFocus(runtime?.qqConversationFocus, warnings)
+  const focus = parseFocus(runtime?.conversationFocus, warnings)
 
   const activity = mapActivity(activityInput)
   if (activityInput.status === 'invalid') warnings.push('实时活动观察面无效。')
@@ -241,20 +241,17 @@ function parseFocus(
 
   if (typeof value === 'object') {
     const focus = value as Record<string, unknown>
-    if (focus.type === 'group' && isPositiveSafeInteger(focus.groupId)) {
-      return { type: 'group', id: String(focus.groupId) }
-    }
-    if (focus.type === 'private' && isPositiveSafeInteger(focus.userId)) {
-      return { type: 'private', id: String(focus.userId) }
+    if (
+      (focus.kind === 'group' || focus.kind === 'private')
+      && typeof focus.externalId === 'string'
+      && focus.externalId.trim().length > 0
+    ) {
+      return { type: focus.kind, id: focus.externalId }
     }
   }
 
-  warnings.push('runtime.qqConversationFocus invalid')
+  warnings.push('runtime.conversationFocus invalid')
   return null
-}
-
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 }
 
 function deriveCacheHitRate(usage: {

@@ -1,18 +1,6 @@
 import '@tanstack/react-start/server-only'
 import { createHash, randomUUID } from 'node:crypto'
-import type { MemoryEvidenceRow } from '../../../../../src/agent/memory-evidence.js'
 import { assertBotStopped, inspectBotProcessGuard } from '../../../../../src/ops/bot-process-guard.js'
-import {
-  migrateLongTermStateToChinese,
-  planLongTermStateLanguageMigration,
-  type LongTermStateLanguageMigrationResult,
-  type LongTermStateLanguageMigrationPlan,
-  type LongTermTranslation,
-  type LongTermTranslationItem,
-} from '../../../../../src/ops/long-term-state-language-migration.js'
-import { createLongTermStateTranslator } from '../../../../../src/ops/long-term-state-language-translator.js'
-import { canonicalizeSelfTopicMemory } from '../../../../../src/ops/memory-canonicalization.js'
-import { migrateMemoryToV2 } from '../../../../../src/ops/memory-v2-migration.js'
 import {
   previewAgentStateReset,
   resetAgentState,
@@ -40,32 +28,16 @@ import {
   type AdminOperationsPort,
 } from './operations.service.js'
 
-type LanguageTranslator = (
-  items: readonly LongTermTranslationItem[],
-  onProgress?: (progress: { completedBatches: number; totalBatches: number }) => void,
-) => Promise<readonly LongTermTranslation[]>
-
 interface AdminOperationsDb extends AgentStateResetDb, AgentStateResetPreviewDb {}
 
 export interface AdminOperationsAdapterDependencies {
   repositoryRoot: string
   workspaceRoot: string
   db: AdminOperationsDb
-  loadMemoryEvidence(ids: readonly number[]): Promise<MemoryEvidenceRow[]>
   inspectBot(repositoryRoot: string): Promise<BotProcessStatusDto>
   assertBotStopped(repositoryRoot: string): Promise<void>
   previewAgentStateReset: typeof previewAgentStateReset
   resetAgentState: typeof resetAgentState
-  migrateMemoryToV2: typeof migrateMemoryToV2
-  canonicalizeSelfTopicMemory: typeof canonicalizeSelfTopicMemory
-  planLongTermStateLanguageMigration(
-    input: { rootDir: string },
-  ): Promise<LongTermStateLanguageMigrationPlan>
-  createLanguageTranslator(): Promise<LanguageTranslator>
-  migrateLongTermStateToChinese(input: {
-    rootDir: string
-    translate(items: readonly LongTermTranslationItem[]): Promise<readonly LongTermTranslation[]>
-  }): Promise<LongTermStateLanguageMigrationResult>
 }
 
 export function createAdminOperationsPort(
@@ -75,165 +47,38 @@ export function createAdminOperationsPort(
     inspectBot: () => dependencies.inspectBot(dependencies.repositoryRoot),
 
     async preview(request) {
-      switch (request.operation) {
-        case 'reset_state': {
-          const result = await dependencies.previewAgentStateReset({
-            scope: request.scope,
-            workspaceDir: dependencies.workspaceRoot,
-            ...(request.scope === 'knowledge' ? {} : { db: dependencies.db }),
-          })
-          const knowledgeNeeded = result.knowledge?.directories.some(directory => directory.exists) ?? false
-          const contextNeeded = result.context
-            ? Object.values(result.context).some(count => count > 0)
-            : false
-          const workspaceNeeded = (result.workspace?.entries.length ?? 0) > 0
-          return {
-            payload: {
-              operation: 'reset_state',
-              scope: request.scope,
-              needed: contextNeeded || knowledgeNeeded || workspaceNeeded,
-              context: result.context ?? null,
-              knowledge: result.knowledge ?? null,
-              workspace: result.workspace ?? null,
-            },
-            stateFingerprint: hashState(result),
-          }
-        }
-        case 'migrate_memory_v2': {
-          const result = await dependencies.migrateMemoryToV2({
-            rootDir: dependencies.workspaceRoot,
-            loadSourceEvidence: dependencies.loadMemoryEvidence,
-          })
-          return {
-            payload: {
-              operation: 'migrate_memory_v2',
-              needed: result.needed,
-              filesBefore: result.filesBefore,
-              filesAfter: result.filesAfter,
-              entries: result.entries,
-              movedPersonEntries: result.movedPersonEntries,
-              quarantinedPersonEntries: result.quarantinedPersonEntries,
-              changes: result.changes.slice(0, 50),
-              warnings: result.warnings.slice(0, 20).map(warning => warning.slice(0, 500)),
-              truncated: {
-                changes: Math.max(0, result.changes.length - 50),
-                warnings: Math.max(0, result.warnings.length - 20),
-              },
-            },
-            stateFingerprint: result.stateFingerprint,
-          }
-        }
-        case 'canonicalize_memory': {
-          const result = await dependencies.canonicalizeSelfTopicMemory({
-            rootDir: dependencies.workspaceRoot,
-          })
-          const sourceFiles = [...result.sourceFiles].sort()
-          const targetFiles = [...result.targets].sort()
-          return {
-            payload: {
-              operation: 'canonicalize_memory',
-              needed: result.needed,
-              filesBefore: result.filesBefore,
-              filesAfter: result.filesAfter,
-              entries: result.entries,
-              consolidatedFiles: result.consolidatedFiles,
-              sourceFiles,
-              targetFiles,
-            },
-            stateFingerprint: result.stateFingerprint,
-          }
-        }
-        case 'migrate_state_language': {
-          const result = await dependencies.planLongTermStateLanguageMigration({
-            rootDir: dependencies.workspaceRoot,
-          })
-          return {
-            payload: {
-              operation: 'migrate_state_language',
-              needed: result.totalItems > 0 || result.repairableJournalEntries > 0,
-              totalItems: result.totalItems,
-              estimatedBatches: result.estimatedBatches,
-              repairableJournalEntries: result.repairableJournalEntries,
-              counts: result.counts,
-            },
-            stateFingerprint: result.stateFingerprint,
-          }
-        }
+      const result = await dependencies.previewAgentStateReset({
+        scope: request.scope,
+        workspaceDir: dependencies.workspaceRoot,
+        ...(request.scope === 'knowledge' ? {} : { db: dependencies.db }),
+      })
+      const knowledgeNeeded = result.knowledge?.directories.some(directory => directory.exists) ?? false
+      const contextNeeded = result.context
+        ? Object.values(result.context).some(count => count > 0)
+        : false
+      const workspaceNeeded = (result.workspace?.entries.length ?? 0) > 0
+      return {
+        payload: {
+          operation: 'reset_state',
+          scope: request.scope,
+          needed: contextNeeded || knowledgeNeeded || workspaceNeeded,
+          context: result.context ?? null,
+          knowledge: result.knowledge ?? null,
+          workspace: result.workspace ?? null,
+        },
+        stateFingerprint: hashState(result),
       }
     },
 
     async execute(request, progress) {
       await dependencies.assertBotStopped(dependencies.repositoryRoot)
-      switch (request.operation) {
-        case 'reset_state': {
-          await progress({ phase: 'resetting', completed: 0, total: 1 })
-          const result = await dependencies.resetAgentState({
-            scope: request.scope,
-            workspaceDir: dependencies.workspaceRoot,
-            ...(request.scope === 'knowledge' ? {} : { db: dependencies.db }),
-          })
-          return { operation: 'reset_state', ...result }
-        }
-        case 'migrate_memory_v2': {
-          await progress({ phase: 'migrating_memory', completed: 0, total: 1 })
-          const result = await dependencies.migrateMemoryToV2({
-            rootDir: dependencies.workspaceRoot,
-            apply: true,
-            loadSourceEvidence: dependencies.loadMemoryEvidence,
-          })
-          return {
-            operation: 'migrate_memory_v2',
-            backupDir: result.backupDir ?? null,
-            filesBefore: result.filesBefore,
-            filesAfter: result.filesAfter,
-            entries: result.entries,
-            movedPersonEntries: result.movedPersonEntries,
-            quarantinedPersonEntries: result.quarantinedPersonEntries,
-            warnings: result.warnings.length,
-          }
-        }
-        case 'canonicalize_memory': {
-          await progress({ phase: 'canonicalizing_memory', completed: 0, total: 1 })
-          const result = await dependencies.canonicalizeSelfTopicMemory({
-            rootDir: dependencies.workspaceRoot,
-            apply: true,
-          })
-          return {
-            operation: 'canonicalize_memory',
-            backupDir: result.backupDir ?? null,
-            filesBefore: result.filesBefore,
-            filesAfter: result.filesAfter,
-            entries: result.entries,
-            consolidatedFiles: result.consolidatedFiles,
-          }
-        }
-        case 'migrate_state_language': {
-          const result = await dependencies.migrateLongTermStateToChinese({
-            rootDir: dependencies.workspaceRoot,
-            async translate(items) {
-              const translate = await dependencies.createLanguageTranslator()
-              let progressWrites = Promise.resolve()
-              const translations = await translate(items, batch => {
-                progressWrites = progressWrites.then(() => progress({
-                  phase: 'translating',
-                  completed: batch.completedBatches,
-                  total: batch.totalBatches,
-                }))
-              })
-              await progressWrites
-              return translations
-            },
-          })
-          return {
-            operation: 'migrate_state_language',
-            backupDir: result.backupDir,
-            repairedNestedJournalEntries: result.repairedNestedJournalEntries,
-            translated: result.translated,
-            renamedMemoryFiles: result.renamedMemoryFiles.length,
-            translatedItems: result.translatedItems,
-          }
-        }
-      }
+      await progress({ phase: 'resetting', completed: 0, total: 1 })
+      const result = await dependencies.resetAgentState({
+        scope: request.scope,
+        workspaceDir: dependencies.workspaceRoot,
+        ...(request.scope === 'knowledge' ? {} : { db: dependencies.db }),
+      })
+      return { operation: 'reset_state', ...result }
     },
   }
 }
@@ -318,19 +163,10 @@ async function createDefaultOperationsRuntime(): Promise<OperationsRuntime> {
     repositoryRoot,
     workspaceRoot,
     db,
-    loadMemoryEvidence: ids => loadMemoryEvidence(db, ids),
     inspectBot: async root => botProcessStatusSchema.parse(await inspectBotProcessGuard(root)),
     assertBotStopped,
     previewAgentStateReset,
     resetAgentState,
-    migrateMemoryToV2,
-    canonicalizeSelfTopicMemory,
-    planLongTermStateLanguageMigration,
-    async createLanguageTranslator() {
-      const { createLlmClient } = await import('../../../../../src/agent/llm-client.js')
-      return createLongTermStateTranslator(createLlmClient())
-    },
-    migrateLongTermStateToChinese,
   })
   const service = createAdminOperationsService(port, {
     now: () => new Date(),
@@ -359,48 +195,6 @@ async function createDefaultOperationsRuntime(): Promise<OperationsRuntime> {
     }),
   })
   return { port, service, runner }
-}
-
-async function loadMemoryEvidence(
-  db: AdminOperationsDb,
-  ids: readonly number[],
-): Promise<MemoryEvidenceRow[]> {
-  if (ids.length === 0) return []
-  const message = (db as unknown as {
-    message: { findMany(input: object): Promise<Array<{
-      id: number
-      sceneKind: string
-      sceneExternalId: string
-      groupId: bigint | null
-      messageId: bigint
-      senderId: bigint
-      sentAt: Date | null
-      createdAt: Date
-    }>> }
-  }).message
-  const rows = await message.findMany({
-    where: { id: { in: [...new Set(ids)] } },
-    orderBy: { id: 'asc' },
-    select: {
-      id: true,
-      sceneKind: true,
-      sceneExternalId: true,
-      groupId: true,
-      messageId: true,
-      senderId: true,
-      sentAt: true,
-      createdAt: true,
-    },
-  })
-  return rows.map(row => ({
-    rowId: row.id,
-    sceneKind: row.sceneKind as 'qq_group' | 'qq_private',
-    sceneExternalId: row.sceneExternalId,
-    groupId: row.groupId === null ? null : Number(row.groupId),
-    messageId: String(row.messageId),
-    senderId: String(row.senderId),
-    sentAt: (row.sentAt ?? row.createdAt).toISOString(),
-  }))
 }
 
 function hashState(value: unknown): string {
@@ -468,13 +262,12 @@ async function reportAdminOperationError(
 
 function diagnosticError(error: unknown): Record<string, unknown> {
   if (!(error instanceof Error)) return { message: redactOperationDiagnostic(String(error)).slice(0, 4_000) }
-  const record = error as Error & { code?: unknown; backupDir?: unknown }
+  const record = error as Error & { code?: unknown }
   return {
     name: error.name,
     message: redactOperationDiagnostic(error.message).slice(0, 4_000),
     stack: error.stack ? redactOperationDiagnostic(error.stack).slice(0, 8_000) : undefined,
     code: typeof record.code === 'string' ? record.code.slice(0, 100) : undefined,
-    backupDir: typeof record.backupDir === 'string' ? record.backupDir.slice(0, 500) : undefined,
   }
 }
 

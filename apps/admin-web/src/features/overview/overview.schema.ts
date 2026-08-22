@@ -1,8 +1,8 @@
 import { z } from 'zod'
 
 const focusSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('group'), id: z.string().regex(/^\d+$/) }).strict(),
-  z.object({ type: z.literal('private'), id: z.string().regex(/^\d+$/) }).strict(),
+  z.object({ type: z.literal('group'), id: z.string().min(1) }).strict(),
+  z.object({ type: z.literal('private'), id: z.string().min(1) }).strict(),
 ])
 
 export const overviewSnapshotSchema = z.object({

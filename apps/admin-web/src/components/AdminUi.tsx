@@ -12,7 +12,7 @@ export function PageHeader({ title, description, generatedAt, isRefreshing = fal
   return (
     <header className="page-header">
       <div className="min-w-0">
-        <div className="page-kicker"><Radio size={12} strokeWidth={2.2} /> Agent observatory</div>
+        <div className="page-kicker"><Radio size={12} strokeWidth={2.2} /> 本机观察</div>
         <h1>{title}</h1>
         <p>{description}</p>
       </div>

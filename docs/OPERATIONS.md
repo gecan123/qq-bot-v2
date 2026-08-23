@@ -56,10 +56,10 @@ pnpm agent:reset-state -- --scope context
 pnpm --silent agent:context -- --json
 pnpm db:generate
 pnpm db:migrate
-pnpm db:push
+pnpm db:query
 pnpm browser:controller
 pnpm toollog
-pnpm toollogf
+pnpm peek -- -f -n 9999
 ```
 
 ### WebAdmin（本机管理模式）

@@ -17,7 +17,6 @@
     "typecheck": "tsc --noEmit",
     "lint": "pnpm typecheck && pnpm repo-check",
     "repo-check": "tsx scripts/repo-check.ts",
-    "probe:longcat-tool-choice": "tsx scripts/probe-longcat-tool-choice.ts",
     "web:dev": "pnpm --filter @qq-bot/admin-web dev",
     "web:test": "pnpm --filter @qq-bot/admin-web test",
     "web:typecheck": "pnpm --filter @qq-bot/admin-web typecheck",
@@ -34,14 +33,11 @@
     "agent:start": "node dist/index.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:push": "prisma db push",
     "db:query": "tsx scripts/agent-db-query.ts",
     "test": "tsx --test --test-concurrency=4 --import ./scripts/test-env.mjs --import tsx 'src/**/*.test.ts'",
     "peek": "tsx scripts/peek.ts",
-    "peekf": "tsx scripts/peek.ts -f -n 9999",
     "browser:controller": "tsx scripts/browser-controller.ts",
-    "toollog": "tail -n 50 logs/tool-calls.ndjson",
-    "toollogf": "tail -f logs/tool-calls.ndjson"
+    "toollog": "tail -n 50 logs/tool-calls.ndjson"
   },
   "keywords": [],
   "author": "",
@@ -73,7 +69,6 @@
   "devDependencies": {
     "@types/node": "^25.2.3",
     "@types/pg": "^8.16.0",
-    "playwright": "^1.60.0",
     "prisma": "^7.4.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"

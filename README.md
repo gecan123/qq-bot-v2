@@ -83,9 +83,8 @@ pnpm web:typecheck # 检查 WebAdmin TypeScript
 pnpm web:build     # 构建 WebAdmin client 和 server bundle
 pnpm db:generate   # 重新生成 Prisma client
 pnpm db:migrate    # 执行 Prisma migrations
-pnpm db:push       # 本地开发时同步 schema
 pnpm toollog       # 查看最近 tool-call 审计日志
-pnpm toollogf      # follow tool-call 审计日志
+pnpm peek -- -f -n 9999 # follow canonical Agent ledger
 ```
 
 ## 只读 WebAdmin

@@ -5,6 +5,13 @@ const focusSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('private'), id: z.string().min(1) }).strict(),
 ])
 
+const activityTargetSchema = z.object({
+  platform: z.enum(['qq', 'feishu']),
+  accountId: z.string().min(1),
+  kind: z.enum(['group', 'private']),
+  externalId: z.string().min(1),
+}).strict()
+
 export const overviewSnapshotSchema = z.object({
   schemaVersion: z.literal(2),
   generatedAt: z.iso.datetime({ offset: true }),
@@ -46,7 +53,7 @@ export const overviewSnapshotSchema = z.object({
     trigger: z.object({
       kind: z.string(),
       label: z.string(),
-      target: focusSchema.nullable(),
+      target: activityTargetSchema.nullable(),
     }).strict().nullable(),
     activeTools: z.array(z.object({
       toolCallId: z.string(),

@@ -6,18 +6,8 @@ import type { MessageSentTarget, ToolContinuation, ToolExecutor } from './tool.j
 import type { EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
 import type { AgentLedgerLoader } from './agent-ledger-loader.js'
-import {
-  AgentLedgerHeadChangedError,
-  type AgentLedgerRepo,
-  type AgentRuntimePatch,
-} from './agent-ledger-repo.js'
-import {
-  createCompactionCandidate,
-  prepareCompaction,
-  summarizeCachedClaudeCompaction,
-  summarizeCompactionCandidate,
-  type MaybeCompactOptions,
-} from './compaction.js'
+import { type AgentLedgerRepo, type AgentRuntimePatch } from './agent-ledger-repo.js'
+import type { MaybeCompactOptions } from './compaction.js'
 import { LlmOutputTruncatedError, runReactRound, type ReactToolOutcome } from './react-kernel.js'
 import { interpretToolEffects } from './effect-interpreter.js'
 import { createLogger } from '../logger.js'
@@ -34,7 +24,6 @@ import { renderGoalContinuation, renderGoalStateEvent } from './goal-render.js'
 import {
   decideMailboxCompensation,
   parseMailboxContinuityState,
-  recordMailboxCompaction,
   recordMailboxDisclosure,
   recordMailboxRound,
   type MailboxContinuityState,
@@ -44,21 +33,14 @@ import {
   hasPendingPrivateMailboxAttention,
   renderMailboxHandledEvent,
 } from './mailbox-handled.js'
-import { projectAgentLedger } from './agent-ledger-projection.js'
-import type {
-  CompactionAgentLedgerEntry,
-  CompactionReason,
-} from './agent-ledger.types.js'
-import { runAfterCompactHook } from './compaction-hooks.js'
 import { config } from '../config/index.js'
 import type { GroupParticipation } from '../config/group-policies.js'
-import { estimateLedgerContextTokens } from './compaction-token-estimator.js'
-import { buildWorkingContextProjection } from './working-context.js'
 import {
   advanceInboxReadCursor,
   type InboxReadCursors,
 } from './inbox-read-cursors.js'
-import type { AgentActivityReporter, AgentActivityTrigger } from './activity-surface.js'
+import type { AgentActivityReporter } from './activity-surface.js'
+import { describeActivityTrigger } from './activity-trigger.js'
 import {
   isAttentionEvent,
   notificationRoutingForEvent,
@@ -67,6 +49,9 @@ import {
   renderAgentStateAdvice,
   type AgentStateAdvisor,
 } from './agent-state-advisor.js'
+import { createLedgerCommitCoordinator } from './ledger-commit-coordinator.js'
+import { decideLoopPolicy } from './loop-policy.js'
+import { createCompactionCoordinator } from './compaction-coordinator.js'
 
 const log = createLogger('BOT_LOOP')
 
@@ -210,8 +195,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let idleBackoffLevel = 0
   let consecutiveUnanchoredIdleRounds = 0
   const recentToolNoveltyKeys = new Map<string, number>()
-  let nextCompactionAttemptAt = 0
-  let compactionAbortController = new AbortController()
   let lastContextWindowTokens =
     config.llm.contextWindowTokensByModel[config.llm.defaultModel] ?? 200_000
 
@@ -240,6 +223,13 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     installRuntimeState(loaded.runtimeState)
   }
 
+  const commitCoordinator = createLedgerCommitCoordinator({
+    context: deps.context,
+    repo: deps.ledgerRepo,
+    getExpectedHeadEntryId: () => ledgerHeadEntryId,
+    installRuntimeState,
+  })
+
   async function commitChanges(input: {
     messages?: readonly AgentMessage[]
     runtimePatch?: AgentRuntimePatch
@@ -248,18 +238,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     if (messages.length === 0 && input.runtimePatch == null) return
 
     try {
-      if (messages.length > 0) {
-        await deps.ledgerRepo.appendMessages({
-          messages,
-          ...(input.runtimePatch ? { runtimePatch: input.runtimePatch } : {}),
-        })
-      } else {
-        await deps.ledgerRepo.updateRuntime({
-          expectedHeadEntryId: ledgerHeadEntryId,
-          patch: input.runtimePatch!,
-        })
-      }
-      await reloadProjectionFromCanonical()
+      await commitCoordinator.commit({ messages, ...(input.runtimePatch ? { runtimePatch: input.runtimePatch } : {}) })
     } catch (error) {
       deps.syncConversationFocus?.(deps.context.getSnapshot().conversationFocus)
       deps.syncInboxReadCursors?.(inboxReadCursors)
@@ -267,198 +246,19 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     }
   }
 
-  async function compactCanonical(input: {
-    reason: CompactionReason
-    contextTokens: number
-    contextWindowTokens: number
-    providerPrefixHeadEntryId?: bigint | null
-  }): Promise<boolean> {
-    if (!deps.ledgerRepo || !deps.ledgerLoader) return false
-    const options = deps.compactOptions ?? {}
-    const nowMs = options.nowMs ?? Date.now
-    if (input.reason === 'threshold' && nowMs() < nextCompactionAttemptAt) {
-      log.debug({ retryAfterMs: nextCompactionAttemptAt - nowMs() }, 'compaction_failure_backoff_skipped')
-      return false
-    }
-    const recordThresholdFailure = (reason: string): void => {
-      if (input.reason !== 'threshold') return
-      nextCompactionAttemptAt = nowMs()
-        + Math.max(1, options.failureBackoffMs ?? DEFAULT_COMPACTION_FAILURE_BACKOFF_MS)
-      log.warn({ reason, nextCompactionAttemptAt }, 'canonical_compaction_backoff_recorded')
-    }
-    const reserveTokens = options.reserveTokens
-      ?? (options.triggerTokens == null
-        ? config.compaction.reserveTokens
-        : Math.max(0, input.contextWindowTokens - options.triggerTokens))
-    const keepRecentTokens = options.keepRecentTokens ?? config.compaction.keepRecentTokens
-    if (
-      input.reason === 'threshold'
-      && input.providerPrefixHeadEntryId == null
-      && input.contextTokens <= Math.max(0, input.contextWindowTokens - reserveTokens)
-    ) {
-      return false
-    }
-
-    for (let headAttempt = 0; headAttempt < 2; headAttempt++) {
-      const canonical = await deps.ledgerRepo.loadCanonicalState()
-      const effectiveContextTokens = input.reason === 'threshold'
-        && input.providerPrefixHeadEntryId != null
-        ? estimateLedgerContextTokens({
-            entries: canonical.entries,
-            providerPrefix: {
-              throughEntryId: input.providerPrefixHeadEntryId,
-              inputTokens: input.contextTokens,
-            },
-          }).tokens
-        : input.contextTokens
-      if (
-        input.reason === 'threshold'
-        && effectiveContextTokens <= Math.max(0, input.contextWindowTokens - reserveTokens)
-      ) {
-        return false
-      }
-      const latestProjection = projectAgentLedger({
-        entries: canonical.entries,
-        runtimeState: canonical.runtimeState,
-      })
-      const previousCompaction = [...canonical.entries]
-        .reverse()
-        .find((entry): entry is CompactionAgentLedgerEntry => entry.entryType === 'compaction')
-        ?? null
-      const preparation = prepareCompaction({
-        entries: canonical.entries,
-        latestProjection,
-        previousCompaction,
-        contextTokens: effectiveContextTokens,
-        contextWindowTokens: input.contextWindowTokens,
-        reserveTokens,
-        keepRecentTokens,
-        reason: input.reason,
-      })
-      if (preparation == null) return false
-      if (preparation.status !== 'ready') {
-        recordThresholdFailure(preparation.reason)
-        return false
-      }
-
-      let candidate: Awaited<ReturnType<typeof createCompactionCandidate>>
-      const compactedContinuity = parseMailboxContinuityState(
-        canonical.runtimeState.mailboxContinuity,
-      )
-      recordMailboxCompaction(compactedContinuity)
-      const candidateRuntimeState = {
-        ...canonical.runtimeState,
-        mailboxContinuity: compactedContinuity,
-      }
-      try {
-        let summarize = options.summarizeCandidate
-        if (summarize == null && deps.llm.provider === 'claude-code' && !preparation.isSplitTurn) {
-          const activeMessageCount = preparation.entriesToSummarize.length
-            + preparation.tailEntries.length
-          const syntheticMessageCount = latestProjection.snapshot.messages.length
-            - activeMessageCount
-          const prefixMessageCount = syntheticMessageCount
-            + preparation.entriesToSummarize.length
-          if (
-            syntheticMessageCount < 0
-            || prefixMessageCount <= 0
-            || prefixMessageCount >= latestProjection.snapshot.messages.length
-          ) {
-            throw new Error('cached Claude compaction prefix does not match canonical projection')
-          }
-          const workingProjection = await buildWorkingContextProjection(
-            latestProjection.snapshot.messages,
-          )
-          const cachedPrefix = workingProjection.messages.slice(0, prefixMessageCount)
-          const visibleTools = deps.tools.list()
-          summarize = (_request, { signal }) => summarizeCachedClaudeCompaction({
-            llm: deps.llm,
-            systemPrompt: deps.systemPrompt,
-            messages: cachedPrefix,
-            tools: visibleTools,
-            ...(options.maxSummaryTokens == null
-              ? {}
-              : { maxSummaryTokens: options.maxSummaryTokens }),
-            signal,
-          })
-        }
-        summarize ??= (request, { signal }) => summarizeCompactionCandidate(request, {
-          signal,
-          llm: deps.llm,
-        })
-        candidate = await createCompactionCandidate({
-          entries: canonical.entries,
-          runtimeState: candidateRuntimeState,
-          preparation,
-          summarize,
-          hooks: options.hooks,
-          signal: compactionAbortController.signal,
-          maxSummaryTokens: options.maxSummaryTokens,
-        })
-      } catch (err) {
-        recordThresholdFailure('summarizer_failed')
-        log.error({ err, reason: input.reason }, 'canonical_compaction_candidate_failed')
-        return false
-      }
-      if (candidate.status !== 'ready') {
-        if (candidate.status !== 'cancelled' || candidate.reason !== 'aborted') {
-          recordThresholdFailure(candidate.reason)
-        }
-        return false
-      }
-
-      try {
-        const committed = await deps.ledgerRepo.appendCompaction({
-          expectedHeadEntryId: preparation.expectedHeadEntryId,
-          payload: candidate.payload,
-          runtimePatch: { mailboxContinuity: compactedContinuity },
-        })
-        const committedEntry = committed.appendedEntries.find(
-          (entry): entry is CompactionAgentLedgerEntry => entry.entryType === 'compaction',
-        )
-        if (!committedEntry) throw new Error('compaction commit returned no compaction entry')
-
-        // CAS makes the validated candidate authoritative. Install immediately;
-        // loader then refreshes the disposable checkpoint best-effort.
-        deps.context.installProjection(candidate.projection.snapshot)
-        installRuntimeState(committed.runtimeState)
-        try {
-          await reloadProjectionFromCanonical()
-        } catch (err) {
-          log.warn({ err }, 'post_compaction_reload_failed_committed_projection_retained')
-        }
-        nextCompactionAttemptAt = 0
-        await runAfterCompactHook(options.hooks ?? {}, {
-          committedEntry,
-          metrics: {
-            tokensBefore: candidate.payload.tokensBefore,
-            estimatedTokensAfter: candidate.payload.estimatedTokensAfter,
-            compressedEntryCount: preparation.entriesToSummarize.length,
-            keptEntryCount: preparation.tailEntries.length,
-          },
-        }, (error) => log.warn({ error }, 'after_compact_hook_failed'))
-        log.info({
-          reason: input.reason,
-          committedEntryId: committedEntry.id,
-          tokensBefore: candidate.payload.tokensBefore,
-          estimatedTokensAfter: candidate.payload.estimatedTokensAfter,
-        }, 'canonical_compaction_committed')
-        return true
-      } catch (err) {
-        if (err instanceof AgentLedgerHeadChangedError && headAttempt === 0) {
-          log.info({
-            expectedHeadEntryId: err.expectedHeadEntryId,
-            actualHeadEntryId: err.actualHeadEntryId,
-          }, 'canonical_compaction_head_changed_recalculating')
-          continue
-        }
-        recordThresholdFailure(err instanceof AgentLedgerHeadChangedError ? 'head_changed' : 'commit_failed')
-        log.error({ err, reason: input.reason }, 'canonical_compaction_commit_failed')
-        return false
-      }
-    }
-    return false
-  }
+  const compactionCoordinator = createCompactionCoordinator({
+    context: deps.context,
+    repo: deps.ledgerRepo,
+    llm: deps.llm,
+    tools: deps.tools,
+    systemPrompt: deps.systemPrompt,
+    options: deps.compactOptions,
+    defaultReserveTokens: config.compaction.reserveTokens,
+    defaultKeepRecentTokens: config.compaction.keepRecentTokens,
+    defaultFailureBackoffMs: DEFAULT_COMPACTION_FAILURE_BACKOFF_MS,
+    installRuntimeState,
+    reloadProjectionFromCanonical,
+  })
 
   function drainEvents(): {
     consumed: number
@@ -676,7 +476,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
           err,
           lastContextWindowTokens,
         )
-        const compacted = await compactCanonical({
+        const compacted = await compactionCoordinator.compact({
           reason: 'overflow',
           contextTokens: overflowContextWindow,
           contextWindowTokens: overflowContextWindow,
@@ -847,7 +647,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     providerPrefixHeadEntryId: bigint | null,
   ): Promise<boolean> {
     if (inputTokens == null) return false
-    return compactCanonical({
+    return compactionCoordinator.compact({
       reason: 'threshold',
       contextTokens: inputTokens,
       contextWindowTokens,
@@ -1045,137 +845,78 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       toolContinuation,
       toolContinuationDetail,
     } = await step()
-    if (!ranRound && !stopRequested) {
-      await waitForExternalEvent()
+    if (ranRound) {
+      consecutiveRounds++
+      if (actionRequired || madeToolProgress) consecutiveUnanchoredIdleRounds = 0
+    }
+    const decision = decideLoopPolicy({
+      ranRound,
+      stopRequested,
+      toolCallCount,
+      actionRequired,
+      recoverableToolFailure,
+      onlyHelpToolCalls,
+      madeToolProgress,
+      requestedYield,
+      ...(toolContinuation ? { toolContinuation } : {}),
+      correctionRetryPending: actionCorrectionRetryPending,
+      recoverableCorrectionRounds: recoverableToolCorrectionRounds,
+      maxRecoverableCorrectionRounds: MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS,
+    })
+    recoverableToolCorrectionRounds = decision.recoverableCorrectionRounds
+
+    if (decision.action === 'stop') return
+    if (decision.action === 'wait_event') {
+      if (decision.reason === 'empty_context') await waitForExternalEvent()
+      else await waitForToolExternalEvent(toolContinuationDetail, actionRequired)
       return
     }
-    if (!ranRound || stopRequested) return
-
-    consecutiveRounds++
-    if (actionRequired || madeToolProgress) consecutiveUnanchoredIdleRounds = 0
-
-    if (toolCallCount > 0) {
-      const continuingCorrection = recoverableToolFailure
-        || (recoverableToolCorrectionRounds > 0 && onlyHelpToolCalls)
-      if (
-        continuingCorrection
-        && recoverableToolCorrectionRounds < MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS
-      ) {
-        recoverableToolCorrectionRounds++
-        actionCorrectionRetryPending = false
-        idleBackoffLevel = 0
-        log.info({
-          consecutiveRounds,
-          correctionRound: recoverableToolCorrectionRounds,
-          maxCorrectionRounds: MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS,
-          recoverableToolFailure,
-          onlyHelpToolCalls,
-        }, 'recoverable_tool_error_retry_immediate')
-        return
-      }
-      if (!recoverableToolFailure && !onlyHelpToolCalls) recoverableToolCorrectionRounds = 0
-      if (toolContinuation === 'immediate') {
-        idleBackoffLevel = 0
-        return
-      }
-      if (toolContinuation === 'stop') {
-        const waitMs = currentIdleWaitMs()
-        log.info({ consecutiveRounds, waitMs }, 'tool_requested_stop_wait')
-        const wake = await waitForAttention(
-          toolContinuationDetail ?? '工具请求停止，等待新的注意事件',
-          waitMs,
-        )
-        actionCorrectionRetryPending = false
-        updateIdleBackoff(wake, true)
-        if (requestedYield && !actionRequired) {
-          await recordUnanchoredIdle(wake, 'yield')
-        } else {
-          consecutiveUnanchoredIdleRounds = 0
-        }
-        return
-      }
-      if (toolContinuation === 'wait_event') {
-        await waitForToolExternalEvent(toolContinuationDetail, actionRequired)
-        return
-      }
-      if (toolContinuation === 'backoff' || toolContinuation === 'wait_attention') {
-        if (actionRequired) idleBackoffLevel = 0
-        const waitMs = actionRequired ? autonomy.actionRetryWaitMs : currentIdleWaitMs()
-        log.info({
-          consecutiveRounds,
-          waitMs,
-          actionRequired,
-          toolContinuation,
-          idleBackoffLevel,
-        }, 'tool_continuation_wait')
-        const wake = await waitForAttention(
-          toolContinuationDetail
-            ?? (actionRequired ? '当前行动需要稍后重试' : '等待新的注意事件或退避到期'),
-          waitMs,
-        )
-        actionCorrectionRetryPending = false
-        updateIdleBackoff(wake, !actionRequired)
-        if (!actionRequired) await recordUnanchoredIdle(wake)
-        return
-      }
-      if (madeToolProgress) {
-        actionCorrectionRetryPending = false
-        idleBackoffLevel = 0
-        return
-      }
-      if (!madeToolProgress) {
-        if (actionRequired) idleBackoffLevel = 0
-        if (actionRequired && !actionCorrectionRetryPending) {
-          actionCorrectionRetryPending = true
-          log.info({ consecutiveRounds }, 'tool_no_progress_action_retry_immediate')
-          return
-        }
-        const waitMs = actionRequired ? autonomy.actionRetryWaitMs : currentIdleWaitMs()
-        log.info({ consecutiveRounds, waitMs, actionRequired, idleBackoffLevel }, 'tool_no_progress_wait')
-        const wake = await waitForAttention(
-          actionRequired ? '工具没有取得进展，等待短暂重试' : '当前没有新进展，等待新的注意事件',
-          waitMs,
-        )
-        actionCorrectionRetryPending = false
-        updateIdleBackoff(wake, !actionRequired)
-        if (!actionRequired) await recordUnanchoredIdle(wake)
-        return
-      }
-    }
-
-    if (actionRequired || actionCorrectionRetryPending) {
+    if (decision.action === 'continue') {
+      actionCorrectionRetryPending = decision.correctionRetryPending
       idleBackoffLevel = 0
-      if (!actionCorrectionRetryPending) {
-        actionCorrectionRetryPending = true
-        log.info(
-          { consecutiveRounds, assistantTextOnly },
-          assistantTextOnly
-            ? 'assistant_text_only_retry_immediate'
-            : 'no_tool_action_retry_immediate',
-        )
-        return
-      }
-      log.info(
-        { consecutiveRounds, waitMs: autonomy.actionRetryWaitMs, assistantTextOnly },
-        assistantTextOnly ? 'assistant_text_only_retry_wait' : 'no_tool_action_retry_wait',
-      )
-      await waitForAttention(
-        assistantTextOnly
-          ? '模型仍只输出普通文本，等待短暂纠错'
-          : '当前请求尚未完成，等待短暂重试',
-        autonomy.actionRetryWaitMs,
-      )
-      actionCorrectionRetryPending = false
+      log.info({
+        consecutiveRounds,
+        reason: decision.reason,
+        correctionRound: recoverableToolCorrectionRounds,
+        assistantTextOnly,
+      }, 'loop_policy_continue')
       return
     }
 
-    const waitMs = currentIdleWaitMs()
-    log.info({ consecutiveRounds, waitMs, idleBackoffLevel, actionAnchor: 'none' }, 'no_tool_quiescent_wait')
-    const wake = await waitForAttention('当前没有待处理行动，等待新消息或计划事件', waitMs)
-    updateIdleBackoff(wake, true)
-    await recordUnanchoredIdle(wake)
-    consecutiveRounds = 0
-    recoverableToolCorrectionRounds = 0
+    if (decision.timeout === 'action_retry') idleBackoffLevel = 0
+    const waitMs = decision.timeout === 'action_retry'
+      ? autonomy.actionRetryWaitMs
+      : currentIdleWaitMs()
+    const detail = toolContinuationDetail ?? loopWaitDetail(decision.reason, actionRequired, assistantTextOnly)
+    log.info({
+      consecutiveRounds,
+      waitMs,
+      actionRequired,
+      reason: decision.reason,
+      idleBackoffLevel,
+    }, 'loop_policy_wait')
+    const wake = await waitForAttention(detail, waitMs)
+    actionCorrectionRetryPending = false
+    updateIdleBackoff(wake, decision.unanchored)
+    if (decision.recordIdle === 'yield') await recordUnanchoredIdle(wake, 'yield')
+    else if (decision.recordIdle === 'other') await recordUnanchoredIdle(wake)
+    else if (decision.reason === 'tool_stop') consecutiveUnanchoredIdleRounds = 0
+    if (decision.reason === 'quiescent') {
+      consecutiveRounds = 0
+      recoverableToolCorrectionRounds = 0
+    }
+  }
+
+  function loopWaitDetail(
+    reason: 'tool_stop' | 'tool_backoff' | 'tool_no_progress' | 'action_correction' | 'quiescent',
+    actionRequired: boolean,
+    assistantTextOnly: boolean,
+  ): string {
+    if (reason === 'tool_stop') return '工具请求停止，等待新的注意事件'
+    if (reason === 'tool_backoff') return actionRequired ? '当前行动需要稍后重试' : '等待新的注意事件或退避到期'
+    if (reason === 'tool_no_progress') return actionRequired ? '工具没有取得进展，等待短暂重试' : '当前没有新进展，等待新的注意事件'
+    if (reason === 'action_correction') return assistantTextOnly ? '模型仍只输出普通文本，等待短暂纠错' : '当前请求尚未完成，等待短暂重试'
+    return '当前没有待处理行动，等待新消息或计划事件'
   }
 
   async function waitForToolExternalEvent(
@@ -1340,9 +1081,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   return {
     async start() {
       stopRequested = false
-      if (compactionAbortController.signal.aborted) {
-        compactionAbortController = new AbortController()
-      }
+      compactionCoordinator.start()
       deps.activityReporter?.setPhase({ phase: 'starting', roundIndex: null, detail: '主循环正在启动' })
       log.info('bot_loop_started')
       try {
@@ -1355,7 +1094,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     async stop() {
       stopRequested = true
       deps.activityReporter?.setPhase({ phase: 'stopping', detail: '正在安全停止主循环', waitUntil: null })
-      compactionAbortController.abort(new Error('bot loop stopping'))
+      compactionCoordinator.stop()
       cancelDebounceSleep?.()
       deps.eventQueue.enqueue({ type: 'wake' })
       log.info('bot_loop_stop_requested')
@@ -1368,75 +1107,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       await step()
     },
   }
-}
-
-function describeActivityTrigger(
-  events: readonly BotEvent[],
-  goal: AgentGoal | null,
-): AgentActivityTrigger | null {
-  for (const event of events) {
-    if (event.type === 'napcat_private_message') {
-      return {
-        kind: 'private_message',
-        label: `收到 ${event.senderNickname || event.peerId} 的私聊`,
-        target: { type: 'private', id: String(event.peerId) },
-      }
-    }
-    if (event.type === 'napcat_message' && event.mentionedSelf) {
-      return {
-        kind: 'group_mention',
-        label: `群 ${event.groupName || event.groupId} 中有人提到了 Agent`,
-        target: { type: 'group', id: String(event.groupId) },
-      }
-    }
-    if (event.type === 'scheduled_wake') {
-      return {
-        kind: 'scheduled_wake',
-        label: `计划“${event.name}”已到期`.slice(0, 500),
-        target: null,
-      }
-    }
-    if (event.type === 'background_task_completed') {
-      return {
-        kind: 'background_task',
-        label: `后台任务 ${event.toolName} 已${event.ok ? '完成' : '失败'}：${event.description}`.slice(0, 500),
-        target: null,
-      }
-    }
-    if (event.type === 'mailbox_backlog') {
-      if (event.source.type === 'conversation') {
-        return {
-          kind: event.source.conversation.kind === 'group' ? 'group_mention' : 'private_message',
-          label: `恢复了 ${event.source.name || event.source.conversation.externalId} 的 ${event.count} 条待处理通知`,
-          target: {
-            type: event.source.conversation.kind,
-            id: event.source.conversation.externalId,
-          },
-        }
-      }
-      return event.source.type === 'group'
-        ? {
-            kind: 'group_mention',
-            label: `恢复了群 ${event.source.groupName || event.source.groupId} 的 ${event.count} 条待处理通知`,
-            target: { type: 'group', id: String(event.source.groupId) },
-          }
-        : {
-            kind: 'private_message',
-            label: `恢复了 ${event.source.senderName} 的 ${event.count} 条待处理私聊`,
-            target: { type: 'private', id: String(event.source.peerId) },
-          }
-    }
-    if (event.type === 'bootstrap') {
-      return { kind: 'bootstrap', label: '首次启动，开始建立自己的初始方向', target: null }
-    }
-    if (event.type === 'wake') {
-      return { kind: 'manual_wake', label: '收到运行时唤醒信号', target: null }
-    }
-  }
-  if (goal?.status === 'active') {
-    return { kind: 'goal', label: `继续推进 Goal：${goal.objective}`.slice(0, 500), target: null }
-  }
-  return null
 }
 
 function sleep(ms: number): Promise<void> {

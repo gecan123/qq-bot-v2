@@ -2,6 +2,7 @@ import 'dotenv/config'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { closeSync, mkdirSync, openSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { parseLoopbackHttpOrigin } from './config/loopback-origin.js'
 
 interface ServiceSpec {
   name: string
@@ -25,32 +26,34 @@ const env: NodeJS.ProcessEnv = {
   ...process.env,
   BOT_PLATFORM_ENABLED: 'true',
 }
-const healthUrl = (baseUrl: string): string => `${baseUrl.replace(/\/+$/, '')}/health`
+const healthUrl = (name: string, baseUrl: string): string => (
+  `${parseLoopbackHttpOrigin(name, baseUrl, { requirePort: true })}/health`
+)
 const webAdminLaunch = packageManagerLaunch(['--filter', '@qq-bot/admin-web', 'dev'])
 const specs: ServiceSpec[] = [
   {
     name: 'media-worker',
     sourceEntry: 'src/services/media-worker.ts',
     distEntry: 'dist/services/media-worker.js',
-    healthUrl: healthUrl(env.BOT_MEDIA_WORKER_URL ?? 'http://127.0.0.1:37923'),
+    healthUrl: healthUrl('BOT_MEDIA_WORKER_URL', env.BOT_MEDIA_WORKER_URL ?? 'http://127.0.0.1:37923'),
   },
   {
     name: 'qq-gateway',
     sourceEntry: 'src/services/qq-gateway.ts',
     distEntry: 'dist/services/qq-gateway.js',
-    healthUrl: healthUrl(env.BOT_QQ_GATEWAY_URL ?? 'http://127.0.0.1:37922'),
+    healthUrl: healthUrl('BOT_QQ_GATEWAY_URL', env.BOT_QQ_GATEWAY_URL ?? 'http://127.0.0.1:37922'),
   },
   {
     name: 'feishu-gateway',
     sourceEntry: 'src/services/feishu-gateway.ts',
     distEntry: 'dist/services/feishu-gateway.js',
-    healthUrl: healthUrl(env.BOT_FEISHU_GATEWAY_URL ?? 'http://127.0.0.1:37927'),
+    healthUrl: healthUrl('BOT_FEISHU_GATEWAY_URL', env.BOT_FEISHU_GATEWAY_URL ?? 'http://127.0.0.1:37927'),
     optional: !enabled(env.BOT_FEISHU_ENABLED),
   },
   {
     name: 'browser-controller',
     sourceEntry: 'scripts/browser-controller.ts',
-    healthUrl: healthUrl(env.BOT_BROWSER_CONTROLLER_URL ?? 'http://127.0.0.1:37921'),
+    healthUrl: healthUrl('BOT_BROWSER_CONTROLLER_URL', env.BOT_BROWSER_CONTROLLER_URL ?? 'http://127.0.0.1:37921'),
     optional: !enabled(env.BOT_BROWSER_ENABLED),
   },
   ...(includeWebAdmin ? [{

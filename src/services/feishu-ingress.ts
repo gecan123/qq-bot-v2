@@ -4,6 +4,7 @@ import { computeMediaHash } from '../media/media-hash.js'
 import { createMediaFromBytes, type CreateMediaFromBytesInput } from '../media/media-store.js'
 import { requestMediaDescription } from './media-worker-client.js'
 import type { ParsedSegment } from '../types/message-segments.js'
+import { withTransientRetry } from '../database/transient-retry.js'
 
 export const FEISHU_MEDIA_MAX_BYTES = 20 * 1024 * 1024
 
@@ -50,7 +51,7 @@ export async function persistFeishuIncomingMessage(
     content.push({ type: 'raw', originalType: input.message.rawContentType, data: input.message.raw ?? null })
   }
 
-  return (deps.appendFact ?? appendMessageFact)({
+  const fact: AppendMessageFactParams = {
     eventKind: input.eventKind ?? 'message',
     eventExternalId: input.eventId,
     conversation: {
@@ -71,7 +72,8 @@ export async function persistFeishuIncomingMessage(
     rawContent: input.message.raw ?? input.message,
     rawMessage: input.message.content,
     sentAt: Math.floor(input.message.createTime / 1000),
-  })
+  }
+  return withTransientRetry(() => (deps.appendFact ?? appendMessageFact)(fact))
 }
 
 async function persistResource(

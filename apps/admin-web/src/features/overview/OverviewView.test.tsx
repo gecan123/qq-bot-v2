@@ -42,7 +42,11 @@ const snapshot: OverviewSnapshot = {
     roundIndex: 8,
     detail: '正在执行 browser',
     waitUntil: null,
-    trigger: { kind: 'private_message', label: '收到 Alice 的私聊', target: { type: 'private', id: '42' } },
+    trigger: {
+      kind: 'private_message',
+      label: '收到 Alice 的私聊',
+      target: { platform: 'qq', accountId: '999', kind: 'private', externalId: '42' },
+    },
     activeTools: [{ toolCallId: 'call-live', toolName: 'browser', roundIndex: 8, startedAt: '2026-07-20T07:59:55.000Z', argsSummary: { action: 'open' } }],
     lastCompleted: null,
   },

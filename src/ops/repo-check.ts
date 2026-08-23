@@ -1,9 +1,11 @@
 export interface RepoCheckFiles {
   'AGENTS.md': string
   'CLAUDE.md': string
+  'CONTEXT-MAP.md': string
   'apps/admin-web/AGENTS.md'?: string
   'apps/admin-web/CLAUDE.md'?: string
   adminWebSources?: Readonly<Record<string, string>>
+  agentSources?: Readonly<Record<string, string>>
   'README.md': string
   'package.json': string
   '.env.example': string
@@ -142,6 +144,11 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   checkEnvExample(files, errors)
   checkMemoryArchitecture(files, errors)
   checkAdminWebSources(files.adminWebSources ?? {}, errors)
+  checkPlatformNeutralAgentContracts(files.agentSources ?? {}, errors)
+
+  if (!files['CONTEXT-MAP.md'].includes('apps/admin-web') || !files['CONTEXT-MAP.md'].includes('docs/AGENT_CONTEXT.md')) {
+    errors.push('CONTEXT-MAP.md must route both bot/backend and apps/admin-web contexts')
+  }
 
   for (const surface of README_REMOVED_SURFACES) {
     if (files['README.md'].includes(surface)) {
@@ -213,6 +220,31 @@ export function runRepoChecks(files: RepoCheckFiles): RepoCheckResult {
   }
 
   return { errors }
+}
+
+function checkPlatformNeutralAgentContracts(
+  sources: Readonly<Record<string, string>>,
+  errors: string[],
+): void {
+  for (const required of [
+    'src/agent/inbox-read-cursors.ts',
+    'src/agent/effect-interpreter.ts',
+    'src/agent/agent-ledger-projection.ts',
+  ]) {
+    if (!sources[required]?.includes("from './mailbox.js'")) {
+      errors.push(`${required} must use the shared mailbox key parser`)
+    }
+  }
+  for (const [path, source] of Object.entries(sources)) {
+    if (path.endsWith('.test.ts') || path === 'src/agent/mailbox.ts') continue
+    if (source.includes('qq_(?:group|private)')) {
+      errors.push(`${path} must not redeclare the legacy QQ mailbox regex`)
+    }
+  }
+  const activity = sources['src/agent/activity-surface.ts'] ?? ''
+  for (const field of ['platform', 'accountId', 'kind', 'externalId']) {
+    if (!activity.includes(field)) errors.push(`activity target must include platform-neutral field ${field}`)
+  }
 }
 
 function checkAdminWebSources(

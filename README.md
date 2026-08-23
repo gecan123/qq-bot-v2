@@ -4,7 +4,7 @@
 
 默认由本机 supervisor 管理 Agent Core、QQ Gateway 和 Media Worker；Feishu Gateway 与 Browser Controller 按配置启用。只有 Agent Core 在单一持久化 `AgentContext` 上运行 `BotLoopAgent`，其他进程通过 PostgreSQL 事实边界或薄 HTTP 协作，不拥有 canonical ledger。短期调度作为 Agent Core 内部深模块运行，Agent Core 与 Media Worker 直接调用配置的 LLM provider。所有 QQ 消息都按群或联系人形成 mailbox，默认只披露带优先级的有界通知，正文由 Agent 按需读取。
 
-仓库还包含 `apps/admin-web`：一个独立的只读 WebAdmin 运维面。它目前只提供 Overview，不改变 bot/backend 主线，也不是新的事实或 replay 来源。
+仓库还包含 `apps/admin-web`：一个独立的 localhost-only WebAdmin。它提供当前活动、Context/Ledger、Timeline、长期状态、跨平台 Conversations/Media、Metrics、Quick Health/手动 Deep Integrity、进程日志，以及唯一受控的 `reset_state` 操作；它不改变 bot/backend 主线，也不是新的事实或 replay 来源。
 
 ## 核心契约
 
@@ -75,6 +75,7 @@ pnpm build         # 编译 TypeScript
 pnpm typecheck     # 只做 TypeScript 检查
 pnpm test          # 在隔离的测试环境中运行 src/**/*.test.ts，不读取本机 .env
 pnpm repo-check    # 检查仓库指令和文档漂移
+pnpm bench:ledger-commit # 1 万/10 万 permanent entry full replay 与真实 coordinator commit 基准
 pnpm lint          # typecheck + repo-check
 pnpm web:dev       # 在 127.0.0.1:20030 启动只读 WebAdmin
 pnpm web:test      # 运行 WebAdmin Vitest 测试
@@ -97,7 +98,7 @@ Browser → TanStack Start Server Function → read service → PostgreSQL
 
 运行前把 `apps/admin-web/.env.example` 复制为不提交的 `apps/admin-web/.env.local`，配置 `DATABASE_URL`，并先运行 `pnpm db:generate`。默认只绑定 `127.0.0.1:20030`。当前没有管理员鉴权，不得改为非可信网络监听或直接公开部署。
 
-WebAdmin 当前只展示 ledger/runtime/Goal/token/tool-call 汇总。它不能更新或删除 ledger、runtime state、checkpoint、Goal、消息、媒体或 workspace side-data，也不能用页面缓存或查询结果重建 `AgentContext`。
+WebAdmin 的观察 feature 不能更新或删除 ledger、runtime state、checkpoint、Goal、消息、媒体或 workspace side-data，也不能用页面缓存或查询结果重建 `AgentContext`。唯一写入口是带预览、确认、停机检查、single-flight 和审计的固定 `reset_state` operation；不接受通用 shell、SQL、命令名或路径输入。
 
 ## 运行形态
 
@@ -105,7 +106,7 @@ WebAdmin 当前只展示 ledger/runtime/Goal/token/tool-call 汇总。它不能�
 
 1. QQ Gateway 独占 NapCat WebSocket、首次历史 backfill、好友/群查询和 QQ 外发；按配置启用的 Feishu Gateway 独占官方 WebSocket、媒体下载和飞书外发；各自 ready 后才通过健康屏障。
 2. Media Worker 处理媒体描述并直接调用媒体 provider；每个进程写入 `logs/processes/<name>.log`。
-3. Agent Core 连接 Prisma，校验 canonical ledger/runtime，从 ledger 恢复 `AgentContext` projection，恢复进程内短期 schedule 与未确认 delivery，并执行 missed-message replay；checkpoint 只在完全匹配时加速。
+3. Agent Core 获取 PostgreSQL advisory lock 后连接 Prisma，校验 canonical ledger/runtime，从 ledger 恢复 `AgentContext` projection，恢复进程内短期 schedule 与未确认 delivery，并执行 missed-message replay；checkpoint 只在完全匹配时复用。
 4. Agent Core 从 backfill 完成后的消息 high-water 启动 database mailbox watcher，通过递增 `messages.rowId` 接收 QQ / 飞书新入站事实。
 5. Agent Core 构建稳定工具面、system prompt 和唯一 `BotLoopAgent`，随后进入主循环。
 

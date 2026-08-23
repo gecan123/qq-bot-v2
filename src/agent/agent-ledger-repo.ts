@@ -107,6 +107,7 @@ export interface StoredAgentCheckpoint extends AgentCheckpointInput {
 export interface AgentLedgerRepo {
   loadCanonicalState(): Promise<CanonicalAgentState>
   appendMessages(input: {
+    expectedHeadEntryId: bigint | null
     messages: readonly DurableAgentMessage[]
     runtimePatch?: AgentRuntimePatch
   }): Promise<AppendResult>
@@ -155,6 +156,7 @@ export function createAgentLedgerRepo(options: {
     },
 
     async appendMessages(input) {
+      assertExpectedHead(input.expectedHeadEntryId)
       if (input.messages.length === 0) {
         throw new AgentLedgerIntegrityError('appendMessages requires at least one message')
       }
@@ -162,6 +164,7 @@ export function createAgentLedgerRepo(options: {
       return client.$transaction(async (tx) => {
         await lockRuntimeState(tx)
         const current = await loadRuntimeState(tx)
+        assertMatchingHead(input.expectedHeadEntryId, current.ledgerHeadEntryId)
         const appendedEntries: AgentLedgerEntry[] = []
         let head = current.ledgerHeadEntryId
         for (const message of messages) {

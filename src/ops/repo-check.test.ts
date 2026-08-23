@@ -15,6 +15,13 @@ const validFiles = {
     'Read `docs/README.md` for the repository knowledge map.',
     'Read `docs/AGENT_CONTEXT.md` before changing persistent context.',
   ].join('\n'),
+  'CONTEXT-MAP.md': 'bot/backend: docs/AGENT_CONTEXT.md\nWebAdmin: apps/admin-web\n',
+  agentSources: {
+    'src/agent/inbox-read-cursors.ts': "import { isMailboxKey } from './mailbox.js'",
+    'src/agent/effect-interpreter.ts': "import { isMailboxKey } from './mailbox.js'",
+    'src/agent/agent-ledger-projection.ts': "import { isMailboxKey } from './mailbox.js'",
+    'src/agent/activity-surface.ts': 'platform accountId kind externalId',
+  },
   'README.md': [
     '# qq-bot-v2',
     '',
@@ -128,6 +135,20 @@ describe('runRepoChecks', () => {
       differentMirror.errors.join('\n'),
       /apps\/admin-web\/AGENTS\.md and CLAUDE\.md must be byte-identical/,
     )
+  })
+
+  test('rejects duplicated legacy mailbox parsers and non-neutral activity targets', () => {
+    const result = runRepoChecks({
+      ...validFiles,
+      agentSources: {
+        ...validFiles.agentSources,
+        'src/agent/effect-interpreter.ts': 'const key = /^qq_(?:group|private):\\d+$/',
+        'src/agent/activity-surface.ts': 'targetId: number',
+      },
+    })
+    assert.match(result.errors.join('\n'), /shared mailbox key parser/)
+    assert.match(result.errors.join('\n'), /must not redeclare the legacy QQ mailbox regex/)
+    assert.match(result.errors.join('\n'), /activity target must include platform-neutral field/)
   })
 
   test('accepts byte-identical Admin Web agent instructions', () => {

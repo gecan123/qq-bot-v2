@@ -31,6 +31,7 @@ describe('logger', () => {
         env: {
           ...process.env,
           LOG_FILE_ENABLED: 'false',
+          NODE_NO_WARNINGS: '1',
         },
       },
     )

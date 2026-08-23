@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
+  beijingDateStart,
   compareTimestampsDesc,
   formatBeijingCompact,
+  formatBeijingDate,
   formatBeijingDateTime,
   formatBeijingIso,
   formatBeijingMonth,
+  shiftBeijingDate,
 } from './beijing-time.js'
 
 describe('Beijing time formatting', () => {
@@ -25,7 +28,15 @@ describe('Beijing time formatting', () => {
   test('uses the Beijing calendar date across a UTC day boundary', () => {
     const boundary = new Date('2026-01-31T16:30:00.000Z')
     assert.equal(formatBeijingIso(boundary), '2026-02-01T00:30:00.000+08:00')
+    assert.equal(formatBeijingDate(boundary), '2026-02-01')
     assert.equal(formatBeijingMonth(boundary), '2026-02')
+  })
+
+  test('creates and shifts Beijing calendar-day boundaries', () => {
+    assert.equal(beijingDateStart('2026-08-23').toISOString(), '2026-08-22T16:00:00.000Z')
+    assert.equal(shiftBeijingDate('2026-08-23', -6), '2026-08-17')
+    assert.equal(shiftBeijingDate('2026-02-28', 1), '2026-03-01')
+    assert.throws(() => beijingDateStart('2026-02-30'), /invalid Beijing date/)
   })
 
   test('orders legacy UTC and Beijing timestamps by their absolute instant', () => {

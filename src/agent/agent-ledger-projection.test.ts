@@ -184,6 +184,27 @@ describe('projectAgentLedger', () => {
     assert.equal(projection.permanentEntryCount, 4)
   })
 
+  test('accepts canonical QQ and Feishu mailbox attention state in compaction', () => {
+    const entries: AgentLedgerEntry[] = [
+      messageEntry(1n, { role: 'user', content: '旧问题' }),
+      compactionEntry(2n, {
+        summary: '平台中立摘要',
+        mailboxAttentionState: {
+          'qq:bot:group:123': { disclosedThroughRowId: 7, handledThroughRowId: 6 },
+          'feishu:app%3Atenant:private:ou%3A1': {
+            disclosedThroughRowId: 9,
+            handledThroughRowId: 8,
+          },
+        },
+      }),
+    ]
+
+    const projection = projectAgentLedger({ entries, runtimeState: runtimeState(2n) })
+
+    assert.match(JSON.stringify(projection.snapshot), /feishu:app%3Atenant:private:ou%3A1/)
+    assert.match(JSON.stringify(projection.snapshot), /qq:bot:group:123/)
+  })
+
   test('uses only the latest compaction and keeps messages on both sides of it', () => {
     const entries: AgentLedgerEntry[] = [
       messageEntry(1n, { role: 'user', content: '最旧消息' }),

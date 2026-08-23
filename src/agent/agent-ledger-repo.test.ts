@@ -192,7 +192,7 @@ describe('createAgentLedgerRepo', () => {
     const fake = createFakeClient()
     const repo = createAgentLedgerRepo({ client: fake.client })
 
-    const result = await repo.appendMessages({ messages })
+    const result = await repo.appendMessages({ expectedHeadEntryId: null, messages })
 
     assert.deepEqual(result.appendedEntries.map((entry) => [entry.id, entry.entryType]), [
       [1n, 'message'],
@@ -213,6 +213,7 @@ describe('createAgentLedgerRepo', () => {
 
     await assert.rejects(
       repo.appendMessages({
+        expectedHeadEntryId: null,
         messages,
         runtimePatch: {
           mailboxCursors: { 'qq_private:100': 9 },
@@ -234,6 +235,7 @@ describe('createAgentLedgerRepo', () => {
 
     await assert.rejects(
       repo.appendMessages({
+        expectedHeadEntryId: null,
         messages: [
           {
             role: 'assistant',
@@ -259,6 +261,7 @@ describe('createAgentLedgerRepo', () => {
     const repo = createAgentLedgerRepo({ client: fake.client })
 
     await repo.appendMessages({
+      expectedHeadEntryId: null,
       messages: [{ role: 'user', content: '{"event":"goal_state_changed"}' }],
       runtimePatch: {
         mailboxCursors: { 'qq_private:100': 12 },
@@ -275,7 +278,7 @@ describe('createAgentLedgerRepo', () => {
   test('rejects compaction when the expected head changed', async () => {
     const fake = createFakeClient()
     const repo = createAgentLedgerRepo({ client: fake.client })
-    await repo.appendMessages({ messages: [messages[0]!] })
+    await repo.appendMessages({ expectedHeadEntryId: null, messages: [messages[0]!] })
 
     await assert.rejects(
       repo.appendCompaction({ expectedHeadEntryId: null, payload: compactionPayload() }),
@@ -288,10 +291,26 @@ describe('createAgentLedgerRepo', () => {
     assert.equal(fake.state().runtime.ledgerHeadEntryId, 1n)
   })
 
+  test('rejects a stale message append without writing any partial entries', async () => {
+    const fake = createFakeClient()
+    const repo = createAgentLedgerRepo({ client: fake.client })
+    await repo.appendMessages({ expectedHeadEntryId: null, messages: [messages[0]!] })
+
+    await assert.rejects(
+      repo.appendMessages({ expectedHeadEntryId: null, messages: [messages[1]!] }),
+      (error: unknown) => error instanceof AgentLedgerHeadChangedError
+        && error.expectedHeadEntryId === null
+        && error.actualHeadEntryId === 1n,
+    )
+
+    assert.equal(fake.state().entries.length, 1)
+    assert.equal(fake.state().runtime.ledgerHeadEntryId, 1n)
+  })
+
   test('commits compaction and its runtime continuity patch atomically', async () => {
     const fake = createFakeClient()
     const repo = createAgentLedgerRepo({ client: fake.client })
-    await repo.appendMessages({ messages: [messages[0]!] })
+    await repo.appendMessages({ expectedHeadEntryId: null, messages: [messages[0]!] })
     const continuity = createEmptyMailboxContinuityState()
     continuity.compactionEpoch = 1
 
@@ -339,7 +358,7 @@ describe('createAgentLedgerRepo', () => {
   test('loads canonical entries and exposes no ledger update/delete path', async () => {
     const fake = createFakeClient()
     const repo = createAgentLedgerRepo({ client: fake.client })
-    await repo.appendMessages({ messages: [messages[0]!] })
+    await repo.appendMessages({ expectedHeadEntryId: null, messages: [messages[0]!] })
 
     const canonical = await repo.loadCanonicalState()
 

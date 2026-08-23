@@ -8,6 +8,7 @@
 - `AgentContext` 是当前 canonical ledger 的内存 projection，不是另一份事实源。`messages` / `media` 是 QQ 与飞书共享的入站事实账本，只用于 missed replay、搜索、审计和按需读取，不能重建 prompt transcript。
 - `bot_agent_runtime_state` 只保存通知披露 cursors、inbox 已读 cursors、continuity、Goal revision、active tool capabilities、平台中立 conversation focus、last wake 和 ledger head。它不保存 LLM history；focus 只能由 `conversation open/close` 改变，不能从消息、memory、日志或其他 side state 推断。
 - `bot_agent_checkpoint` 是可丢弃的 projection cache。启动始终先验证 canonical ledger；checkpoint 只有 schema、head、fingerprint 和 projection 都匹配时才命中。missing、stale、corrupt 都从 canonical ledger 重建，checkpoint 写失败不影响已提交历史。
+- 普通 message/runtime commit 必须携带当前 expected head。事务返回 appended entries 与新 runtime state 后，`LedgerCommitCoordinator` 只基于当前已验证 active projection 增量安装；不得在日常 commit 热路径重新 SELECT/fingerprint 永久 prefix。完整 chain 校验保留在启动、compaction 后刷新、`agent:ledger-check` 和显式 Deep Integrity。
 - `bot_agent_goal`、workspace Markdown、调度文件和 `logs/*` 都是 side state，永远不能作为 transcript replay 来源。`logs/agent-activity.json` 仅供 WebAdmin 观察进程 phase、等待和并发工具，缺失或损坏不得影响 replay 或 Agent 行为。
 
 ## Append 与原子性
@@ -26,7 +27,7 @@
 2. 校验 entry schema、严格递增 ID、runtime head、compaction chain、boundary，以及所有 tool call/result 组。
 3. 找到最新 compaction；把其 summary 和受控机器状态放在最前，保留 `firstKeptEntryId` 起的旧 message entries，再追加 compaction 之后的新 message entries。
 4. 把 runtime singleton 中的 capabilities 和跨平台 conversation focus 放入完整 projection，校验后原子安装到 `AgentContext`。
-5. checkpoint 仅作为完全匹配时的加速缓存；否则 best-effort 刷新。
+5. checkpoint 仅作为完全匹配时可复用的 validation cache；否则在完整 load 路径 best-effort 刷新。普通 commit 不同步刷新 checkpoint。
 
 同一 canonical state 必须得到字节一致的 projection。不得从可变 side table、运维日志、当前媒体描述或重新执行工具来补历史。
 
@@ -67,6 +68,8 @@
 - `src/agent/agent-ledger-repo.ts`：append、CAS compaction、runtime 原子更新和 checkpoint I/O。
 - `src/agent/agent-ledger-projection.ts`：canonical 校验与确定性 projection。
 - `src/agent/agent-ledger-loader.ts`：checkpoint 分类、rebuild 和安装输入。
+- `src/agent/ledger-commit-coordinator.ts`：expected-head commit 与 active projection 增量安装。
+- `src/agent/compaction-coordinator.ts`：threshold/overflow、candidate、CAS 重算、失败退避和 post-compact refresh。
 - `src/agent/agent-context.ts`：当前内存 projection。
 - `src/agent/bot-loop-agent.ts`：Runtime Host、事务边界、trigger 与失败恢复。
 - `src/agent/agent-state-advisor.ts`：连续空闲后的无工具状态判断与受控 advice renderer。

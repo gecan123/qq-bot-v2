@@ -1,8 +1,19 @@
 import 'dotenv/config'
 import { isAbsolute } from 'node:path'
 import { loadGroupPolicies, type GroupPolicy } from './group-policies.js'
-
-type EnvSource = Record<string, string | undefined>
+import { parseLoopbackHttpOrigin } from './loopback-origin.js'
+import { parseServiceConfig } from './services.js'
+import {
+  parseBoolean,
+  parseEnumValue,
+  parseOptionalEnumValue,
+  parsePositiveInteger,
+  parsePositiveSafeInteger,
+  parseStrictNonNegativeInteger,
+  parseStrictPositiveInteger,
+  requireEnv,
+  type EnvSource,
+} from './env.js'
 
 type LlmScenarioKey =
   | 'describeImage'
@@ -104,14 +115,6 @@ const OPENAI_REASONING_EFFORTS: readonly OpenAiReasoningEffort[] = [
   'max',
 ]
 
-function requireEnv(env: EnvSource, name: string): string {
-  const value = env[name]
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`)
-  }
-  return value
-}
-
 function parseMoomooConfig(env: EnvSource): MoomooConfig | undefined {
   if (!parseBoolean(env.MOOMOO_SKILL_ENABLED, false)) return undefined
   const skillDir = env.MOOMOO_SKILL_DIR?.trim()
@@ -141,29 +144,14 @@ function parseCryptoPaperConfig(env: EnvSource): CryptoPaperConfig | undefined {
 function parseVibeTradingConfig(env: EnvSource): VibeTradingConfig | undefined {
   if (!parseBoolean(env.VIBE_TRADING_ENABLED, false)) return undefined
 
-  const rawBaseUrl = env.VIBE_TRADING_BASE_URL?.trim() || 'http://127.0.0.1:8899'
-  let url: URL
-  try {
-    url = new URL(rawBaseUrl)
-  } catch {
-    throw new Error('VIBE_TRADING_BASE_URL must be a valid loopback HTTP URL')
-  }
-  const loopbackHosts = new Set(['127.0.0.1', 'localhost', '[::1]'])
-  if (
-    url.protocol !== 'http:'
-    || !loopbackHosts.has(url.hostname)
-    || url.username
-    || url.password
-    || url.search
-    || url.hash
-    || (url.pathname !== '/' && url.pathname !== '')
-  ) {
-    throw new Error('VIBE_TRADING_BASE_URL must be an origin-only loopback HTTP URL')
-  }
+  const baseUrl = parseLoopbackHttpOrigin(
+    'VIBE_TRADING_BASE_URL',
+    env.VIBE_TRADING_BASE_URL?.trim() || 'http://127.0.0.1:8899',
+  )
 
   const apiKey = env.VIBE_TRADING_API_KEY?.trim()
   return {
-    baseUrl: url.origin,
+    baseUrl,
     ...(apiKey ? { apiKey } : {}),
     requestTimeoutMs: parsePositiveInteger(env.VIBE_TRADING_REQUEST_TIMEOUT_MS, 15_000),
     taskTimeoutMs: parsePositiveInteger(env.VIBE_TRADING_TASK_TIMEOUT_MS, 30 * 60_000),
@@ -172,81 +160,12 @@ function parseVibeTradingConfig(env: EnvSource): VibeTradingConfig | undefined {
   }
 }
 
-function parsePositiveInteger(value: string | undefined, defaultValue: number): number {
-  if (value == null || value.trim() === '') return defaultValue
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed) || parsed <= 0) return defaultValue
-  return Math.floor(parsed)
-}
-
-function parseStrictPositiveInteger(name: string, value: string | undefined, defaultValue: number): number {
-  if (value == null || value.trim() === '') return defaultValue
-  const parsed = Number(value.trim())
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error(`Invalid ${name} "${value}" (must be positive safe integer)`)
-  }
-  return parsed
-}
-
-function parseStrictNonNegativeInteger(
-  name: string,
-  value: string | undefined,
-  defaultValue: number,
-): number {
-  if (value == null || value.trim() === '') return defaultValue
-  const parsed = Number(value.trim())
-  if (!Number.isSafeInteger(parsed) || parsed < 0) {
-    throw new Error(`Invalid ${name} "${value}" (must be a non-negative safe integer)`)
-  }
-  return parsed
-}
-
-function parsePositiveSafeInteger(name: string, value: string): number {
-  const parsed = Number(value.trim())
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error(`Invalid ${name} "${value}" (must be positive safe integer)`)
-  }
-  return parsed
-}
-
-function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
-  if (value == null) return defaultValue
-  const v = value.trim().toLowerCase()
-  if (v === '') return defaultValue
-  if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true
-  if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false
-  return defaultValue
-}
-
 function parseClaudeToolChoice(value: string | undefined): 'any' | 'auto' {
   const normalized = value?.trim().toLowerCase() || 'any'
   if (normalized === 'any' || normalized === 'auto') return normalized
   throw new Error(
     `Invalid LLM_PROVIDER_CLAUDE_TOOL_CHOICE "${value}" (expected any or auto)`,
   )
-}
-
-function parseEnumValue<T extends string>(
-  name: string,
-  value: string | undefined,
-  allowed: readonly T[],
-  defaultValue: T,
-): T {
-  const normalized = value?.trim().toLowerCase()
-  if (!normalized) return defaultValue
-  if ((allowed as readonly string[]).includes(normalized)) return normalized as T
-  throw new Error(`Invalid ${name} "${value}" (expected ${allowed.join(' or ')})`)
-}
-
-function parseOptionalEnumValue<T extends string>(
-  name: string,
-  value: string | undefined,
-  allowed: readonly T[],
-): T | undefined {
-  const normalized = value?.trim().toLowerCase()
-  if (!normalized) return undefined
-  if ((allowed as readonly string[]).includes(normalized)) return normalized as T
-  throw new Error(`Invalid ${name} "${value}" (expected ${allowed.join(' or ')})`)
 }
 
 function parseClaudeThinking(env: EnvSource): ClaudeThinkingConfig {
@@ -561,57 +480,7 @@ export function parseConfig(
   const outboundCacheMaxBytes = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_MAX_BYTES, 100 * 1024 * 1024)
   const outboundCacheTtlMs = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_TTL_MS, 60 * 60 * 1000)
   const eventDebounceMs = parsePositiveInteger(env.BOT_EVENT_DEBOUNCE_MS, 3_000)
-  const browserEnabled = parseBoolean(env.BOT_BROWSER_ENABLED, false)
-  const browserControllerUrl = env.BOT_BROWSER_CONTROLLER_URL && env.BOT_BROWSER_CONTROLLER_URL.trim().length > 0
-    ? env.BOT_BROWSER_CONTROLLER_URL.trim()
-    : 'http://127.0.0.1:37921'
-  const browserProfileDir = env.BOT_BROWSER_PROFILE_DIR && env.BOT_BROWSER_PROFILE_DIR.trim().length > 0
-    ? env.BOT_BROWSER_PROFILE_DIR.trim()
-    : 'data/browser-profile/luna'
-  const browserArtifactDir = env.BOT_BROWSER_ARTIFACT_DIR && env.BOT_BROWSER_ARTIFACT_DIR.trim().length > 0
-    ? env.BOT_BROWSER_ARTIFACT_DIR.trim()
-    : 'data/agent-workspace/browser'
-  const browserActionLogPath = env.BOT_BROWSER_ACTION_LOG_PATH && env.BOT_BROWSER_ACTION_LOG_PATH.trim().length > 0
-    ? env.BOT_BROWSER_ACTION_LOG_PATH.trim()
-    : 'logs/browser-actions.ndjson'
-  const browserActionTimeoutMs = parsePositiveInteger(env.BOT_BROWSER_ACTION_TIMEOUT_MS, 15_000)
-  const platformEnabled = parseBoolean(env.BOT_PLATFORM_ENABLED, false)
-  const serviceUrl = (name: string, fallback: string): string => {
-    const raw = env[name]?.trim() || fallback
-    let url: URL
-    try {
-      url = new URL(raw)
-    } catch {
-      throw new Error(`${name} must be an origin-only loopback HTTP URL with an explicit port`)
-    }
-    if (
-      url.protocol !== 'http:'
-      || !new Set(['127.0.0.1', 'localhost', '[::1]']).has(url.hostname)
-      || !url.port
-      || url.username
-      || url.password
-      || url.search
-      || url.hash
-      || (url.pathname !== '/' && url.pathname !== '')
-    ) {
-      throw new Error(`${name} must be an origin-only loopback HTTP URL with an explicit port`)
-    }
-    return url.origin
-  }
-  const feishu = parseBoolean(env.BOT_FEISHU_ENABLED, false)
-    ? {
-        appId: requireEnv(env, 'BOT_FEISHU_APP_ID').trim(),
-        appSecret: requireEnv(env, 'BOT_FEISHU_APP_SECRET').trim(),
-        groupIds: (env.BOT_FEISHU_GROUP_IDS ?? '')
-          .split(',')
-          .map((value) => value.trim())
-          .filter(Boolean),
-        ...(env.BOT_OWNER_FEISHU_OPEN_ID?.trim()
-          ? { ownerOpenId: env.BOT_OWNER_FEISHU_OPEN_ID.trim() }
-          : {}),
-        gatewayUrl: serviceUrl('BOT_FEISHU_GATEWAY_URL', 'http://127.0.0.1:37927'),
-      }
-    : undefined
+  const serviceConfig = parseServiceConfig(env)
 
   return {
     databaseUrl: requireEnv(env, 'DATABASE_URL'),
@@ -626,7 +495,7 @@ export function parseConfig(
     selfNumber: parsePositiveSafeInteger('SELF_NUMBER', requireEnv(env, 'SELF_NUMBER')),
     /** Owner (创造者) — 渲染 [关系基线] 用. null = 未配置 → 那段不渲染. */
     owner: parseOwner(env),
-    feishu,
+    feishu: serviceConfig.feishu,
     nodeEnv: env.NODE_ENV || 'development',
     replyMediaTimeoutMs: parsePositiveInteger(env.REPLY_MEDIA_TIMEOUT_MS, 15_000),
     jobInterDelayMs: parsePositiveInteger(env.JOB_INTER_DELAY_MS, 200),
@@ -664,20 +533,8 @@ export function parseConfig(
       maxBytes: outboundCacheMaxBytes,
       ttlMs: outboundCacheTtlMs,
     },
-    browser: {
-      enabled: browserEnabled,
-      controllerUrl: browserControllerUrl,
-      profileDir: browserProfileDir,
-      artifactDir: browserArtifactDir,
-      actionLogPath: browserActionLogPath,
-      actionTimeoutMs: browserActionTimeoutMs,
-    },
-    services: {
-      enabled: platformEnabled,
-      qqGatewayUrl: serviceUrl('BOT_QQ_GATEWAY_URL', 'http://127.0.0.1:37922'),
-      mediaWorkerUrl: serviceUrl('BOT_MEDIA_WORKER_URL', 'http://127.0.0.1:37923'),
-      mailboxPollMs: parsePositiveInteger(env.BOT_MAILBOX_POLL_MS, 1_000),
-    },
+    browser: serviceConfig.browser,
+    services: serviceConfig.services,
     openbb: parseBoolean(env.OPENBB_CLI_ENABLED, false)
       ? {
           cliBin: env.OPENBB_CLI_BIN?.trim() || 'openbb',

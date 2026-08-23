@@ -1,7 +1,7 @@
 {
   "name": "qq-bot-v2",
   "version": "1.0.0",
-  "description": "QQ Bot V2 - 纯消息存储 MVP",
+  "description": "QQ / 飞书单 Agent 永续运行平台",
   "type": "module",
   "scripts": {
     "dev": "tsx src/platform.ts --watch",
@@ -27,6 +27,7 @@
     "agent:daily-metrics": "tsx scripts/agent-daily-metrics.ts",
     "agent:memory-check": "tsx scripts/agent-memory-check.ts",
     "agent:ledger-check": "tsx scripts/agent-ledger-check.ts",
+    "bench:ledger-commit": "tsx scripts/benchmark-ledger-commit.ts",
     "agent:context": "tsx scripts/agent-context.ts",
     "agent:reset-state": "tsx scripts/reset-agent-state.ts --confirm",
     "start": "node dist/platform.js",
@@ -35,7 +36,7 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:query": "tsx scripts/agent-db-query.ts",
-    "test": "tsx --test --import ./scripts/test-env.mjs --import tsx 'src/**/*.test.ts'",
+    "test": "tsx --test --test-concurrency=4 --import ./scripts/test-env.mjs --import tsx 'src/**/*.test.ts'",
     "peek": "tsx scripts/peek.ts",
     "peekf": "tsx scripts/peek.ts -f -n 9999",
     "browser:controller": "tsx scripts/browser-controller.ts",
@@ -67,7 +68,7 @@
     "playwright-core": "^1.60.0",
     "sharp": "^0.34.5",
     "yaml": "^2.8.4",
-    "zod": "^4.3.6"
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",

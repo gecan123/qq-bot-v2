@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 export const qqMessageSchema = z.object({
   id: z.number(), scene: z.string(), sceneKind: z.string(), sender: z.string(), senderId: z.string(),
+  platform: z.enum(['qq', 'feishu']), accountId: z.string(), conversationKind: z.enum(['group', 'private']), conversationExternalId: z.string(),
   at: z.iso.datetime({ offset: true }), text: z.string(), mediaReferenceIds: z.array(z.string()),
 }).strict()
 
@@ -12,9 +13,12 @@ export const qqMediaSchema = z.object({
 }).strict()
 
 export const qqSnapshotSchema = z.object({
-  schemaVersion: z.literal(1), generatedAt: z.iso.datetime({ offset: true }),
-  counts: z.object({ messages: z.number(), media: z.number(), stickers: z.number(), groups: z.number() }).strict(),
-  groups: z.array(z.object({ groupId: z.string().regex(/^\d+$/), name: z.string(), messageCount: z.number().int().nonnegative(), lastAt: z.iso.datetime({ offset: true }) }).strict()),
+  schemaVersion: z.literal(2), generatedAt: z.iso.datetime({ offset: true }),
+  counts: z.object({ messages: z.number(), media: z.number(), stickers: z.number(), conversations: z.number() }).strict(),
+  conversations: z.array(z.object({
+    platform: z.enum(['qq', 'feishu']), accountId: z.string(), kind: z.enum(['group', 'private']),
+    externalId: z.string(), name: z.string(), messageCount: z.number().int().nonnegative(), lastAt: z.iso.datetime({ offset: true }),
+  }).strict()),
   messages: z.array(qqMessageSchema),
   media: z.array(qqMediaSchema),
   note: z.string(),

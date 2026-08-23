@@ -1,10 +1,11 @@
-import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
-import { dirname, join, normalize, resolve } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { mkdir, readFile, readdir, stat, unlink } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { compareTimestampsDesc, formatBeijingCompact, formatBeijingIso } from '../utils/beijing-time.js'
 import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
 import type { ConversationRef } from '../chat/conversation.js'
 import { conversationKey } from '../chat/conversation.js'
+import { atomicWriteText, revisionOfText, safeWorkspacePath, withResourceWrite } from './workspace-document.js'
 
 export type MemoryScope = 'self' | 'person' | 'group' | 'topic'
 export type MemoryTier = 'recent' | 'stable'
@@ -276,9 +277,7 @@ function withCoordinatedWrite<T>(
   resourceKey: string,
   task: () => Promise<T>,
 ): Promise<T> {
-  return options.workspaceStateCoordinator
-    ? options.workspaceStateCoordinator.withWrite(resourceKey, task)
-    : task()
+  return withResourceWrite(options.workspaceStateCoordinator, resourceKey, task)
 }
 
 export async function writeMemoryEntry(
@@ -1268,16 +1267,7 @@ function filesForRecall(input: RecallMemoryInput): string[] | null {
 }
 
 function safeMemoryFile(rootDir: string, relativeFile: string): string {
-  const normalized = normalize(relativeFile).replace(/\\/g, '/')
-  if (!normalized.endsWith('.md') || normalized.startsWith('../') || normalized === '..' || normalized.startsWith('/')) {
-    throw new Error(`memory file is not allowed: ${relativeFile}`)
-  }
-  const root = resolve(memoryRoot(rootDir))
-  const resolved = resolve(root, normalized)
-  if (resolved !== root && !resolved.startsWith(`${root}/`)) {
-    throw new Error(`memory file escapes root: ${relativeFile}`)
-  }
-  return resolved
+  return safeWorkspacePath({ rootDir: memoryRoot(rootDir), relativeFile, label: 'memory file' })
 }
 
 async function readOptional(path: string): Promise<string | null> {
@@ -1325,17 +1315,11 @@ function replaceUpdatedAt(raw: string, updatedAt: string): string {
 }
 
 function revisionOf(raw: string): string {
-  return createHash('sha256').update(raw).digest('hex')
+  return revisionOfText(raw)
 }
 
 async function atomicWrite(path: string, raw: string): Promise<void> {
-  const tempPath = `${path}.tmp-${randomUUID()}`
-  try {
-    await writeFile(tempPath, raw, 'utf8')
-    await rename(tempPath, path)
-  } finally {
-    await rm(tempPath, { force: true }).catch(() => undefined)
-  }
+  await atomicWriteText(path, raw)
 }
 
 function renderMemoryEntry(entry: MemoryEntry): string {

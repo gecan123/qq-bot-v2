@@ -206,15 +206,16 @@ function describeToolAction(
     case 'inbox':
       return { title: '读取了消息', detail: action ? `动作：${action}` : '检查了一个 QQ mailbox' }
     case 'send_message':
-      return { title: '发送了 QQ 消息', detail: '已向当前显式打开的 QQ 会话发送内容' }
+      return { title: '发送了消息', detail: '已向当前显式打开的会话发送内容' }
     case 'web_search':
       return { title: '搜索了网络信息', detail: query ? `关键词：${query}` : '执行了一次网络搜索' }
     case 'fetch_content':
       return { title: '读取了外部内容', detail: text(record.url) ?? text(record.ref) ?? '获取并解析了内容' }
     case 'browser':
       return { title: action === 'open' ? '打开了网页' : '操作了浏览器', detail: action ? `动作：${action}` : '完成了一次浏览器操作' }
+    case 'conversation':
     case 'qq_conversation':
-      return { title: action === 'open' ? '切换了 QQ 会话' : '更新了 QQ 会话状态', detail: action ? `动作：${action}` : '更新了显式发送目标' }
+      return { title: action === 'open' ? '切换了会话' : '更新了会话状态', detail: action ? `动作：${action}` : '更新了显式发送目标' }
     case 'goal':
       return { title: '更新了当前 Goal', detail: action ? `动作：${action}` : '读取或更新了持久 Goal' }
     case 'pause':

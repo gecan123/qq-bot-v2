@@ -4,11 +4,29 @@ import type { BotEvent } from './event.js'
 import {
   MAILBOX_BACKLOG_RECENT_LIMIT,
   MAILBOX_BACKLOG_THRESHOLD,
+  isMailboxKey,
   mailboxKeyForEvent,
   planMailboxDisclosures,
   renderMailboxBacklogNotification,
   renderMailboxNotification,
 } from './mailbox.js'
+
+describe('mailbox key contract', () => {
+  test('recognizes canonical encoded and legacy QQ keys from one parser', () => {
+    for (const key of [
+      'qq_group:1',
+      'qq_private:2',
+      'qq:bot:group:123',
+      'feishu:app:private:ou_1',
+      'feishu:app%3Atenant:group:oc%3A1',
+    ]) {
+      assert.equal(isMailboxKey(key), true, key)
+    }
+    for (const key of ['', 'qq_group:x', 'qq::group:1', 'qq:bot:unknown:1', 'qq:bot:group:1:2']) {
+      assert.equal(isMailboxKey(key), false, key)
+    }
+  })
+})
 
 function groupEvent(input: {
   rowId: number

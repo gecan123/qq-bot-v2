@@ -17,10 +17,10 @@ import {
 } from './agent-ledger.types.js'
 import { renderMailboxAttentionStateEvent, type MailboxAttentionState } from './mailbox-handled.js'
 import { parseInboxReadCursors } from './inbox-read-cursors.js'
+import { isMailboxKey } from './mailbox.js'
 import { validateBotSnapshotIntegrity } from './snapshot-integrity.js'
 
 const HISTORY_SUMMARY_PREFIX = '[历史摘要]\n'
-const MAILBOX_KEY_PATTERN = /^qq_(?:group|private):\d+$/
 const POSITIVE_DECIMAL_PATTERN = /^[1-9]\d*$/
 
 export class AgentLedgerIntegrityError extends Error {
@@ -480,7 +480,7 @@ function parseMailboxAttentionState(value: unknown, path: string): MailboxAttent
   const record = requireRecord(value, path)
   const parsed: MailboxAttentionState = {}
   for (const mailbox of Object.keys(record).sort()) {
-    if (!MAILBOX_KEY_PATTERN.test(mailbox)) {
+    if (!isMailboxKey(mailbox)) {
       throw new AgentLedgerIntegrityError(`${path}.${mailbox} has invalid mailbox key`)
     }
     const cursorPath = `${path}.${mailbox}`

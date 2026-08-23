@@ -11,6 +11,7 @@ src/generated/
 .tmp/
 temp/
 .gemini/
+.pi/
 .worktrees/
 agent-config.json
 .DS_Store

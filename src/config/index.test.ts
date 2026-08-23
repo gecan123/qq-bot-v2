@@ -390,6 +390,7 @@ describe('config', () => {
     assert.equal(defaults.services.enabled, false)
     assert.equal(defaults.services.qqGatewayUrl, 'http://127.0.0.1:37922')
     assert.equal(defaults.services.mediaWorkerUrl, 'http://127.0.0.1:37923')
+    assert.equal(defaults.browser.controllerUrl, 'http://127.0.0.1:37921')
 
     const configured = parseConfig(createBaseEnv({
       BOT_PLATFORM_ENABLED: 'true',
@@ -411,6 +412,10 @@ describe('config', () => {
         /BOT_QQ_GATEWAY_URL must be an origin-only loopback HTTP URL with an explicit port/,
       )
     }
+    assert.throws(
+      () => parseConfig(createBaseEnv({ BOT_BROWSER_CONTROLLER_URL: 'http://example.com:37921' })),
+      /BOT_BROWSER_CONTROLLER_URL must be an origin-only loopback HTTP URL with an explicit port/,
+    )
   })
 
   test('keeps Feishu opt-in and requires credentials only when enabled', () => {

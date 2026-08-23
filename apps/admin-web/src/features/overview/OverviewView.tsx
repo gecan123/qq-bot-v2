@@ -175,8 +175,8 @@ function describeActiveTool(toolName: string, args: unknown): string {
   const record = args && typeof args === 'object' && !Array.isArray(args) ? args as Record<string, unknown> : {}
   const action = typeof record.action === 'string' ? record.action : null
   switch (toolName) {
-    case 'inbox': return '正在读取 QQ 消息'
-    case 'send_message': return '正在向当前 QQ 会话发送消息'
+    case 'inbox': return '正在读取会话消息'
+    case 'send_message': return '正在向当前会话发送消息'
     case 'web_search': return '正在搜索网络信息'
     case 'fetch_content': return '正在读取外部内容'
     case 'browser': return action === 'open' ? '正在打开网页' : '正在操作浏览器'
@@ -189,7 +189,7 @@ function describeActiveTool(toolName: string, args: unknown): string {
 
 function formatRuntime(snapshot: OverviewSnapshot): string {
   if (!snapshot.runtime.available) return 'Runtime 状态缺失'
-  if (!snapshot.runtime.focus) return '未选择 QQ 会话'
+  if (!snapshot.runtime.focus) return '未选择会话'
   return snapshot.runtime.focus.type === 'group' ? `群 ${snapshot.runtime.focus.id}` : `私聊 ${snapshot.runtime.focus.id}`
 }
 

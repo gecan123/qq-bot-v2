@@ -46,6 +46,21 @@ export function formatBeijingDateTime(date: Date): string {
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`
 }
 
+export function formatBeijingDate(date: Date): string {
+  const parts = beijingParts(date)
+  return `${parts.year}-${parts.month}-${parts.day}`
+}
+
+export function beijingDateStart(date: string): Date {
+  assertBeijingDate(date)
+  return new Date(`${date}T00:00:00${BEIJING_UTC_OFFSET}`)
+}
+
+export function shiftBeijingDate(date: string, days: number): string {
+  if (!Number.isSafeInteger(days)) throw new RangeError('days must be a safe integer')
+  return formatBeijingDate(new Date(beijingDateStart(date).getTime() + days * 86_400_000))
+}
+
 export function formatBeijingMonth(date: Date): string {
   const parts = beijingParts(date)
   return `${parts.year}-${parts.month}`
@@ -65,4 +80,12 @@ export function compareTimestampsDesc(left: string | null, right: string | null)
     return rightMs - leftMs
   }
   return (right ?? '').localeCompare(left ?? '')
+}
+
+function assertBeijingDate(date: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`invalid Beijing date: ${date}`)
+  const parsed = new Date(`${date}T00:00:00${BEIJING_UTC_OFFSET}`)
+  if (!Number.isFinite(parsed.getTime()) || formatBeijingDate(parsed) !== date) {
+    throw new Error(`invalid Beijing date: ${date}`)
+  }
 }

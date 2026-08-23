@@ -144,6 +144,7 @@ async function runProcess(command: string, args: string[]): Promise<{
         LLM_DEFAULT_PROVIDER: '',
         FORCE_COLOR: '0',
         NO_COLOR: '1',
+        NODE_NO_WARNINGS: '1',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })

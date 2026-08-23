@@ -1,5 +1,6 @@
 import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { prisma } from './database/client.js'
+import { acquireAgentCoreLock, type AgentCoreLock } from './database/agent-core-lock.js'
 import type { IngestedMessage } from './bot/core.js'
 import { createLogger } from './logger.js'
 import { formatBeijingDateTime, formatBeijingIso } from './utils/beijing-time.js'
@@ -32,6 +33,7 @@ import { enqueueColdStartBootstrap } from './agent/cold-start-bootstrap.js'
 import { createShutdownCoordinator, type ShutdownCoordinator } from './ops/shutdown.js'
 import { createAgentStartupLifecycle } from './ops/agent-startup-lifecycle.js'
 import { purgeObservabilityData } from './ops/observability-retention.js'
+import { INGRESS_FAILURE_LOG_PATH } from './services/ingress-failure-log.js'
 import {
   AGENT_CONTEXT_SURFACE_PATH,
   writeRuntimeAgentContextSurface,
@@ -71,6 +73,7 @@ const SHUTDOWN_TIMEOUT_MS = 30_000
 let shutdownCoordinator: ShutdownCoordinator | null = null
 let fallbackShutdownPromise: Promise<void> | null = null
 let retentionRunner: DailyRetentionRunner | null = null
+let agentCoreLock: AgentCoreLock | null = null
 
 async function main() {
   log.info(
@@ -80,6 +83,7 @@ async function main() {
     },
     'qq-bot-v2 single-context MVP-2 启动',
   )
+  agentCoreLock = await acquireAgentCoreLock({ databaseUrl: config.databaseUrl })
   await prisma.$connect()
   setTokenUsageDbPersistenceEnabled(true)
   log.info('数据库已连接')
@@ -499,7 +503,7 @@ async function main() {
       removePidFile()
     },
     saveFinal: () => runtime.agent.flush(),
-    disconnectDb: () => prisma.$disconnect(),
+    disconnectDb: disconnectDatabaseAndReleaseAgentCoreLock,
     timeoutMs: SHUTDOWN_TIMEOUT_MS,
     onPhaseError: (error) => {
       log.error(error, 'shutdown_phase_failed')
@@ -523,6 +527,7 @@ async function runRetentionMaintenance(): Promise<void> {
         config.tokenUsageLogPath,
         config.toolCallLogPath,
         config.fetchLogPath,
+        INGRESS_FAILURE_LOG_PATH,
       ],
     })
   } catch (error) {
@@ -539,6 +544,15 @@ function removePidFile(): void {
   }
 }
 
+async function disconnectDatabaseAndReleaseAgentCoreLock(): Promise<void> {
+  try {
+    await prisma.$disconnect()
+  } finally {
+    await agentCoreLock?.release()
+    agentCoreLock = null
+  }
+}
+
 function shutdownBeforeRuntimeReady(): Promise<void> {
   fallbackShutdownPromise ??= (async () => {
     await retentionRunner?.stop()
@@ -550,7 +564,7 @@ function shutdownBeforeRuntimeReady(): Promise<void> {
       jobQueue.stop()
     }
     removePidFile()
-    await prisma.$disconnect()
+    await disconnectDatabaseAndReleaseAgentCoreLock()
   })()
   return fallbackShutdownPromise
 }

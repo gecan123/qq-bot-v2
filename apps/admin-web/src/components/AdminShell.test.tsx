@@ -8,7 +8,7 @@ import {
 
 describe('AdminShell navigation', () => {
   test('keeps daily destinations small and groups technical evidence separately', () => {
-    assert.deepEqual(primaryNavigation.map(item => item.label), ['现在', 'QQ', '知识'])
+    assert.deepEqual(primaryNavigation.map(item => item.label), ['现在', '会话', '知识'])
     assert.deepEqual(investigationNavigation.map(item => item.to), [
       '/health',
       '/logs',

@@ -4,6 +4,8 @@ import { qqGroupSnapshotSchema, qqSnapshotSchema, type QqGroupSnapshot, type QqS
 
 type MessageRow = {
   rowId: number
+  platform: string
+  accountId: string
   conversationKind: string
   conversationExternalId: string
   conversationName: string | null
@@ -33,6 +35,8 @@ type StickerRow = { mediaId: number; name: string; tags: string[] }
 
 const messageSelect = {
   rowId: true,
+  platform: true,
+  accountId: true,
   conversationKind: true,
   conversationExternalId: true,
   conversationName: true,
@@ -50,29 +54,28 @@ const mediaSelect = { mediaId: true, contentType: true, fileName: true, fileSize
 
 export async function loadQqSnapshot(now = new Date()): Promise<QqSnapshot> {
   const db = getAdminPrisma()
-  const [messageCount, mediaCount, stickerCount, messages, media, stickers, groups] = await Promise.all([
-    db.message.count({ where: { platform: 'qq' } }),
+  const [messageCount, mediaCount, stickerCount, messages, media, stickers, conversations] = await Promise.all([
+    db.message.count(),
     db.media.count(),
     db.stickerPool.count(),
     db.message.findMany({
-      where: { platform: 'qq' },
       orderBy: [{ createdAt: 'desc' }, { rowId: 'desc' }],
       take: 80,
       select: messageSelect,
     }),
     db.media.findMany({ where: { contentType: { in: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] }, blob: { is: { byteSize: { lte: 300_000 } } } }, orderBy: { createdAt: 'desc' }, take: 18, select: mediaSelect }),
     db.stickerPool.findMany({ select: { mediaId: true, name: true, tags: true } }),
-    readGroups(db),
+    readConversations(db),
   ])
   const stickerByMedia = new Map(stickers.map(item => [item.mediaId, item]))
   return qqSnapshotSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: now.toISOString(),
-    counts: { messages: messageCount, media: mediaCount, stickers: stickerCount, groups: groups.length },
-    groups,
+    counts: { messages: messageCount, media: mediaCount, stickers: stickerCount, conversations: conversations.length },
+    conversations,
     messages: messages.map(mapMessage),
     media: media.map(row => mapMedia(row, stickerByMedia)),
-    note: '总览展示最近 80 条 QQ 消息；群聊列表可下钻到单群最近 300 条消息。媒体缩略图仅返回小于 300KB 的图片。',
+    note: '总览展示最近 80 条跨平台消息；QQ 群可继续下钻。媒体是 QQ / 飞书共享事实缓存，缩略图仅返回小于 300KB 的图片。',
   })
 }
 
@@ -133,34 +136,45 @@ export async function loadQqGroupSnapshot(groupId: string, now = new Date()): Pr
   })
 }
 
-async function readGroups(db: ReturnType<typeof getAdminPrisma>): Promise<QqSnapshot['groups']> {
+async function readConversations(db: ReturnType<typeof getAdminPrisma>): Promise<QqSnapshot['conversations']> {
   const rows = await db.$queryRawUnsafe<Array<{
-    group_id: string
-    group_name: string | null
+    platform: 'qq' | 'feishu'
+    account_id: string
+    conversation_kind: 'group' | 'private'
+    external_id: string
+    conversation_name: string | null
     message_count: bigint
     last_at: Date
   }>>(`
-    SELECT conversation_external_id AS group_id,
-      (ARRAY_AGG(conversation_name ORDER BY COALESCE(sent_at, created_at) DESC) FILTER (WHERE conversation_name IS NOT NULL))[1] AS group_name,
+    SELECT platform, account_id, conversation_kind,
+      conversation_external_id AS external_id,
+      (ARRAY_AGG(conversation_name ORDER BY COALESCE(sent_at, created_at) DESC)
+        FILTER (WHERE conversation_name IS NOT NULL))[1] AS conversation_name,
       COUNT(*) AS message_count,
       MAX(COALESCE(sent_at, created_at)) AS last_at
     FROM messages
-    WHERE platform = 'qq' AND conversation_kind = 'group'
-    GROUP BY conversation_external_id
+    GROUP BY platform, account_id, conversation_kind, conversation_external_id
     ORDER BY last_at DESC
   `)
   return rows.map(row => ({
-    groupId: row.group_id,
-    name: row.group_name || `群 ${row.group_id}`,
+    platform: row.platform,
+    accountId: row.account_id,
+    kind: row.conversation_kind,
+    externalId: row.external_id,
+    name: row.conversation_name || row.external_id,
     messageCount: Number(row.message_count),
     lastAt: row.last_at.toISOString(),
   }))
 }
 
 function mapMessage(row: MessageRow): QqSnapshot['messages'][number] {
-  const sceneKind = row.conversationKind === 'group' ? 'qq_group' : 'qq_private'
+  const sceneKind = `${row.platform}_${row.conversationKind}`
   return {
     id: row.rowId,
+    platform: row.platform === 'feishu' ? 'feishu' : 'qq',
+    accountId: row.accountId,
+    conversationKind: row.conversationKind === 'private' ? 'private' : 'group',
+    conversationExternalId: row.conversationExternalId,
     sceneKind,
     scene: row.conversationKind === 'group'
       ? (row.conversationName

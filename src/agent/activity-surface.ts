@@ -23,10 +23,12 @@ const phaseSchema = z.enum([
   'stopped',
 ])
 
-const targetSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('group'), id: z.string().regex(/^\d+$/) }).strict(),
-  z.object({ type: z.literal('private'), id: z.string().regex(/^\d+$/) }).strict(),
-])
+const targetSchema = z.object({
+  platform: z.enum(['qq', 'feishu']),
+  accountId: z.string().min(1),
+  kind: z.enum(['group', 'private']),
+  externalId: z.string().min(1),
+}).strict()
 
 const triggerSchema = z.object({
   kind: z.enum([
@@ -61,7 +63,7 @@ const completedToolSchema = z.object({
 }).strict()
 
 export const agentActivitySurfaceSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   instanceId: z.string().min(1),
   pid: z.number().int().positive(),
   startedAt: z.iso.datetime({ offset: true }),
@@ -118,7 +120,7 @@ export function createAgentActivityReporter(options: ReporterOptions = {}): Agen
   const write = options.write ?? writeAgentActivitySurface
   const createdAt = now().toISOString()
   let surface: AgentActivitySurface = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     instanceId,
     pid,
     startedAt: createdAt,

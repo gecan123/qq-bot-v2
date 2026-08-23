@@ -38,14 +38,20 @@ interface CheckpointProjectionPayload {
 export function createAgentLedgerLoader(input: { repo: AgentLedgerRepo }): AgentLedgerLoader {
   return {
     async load() {
+      const loadStartedAt = performance.now()
       const canonical = await input.repo.loadCanonicalState()
+      const canonicalLoadMs = performance.now() - loadStartedAt
       // Canonical validation always happens before considering a cache hit. A valid
       // checkpoint must never hide a damaged permanent ledger.
+      const projectionStartedAt = performance.now()
       const canonicalProjection = projectAgentLedger({
         entries: canonical.entries,
         runtimeState: canonical.runtimeState,
       })
+      const projectionMs = performance.now() - projectionStartedAt
+      const fingerprintStartedAt = performance.now()
       const fingerprint = fingerprintCanonicalAgentState(canonical)
+      const fingerprintMs = performance.now() - fingerprintStartedAt
 
       let checkpoint: StoredAgentCheckpoint | null = null
       let checkpointStatus: AgentCheckpointStatus = 'missing'
@@ -70,6 +76,10 @@ export function createAgentLedgerLoader(input: { repo: AgentLedgerRepo }): Agent
             canonical.runtimeState,
           )
           if (cached != null && projectionsMatch(cached, canonicalProjection)) {
+            logLoadMetrics({
+              canonicalLoadMs, projectionMs, fingerprintMs,
+              checkpointRefreshMs: 0, entries: canonical.entries.length, status: 'hit',
+            })
             return {
               projection: cached,
               runtimeState: canonical.runtimeState,
@@ -80,7 +90,13 @@ export function createAgentLedgerLoader(input: { repo: AgentLedgerRepo }): Agent
         }
       }
 
+      const checkpointStartedAt = performance.now()
       await saveCheckpointBestEffort(input.repo, canonicalProjection, fingerprint)
+      const checkpointRefreshMs = performance.now() - checkpointStartedAt
+      logLoadMetrics({
+        canonicalLoadMs, projectionMs, fingerprintMs, checkpointRefreshMs,
+        entries: canonical.entries.length, status: checkpointStatus,
+      })
       return {
         projection: canonicalProjection,
         runtimeState: canonical.runtimeState,
@@ -88,6 +104,27 @@ export function createAgentLedgerLoader(input: { repo: AgentLedgerRepo }): Agent
       }
     },
   }
+}
+
+function logLoadMetrics(input: {
+  canonicalLoadMs: number
+  projectionMs: number
+  fingerprintMs: number
+  checkpointRefreshMs: number
+  entries: number
+  status: AgentCheckpointStatus
+}): void {
+  log.info({
+    ...input,
+    canonicalLoadMs: roundMs(input.canonicalLoadMs),
+    projectionMs: roundMs(input.projectionMs),
+    fingerprintMs: roundMs(input.fingerprintMs),
+    checkpointRefreshMs: roundMs(input.checkpointRefreshMs),
+  }, 'agent_ledger_load_completed')
+}
+
+function roundMs(value: number): number {
+  return Math.round(value * 100) / 100
 }
 
 export function fingerprintCanonicalAgentState(canonical: CanonicalAgentState): string {

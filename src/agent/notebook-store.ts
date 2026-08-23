@@ -1,5 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   compareTimestampsDesc,
@@ -8,6 +8,7 @@ import {
   formatBeijingMonth,
 } from '../utils/beijing-time.js'
 import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
+import { assertTextRevision, atomicWriteText, revisionOfText, withResourceWrite } from './workspace-document.js'
 
 export type NotebookKind = 'research' | 'reading' | 'market' | 'project' | 'general'
 
@@ -84,9 +85,7 @@ function withCoordinatedWrite<T>(
   resourceKey: string,
   task: () => Promise<T>,
 ): Promise<T> {
-  return options.workspaceStateCoordinator
-    ? options.workspaceStateCoordinator.withWrite(resourceKey, task)
-    : task()
+  return withResourceWrite(options.workspaceStateCoordinator, resourceKey, task)
 }
 
 function generateId(now: Date): string {
@@ -110,26 +109,18 @@ function normalizeTopic(topic: string): string {
 }
 
 function revisionOf(raw: string): string {
-  return createHash('sha256').update(raw).digest('hex')
+  return revisionOfText(raw)
 }
 
 async function atomicWrite(path: string, raw: string): Promise<void> {
-  const temporary = `${path}.tmp-${randomUUID()}`
-  try {
-    await writeFile(temporary, raw, 'utf8')
-    await rename(temporary, path)
-  } finally {
-    await rm(temporary, { force: true }).catch(() => undefined)
-  }
+  await atomicWriteText(path, raw)
 }
 
 function assertRevision(raw: string, expectedRevision: string): void {
-  if (revisionOf(raw) !== expectedRevision) {
-    throw new NotebookStoreError(
+  assertTextRevision(raw, expectedRevision, () => new NotebookStoreError(
       'revision_conflict',
       'notebook file changed; read the entry again and retry with the latest revision',
-    )
-  }
+    ))
 }
 
 export async function appendNotebookRecord(

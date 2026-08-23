@@ -86,11 +86,12 @@ describe('purgeObservabilityData', () => {
     assert.deepEqual(report.failures, [{ target: 'agent_tool_calls', error: 'tool cleanup failed' }])
   })
 
-  test('atomically removes expired ts/time records and preserves retained lines byte-for-byte', async () => {
+  test('atomically removes expired ts/time/failedAt records and preserves retained lines byte-for-byte', async () => {
     const filePath = join(tempDir, 'mixed.ndjson')
     const retainedLines = [
       '{"ts":"2026-06-20T00:00:00.000+08:00","value":"cutoff-is-retained"}',
       '{ "time": "2026-07-19T23:00:00.000+08:00", "spaced": true }',
+      '{"failedAt":"2026-07-19T23:30:00.000+08:00","kind":"ingress"}',
       'not json at all',
       '{"value":"missing timestamp"}',
       '{"ts":"not-a-date","value":"invalid timestamp"}',
@@ -99,6 +100,7 @@ describe('purgeObservabilityData', () => {
       '{"ts":"2026-06-19T23:59:59.999+08:00","value":"old-ts"}',
       retainedLines[0],
       '{"time":"2026-05-01T00:00:00.000+08:00","value":"old-time"}',
+      '{"failedAt":"2026-05-02T00:00:00.000+08:00","kind":"old-ingress"}',
       ...retainedLines.slice(1),
     ].join('\n') + '\n', 'utf8')
 
@@ -112,8 +114,8 @@ describe('purgeObservabilityData', () => {
     assert.equal(await readFile(filePath, 'utf8'), retainedLines.join('\n') + '\n')
     assert.deepEqual(report.files, [{
       path: filePath,
-      removedLines: 2,
-      retainedLines: 5,
+      removedLines: 3,
+      retainedLines: 6,
       unparseableTimestampLines: 3,
     }])
     assert.deepEqual(report.failures, [])

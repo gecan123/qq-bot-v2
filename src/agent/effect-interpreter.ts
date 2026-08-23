@@ -2,6 +2,7 @@ import type { ReactToolEffect } from './react-kernel.js'
 import type { InboxReadEffect, MessageSentTarget } from './tool.js'
 import { createLogger } from '../logger.js'
 import { conversationKey } from '../chat/conversation.js'
+import { isMailboxKey } from './mailbox.js'
 
 const log = createLogger('EFFECT_INTERPRETER')
 
@@ -42,7 +43,7 @@ export function interpretToolEffects(effects: ReactToolEffect[]): EffectInterpre
           break
         }
         if (
-          !/^(?:(?:qq|feishu):[^:]+:(?:group|private):[^:]+|qq_(?:group|private):\d+)$/.test(item.effect.mailbox)
+          !isMailboxKey(item.effect.mailbox)
           || !isPositiveSafeInteger(item.effect.throughRowId)
         ) {
           logRejectedEffect(item, 'invalid_inbox_cursor')

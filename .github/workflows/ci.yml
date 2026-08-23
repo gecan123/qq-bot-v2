@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: qq_bot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d qq_bot_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/qq_bot_test
+      QQ_BOT_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/qq_bot_test
+      LLM_DEFAULT_PROVIDER: claude-code
+      LLM_DEFAULT_MODEL: test-model
+      LLM_MODEL_CONTEXT_WINDOWS_JSON: '{"test-model":200000}'
+      LLM_PROVIDER_CLAUDE_URL: http://127.0.0.1:8317
+      LLM_PROVIDER_CLAUDE_API_KEY: test
+      NAPCAT_WS_URL: ws://127.0.0.1:3001
+      NAPCAT_ACCESS_TOKEN: test
+      SELF_NUMBER: '10000'
+      LOG_FILE_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.17.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm prisma migrate deploy
+      - run: pnpm db:generate
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm repo-check
+      - run: pnpm web:test
+      - run: pnpm web:typecheck
+      - run: pnpm web:build

@@ -1,8 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { formatBeijingCompact, formatBeijingIso } from '../utils/beijing-time.js'
 import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
+import { assertTextRevision, atomicWriteText, revisionOfText, withResourceWrite } from './workspace-document.js'
 
 export interface LifeJournalStoreOptions {
   rootDir: string
@@ -70,9 +71,7 @@ function withCoordinatedWrite<T>(
   resourceKey: string,
   task: () => Promise<T>,
 ): Promise<T> {
-  return options.workspaceStateCoordinator
-    ? options.workspaceStateCoordinator.withWrite(resourceKey, task)
-    : task()
+  return withResourceWrite(options.workspaceStateCoordinator, resourceKey, task)
 }
 
 function currentDate(options: LifeJournalStoreOptions): Date {
@@ -113,7 +112,7 @@ function journalPath(rootDir: string, date: string): string {
 }
 
 function revisionOf(content: string): string {
-  return createHash('sha256').update(content).digest('hex')
+  return revisionOfText(content)
 }
 
 function createEntryId(options: LifeJournalStoreOptions, date: Date): string {
@@ -249,19 +248,13 @@ export async function readLifeJournalEntry(
 }
 
 async function atomicWrite(path: string, content: string): Promise<void> {
-  const tempPath = `${path}.tmp-${randomUUID()}`
-  try {
-    await writeFile(tempPath, content, 'utf8')
-    await rename(tempPath, path)
-  } finally {
-    await rm(tempPath, { force: true }).catch(() => undefined)
-  }
+  await atomicWriteText(path, content)
 }
 
 function assertRevision(content: string, expectedRevision: string): void {
-  if (revisionOf(content) !== expectedRevision) {
-    throw new LifeJournalStoreError('revision_conflict', 'life journal changed; read_recent and retry with the latest revision')
-  }
+  assertTextRevision(content, expectedRevision, () => new LifeJournalStoreError(
+    'revision_conflict', 'life journal changed; read_recent and retry with the latest revision',
+  ))
 }
 
 function normalizedFile(content: string): string {

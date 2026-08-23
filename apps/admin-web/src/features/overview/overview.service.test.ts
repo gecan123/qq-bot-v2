@@ -91,7 +91,7 @@ const toolActivity: OverviewToolActivityInput = {
 }
 
 const activity: AgentActivitySurface = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   instanceId: 'instance-1',
   pid: 123,
   startedAt: '2026-07-20T07:50:00.000Z',
@@ -104,7 +104,7 @@ const activity: AgentActivitySurface = {
   trigger: {
     kind: 'private_message',
     label: '收到 Alice 的私聊',
-    target: { type: 'private', id: '42' },
+    target: { platform: 'qq', accountId: '999', kind: 'private', externalId: '42' },
   },
   activeTools: [{
     toolCallId: 'call-live',

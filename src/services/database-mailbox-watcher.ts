@@ -7,6 +7,15 @@ import { createLogger } from '../logger.js'
 import type { Message } from '../generated/prisma/client.js'
 import type { ChatPlatform, ConversationKind } from '../chat/conversation.js'
 import { conversationKey } from '../chat/conversation.js'
+import {
+  initialMailboxWatcherStatus,
+  MAILBOX_WATCHER_STATUS_PATH,
+  recordMailboxWatcherFailure,
+  recordMailboxWatcherSuccess,
+  shouldPublishMailboxWatcherStatus,
+  type MailboxWatcherStatus,
+  writeMailboxWatcherStatus,
+} from './mailbox-watcher-status.js'
 
 const log = createLogger('MAILBOX_WATCHER')
 
@@ -14,6 +23,7 @@ export interface DatabaseMailboxWatcher {
   start(): void
   stop(): Promise<void>
   cursor(): number
+  status(): MailboxWatcherStatus
 }
 
 export async function currentMessageHighWater(): Promise<number> {
@@ -76,6 +86,10 @@ export function createDatabaseMailboxWatcher(input: {
   selfExternalIds?: Partial<Record<ChatPlatform, string>>
   allowedConversationKeys?: ReadonlySet<string>
   enqueue: (event: BotEvent) => void | Promise<void>
+  statusPath?: string
+  writeStatus?: (path: string, status: MailboxWatcherStatus) => Promise<void>
+  statusHeartbeatMs?: number
+  now?: () => Date
 }): DatabaseMailboxWatcher {
   const policies = new Map(input.groupPolicies.map((policy) => [policy.id, policy]))
   let cursor = input.startAfterRowId
@@ -83,6 +97,32 @@ export function createDatabaseMailboxWatcher(input: {
   let stopped = false
   let polling = false
   let activePoll: Promise<void> | null = null
+  let processingRowId: number | null = null
+  const now = input.now ?? (() => new Date())
+  let status = initialMailboxWatcherStatus(cursor, now())
+  let statusWriteTail = Promise.resolve()
+  let lastPublishedStatus: MailboxWatcherStatus | null = null
+  let lastPublishedAtMs: number | null = null
+  const statusPath = input.statusPath ?? MAILBOX_WATCHER_STATUS_PATH
+  const writeStatus = input.writeStatus ?? writeMailboxWatcherStatus
+  const statusHeartbeatMs = Math.max(1_000, input.statusHeartbeatMs ?? 60_000)
+
+  const publishStatus = (): void => {
+    const publishedAtMs = now().getTime()
+    if (!shouldPublishMailboxWatcherStatus({
+      current: status,
+      previous: lastPublishedStatus,
+      lastPublishedAtMs,
+      nowMs: publishedAtMs,
+      heartbeatMs: statusHeartbeatMs,
+    })) return
+    const snapshot = structuredClone(status)
+    lastPublishedStatus = snapshot
+    lastPublishedAtMs = publishedAtMs
+    statusWriteTail = statusWriteTail
+      .then(() => writeStatus(statusPath, snapshot))
+      .catch((error: unknown) => log.warn({ error, statusPath }, 'mailbox_watcher_status_write_failed'))
+  }
 
   const schedule = (delayMs: number): void => {
     if (stopped || timer) return
@@ -106,6 +146,7 @@ export function createDatabaseMailboxWatcher(input: {
         take: 200,
       })
       for (const row of rows) {
+        processingRowId = row.rowId
         const platform = chatPlatform(row.platform)
         const selfExternalId = input.selfExternalIds?.[platform]
           ?? (platform === 'qq' ? String(input.selfNumber) : '')
@@ -138,10 +179,16 @@ export function createDatabaseMailboxWatcher(input: {
         const ready = await ensureMessageReadyForAgent(row)
         await input.enqueue(messageRowToChatEvent(row, ready.renderedText, selfExternalId))
         cursor = row.rowId
+        processingRowId = null
       }
+      status = recordMailboxWatcherSuccess(status, cursor, now())
+      publishStatus()
       schedule(rows.length === 200 ? 0 : input.pollMs)
     } catch (error) {
-      log.error({ error, cursor }, 'database_mailbox_poll_failed')
+      status = recordMailboxWatcherFailure(status, processingRowId, error, now())
+      publishStatus()
+      log.error({ error, cursor, blockedAtRowId: processingRowId }, 'database_mailbox_poll_failed')
+      processingRowId = null
       schedule(input.pollMs)
     } finally {
       polling = false
@@ -151,6 +198,7 @@ export function createDatabaseMailboxWatcher(input: {
   return {
     start() {
       stopped = false
+      publishStatus()
       schedule(0)
     },
     async stop() {
@@ -158,8 +206,10 @@ export function createDatabaseMailboxWatcher(input: {
       if (timer) clearTimeout(timer)
       timer = null
       await activePoll
+      await statusWriteTail
     },
     cursor: () => cursor,
+    status: () => structuredClone(status),
   }
 }
 

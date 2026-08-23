@@ -17,7 +17,7 @@ export type NavigationItem = { to: NavigationPath; label: string; hint: string; 
 
 export const primaryNavigation: NavigationItem[] = [
   { to: '/', label: '现在', hint: '当前状态与进展', icon: LayoutDashboard },
-  { to: '/qq', label: 'QQ', hint: '会话与媒体', icon: MessageCircleMore },
+  { to: '/qq', label: '会话', hint: 'QQ、飞书与媒体', icon: MessageCircleMore },
   { to: '/memory', label: '知识', hint: 'Memory 与 Life', icon: BookOpenText },
 ]
 

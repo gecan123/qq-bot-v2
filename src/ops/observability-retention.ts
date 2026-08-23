@@ -65,7 +65,7 @@ function inspectNdjsonLine(line: Buffer, cutoffMs: number): {
     return { retain: true, unparseableTimestamp: true }
   }
   const record = parsed as Record<string, unknown>
-  const timestamp = record.ts ?? record.time
+  const timestamp = record.ts ?? record.time ?? record.failedAt
   if (typeof timestamp !== 'string') {
     return { retain: true, unparseableTimestamp: true }
   }

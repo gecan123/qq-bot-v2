@@ -64,7 +64,7 @@ pnpm toollogf
 
 ### WebAdmin（本机管理模式）
 
-`apps/admin-web` 的“现在”首页展示实时活动、Goal commitment 与最近工具进展，其他观察页面提供 Ledger、原始事件、生命状态、Memory、QQ、指标和健康下钻。“管理操作”页面只开放固定 `reset_state`：选择 `context`、`knowledge` 或 `all`，且没有自动恢复路径。一次性 Memory/语言迁移已经退出正式运维面。
+`apps/admin-web` 的“现在”首页展示实时活动、Goal commitment 与最近工具进展，其他观察页面提供 Ledger、原始事件、生命状态、Memory、跨平台 Conversations/Media、指标和健康下钻。Health 的自动刷新只读 head/count/checkpoint 元数据；完整 canonical replay 必须由 operator 点击 Deep Integrity 手动触发，并展示最近检查时间、耗时和摘要。“管理操作”页面只开放固定 `reset_state`：选择 `context`、`knowledge` 或 `all`，且没有自动恢复路径。
 
 观察数据流是：
 
@@ -103,6 +103,7 @@ pnpm web:test
 pnpm web:typecheck
 pnpm web:build
 pnpm repo-check
+pnpm bench:ledger-commit
 ```
 
 构建不连接数据库；真实页面加载才通过 Server Function 使用 `DATABASE_URL`。观察 feature 不允许更新 ledger、runtime state、checkpoint、Goal、消息、媒体或 workspace side-data。唯一 mutation adapter 是 `features/operations/operations.server.ts`，它不能调用 shell、package script、任意 SQL 或接受路径输入。WebAdmin run state、审计日志、页面 cache 和查询 DTO 都不是 replay source，不能重建或改写 `AgentContext`。
@@ -232,7 +233,7 @@ invoke tool=mcp args={"action":"call","tool":"mcp__example__search","arguments":
 
 - Agent Core 启动后异步执行一次 retention，并在每天北京时间 03:00 以 single-flight 方式再次执行；清理不会阻塞 Bot 启动，停机时会取消 timer 并有界等待在途任务。
 - 每次清理删除 `BOT_INBOUND_RETENTION_DAYS` 窗口之前的 `messages` 和 `media`，默认 7 天；个人长期使用可按需改为 30 或 90 天。StickerPool 正在引用的 Media 受保护。Memory 中的 `sourceMessageRowIds` 只在该窗口内保证可回查原文，过期后保留为历史来源标识。删除 Media 后，再清理一小时前已经无人引用且近期没有被内容 upsert 触碰的 `media_blobs`。
-- 每次清理也默认删除 30 天前的 `agent_tool_calls`、`agent_token_usage` 以及 token/tool/fetch NDJSON 记录；用 `BOT_OBSERVABILITY_RETENTION_DAYS` 覆盖，设为 `0` 关闭这组观测数据清理。NDJSON 以同目录临时文件原子替换；无效 JSON、无效时间戳或缺少 `ts`/`time` 的行会保留并记录告警。数据库表和各文件独立清理，单个目标失败不会阻塞其他目标或 Bot 启动。
+- 每次清理也默认删除 30 天前的 `agent_tool_calls`、`agent_token_usage` 以及 token/tool/fetch/ingress-failure NDJSON 记录；用 `BOT_OBSERVABILITY_RETENTION_DAYS` 覆盖，设为 `0` 关闭这组观测数据清理。NDJSON 以同目录临时文件原子替换，并识别 `ts`、`time` 或 `failedAt` 时间字段；无效 JSON、无效时间戳或缺少时间字段的行会保留并记录告警。数据库表和各文件独立清理，单个目标失败不会阻塞其他目标或 Bot 启动。
 
 ## Moomoo OpenD / Mac
 
@@ -393,6 +394,8 @@ VIBE_TRADING_RESULT_MAX_CHARS=12000
 - `pnpm agent:metrics --db` 从 Postgres 汇总持久化事件；可加 `--from <iso> --to <iso> --tool <name> --operation <name> --model <name> --ok true|false --side-effect true|false` 做筛选。
 - `pnpm agent:daily-metrics` 按北京时间自然日统计真实 bot 的全部模型 tool call 与 token/cache，默认查今天并排除 `model=mock` 测试数据。`--date YYYY-MM-DD` 指定截止自然日，`--days N` 逐日返回包含截止日在内的最近 N 天（最多 31 天）；例如 `pnpm agent:daily-metrics -- --date 2026-07-13` 和 `pnpm agent:daily-metrics -- --days 7`。新日志会把 `invoke` 记成其实际请求的内部工具；旧日志无法展开时保留 `invoke` 并报告 `unresolvedInvokeCalls`。该报告只在 operator/WebAdmin 面使用。
 - `pnpm agent:ledger-check` 使用原始只读 Prisma 查询检查 canonical rows：验证 entry schema、严格递增 ID、runtime head、compaction chain/boundary、assistant tool call/result 原子组，以及 checkpoint 的 match/stale/corrupt 分类。它不通过 runtime repository 修复或写回数据；输出 JSON，有错误时非零退出。runtime 启动会先校验 canonical ledger，checkpoint 缺失、过期或损坏时只从 ledger 重建，绝不从消息、side-data 或日志重建 prompt history。
+- `pnpm bench:ledger-commit` 不连接数据库或 provider，固定构造 1 万和 10 万 permanent entry 的合法 compacted ledger；full replay 走 canonical projection，增量路径实际调用 `LedgerCommitCoordinator` 并包含 `AgentContext` 克隆、完整 active projection 校验和 runtime state 安装。它证明日常 commit 成本取决于有界 active projection，而不是 permanent prefix；数据库事务耗时仍需结合结构化 commit 日志观察。
+- GitHub Actions 使用 fresh PostgreSQL 执行全部 migrations，并运行 root/WebAdmin 验证；只有显式设置 `QQ_BOT_TEST_DATABASE_URL`（必须指向可清空的专用测试库）时，真实 PostgreSQL 测试才会清理 ledger/checkpoint 并验证双 writer CAS、advisory lock 和 singleton CHECK。
 
 ## Git
 

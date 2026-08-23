@@ -6,9 +6,11 @@ import { buildMediaProvider } from '../llm/media-provider.js'
 import { setLlmProvider } from '../llm/provider.js'
 import { createLogger } from '../logger.js'
 import { closeServer, startJsonServer, writeJson } from './http.js'
+import { createTaskScheduler } from '../agent/task-scheduler.js'
 
 const log = createLogger('MEDIA_WORKER')
 const activeGenerations = new Set<Promise<void>>()
+const scheduler = createTaskScheduler({ 'media-description': { concurrency: 2 } })
 let server: Server | null = null
 let stopping = false
 
@@ -58,7 +60,10 @@ async function shutdown(signal: string): Promise<void> {
 }
 
 function trackGeneration(mediaId: number): Promise<void> {
-  const generation = generateDescriptionForMedia(mediaId)
+  const generation = scheduler.schedule(
+    { lane: 'media-description', resourceKey: `media:${mediaId}`, dedupeKey: `media:${mediaId}` },
+    () => generateDescriptionForMedia(mediaId),
+  )
   activeGenerations.add(generation)
   void generation.then(
     () => activeGenerations.delete(generation),

@@ -7,11 +7,11 @@
 ## 核心流程
 
 1. `src/platform.ts` 启动各服务、等待健康检查通过，再启动 `src/index.ts` 中的 Agent Core。每个进程写独立日志，supervisor 只负责本机生命周期，不承担业务路由。
-2. 启动恢复只从 `bot_agent_ledger_entries` 加载 canonical history，并校验 `bot_agent_runtime_state`。可丢弃的 `bot_agent_checkpoint` 只有完全匹配时才用于加速；missing、stale 或 corrupt 都从 canonical ledger 重建。
+2. Agent Core 先用专用 PostgreSQL session 获取 advisory lock，再连接 Prisma。启动恢复只从 `bot_agent_ledger_entries` 加载 canonical history，并校验 `bot_agent_runtime_state`。可丢弃的 `bot_agent_checkpoint` 只有完全匹配时才可复用；missing、stale 或 corrupt 都从 canonical ledger 重建。
 3. QQ Gateway 独占 NapCat WebSocket、首次群历史 backfill、好友/群目录查询和 QQ 外发。按配置启用的 Feishu Gateway 独占官方 WebSocket client、飞书资源下载和飞书外发，并通过 loopback HTTP 向 Agent Core 暴露健康、已观察会话与发送边界；两个 Gateway 都不是 Agent。
 4. `src/bot/**` 与 `src/services/feishu-ingress.ts` 把平台事件规范化为追加式 `messages` / `media` 事实；每次附件保留独立、稳定的 `mediaId`，物理字节通过 `media.blobId` 引用按 SHA-256 唯一的 `media_blobs`，单个飞书下载资源上限为 20MB。Agent Core 先做 missed-message replay，再由 database mailbox watcher 按递增 `rowId` 读取新事实，`src/agent/mailbox.ts` 按平台与会话聚合成不含正文的确定性通知。
 5. `src/agent/runtime.ts` 装配 context projection、tools、system prompt 和 `BotLoopAgent`。QQ 与飞书始终共用一个主 Agent、一个 mailbox 调度器和一个持久 LLM ledger；轮次边界统一按 attention、scheduled wake、active Goal、普通环境事件披露。
-6. `src/agent/bot-loop-agent.ts` 是 Runtime Host：负责受控 append、runtime cursor/continuity/Goal revision/跨平台 conversation focus 原子更新、compaction 和 autonomy 调度。事务成功后才推进内存 `AgentContext`。
+6. `src/agent/bot-loop-agent.ts` 是唯一 Runtime Host；它把 expected-head append/增量 projection 委托给 `LedgerCommitCoordinator`，把 threshold/overflow/CAS 重算委托给 `CompactionCoordinator`，把 continue/wait/backoff/stop 决策委托给纯 `LoopPolicy`。事务成功后才推进内存 `AgentContext`。
 7. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct。连续且显式只读的 tool calls 可以并行，副作用和未知调用是 barrier；tool results 始终按 assistant tool-call 顺序成组 append。只有 `ToolExecutionResult.content` 进入 ledger，`outcome` / `effects` 由 Runtime Host 解释。
 
 专用后台工作统一走有界边界。Agent Core 内部仍保留 `maintenance=1`、`network=3` 等 bounded task scheduler；入站媒体描述由独立 Media Worker 处理，并把结果写回 Postgres `media` 事实行。媒体描述是可缺失的 best-effort 增强：消息渲染只读取当时已有描述，不等待、不触发生成；新图片/贴纸下载后最多自动请求一次，视频、语音和文件不自动生成描述。Media Worker 不扫描历史空描述，也不自动重试失败调用。Browser Controller 继续作为独立进程。它们都不是新的主 Agent，也不能直接写 canonical ledger。项目当前接受进程重启中断在途后台任务，不建设通用 `jobKind + payload` 自动恢复层；只有重启丢失昂贵长任务形成可测量痛点，或外部服务原生提供可恢复 task/session ID 时再重新评估。
@@ -56,7 +56,7 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - Claude 主请求会预热同一原子 cut 上的 provider-only cache breakpoint；普通 Claude compaction 复用主 system、tools 和原始 prefix 后追加可信 control message。OpenAI 与 Claude split-turn fallback 仍走隔离 summarizer 请求；缓存从不成为 replay 或事实来源。
 - 自动压缩由动态 token threshold 触发；provider context overflow 每轮最多强制 compact-and-retry 一次。主 Agent 和聊天控制面不提供手动 compaction。
 - summarizer 和 hook 在事务外执行，最终用 expected head 做 CAS。head race 会基于新 head 重算一次；失败不会改变 canonical history。
-- checkpoint 只是可重建 projection cache，runtime state 只保存控制元数据，两者都不能重建 transcript。
+- 普通 commit 直接用事务返回的 appended entries/runtime state 增量安装 projection，不读取永久 prefix，也不刷新 checkpoint。checkpoint 只在启动或 compaction 后完整 canonical load 时 best-effort 刷新；runtime state 只保存控制元数据，两者都不能重建 transcript。
 - canonical 图片只保存稳定 `image_ref`，请求前才解析近期图片。媒体失效时投影确定性 unavailable marker，不改变旧 ledger。
 
 完整 replay、compaction、图片和 mailbox 不变量见 `docs/AGENT_CONTEXT.md`。
@@ -95,7 +95,8 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - `src/agent/agent-ledger-repo.ts`：append、CAS compaction、runtime 原子更新和 checkpoint I/O。
 - `src/agent/agent-ledger-projection.ts`：canonical 校验与确定性 projection。
 - `src/agent/agent-ledger-loader.ts`：checkpoint 分类、rebuild 和安装输入。
-- `src/agent/bot-loop-agent.ts`：Runtime Host、事务边界、trigger、失败恢复和自主循环。
+- `src/agent/ledger-commit-coordinator.ts`、`src/agent/compaction-coordinator.ts`、`src/agent/loop-policy.ts`：提交热路径、压缩事务与纯循环策略。
+- `src/agent/bot-loop-agent.ts`：唯一 Runtime Host、trigger、失败恢复和自主循环编排。
 - `src/agent/react-kernel.ts`：单轮 ReAct、tool call/result 顺序和结果边界。
 - `src/agent/compaction*.ts`：token cut、serialization、hooks、candidate 和 summary 校验。
 - `src/agent/working-context.ts`、`src/media/agent-image-ref.ts`：请求投影与稳定图片引用。
@@ -106,5 +107,5 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - `src/agent/schedule-*.ts`：进程内短期调度、occurrence、pending delivery 和重启恢复。
 - `src/services/media-worker.ts`：独立媒体描述 worker，直接调用媒体 provider。
 - `src/bot/**`、`src/services/feishu-*.ts`、`src/messaging/**`、`src/media/**`：QQ/飞书 ingress、发送和媒体领域实现。
-- `src/database/**`、`src/ops/**`：数据库 helper、运维日志和只读检查。
+- `src/database/**`、`src/ops/**`：数据库 helper、Agent Core advisory lock、入站 transient retry、运维日志和只读检查。
 - `apps/admin-web/**`：TanStack Start 本机管理面；观察 feature 只读，operations feature 通过固定 DTO、single-flight runner 和本地审计调用强类型 `src/ops` 服务；`*.functions.ts` 暴露 RPC wrapper，`*.server.ts` 保留 Prisma/env/文件 helper。

@@ -23,6 +23,20 @@ describe('interpretToolEffects', () => {
     })
   })
 
+  test('uses the shared mailbox parser for Feishu and encoded identifiers', () => {
+    assert.deepEqual(interpretToolEffects([
+      {
+        toolCallId: 'inbox-1',
+        toolName: 'inbox',
+        effect: {
+          type: 'inbox_read',
+          mailbox: 'feishu:app%3Atenant:private:ou%3A1',
+          throughRowId: 8,
+        },
+      },
+    ]).inboxReads, [{ mailbox: 'feishu:app%3Atenant:private:ou%3A1', throughRowId: 8 }])
+  })
+
   test('rejects effects from unrelated tools', () => {
     assert.deepEqual(interpretToolEffects([{
       toolCallId: 'lookup-1',

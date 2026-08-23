@@ -24,7 +24,7 @@ describe('AgentActivityReporter', () => {
     reporter.setTrigger({
       kind: 'private_message',
       label: '收到 Alice 的私聊',
-      target: { type: 'private', id: '42' },
+      target: { platform: 'qq', accountId: '999', kind: 'private', externalId: '42' },
     })
     reporter.setPhase({ phase: 'thinking', roundIndex: 7 })
     now = new Date('2026-07-20T08:00:03.000Z')
@@ -37,11 +37,12 @@ describe('AgentActivityReporter', () => {
     await reporter.flush()
 
     const surface = writes.at(-1)!
+    assert.equal(surface.schemaVersion, 2)
     assert.equal(surface.phase, 'waiting')
     assert.equal(surface.phaseStartedAt, '2026-07-20T08:00:03.000Z')
     assert.equal(surface.roundIndex, 7)
     assert.equal(surface.trigger?.kind, 'private_message')
-    assert.equal(surface.trigger?.target?.id, '42')
+    assert.equal(surface.trigger?.target?.externalId, '42')
     assert.equal(surface.waitUntil, '2026-07-20T08:15:03.000Z')
     assert.deepEqual(surface.activeTools, [])
   })

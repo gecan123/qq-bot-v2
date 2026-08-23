@@ -1,10 +1,15 @@
 import { BrowserController } from '../src/browser/controller.js'
 import { startBrowserServer } from '../src/browser/server.js'
 import { createLogger } from '../src/logger.js'
+import { parseLoopbackHttpOrigin } from '../src/config/loopback-origin.js'
 
 const log = createLogger('BROWSER_CONTROLLER')
 
-const controllerUrl = process.env.BOT_BROWSER_CONTROLLER_URL?.trim() || 'http://127.0.0.1:37921'
+const controllerUrl = parseLoopbackHttpOrigin(
+  'BOT_BROWSER_CONTROLLER_URL',
+  process.env.BOT_BROWSER_CONTROLLER_URL?.trim() || 'http://127.0.0.1:37921',
+  { requirePort: true },
+)
 const profileDir = process.env.BOT_BROWSER_PROFILE_DIR?.trim() || 'data/browser-profile/luna'
 const artifactDir = process.env.BOT_BROWSER_ARTIFACT_DIR?.trim() || 'data/agent-workspace/browser'
 const actionLogPath = process.env.BOT_BROWSER_ACTION_LOG_PATH?.trim() || 'logs/browser-actions.ndjson'

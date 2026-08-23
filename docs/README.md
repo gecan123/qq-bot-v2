@@ -4,6 +4,7 @@
 
 ## 入口
 
+- `CONTEXT-MAP.md`：bot/backend 与 WebAdmin 两个领域上下文的路由入口。
 - `docs/ARCHITECTURE.md`：运行形态、模块边界和启动流程。
 - `docs/AGENT_CONTEXT.md`：永续上下文不变量和 replay 规则。
 - `docs/MEMORY_ARCHITECTURE.md`：事实账本、LLM ledger、长期记忆、Notebook、Life Journal 和 Agenda 的边界与流程。

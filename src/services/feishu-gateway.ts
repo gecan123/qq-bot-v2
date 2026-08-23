@@ -28,6 +28,8 @@ import {
   ConversationWorkQueue,
   feishuGatewayHealth,
 } from './feishu-event-routing.js'
+import { withTransientRetry } from '../database/transient-retry.js'
+import { recordIngressFailure } from './ingress-failure-log.js'
 
 const log = createLogger('FEISHU_GATEWAY')
 const feishu = config.feishu
@@ -135,6 +137,7 @@ function createDispatcher(
             ),
           })
         } catch (error) {
+          await recordIngressFailure({ platform: 'feishu', kind: 'message', error, context: { chatId, messageId: event.message.message_id } }).catch(() => undefined)
           log.error({ error, chatId, messageId: event.message.message_id }, 'feishu_message_ingress_failed')
         }
       })
@@ -144,7 +147,7 @@ function createDispatcher(
       workQueue.schedule(event.chat_id, async () => {
         try {
           const recallTime = secondsFromFeishuTime(event.recall_time ?? event.create_time)
-          const result = await persistMessageRecall({
+          const result = await withTransientRetry(() => persistMessageRecall({
             platform: 'feishu',
             accountId: feishu!.appId,
             eventExternalId: event.event_id ?? `recall:${event.message_id}:${recallTime}`,
@@ -152,9 +155,10 @@ function createDispatcher(
             conversationExternalId: event.chat_id!,
             recalledAt: recallTime,
             rawContent: event,
-          })
+          }), { onRetry: ({ error, attempt, delayMs }) => log.warn({ error, attempt, delayMs, chatId: event.chat_id }, 'feishu_ingress_persist_retry') })
           if (!result) log.warn({ chatId: event.chat_id, messageId: event.message_id }, 'feishu_recall_original_missing')
         } catch (error) {
+          await recordIngressFailure({ platform: 'feishu', kind: 'recall', error, context: { chatId: event.chat_id!, messageId: event.message_id! } }).catch(() => undefined)
           log.error({ error, chatId: event.chat_id, messageId: event.message_id }, 'feishu_recall_ingress_failed')
         }
       })

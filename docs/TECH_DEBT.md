@@ -26,30 +26,32 @@ QQ Gateway、Feishu Gateway 和 Media Worker 通过 PostgreSQL 事实边界或�
 
 ## P0：已确认正确性缺陷
 
-当前没有已知 P0 正确性缺陷。
+当前没有已知未修复的 P0 正确性缺陷。2026-08-23 已统一 canonical/legacy QQ 与飞书 mailbox key 解析，并为 inbox cursor、compaction projection、effect interpretation 增加统一契约测试。
+
+## 2026-08-23 已完成的可靠性与结构收敛
+
+- 普通 ledger append 已增加 expected-head CAS；日常提交使用 `LedgerCommitCoordinator` 增量安装已验证 projection，不再每次全量 replay。启动、compaction 后刷新、`agent:ledger-check` 与 WebAdmin 手动 Deep Integrity 仍保留完整 chain 校验。
+- Agent Core 启动持有专用 PostgreSQL session advisory lock；`.bot.pid` 只保留诊断意义。真实 PostgreSQL CI 覆盖双 writer CAS、advisory lock 与 singleton CHECK。
+- QQ/飞书入站事实写入与撤回使用有界 transient retry 和小抖动；最终失败进入结构化 NDJSON，Health 展示最近 24 小时计数。Mailbox watcher 保持不自动跳过 poison row，并暴露阻塞 row、连续失败和错误分类。
+- 独立 Media Worker 复用有界 scheduler，Browser 与全部本机服务 URL 共用 loopback origin parser。
+- WebAdmin Metrics 默认读取 NDJSON 并明确 source/coverage/truncated；会话页覆盖 QQ 与飞书；Health 常规刷新只做 quick metadata check，完整 replay 由 operator 手动触发。
+- `BotLoopAgent` 已把 persistence、compaction 与循环决策分别下沉到 `LedgerCommitCoordinator`、`CompactionCoordinator` 与纯 `LoopPolicy`；Memory、Notebook、Life Journal 共享薄的 Markdown revision/CAS/atomic-write 基础设施。
 
 ## P1：可靠性与规模风险
 
-### Canonical commit 热路径随永久 ledger 线性增长
+### 已偿还：Canonical commit 热路径随永久 ledger 线性增长
 
-- 证据：`src/agent/bot-loop-agent.ts` 的每次 `commitChanges()` 都调用 `reloadProjectionFromCanonical()`；`src/agent/agent-ledger-repo.ts` 的 `loadCanonicalState()` 全量读取所有 entry；`src/agent/agent-ledger-loader.ts` 随后全量校验、projection、稳定序列化并计算 SHA-256 fingerprint。
-- checkpoint 当前不是热路径加速器：loader 在判断 checkpoint 是否命中之前已经完成 canonical 全量读取和校验。
-- 影响：单次提交趋近 `O(N)`，长期累计成本趋近 `O(N²)`；compaction 只缩短 LLM active view，不减少 permanent ledger 的读取与 fingerprint 成本。
-- 目标：所有 append 使用 expected-head CAS；成功提交后用返回的 appended entries/runtime state 增量安装 projection；checkpoint 写入批处理或节流。启动、显式 doctor 和周期审计仍保留完整 chain 校验。增加 1 万/10 万 entry 的 benchmark 与 commit latency 指标。
+- 状态：已完成。普通 commit 不再调用 canonical loader；commit、ledger load、projection/fingerprint 与 checkpoint refresh 分别记录耗时。
+- `pnpm bench:ledger-commit` 固定覆盖 1 万/10 万 permanent entry 的合法 compacted ledger；增量路径实际调用 `LedgerCommitCoordinator`，包含 `AgentContext` 克隆、active projection 校验与 runtime state 安装，避免用数组切片冒充 commit 成本。
+- 完整校验仍是明确的低频/启动路径；checkpoint 是可丢弃 cache，不会掩盖 canonical 损坏。
 
-### Agent Core 单实例是假设，但没有数据库级 fencing
+### 已偿还：Agent Core 数据库级 fencing
 
-- 证据：`src/index.ts` 直接覆盖 `.bot.pid`，没有检查旧进程、租约或互斥；误启动两个 Agent Core 时会各自持有独立 `AgentContext`、database mailbox watcher 和自主循环。QQ Gateway 已独立，但 runtime row lock 仍只能串行化单次数据库事务，不能阻止双 loop。
-- `appendCompaction()` 和 `updateRuntime()` 校验 expected head，但普通 `appendMessages()` 没有 expected-head CAS。
-- 影响：误启动第二实例时可能交错写 ledger、重复处理事件或重复向 QQ/飞书发送消息。
-- 目标：启动时获取 PostgreSQL advisory lock，或实现带 fencing token 的租约；普通 append 同样校验 expected head。`.bot.pid` 只保留为诊断信息，不作为唯一互斥机制。
+- 状态：已完成。`src/database/agent-core-lock.ts` 使用专用连接持有 session advisory lock，shutdown 明确释放；普通 append、runtime update 与 compaction 全部校验 expected head。
 
-### 缺少真实 PostgreSQL 并发与迁移验证
+### 已偿还：真实 PostgreSQL 并发与迁移验证
 
-- 现有 ledger repository 测试主要使用 fake client，能覆盖事务意图，但不能证明 PostgreSQL 行锁、CAS race 和隔离行为。
-- 仓库当前没有 GitHub Actions workflow，也没有从空数据库执行全部 Prisma migrations 的持续验证。
-- 影响：单元测试全部通过时，锁竞争、迁移顺序、约束差异和双 writer 行为仍可能只在部署环境暴露。
-- 目标：CI 至少运行 root test/typecheck/repo-check、WebAdmin test/typecheck/build、fresh database migration；再增加使用真实 PostgreSQL 的 concurrent writer、compaction head race 和 singleton 初始化集成测试。
+- 状态：`.github/workflows/ci.yml` 使用 fresh PostgreSQL 执行全部 migrations，并运行 root/WebAdmin 完整验证；`agent-ledger-postgres.integration.test.ts` 覆盖真实 row lock + stale-head race、advisory lock 与 singleton constraint。
 
 ## P2：可维护性与可观测性
 
@@ -79,13 +81,12 @@ QQ Gateway、Feishu Gateway 和 Media Worker 通过 PostgreSQL 事实边界或�
 
 ### BotLoopAgent 职责过密
 
-- `src/agent/bot-loop-agent.ts` 同时协调 persistence、compaction、mailbox、Goal、autonomy、Life hooks 与 recovery，相关测试也集中在一个大型测试文件。
-- 目标：只做边界清晰的提取，例如 pure loop policy 与 ledger commit coordinator；保持单主循环和 canonical ledger 契约，不引入第二套 orchestration 或宽泛重写。
+- persistence、compaction 与循环决策已经提取为三个深模块；主循环仍是唯一 orchestration，没有引入第二套 runtime。
+- 剩余 mailbox/Goal/recovery 只有在继续出现可独立测试的稳定边界时再提取，不按行数机械拆分。
 
 ### 数据库 singleton 约束主要依赖应用代码
 
-- runtime/checkpoint 都以 `id=1` 作为 singleton，但 schema 没有像 Goal 一样把该约束表达为数据库 CHECK。
-- 目标：在 PostgreSQL migration 中补 singleton CHECK，并用 fresh migration test 验证；应用层校验继续保留为错误诊断。
+- 已通过 `20260823010000_enforce_agent_singletons` 为 runtime/checkpoint 增加数据库 CHECK；应用层校验继续保留为错误诊断。
 
 ### Migration 与恢复演练不足
 
@@ -112,10 +113,9 @@ QQ Gateway、Feishu Gateway 和 Media Worker 通过 PostgreSQL 事实边界或�
 
 ## 推荐偿还顺序
 
-1. 先观察长期 ledger 的真实 commit latency；出现可复现变慢后，再改为增量 projection 并增加规模 benchmark。
-2. 单机个人部署继续依赖运维约束只启动一个 Agent Core；只有出现误启动双实例的真实问题时，再增加数据库级 fencing 和普通 append CAS。
-3. 根据个人使用周期调整 `BOT_INBOUND_RETENTION_DAYS`；当前契约明确 provenance 只在该窗口内保证原文可回查。
-4. CI、fresh migration、真实 PostgreSQL 并发测试、统一 usage accounting、singleton 约束和恢复 runbook 都按真实痛点择需建设，不作为个人项目默认门槛。
+1. 根据个人使用周期调整 `BOT_INBOUND_RETENTION_DAYS`；当前契约明确 provenance 只在该窗口内保证原文可回查。
+2. 观察 Feishu 重启窗口、编辑事件和 Markdown lexical recall 的真实证据，再决定是否补平台 backfill 或派生检索索引。
+3. 不为个人实验项目预建 HA、broker、跨主机恢复或多 Agent；只有可测量痛点出现时再扩展。
 
 ## 持续维护
 

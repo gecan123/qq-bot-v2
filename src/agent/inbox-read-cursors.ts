@@ -1,4 +1,4 @@
-const INBOX_MAILBOX_KEY_PATTERN = /^qq_(?:group|private):\d+$/
+import { isMailboxKey } from './mailbox.js'
 
 export type InboxReadCursors = Record<string, number>
 
@@ -9,7 +9,7 @@ export function parseInboxReadCursors(value: unknown): InboxReadCursors {
 
   const cursors: InboxReadCursors = {}
   for (const [mailbox, cursor] of Object.entries(value as Record<string, unknown>)) {
-    if (!INBOX_MAILBOX_KEY_PATTERN.test(mailbox)) {
+    if (!isMailboxKey(mailbox)) {
       throw new TypeError(`invalid inbox mailbox key: ${mailbox}`)
     }
     if (!Number.isSafeInteger(cursor) || (cursor as number) < 0) {
@@ -25,7 +25,7 @@ export function advanceInboxReadCursor(
   mailbox: string,
   throughRowId: number,
 ): InboxReadCursors {
-  if (!INBOX_MAILBOX_KEY_PATTERN.test(mailbox)) {
+  if (!isMailboxKey(mailbox)) {
     throw new TypeError(`invalid inbox mailbox key: ${mailbox}`)
   }
   if (!Number.isSafeInteger(throughRowId) || throughRowId <= 0) {

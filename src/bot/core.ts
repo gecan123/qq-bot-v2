@@ -11,6 +11,8 @@ import type { ParsedSegment } from '../types/message-segments.js'
 import { groupUploadSyntheticMessageId, type GroupUploadNotice } from './group-upload.js'
 import { persistMessageRecall } from '../services/message-recall.js'
 import type { MessageFactKind } from '../database/messages.js'
+import { withTransientRetry } from '../database/transient-retry.js'
+import { recordIngressFailure } from '../services/ingress-failure-log.js'
 
 const ingressLog = createLogger('INGRESS')
 const napcatLog = createLogger('NAPCAT')
@@ -98,7 +100,7 @@ async function processMessage(
   const replySegment = mediaResult.content.find(
     (segment): segment is Extract<ParsedSegment, { type: 'reply' }> => segment.type === 'reply',
   )
-  const persisted = await appendMessageFact({
+  const persisted = await withTransientRetry(() => appendMessageFact({
     eventKind: 'message',
     eventExternalId: `message:${scope.kind}:${conversation.externalId}:${parsed.messageId}`,
     conversation,
@@ -115,7 +117,7 @@ async function processMessage(
     rawContent: qqMsg.message,
     rawMessage: qqMsg.raw_message,
     sentAt: parsed.time,
-  })
+  }), { onRetry: ({ error, attempt, delayMs }) => ingressLog.warn({ error, attempt, delayMs }, 'qq_ingress_persist_retry') })
 
   const mentionedSelf = mediaResult.content.some(
     (segment) => segment.type === 'at' && segment.targetId === String(config.selfNumber),
@@ -217,7 +219,7 @@ async function processGroupUpload(
     senderId: context.user_id,
     napcat,
   })
-  const persisted = await appendMessageFact({
+  const persisted = await withTransientRetry(() => appendMessageFact({
     eventKind: 'message',
     eventExternalId: `message:group:${context.group_id}:${messageId}`,
     conversation: {
@@ -236,7 +238,7 @@ async function processGroupUpload(
     rawContent: { noticeType: 'group_upload', file: context.file },
     rawMessage: `[群文件上传: ${context.file.name}]`,
     sentAt: context.time,
-  })
+  }), { onRetry: ({ error, attempt, delayMs }) => ingressLog.warn({ error, attempt, delayMs }, 'qq_ingress_persist_retry') })
 
   ingressLog.info({
     direction: 'inbound',
@@ -340,6 +342,7 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): Napc
       try {
         await backfillGroupMessages(groupId)
       } catch (error) {
+        await recordIngressFailure({ platform: 'qq', kind: 'group_backfill', error, context: { groupId } }).catch(() => undefined)
         ingressLog.error({ error, groupId }, '群历史消息补拉失败')
       }
     }))
@@ -370,6 +373,7 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): Napc
       try {
         await processMessage({ kind: 'group', groupId }, context.message_id, { ...options, readyDispatcher })
       } catch (error) {
+        await recordIngressFailure({ platform: 'qq', kind: 'group_message', error, context: { groupId, messageId: String(context.message_id) } }).catch(() => undefined)
         ingressLog.error({ error, group: groupId, msgId: context.message_id }, '处理群消息失败')
       }
     })
@@ -384,6 +388,7 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): Napc
       try {
         await processGroupUpload(context, { ...options, readyDispatcher })
       } catch (error) {
+        await recordIngressFailure({ platform: 'qq', kind: 'group_upload', error, context: { groupId, fileId: String(context.file.id) } }).catch(() => undefined)
         ingressLog.error(
           { error, group: groupId, fileId: context.file.id, fileName: context.file.name },
           '处理群文件上传失败',
@@ -398,7 +403,7 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): Napc
     const groupId = context.group_id
     const prev = groupChains.get(groupId) ?? Promise.resolve()
     const next = prev.then(async () => {
-      const result = await persistMessageRecall({
+      const result = await withTransientRetry(() => persistMessageRecall({
         platform: 'qq',
         accountId: String(config.selfNumber),
         eventExternalId: `recall:group:${groupId}:${context.message_id}:${context.time}`,
@@ -406,7 +411,7 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): Napc
         conversationExternalId: String(groupId),
         recalledAt: context.time,
         rawContent: context,
-      })
+      }), { onRetry: ({ error, attempt, delayMs }) => ingressLog.warn({ error, attempt, delayMs }, 'qq_recall_persist_retry') })
       if (!result) {
         ingressLog.warn({ groupId, messageId: context.message_id }, '撤回原消息未入库')
         return
@@ -423,6 +428,7 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): Napc
         sentAt: result.sentAt ?? result.createdAt,
       })
     }).catch((error) => {
+      void recordIngressFailure({ platform: 'qq', kind: 'group_recall', error, context: { groupId, messageId: String(context.message_id) } }).catch(() => undefined)
       ingressLog.error({ error, groupId, messageId: context.message_id }, '处理群消息撤回失败')
     })
     groupChains.set(groupId, next)
@@ -438,6 +444,7 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): Napc
       try {
         await processMessage({ kind: 'private', peerId }, context.message_id, { ...options, readyDispatcher })
       } catch (error) {
+        await recordIngressFailure({ platform: 'qq', kind: 'private_message', error, context: { peerId, messageId: String(context.message_id) } }).catch(() => undefined)
         ingressLog.error({ error, peer: peerId, msgId: context.message_id }, '处理私聊消息失败')
       }
     })
@@ -448,7 +455,7 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): Napc
     const peerId = context.user_id
     const prev = privateChains.get(peerId) ?? Promise.resolve()
     const next = prev.then(async () => {
-      const result = await persistMessageRecall({
+      const result = await withTransientRetry(() => persistMessageRecall({
         platform: 'qq',
         accountId: String(config.selfNumber),
         eventExternalId: `recall:private:${peerId}:${context.message_id}:${context.time}`,
@@ -456,7 +463,7 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): Napc
         conversationExternalId: String(peerId),
         recalledAt: context.time,
         rawContent: context,
-      })
+      }), { onRetry: ({ error, attempt, delayMs }) => ingressLog.warn({ error, attempt, delayMs }, 'qq_recall_persist_retry') })
       if (!result) {
         ingressLog.warn({ peerId, messageId: context.message_id }, '撤回原私聊消息未入库')
         return
@@ -472,6 +479,7 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): Napc
         sentAt: result.sentAt ?? result.createdAt,
       })
     }).catch((error) => {
+      void recordIngressFailure({ platform: 'qq', kind: 'private_recall', error, context: { peerId, messageId: String(context.message_id) } }).catch(() => undefined)
       ingressLog.error({ error, peerId, messageId: context.message_id }, '处理私聊消息撤回失败')
     })
     privateChains.set(peerId, next)

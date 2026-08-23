@@ -76,7 +76,7 @@ describe('main runtime wiring', () => {
     assert.match(source, /import \{ purgeObservabilityData \} from '\.\/ops\/observability-retention\.js'/)
     assert.match(
       source,
-      /await purgeObservabilityData\(\{\s*retentionDays: config\.observabilityRetentionDays,\s*ndjsonPaths: \[\s*config\.tokenUsageLogPath,\s*config\.toolCallLogPath,\s*config\.fetchLogPath,\s*\],\s*\}\)/,
+      /await purgeObservabilityData\(\{\s*retentionDays: config\.observabilityRetentionDays,\s*ndjsonPaths: \[\s*config\.tokenUsageLogPath,\s*config\.toolCallLogPath,\s*config\.fetchLogPath,\s*INGRESS_FAILURE_LOG_PATH,\s*\],\s*\}\)/,
     )
   })
 })

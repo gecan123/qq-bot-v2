@@ -27,9 +27,11 @@ function listTypeScriptFiles(directory: string): string[] {
 const files: RepoCheckFiles = {
   'AGENTS.md': readFileSync('AGENTS.md', 'utf8'),
   'CLAUDE.md': readFileSync('CLAUDE.md', 'utf8'),
+  'CONTEXT-MAP.md': readFileSync('CONTEXT-MAP.md', 'utf8'),
   'apps/admin-web/AGENTS.md': readOptionalFile('apps/admin-web/AGENTS.md'),
   'apps/admin-web/CLAUDE.md': readOptionalFile('apps/admin-web/CLAUDE.md'),
   adminWebSources: readAdminWebSources('apps/admin-web/src'),
+  agentSources: readAdminWebSources('src/agent'),
   'README.md': readFileSync('README.md', 'utf8'),
   'package.json': readFileSync('package.json', 'utf8'),
   '.env.example': readFileSync('.env.example', 'utf8'),

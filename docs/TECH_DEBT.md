@@ -31,7 +31,7 @@ QQ Gateway、Feishu Gateway 和 Media Worker 通过 PostgreSQL 事实边界或�
 ## 2026-08-23 已完成的可靠性与结构收敛
 
 - 普通 ledger append 已增加 expected-head CAS；日常提交使用 `LedgerCommitCoordinator` 增量安装已验证 projection，不再每次全量 replay。启动、compaction 后刷新、`agent:ledger-check` 与 WebAdmin 手动 Deep Integrity 仍保留完整 chain 校验。
-- Agent Core 启动持有专用 PostgreSQL session advisory lock；`.bot.pid` 只保留诊断意义。真实 PostgreSQL CI 覆盖双 writer CAS、advisory lock 与 singleton CHECK。
+- Agent Core 启动持有专用 PostgreSQL session advisory lock；`.bot.pid` 只保留诊断意义。
 - QQ/飞书入站事实写入与撤回使用有界 transient retry 和小抖动；最终失败进入结构化 NDJSON，Health 展示最近 24 小时计数。Mailbox watcher 保持不自动跳过 poison row，并暴露阻塞 row、连续失败和错误分类。
 - 独立 Media Worker 复用有界 scheduler，Browser 与全部本机服务 URL 共用 loopback origin parser。
 - WebAdmin Metrics 默认读取 NDJSON 并明确 source/coverage/truncated；会话页覆盖 QQ 与飞书；Health 常规刷新只做 quick metadata check，完整 replay 由 operator 手动触发。
@@ -48,10 +48,6 @@ QQ Gateway、Feishu Gateway 和 Media Worker 通过 PostgreSQL 事实边界或�
 ### 已偿还：Agent Core 数据库级 fencing
 
 - 状态：已完成。`src/database/agent-core-lock.ts` 使用专用连接持有 session advisory lock，shutdown 明确释放；普通 append、runtime update 与 compaction 全部校验 expected head。
-
-### 已偿还：真实 PostgreSQL 并发与迁移验证
-
-- 状态：`.github/workflows/ci.yml` 使用 fresh PostgreSQL 执行全部 migrations，并运行 root/WebAdmin 完整验证；`agent-ledger-postgres.integration.test.ts` 覆盖真实 row lock + stale-head race、advisory lock 与 singleton constraint。
 
 ## P2：可维护性与可观测性
 

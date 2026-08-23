@@ -395,7 +395,6 @@ VIBE_TRADING_RESULT_MAX_CHARS=12000
 - `pnpm agent:daily-metrics` 按北京时间自然日统计真实 bot 的全部模型 tool call 与 token/cache，默认查今天并排除 `model=mock` 测试数据。`--date YYYY-MM-DD` 指定截止自然日，`--days N` 逐日返回包含截止日在内的最近 N 天（最多 31 天）；例如 `pnpm agent:daily-metrics -- --date 2026-07-13` 和 `pnpm agent:daily-metrics -- --days 7`。新日志会把 `invoke` 记成其实际请求的内部工具；旧日志无法展开时保留 `invoke` 并报告 `unresolvedInvokeCalls`。该报告只在 operator/WebAdmin 面使用。
 - `pnpm agent:ledger-check` 使用原始只读 Prisma 查询检查 canonical rows：验证 entry schema、严格递增 ID、runtime head、compaction chain/boundary、assistant tool call/result 原子组，以及 checkpoint 的 match/stale/corrupt 分类。它不通过 runtime repository 修复或写回数据；输出 JSON，有错误时非零退出。runtime 启动会先校验 canonical ledger，checkpoint 缺失、过期或损坏时只从 ledger 重建，绝不从消息、side-data 或日志重建 prompt history。
 - `pnpm bench:ledger-commit` 不连接数据库或 provider，固定构造 1 万和 10 万 permanent entry 的合法 compacted ledger；full replay 走 canonical projection，增量路径实际调用 `LedgerCommitCoordinator` 并包含 `AgentContext` 克隆、完整 active projection 校验和 runtime state 安装。它证明日常 commit 成本取决于有界 active projection，而不是 permanent prefix；数据库事务耗时仍需结合结构化 commit 日志观察。
-- GitHub Actions 使用 fresh PostgreSQL 执行全部 migrations，并运行 root/WebAdmin 验证；只有显式设置 `QQ_BOT_TEST_DATABASE_URL`（必须指向可清空的专用测试库）时，真实 PostgreSQL 测试才会清理 ledger/checkpoint 并验证双 writer CAS、advisory lock 和 singleton CHECK。
 
 ## Git
 

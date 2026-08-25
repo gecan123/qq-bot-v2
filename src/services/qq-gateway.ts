@@ -6,6 +6,7 @@ import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
 import { sendSegmentsRaw } from '../messaging/napcat-sender.js'
 import { closeServer, startJsonServer, writeJson } from './http.js'
+import { qqGatewayHealth } from './qq-gateway-health.js'
 
 const log = createLogger('QQ_GATEWAY')
 let server: Server | null = null
@@ -18,15 +19,18 @@ async function main(): Promise<void> {
   const lifecycle = registerNapcatHandlers()
   await connectNapcat()
   connected = true
-  await lifecycle.initialBackfillDone
-  backfillCompleted = true
-  log.info('qq_gateway_initial_backfill_completed')
 
   server = await startJsonServer({
     baseUrl: config.services.qqGatewayUrl,
     async handler({ request, response, url, body }) {
       if (request.method === 'GET' && url.pathname === '/health') {
-        return { ok: true, connected, backfillCompleted }
+        const health = qqGatewayHealth(connected, backfillCompleted)
+        writeJson(response, health.status, health.body)
+        return
+      }
+      if (!backfillCompleted) {
+        writeJson(response, 503, { ok: false, error: 'initial backfill is still in progress' })
+        return
       }
       if (request.method !== 'POST') {
         writeJson(response, 404, { ok: false, error: 'not found' })
@@ -75,6 +79,11 @@ async function main(): Promise<void> {
       writeJson(response, 404, { ok: false, error: 'not found' })
     },
   })
+  log.info({ url: config.services.qqGatewayUrl }, 'qq_gateway_listening')
+
+  await lifecycle.initialBackfillDone
+  backfillCompleted = true
+  log.info('qq_gateway_initial_backfill_completed')
   log.info({ url: config.services.qqGatewayUrl }, 'qq_gateway_started')
 }
 

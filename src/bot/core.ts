@@ -6,7 +6,11 @@ import { createLogger } from '../logger.js'
 import { persistMediaReferences } from '../media/media-cache.js'
 import { summarizeSegments } from '../utils/business-log.js'
 import { createMessageReadyDispatcher, type MessageReadyDispatcher } from './message-ready-dispatcher.js'
-import { createBackfillScheduler } from './startup-backfill.js'
+import {
+  createBackfillScheduler,
+  runBoundedBackfills,
+  withBackfillSourceTimeout,
+} from './startup-backfill.js'
 import type { ParsedSegment } from '../types/message-segments.js'
 import { groupUploadSyntheticMessageId, type GroupUploadNotice } from './group-upload.js'
 import { persistMessageRecall } from '../services/message-recall.js'
@@ -18,6 +22,8 @@ const ingressLog = createLogger('INGRESS')
 const napcatLog = createLogger('NAPCAT')
 
 const BACKFILL_COUNT = 50
+const INITIAL_BACKFILL_CONCURRENCY = 2
+const INITIAL_BACKFILL_SOURCE_TIMEOUT_MS = 12_000
 
 export type IngestedMessage =
   | {
@@ -269,10 +275,14 @@ async function processGroupUpload(
 }
 
 async function backfillGroupMessages(groupId: number): Promise<void> {
-  const { messages } = await napcat.get_group_msg_history({
-    group_id: groupId,
-    count: BACKFILL_COUNT,
-  })
+  const { messages } = await withBackfillSourceTimeout(
+    napcat.get_group_msg_history({
+      group_id: groupId,
+      count: BACKFILL_COUNT,
+    }),
+    groupId,
+    INITIAL_BACKFILL_SOURCE_TIMEOUT_MS,
+  )
   const allMessageIds = messages.map((m) => String(m.message_id))
   const existingIds = await findExistingMessageExternalIds({
     platform: 'qq',
@@ -338,14 +348,15 @@ async function resolveGroupName(context: { group_id: number; group_name?: string
 export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): NapcatHandlerLifecycle {
   const readyDispatcher = createMessageReadyDispatcher({ onMessageReady: options.onMessageReady })
   const backfillScheduler = createBackfillScheduler(async () => {
-    await Promise.all(config.botTargetGroupIds.map(async (groupId) => {
-      try {
-        await backfillGroupMessages(groupId)
-      } catch (error) {
+    await runBoundedBackfills({
+      sources: config.botTargetGroupIds,
+      concurrency: INITIAL_BACKFILL_CONCURRENCY,
+      run: backfillGroupMessages,
+      async onFailure(groupId, error) {
         await recordIngressFailure({ platform: 'qq', kind: 'group_backfill', error, context: { groupId } }).catch(() => undefined)
         ingressLog.error({ error, groupId }, '群历史消息补拉失败')
-      }
-    }))
+      },
+    })
   })
 
   napcat.on('socket.open', () => napcatLog.info('WebSocket 开始连接'))

@@ -101,6 +101,30 @@ describe('trading_agent', () => {
     assert.equal(completion.ok, true)
   })
 
+  test('rejects before creating a remote session when the global task limit is full', async () => {
+    const registry = createInMemoryTaskRegistry({ maxActiveTasks: 1 })
+    registry.register({ toolName: 'existing', description: 'existing work' })
+    let requests = 0
+    const tool = createTradingAgentTool({
+      taskRegistry: registry,
+      runtimeConfig,
+      fetchImpl: (async () => {
+        requests++
+        return jsonResponse({}, 500)
+      }) as typeof fetch,
+    })
+
+    const result = await tool.execute({
+      action: 'start',
+      prompt: '研究一个新策略',
+    }, { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 1 })
+    const payload = JSON.parse(result.content as string)
+
+    assert.equal(payload.ok, false)
+    assert.equal(payload.code, 'background_task_limit')
+    assert.equal(requests, 0)
+  })
+
   test('recovers a persisted result directly by session id', async () => {
     const tool = createTradingAgentTool({
       taskRegistry: createInMemoryTaskRegistry(),

@@ -9,7 +9,6 @@ import type { BotEvent } from './event.js'
 import type { LlmCallInput, LlmClient } from './llm-client.js'
 import { createAgentRuntime, createScheduleRuntimeLogHandler } from './runtime.js'
 import type { MessageSender } from '../messaging/message-sender.js'
-import { McpManager } from './mcp-manager.js'
 import { createInMemoryGoalStore } from './goal-store.js'
 import type { ScheduleRuntime, ScheduleRuntimeLogEntry } from './schedule-runtime.js'
 import { createTestAgentLedger } from './test-support/agent-ledger.js'
@@ -108,36 +107,12 @@ describe('createAgentRuntime', () => {
     const context = createAgentContext()
     const ledger = createTestAgentLedger({
     })
-    let mcpConnections = 0
     let scheduleStarts = 0
     let scheduleStops = 0
     const scheduleRuntime = makeScheduleRuntime({
       async start() { scheduleStarts++ },
       async stop() { scheduleStops++ },
     })
-    const mcpManager = new McpManager({
-      servers: {
-        local: {
-          command: '/bin/echo',
-          args: [],
-          env: {},
-          inheritEnv: [],
-          readOnlyTools: ['search'],
-          timeoutMs: 30_000,
-          resultMaxChars: 12_000,
-        },
-      },
-      snapshotDir: '/tmp/qq-bot-v2-runtime-test-mcp-schemas',
-      factory: async () => {
-        mcpConnections++
-        return {
-          async listTools() { return [] },
-          async callTool() { return {} },
-          async close() {},
-        }
-      },
-    })
-
     const runtime = createAgentRuntime({
       context,
       eventQueue: new InMemoryEventQueue<BotEvent>(),
@@ -154,20 +129,18 @@ describe('createAgentRuntime', () => {
       owner: { qq: 2002, name: 'zzz' },
       eventDebounceMs: 0,
       optionalTools: disabledOptionalTools(),
-      mcpManager,
       scheduleRuntime,
       goalStore: createInMemoryGoalStore(),
     })
 
     assert.match(runtime.systemPrompt, /测试群/)
     assert.deepEqual(runtime.tools.list().map((tool) => tool.name), [
-      'yield',
+      'rest',
       'qq_directory',
       'background_task',
-      'approval',
       'goal',
       'skill',
-      'initiative_review',
+      'psychologist',
       'memory',
       'inbox',
       'chat_style',
@@ -192,17 +165,14 @@ describe('createAgentRuntime', () => {
     const payload = JSON.parse(helpResult.content)
     const externalResearch = payload.capabilities.find((item: { name: string }) => item.name === 'external_research')
     const skillManagement = payload.capabilities.find((item: { name: string }) => item.name === 'skill_management')
-    const mcpConnectors = payload.capabilities.find((item: { name: string }) => item.name === 'mcp_connectors')
     const chat = payload.capabilities.find((item: { name: string }) => item.name === 'chat')
     const shortTermScheduling = payload.capabilities.find((item: { name: string }) => item.name === 'short_term_scheduling')
     const lifeState = payload.capabilities.find((item: { name: string }) => item.name === 'life_state')
     const stickerManagement = payload.capabilities.find((item: { name: string }) => item.name === 'sticker_management')
-    assert.deepEqual(mcpConnectors.tools, ['mcp'])
     assert.deepEqual(chat.tools, ['conversation', 'send_message'])
     assert.deepEqual(shortTermScheduling.tools, ['schedule'])
     assert.deepEqual(lifeState.tools, ['notebook', 'life_journal'])
     assert.deepEqual(stickerManagement.tools, ['collect_sticker'])
-    assert.equal(mcpConnections, 0)
 
     const scheduleList = await runtime.tools.execute({
       id: 'schedule-inactive',
@@ -214,17 +184,23 @@ describe('createAgentRuntime', () => {
     })
     assert.equal(JSON.parse(scheduleList.content as string).ok, true)
 
-    const yieldResult = await runtime.tools.execute({
-      id: 'yield-1',
-      name: 'yield',
-      args: { reason: '当前没有待处理行动' },
+    const restQueue = new InMemoryEventQueue<BotEvent>()
+    restQueue.enqueue({ type: 'wake' })
+    const restResult = await runtime.tools.execute({
+      id: 'rest-1',
+      name: 'rest',
+      args: {
+        durationMinutes: 30,
+        reason: '主动休息一下',
+        resumeAction: '醒来后继续写一段文章',
+      },
     }, {
-      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      eventQueue: restQueue,
       roundIndex: 1,
     })
-    const yieldPayload = JSON.parse(yieldResult.content as string)
-    assert.equal(yieldPayload.status, 'yielded')
-    assert.equal(yieldResult.effects, undefined)
+    const restPayload = JSON.parse(restResult.content as string)
+    assert.equal(restPayload.status, 'interrupted')
+    assert.equal(restResult.outcome?.continuation, 'immediate')
     await runtime.stopBackgroundServices()
     assert.equal(scheduleStops, 1)
   })
@@ -499,20 +475,14 @@ describe('createAgentRuntime', () => {
     await assert.rejects(runtime.startBackgroundServices(), /stopped/i)
   })
 
-  test('stops the schedule runtime before MCP and remains idempotent', async () => {
+  test('stops the schedule runtime once and remains idempotent', async () => {
     const order: string[] = []
     const scheduleRuntime = makeScheduleRuntime({
       async stop() { order.push('schedule') },
     })
-    const mcpManager = {
-      hasServers() { return false },
-      approvalRequirementForArgs() { return null },
-      async closeAll() { order.push('mcp') },
-    } as unknown as McpManager
     const runtime = createAgentRuntime({
       ...makeRuntimeInput(),
       scheduleRuntime,
-      mcpManager,
     })
 
     await Promise.all([
@@ -520,39 +490,7 @@ describe('createAgentRuntime', () => {
       runtime.stopBackgroundServices(),
     ])
 
-    assert.deepEqual(order, ['schedule', 'mcp'])
-  })
-
-  test('closes MCP after schedule stop fails and retains both failures', async () => {
-    const order: string[] = []
-    const scheduleFailure = new Error('schedule stop failed')
-    const mcpFailure = new Error('mcp close failed')
-    const scheduleRuntime = makeScheduleRuntime({
-      async stop() {
-        order.push('schedule')
-        throw scheduleFailure
-      },
-    })
-    const mcpManager = {
-      hasServers() { return false },
-      approvalRequirementForArgs() { return null },
-      async closeAll() {
-        order.push('mcp')
-        throw mcpFailure
-      },
-    } as unknown as McpManager
-    const runtime = createAgentRuntime({
-      ...makeRuntimeInput(),
-      scheduleRuntime,
-      mcpManager,
-    })
-
-    await assert.rejects(runtime.stopBackgroundServices(), (error: unknown) => {
-      return error instanceof AggregateError
-        && error.errors[0] === scheduleFailure
-        && error.errors[1] === mcpFailure
-    })
-    assert.deepEqual(order, ['schedule', 'mcp'])
+    assert.deepEqual(order, ['schedule'])
   })
 
   test('passes schedule runtime failures to the configured operations logger', async () => {

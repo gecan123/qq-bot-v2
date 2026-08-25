@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { createOpenbbCliTool, type OpenbbCliRunner } from './openbb-cli.js'
+import {
+  buildOpenbbSubprocessEnv,
+  createOpenbbCliTool,
+  type OpenbbCliRunner,
+} from './openbb-cli.js'
 import type { ToolContext } from '../tool.js'
 import type { BotEvent } from '../event.js'
 import { InMemoryEventQueue } from '../event-queue.js'
@@ -30,6 +34,22 @@ function makeTool(runner: OpenbbCliRunner) {
 }
 
 describe('openbb_cli tool', () => {
+  test('passes only base environment and explicitly inherited provider variables', () => {
+    assert.deepEqual(buildOpenbbSubprocessEnv({
+      PATH: '/usr/bin:/bin',
+      HOME: '/tmp/home',
+      LANG: 'zh_CN.UTF-8',
+      FMP_API_KEY: 'fmp-secret',
+      DATABASE_URL: 'postgresql://secret',
+      LLM_PROVIDER_OPENAI_API_KEY: 'llm-secret',
+    }, ['FMP_API_KEY']), {
+      PATH: '/usr/bin:/bin',
+      HOME: '/tmp/home',
+      LANG: 'zh_CN.UTF-8',
+      FMP_API_KEY: 'fmp-secret',
+    })
+  })
+
   test('accepts OpenBB CLI commands and rejects non-OpenBB shell commands', () => {
     const tool = makeTool(async () => ({ exitCode: 0, stdout: '[]', stderr: '', timedOut: false }))
 

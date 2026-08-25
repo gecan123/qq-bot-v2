@@ -48,7 +48,7 @@ const validFiles = {
   'prompts/groups.md': '# 群聊配置\n\n## 群 111\n\n- participation: mentions\n',
   'src/agent/tools/index.ts': [
     'createDeferredToolExecutor',
-    'yieldTool,',
+      'restTool,',
     'createSendMessageTool({',
     'createGenerateImageTool({ taskRegistry: deps.taskRegistry }),',
     'createBackgroundTaskTool({ taskRegistry: deps.taskRegistry }),',
@@ -102,7 +102,7 @@ const validFiles = {
   'docs/MEMORY_ARCHITECTURE.md': 'Markdown is the source of truth. No SQLite or embedding. checkpoint recovery. UNTRUSTED_DATA.\n',
   'docs/TOOLS.md': [
     '# Agent Tools',
-    '`help` `invoke` `yield` `send_message` `generate_image` `background_task` `memory` `collect_sticker` `workspace_bash` `workspace_file` `browser` `web_search`',
+    '`help` `invoke` `rest` `send_message` `generate_image` `background_task` `memory` `collect_sticker` `workspace_bash` `workspace_file` `browser` `web_search`',
     '`help` `db` `style` `openbb` `fetch` `metrics`',
   ].join('\n'),
   'docs/OPERATIONS.md': '# Operations\n',
@@ -263,7 +263,7 @@ describe('runRepoChecks', () => {
       ...validFiles,
       'docs/TOOLS.md': [
         '# Agent Tools',
-        '`help` `invoke` `yield` `send_message` `generate_image` `background_task` `memory` `workspace_bash` `workspace_file` `browser` `web_search`',
+        '`help` `invoke` `rest` `send_message` `generate_image` `background_task` `memory` `workspace_bash` `workspace_file` `browser` `web_search`',
         '`help` `db` `style` `openbb` `fetch` `metrics` `collect_sticker`',
         '`collect_sticker` belongs under `workspace_bash` for sticker collection.',
       ].join('\n'),
@@ -277,7 +277,7 @@ describe('runRepoChecks', () => {
       ...validFiles,
       'docs/TOOLS.md': [
         '# Agent Tools',
-        '`help` `invoke` `yield` `send_message` `generate_image` `background_task` `memory` `collect_sticker` `workspace_bash` `workspace_file` `browser` `web_search`',
+        '`help` `invoke` `rest` `send_message` `generate_image` `background_task` `memory` `collect_sticker` `workspace_bash` `workspace_file` `browser` `web_search`',
         '`help` `db` `style` `openbb` `fetch` `metrics`',
         '`collect_sticker` is not a `workspace_bash` subcommand.',
       ].join('\n'),

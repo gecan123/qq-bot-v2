@@ -2,7 +2,10 @@ import { z } from 'zod'
 import { config, type VibeTradingConfig } from '../../config/index.js'
 import { createLogger } from '../../logger.js'
 import type { BackgroundTaskRegistry, JsonValue } from '../background-task-registry.js'
-import { createBackgroundTaskWaitOutcome } from '../background-task-control.js'
+import {
+  createBackgroundTaskWaitOutcome,
+  tryRegisterBackgroundTask,
+} from '../background-task-control.js'
 import type { Tool, ToolContext, ToolExecutionOutcome } from '../tool.js'
 
 const log = createLogger('TOOL_TRADING_AGENT')
@@ -123,52 +126,64 @@ export function createTradingAgentTool(
         throw new Error(`Unsupported trading_agent action: ${args.action}`)
       }
 
-      let sessionId: string
-      if (args.action === 'start') {
-        const session = await client.request<SessionResponse>('/sessions', {
-          method: 'POST',
-          body: JSON.stringify({ title: buildSessionTitle(args.prompt) }),
-        })
-        sessionId = requireString(session.session_id, 'session_id')
-      } else {
-        sessionId = args.sessionId
-      }
-
-      const sent = await client.request<SendResponse>(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
-        method: 'POST',
-        body: JSON.stringify({ content: boundedResearchPrompt(args.prompt) }),
-      })
-      const attemptId = requireString(sent.attempt_id, 'attempt_id')
       const description = `Vibe-Trading 研究: ${args.prompt.slice(0, 100)}`
-      const task = deps.taskRegistry.register({ toolName: 'trading_agent', description })
-      void monitorAttempt({
-        client,
-        runtimeConfig: deps.runtimeConfig,
-        taskRegistry: deps.taskRegistry,
-        taskId: task.id,
-        sessionId,
-        attemptId,
-        description,
-        ctx,
-        sleep,
-        clockMs,
-      })
+      const registration = tryRegisterBackgroundTask(
+        deps.taskRegistry,
+        { toolName: 'trading_agent', description },
+      )
+      if (!registration.ok) return registration.result
+      const task = registration.task
 
-      return {
-        content: JSON.stringify({
-          ok: true,
-          action: args.action,
-          status: 'started',
+      let sessionId: string | undefined
+      try {
+        if (args.action === 'start') {
+          const session = await client.request<SessionResponse>('/sessions', {
+            method: 'POST',
+            body: JSON.stringify({ title: buildSessionTitle(args.prompt) }),
+          })
+          sessionId = requireString(session.session_id, 'session_id')
+        } else {
+          sessionId = args.sessionId
+        }
+
+        const sent = await client.request<SendResponse>(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
+          method: 'POST',
+          body: JSON.stringify({ content: boundedResearchPrompt(args.prompt) }),
+        })
+        const attemptId = requireString(sent.attempt_id, 'attempt_id')
+        void monitorAttempt({
+          client,
+          runtimeConfig: deps.runtimeConfig,
+          taskRegistry: deps.taskRegistry,
           taskId: task.id,
           sessionId,
           attemptId,
-          next: `等待完成通知后调用 background_task action=get taskId=${task.id}; 重启后调用 trading_agent action=result sessionId=${sessionId} attemptId=${attemptId}`,
-        }),
-        outcome: createBackgroundTaskWaitOutcome({
-          task,
-          code: 'started',
-          progress: true,
-        }),
+          description,
+          ctx,
+          sleep,
+          clockMs,
+        })
+
+        return {
+          content: JSON.stringify({
+            ok: true,
+            action: args.action,
+            status: 'started',
+            taskId: task.id,
+            sessionId,
+            attemptId,
+            next: `等待完成通知后调用 background_task action=get taskId=${task.id}; 重启后调用 trading_agent action=result sessionId=${sessionId} attemptId=${attemptId}`,
+          }),
+          outcome: createBackgroundTaskWaitOutcome({
+            task,
+            code: 'started',
+            progress: true,
+          }),
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        deps.taskRegistry.fail(task.id, message)
+        throw error
       }
     },
   }

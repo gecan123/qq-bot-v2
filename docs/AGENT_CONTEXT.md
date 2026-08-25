@@ -55,12 +55,12 @@
 - 新通知统一写成 `event=notification`；历史 ledger 中的 `event=inbox_update` 继续由 mailbox attention parser 兼容，不能迁移或改写旧 entry。后台任务通知只披露状态和 `background_task get` 打开动作；调度到期 notification 不含 intention，正文先写独立 occurrence store，再由 `schedule get_occurrence` 读取。来源 side state 不参与 transcript replay；通知本身一旦进入 ledger 就保持字节稳定。
 - 新 mailbox 不会自动切换当前会话。发送前必须通过 `conversation open` 显式选择允许的群或好友；`send_message` 只读取当前 focus，focus 变化和对应可见 tool result 同事务进入 runtime state。
 - 私聊发送是否属于“回应新入站”由同 target 的 durable pending mailbox 判断，不依赖 `reply_to`。`reply_to` 只控制对应平台的引用/回复展示；进程内主动私聊冷却不得拦截 pending mailbox 的回复。
-- 未追加 `mailbox_handled` 的私聊 mailbox 跨 round 保持行动锚点。锚点下的无进展 round 只允许一次立即纠错；连续第二次仍无进展时进入一分钟、可被注意事件打断的等待，不能降级为普通十五分钟 idle wait，也不能无限即时自循环。
+- 未追加 `mailbox_handled` 的私聊 mailbox 跨 round 保持行动锚点。锚点下的无进展 round 只允许一次立即纠错；连续第二次仍违反行动协议时进入一分钟、可被注意事件打断的技术等待，不能无限即时自循环。普通完成或无进展则立即寻找下一项行动。
 - provider-confirmed `send_message` 仍与本地数据库不存在分布式事务。只有同 target 有 pending disclosure 时才 append `mailbox_handled`；这防止重复回应，但不承诺任一平台外发 exactly-once。稳定 action UUID 与 `sent|failed|delivery_unknown` 只表达本次 adapter 结果，不引入 outbox 或自动重试。
 - `mailbox_handled` 只表示这批入站已经回应，不表示回应中承诺的工作已完成。`send_message.work=continue` 只在进程内为下一轮保留短期行动锚点，不跨重启；`work=goal_progress` 必须绑定当前 active Goal 且其 `currentCommitment` 非空，否则 before-tool hook 以 `work_commitment_required` 拒绝外发。进度消息可以关闭 mailbox 防重，长期行动锚点仍由 Goal revision/continuation 契约跨轮与跨重启保留。
 - owner 和 self Goal 的 `complete` 在状态写入前各执行一次独立、无工具 LLM 验收。judger 只读取当前 canonical projection：优先从当前 goalId 首次出现处截取，marker 已被 compaction 移出时使用完整 projection；transcript 包在 untrusted envelope 中，不能从日志、Goal side table、Memory 或其他可变 side state 重建证据。
 - 只有严格解析出的 `{ok:true}` 才允许调用 `GoalStore.complete()`；`ok:false`、provider 或协议失败都不改变 Goal 状态，同一次尝试不自动重试。拒绝或不可用原因只通过正常 `goal` tool result 进入 ledger；judger 不决定 blocker，也不创建第二个 Agent。
-- 空闲状态顾问同样只读取有界的 canonical projection，且没有工具、运行状态或 ledger 写权限。顾问调用不施加额外输出 token 上限，最多运行一小时；空正文、截断或非法 JSON 在同一时间预算内重试一次。`healthy_rest` 不追加消息；严格解析出的 `directionless` / `anxiety_loop` 由 Runtime Host append 一条 `event=agent_state_advice`。顾问最终失败时，Runtime Host 不把错误或不可信输出写入 history，只复位进程内 idle backoff，并 append 一条固定 `event=runtime_correction, code=autonomous_life_direction_search_required` 的方向搜索兜底。受控消息提交后才成为可 replay 的 LLM history，且不是 Goal、外部命令或新的权威状态。
+- 主动休息只由主 Agent 显式调用 `rest`，等待发生在该工具执行内部，不读取或改写 canonical projection，也不创建可 replay 的休息状态；注意事件会提前打断，工具结果闭合后立即继续。Runtime 没有隐藏的空闲顾问或自动休息判断。
 - 不实现 pi 风格 session tree。跨平台外发、mailbox cursor、Goal revision 和工具副作用需要一条可审计的线性时间线；分叉历史会让“哪条分支已发送/已处理”失去唯一答案。并行工作只通过有明确类型和边界的 background task 完成，结果回到主 ledger。
 
 ## 代码地图
@@ -72,7 +72,7 @@
 - `src/agent/compaction-coordinator.ts`：threshold/overflow、candidate、CAS 重算、失败退避和 post-compact refresh。
 - `src/agent/agent-context.ts`：当前内存 projection。
 - `src/agent/bot-loop-agent.ts`：Runtime Host、事务边界、trigger 与失败恢复。
-- `src/agent/agent-state-advisor.ts`：连续空闲后的无工具状态判断与受控 advice renderer。
+- `src/agent/loop-policy.ts`：持续行动、技术退避和空上下文等待的结构化决策。
 - `src/agent/compaction*.ts`：token cut、serialization、hooks、candidate 和 summary 校验。
 - `src/agent/working-context.ts`、`src/media/agent-image-ref.ts`：单次请求 projection 与稳定图片引用解析。
 - `src/ops/agent-ledger-check.ts`：完全只读的 canonical/checkpoint 检查。

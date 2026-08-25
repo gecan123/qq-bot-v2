@@ -1,5 +1,9 @@
-import sharp from 'sharp'
 import { createLogger } from '../logger.js'
+import {
+  assertSafeImageDimensions,
+  ImageDecodeSafetyError,
+  openImageForSafeDecode,
+} from './image-decode-safety.js'
 
 const log = createLogger('COMPRESS_CTX')
 
@@ -16,7 +20,9 @@ export async function compressForContext(
   imageBytes: Buffer,
 ): Promise<CompressedImage | null> {
   try {
-    const buf = await sharp(imageBytes, { animated: false, limitInputPixels: false })
+    const image = openImageForSafeDecode(imageBytes)
+    assertSafeImageDimensions(await image.metadata())
+    const buf = await image
       .rotate()
       .resize({
         width: MAX_DIMENSION,
@@ -33,7 +39,10 @@ export async function compressForContext(
       byteSize: buf.byteLength,
     }
   } catch (err) {
-    log.warn({ err }, 'compress_for_context_failed')
+    log.warn({
+      err,
+      code: err instanceof ImageDecodeSafetyError ? err.code : 'image_decode_failed',
+    }, 'compress_for_context_failed')
     return null
   }
 }

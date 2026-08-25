@@ -4,31 +4,28 @@
 
 ## 默认可见能力
 
-- 对话控制：`yield`。当当前方向已经完成、暂时没有可执行下一步或应把控制权交回等待机制时调用；它立即返回 `continuation=stop`，不保存 intention、resume reminder 或休息状态。无工具轮仍由 runtime 的有界等待处理。
+- 主动休息：`rest` 是唯一的主动暂停入口。只有此刻真正想休息时才调用，并明确给出 `durationMinutes=1..240`、真实 `reason` 和醒后立即执行的 `resumeAction`；注意事件会提前打断，结束后立刻回到行动循环。完成一件事、暂时没想法、owner 不在线或等待外部回复都不是休息理由，普通轮次会直接寻找下一件可执行的事。
 - 短期调度：`schedule action=create|list|get_occurrence|cancel`，active job 的公开 ID 字段统一为 `id`。`create` 只接受一次性 `at` 或 `afterSeconds`，触发必须位于 30 秒到 3 天内，最多 20 个 active job。同名同时间创建幂等返回 `existing`，同名不同时间返回冲突及已有 `id`，需先 cancel；`list` 返回有界公开摘要。active 状态保存在 schedule store，触发正文只写一次 occurrence store；到期 notification 只给名称、时间和 `get_occurrence` 打开参数，不执行预存命令。它是 normal+interrupt，轮次边界低于 high notification、高于 active Goal 和 passive notification。
 - 持久目标：`goal action=get|create_self|replan|complete|report_blocker|abandon_self`。没有未完成 Goal 时，Agent 可以为自己的兴趣直接创建 `origin=self` 的持久目标，必须给出真实 `motivation`、可核验 `completionCriteria` 和立即执行的 `currentCommitment`；owner Goal 初始没有承诺时由 Agent 先 `replan`。默认预算 1,000,000 tokens，单个上限 10,000,000，60 秒冷却和滚动 24 小时最多 64 个只是失控保险丝。Agent 可以放弃 self Goal，但不能放弃 owner Goal。配置的 owner 仍可用私聊 `/goal` 创建、暂停、恢复或取消，owner Goal 会直接抢占 self Goal。轮次边界优先级是 high+interrupt notification > normal+interrupt notification > active Goal > passive notification；前台仍是单一串行 BotLoop，等待后台或外部输入时可以做其他事情。`complete` 必须提交逐项真实证据，并对 owner/self Goal 各执行一次独立、无工具的 LLM 验收；只有 `{ok:true}` 才落完成状态，拒绝或验收不可用会保持 Goal 活跃且本次不重试。同一 blocker 每个连续 Goal round 用相同 `blockerKey` 报告，第三轮才转 `blocked`。Goal token budget 按主 Agent 未缓存 input 加 output 计量；judger 等辅助 LLM 使用量尚未计入。只有明确的 provider 硬额度/账单上限才转 `usage_limited`，普通临时 429 仍走已有有界重试和 round backoff。
 - QQ 与飞书发送位于 deferred `chat` capability：用 `help action=describe` 查看 schema 后，直接 `invoke conversation open` 显式打开允许的群或好友，最后 `invoke send_message` 发送文本、图片、图文或受控音乐卡片。`work` 必填：无后续承诺用 `state=none`；当前会话内马上续做用 `state=continue`，只保护下一轮且不跨重启；持久 Goal 的进度消息用 `state=goal_progress + goalId`，并由 before-tool hook 确认该 Goal 当前 active 且有 `currentCommitment`。
 - QQ 目录：`qq_directory`（分页列出/搜索 NapCat 当前全部好友；群目录只披露当前已加入且配置在 `prompts/groups.md` 的群；`profile` 按 QQ 号合并当前目录名和消息事实账本中观察到的历史群名片/昵称）。
-- 稳定按需壳：`help`（`list` / `describe` capability 或内部工具 schema）和 `invoke`（直接调用按需内部工具）。安全仍由目标工具 schema、policy 和 approval 约束，不持久化激活状态。
+- 稳定按需壳：`help`（`list` / `describe` capability 或内部工具 schema）和 `invoke`（直接调用按需内部工具）。安全仍由目标工具 schema 和 policy 约束，不持久化激活状态。
 - 知识和历史：`memory`（稳定长期记忆）、`notebook`（按稳定 topic 维护研究/阅读/市场/项目过程）、`life_journal`（经历、感受、梦和 Agenda）、`skill`、`inbox`（list/read 多来源消息正文）。四类长期状态的人类可读叙述必须以中文为载体，技术标识可保留原文但要放进中文说明；结构字段、ID 和 Agenda 固定分区名保持原样。
 - 表情包：`collect_sticker`（收藏、移除、列表、搜索和随机候选）。
-- 外部内容：typed `fetch_content`、配置后可用的 `web_search` 和 `openbb_cli`；配置官方 Moomoo Skill 后由 `moomoo_skill` 查询行情、账户并操作普通证券模拟仓；配置 `CRYPTO_PAPER_ENABLED=true` 后，typed `crypto_paper` 使用 Moomoo Crypto 行情维护本地模拟资金、持仓和成交。
+- 外部内容：typed `fetch_content` 和配置后可用的 `web_search`。金融能力统一位于 deferred `finance`：按配置包含 `openbb_cli`、`moomoo_skill`、`crypto_paper` 和 `trading_agent`。
 - 风格和文本判断：`chat_style` 按需读取聊天约束、风格和群定制；发送路径不再运行阻塞式 AI 腔分类器。
-- 主动性自检：`initiative_review` 是默认可见的只读 LLM 工具。只有当主 Agent 准备以“以后再说”“不打扰”“算了”“先歇着”等理由停下仍可立即推进的方向时，才把完整第一人称想法交给它；已经在推进、只是客观描述状态、确实没有当前方向或健康交还控制时不调用。它返回稳定的 `hasNegative` / `rewritten`，结果作为普通 tool result 进入 ledger；工具本身不保存会话状态，也不在每轮隐藏执行。
-- 运行时工作：`background_task`（通用异步任务 list/get；get 的文本结果有通用上限）、只读 `workspace_bash`；普通私有工作文件通过 deferred `workspace_management` 内的 `workspace_file` 修改。任务 registry 持久化到 `BOT_BACKGROUND_TASK_STATE_PATH`；所有遗留 running 在重启时明确变成 `interrupted`。完成/失败 notification 不复制 description、summary 或结果正文，只携带状态和 `background_task get` 打开动作。当前定时唤醒不走 task registry，而由上述独立 schedule/occurrence store 恢复。
-- 审批控制：`approval action=list|status|approve|cancel`。默认 `BOT_APPROVAL_MODE=thin`，只拦网站 `publish` 和未声明只读的 MCP 调用；本地 memory/notebook/Life Journal/workspace 删除和网站本地删除不等待审批。被拦调用会返回 `approvalId`；owner 私聊发送精确文本 `批准 <approvalId>` 后，用消息 `rowId` 批准并以相同参数重试。审批默认 10 分钟过期且只能消费一次。需要旧的全量本地审批时设 `strict`，快速实验可设 `off`。
+- 心理医生：`psychologist` 是默认可见的只读 LLM 工具，用于自我反思与行为检查，不提供医学诊断。只有当主 Agent 准备以“以后再说”“不打扰”“算了”“先歇着”等理由停下仍可立即推进的方向时，才把完整第一人称想法交给它；已经在推进、只是客观描述状态、确实没有当前方向或健康交还控制时不调用。它返回稳定的 `hasNegative` / `rewritten`，结果作为普通 tool result 进入 ledger；工具本身不保存会话状态，也不在每轮隐藏执行。
+- 运行时工作：`background_task`（通用异步任务 list/get；get 的文本结果有通用上限）、只读 `workspace_bash`；普通私有工作文件通过 deferred `workspace_management` 内的 `workspace_file` 修改。任务 registry 持久化到 `BOT_BACKGROUND_TASK_STATE_PATH`；所有遗留 running 在重启时明确变成 `interrupted`。全局未完成任务数由 `BOT_BACKGROUND_TASK_MAX_ACTIVE` 限制，默认 8；排队任务也占额度，超限会在启动图片生成、后台抓取或交易研究前明确拒绝。完成/失败 notification 不复制 description、summary 或结果正文，只携带状态和 `background_task get` 打开动作。当前定时唤醒不走 task registry，而由上述独立 schedule/occurrence store 恢复。
 
 ## Deferred capability
 
-- `mcp_connectors`：仅在配置 `BOT_MCP_CONFIG_PATH` 后出现，内部工具是 `mcp`。启动只读取配置，不拉外部进程；`mcp action=tools|connect|call` 首次使用才启动对应 stdio server。先分页读取 tools，再用返回的 `mcp__server__tool` 完整名称调用。schema 快照写入 `BOT_MCP_SCHEMA_SNAPSHOT_DIR`，远端结果和二进制内容有上限，关机时主动断开。
 - `browser`：配置 `BOT_BROWSER_ENABLED=true` 后出现，内部工具是单一 action-driven `browser`；截图、下载和 annotation 返回后，artifact retention 清理由 sidecar 的单 worker 合并执行。
-- `finance`：按配置包含 `openbb_cli`、`moomoo_skill` 和 `crypto_paper`。
-- `trading_research`：配置 `VIBE_TRADING_ENABLED=true` 后出现，内部工具是 `trading_agent`；已有具体金融问题且需要跨来源证据、可复现策略规则、反证或历史回测时，委派给本机 Vibe-Trading Agent。
+- `finance`：按配置包含 `openbb_cli`、`moomoo_skill`、`crypto_paper` 和 `trading_agent`。前三项负责数据与受限模拟交易；已有具体金融问题且需要跨来源证据、可复现策略规则、反证或历史回测时，使用 `trading_agent` 委派给本机 Vibe-Trading Agent。
 - `website`：配置 `BOT_WEBSITE_ENABLED=true` 和独立网站仓库路径后出现，内部工具是 `website`，用于维护 Luna 的 Astro 个人网站并发布到配置分支。
 - `external_research`：内部 `fetch_content` 只暴露普通网页和 Reddit action；配置 `TAVILY_API_KEY` 后同时包含 `web_search`。
 - `fetch_content action=url` 默认同步返回网页摘要；预计较慢或想同时处理其他事情时可传 `background=true`，它进入最多 3 并发的 `network` lane，立即返回 `taskId`，完成后通过 `background_task` 取结果。
 - `media_generation`：内部工具是 `generate_image`，创建图片生成/编辑后台任务，`count=1..4` 时固定最多并发 2 个图片请求，后续用 `background_task` 查结果。
-- `media_inspection`：内部工具是 `inspect_media`，用入站 `mediaId` 或生成图 `ephemeralRef` 返回有界真实预览 image block；缺失的入站图片描述进入 `media-description` lane，当前结果标记 `descriptionStatus=pending` 而不等待模型。
+- `media_inspection`：内部工具是 `inspect_media`，用入站 `mediaId` 或生成图 `ephemeralRef` 返回有界真实预览 image block；缺失的入站图片描述进入 `media-description` lane，当前结果标记 `descriptionStatus=pending` 而不等待模型。原始媒体事实仍可保存，但图片解码统一限制为最多 4000 万像素、单边最多 8192px，动画只读取第一帧；超限图片不会进入预览或视觉模型请求。
 - `media_fetch`：内部 `fetch_content` 只暴露图片 URL / QQ 头像 action；激活它不会放开普通网页或 Reddit 抓取。
 - `workspace_management`：包含 `workspace_file` 和只读 `workspace_bash`。后者只允许 `pwd/ls/rg/cat/head/tail/wc`，不经过 shell；外部抓取、风格和金融分别用 typed capability。
 - `document_reading`：内部工具是 `read_file`，只接受 `inbox` 返回的 `type=file` 的 `mediaId`；支持有界分页读取纯文本、PDF、DOCX、XLSX、PPTX、RTF 和 OpenDocument，不接受路径或 URL，也不执行文件内容。
@@ -37,9 +34,9 @@
 
 ## 结果契约
 
-- 工具对 LLM 返回的事实只放在 `content`。运行时可以附带 `outcome` 和 `effects`，但二者不进入 `AgentContext`；循环语义读取结构化 outcome/effect，不反解析结果文本。`yield` 不产生 effect，只以 `continuation=stop` 结束当前方向。
-- 工具可以用 `outcome.progress=false` 声明一次成功调用没有获得新信息、改变状态或完成外部动作。Runtime Host 会把这种调用视为无进展并进入可被新注意事件打断的等待，不因存在 tool call 就立即续跑；事实性的 `content` 仍正常进入 ledger。
-- `outcome.continuation` 与进展分离：`immediate` 请求一次立即决策，`wait_attention` 等普通注意事件，`wait_event` 表示已启动或观察到真实后台工作并等待完成事件，`backoff` 进入退避，`stop` 停止当前方向。`continuationDetail` 最多透传 1000 字符到可丢弃活动观察面，不进入 ledger。后台任务 start、运行中的 `background_task get/list` 都返回 `wait_event`，因此不会提前轮询，完成事件仍会立即唤醒主循环；重启后直接查询不再有本机 completion event 保证的持久远端 session 时返回 `backoff`，避免立即空转并保留定期复查能力。
+- 工具对 LLM 返回的事实只放在 `content`。运行时可以附带 `outcome` 和 `effects`，但二者不进入 `AgentContext`；循环语义读取结构化 outcome/effect，不反解析结果文本。`rest` 在工具调用内部等待，结束或被打断后以 `continuation=immediate` 返回。
+- 工具可以用 `outcome.progress=false` 声明一次成功调用没有获得新信息、改变状态或完成外部动作；事实性的 `content` 仍正常进入 ledger。普通无进展不会触发空闲等待，Runtime Host 会立即要求下一轮改做其他行动。
+- `outcome.continuation` 与进展分离：`immediate` 请求一次立即决策；`wait_event` 表示已启动或观察到真实后台工作，主循环不轮询它而是立刻做其他事；`wait_attention` / `stop` 表示当前方向告一段落，但不会停止整个 Agent；只有 `backoff` 表示一次有界技术退避。`continuationDetail` 最多透传 1000 字符到可丢弃活动观察面，不进入 ledger。后台任务 start、运行中的 `background_task get/list` 返回 `wait_event`；完成事件稍后进入注意队列。重启后直接查询不再有本机 completion event 保证的持久远端 session 时返回 `backoff`，避免故障紧密重试。
 - 需要后续程序判断的结果使用稳定 JSON，并包含明确的成功状态和错误 code。面向人的摘要或错误说明放在具名字段中，不与 JSON 前后拼接自然语言。
 - schema 校验失败返回具体 `issues`、当前工具名和立即重试同一工具的提示；未知顶层工具返回当前 `availableTools` 和恢复提示，已移除的 `send_image` / `workspace_command` 分别定向引导到 `send_message.imageRef` / `workspace_bash`，不做静默兼容。
 - `continuation=immediate` 的可恢复失败最多保留 3 个立即纠错轮；成功重试或额度用完后回到普通 cooldown。该进程内状态不进入 ledger 或 runtime singleton。
@@ -70,15 +67,14 @@
 - `send_message` 的 target 必须由当前 conversation focus 明确给出。不能从 memory、消息文本或日志推断 target；切换来源时必须重新 `conversation open`。
 - `send_message.music` 只接受 qq/163/kugou/kuwo/migu 的歌曲 ID，或字段受限且 URL 必须为 HTTPS 的 custom 音乐卡片；不接受任意 JSON 卡片。
 - assistant text 是内部历史/推理，不是公开发送通道。
-- `send_message` 成功不会隐式结束 Agent 当前活动；下一轮可以继续行动、无工具结束活动，或显式调用 `yield` 交回控制权。
+- `send_message` 成功不会隐式结束 Agent 当前活动；下一轮继续当前方向或立刻选择另一件事。只有真正想主动休息时才调用 `rest`。
 - content-only 且无 tool call 的 assistant 输出不会发送或执行。Runtime 会追加受控 `runtime_correction` 并立即重试一次；连续第二次进入一分钟可打断等待，防止既假完成又紧密空转。
 - QQ 群策略仍以 `prompts/groups.md` 为唯一来源：普通群消息不唤醒或打断 Agent；`mentions` 群只进入被动 inbox，`selective` / `active` 群可以额外形成 passive notification。飞书群以 `BOT_FEISHU_GROUP_IDS` 明确 allowlist；普通消息被动入库，结构化 @bot、编辑和撤回可以形成 attention。QQ 私聊目标必须是 NapCat 当前好友；飞书群目标必须在 allowlist，私聊目标必须已经由 Gateway 观察到。未授权会明确拒绝，不会模拟成功。
 - 私聊的主动发言冷却只限制没有同 target pending mailbox 的真正 ambient send。对新入站私聊的回复不必为了绕过冷却而添加 `reply_to`；`reply_to` 用于对应平台的引用/回复展示。
 - `qq_directory` 是只读目录。`list_friends` / `search_friends` 覆盖 NapCat 当前全部好友，因此这些结果都可作为 private `send_message` target；`list_groups` 只返回 NapCat 当前群列表与 `prompts/groups.md` 群 section 的交集，不扩大群监听或发送授权。`profile` 以 QQ 号为主键，把当前好友 remark/nickname 与 `messages` 中同一 sender 的群名片、sender nickname、出现群和时间合并为带来源的 identity view；它不把昵称当权限或稳定事实。结果有条数上限和 offset 分页，不提供加删好友、加退群或群管理动作。
 - 群 `send_message` 最终失败后才按需查询机器人自身的当前禁言状态；确认命中时 tool result 返回 `reason=group_muted` 和可用的 `mutedUntil`，否则返回 `reason=send_failed`。该事实不缓存，也不会阻止后续真实发送。
 - 外部工具必须保留输出上限和超时；审计强度由 `BOT_TOOL_AUDIT_MODE` 控制，开发默认只记副作用。
-- 默认 thin 审批只保护公开发布和未知 MCP 写操作，不阻塞本地内容快速迭代。`strict` 才额外审批 memory/notebook/Life Journal/workspace 删除和网站本地删除；`off` 关闭统一 approval hook，但不会关闭 target、revision、路径、schema、超时和 allowlist 等工具自身边界。
-- MCP 配置是 operator 权限面，不由 Agent 修改。`readOnlyTools` 必须逐个写远端原始 tool name；远端 `readOnlyHint` 只作为展示信息，不能自动获得信任。未列出的工具即使自称只读，也默认审批。
+- Agent 不使用通用人工审批层；工具调用在各自的 target、revision、路径、schema、超时、allowlist 和审计边界内直接执行。
 - `inbox list` 只列出最近扫描窗口内 `latestRowId > lastReadRowId` 的待读来源；`read` 未显式传 `afterRowId` 时从持久已读 cursor 继续，并只推进到本次有界输出实际展示的最后一行。群读取必须显式指定监听白名单内的 groupId；私聊读取必须显式指定 peerId。read 结果用结构化 `media[].mediaId` 披露入站媒体 handle，整体仍有行数和字符上限，并作为普通 tool result 进入 AgentContext。群文件上传 notice 会用稳定的负数 synthetic messageId 落入同一 mailbox，此时 `replyable=false`，只能 ambient 回复。
 - `read_file` 位于 deferred `document_reading` capability 内，只能解析已落库的消息文件 handle；QQ 与飞书媒体都先进入统一 `media` / `media_blobs` 后才能读取。单次返回和可解析输入都有上限，压缩包与旧版 DOC/XLS/PPT 明确拒绝。
 - `workspace_bash` 的 workspace/repo 文件命令都只读且不经过 shell；只允许 `pwd/ls/rg/cat/head/tail/wc`。普通文件修改必须走 `workspace_file`，不能用它访问数据库、网络、金融、风格或指标。repo view 不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
@@ -95,8 +91,8 @@
 - `website` 位于 deferred `website` capability 内；`status` / `read` 是只读操作，`write` / `delete` / `move` / `publish` 是副作用操作并进入工具审计。它不能修改依赖、构建配置、CI、Vercel 配置或网站仓库的隐藏文件。
 - 主 system prompt 只保留身份、运行形态和能力入口；常驻提示词位于 `prompts/system/`，聊天硬约束与风格卡片位于 `prompts/chat-style/`，通过 typed `chat_style` 按需读取。
 - `BOT_TOOL_AUDIT_MODE=side_effects` 是开发默认值，只把副作用写入 `logs/tool-calls.ndjson`；`all` 恢复全部工具 trace，`off` 完全关闭。Postgres `agent_tool_calls` 默认不写，只有 `BOT_TOOL_AUDIT_DB_ENABLED=true` 时启用。
-- 同一 assistant turn 中，只有连续且命中显式只读 allowlist 的调用可以并行；副作用、未知工具、`inspect_media` 和所有 MCP 调用默认构成顺序 barrier。并行完成先后不改变 ledger，tool result 必须按原 assistant tool-call 顺序 append。
-- Bash 类能力必须保留 command allowlist、固定 workspace、最小 env 和输出/时间上限；敏感访问应通过专门脚本或 capability wrapper。审计可按开发阶段调薄，不能用关闭审计替代执行边界。
+- 同一 assistant turn 中，只有连续且命中显式只读 allowlist 的调用可以并行；副作用、未知工具和 `inspect_media` 默认构成顺序 barrier。并行完成先后不改变 ledger，tool result 必须按原 assistant tool-call 顺序 append。
+- Bash 类能力必须保留 command allowlist、固定 workspace、最小 env 和输出/时间上限；敏感访问应通过专门脚本或 capability wrapper。`openbb_cli` 子进程默认只继承 PATH/HOME/locale/临时目录，数据源确需的 API key 必须由 operator 用 `OPENBB_CLI_INHERIT_ENV` 显式列出，不能继承整个 Bot 环境。审计可按开发阶段调薄，不能用关闭审计替代执行边界。
 - `workspace_bash` 和 deferred tools 必须保留现有上限、preview compression、cache 和 timeout；网络与外部程序只通过专用 typed wrapper。
 - 有副作用的工具要格外谨慎：`send_message`、图片生成/下载、notebook/life_journal/memory/sticker 工具、browser 写操作，以及未来任何会写 DB 或外部服务的工具。
 
@@ -108,7 +104,7 @@
 - Claude `stop_reason` 和 OpenAI `finish_reason` 会归一化为 Runtime Host 的停止原因。`max_tokens` 先用更大的单次输出预算重试同一份 messages；仍截断时，只允许把“不含 tool call 的普通文本”作为 continuation checkpoint 写入 ledger，最多续写两次。任何截断或不完整的 tool call 都不写入、不执行。
 - 可用 `LLM_FALLBACK_MODEL` 显式配置同一 wire provider 的备用模型。只在主模型内部重试耗尽后的 overload/5xx 上切换一次；auth、rate limit、invalid request 和 context overflow 不切换，显式场景模型也不会继承主 Agent fallback。
 - 主 Agent、compaction、Memory maintenance、Goal judge、主动性自检、startup persona probe、`fetch_url` 摘要和长期状态翻译统一经 `observeLlmCall()` 记录一次调用。成功、失败和取消都生成独立 callId；evidence 只保留四段结构摘要与 SHA-256 指纹，用工具名和 block 类型判断工具是在 canonical 组装、wire 翻译、provider 返回还是统一解析阶段丢失。不得把 prompt/response 正文、工具参数、图片数据、provider headers 或错误 message 放进 evidence；观察写入失败不能影响原调用，也不能成为 replay、compaction 或 prompt 的输入。
-- `initiative_review` 的固定规则原文位于 `prompts/tools/initiative-review.md`，每次只把本次独白作为 user message 追加。Claude-Code-compatible 路径因此复用现有最后 system block 的 1h cache breakpoint；是否真正命中仍以 `operation=agent.initiative_review` 的 `cachedTokens` 为准。OpenAI-compatible provider 是否缓存由对应上游决定。缓存只复用固定输入前缀，不是工具状态或长期记忆。
+- `psychologist` 的固定规则原文位于 `prompts/tools/psychologist.md`，每次只把本次独白作为 user message 追加。Claude-Code-compatible 路径因此复用现有最后 system block 的 1h cache breakpoint；是否真正命中仍以 `operation=agent.psychologist` 的 `cachedTokens` 为准。OpenAI-compatible provider 是否缓存由对应上游决定。缓存只复用固定输入前缀，不是工具状态或长期记忆。
 - 媒体描述使用 `src/llm/**` 下的 routing provider，和 agent chat client 分离。它是可缺失的 best-effort 增强：自动路径只对新图片/贴纸尝试一次，不扫描历史 backlog，不做 SDK 或队列重试；视频、语音和文件只允许显式按需调用。
 - 优先使用渐进式披露：system prompt 只放稳定边界和入口，长手册和可变数据放到工具或文件后面。
 - Agent chat 发送前会从 durable ledger projection 构建 working context；默认保留最近三个带图片的 tool result，更旧图片替换为稳定 marker 并记录 `working_context_projected`，不会改写 canonical ledger。

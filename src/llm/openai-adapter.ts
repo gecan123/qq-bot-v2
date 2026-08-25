@@ -1,10 +1,13 @@
 import OpenAI from 'openai'
 import { jsonrepair } from 'jsonrepair'
-import sharp from 'sharp'
 import type { LlmProvider, MediaDescriptionResult } from './types.js'
 import type { OpenAiReasoningEffort } from '../config/index.js'
 import { loadPrompt } from '../config/prompt-loader.js'
 import { recordCurrentTokenUsage, toTokenUsage } from './token-usage.js'
+import {
+    openImageForSafeDecode,
+    readSafeImageMetadata,
+} from '../media/image-decode-safety.js'
 
 type StructuredImageDescription = {
     detectedType?: string
@@ -344,14 +347,8 @@ export class OpenAIProvider implements LlmProvider {
         image: Buffer,
         contentType: string,
     ): Promise<{ image: Buffer; contentType: string }> {
+        const metadata = await readSafeImageMetadata(image)
         if (image.length <= MAX_IMAGE_BYTES) {
-            return { image, contentType }
-        }
-
-        let metadata: sharp.Metadata
-        try {
-            metadata = await sharp(image, { animated: false }).metadata()
-        } catch {
             return { image, contentType }
         }
 
@@ -365,7 +362,7 @@ export class OpenAIProvider implements LlmProvider {
 
         for (const width of resizeWidths) {
             for (const quality of IMAGE_COMPRESSION_QUALITIES) {
-                let pipeline = sharp(image, { animated: false, limitInputPixels: false }).rotate()
+                let pipeline = openImageForSafeDecode(image).rotate()
                 if (width && originalWidth && width < originalWidth) {
                     pipeline = pipeline.resize({ width, withoutEnlargement: true })
                 }

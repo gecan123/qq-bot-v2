@@ -141,6 +141,17 @@ function parseCryptoPaperConfig(env: EnvSource): CryptoPaperConfig | undefined {
   return { initialCash, feeRateBps }
 }
 
+function parseEnvironmentVariableNames(name: string, value: string | undefined): string[] {
+  if (!value?.trim()) return []
+  const names = value.split(',').map((item) => item.trim()).filter(Boolean)
+  for (const item of names) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(item)) {
+      throw new Error(`Invalid ${name} entry "${item}" (must be an environment variable name)`)
+    }
+  }
+  return [...new Set(names)]
+}
+
 function parseVibeTradingConfig(env: EnvSource): VibeTradingConfig | undefined {
   if (!parseBoolean(env.VIBE_TRADING_ENABLED, false)) return undefined
 
@@ -456,26 +467,15 @@ export function parseConfig(
     && env.BOT_BACKGROUND_TASK_STATE_PATH.trim().length > 0
     ? env.BOT_BACKGROUND_TASK_STATE_PATH.trim()
     : 'data/agent-workspace/runtime/background-tasks.json'
+  const backgroundTaskMaxActive = parseStrictPositiveInteger(
+    'BOT_BACKGROUND_TASK_MAX_ACTIVE',
+    env.BOT_BACKGROUND_TASK_MAX_ACTIVE,
+    8,
+  )
   const scheduleStatePath = env.BOT_SCHEDULE_STATE_PATH
     && env.BOT_SCHEDULE_STATE_PATH.trim().length > 0
     ? env.BOT_SCHEDULE_STATE_PATH.trim()
     : 'data/agent-workspace/runtime/schedules.json'
-  const approvalStatePath = env.BOT_APPROVAL_STATE_PATH && env.BOT_APPROVAL_STATE_PATH.trim().length > 0
-    ? env.BOT_APPROVAL_STATE_PATH.trim()
-    : 'data/agent-workspace/runtime/approvals.json'
-  const approvalMode = parseEnumValue(
-    'BOT_APPROVAL_MODE',
-    env.BOT_APPROVAL_MODE,
-    ['off', 'thin', 'strict'] as const,
-    'thin',
-  )
-  const mcpConfigPath = env.BOT_MCP_CONFIG_PATH && env.BOT_MCP_CONFIG_PATH.trim().length > 0
-    ? env.BOT_MCP_CONFIG_PATH.trim()
-    : undefined
-  const mcpSchemaSnapshotDir = env.BOT_MCP_SCHEMA_SNAPSHOT_DIR
-    && env.BOT_MCP_SCHEMA_SNAPSHOT_DIR.trim().length > 0
-    ? env.BOT_MCP_SCHEMA_SNAPSHOT_DIR.trim()
-    : 'data/agent-workspace/runtime/mcp-schemas'
   const outboundCacheMaxEntries = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_MAX_ENTRIES, 32)
   const outboundCacheMaxBytes = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_MAX_BYTES, 100 * 1024 * 1024)
   const outboundCacheTtlMs = parsePositiveInteger(env.BOT_OUTBOUND_CACHE_TTL_MS, 60 * 60 * 1000)
@@ -517,11 +517,8 @@ export function parseConfig(
     toolAuditMode,
     toolAuditDbEnabled,
     backgroundTaskStatePath,
+    backgroundTaskMaxActive,
     scheduleStatePath,
-    approvalStatePath,
-    approvalMode,
-    mcpConfigPath,
-    mcpSchemaSnapshotDir,
     /**
      * 队列有事件时, drainEvents 前等更多事件堆积的毫秒数. 合并连续消息进同一轮 LLM
      * 调用. 默认 3s 覆盖常见连续输入; 媒体引用在事件入队前完成稳定渲染. 非正值或
@@ -539,6 +536,10 @@ export function parseConfig(
       ? {
           cliBin: env.OPENBB_CLI_BIN?.trim() || 'openbb',
           cliTimeoutMs: parsePositiveInteger(env.OPENBB_CLI_TIMEOUT_MS, 15_000),
+          inheritEnv: parseEnvironmentVariableNames(
+            'OPENBB_CLI_INHERIT_ENV',
+            env.OPENBB_CLI_INHERIT_ENV,
+          ),
         }
       : undefined,
     moomoo: parseMoomooConfig(env),

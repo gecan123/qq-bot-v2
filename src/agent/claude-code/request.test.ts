@@ -17,10 +17,14 @@ const dummyTool: Tool = {
   execute: async () => ({ content: 'ok' }),
 }
 
-const yieldTool: Tool = {
-  name: 'yield',
-  description: '交回控制权',
-  schema: z.object({}),
+const restTool: Tool = {
+  name: 'rest',
+  description: '主动休息',
+  schema: z.object({
+    durationMinutes: z.number(),
+    reason: z.string(),
+    resumeAction: z.string(),
+  }),
   execute: async () => ({ content: 'ok' }),
 }
 
@@ -279,7 +283,7 @@ describe('buildClaudeCodeRequestBody', () => {
       model: 'claude-sonnet-4-5',
       systemPrompt: 's',
       messages: [{ role: 'user', content: 'h' }],
-      tools: [dummyTool, yieldTool],
+      tools: [dummyTool, restTool],
     })
     assert.deepEqual(body.tool_choice, { type: 'any' })
     assert.ok(Array.isArray(body.tools))
@@ -474,20 +478,24 @@ describe('buildClaudeCodeRequestBody', () => {
       {
         role: 'assistant',
         content: '',
-        toolCalls: [{ id: 'call_1', name: 'yield', args: {} }],
+        toolCalls: [{
+          id: 'call_1',
+          name: 'rest',
+          args: { durationMinutes: 30, reason: '想休息', resumeAction: '继续阅读' },
+        }],
       },
-      { role: 'tool', toolCallId: 'call_1', content: '{"status":"yielded"}' },
+      { role: 'tool', toolCallId: 'call_1', content: '{"status":"elapsed"}' },
     ]
     const body = buildClaudeCodeRequestBody({
       model: 'claude-sonnet-4-5',
       systemPrompt: 's',
       messages,
-      tools: [yieldTool],
+      tools: [restTool],
     })
     assert.equal(body.messages.length, 2)
     assert.deepEqual(body.messages[1], {
       role: 'user',
-      content: [{ type: 'tool_result', tool_use_id: 'call_1', content: '{"status":"yielded"}', cache_control: { type: 'ephemeral', ttl: '1h' } }],
+      content: [{ type: 'tool_result', tool_use_id: 'call_1', content: '{"status":"elapsed"}', cache_control: { type: 'ephemeral', ttl: '1h' } }],
     })
   })
 

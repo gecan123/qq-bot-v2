@@ -1,5 +1,7 @@
 # 空闲自驱动强化设计
 
+> 历史方案：`pause action=rest` 已由当前 `rest` 工具和持续行动循环取代；现行契约见 `docs/ARCHITECTURE.md` 与 `docs/TOOLS.md`。
+
 ## 背景
 
 当前设计只保留 `pause action=rest` 作为 LLM 可见的节奏控制动作。不再暴露 `wait`，也不恢复 `[空闲提示]` 这类 runtime 提示器，避免把自驱动做成调度器训话。

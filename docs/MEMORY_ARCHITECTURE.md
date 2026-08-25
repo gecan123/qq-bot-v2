@@ -108,7 +108,7 @@ flowchart LR
 
 - 单文件 `life/agenda.md` 表示“现在仍有效的状态”，不是 append-only 历史。
 - 主 Agent 显式修改时必须先 read，再带最新 revision 覆盖完整 Agenda。
-- Agenda 只由显式 `life_journal` 工具更新。`yield` 不读取 Agenda 或 Journal，也不会同步请求额外 LLM；没有牵引力时由主循环以无工具轮或 yield 结束当前活动。
+- Agenda 只由显式 `life_journal` 工具更新。`rest` 不读取 Agenda 或 Journal，也不会同步请求额外 LLM；当前方向没有牵引力时主循环直接寻找另一项行动，只有真正主动休息时才显式调用 `rest`。
 
 ## 读取与披露
 

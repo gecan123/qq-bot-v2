@@ -14,7 +14,7 @@
 6. `src/agent/bot-loop-agent.ts` 是唯一 Runtime Host；它把 expected-head append/增量 projection 委托给 `LedgerCommitCoordinator`，把 threshold/overflow/CAS 重算委托给 `CompactionCoordinator`，把 continue/wait/backoff/stop 决策委托给纯 `LoopPolicy`。事务成功后才推进内存 `AgentContext`。
 7. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct。连续且显式只读的 tool calls 可以并行，副作用和未知调用是 barrier；tool results 始终按 assistant tool-call 顺序成组 append。只有 `ToolExecutionResult.content` 进入 ledger，`outcome` / `effects` 由 Runtime Host 解释。
 
-专用后台工作统一走有界边界。Agent Core 内部仍保留 `maintenance=1`、`network=3` 等 bounded task scheduler；入站媒体描述由独立 Media Worker 处理，并把结果写回 Postgres `media` 事实行。媒体描述是可缺失的 best-effort 增强：消息渲染只读取当时已有描述，不等待、不触发生成；新图片/贴纸下载后最多自动请求一次，视频、语音和文件不自动生成描述。Media Worker 不扫描历史空描述，也不自动重试失败调用。Browser Controller 继续作为独立进程。它们都不是新的主 Agent，也不能直接写 canonical ledger。项目当前接受进程重启中断在途后台任务，不建设通用 `jobKind + payload` 自动恢复层；只有重启丢失昂贵长任务形成可测量痛点，或外部服务原生提供可恢复 task/session ID 时再重新评估。
+专用后台工作统一走有界边界。Agent Core 内部仍保留 `maintenance=1`、`network=3` 等 bounded task scheduler；全局未完成后台任务数默认最多 8 个，已登记但仍在 scheduler 中等待的任务也占额度，超限会在启动实际图片、网络或交易研究工作前明确拒绝。入站媒体描述由独立 Media Worker 处理，并把结果写回 Postgres `media` 事实行。媒体描述是可缺失的 best-effort 增强：消息渲染只读取当时已有描述，不等待、不触发生成；新图片/贴纸下载后最多自动请求一次，视频、语音和文件不自动生成描述。原始图片事实仍可保存，但预览和视觉模型路径只解码最多 4000 万像素、单边最多 8192px 的第一帧。Media Worker 不扫描历史空描述，也不自动重试失败调用。Browser Controller 继续作为独立进程。它们都不是新的主 Agent，也不能直接写 canonical ledger。项目当前接受进程重启中断在途后台任务，不建设通用 `jobKind + payload` 自动恢复层；只有重启丢失昂贵长任务形成可测量痛点，或外部服务原生提供可恢复 task/session ID 时再重新评估。
 
 短期调度是 Agent Core 内部的持久深模块。`ScheduleRuntime` 把 active 状态原子写入 `schedules.json`，把已触发正文写入 occurrence store，并在删除 active job 前把待投递 wake 写入 delivery store；到期时直接向同进程 `EventQueue` 投递 `scheduled_wake`，由单一 `BotLoopAgent` 转成不含 intention 的 `notification`。该 notification 写入 canonical ledger 后，Runtime 才删除 pending delivery；进程重启会检查 active schedule、pending delivery 和 canonical ledger，重放尚未提交的 wake，并清理已经提交但尚未确认的 delivery。Agent 按需调用 `schedule get_occurrence` 打开正文。
 
@@ -63,11 +63,11 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 
 ## 自主循环
 
-- `send_message` 成功只是完成一个动作，不强制立即等待。当前会话内马上续做用 `work=continue`，它只为下一轮提供进程内行动锚点；需要跨注意周期或重启的长期进度仍用绑定 active Goal/currentCommitment 的 `work=goal_progress`。mailbox 在成功回复后仍可关闭防重。刚收到注意事件、存在 active Goal、收到短期续做信号，或模型只输出了不会执行的普通文本时，无工具结束会立即纠错一次；连续第二次等待 60 秒。自由空闲或无进展工具轮从 15 分钟开始指数退避，最多 4 小时；新的注意事件或真实工具进展会复位退避。
+- `send_message` 成功只是完成一个动作，不强制等待。当前会话内马上续做用 `work=continue`，它只为下一轮提供进程内行动锚点；需要跨注意周期或重启的长期进度仍用绑定 active Goal/currentCommitment 的 `work=goal_progress`。mailbox 在成功回复后仍可关闭防重。普通完成、无进展、后台任务已启动以及无工具轮都会立即进入下一次决策；模型只输出不会执行的普通文本时，Runtime 追加一次受控纠错，仍不执行那段文本。
 - provider-confirmed 外发到有 pending 通知的同 target mailbox 后，Runtime 在 tool result 闭合后原子 append `mailbox_handled` 与 runtime cursor，避免把已经处理的旧行再次视为新请求。
-- `yield` 是无状态的显式交还控制工具，只返回 `continuation=stop`；不保存 intention、resume reminder、rest state 或专门指标。第一次无行动锚点的 `yield` 等待自然结束后，Runtime 会 append 一条稳定的 `runtime_correction`，要求下一次 `yield` 前先加载 `autonomous_life` 做一次有界方向搜索；找到真实牵引力就直接行动，确实没有才继续等待。空闲、无进展和工具明确请求等待时仍使用进程内有界等待，等待状态本身不进入 ledger。
-- 连续三次没有 Goal、pending attention、真实工具进展或后台 `wait_event` 锚点的空闲等待后，Runtime 才调用一次无工具、只读的状态顾问。它只看有界的近期 canonical transcript：`healthy_rest` 保持休息且不写入上下文；`directionless` 产生一个从近期真实线索长出的第一人称小念头；`anxiety_loop` 只给一个停止重复的收敛动作。后两者由 Runtime 以 `agent_state_advice` 受控消息 append，顾问本身没有 ledger 写权限，也不是第二个 Agent。顾问不设置额外的 per-call 输出 token 上限，整次检查最多运行一小时；空正文、截断或非法 JSON 会在同一时间预算内重试一次。最终失败会记录真实异常、复位 idle backoff，并由 Runtime append `autonomous_life` 方向搜索兜底。
-- 连续自主行动不设轮次上限，不会因为工作轮数达到固定值而强制冷却。工具用 `outcome.progress` 报告是否获得新事实或改变状态，只用 `continuation=immediate|wait_attention|wait_event|backoff|stop` 表达下一轮调度：`wait_event` 表示已有真实后台工作，等待完成事件时不受 pending 请求的一分钟纠错节奏驱动，也会重置连续行动计数；可丢弃的 `continuationDetail` 只用于实时活动说明。`noveltyKey` 默认抑制进程内重复披露。`continuation=immediate` 的失败最多保留三轮紧密纠错，之后回到普通无进展调度。
+- `rest` 是唯一的主动暂停工具。它在工具调用内部按明确时长等待，记录本次真实理由和恢复动作；私聊、@、后台任务完成、调度事件或停止信号会提前打断。休息没有跨重启持久状态，结束或打断后立即进入下一次决策。
+- Runtime 不再维护 idle backoff、自动休息顾问或“做完就停”的路径。全新空 ledger 会先 append 一条稳定的自主启动消息并立即开始第一轮。只有 provider/工具明确返回 `backoff`、连续行动协议失败，或本轮只消费了无需披露的重复事件时才使用可打断的技术等待；这些等待不是 Agent 主动休息，也不进入 ledger。
+- 连续自主行动不设轮次上限，不会因为工作轮数达到固定值而强制冷却。工具用 `outcome.progress` 报告是否获得新事实或改变状态，只用 `continuation=immediate|wait_attention|wait_event|backoff|stop` 表达当前方向状态：除 `backoff` 外，Runtime 都立即开始下一轮；`wait_event` 只表示不要轮询当前后台任务，应改做其他事。可丢弃的 `continuationDetail` 只用于实时活动说明，`noveltyKey` 默认抑制进程内重复披露。`continuation=immediate` 的失败最多保留三轮紧密纠错，之后改走下一行动或短暂技术退避。
 - 循环控制使用稳定结构化载荷，不能依赖自由文本判断成功或状态。
 
 ## 持久边界

@@ -3,6 +3,11 @@ import { createServer } from 'node:http'
 import { describe, test } from 'node:test'
 import { OpenAIProvider } from './openai-adapter.js'
 
+const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=',
+  'base64',
+)
+
 describe('OpenAIProvider media file inputs', () => {
   test('throws a clear error when baseURL is not an absolute http url', () => {
     assert.throws(
@@ -43,8 +48,8 @@ describe('OpenAIProvider media file inputs', () => {
       'gpt-5.6-luna',
     )
     await assert.rejects(() => provider.describeImage({
-      image: Buffer.from('image-bytes'),
-      contentType: 'image/jpeg',
+      image: TINY_PNG,
+      contentType: 'image/png',
     }))
 
     assert.equal(requestCount, 1)
@@ -86,8 +91,8 @@ describe('OpenAIProvider media file inputs', () => {
     }
 
     const result = await provider.describeImage({
-      image: Buffer.from('image-bytes'),
-      contentType: 'image/jpeg',
+      image: TINY_PNG,
+      contentType: 'image/png',
     })
 
     assert.equal(calls.length, 1)
@@ -126,8 +131,8 @@ describe('OpenAIProvider media file inputs', () => {
     }
 
     const result = await provider.describeImage({
-      image: Buffer.from('image-bytes'),
-      contentType: 'image/jpeg',
+      image: TINY_PNG,
+      contentType: 'image/png',
     })
 
     assert.match(result, /新闻截图，内容是一则遗产分配报道/)
@@ -161,8 +166,8 @@ describe('OpenAIProvider media file inputs', () => {
     }
 
     const result = await provider.describeImage({
-      image: Buffer.from('image-bytes'),
-      contentType: 'image/jpeg',
+      image: TINY_PNG,
+      contentType: 'image/png',
     })
 
     assert.match(result, /商场内一家娱乐游戏厅的店铺外观/)
@@ -197,13 +202,37 @@ describe('OpenAIProvider media file inputs', () => {
     }
 
     const result = await provider.describeImage({
-      image: Buffer.from('image-bytes'),
-      contentType: 'image/gif',
+      image: TINY_PNG,
+      contentType: 'image/png',
       mediaType: 'sticker',
     })
 
     assert.equal(calls.length, 1)
     assert.equal(result, '')
+  })
+
+  test('describeImage rejects unsafe decoded dimensions before contacting the provider', async () => {
+    let calls = 0
+    const provider = new OpenAIProvider('http://127.0.0.1:8317/v1', 'sk-local', 'gpt-5.4-mini')
+    ;(provider as any).client = {
+      chat: {
+        completions: {
+          create: async () => {
+            calls++
+            return { choices: [{ message: { content: '{}' } }] }
+          },
+        },
+      },
+    }
+    const oversized = Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="6325" height="6325"><rect width="100%" height="100%"/></svg>',
+    )
+
+    await assert.rejects(
+      () => provider.describeImage({ image: oversized, contentType: 'image/svg+xml' }),
+      /40000000 pixel decode limit/,
+    )
+    assert.equal(calls, 0)
   })
 
   test('describeImage preprocesses oversized images before request', async () => {

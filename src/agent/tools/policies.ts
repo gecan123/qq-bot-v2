@@ -41,17 +41,16 @@ function byAction(input: {
  * 构造直接失败，避免并发白名单和副作用日志各自漂移。
  */
 export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.freeze({
-  yield: fixed(EXCLUSIVE_READ),
+  rest: fixed(EXCLUSIVE_READ),
   qq_directory: fixed(PARALLEL_READ),
   background_task: byAction({ parallel: ['list', 'get'] }),
   schedule: byAction({ parallel: ['list', 'get_occurrence'], sideEffect: ['create', 'cancel'] }),
-  approval: byAction({ parallel: ['list', 'status'], sideEffect: ['approve', 'cancel'] }),
   goal: byAction({
     parallel: ['get'],
     sideEffect: ['create_self', 'complete', 'report_blocker', 'abandon_self'],
   }),
   skill: fixed(PARALLEL_READ),
-  initiative_review: fixed(EXCLUSIVE_READ),
+  psychologist: fixed(EXCLUSIVE_READ),
   memory: byAction({
     parallel: ['recall'],
     sideEffect: ['remember', 'correct'],
@@ -80,10 +79,6 @@ export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.fr
     sideEffect: ['open', 'close'],
   }),
   send_message: fixed(EXCLUSIVE_SIDE_EFFECT),
-  mcp: byAction({
-    exclusive: ['servers'],
-    sideEffect: ['connect', 'tools', 'call', 'disconnect'],
-  }),
   browser: fixed(EXCLUSIVE_SIDE_EFFECT),
   openbb_cli: fixed(PARALLEL_READ),
   moomoo_skill: (args) => {

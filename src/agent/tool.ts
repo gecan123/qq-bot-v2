@@ -369,7 +369,7 @@ function createHelpTool(options: {
     description: [
       '稳定工具帮助入口. 用 list 查看 capability; 用 describe 按需查看内部工具 schema; 然后通过 invoke 调用内部工具.',
       `可用 capability: ${capabilityNames || 'none'}.`,
-      '顶层 tools 保持稳定，deferred 工具继续由各自 schema、policy 和 approval 保护.',
+      '顶层 tools 保持稳定，deferred 工具继续由各自 schema 和 policy 保护.',
     ].join(' '),
     schema,
     policy: () => ({ sideEffect: false, concurrency: 'parallel' }),
@@ -458,7 +458,7 @@ function createHelpTool(options: {
 function createInvokeTool(): Tool<InvokeToolArgs> {
   return {
     name: 'invoke',
-    description: '稳定内部工具调用入口. 先用 help list/describe 发现能力和参数；调用仍受目标工具的 schema、policy 和 approval 保护.',
+    description: '稳定内部工具调用入口. 先用 help list/describe 发现能力和参数；调用仍受目标工具的 schema 和 policy 保护.',
     schema: z.object({
       tool: z.string().trim().min(1).describe('要调用的内部工具名, 例如 browser、web_search、fetch_content、generate_image、openbb_cli.'),
       args: z.record(z.string(), z.unknown()).optional().describe('内部工具参数对象. 具体字段先用 help action=describe tool=<tool> 查看.'),

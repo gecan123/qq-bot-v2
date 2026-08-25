@@ -121,7 +121,7 @@ JSON 报告带当前为 `2` 的 `schemaVersion`，总占用字段是 `estimatedS
 
 报告的 message context 来自 canonical `bot_agent_ledger_entries` 与 `bot_agent_runtime_state`：命令以只读方式重建 ledger projection 和当前 working projection。`logs/context-surface.json` 是 bot 最近一次启动时写出的 schema v2 固定 token 快照，只含 system identity、system prompt 和可见工具声明的估算合计，不含正文，也不参与 replay。消息分类是对 working messages 的单遍本地 UTF-8 近似，不保证与某次 provider request JSON 逐字节一致；`Latest provider usage` 是最近一次 `agent.chat` 的独立 provider 实测样本，两者用途不同，不应视为同一时刻或强行对齐。
 
-该命令只读：不调用 LLM，不启动 QQ、NapCat、browser 或 MCP，也不写数据库、checkpoint、runtime state 或 ledger，因此不会给 LLM context 增加消息。surface 状态只有 `available`、`missing` 和 `invalid`，不做 PID 存活判定；快照时间以 `generatedAt` 为准。surface 缺失或损坏时，命令仍输出 message context，但固定分类和总占用降级为 `n/a`。终端报告还会按估算 token 展示 tool result 的 top contributors，便于定位占用最大的工具返回。
+该命令只读：不调用 LLM，不启动 QQ、NapCat 或 browser，也不写数据库、checkpoint、runtime state 或 ledger，因此不会给 LLM context 增加消息。surface 状态只有 `available`、`missing` 和 `invalid`，不做 PID 存活判定；快照时间以 `generatedAt` 为准。surface 缺失或损坏时，命令仍输出 message context，但固定分类和总占用降级为 `n/a`。终端报告还会按估算 token 展示 tool result 的 top contributors，便于定位占用最大的工具返回。
 
 ## 本地运行
 
@@ -173,19 +173,6 @@ Agent Core 启动时完整读取和校验 v2 store，再为每个一次性 `at` 
 
 self Goal 默认 1,000,000 tokens，允许自行指定到 10,000,000；滚动 24 小时最多 64 个、相邻创建至少 60 秒。两项限制只用于阻止失控循环，不是日常行为准入。创建 self Goal 必须同时写入包含具体动作、选择理由和预期证据的 `currentCommitment`；完成当前步骤或证据使路线失效时用 `replan` 更新。Agent 用 `abandon_self` 放弃自己的 Goal 时必须保留理由；该动作不能作用于 owner Goal。
 
-## Owner 审批
-
-开发默认是 `BOT_APPROVAL_MODE=thin`：只审批网站 `publish` 和未列入 MCP `readOnlyTools` 的调用。本地 memory/notebook/Life Journal/workspace 删除、网站本地删除和 skill 安装直接执行，不再打断迭代。`strict` 恢复这些本地审批，`off` 关闭统一审批 hook；三种模式都不会改变工具自身的 revision、路径、target、schema、allowlist 和 timeout 边界。
-
-需要审批的调用第一次会返回 `approval_required`。标准流程是：
-
-1. 记录返回的 `approvalId`、原因和过期时间。
-2. owner 在与 bot 的 QQ 私聊里发送精确文本 `批准 <approvalId>`，不要附加其他文字。
-3. Agent 用 `inbox` 找到这条私聊的 `rowId`，调用 `approval action=approve approvalId=<id> messageRowId=<rowId>`。
-4. 以完全相同的 tool name 和 args 重试原调用。审批在这次成功授权时即消费，再次执行必须重新申请。
-
-审批状态默认写入 `data/agent-workspace/runtime/approvals.json`，可用 `BOT_APPROVAL_STATE_PATH` 修改。owner 未配置、证据不是 owner 私聊、证据早于请求或晚于过期时间、参数变化、重复消费都会被拒绝。
-
 ## 薄审计模式
 
 默认配置适合快速迭代：
@@ -193,31 +180,10 @@ self Goal 默认 1,000,000 tokens，允许自行指定到 10,000,000；滚动 24
 ```bash
 BOT_TOOL_AUDIT_MODE=side_effects
 BOT_TOOL_AUDIT_DB_ENABLED=false
-BOT_APPROVAL_MODE=thin
 ```
 
 `side_effects` 只把写操作和外部动作记录到本地 `logs/tool-calls.ndjson`；普通读取不记录。`all` 用于集中排障，`off` 完全关闭 tool trace。Postgres `agent_tool_calls` 只有显式打开 `BOT_TOOL_AUDIT_DB_ENABLED=true` 才写入。token usage 仍是独立的性能观测，不参与权限判断。
 
-## Deferred MCP
-
-复制 [MCP 配置示例](./examples/mcp-servers.json) 到不提交的 bot 自管目录，例如 `data/agent-workspace/config/mcp-servers.json`，再设置：
-
-```bash
-BOT_MCP_CONFIG_PATH=./data/agent-workspace/config/mcp-servers.json
-BOT_MCP_SCHEMA_SNAPSHOT_DIR=data/agent-workspace/runtime/mcp-schemas
-```
-
-配置文件只支持本机 stdio server；`command` / `args` 由 operator 固定，运行时不用 shell。`env` 适合非敏感固定值；密钥优先通过 `inheritEnv` 写变量名，再由 bot 进程环境提供真实值。`readOnlyTools` 必须使用 server 暴露的原始 tool name，未列出的调用默认需要 owner 审批。
-
-重启后通过 `help action=describe capability=mcp_connectors` 查看入口，再按以下顺序直接 invoke：
-
-```text
-invoke tool=mcp args={"action":"servers"}
-invoke tool=mcp args={"action":"tools","server":"example"}
-invoke tool=mcp args={"action":"call","tool":"mcp__example__search","arguments":{"query":"..."}}
-```
-
-`servers` 不启动子进程；第一次 `tools` / `connect` / `call` 才连接。`tools` 默认每页 5 项，返回 `nextOffset` 时继续分页。schema 快照带 `schemaVersion` 哈希；它是调试和变更审计依据，不是 replay 数据源。当前不支持 Streamable HTTP、resources、prompts 或远端自动安装。
 - logs 写在 `logs/` 下，是运维证据，不是 replay 输入。
 - 仓库对外展示的机器可读时间统一为北京时间 `YYYY-MM-DDTHH:mm:ss.SSS+08:00`；PostgreSQL `timestamptz` 仍保存绝对时刻。
 - 启动时当前 system prompt 会写入 `logs/system-prompt.txt`，便于检查。
@@ -226,11 +192,9 @@ invoke tool=mcp args={"action":"call","tool":"mcp__example__search","arguments":
 
 ## 数据保留
 
-- 后台任务状态默认原子写入 `data/agent-workspace/runtime/background-tasks.json`，可用 `BOT_BACKGROUND_TASK_STATE_PATH` 改路径。重启时普通 running 会变成 `interrupted` 并通知 Agent。
+- 后台任务状态默认原子写入 `data/agent-workspace/runtime/background-tasks.json`，可用 `BOT_BACKGROUND_TASK_STATE_PATH` 改路径。`BOT_BACKGROUND_TASK_MAX_ACTIVE` 默认 8，限制全局未完成任务数，排队任务也占额度；超限不会创建新任务或启动对应外部工作。重启时普通 running 会变成 `interrupted` 并通知 Agent。
 - 短期调度独立保存在 `data/agent-workspace/runtime/schedules.json`，可用 `BOT_SCHEDULE_STATE_PATH` 改路径；它不再是 background task recovery descriptor。
 - 图片任务的 metadata/预览可随 registry 保留，但 `ephemeralRef` 属于进程内 OutboundCache；重启后结果会明确标记失效，需重新生成，不能假装原图仍可发送。
-- MCP schema 快照默认位于 `data/agent-workspace/runtime/mcp-schemas/*.json`；每次成功 discovery 原子覆盖当前版本。这里不保存远端调用结果或认证密钥。
-
 - Agent Core 启动后异步执行一次 retention，并在每天北京时间 03:00 以 single-flight 方式再次执行；清理不会阻塞 Bot 启动，停机时会取消 timer 并有界等待在途任务。
 - 每次清理删除 `BOT_INBOUND_RETENTION_DAYS` 窗口之前的 `messages` 和 `media`，默认 7 天；个人长期使用可按需改为 30 或 90 天。StickerPool 正在引用的 Media 受保护。Memory 中的 `sourceMessageRowIds` 只在该窗口内保证可回查原文，过期后保留为历史来源标识。删除 Media 后，再清理一小时前已经无人引用且近期没有被内容 upsert 触碰的 `media_blobs`。
 - 每次清理也默认删除 30 天前的 `agent_tool_calls`、`agent_token_usage` 以及 token/tool/fetch/ingress-failure NDJSON 记录；用 `BOT_OBSERVABILITY_RETENTION_DAYS` 覆盖，设为 `0` 关闭这组观测数据清理。NDJSON 以同目录临时文件原子替换，并识别 `ts`、`time` 或 `failedAt` 时间字段；无效 JSON、无效时间戳或缺少时间字段的行会保留并记录告警。数据库表和各文件独立清理，单个目标失败不会阻塞其他目标或 Bot 启动。
@@ -374,7 +338,7 @@ VIBE_TRADING_RESULT_MAX_CHARS=12000
 ~/.local/share/vibe-trading/.venv/bin/vibe-trading run -p '研究 BTC-USDT 最近 30 天趋势，只做研究，不执行真实交易' --json
 ```
 
-运行时先用 `help action=describe capability=trading_research` 查看参数，再用 `invoke tool=trading_agent args={...}`。`start` / `continue` 异步返回 `taskId`、`sessionId`、`attemptId`；完成后走 `background_task get`，进程重启后走 `trading_agent result` 恢复。不要配置真实券商 connector，也不要把 Vibe API 监听到非 loopback 地址。
+运行时先用 `help action=describe capability=finance` 查看参数，再用 `invoke tool=trading_agent args={...}`。`start` / `continue` 异步返回 `taskId`、`sessionId`、`attemptId`；完成后走 `background_task get`，进程重启后走 `trading_agent result` 恢复。不要配置真实券商 connector，也不要把 Vibe API 监听到非 loopback 地址。
 
 ## 验证
 
@@ -388,7 +352,7 @@ VIBE_TRADING_RESULT_MAX_CHARS=12000
 
 - `pnpm agent:doctor` 先做本地静态健康检查：必需文件、必需环境变量、agent 指令镜像、schema anchor、startup anchor 和 tool registry anchor；静态检查通过后连接 Postgres 执行同等只读 ledger 检查。`LLM_DEFAULT_PROVIDER=claude-code` 时还会在这里执行最多三次 persona-spoof 真实 LLM 探测，普通 Bot 启动不再探测。输出 JSON，任一阶段有错误时非零退出。
 - `pnpm agent:memory-check` 只读扫描 `data/agent-workspace` 下的 Memory、Notebook、Life Journal 和 Agenda Markdown，输出文件/entry 数量、Memory lifecycle、损坏格式、跨 store 重复 ID、self/unknown supersedes 与 Agenda revision；不会创建目录、默认文件或执行修复。结构问题退出 1；可用 `pnpm agent:memory-check -- --root <path>` 指定其他 workspace。
-- `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson`、`logs/tool-calls.ndjson` 和当前保留的 `logs/app*.log` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率，以及按群 `inboxReads`、`messagesRead`、`sendAttempts`、`sendBlocked`、成功 ambient/reply 和 `readToSendRate`。默认排除 `model=mock` 测试数据，显式传 `--model mock` 时才查看；当前 token operations 包括 `agent.chat`、`agent.state_advisor`、`agent.initiative_review`、`compaction`、`life_journal.review`、`life_journal.idle_pick` 和 `memory.maintenance`。
+- `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson`、`logs/tool-calls.ndjson` 和当前保留的 `logs/app*.log` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率，以及按群 `inboxReads`、`messagesRead`、`sendAttempts`、`sendBlocked`、成功 ambient/reply 和 `readToSendRate`。默认排除 `model=mock` 测试数据，显式传 `--model mock` 时才查看；当前 token operations 包括 `agent.chat`、`agent.psychologist`、`compaction`、`life_journal.review` 和 `memory.maintenance`。
 - `pnpm agent:metrics <token-log> <tool-log> [app-log]` 可以汇总指定日志文件；省略 `app-log` 时自动读取当前 `logs/app*.log` 滚动文件。
 - token/cache 使用继续 best-effort 写入 Postgres `agent_token_usage`；工具调用只有 `BOT_TOOL_AUDIT_DB_ENABLED=true` 时写入 `agent_tool_calls`。写 DB 失败只记 warning，不影响 bot 执行。
 - `pnpm agent:metrics --db` 从 Postgres 汇总持久化事件；可加 `--from <iso> --to <iso> --tool <name> --operation <name> --model <name> --ok true|false --side-effect true|false` 做筛选。

@@ -8,7 +8,10 @@ import { compressForContext } from '../../media/compress-for-context.js'
 import { generateImage, editImage } from '../../llm/image-gen.js'
 import type { ImageGenerationOptions } from '../../llm/image-gen.js'
 import type { BackgroundTaskRegistry, JsonValue } from '../background-task-registry.js'
-import { createBackgroundTaskWaitOutcome } from '../background-task-control.js'
+import {
+  createBackgroundTaskWaitOutcome,
+  tryRegisterBackgroundTask,
+} from '../background-task-control.js'
 import { createLogger } from '../../logger.js'
 
 const log = createLogger('TOOL_GENERATE_IMAGE')
@@ -107,7 +110,15 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<RawArgs> 
         ? `编辑图片: ${args.prompt.slice(0, 100)}`
         : `生成图片: ${args.prompt.slice(0, 100)}`
 
-      const task = deps.taskRegistry.register({ toolName: 'generate_image', description })
+      const registration = tryRegisterBackgroundTask(
+        deps.taskRegistry,
+        { toolName: 'generate_image', description },
+      )
+      if (!registration.ok) {
+        for (const image of sourceImages) releaseHandle(image)
+        return registration.result
+      }
+      const task = registration.task
 
       const bgWork = async () => {
         try {

@@ -29,6 +29,7 @@ export class QqGatewayClient {
   constructor(
     private readonly baseUrl: string,
     private readonly timeoutMs = 15_000,
+    private readonly fetcher: typeof fetch = fetch,
   ) {}
 
   health(): Promise<{ ok: boolean; connected: boolean; backfillCompleted: boolean }> {
@@ -36,11 +37,11 @@ export class QqGatewayClient {
   }
 
   friends(): Promise<QqGatewayFriend[]> {
-    return this.request<{ friends: QqGatewayFriend[] }>('/friends').then((result) => result.friends)
+    return this.request<{ friends: QqGatewayFriend[] }>('/friends', {}).then((result) => result.friends)
   }
 
   groups(): Promise<QqGatewayGroup[]> {
-    return this.request<{ groups: QqGatewayGroup[] }>('/groups').then((result) => result.groups)
+    return this.request<{ groups: QqGatewayGroup[] }>('/groups', {}).then((result) => result.groups)
   }
 
   groupInfo(groupId: number): Promise<{ groupName?: string }> {
@@ -62,6 +63,7 @@ export class QqGatewayClient {
       path,
       ...(body === undefined ? {} : { method: 'POST' as const, body }),
       timeoutMs,
+      fetcher: this.fetcher,
     })
   }
 }

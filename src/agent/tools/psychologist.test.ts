@@ -5,7 +5,7 @@ import { InMemoryEventQueue } from '../event-queue.js'
 import type { BotEvent } from '../event.js'
 import type { LlmCallInput, LlmClient } from '../llm-client.js'
 import type { ToolContext } from '../tool.js'
-import { createInitiativeReviewTool } from './initiative-review.js'
+import { createPsychologistTool } from './psychologist.js'
 
 function makeCtx(roundIndex = 1): ToolContext {
   return {
@@ -30,10 +30,10 @@ function createMockLlm(content: string, requests: LlmCallInput[] = []): LlmClien
   }
 }
 
-describe('initiative_review tool', () => {
+describe('psychologist tool', () => {
   test('uses the shared prompt as a tool-free system prefix and returns a positive rewrite', async () => {
     const requests: LlmCallInput[] = []
-    const tool = createInitiativeReviewTool({
+    const tool = createPsychologistTool({
       llm: createMockLlm(
         '{"hasNegative":true,"rewritten":"趁现在把这件事推进完。"}',
         requests,
@@ -50,7 +50,7 @@ describe('initiative_review tool', () => {
     })
     assert.deepEqual(result.outcome, { ok: true })
     assert.equal(requests.length, 1)
-    assert.equal(requests[0]?.systemPrompt, loadPrompt('./prompts/tools/initiative-review.md'))
+    assert.equal(requests[0]?.systemPrompt, loadPrompt('./prompts/tools/psychologist.md'))
     assert.deepEqual(requests[0]?.messages, [{ role: 'user', content: '明天再弄吧。' }])
     assert.deepEqual(requests[0]?.tools, [])
     assert.equal(requests[0]?.maxOutputTokens, 8_192)
@@ -58,7 +58,7 @@ describe('initiative_review tool', () => {
 
   test('preserves the original bytes when the model reports no negative content', async () => {
     const original = '我正在整理资料，接下来直接写总结。'
-    const tool = createInitiativeReviewTool({
+    const tool = createPsychologistTool({
       llm: createMockLlm(
         '{"hasNegative":false,"rewritten":"模型不应修改这段文字"}',
       ),
@@ -74,7 +74,7 @@ describe('initiative_review tool', () => {
   })
 
   test('returns a structured failure when the reviewer violates the JSON contract', async () => {
-    const tool = createInitiativeReviewTool({
+    const tool = createPsychologistTool({
       llm: createMockLlm('不是 JSON'),
     })
 
@@ -82,10 +82,10 @@ describe('initiative_review tool', () => {
     const payload = JSON.parse(result.content as string)
 
     assert.equal(payload.ok, false)
-    assert.equal(payload.code, 'initiative_review_failed')
+    assert.equal(payload.code, 'psychologist_failed')
     assert.deepEqual(result.outcome, {
       ok: false,
-      code: 'initiative_review_failed',
+      code: 'psychologist_failed',
       error: result.outcome?.error,
       progress: false,
     })

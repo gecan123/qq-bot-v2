@@ -20,6 +20,13 @@ const contextMessageEntrySchema = contextEntryBaseSchema.extend({
   toolCalls: z.array(z.object({
     id: z.string(),
     name: z.string(),
+    displayName: z.string(),
+    transportName: z.string().nullable(),
+    argsPreview: z.string(),
+    parameters: z.array(z.object({
+      label: z.string(),
+      value: z.string(),
+    }).strict()),
   }).strict()),
   toolCallId: z.string().nullable(),
   toolName: z.string().nullable(),
@@ -57,7 +64,7 @@ export const contextLedgerEntrySchema = z.discriminatedUnion('kind', [
 ])
 
 export const contextSnapshotSchema = z.object({
-  schemaVersion: z.literal(3),
+  schemaVersion: z.literal(5),
   generatedAt: z.iso.datetime({ offset: true }),
   ledger: z.object({
     total: z.number().int().nonnegative(),

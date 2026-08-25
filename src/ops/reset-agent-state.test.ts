@@ -101,7 +101,7 @@ async function createPreviewWorkspace(): Promise<string> {
   await mkdir(join(workspaceDir, 'notebook'), { recursive: true })
   await writeFile(join(workspaceDir, 'notebook', 'one.md'), 'one', 'utf8')
   await mkdir(join(workspaceDir, 'runtime'), { recursive: true })
-  await writeFile(join(workspaceDir, 'runtime', 'approvals.json'), '{}', 'utf8')
+  await writeFile(join(workspaceDir, 'runtime', 'schedules.json'), '{}', 'utf8')
   await writeFile(join(workspaceDir, 'notes.md'), 'ordinary generated file', 'utf8')
   return workspaceDir
 }

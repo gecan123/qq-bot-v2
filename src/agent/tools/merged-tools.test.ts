@@ -177,7 +177,7 @@ describe('merged main-agent tools', () => {
     assert.deepEqual(capabilities.get('sticker_management'), ['collect_sticker'])
     assert.ok(alwaysOnNames.includes('memory'))
     assert.ok(alwaysOnNames.includes('goal'))
-    assert.ok(alwaysOnNames.includes('initiative_review'))
+    assert.ok(alwaysOnNames.includes('psychologist'))
   })
 
   test('buildBotTools exposes default entries and defers heavy typed tools', () => {
@@ -207,9 +207,9 @@ describe('merged main-agent tools', () => {
     assert.ok(names.includes('memory'))
     assert.ok(names.includes('goal'))
     assert.ok(names.includes('inbox'))
-    assert.ok(names.includes('yield'))
+    assert.ok(names.includes('rest'))
     assert.ok(names.includes('skill'))
-    assert.ok(names.includes('initiative_review'))
+    assert.ok(names.includes('psychologist'))
     assert.ok(names.includes('help'))
     assert.ok(names.includes('invoke'))
     assert.equal(names.includes('toolbox'), false)
@@ -230,7 +230,6 @@ describe('merged main-agent tools', () => {
     assert.equal(names.includes('gh'), false)
     assert.equal(names.includes('web_search'), false)
     assert.equal(names.includes('wait'), false)
-    assert.equal(names.includes('rest'), false)
     assert.equal(names.includes('reddit'), false)
     assert.equal(names.includes('list_reddit'), false)
     assert.equal(names.includes('get_reddit_post'), false)
@@ -365,10 +364,10 @@ describe('merged main-agent tools', () => {
     assert.equal(alwaysOnNames.includes('life_journal'), false)
     assert.equal(alwaysOnNames.includes('collect_sticker'), false)
     assert.ok(alwaysOnNames.includes('memory'))
-    assert.ok(alwaysOnNames.includes('yield'))
+    assert.ok(alwaysOnNames.includes('rest'))
     assert.ok(alwaysOnNames.includes('goal'))
     assert.ok(alwaysOnNames.includes('chat_style'))
-    assert.ok(alwaysOnNames.includes('initiative_review'))
+    assert.ok(alwaysOnNames.includes('psychologist'))
     assert.equal(alwaysOnNames.includes('ai_tone'), false)
     assert.equal(alwaysOnNames.includes('journal'), false)
     assert.deepEqual(capabilities.get('short_term_scheduling'), ['schedule'])
@@ -391,9 +390,12 @@ describe('merged main-agent tools', () => {
     assert.deepEqual(capabilities.get('media_fetch'), ['fetch_content'])
     assert.deepEqual(capabilities.get('website'), ['website'])
     assert.match(capabilityDescriptions.get('website') ?? '', /Luna 自己的长期创作空间.*src\/content\/blog.*现有模板.*src.*页面.*组件.*布局.*public.*publish.*正式页面.*上线.*机械改动/s)
-    if (capabilities.has('finance')) assert.deepEqual(capabilities.get('finance'), ['openbb_cli'])
-    assert.deepEqual(capabilities.get('trading_research'), ['trading_agent'])
-    assert.match(capabilityDescriptions.get('trading_research') ?? '', /具体金融问题.*跨来源证据.*简单报价.*finance/)
+    assert.deepEqual(capabilities.get('finance'), ['trading_agent'])
+    assert.match(capabilityDescriptions.get('finance') ?? '', /金融数据.*模拟交易.*深度研究.*trading_agent/)
+    assert.deepEqual(
+      [...capabilities.entries()].filter(([, tools]) => tools.includes('trading_agent')),
+      [['finance', ['trading_agent']]],
+    )
     if (capabilities.has('browser')) assert.deepEqual(capabilities.get('browser'), ['browser'])
   })
 

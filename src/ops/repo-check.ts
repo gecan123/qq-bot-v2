@@ -70,7 +70,7 @@ const REQUIRED_ENV_MARKERS = [
 
 const TOOL_REGISTRY_MARKERS = [
   ['createDeferredToolExecutor', 'invoke'],
-  ['yieldTool', 'yield'],
+  ['restTool', 'rest'],
   ['createSendMessageTool', 'send_message'],
   ['createGenerateImageTool', 'generate_image'],
   ['createBackgroundTaskTool', 'background_task'],

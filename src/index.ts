@@ -141,7 +141,10 @@ async function main() {
 
   // 5. 事件队列 + messageRowId 去重 (replay-missed × live event 重叠时去重, 见 dedup-enqueue.ts)
   const eventQueue = new InMemoryEventQueue<BotEvent>()
-  const persistentTasks = createPersistentTaskRegistry({ path: config.backgroundTaskStatePath })
+  const persistentTasks = createPersistentTaskRegistry({
+    path: config.backgroundTaskStatePath,
+    maxActiveTasks: config.backgroundTaskMaxActive,
+  })
   for (const task of persistentTasks.interruptedAtStartup) {
     eventQueue.enqueue({
       type: 'background_task_completed',
@@ -436,10 +439,6 @@ async function main() {
     workspaceStateCoordinator,
     taskRegistry: persistentTasks.registry,
     scheduleStatePath: config.scheduleStatePath,
-    approvalStatePath: config.approvalStatePath,
-    approvalMode: config.approvalMode,
-    mcpConfigPath: config.mcpConfigPath,
-    mcpSchemaSnapshotDir: config.mcpSchemaSnapshotDir,
     activityReporter,
   })
   try {

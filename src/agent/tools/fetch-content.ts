@@ -4,7 +4,10 @@ import { createFetchUrlTool } from './fetch-url.js'
 import { createFetchImageTool } from './fetch-image.js'
 import { createRedditTool } from './reddit.js'
 import type { BackgroundTaskRegistry } from '../background-task-registry.js'
-import { createBackgroundTaskWaitOutcome } from '../background-task-control.js'
+import {
+  createBackgroundTaskWaitOutcome,
+  tryRegisterBackgroundTask,
+} from '../background-task-control.js'
 import type { TaskScheduler } from '../task-scheduler.js'
 import type { ToolContext, ToolExecutionResult } from '../tool.js'
 
@@ -184,7 +187,12 @@ function startBackgroundFetch(input: {
   taskScheduler: TaskScheduler
 }): ToolExecutionResult {
   const description = `后台抓取网页: ${input.args.url.slice(0, 120)}`
-  const task = input.taskRegistry.register({ toolName: 'fetch_content', description })
+  const registration = tryRegisterBackgroundTask(
+    input.taskRegistry,
+    { toolName: 'fetch_content', description },
+  )
+  if (!registration.ok) return registration.result
+  const task = registration.task
   const dedupeKey = `fetch-url:${input.args.url}:${input.args.hint ?? ''}`
 
   void input.taskScheduler.schedule({ lane: 'network', dedupeKey }, () => (

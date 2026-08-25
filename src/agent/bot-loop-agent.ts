@@ -45,10 +45,6 @@ import {
   isAttentionEvent,
   notificationRoutingForEvent,
 } from './notification.js'
-import {
-  renderAgentStateAdvice,
-  type AgentStateAdvisor,
-} from './agent-state-advisor.js'
 import { createLedgerCommitCoordinator } from './ledger-commit-coordinator.js'
 import { decideLoopPolicy } from './loop-policy.js'
 import { createCompactionCoordinator } from './compaction-coordinator.js'
@@ -104,15 +100,10 @@ export interface BotLoopAgentDeps {
   activityReporter?: AgentActivityReporter
   /** 事件对应的 user message 已进入 canonical ledger 后触发。 */
   onEventsCommitted?: (events: readonly BotEvent[]) => Promise<void> | void
-  /** 低频、只读的空闲状态判断；不持有工具或 ledger 写权限。 */
-  stateAdvisor?: AgentStateAdvisor
 }
 
 export interface BotLoopAutonomyOptions {
-  idleWaitMs?: number
-  maxIdleWaitMs?: number
   actionRetryWaitMs?: number
-  stateAdvisorAfterIdleRounds?: number
   now?: () => Date
   waitForAttentionOrTimeout?: (
     queue: EventQueue<BotEvent>,
@@ -123,10 +114,7 @@ export interface BotLoopAutonomyOptions {
 const DEFAULT_ERROR_BACKOFF_MS = 5_000
 const DEFAULT_EVENT_DEBOUNCE_MS = 3_000
 const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 86_400_000
-const DEFAULT_IDLE_WAIT_MS = 15 * 60_000
-const DEFAULT_MAX_IDLE_WAIT_MS = 4 * 60 * 60_000
 const DEFAULT_ACTION_RETRY_WAIT_MS = 60_000
-const DEFAULT_STATE_ADVISOR_IDLE_ROUNDS = 3
 const DEFAULT_COMPACTION_FAILURE_BACKOFF_MS = 10 * 60_000
 const MAX_OUTPUT_CONTINUATIONS_PER_ROUND = 2
 const MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS = 3
@@ -136,16 +124,12 @@ const OUTPUT_CONTINUATION_PROMPT =
 const ASSISTANT_TEXT_ONLY_CORRECTION = JSON.stringify({
   event: 'runtime_correction',
   code: 'assistant_text_without_tool',
-  instruction: '上一轮只输出了普通 assistant 文本；它不会发送给任何人，也不会执行其中的计划。若仍有工作，现在调用具体工具；若确实没有待处理行动，以空内容且无工具调用结束。',
+  instruction: '上一轮只输出了普通 assistant 文本；它不会发送给任何人，也不会执行其中的计划。现在调用一个具体工具继续行动；当前方向已完成或不可继续时，立刻选择另一件可执行的事。只有真正想主动休息时才调用 rest。',
 })
-const AUTONOMOUS_LIFE_DIRECTION_SEARCH_CORRECTION = JSON.stringify({
-  event: 'runtime_correction',
-  code: 'autonomous_life_direction_search_required',
-  requiredTool: {
-    name: 'skill',
-    args: { action: 'load', name: 'autonomous_life' },
-  },
-  instruction: '在再次 yield 前，先加载 autonomous_life，基于近期真实线索做一次有界方向搜索。找到有牵引力且可立即执行的一步就直接行动；确实没有方向时才 yield。',
+const CONTINUOUS_AUTONOMY_BOOTSTRAP = JSON.stringify({
+  event: 'runtime_bootstrap',
+  code: 'continuous_autonomy_started',
+  instruction: '现在开始自主生活。即使没有外部请求，也从聊天、网络探索、阅读、创作、自己的项目、Agenda 或稳定兴趣中选择一件可立即执行的事，并用真实工具开始行动。只有此刻真正想主动休息时才调用 rest。',
 })
 const defaultKeepAlive = {
   open() {
@@ -167,15 +151,8 @@ export interface BotLoopAgent {
 }
 
 export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
-  const idleWaitMs = Math.max(1, deps.autonomy?.idleWaitMs ?? DEFAULT_IDLE_WAIT_MS)
   const autonomy = {
-    idleWaitMs,
-    maxIdleWaitMs: Math.max(idleWaitMs, deps.autonomy?.maxIdleWaitMs ?? DEFAULT_MAX_IDLE_WAIT_MS),
     actionRetryWaitMs: Math.max(1, deps.autonomy?.actionRetryWaitMs ?? DEFAULT_ACTION_RETRY_WAIT_MS),
-    stateAdvisorAfterIdleRounds: Math.max(
-      1,
-      deps.autonomy?.stateAdvisorAfterIdleRounds ?? DEFAULT_STATE_ADVISOR_IDLE_ROUNDS,
-    ),
     now: deps.autonomy?.now ?? (() => new Date()),
     waitForAttentionOrTimeout: deps.autonomy?.waitForAttentionOrTimeout ?? waitForAttentionOrTimeout,
   }
@@ -192,8 +169,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let actionCorrectionRetryPending = false
   let shortWorkContinuationPending = false
   let recoverableToolCorrectionRounds = 0
-  let idleBackoffLevel = 0
-  let consecutiveUnanchoredIdleRounds = 0
   const recentToolNoveltyKeys = new Map<string, number>()
   let lastContextWindowTokens =
     config.llm.contextWindowTokensByModel[config.llm.defaultModel] ?? 200_000
@@ -411,7 +386,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     onlyHelpToolCalls: boolean
     madeToolProgress: boolean
     assistantTextOnly: boolean
-    requestedYield: boolean
     toolContinuation?: ToolContinuation
     toolContinuationDetail?: string
   }> {
@@ -535,9 +509,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         && result.toolOutcomes.every((outcome) => outcome.requestedToolName === 'help'),
       madeToolProgress: toolControl.madeProgress,
       assistantTextOnly: result.assistantTextOnly,
-      requestedYield: result.toolOutcomes.some((outcome) => (
-        outcome.toolName === 'yield' && outcome.code === 'yielded'
-      )),
       ...(toolControl.continuation ? { toolContinuation: toolControl.continuation } : {}),
       ...(toolControl.continuationDetail
         ? { toolContinuationDetail: toolControl.continuationDetail }
@@ -663,7 +634,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     onlyHelpToolCalls?: boolean
     madeToolProgress?: boolean
     assistantTextOnly?: boolean
-    requestedYield?: boolean
     toolContinuation?: ToolContinuation
     toolContinuationDetail?: string
   }> {
@@ -721,6 +691,15 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       stagedContinuity,
       stagedWake,
     )
+    let autonomyBootstrapAppended = false
+    if (
+      !stopRequested
+      && deps.context.getSnapshot().messages.length === 0
+      && stagedMessages.length === 0
+    ) {
+      stagedMessages.push({ role: 'user', content: CONTINUOUS_AUTONOMY_BOOTSTRAP })
+      autonomyBootstrapAppended = true
+    }
     log.debug({ roundIndex: roundIndex + 1, eventsConsumed: drained.consumed, eventsDisclosed: disclosed }, 'round_start')
 
     const cursorsChanged = JSON.stringify(drained.cursors) !== JSON.stringify(mailboxCursors)
@@ -750,7 +729,12 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       }
     }
 
-    if (drained.consumed > 0 && disclosed === 0 && !goalMessagesAppended) {
+    if (
+      drained.consumed > 0
+      && disclosed === 0
+      && !goalMessagesAppended
+      && !autonomyBootstrapAppended
+    ) {
       return { ranRound: false }
     }
 
@@ -787,7 +771,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls,
       madeToolProgress,
       assistantTextOnly,
-      requestedYield,
       toolContinuation,
       toolContinuationDetail,
     } = roundResult
@@ -820,7 +803,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls,
       madeToolProgress,
       assistantTextOnly,
-      requestedYield,
       ...(toolContinuation ? { toolContinuation } : {}),
       ...(toolContinuationDetail ? { toolContinuationDetail } : {}),
       actionRequired: goalAtRoundStart?.status === 'active'
@@ -841,13 +823,11 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls = false,
       madeToolProgress = false,
       assistantTextOnly = false,
-      requestedYield = false,
       toolContinuation,
       toolContinuationDetail,
     } = await step()
     if (ranRound) {
       consecutiveRounds++
-      if (actionRequired || madeToolProgress) consecutiveUnanchoredIdleRounds = 0
     }
     const decision = decideLoopPolicy({
       ranRound,
@@ -857,7 +837,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       recoverableToolFailure,
       onlyHelpToolCalls,
       madeToolProgress,
-      requestedYield,
       ...(toolContinuation ? { toolContinuation } : {}),
       correctionRetryPending: actionCorrectionRetryPending,
       recoverableCorrectionRounds: recoverableToolCorrectionRounds,
@@ -867,13 +846,11 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
 
     if (decision.action === 'stop') return
     if (decision.action === 'wait_event') {
-      if (decision.reason === 'empty_context') await waitForExternalEvent()
-      else await waitForToolExternalEvent(toolContinuationDetail, actionRequired)
+      await waitForExternalEvent()
       return
     }
     if (decision.action === 'continue') {
       actionCorrectionRetryPending = decision.correctionRetryPending
-      idleBackoffLevel = 0
       log.info({
         consecutiveRounds,
         reason: decision.reason,
@@ -883,147 +860,25 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       return
     }
 
-    if (decision.timeout === 'action_retry') idleBackoffLevel = 0
-    const waitMs = decision.timeout === 'action_retry'
-      ? autonomy.actionRetryWaitMs
-      : currentIdleWaitMs()
-    const detail = toolContinuationDetail ?? loopWaitDetail(decision.reason, actionRequired, assistantTextOnly)
+    const waitMs = autonomy.actionRetryWaitMs
+    const detail = toolContinuationDetail ?? loopWaitDetail(decision.reason, assistantTextOnly)
     log.info({
       consecutiveRounds,
       waitMs,
       actionRequired,
       reason: decision.reason,
-      idleBackoffLevel,
     }, 'loop_policy_wait')
-    const wake = await waitForAttention(detail, waitMs)
+    await waitForAttention(detail, waitMs)
     actionCorrectionRetryPending = false
-    updateIdleBackoff(wake, decision.unanchored)
-    if (decision.recordIdle === 'yield') await recordUnanchoredIdle(wake, 'yield')
-    else if (decision.recordIdle === 'other') await recordUnanchoredIdle(wake)
-    else if (decision.reason === 'tool_stop') consecutiveUnanchoredIdleRounds = 0
-    if (decision.reason === 'quiescent') {
-      consecutiveRounds = 0
-      recoverableToolCorrectionRounds = 0
-    }
   }
 
   function loopWaitDetail(
-    reason: 'tool_stop' | 'tool_backoff' | 'tool_no_progress' | 'action_correction' | 'quiescent',
-    actionRequired: boolean,
+    reason: 'tool_backoff' | 'action_correction',
     assistantTextOnly: boolean,
   ): string {
-    if (reason === 'tool_stop') return '工具请求停止，等待新的注意事件'
-    if (reason === 'tool_backoff') return actionRequired ? '当前行动需要稍后重试' : '等待新的注意事件或退避到期'
-    if (reason === 'tool_no_progress') return actionRequired ? '工具没有取得进展，等待短暂重试' : '当前没有新进展，等待新的注意事件'
+    if (reason === 'tool_backoff') return '外部能力要求短暂退避，等待后重试或切换方向'
     if (reason === 'action_correction') return assistantTextOnly ? '模型仍只输出普通文本，等待短暂纠错' : '当前请求尚未完成，等待短暂重试'
-    return '当前没有待处理行动，等待新消息或计划事件'
-  }
-
-  async function waitForToolExternalEvent(
-    detail: string | undefined,
-    actionRequired: boolean,
-  ): Promise<void> {
-    const waitMs = currentIdleWaitMs()
-    log.info({
-      consecutiveRounds,
-      waitMs,
-      actionRequired,
-      toolContinuation: 'wait_event',
-    }, 'tool_external_event_wait')
-    await waitForAttention(
-      detail ?? '后台工作仍在运行，等待完成事件',
-      waitMs,
-    )
-    consecutiveRounds = 0
-    actionCorrectionRetryPending = false
-    recoverableToolCorrectionRounds = 0
-    idleBackoffLevel = 0
-    consecutiveUnanchoredIdleRounds = 0
-  }
-
-  async function appendAutonomousLifeDirectionSearch(
-    trigger: 'yield_elapsed' | 'state_advisor_failed',
-  ): Promise<void> {
-    await commitChanges({
-      messages: [{
-        role: 'user',
-        content: AUTONOMOUS_LIFE_DIRECTION_SEARCH_CORRECTION,
-      }],
-    })
-    log.info({ trigger }, 'autonomous_life_direction_search_appended')
-  }
-
-  async function recordUnanchoredIdle(
-    wake: 'attention' | 'elapsed',
-    source: 'yield' | 'other' = 'other',
-  ): Promise<void> {
-    if (wake === 'attention') {
-      consecutiveUnanchoredIdleRounds = 0
-      return
-    }
-    if (stopRequested) return
-
-    consecutiveUnanchoredIdleRounds++
-    if (source === 'yield' && consecutiveUnanchoredIdleRounds === 1) {
-      await appendAutonomousLifeDirectionSearch('yield_elapsed')
-    }
-    if (
-      consecutiveUnanchoredIdleRounds < autonomy.stateAdvisorAfterIdleRounds
-      || !deps.stateAdvisor
-    ) {
-      return
-    }
-
-    const observedIdleRounds = consecutiveUnanchoredIdleRounds
-    consecutiveUnanchoredIdleRounds = 0
-    deps.activityReporter?.setPhase({
-      phase: 'thinking',
-      roundIndex,
-      detail: '连续空闲后正在做一次有界状态检查',
-    })
-    try {
-      const assessment = await deps.stateAdvisor.evaluate({
-        consecutiveIdleRounds: observedIdleRounds,
-      })
-      if (assessment.state === 'healthy_rest') {
-        log.info({
-          observedIdleRounds,
-          state: assessment.state,
-          reason: assessment.reason,
-        }, 'state_advisor_kept_rest')
-        return
-      }
-
-      await commitChanges({
-        messages: [{
-          role: 'user',
-          content: renderAgentStateAdvice(assessment),
-        }],
-      })
-      idleBackoffLevel = 0
-      log.info({
-        observedIdleRounds,
-        state: assessment.state,
-      }, 'state_advisor_advice_appended')
-    } catch (error) {
-      idleBackoffLevel = 0
-      log.warn({ err: error, observedIdleRounds }, 'state_advisor_failed')
-      try {
-        await appendAutonomousLifeDirectionSearch('state_advisor_failed')
-      } catch (fallbackError) {
-        log.error(
-          { err: fallbackError, observedIdleRounds },
-          'state_advisor_fallback_append_failed',
-        )
-      }
-    }
-  }
-
-  function currentIdleWaitMs(): number {
-    return Math.min(
-      autonomy.maxIdleWaitMs,
-      autonomy.idleWaitMs * (2 ** Math.min(idleBackoffLevel, 20)),
-    )
+    return '当前行动协议连续失败，等待短暂重试'
   }
 
   async function waitForAttention(
@@ -1036,14 +891,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       waitUntil: new Date(autonomy.now().getTime() + timeoutMs).toISOString(),
     })
     return await autonomy.waitForAttentionOrTimeout(deps.eventQueue, timeoutMs)
-  }
-
-  function updateIdleBackoff(wake: 'attention' | 'elapsed', unanchored: boolean): void {
-    if (wake === 'attention' || !unanchored) {
-      idleBackoffLevel = 0
-      return
-    }
-    idleBackoffLevel = Math.min(idleBackoffLevel + 1, 20)
   }
 
   async function waitForExternalEvent(): Promise<void> {

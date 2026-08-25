@@ -22,7 +22,7 @@ describe('buildContextEntryViews', () => {
         message: {
           role: 'assistant',
           content: '',
-          toolCalls: [{ id: 'call-yield', name: 'yield', args: {} }],
+          toolCalls: [{ id: 'call-yield', name: 'yield', args: { reason: '等待新输入' } }],
         },
       }),
       ledgerRow(101n, 'compaction', {
@@ -38,15 +38,22 @@ describe('buildContextEntryViews', () => {
       }),
     ])
 
-    assert.deepEqual(entries.map(entry => entry.id), ['102', '103', '101'])
-    assert.deepEqual(entries[0], {
+    assert.deepEqual(entries.map(entry => entry.id), ['101', '102', '103'])
+    assert.deepEqual(entries[1], {
       kind: 'message',
       id: '102',
       entryType: 'message',
       createdAt: '2026-07-26T08:00:00.000Z',
       role: 'assistant',
       summary: '',
-      toolCalls: [{ id: 'call-yield', name: 'yield' }],
+      toolCalls: [{
+        id: 'call-yield',
+        name: 'yield',
+        displayName: 'yield',
+        transportName: null,
+        argsPreview: '{\n  "reason": "等待新输入"\n}',
+        parameters: [{ label: 'reason', value: '等待新输入' }],
+      }],
       toolCallId: null,
       toolName: null,
       parentEntryId: null,
@@ -56,11 +63,11 @@ describe('buildContextEntryViews', () => {
         message: {
           role: 'assistant',
           content: '',
-          toolCalls: [{ id: 'call-yield', name: 'yield', args: {} }],
+          toolCalls: [{ id: 'call-yield', name: 'yield', args: { reason: '等待新输入' } }],
         },
       }, null, 2),
     })
-    assert.deepEqual(entries[1], {
+    assert.deepEqual(entries[2], {
       kind: 'message',
       id: '103',
       entryType: 'message',
@@ -90,7 +97,7 @@ describe('buildContextEntryViews', () => {
         },
       }, null, 2),
     })
-    assert.deepEqual(entries[2], {
+    assert.deepEqual(entries[0], {
       kind: 'compaction',
       id: '101',
       entryType: 'compaction',
@@ -140,6 +147,68 @@ describe('buildContextEntryViews', () => {
 
     assert.equal(entries[0]?.kind, 'message')
     assert.equal(entries[0]?.summary, '')
+  })
+
+  test('keeps long Markdown message bodies readable in the bounded conversation snapshot', () => {
+    const content = `## 长回复\n\n${'正文内容。'.repeat(300)}`
+    const entries = buildContextEntryViews([
+      ledgerRow(106n, 'message', {
+        schemaVersion: 1,
+        message: { role: 'assistant', content, toolCalls: [] },
+      }),
+    ])
+
+    assert.equal(entries[0]?.kind, 'message')
+    assert.equal(entries[0]?.summary, content)
+  })
+
+  test('exposes the effective deferred tool and human-readable key parameters', () => {
+    const entries = buildContextEntryViews([
+      ledgerRow(107n, 'message', {
+        schemaVersion: 1,
+        message: {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{
+            id: 'call-open',
+            name: 'invoke',
+            args: {
+              tool: 'conversation',
+              args: {
+                action: 'open',
+                target: {
+                  kind: 'private',
+                  platform: 'qq',
+                  accountId: '10000',
+                  externalId: '3999414673',
+                },
+              },
+            },
+          }],
+        },
+      }),
+    ])
+
+    assert.equal(entries[0]?.kind, 'message')
+    assert.deepEqual(entries[0]?.toolCalls, [{
+      id: 'call-open',
+      name: 'invoke',
+      displayName: 'conversation',
+      transportName: 'invoke',
+      argsPreview: JSON.stringify({
+        action: 'open',
+        target: {
+          kind: 'private',
+          platform: 'qq',
+          accountId: '10000',
+          externalId: '3999414673',
+        },
+      }, null, 2),
+      parameters: [
+        { label: 'action', value: 'open' },
+        { label: 'target', value: 'QQ 私聊 · 3999414673' },
+      ],
+    }])
   })
 })
 

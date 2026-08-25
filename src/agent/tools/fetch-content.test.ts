@@ -84,6 +84,30 @@ describe('fetch_content tool', () => {
     assert.equal(ctx.eventQueue.dequeue()?.type, 'background_task_completed')
   })
 
+  test('background mode rejects before scheduling when the global task limit is full', async () => {
+    const urlCalls: unknown[] = []
+    const taskRegistry = createInMemoryTaskRegistry({ maxActiveTasks: 1 })
+    taskRegistry.register({ toolName: 'existing', description: 'existing work' })
+    const taskScheduler = createTaskScheduler({ network: { concurrency: 1 } })
+    const tool = createFetchContentTool({
+      urlTool: delegateTool('fetch_url', urlCalls),
+      taskRegistry,
+      taskScheduler,
+    })
+
+    const result = await tool.execute({
+      action: 'url',
+      url: 'https://example.com/blocked',
+      background: true,
+    }, makeCtx())
+    const payload = JSON.parse(result.content as string)
+
+    assert.equal(payload.ok, false)
+    assert.equal(payload.code, 'background_task_limit')
+    assert.deepEqual(urlCalls, [])
+    await taskScheduler.drain()
+  })
+
   test('action=url delegates to fetch_url with url and hint', async () => {
     const urlCalls: unknown[] = []
     const imageCalls: unknown[] = []

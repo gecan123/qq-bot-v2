@@ -15,7 +15,6 @@ import {
   createSendMessageSafetyGuard,
   createSendMessageWorkCommitmentHook,
 } from './tool-policy-hooks.js'
-import { createOwnerApprovalHook, type ApprovalMode } from './approval-policy.js'
 import { buildBotToolManifest, type BotOptionalTools } from './tools/index.js'
 import type { AgentContext } from './agent-context.js'
 import type { EventQueue } from './event-queue.js'
@@ -35,7 +34,6 @@ import { createQqDeliveryAdapter } from '../messaging/qq-delivery-adapter.js'
 import type { ConversationSendPolicy } from './conversation-send-policy.js'
 import { conversationKey } from '../chat/conversation.js'
 import {
-  findApprovalEvidenceMessage,
   findMemoryEvidenceRows,
   findObservedQqIdentityRows,
   isConversationMessageMentioningUser,
@@ -58,11 +56,6 @@ import {
 } from './schedule-occurrence-store.js'
 import { createPersistentScheduleDeliveryStore } from './schedule-delivery-store.js'
 import { createScheduleDeliveryCoordinator } from './schedule-delivery-coordinator.js'
-import { createApprovalManager, type ApprovalManager } from './approval-manager.js'
-import {
-  createMcpManagerFromConfigFile,
-  type McpManager,
-} from './mcp-manager.js'
 import type { GoalStore } from './goal-store.js'
 import { createGoalCompletionJudge } from './goal-completion-judge.js'
 import type { MemoryMaintenanceRuntime } from './memory-maintenance.js'
@@ -76,7 +69,6 @@ import {
   type AgentActivityReporter,
 } from './activity-surface.js'
 import type { GroupMuteInspector } from '../messaging/group-mute-inspector.js'
-import { createAgentStateAdvisor } from './agent-state-advisor.js'
 
 const scheduleLog = createLogger('SCHEDULE')
 
@@ -134,12 +126,6 @@ export interface AgentRuntimeInput {
   scheduleRuntime?: ScheduleRuntime
   scheduleStatePath?: string
   scheduleLogger?: (entry: ScheduleRuntimeLogEntry) => void
-  approvalManager?: ApprovalManager
-  approvalStatePath?: string
-  approvalMode?: ApprovalMode
-  mcpManager?: McpManager
-  mcpConfigPath?: string
-  mcpSchemaSnapshotDir?: string
   /** 测试或嵌入方显式替换/关闭配置驱动的可选工具；生产默认按 config 自动发现。 */
   optionalTools?: BotOptionalTools
   /** 可丢弃的实时观察面；写入失败不得影响 Agent 行为。 */
@@ -201,17 +187,6 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     eventQueue: scheduleDeliveryCoordinator?.eventQueue ?? input.eventQueue,
     logger: input.scheduleLogger ?? createScheduleRuntimeLogHandler(),
   })
-  const approvalManager = input.approvalManager ?? createApprovalManager({
-    path: input.approvalStatePath ?? 'data/agent-workspace/runtime/approvals.json',
-    owner: input.owner,
-    loadEvidence: findApprovalEvidenceMessage,
-  })
-  const mcpManager = input.mcpManager ?? (input.mcpConfigPath
-    ? createMcpManagerFromConfigFile({
-        path: input.mcpConfigPath,
-        snapshotDir: input.mcpSchemaSnapshotDir,
-    })
-    : undefined)
   const goalCompletionJudge = input.goalStore
     ? createGoalCompletionJudge({
         llm: input.llm,
@@ -314,8 +289,6 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       taskRegistry,
       taskScheduler: input.taskScheduler,
       scheduleRuntime,
-      approvalManager,
-      mcpManager,
       goalStore: input.goalStore,
       goalCompletionJudge,
       memoryMaintenance: input.memoryMaintenance,
@@ -346,9 +319,6 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     },
     hooks: {
       beforeTool: [
-        createOwnerApprovalHook(approvalManager, (toolName, args) => (
-          toolName === 'mcp' ? mcpManager?.approvalRequirementForArgs(args) ?? null : null
-        ), input.approvalMode ?? 'thin'),
         createSendMessageWorkCommitmentHook({
           getCurrentGoal: async () => await input.goalStore?.get() ?? null,
         }),
@@ -368,12 +338,6 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     selfNumber: input.selfNumber,
     owner: input.owner,
   })
-  const stateAdvisor = createAgentStateAdvisor({
-    llm: input.llm,
-    systemPrompt,
-    getMessages: () => input.context.getSnapshot().messages,
-  })
-
   const agent = createBotLoopAgent({
     systemPrompt,
     context: input.context,
@@ -410,7 +374,6 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       }
       await input.onEventsCommitted?.(events)
     },
-    stateAdvisor,
   })
 
   let backgroundStartPromise: Promise<void> | null = null
@@ -461,11 +424,6 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
         const errors: unknown[] = []
         try {
           await scheduleRuntime.stop()
-        } catch (error) {
-          errors.push(error)
-        }
-        try {
-          await mcpManager?.closeAll()
         } catch (error) {
           errors.push(error)
         }

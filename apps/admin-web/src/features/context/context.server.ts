@@ -2,6 +2,8 @@ import '@tanstack/react-start/server-only'
 import { getAdminPrisma } from '../../server/db.server.js'
 import { contextSnapshotSchema, type ContextSnapshot } from './context.schema.js'
 
+const CONVERSATION_TEXT_LIMIT = 12_000
+
 export async function loadContextSnapshot(now = new Date()): Promise<ContextSnapshot> {
   const db = getAdminPrisma()
   const [total, rows, grouped, checkpoint, runtime, usage, recentLlmCalls] = await Promise.all([
@@ -43,7 +45,7 @@ export async function loadContextSnapshot(now = new Date()): Promise<ContextSnap
   if (checkpoint?.throughEntryId && headId && checkpoint.throughEntryId > BigInt(headId)) warnings.push('Checkpoint throughEntryId 超过 canonical ledger head。')
 
   return contextSnapshotSchema.parse({
-    schemaVersion: 3,
+    schemaVersion: 5,
     generatedAt: now.toISOString(),
     ledger: {
       total,
@@ -176,7 +178,7 @@ export function buildContextEntryViews(
   groups.sort((left, right) => {
     const leftHead = left.reduce((max, entry) => max > BigInt(entry.id) ? max : BigInt(entry.id), 0n)
     const rightHead = right.reduce((max, entry) => max > BigInt(entry.id) ? max : BigInt(entry.id), 0n)
-    return leftHead === rightHead ? 0 : leftHead > rightHead ? -1 : 1
+    return leftHead === rightHead ? 0 : leftHead < rightHead ? -1 : 1
   })
   return groups.flat()
 }
@@ -210,7 +212,7 @@ function buildContextEntryView(row: ContextLedgerRow): ContextSnapshot['entries'
       const toolCalls = message.toolCalls.flatMap(value => {
         const call = asRecord(value)
         return call && typeof call.id === 'string' && typeof call.name === 'string'
-          ? [{ id: call.id, name: call.name }]
+          ? [toolCallView(call.id, call.name, call.args)]
           : []
       })
       return {
@@ -299,7 +301,52 @@ function previewContent(value: unknown): string {
 }
 
 function previewText(value: string): string {
-  return value.length <= 600 ? value : `${value.slice(0, 600)}…`
+  return value.length <= CONVERSATION_TEXT_LIMIT
+    ? value
+    : `${value.slice(0, CONVERSATION_TEXT_LIMIT)}\n… [内容已截断]`
+}
+
+function toolCallView(id: string, name: string, value: unknown) {
+  const rawArgs = asRecord(value) ?? {}
+  const deferredName = name === 'invoke' ? stringOrNull(rawArgs.tool) : null
+  const deferredArgs = deferredName === null ? null : asRecord(rawArgs.args)
+  const args = deferredArgs ?? rawArgs
+  return {
+    id,
+    name,
+    displayName: deferredName ?? name,
+    transportName: deferredName === null ? null : name,
+    argsPreview: safePreview(args),
+    parameters: Object.entries(args).slice(0, 5).map(([label, parameter]) => ({
+      label,
+      value: formatToolParameter(parameter),
+    })),
+  }
+}
+
+function formatToolParameter(value: unknown): string {
+  if (value === null) return 'null'
+  if (typeof value === 'string') return singleLineLimit(value, 96)
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) return `${value.length} 项`
+  const record = asRecord(value)
+  if (!record) return String(value)
+  const conversation = formatConversationRef(record)
+  if (conversation !== null) return conversation
+  return singleLineLimit(safePreview(record), 120)
+}
+
+function formatConversationRef(value: Record<string, unknown>): string | null {
+  const platform = typeof value.platform === 'string' ? value.platform.toUpperCase() : null
+  const kind = value.kind === 'private' ? '私聊' : value.kind === 'group' ? '群聊' : null
+  if (platform === null || kind === null) return null
+  const identity = [value.externalId, value.accountId].find(item => typeof item === 'string')
+  return `${platform} ${kind}${typeof identity === 'string' ? ` · ${identity}` : ''}`
+}
+
+function singleLineLimit(value: string, limit: number): string {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  return normalized.length <= limit ? normalized : `${normalized.slice(0, limit)}…`
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

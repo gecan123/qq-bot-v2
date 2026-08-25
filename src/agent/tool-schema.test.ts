@@ -7,7 +7,7 @@ import { collectStickerTool } from './tools/collect-sticker.js'
 import { createGenerateImageTool } from './tools/generate-image.js'
 import { notebookTool } from './tools/notebook.js'
 import { memoryTool } from './tools/memory.js'
-import { yieldTool } from './tools/yield.js'
+import { restTool } from './tools/rest.js'
 import { createScheduleTool } from './tools/schedule.js'
 import { createSendMessageTool } from './tools/send-message.js'
 import type { ScheduleRuntime } from './schedule-runtime.js'
@@ -135,17 +135,21 @@ test('zodToOpenAIStrictToolJsonSchema makes optional object fields required and 
   })
 })
 
-test('zodToOpenAIStrictToolJsonSchema keeps yield schema strict and small', () => {
-  const json = zodToOpenAIStrictToolJsonSchema(yieldTool.schema)
+test('zodToOpenAIStrictToolJsonSchema keeps rest schema strict and explicit', () => {
+  const json = zodToOpenAIStrictToolJsonSchema(restTool.schema)
 
   assert.equal(json.type, 'object')
   assert.equal('oneOf' in json, false)
   assert.equal('anyOf' in json, false)
-  assert.deepEqual(json.required, ['reason'])
+  assert.deepEqual(json.required, ['durationMinutes', 'reason', 'resumeAction'])
 
   const props = json.properties as Record<string, Record<string, unknown>>
-  assert.ok(Array.isArray(props.reason.anyOf))
-  assert.deepEqual(Object.keys(props), ['reason'])
+  assert.equal(props.durationMinutes.type, 'integer')
+  assert.equal(props.durationMinutes.minimum, 1)
+  assert.equal(props.durationMinutes.maximum, 240)
+  assert.equal(props.reason.type, 'string')
+  assert.equal(props.resumeAction.type, 'string')
+  assert.deepEqual(Object.keys(props), ['durationMinutes', 'reason', 'resumeAction'])
 })
 
 test('zodToOpenAIStrictToolJsonSchema removes unsupported string formats', () => {

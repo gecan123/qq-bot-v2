@@ -336,37 +336,35 @@ describe('config', () => {
     assert.equal(blank.toolCallLogPath, 'logs/tool-calls.ndjson')
   })
 
-  test('defaults to thin local audit and accepts strict/off overrides', () => {
+  test('defaults to side-effect audit and accepts audit overrides', () => {
     const defaults = parseConfig(createBaseEnv())
     assert.equal(defaults.toolAuditMode, 'side_effects')
     assert.equal(defaults.toolAuditDbEnabled, false)
-    assert.equal(defaults.approvalMode, 'thin')
 
-    const strict = parseConfig(createBaseEnv({
+    const configured = parseConfig(createBaseEnv({
       BOT_TOOL_AUDIT_MODE: 'all',
       BOT_TOOL_AUDIT_DB_ENABLED: 'true',
-      BOT_APPROVAL_MODE: 'strict',
     }))
-    assert.equal(strict.toolAuditMode, 'all')
-    assert.equal(strict.toolAuditDbEnabled, true)
-    assert.equal(strict.approvalMode, 'strict')
+    assert.equal(configured.toolAuditMode, 'all')
+    assert.equal(configured.toolAuditDbEnabled, true)
 
     assert.equal(parseConfig(createBaseEnv({ BOT_TOOL_AUDIT_MODE: 'off' })).toolAuditMode, 'off')
-    assert.equal(parseConfig(createBaseEnv({ BOT_APPROVAL_MODE: 'off' })).approvalMode, 'off')
-    assert.throws(
-      () => parseConfig(createBaseEnv({ BOT_APPROVAL_MODE: 'maybe' })),
-      /Invalid BOT_APPROVAL_MODE/,
-    )
   })
 
-  test('background task state path defaults to bot workspace and accepts override', () => {
-    assert.equal(
-      parseConfig(createBaseEnv()).backgroundTaskStatePath,
-      'data/agent-workspace/runtime/background-tasks.json',
-    )
-    assert.equal(
-      parseConfig(createBaseEnv({ BOT_BACKGROUND_TASK_STATE_PATH: 'tmp/tasks.json' })).backgroundTaskStatePath,
-      'tmp/tasks.json',
+  test('background task state and admission limit have safe defaults and validated overrides', () => {
+    const defaults = parseConfig(createBaseEnv())
+    assert.equal(defaults.backgroundTaskStatePath, 'data/agent-workspace/runtime/background-tasks.json')
+    assert.equal(defaults.backgroundTaskMaxActive, 8)
+
+    const configured = parseConfig(createBaseEnv({
+      BOT_BACKGROUND_TASK_STATE_PATH: 'tmp/tasks.json',
+      BOT_BACKGROUND_TASK_MAX_ACTIVE: '12',
+    }))
+    assert.equal(configured.backgroundTaskStatePath, 'tmp/tasks.json')
+    assert.equal(configured.backgroundTaskMaxActive, 12)
+    assert.throws(
+      () => parseConfig(createBaseEnv({ BOT_BACKGROUND_TASK_MAX_ACTIVE: '0' })),
+      /Invalid BOT_BACKGROUND_TASK_MAX_ACTIVE/,
     )
   })
 
@@ -440,42 +438,30 @@ describe('config', () => {
     )
   })
 
-  test('approval state path defaults to bot workspace and accepts override', () => {
-    assert.equal(
-      parseConfig(createBaseEnv()).approvalStatePath,
-      'data/agent-workspace/runtime/approvals.json',
-    )
-    assert.equal(
-      parseConfig(createBaseEnv({ BOT_APPROVAL_STATE_PATH: 'tmp/approvals.json' })).approvalStatePath,
-      'tmp/approvals.json',
-    )
-  })
-
-  test('keeps MCP disabled by default and parses deferred MCP paths', () => {
-    const defaults = parseConfig(createBaseEnv())
-    assert.equal(defaults.mcpConfigPath, undefined)
-    assert.equal(defaults.mcpSchemaSnapshotDir, 'data/agent-workspace/runtime/mcp-schemas')
-
-    const configured = parseConfig(createBaseEnv({
-      BOT_MCP_CONFIG_PATH: './private/mcp.json',
-      BOT_MCP_SCHEMA_SNAPSHOT_DIR: 'tmp/mcp-schemas',
-    }))
-    assert.equal(configured.mcpConfigPath, './private/mcp.json')
-    assert.equal(configured.mcpSchemaSnapshotDir, 'tmp/mcp-schemas')
-  })
-
   test('openbb: 不启用 OPENBB_CLI_ENABLED → undefined', () => {
     const config = parseConfig(createBaseEnv())
     assert.equal(config.openbb, undefined)
   })
 
-  test('openbb: 启用 OPENBB_CLI_ENABLED → { cliBin, cliTimeoutMs }', () => {
+  test('openbb: 启用后解析命令、超时和显式环境变量白名单', () => {
     const config = parseConfig(createBaseEnv({
       OPENBB_CLI_ENABLED: 'true',
       OPENBB_CLI_BIN: '  python3 -m openbb  ',
       OPENBB_CLI_TIMEOUT_MS: '30000',
+      OPENBB_CLI_INHERIT_ENV: 'FMP_API_KEY, POLYGON_API_KEY,FMP_API_KEY',
     }))
-    assert.deepEqual(config.openbb, { cliBin: 'python3 -m openbb', cliTimeoutMs: 30_000 })
+    assert.deepEqual(config.openbb, {
+      cliBin: 'python3 -m openbb',
+      cliTimeoutMs: 30_000,
+      inheritEnv: ['FMP_API_KEY', 'POLYGON_API_KEY'],
+    })
+    assert.throws(
+      () => parseConfig(createBaseEnv({
+        OPENBB_CLI_ENABLED: 'true',
+        OPENBB_CLI_INHERIT_ENV: 'GOOD_KEY,bad-key',
+      })),
+      /Invalid OPENBB_CLI_INHERIT_ENV entry/,
+    )
   })
 
   test('openbb: OPENBB_CLI_TIMEOUT_MS 非法时回退默认 15000', () => {
@@ -483,7 +469,7 @@ describe('config', () => {
       OPENBB_CLI_ENABLED: '1',
       OPENBB_CLI_TIMEOUT_MS: 'nope',
     }))
-    assert.deepEqual(config.openbb, { cliBin: 'openbb', cliTimeoutMs: 15_000 })
+    assert.deepEqual(config.openbb, { cliBin: 'openbb', cliTimeoutMs: 15_000, inheritEnv: [] })
   })
 
   test('vibe trading: 默认关闭，启用时只接受 loopback HTTP origin', () => {

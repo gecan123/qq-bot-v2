@@ -20,7 +20,7 @@ QQ / 飞书入站
   -> ledger 与 runtime state 原子提交
 ```
 
-QQ Gateway、Feishu Gateway 和 Media Worker 通过 PostgreSQL 事实边界或薄 HTTP 与 Agent Core 协作；不使用通用 broker。短期 ScheduleRuntime、occurrence 与 pending delivery 都由 Agent Core 进程内持有，Agent Core 和 Media Worker 直接调用配置的 LLM provider。只有 Agent Core 可以拥有 `AgentContext`、推进 runtime singleton 和写 canonical ledger。PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goal 和观测数据；Memory、Notebook、Life Journal、Agenda、schedule、approval 与 background task 元数据主要保存在 workspace Markdown/JSON。WebAdmin 的观察 feature 保持只读，固定 operations feature 是唯一受控写入口。
+QQ Gateway、Feishu Gateway 和 Media Worker 通过 PostgreSQL 事实边界或薄 HTTP 与 Agent Core 协作；不使用通用 broker。短期 ScheduleRuntime、occurrence 与 pending delivery 都由 Agent Core 进程内持有，Agent Core 和 Media Worker 直接调用配置的 LLM provider。只有 Agent Core 可以拥有 `AgentContext`、推进 runtime singleton 和写 canonical ledger。PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goal 和观测数据；Memory、Notebook、Life Journal、Agenda、schedule 与 background task 元数据主要保存在 workspace Markdown/JSON。WebAdmin 的观察 feature 保持只读，固定 operations feature 是唯一受控写入口。
 
 现有设计的可靠性基础包括：append-only canonical history、确定性 replay、compaction CAS、tool call/result 原子组、显式跨平台 conversation focus、集中 tool policy、渐进式披露、有界 scheduler，以及 WebAdmin 的只读观察边界和固定 operations 写入边界。下面条目是在这些契约之上的具体缺口。
 

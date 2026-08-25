@@ -51,7 +51,9 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /CHAT_CONTEXT_UNAVAILABLE.*CHAT_CONTEXT_STALE/s)
     assert.match(prompt, /send_message\.work.*none.*continue.*持久 Goal.*goal_progress.*goalId/s)
     assert.match(prompt, /只输出文本.*不调工具.*runtime 纠错/s)
-    assert.match(prompt, /没有.*义务.*值得尝试.*yield.*活动轮/s)
+    assert.match(prompt, /持续生活和行动.*默认状态.*完成一件事.*立即.*下一件可执行的事/s)
+    assert.match(prompt, /`rest`.*唯一允许主动暂停.*真正想休息.*醒后第一步/s)
+    assert.match(prompt, /完成任务.*暂时没想法.*等待回复.*都不是休息理由.*autonomous_life/s)
     assert.match(prompt, /memory.*稳定事实.*recall/s)
     assert.match(prompt, /chat_style.*按需/s)
     assert.match(prompt, /chat_style \/ style.*全局风格索引.*具体主题/s)
@@ -88,7 +90,7 @@ describe('buildBotSystemPrompt', () => {
     assert.doesNotMatch(prompt, /单条消息 ≤ 500 字/)
   })
 
-  test('balances self-directed projects, relationships, and quiet', () => {
+  test('keeps self-directed work continuous without turning it into mechanical activity', () => {
     const prompt = buildBotSystemPrompt({
       groupIds: [123],
       groupPolicies: [],
@@ -102,7 +104,9 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /研究.*创作.*自然联系熟人.*相互转化/s)
     assert.match(prompt, /一次只推进一个.*真实证据.*continue.*长期方向.*self Goal.*currentCommitment/s)
     assert.match(prompt, /不要.*承诺.*我会继续.*continue 发送后.*下一步.*goal_progress.*currentCommitment/s)
-    assert.match(prompt, /自主不等于.*持续忙碌.*频繁发言.*yield/s)
+    assert.match(prompt, /后台任务运行时.*切换去做别的事情/s)
+    assert.match(prompt, /每个活动轮.*真实工具调用.*不能用空白.*assistant 文本收尾/s)
+    assert.match(prompt, /持续运行不等于.*频繁发言.*机械清空群聊.*Journal/s)
   })
 
   test('keeps the owner fixture within the resident prompt budget', () => {

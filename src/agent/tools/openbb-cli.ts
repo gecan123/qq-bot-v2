@@ -36,6 +36,7 @@ export interface OpenbbCliRunOptions {
   cliBin: string
   timeoutMs: number
   captureCapBytes: number
+  inheritEnv: readonly string[]
 }
 
 export interface OpenbbCliRunResult {
@@ -55,6 +56,7 @@ export interface OpenbbCliDeps {
   fileReader?: (path: string) => Promise<string>
   cliBin?: string
   timeoutMs?: number
+  inheritEnv?: readonly string[]
   logPath?: string
   appender?: (path: string, line: string) => Promise<void>
   now?: () => Date
@@ -244,6 +246,7 @@ export function createOpenbbCliTool(deps: OpenbbCliDeps = {}): Tool<Args> {
   const fileReader = deps.fileReader ?? ((path: string) => readFile(path, 'utf8'))
   const cliBin = deps.cliBin ?? config.openbb?.cliBin ?? 'openbb'
   const timeoutMs = deps.timeoutMs ?? config.openbb?.cliTimeoutMs ?? 15_000
+  const inheritEnv = deps.inheritEnv ?? config.openbb?.inheritEnv ?? []
   const now = deps.now ?? (() => new Date())
   const clockMs = deps.clockMs ?? (() => Date.now())
 
@@ -266,6 +269,7 @@ export function createOpenbbCliTool(deps: OpenbbCliDeps = {}): Tool<Args> {
         cliBin,
         timeoutMs,
         captureCapBytes: RAW_CAPTURE_CAP_BYTES,
+        inheritEnv,
       })
       const durationMs = Math.max(0, Math.round(clockMs() - startedAt))
       const output = result.stdout || result.stderr
@@ -352,7 +356,25 @@ export function createOpenbbCliTool(deps: OpenbbCliDeps = {}): Tool<Args> {
 
 export function maybeCreateOpenbbCliTool(): Tool<Args> | null {
   if (!config.openbb) return null
-  return createOpenbbCliTool({ cliBin: config.openbb.cliBin, timeoutMs: config.openbb.cliTimeoutMs })
+  return createOpenbbCliTool({
+    cliBin: config.openbb.cliBin,
+    timeoutMs: config.openbb.cliTimeoutMs,
+    inheritEnv: config.openbb.inheritEnv,
+  })
+}
+
+const OPENBB_BASE_ENV_NAMES = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR'] as const
+
+export function buildOpenbbSubprocessEnv(
+  source: NodeJS.ProcessEnv,
+  inheritEnv: readonly string[],
+): Record<string, string> {
+  const result: Record<string, string> = {}
+  for (const name of [...OPENBB_BASE_ENV_NAMES, ...inheritEnv]) {
+    const value = source[name]
+    if (value != null) result[name] = value
+  }
+  return result
 }
 
 export async function runOpenbbCommand(
@@ -373,7 +395,7 @@ export async function runOpenbbCommand(
 
     const child = spawn(cliTokens[0], cliTokens.slice(1), {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: process.env,
+      env: buildOpenbbSubprocessEnv(process.env, options.inheritEnv),
     })
 
     let stdout = ''

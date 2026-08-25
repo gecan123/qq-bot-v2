@@ -18,8 +18,8 @@ describe('agent daily metrics', () => {
           time: '2026-07-13T09:01:00.000+08:00',
           msg: 'round_llm_done',
           model: 'real-model',
-          toolNames: ['invoke', 'yield'],
-          effectiveToolNames: ['send_message', 'yield'],
+          toolNames: ['invoke', 'rest'],
+          effectiveToolNames: ['send_message', 'rest'],
         }),
         JSON.stringify({
           time: '2026-07-13T09:02:00.000+08:00',
@@ -30,7 +30,7 @@ describe('agent daily metrics', () => {
 
     const report = result.reports[0]!
     assert.equal(report.tokenUsage.total.totalTokens, 120)
-    assert.deepEqual(report.toolCalls.byTool, { send_message: 1, yield: 1 })
+    assert.deepEqual(report.toolCalls.byTool, { rest: 1, send_message: 1 })
     assert.equal('rest' in report, false)
   })
 

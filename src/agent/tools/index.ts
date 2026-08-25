@@ -3,7 +3,7 @@ import type { MessageSender } from '../../messaging/message-sender.js'
 import type { BackgroundTaskRegistry } from '../background-task-registry.js'
 import type { GroupPolicy } from '../../config/group-policies.js'
 import type { TargetMetadataMaps } from '../resolve-target-meta.js'
-import { createYieldTool } from './yield.js'
+import { createRestTool } from './rest.js'
 import { createSendMessageTool } from './send-message.js'
 import { maybeCreateWebSearchTool } from './web-search.js'
 import { createGenerateImageTool } from './generate-image.js'
@@ -34,10 +34,6 @@ import { createAgentTaskScheduler, type TaskScheduler } from '../task-scheduler.
 import { createQqDirectoryTool, type QqDirectoryDeps } from './qq-directory.js'
 import { createScheduleTool } from './schedule.js'
 import type { ScheduleRuntime } from '../schedule-runtime.js'
-import type { ApprovalManager } from '../approval-manager.js'
-import { createApprovalTool } from './approval.js'
-import type { McpManager } from '../mcp-manager.js'
-import { createMcpTool } from './mcp.js'
 import { createGoalTool } from './goal.js'
 import type { GoalStore } from '../goal-store.js'
 import type { GoalCompletionJudge } from '../goal-completion-judge.js'
@@ -52,7 +48,7 @@ import type { InboxReadCursors } from '../inbox-read-cursors.js'
 import { maybeCreateMoomooSkillTool } from './moomoo-skill.js'
 import type { GroupMuteInspector } from '../../messaging/group-mute-inspector.js'
 import type { LlmClient } from '../llm-client.js'
-import { createInitiativeReviewTool } from './initiative-review.js'
+import { createPsychologistTool } from './psychologist.js'
 
 export interface BotToolDeps {
   llm: LlmClient
@@ -71,8 +67,6 @@ export interface BotToolDeps {
   optionalTools?: BotOptionalTools
   taskScheduler?: TaskScheduler
   scheduleRuntime: ScheduleRuntime
-  approvalManager?: ApprovalManager
-  mcpManager?: McpManager
   goalStore?: GoalStore
   goalCompletionJudge?: GoalCompletionJudge
   memoryMaintenance?: MemoryMaintenanceRuntime
@@ -155,8 +149,8 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     metadata: deps.metadata,
     groupPolicies: deps.groupPolicies,
   })
-  const initiativeReview = createInitiativeReviewTool({ llm: deps.llm })
-  const yieldControl = createYieldTool()
+  const psychologist = createPsychologistTool({ llm: deps.llm })
+  const rest = createRestTool()
   const schedule = createScheduleTool(deps.scheduleRuntime)
   const notebook = createNotebookTool({
     rootDir: deps.workspaceDir,
@@ -169,13 +163,12 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   const collectSticker = collectStickerTool
   const workspaceBash = createWorkspaceBashTool({ workspaceDir: deps.workspaceDir })
   const tools: Tool[] = [
-    yieldControl,
+    rest,
     qqDirectory,
     backgroundTask,
-    ...(deps.approvalManager ? [createApprovalTool(deps.approvalManager)] : []),
     ...(deps.goalStore ? [createGoalTool(deps.goalStore, deps.goalCompletionJudge!)] : []),
     skillTool,
-    initiativeReview,
+    psychologist,
     createMemoryTool({
       workspaceDir: deps.workspaceDir,
       maintenance: deps.memoryMaintenance,
@@ -213,14 +206,6 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     },
   )
 
-  if (deps.mcpManager?.hasServers()) {
-    capabilities.push({
-      name: 'mcp_connectors',
-      description: '按需连接 operator 配置的 MCP server；提供命名空间工具、版本化 schema 快照、结果上限和 owner 审批.',
-      tools: [createMcpTool(deps.mcpManager)],
-    })
-  }
-
   const browser = resolveOptionalTool(deps.optionalTools, 'browser', maybeCreateBrowserTool)
   if (browser) {
     capabilities.push({
@@ -231,20 +216,13 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   }
 
   const openbb = resolveOptionalTool(deps.optionalTools, 'openbb', maybeCreateOpenbbCliTool)
-  const financeTools = [openbb, moomoo, cryptoPaper].filter((tool): tool is Tool => tool != null)
+  const financeTools = [openbb, moomoo, cryptoPaper, tradingAgent]
+    .filter((tool): tool is Tool => tool != null)
   if (financeTools.length > 0) {
     capabilities.push({
       name: 'finance',
-      description: '金融数据查询与受限模拟交易：OpenBB、Moomoo 和加密货币纸面账户；具体可用工具以 describe 结果为准.',
+      description: '金融数据、受限模拟交易与深度研究：OpenBB、Moomoo、加密货币纸面账户，以及用于跨来源证据、策略规则和历史回测的 trading_agent；具体可用工具以 describe 结果为准.',
       tools: financeTools,
-    })
-  }
-
-  if (tradingAgent) {
-    capabilities.push({
-      name: 'trading_research',
-      description: '有具体金融问题且需要跨来源证据、可复现策略规则或历史回测时，委派给本机 Vibe-Trading 子 Agent；简单报价或单项数据改用 finance，不为机械盯行情启动，只允许研究与模拟分析.',
-      tools: [tradingAgent],
     })
   }
 

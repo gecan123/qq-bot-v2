@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, test } from 'node:test'
 import {
+  BackgroundTaskAdmissionError,
   createInMemoryTaskRegistry,
   createPersistentTaskRegistry,
 } from './background-task-registry.js'
@@ -115,6 +116,35 @@ describe('background task registry', () => {
     assert.equal(registry.get(task.id)?.status, 'completed')
     assert.equal(registry.get(task.id)?.resultSummary, 'first')
     assert.deepEqual(registry.get(task.id)?.resultData, { value: 1 })
+  })
+
+  test('rejects new work at the active-task limit and releases capacity on terminal settlement', () => {
+    let nextId = 1
+    const registry = createInMemoryTaskRegistry({
+      maxActiveTasks: 2,
+      idFactory: () => `task-${nextId++}`,
+    })
+    const first = registry.register({ toolName: 'first', description: 'first' })
+    registry.register({ toolName: 'second', description: 'second' })
+
+    assert.throws(
+      () => registry.register({ toolName: 'third', description: 'third' }),
+      (error: unknown) => error instanceof BackgroundTaskAdmissionError
+        && error.limit === 2
+        && error.active === 2,
+    )
+    assert.equal(nextId, 3, 'rejected admission must not consume a task id')
+
+    registry.complete(first.id, { summary: 'done' })
+    const admitted = registry.register({ toolName: 'third', description: 'third' })
+    assert.equal(admitted.id, 'task-3')
+  })
+
+  test('rejects invalid active-task limits at registry creation', () => {
+    assert.throws(
+      () => createInMemoryTaskRegistry({ maxActiveTasks: 0 }),
+      /Invalid maxActiveTasks/,
+    )
   })
 
   test('cancel moves only a running task into a terminal state', () => {

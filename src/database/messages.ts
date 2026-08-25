@@ -366,43 +366,6 @@ export async function isConversationMessageMentioningUser(
   })
 }
 
-export async function findApprovalEvidenceMessage(rowId: number): Promise<{
-  rowId: number
-  conversation: ConversationRef
-  senderExternalId: string
-  text: string
-  sentAt: Date
-} | null> {
-  const row = await prisma.message.findUnique({
-    where: { rowId },
-    select: {
-      rowId: true,
-      platform: true,
-      accountId: true,
-      conversationKind: true,
-      conversationExternalId: true,
-      senderExternalId: true,
-      resolvedText: true,
-      searchText: true,
-      sentAt: true,
-      createdAt: true,
-    },
-  })
-  if (!row) return null
-  return {
-    rowId: row.rowId,
-    conversation: {
-      platform: chatPlatformFromDb(row.platform),
-      accountId: row.accountId,
-      kind: conversationKindFromDb(row.conversationKind),
-      externalId: row.conversationExternalId,
-    },
-    senderExternalId: row.senderExternalId,
-    text: row.resolvedText ?? row.searchText,
-    sentAt: row.sentAt ?? row.createdAt,
-  }
-}
-
 function jsonSql(value: Prisma.InputJsonValue | null | undefined): Prisma.Sql {
   if (value === undefined) return Prisma.sql`NULL`
   if (value === null) return Prisma.sql`'null'::jsonb`

@@ -88,6 +88,29 @@ describe('generate_image tool', () => {
     }
   })
 
+  test('rejects before starting image work when the global background-task limit is full', async () => {
+    const taskRegistry = createInMemoryTaskRegistry({ maxActiveTasks: 1 })
+    taskRegistry.register({ toolName: 'existing', description: 'existing work' })
+    let generateCalls = 0
+    const tool = createGenerateImageTool({
+      generate: async () => {
+        generateCalls++
+        return FAKE_PNG
+      },
+      taskRegistry,
+    })
+
+    const result = await tool.execute({ prompt: 'another image' }, ctx)
+    const parsed = parseResultJson(result.content)
+
+    assert.equal(parsed.ok, false)
+    assert.equal(parsed.code, 'background_task_limit')
+    assert.equal(parsed.active, 1)
+    assert.equal(parsed.limit, 1)
+    assert.equal(generateCalls, 0)
+    assert.equal(taskRegistry.listRunning().length, 1)
+  })
+
   test('registers failure when generate throws', async () => {
     const taskRegistry = createInMemoryTaskRegistry()
     const tool = createGenerateImageTool({

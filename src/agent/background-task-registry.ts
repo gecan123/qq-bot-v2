@@ -65,6 +65,7 @@ interface RegistryOptions {
   idFactory?: () => string
   completedTtlMs?: number
   recentLimit?: number
+  maxActiveTasks?: number
 }
 
 interface PersistentRegistryOptions extends RegistryOptions {
@@ -73,6 +74,19 @@ interface PersistentRegistryOptions extends RegistryOptions {
 
 const DEFAULT_COMPLETED_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const DEFAULT_RECENT_LIMIT = 20
+export const DEFAULT_MAX_ACTIVE_BACKGROUND_TASKS = 8
+
+export class BackgroundTaskAdmissionError extends Error {
+  readonly code = 'background_task_limit'
+
+  constructor(
+    readonly limit: number,
+    readonly active: number,
+  ) {
+    super(`Background task limit reached: ${active}/${limit} active`)
+    this.name = 'BackgroundTaskAdmissionError'
+  }
+}
 
 export function createInMemoryTaskRegistry(options: RegistryOptions = {}): BackgroundTaskRegistry {
   let nextId = 1
@@ -128,6 +142,10 @@ function createTaskRegistry(options: RegistryOptions & {
   const idFactory = options.idFactory ?? randomUUID
   const completedTtlMs = options.completedTtlMs ?? DEFAULT_COMPLETED_TTL_MS
   const recentLimit = options.recentLimit ?? DEFAULT_RECENT_LIMIT
+  const maxActiveTasks = options.maxActiveTasks ?? DEFAULT_MAX_ACTIVE_BACKGROUND_TASKS
+  if (!Number.isSafeInteger(maxActiveTasks) || maxActiveTasks <= 0) {
+    throw new Error(`Invalid maxActiveTasks: ${String(maxActiveTasks)}`)
+  }
 
   const persistNow = () => options.persist([...tasks.values()])
 
@@ -171,6 +189,10 @@ function createTaskRegistry(options: RegistryOptions & {
     register(opts) {
       const registeredAt = now()
       cleanup(registeredAt)
+      const active = [...tasks.values()].filter((task) => task.status === 'running').length
+      if (active >= maxActiveTasks) {
+        throw new BackgroundTaskAdmissionError(maxActiveTasks, active)
+      }
       let id = idFactory()
       while (tasks.has(id)) id = idFactory()
       const task: BackgroundTask = {

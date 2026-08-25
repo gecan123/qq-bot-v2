@@ -25,7 +25,7 @@ export const investigationNavigation: NavigationItem[] = [
   { to: '/health', label: '系统健康', hint: '完整性与运行状态', icon: ShieldCheck },
   { to: '/logs', label: '进程日志', hint: '搜索与实时 tail', icon: ScrollText },
   { to: '/timeline', label: '事件时间线', hint: '逐条活动证据', icon: Activity },
-  { to: '/context', label: 'Ledger', hint: 'Context 与 canonical', icon: Database },
+  { to: '/context', label: '主 Agent', hint: 'Canonical 对话与 Ledger', icon: Database },
   { to: '/life', label: 'Goal 与计划', hint: 'Agenda 与后台任务', icon: HeartPulse },
   { to: '/metrics', label: '用量指标', hint: 'Token、缓存与工具', icon: Gauge },
 ]

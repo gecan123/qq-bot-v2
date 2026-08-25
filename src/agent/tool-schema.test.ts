@@ -146,7 +146,7 @@ test('zodToOpenAIStrictToolJsonSchema keeps rest schema strict and explicit', ()
   const props = json.properties as Record<string, Record<string, unknown>>
   assert.equal(props.durationMinutes.type, 'integer')
   assert.equal(props.durationMinutes.minimum, 1)
-  assert.equal(props.durationMinutes.maximum, 240)
+  assert.equal(props.durationMinutes.maximum, 60)
   assert.equal(props.reason.type, 'string')
   assert.equal(props.resumeAction.type, 'string')
   assert.deepEqual(Object.keys(props), ['durationMinutes', 'reason', 'resumeAction'])

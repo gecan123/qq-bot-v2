@@ -7,9 +7,10 @@
 - `CONTEXT-MAP.md`：bot/backend 与 WebAdmin 两个领域上下文的路由入口。
 - `docs/ARCHITECTURE.md`：运行形态、模块边界和启动流程。
 - `docs/AGENT_CONTEXT.md`：永续上下文不变量和 replay 规则。
-- `docs/MEMORY_ARCHITECTURE.md`：事实账本、LLM ledger、长期记忆、Notebook、Life Journal 和 Agenda 的边界与流程。
+- `docs/MEMORY_ARCHITECTURE.md`：事实账本、LLM ledger、Memory 与 Notebook 的边界和流程。
 - `docs/TOOLS.md`：bot 工具注册、安全边界和外部能力。
 - `docs/HARNESS_COMPARISON.md`：按 `learn-claude-code` 章节对照当前 Agent harness 能力。
+- `docs/COMMANDS.md`：项目全部可执行命令、参数、风险和可复制调试流程的统一手册。
 - `docs/OPERATIONS.md`：本地命令、日志、验证和排查。
 - `docs/TECH_DEBT.md`：已知漂移和清理候选。
 - `apps/admin-web/`：localhost-only WebAdmin；观察页用于实时活动和技术下钻，独立“管理操作”页只开放带预览、确认、停机检查和审计的 `reset_state`，运行与边界见 `docs/OPERATIONS.md`。

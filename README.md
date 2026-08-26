@@ -64,27 +64,18 @@ pnpm dev
 
 ## 常用命令
 
+完整命令、参数、风险说明和可复制调试流程见 [`docs/COMMANDS.md`](docs/COMMANDS.md)。下面只保留最常用入口：
+
 ```bash
 pnpm dev           # watch 模式启动多进程平台
 pnpm dev:once      # 单次启动多进程平台
 pnpm dev:all       # watch 模式启动多进程平台与 WebAdmin
 pnpm dev:all:once  # 单次启动多进程平台与 WebAdmin
-pnpm agent:dev     # watch 模式启动旧单进程兼容入口
-pnpm agent:dev:once # 单次启动旧单进程兼容入口
 pnpm build         # 编译 TypeScript
 pnpm typecheck     # 只做 TypeScript 检查
 pnpm test          # 在隔离的测试环境中运行 src/**/*.test.ts，不读取本机 .env
 pnpm repo-check    # 检查仓库指令和文档漂移
-pnpm bench:ledger-commit # 1 万/10 万 permanent entry full replay 与真实 coordinator commit 基准
-pnpm lint          # typecheck + repo-check
 pnpm web:dev       # 在 127.0.0.1:20030 启动只读 WebAdmin
-pnpm web:test      # 运行 WebAdmin Vitest 测试
-pnpm web:typecheck # 检查 WebAdmin TypeScript
-pnpm web:build     # 构建 WebAdmin client 和 server bundle
-pnpm db:generate   # 重新生成 Prisma client
-pnpm db:migrate    # 执行 Prisma migrations
-pnpm toollog       # 查看最近 tool-call 审计日志
-pnpm peek -- -f -n 9999 # follow canonical Agent ledger
 ```
 
 ## 只读 WebAdmin

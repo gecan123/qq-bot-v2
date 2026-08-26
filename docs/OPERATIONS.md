@@ -13,9 +13,19 @@
 
 ## 常用命令
 
+项目全部可执行命令、参数、风险等级和可复制示例统一维护在 `docs/COMMANDS.md`。本页只保留对应运行语义和排障细节。
+
 ### 重置 Agent 持久状态（本地调试）
 
-先停止 bot，再运行：
+完整范围说明和可直接复制的命令见 `docs/COMMANDS.md`。先停止 bot，再按需要运行：
+
+```bash
+pnpm agent:reset:context
+pnpm agent:reset:knowledge
+pnpm agent:reset:all
+```
+
+上述快捷命令分别对应下面的通用 `--scope` 入口：
 
 ```bash
 pnpm agent:reset-state -- --scope context
@@ -351,8 +361,8 @@ VIBE_TRADING_RESULT_MAX_CHARS=12000
 ## Agent 反馈
 
 - `pnpm agent:doctor` 先做本地静态健康检查：必需文件、必需环境变量、agent 指令镜像、schema anchor、startup anchor 和 tool registry anchor；静态检查通过后连接 Postgres 执行同等只读 ledger 检查。`LLM_DEFAULT_PROVIDER=claude-code` 时还会在这里执行最多三次 persona-spoof 真实 LLM 探测，普通 Bot 启动不再探测。输出 JSON，任一阶段有错误时非零退出。
-- `pnpm agent:memory-check` 只读扫描 `data/agent-workspace` 下的 Memory、Notebook、Life Journal 和 Agenda Markdown，输出文件/entry 数量、Memory lifecycle、损坏格式、跨 store 重复 ID、self/unknown supersedes 与 Agenda revision；不会创建目录、默认文件或执行修复。结构问题退出 1；可用 `pnpm agent:memory-check -- --root <path>` 指定其他 workspace。
-- `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson`、`logs/tool-calls.ndjson` 和当前保留的 `logs/app*.log` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率，以及按群 `inboxReads`、`messagesRead`、`sendAttempts`、`sendBlocked`、成功 ambient/reply 和 `readToSendRate`。默认排除 `model=mock` 测试数据，显式传 `--model mock` 时才查看；当前 token operations 包括 `agent.chat`、`agent.psychologist`、`compaction`、`life_journal.review` 和 `memory.maintenance`。
+- `pnpm agent:memory-check` 只读扫描 `data/agent-workspace` 下的 Memory 与 Notebook Markdown，输出文件/entry 数量、Memory lifecycle、损坏格式、跨 store 重复 ID 和 self/unknown supersedes；不会创建目录、默认文件或执行修复。结构问题退出 1；可用 `pnpm agent:memory-check -- --root <path>` 指定其他 workspace。
+- `pnpm agent:metrics` 汇总 `logs/token-usage.ndjson`、`logs/tool-calls.ndjson` 和当前保留的 `logs/app*.log` 到 stdout JSON：token/cache 使用、工具失败数、副作用工具数、每工具平均耗时、失败率、副作用率，以及按群 `inboxReads`、`messagesRead`、`sendAttempts`、`sendBlocked`、成功 ambient/reply 和 `readToSendRate`。默认排除 `model=mock` 测试数据，显式传 `--model mock` 时才查看；当前 token operations 包括 `agent.chat`、`agent.psychologist`、`compaction` 和 `memory.maintenance`。
 - `pnpm agent:metrics <token-log> <tool-log> [app-log]` 可以汇总指定日志文件；省略 `app-log` 时自动读取当前 `logs/app*.log` 滚动文件。
 - token/cache 使用继续 best-effort 写入 Postgres `agent_token_usage`；工具调用只有 `BOT_TOOL_AUDIT_DB_ENABLED=true` 时写入 `agent_tool_calls`。写 DB 失败只记 warning，不影响 bot 执行。
 - `pnpm agent:metrics --db` 从 Postgres 汇总持久化事件；可加 `--from <iso> --to <iso> --tool <name> --operation <name> --model <name> --ok true|false --side-effect true|false` 做筛选。

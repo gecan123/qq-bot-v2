@@ -5,7 +5,6 @@ import {
   BackfillSourceTimeoutError,
   createBackfillScheduler,
   runBoundedBackfills,
-  withBackfillSourceTimeout,
 } from './startup-backfill.js'
 
 test('initialBackfillDone resolves only after the first scheduled backfill completes', async () => {
@@ -69,6 +68,7 @@ test('bounded backfills limit concurrent source work', async () => {
   await runBoundedBackfills({
     sources: [1, 2, 3, 4],
     concurrency: 2,
+    sourceTimeoutMs: 100,
     async run() {
       active++
       maxActive = Math.max(maxActive, active)
@@ -90,9 +90,11 @@ test('bounded backfills time out a pending source and continue other sources', a
   await runBoundedBackfills({
     sources: [1, 2, 3],
     concurrency: 2,
-    async run(source) {
+    sourceTimeoutMs: 15,
+    async run(source, signal) {
       if (source === 1) {
-        await withBackfillSourceTimeout(delay(30), source, 15)
+        await delay(30)
+        signal.throwIfAborted()
       }
       await delay(1)
       completed.push(source)

@@ -9,7 +9,6 @@ import { createMessageReadyDispatcher, type MessageReadyDispatcher } from './mes
 import {
   createBackfillScheduler,
   runBoundedBackfills,
-  withBackfillSourceTimeout,
 } from './startup-backfill.js'
 import type { ParsedSegment } from '../types/message-segments.js'
 import { groupUploadSyntheticMessageId, type GroupUploadNotice } from './group-upload.js'
@@ -274,15 +273,12 @@ async function processGroupUpload(
   })
 }
 
-async function backfillGroupMessages(groupId: number): Promise<void> {
-  const { messages } = await withBackfillSourceTimeout(
-    napcat.get_group_msg_history({
-      group_id: groupId,
-      count: BACKFILL_COUNT,
-    }),
-    groupId,
-    INITIAL_BACKFILL_SOURCE_TIMEOUT_MS,
-  )
+async function backfillGroupMessages(groupId: number, signal: AbortSignal): Promise<void> {
+  const { messages } = await napcat.get_group_msg_history({
+    group_id: groupId,
+    count: BACKFILL_COUNT,
+  })
+  signal.throwIfAborted()
   const allMessageIds = messages.map((m) => String(m.message_id))
   const existingIds = await findExistingMessageExternalIds({
     platform: 'qq',
@@ -290,16 +286,20 @@ async function backfillGroupMessages(groupId: number): Promise<void> {
     kind: 'group',
     externalId: String(groupId),
   }, allMessageIds)
+  signal.throwIfAborted()
 
   for (const msg of messages) {
+    signal.throwIfAborted()
     if (existingIds.has(String(msg.message_id))) continue
     try {
       // backfill 不传 onMessageReady, 历史消息只入库, 不进 LLM 视野。
       // 启动恢复只覆盖 mailbox cursor / legacy lastWakeAt 边界后的消息。
       await processMessage({ kind: 'group', groupId }, msg.message_id, {})
     } catch (error) {
+      signal.throwIfAborted()
       ingressLog.warn({ error, groupId, msgId: msg.message_id }, '补拉消息处理失败,跳过')
     }
+    signal.throwIfAborted()
   }
   ingressLog.info(
     {
@@ -351,6 +351,7 @@ export function registerNapcatHandlers(options: NapcatHandlerOptions = {}): Napc
     await runBoundedBackfills({
       sources: config.botTargetGroupIds,
       concurrency: INITIAL_BACKFILL_CONCURRENCY,
+      sourceTimeoutMs: INITIAL_BACKFILL_SOURCE_TIMEOUT_MS,
       run: backfillGroupMessages,
       async onFailure(groupId, error) {
         await recordIngressFailure({ platform: 'qq', kind: 'group_backfill', error, context: { groupId } }).catch(() => undefined)

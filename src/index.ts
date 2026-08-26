@@ -51,6 +51,7 @@ import {
   createQqGatewayMessageSender,
   QqGatewayClient,
 } from './services/qq-gateway-client.js'
+import { loadQqFriendsSafely } from './services/qq-friend-directory.js'
 import {
   createDatabaseMailboxWatcher,
   currentMessageHighWater,
@@ -70,6 +71,7 @@ const log = createLogger('APP')
 // 仅供 WebAdmin 与破坏性运维命令判断 Bot 是否仍在运行；不再承载产品控制信号。
 const BOT_PID_FILE = '.bot.pid'
 const SHUTDOWN_TIMEOUT_MS = 30_000
+const QQ_FRIEND_DIRECTORY_TIMEOUT_MS = 20_000
 let shutdownCoordinator: ShutdownCoordinator | null = null
 let fallbackShutdownPromise: Promise<void> | null = null
 let retentionRunner: DailyRetentionRunner | null = null
@@ -245,13 +247,28 @@ async function main() {
   const directQq = config.services.enabled ? null : await import('./bot/core.js')
   const directNapcatModule = config.services.enabled ? null : await import('./bot/napcat.js')
   const directNapcat = directNapcatModule?.napcat
-  const loadQqFriends = async () => qqGateway
-    ? qqGateway.friends()
+  const loadRawQqFriends = async () => qqGateway
+    ? qqGateway.friends(QQ_FRIEND_DIRECTORY_TIMEOUT_MS)
     : (await directNapcat!.get_friend_list()).map((friend) => ({
         userId: friend.user_id,
         nickname: friend.nickname,
         remark: friend.remark,
       }))
+  const loadQqFriends = async () => {
+    const result = await loadQqFriendsSafely({
+      loadFriends: loadRawQqFriends,
+      owner: config.owner,
+      timeoutMs: QQ_FRIEND_DIRECTORY_TIMEOUT_MS,
+    })
+    if (result.status === 'degraded') {
+      log.warn({
+        error: result.error,
+        timeoutMs: QQ_FRIEND_DIRECTORY_TIMEOUT_MS,
+        ownerFallback: config.owner != null,
+      }, 'QQ 好友目录不可用，使用安全降级目录')
+    }
+    return result.friends
+  }
   const loadQqGroups = async () => qqGateway
     ? qqGateway.groups()
     : (await directNapcat!.get_group_list()).map((group) => ({

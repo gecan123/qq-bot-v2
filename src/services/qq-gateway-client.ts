@@ -36,8 +36,9 @@ export class QqGatewayClient {
     return this.request('/health')
   }
 
-  friends(): Promise<QqGatewayFriend[]> {
-    return this.request<{ friends: QqGatewayFriend[] }>('/friends', {}).then((result) => result.friends)
+  friends(timeoutMs = this.timeoutMs): Promise<QqGatewayFriend[]> {
+    return this.request<{ friends: QqGatewayFriend[] }>('/friends', {}, timeoutMs)
+      .then((result) => result.friends)
   }
 
   groups(): Promise<QqGatewayGroup[]> {

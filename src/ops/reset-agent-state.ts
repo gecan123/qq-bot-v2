@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { AGENT_RUNTIME_STATE_SCHEMA_VERSION } from '../agent/agent-ledger.types.js'
 import { createEmptyMailboxContinuityState } from '../agent/mailbox-continuity.js'
 
-const KNOWLEDGE_DIRECTORIES = ['memory', 'journal', 'life', 'notebook'] as const
+const KNOWLEDGE_DIRECTORIES = ['memory', 'notebook'] as const
 const WORKSPACE_CONTRACT_FILES: ['.gitignore', 'README.md'] = ['.gitignore', 'README.md']
 const WORKSPACE_ENTRY_LIMIT = 100
 const RESET_SCOPES = ['all', 'context', 'knowledge'] as const

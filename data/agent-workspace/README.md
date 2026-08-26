@@ -4,11 +4,9 @@ This directory is the bot/agent-owned workspace. Managed knowledge is split by l
 
 - `memory/`: stable facts, preferences, methods, and conclusions that can be reused directly.
 - `notebook/<kind>/YYYY-MM.md`: evolving research, reading, market, project, or general topic work.
-- `life/journal/YYYY-MM-DD.md`: selective reflections and dreams.
-- `life/agenda.md`: mutable commitments, waiting items, unfinished interests, and concrete next steps.
 - Other directories: ordinary drafts, scratch notes, indexes, runtime state, and managed artifacts.
 
-Managed paths are written through their typed tools. Deferred `workspace_file` is only for ordinary text files, while `workspace_bash cwd=workspace` is a read-only inspection surface plus controlled built-in subcommands. The legacy `journal/` directory is no longer used and exists only as a reset cleanup target.
+Managed paths are written through their typed tools. Deferred `workspace_file` is only for ordinary text files, while `workspace_bash cwd=workspace` is a read-only inspection surface plus controlled built-in subcommands.
 
 Markdown files under `memory/`, `notebook/`, and `life/` are the source of truth. There is currently no SQLite, FTS/BM25, embedding, vector index, or hidden automatic memory injection. The main agent explicitly calls `memory recall` when prior facts are relevant; returned results enter the durable AgentContext ledger and are not re-read from mutable Markdown during replay.
 

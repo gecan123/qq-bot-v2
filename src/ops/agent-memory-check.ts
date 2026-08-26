@@ -1,10 +1,8 @@
-import { createHash } from 'node:crypto'
 import { readFile, readdir } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
-import { readLifeJournalDay } from '../agent/life-journal-store.js'
 import { inspectMemoryFileForMaintenance, type MemoryEntry } from '../agent/memory-store.js'
 
-type StoreName = 'memory' | 'notebook' | 'lifeJournal'
+type StoreName = 'memory' | 'notebook'
 
 export interface AgentMemoryCheckReport {
   ok: boolean
@@ -21,11 +19,6 @@ export interface AgentMemoryCheckReport {
     duplicateIds: Array<{ id: string; locations: string[] }>
     selfReferencingSupersedes: Array<{ id: string; location: string }>
     unknownSupersedes: Array<{ id: string; targetId: string; location: string }>
-  }
-  agenda: {
-    exists: boolean
-    revision: string | null
-    sizeBytes: number
   }
 }
 
@@ -88,28 +81,6 @@ export async function checkAgentMemory(options: {
     locatedEntries.push(...parsed)
   }
 
-  const journalRoot = join(rootDir, 'life', 'journal')
-  const journalFiles = await listMarkdownFiles(journalRoot)
-  let lifeJournalEntries = 0
-  for (const file of journalFiles) {
-    const location = `life/journal/${file}`
-    const match = /^(\d{4}-\d{2}-\d{2})\.md$/.exec(file)
-    if (!match || file.includes('/')) {
-      corruptOrUnsupportedFiles.push(location)
-      continue
-    }
-    try {
-      const journal = await readLifeJournalDay({ rootDir, date: match[1]! })
-      lifeJournalEntries += journal.entries.length
-      for (const entry of journal.entries) {
-        locatedEntries.push({ id: entry.id, location: `${location}#${entry.id}` })
-      }
-    } catch {
-      corruptOrUnsupportedFiles.push(location)
-    }
-  }
-
-  const agenda = await inspectAgenda(rootDir)
   const duplicateIds = duplicateEntryIds(locatedEntries)
   const lifecycle = {
     expired: parsedMemoryEntries.filter(({ entry }) => entry.validUntil != null && Date.parse(entry.validUntil) < nowMs).length,
@@ -134,11 +105,9 @@ export async function checkAgentMemory(options: {
     counts: {
       memory: { files: memoryFiles.length, entries: parsedMemoryEntries.length },
       notebook: { files: notebookFiles.length, entries: notebookEntries.length },
-      lifeJournal: { files: journalFiles.length, entries: lifeJournalEntries },
     },
     lifecycle,
     issues,
-    agenda,
   }
 }
 
@@ -215,23 +184,6 @@ function parseNotebookFile(raw: string, file: string, location: string): Noteboo
     offset = close + '<!-- /notebook-entry -->'.length
   }
   return entries.length === markers ? entries : null
-}
-
-async function inspectAgenda(rootDir: string): Promise<AgentMemoryCheckReport['agenda']> {
-  let markdown: string
-  try {
-    markdown = await readFile(join(rootDir, 'life', 'agenda.md'), 'utf8')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { exists: false, revision: null, sizeBytes: 0 }
-    }
-    throw error
-  }
-  return {
-    exists: true,
-    revision: createHash('sha256').update(markdown).digest('hex'),
-    sizeBytes: Buffer.byteLength(markdown, 'utf8'),
-  }
 }
 
 function duplicateEntryIds(entries: LocatedEntry[]): AgentMemoryCheckReport['issues']['duplicateIds'] {

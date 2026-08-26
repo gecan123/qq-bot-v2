@@ -30,8 +30,6 @@ function resetPayload(scope: 'context' | 'knowledge' | 'all' = 'context'): Opera
       ? null
       : { directories: [
           { name: 'memory', exists: true, files: 2 },
-          { name: 'journal', exists: false, files: 0 },
-          { name: 'life', exists: true, files: 1 },
           { name: 'notebook', exists: true, files: 1 },
         ] },
     workspace: scope === 'all'

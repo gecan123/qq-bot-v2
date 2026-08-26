@@ -23,8 +23,8 @@ export const memoryProvenanceSchema = z.object({
 export const memorySnapshotSchema = z.object({
   schemaVersion: z.literal(1),
   generatedAt: z.iso.datetime({ offset: true }),
-  counts: z.object({ files: z.number(), entries: z.number(), journalFiles: z.number(), journalEntries: z.number(), sourceLinks: z.number() }).strict(),
-  files: z.array(z.object({ fileId: z.string(), path: z.string(), kind: z.enum(['memory', 'journal', 'notebook']), updatedAt: z.iso.datetime({ offset: true }), size: z.number(), entryCount: z.number() }).strict()),
+  counts: z.object({ files: z.number(), memoryEntries: z.number(), notebookEntries: z.number(), sourceLinks: z.number() }).strict(),
+  files: z.array(z.object({ fileId: z.string(), path: z.string(), kind: z.enum(['memory', 'notebook']), updatedAt: z.iso.datetime({ offset: true }), size: z.number(), entryCount: z.number() }).strict()),
   entries: z.array(memoryEntrySchema),
   provenance: z.array(memoryProvenanceSchema),
   warnings: z.array(z.string()),
@@ -38,7 +38,7 @@ export const memoryFileSnapshotSchema = z.object({
   file: z.object({
     fileId: z.string(),
     path: z.string(),
-    kind: z.enum(['memory', 'journal', 'notebook']),
+    kind: z.enum(['memory', 'notebook']),
     updatedAt: z.iso.datetime({ offset: true }),
     size: z.number().int().nonnegative(),
     title: z.string(),

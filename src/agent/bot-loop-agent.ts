@@ -129,7 +129,7 @@ const ASSISTANT_TEXT_ONLY_CORRECTION = JSON.stringify({
 const CONTINUOUS_AUTONOMY_BOOTSTRAP = JSON.stringify({
   event: 'runtime_bootstrap',
   code: 'continuous_autonomy_started',
-  instruction: '现在开始自主生活。即使没有外部请求，也从聊天、网络探索、阅读、创作、自己的项目、Agenda 或稳定兴趣中选择一件可立即执行的事，并用真实工具开始行动。只有此刻真正想主动休息时才调用 rest。',
+  instruction: '现在开始自主生活。即使没有外部请求，也从聊天、网络探索、阅读、创作、自己的项目或稳定兴趣中选择一件可立即执行的事，并用真实工具开始行动。只有此刻真正想主动休息时才调用 rest。',
 })
 const defaultKeepAlive = {
   open() {

@@ -47,7 +47,7 @@ async function createWorkspace(): Promise<string> {
   await writeFile(join(workspaceDir, 'README.md'), 'workspace contract', 'utf8')
   await writeFile(join(workspaceDir, '.gitignore'), '*', 'utf8')
   await writeFile(join(workspaceDir, '.DS_Store'), 'generated metadata', 'utf8')
-  for (const directory of ['memory', 'journal', 'life', 'notebook']) {
+  for (const directory of ['memory', 'notebook']) {
     await mkdir(join(workspaceDir, directory), { recursive: true })
     await writeFile(join(workspaceDir, directory, 'old.md'), 'old state', 'utf8')
   }
@@ -62,7 +62,7 @@ async function createWorkspace(): Promise<string> {
 }
 
 async function assertManagedStatePresent(workspaceDir: string): Promise<void> {
-  for (const directory of ['memory', 'journal', 'life', 'notebook']) {
+  for (const directory of ['memory', 'notebook']) {
     assert.equal(await readFile(join(workspaceDir, directory, 'old.md'), 'utf8'), 'old state')
   }
 }
@@ -96,8 +96,6 @@ async function createPreviewWorkspace(): Promise<string> {
   await mkdir(join(workspaceDir, 'memory', 'nested'), { recursive: true })
   await writeFile(join(workspaceDir, 'memory', 'one.md'), 'one', 'utf8')
   await writeFile(join(workspaceDir, 'memory', 'nested', 'two.md'), 'two', 'utf8')
-  await mkdir(join(workspaceDir, 'life'), { recursive: true })
-  await writeFile(join(workspaceDir, 'life', 'one.md'), 'one', 'utf8')
   await mkdir(join(workspaceDir, 'notebook'), { recursive: true })
   await writeFile(join(workspaceDir, 'notebook', 'one.md'), 'one', 'utf8')
   await mkdir(join(workspaceDir, 'runtime'), { recursive: true })
@@ -136,8 +134,6 @@ describe('previewAgentStateReset', () => {
         knowledge: {
           directories: [
             { name: 'memory', exists: true, files: 2 },
-            { name: 'journal', exists: false, files: 0 },
-            { name: 'life', exists: true, files: 1 },
             { name: 'notebook', exists: true, files: 1 },
           ],
         },
@@ -164,11 +160,10 @@ describe('previewAgentStateReset', () => {
         runtimeStates: 1,
         goals: 1,
       })
-      assert.equal(preview.knowledge?.directories.length, 4)
+      assert.equal(preview.knowledge?.directories.length, 2)
       assert.deepEqual(preview.workspace, {
         preservedFiles: ['.gitignore', 'README.md'],
         entries: [
-          { name: 'life', kind: 'directory', files: 1 },
           { name: 'memory', kind: 'directory', files: 2 },
           { name: 'notebook', kind: 'directory', files: 1 },
           { name: 'notes.md', kind: 'file', files: 1 },
@@ -196,9 +191,7 @@ describe('previewAgentStateReset', () => {
 async function assertManagedStatePresentForPreview(workspaceDir: string): Promise<void> {
   assert.equal(await readFile(join(workspaceDir, 'memory', 'one.md'), 'utf8'), 'one')
   assert.equal(await readFile(join(workspaceDir, 'memory', 'nested', 'two.md'), 'utf8'), 'two')
-  assert.equal(await readFile(join(workspaceDir, 'life', 'one.md'), 'utf8'), 'one')
   assert.equal(await readFile(join(workspaceDir, 'notebook', 'one.md'), 'utf8'), 'one')
-  await assert.rejects(access(join(workspaceDir, 'journal')))
 }
 
 describe('resetAgentState', () => {
@@ -262,7 +255,7 @@ describe('resetAgentState', () => {
       assert.equal(result.scope, 'knowledge')
       assert.equal(result.deletedLedgerEntries, 0)
       assert.equal(result.createdRuntimeState, false)
-      assert.deepEqual(result.removedDirectories, ['memory', 'journal', 'life', 'notebook'])
+      assert.deepEqual(result.removedDirectories, ['memory', 'notebook'])
       assert.equal(result.removedWorkspaceEntries, 0)
       for (const directory of result.removedDirectories) {
         await assert.rejects(access(join(workspaceDir, directory)))
@@ -280,8 +273,8 @@ describe('resetAgentState', () => {
       const firstResult = await resetAgentState({ scope: 'all', workspaceDir, db: first.db })
       assert.equal(first.transactions, 1)
       assert.equal(firstResult.createdRuntimeState, true)
-      assert.deepEqual(firstResult.removedDirectories, ['memory', 'journal', 'life', 'notebook'])
-      assert.equal(firstResult.removedWorkspaceEntries, 9)
+      assert.deepEqual(firstResult.removedDirectories, ['memory', 'notebook'])
+      assert.equal(firstResult.removedWorkspaceEntries, 7)
       assert.equal(await readFile(join(workspaceDir, 'README.md'), 'utf8'), 'workspace contract')
       assert.equal(await readFile(join(workspaceDir, '.gitignore'), 'utf8'), '*')
       assert.deepEqual((await readdir(workspaceDir)).sort(), ['.gitignore', 'README.md'])
@@ -290,7 +283,7 @@ describe('resetAgentState', () => {
       const secondResult = await resetAgentState({ scope: 'all', workspaceDir, db: empty.db })
       assert.equal(secondResult.deletedLedgerEntries, 0)
       assert.equal(secondResult.deletedGoals, 0)
-      assert.deepEqual(secondResult.removedDirectories, ['memory', 'journal', 'life', 'notebook'])
+      assert.deepEqual(secondResult.removedDirectories, ['memory', 'notebook'])
       assert.equal(secondResult.removedWorkspaceEntries, 0)
     } finally {
       await rm(workspaceDir, { recursive: true, force: true })

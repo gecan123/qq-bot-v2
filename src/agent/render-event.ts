@@ -11,7 +11,7 @@ import { mailboxKeyForEvent, renderMailboxNotification } from './mailbox.js'
  * wake 只是内部解阻塞信号；bootstrap 是显式控制事件，不伪装成通知。
  */
 export const BOOTSTRAP_TEXT =
-  '[冷启动] 这是一次全新 AgentContext 的首次启动, 当前没有待回复的历史消息. 按自己的身份、兴趣、Agenda 和可验证线索决定第一步.'
+  '[冷启动] 这是一次全新 AgentContext 的首次启动, 当前没有待回复的历史消息. 按自己的身份、兴趣和可验证线索决定第一步.'
 
 export function renderBotEvent(event: BotEvent): string | null {
   if (event.type === 'wake') return null

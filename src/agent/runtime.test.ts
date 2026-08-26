@@ -167,11 +167,11 @@ describe('createAgentRuntime', () => {
     const skillManagement = payload.capabilities.find((item: { name: string }) => item.name === 'skill_management')
     const chat = payload.capabilities.find((item: { name: string }) => item.name === 'chat')
     const shortTermScheduling = payload.capabilities.find((item: { name: string }) => item.name === 'short_term_scheduling')
-    const lifeState = payload.capabilities.find((item: { name: string }) => item.name === 'life_state')
+    const notebookManagement = payload.capabilities.find((item: { name: string }) => item.name === 'notebook_management')
     const stickerManagement = payload.capabilities.find((item: { name: string }) => item.name === 'sticker_management')
     assert.deepEqual(chat.tools, ['conversation', 'send_message'])
     assert.deepEqual(shortTermScheduling.tools, ['schedule'])
-    assert.deepEqual(lifeState.tools, ['notebook', 'life_journal'])
+    assert.deepEqual(notebookManagement.tools, ['notebook'])
     assert.deepEqual(stickerManagement.tools, ['collect_sticker'])
 
     const scheduleList = await runtime.tools.execute({

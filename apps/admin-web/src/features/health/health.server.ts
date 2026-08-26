@@ -68,7 +68,6 @@ export async function loadHealthSnapshot(now = new Date()): Promise<HealthSnapsh
       counts: knowledge.counts,
       lifecycle: knowledge.lifecycle,
       issueCount: knowledgeIssueCount,
-      agendaExists: knowledge.agenda.exists,
     },
     contextSurface: { status: surface.status, generatedAt: surfaceGeneratedAt, ageSeconds: surfaceAgeSeconds },
     mailboxWatcher,

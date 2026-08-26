@@ -3,7 +3,6 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, test } from 'node:test'
-import { appendLifeJournalEntry, writeLifeAgenda } from '../agent/life-journal-store.js'
 import {
   applyMemoryMaintenance,
   compactMemoryEntries,
@@ -87,10 +86,6 @@ describe('agent memory check', () => {
     await mkdir(join(rootDir, 'notebook', 'research'), { recursive: true })
     await writeFile(join(rootDir, 'notebook', 'research', '2026-08.md'), '<!-- notebook-entry\ninvalid\n', 'utf8')
 
-    await appendLifeJournalEntry({ rootDir, now, id: () => 'life-id', markdown: '### Saw\n- 发生了一件事。' })
-    await writeFile(join(rootDir, 'life', 'journal', '2026-07-12.md'), '# unsupported journal\n', 'utf8')
-    await writeLifeAgenda({ rootDir }, '# Agenda\n\n## Active\n- [ ] 检查记忆\n')
-
     const before = await snapshotFiles(rootDir)
     const report = await checkAgentMemory({ rootDir, now: new Date('2026-07-13T08:00:00.000Z') })
     const after = await snapshotFiles(rootDir)
@@ -99,19 +94,15 @@ describe('agent memory check', () => {
     assert.deepEqual(report.counts, {
       memory: { files: 3, entries: 3 },
       notebook: { files: 2, entries: 1 },
-      lifeJournal: { files: 2, entries: 1 },
     })
     assert.equal(report.lifecycle.expired, 1)
     assert.equal(report.lifecycle.disputed, 1)
     assert.equal(report.lifecycle.superseded, 1)
     assert.equal(report.lifecycle.stableWithoutSources, 1)
-    assert.equal(report.issues.corruptOrUnsupportedFiles.length, 4)
+    assert.equal(report.issues.corruptOrUnsupportedFiles.length, 3)
     assert.equal(report.issues.duplicateIds.some((item) => item.id === 'duplicate-id'), true)
     assert.equal(report.issues.selfReferencingSupersedes.some((item) => item.id === 'self-ref-id'), true)
     assert.equal(report.issues.unknownSupersedes.some((item) => item.targetId === 'missing-id'), true)
-    assert.equal(report.agenda.exists, true)
-    assert.equal(report.agenda.sizeBytes, Buffer.byteLength(before['life/agenda.md']!, 'utf8'))
-    assert.match(report.agenda.revision ?? '', /^[a-f0-9]{64}$/)
     assert.equal(report.ok, false)
     assert.equal(memoryCheckExitCode(report), 1)
   })
@@ -123,7 +114,6 @@ describe('agent memory check', () => {
     assert.deepEqual(await snapshotFiles(rootDir), before)
     assert.equal(report.ok, true)
     assert.deepEqual(report.issues.corruptOrUnsupportedFiles, [])
-    assert.deepEqual(report.agenda, { exists: false, revision: null, sizeBytes: 0 })
     assert.equal(memoryCheckExitCode(report), 0)
   })
 

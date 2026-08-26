@@ -170,10 +170,9 @@ describe('merged main-agent tools', () => {
 
     assert.equal(alwaysOnNames.includes('schedule'), false)
     assert.equal(alwaysOnNames.includes('notebook'), false)
-    assert.equal(alwaysOnNames.includes('life_journal'), false)
     assert.equal(alwaysOnNames.includes('collect_sticker'), false)
     assert.deepEqual(capabilities.get('short_term_scheduling'), ['schedule'])
-    assert.deepEqual(capabilities.get('life_state'), ['notebook', 'life_journal'])
+    assert.deepEqual(capabilities.get('notebook_management'), ['notebook'])
     assert.deepEqual(capabilities.get('sticker_management'), ['collect_sticker'])
     assert.ok(alwaysOnNames.includes('memory'))
     assert.ok(alwaysOnNames.includes('goal'))
@@ -281,7 +280,6 @@ describe('merged main-agent tools', () => {
       })
       const memory = findManifestTool(manifest, 'memory')
       const notebook = findManifestTool(manifest, 'notebook')
-      const lifeJournal = findManifestTool(manifest, 'life_journal')
 
       await memory.execute({
         action: 'remember',
@@ -295,15 +293,8 @@ describe('merged main-agent tools', () => {
         topic: 'runtime wiring',
         content: '共享 coordinator',
       } as never, makeCtx())
-      await lifeJournal.execute({
-        action: 'write',
-        kind: 'reflection',
-        markdown: '共享 coordinator',
-      } as never, makeCtx())
-
       assert.equal(resourceKeys.some((key) => key === 'memory:self/self.md'), true)
       assert.equal(resourceKeys.some((key) => key.startsWith('notebook:research/')), true)
-      assert.equal(resourceKeys.some((key) => key.startsWith('life-journal:')), true)
     } finally {
       process.chdir(originalCwd)
       await rm(temporaryCwd, { recursive: true, force: true })
@@ -361,7 +352,6 @@ describe('merged main-agent tools', () => {
     assert.equal(allToolNames.includes('send_image'), false)
     assert.equal(alwaysOnNames.includes('schedule'), false)
     assert.equal(alwaysOnNames.includes('notebook'), false)
-    assert.equal(alwaysOnNames.includes('life_journal'), false)
     assert.equal(alwaysOnNames.includes('collect_sticker'), false)
     assert.ok(alwaysOnNames.includes('memory'))
     assert.ok(alwaysOnNames.includes('rest'))
@@ -371,7 +361,7 @@ describe('merged main-agent tools', () => {
     assert.equal(alwaysOnNames.includes('ai_tone'), false)
     assert.equal(alwaysOnNames.includes('journal'), false)
     assert.deepEqual(capabilities.get('short_term_scheduling'), ['schedule'])
-    assert.deepEqual(capabilities.get('life_state'), ['notebook', 'life_journal'])
+    assert.deepEqual(capabilities.get('notebook_management'), ['notebook'])
     assert.deepEqual(capabilities.get('sticker_management'), ['collect_sticker'])
     assert.deepEqual(capabilities.get('workspace_management'), ['workspace_file', 'workspace_bash'])
     assert.equal(capabilities.has('database_read'), false)
@@ -608,15 +598,15 @@ describe('merged main-agent tools', () => {
         action: 'remember',
         scope: 'self',
         content: '我喜欢冷笑话。',
-      }, makeCtx())).content as string) as { ok: boolean; file: string }
+      }, makeCtx())).content as string) as { ok: boolean; changed: boolean }
       const recalled = JSON.parse((await tool.execute({
         action: 'recall',
         query: '冷笑话',
         scope: 'self',
-      }, makeCtx())).content as string) as { matches: { file: string; content: string }[] }
+      }, makeCtx())).content as string) as { matches: { ref: string; content: string }[] }
 
       assert.equal(written.ok, true)
-      assert.equal(recalled.matches[0]!.file, 'self/self.md')
+      assert.match(recalled.matches[0]!.ref, /^mem1\./)
       assert.match(recalled.matches[0]!.content, /喜欢冷笑话/)
       assert.doesNotThrow(() => zod.toJSONSchema(memoryTool.schema))
     } finally {

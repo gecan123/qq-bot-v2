@@ -19,7 +19,6 @@ import { createFetchContentTool, fetchContentScopeAccepts } from './fetch-conten
 import { createInboxTool } from './inbox.js'
 import { createChatStyleTool } from './chat-style.js'
 import { createNotebookTool } from './notebook.js'
-import { createLifeJournalTool } from './life-journal.js'
 import { workspaceFileTool } from './workspace-file.js'
 import { createReadFileTool } from './read-file.js'
 import { createInspectMediaTool } from './inspect-media.js'
@@ -156,10 +155,6 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     rootDir: deps.workspaceDir,
     workspaceStateCoordinator: deps.workspaceStateCoordinator,
   })
-  const lifeJournal = createLifeJournalTool({
-    rootDir: deps.workspaceDir,
-    workspaceStateCoordinator: deps.workspaceStateCoordinator,
-  })
   const collectSticker = collectStickerTool
   const workspaceBash = createWorkspaceBashTool({ workspaceDir: deps.workspaceDir })
   const tools: Tool[] = [
@@ -195,9 +190,9 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
       tools: [schedule],
     },
     {
-      name: 'life_state',
-      description: '跨天主题过程、经历、感受、梦和当前 Agenda；稳定事实仍写 memory.',
-      tools: [notebook, lifeJournal],
+      name: 'notebook_management',
+      description: '跨天维护研究、阅读、市场和项目过程；稳定结论写 memory，持续承诺用 goal，定时唤醒用 schedule.',
+      tools: [notebook],
     },
     {
       name: 'sticker_management',

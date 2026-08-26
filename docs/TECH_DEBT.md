@@ -20,7 +20,7 @@ QQ / 飞书入站
   -> ledger 与 runtime state 原子提交
 ```
 
-QQ Gateway、Feishu Gateway 和 Media Worker 通过 PostgreSQL 事实边界或薄 HTTP 与 Agent Core 协作；不使用通用 broker。短期 ScheduleRuntime、occurrence 与 pending delivery 都由 Agent Core 进程内持有，Agent Core 和 Media Worker 直接调用配置的 LLM provider。只有 Agent Core 可以拥有 `AgentContext`、推进 runtime singleton 和写 canonical ledger。PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goal 和观测数据；Memory、Notebook、Life Journal、Agenda、schedule 与 background task 元数据主要保存在 workspace Markdown/JSON。WebAdmin 的观察 feature 保持只读，固定 operations feature 是唯一受控写入口。
+QQ Gateway、Feishu Gateway 和 Media Worker 通过 PostgreSQL 事实边界或薄 HTTP 与 Agent Core 协作；不使用通用 broker。短期 ScheduleRuntime、occurrence 与 pending delivery 都由 Agent Core 进程内持有，Agent Core 和 Media Worker 直接调用配置的 LLM provider。只有 Agent Core 可以拥有 `AgentContext`、推进 runtime singleton 和写 canonical ledger。PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goal 和观测数据；Memory、Notebook、schedule 与 background task 元数据主要保存在 workspace Markdown/JSON。WebAdmin 的观察 feature 保持只读，固定 operations feature 是唯一受控写入口。
 
 现有设计的可靠性基础包括：append-only canonical history、确定性 replay、compaction CAS、tool call/result 原子组、显式跨平台 conversation focus、集中 tool policy、渐进式披露、有界 scheduler，以及 WebAdmin 的只读观察边界和固定 operations 写入边界。下面条目是在这些契约之上的具体缺口。
 
@@ -35,7 +35,7 @@ QQ Gateway、Feishu Gateway 和 Media Worker 通过 PostgreSQL 事实边界或�
 - QQ/飞书入站事实写入与撤回使用有界 transient retry 和小抖动；最终失败进入结构化 NDJSON，Health 展示最近 24 小时计数。Mailbox watcher 保持不自动跳过 poison row，并暴露阻塞 row、连续失败和错误分类。
 - 独立 Media Worker 复用有界 scheduler，Browser 与全部本机服务 URL 共用 loopback origin parser。
 - WebAdmin Metrics 默认读取 NDJSON 并明确 source/coverage/truncated；会话页覆盖 QQ 与飞书；Health 常规刷新只做 quick metadata check，完整 replay 由 operator 手动触发。
-- `BotLoopAgent` 已把 persistence、compaction 与循环决策分别下沉到 `LedgerCommitCoordinator`、`CompactionCoordinator` 与纯 `LoopPolicy`；Memory、Notebook、Life Journal 共享薄的 Markdown revision/CAS/atomic-write 基础设施。
+- `BotLoopAgent` 已把 persistence、compaction 与循环决策分别下沉到 `LedgerCommitCoordinator`、`CompactionCoordinator` 与纯 `LoopPolicy`；Memory 与 Notebook 共享薄的 Markdown revision/CAS/atomic-write 基础设施。
 
 ## P1：可靠性与规模风险
 
@@ -71,7 +71,7 @@ QQ Gateway、Feishu Gateway 和 Media Worker 通过 PostgreSQL 事实边界或�
 ### Goal 总成本与非 Agent LLM 路径尚未统一
 
 - `LlmClient` 路径已经统一记录 callId、actor/operation/taskId/goalId、provider/model、成功/失败/取消、耗时、stop reason、token/cache 和不含正文的四段结构 evidence；主 Agent、compaction、Memory maintenance、Goal completion judge、startup probe、`fetch_url` 摘要与长期状态翻译均已接入。
-- Life Journal 和媒体描述等 `src/llm/openai-adapter.ts` 路径仍主要使用 AsyncLocal usage 聚合，没有进入同一逐调用 trace；不同稳定 prompt family 的 cache key 分离也没有形成统一契约。
+- 媒体描述等 `src/llm/openai-adapter.ts` 路径仍主要使用 AsyncLocal usage 聚合，没有进入同一逐调用 trace；不同稳定 prompt family 的 cache key 分离也没有形成统一契约。
 - Goal token budget 当前只覆盖主 Agent round 的未缓存 input + output；包括完成验收在内的辅助 LLM 调用不进入完整任务成本。
 - 目标：决定是否让非 `LlmClient` 路径复用同一安全 trace，再建立稳定 prompt-family 分离，并明确 Goal budget 是“主循环预算”还是“目标总成本预算”。
 
@@ -103,7 +103,7 @@ QQ Gateway、Feishu Gateway 和 Media Worker 通过 PostgreSQL 事实边界或�
 
 ## 条件性观察项
 
-- Memory、Notebook、Life Journal 和 Agenda writer 当前只有单进程按资源键协调。在单 bot writer 部署下这是明确运行约束；只有未来允许多个 writer 进程共享 workspace 时，才增加跨进程互斥或改成单 writer service。
+- Memory 与 Notebook writer 当前只有单进程按资源键协调。在单 bot writer 部署下这是明确运行约束；只有未来允许多个 writer 进程共享 workspace 时，才增加跨进程互斥或改成单 writer service。
 - 长期状态当前坚持 Markdown 扫描和确定性 lexical scoring。先积累规模、延迟和召回质量证据；只有出现可复现瓶颈时，才评估可从 Markdown 重建的 SQLite FTS/BM25 或 embedding 派生索引。
 - s12 多任务图/依赖、s15/s16 多 Agent team/protocol 和 s18 worktree isolation 只有在产品确实需要长期协作或自主改代码时再引入，不把单一 Goal 扩成第二主循环。
 

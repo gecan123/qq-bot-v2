@@ -8,11 +8,10 @@ import { lifeSnapshotSchema, type LifeSnapshot } from './life.schema.js'
 export async function loadLifeSnapshot(now = new Date()): Promise<LifeSnapshot> {
   const db = getAdminPrisma()
   const workspace = getWorkspaceRoot()
-  const [goal, runtime, inboxReadCount, agendaRaw, schedulesRaw, tasksRaw] = await Promise.all([
+  const [goal, runtime, inboxReadCount, schedulesRaw, tasksRaw] = await Promise.all([
     db.botAgentGoal.findUnique({ where: { id: 1 } }),
     db.botAgentRuntimeState.findUnique({ where: { id: 1 }, select: { lastWakeAt: true, updatedAt: true, conversationFocus: true, mailboxCursors: true } }),
     readInboxReadCursorCount(db),
-    readOptional(join(workspace, 'life', 'agenda.md')),
     readJson(join(workspace, 'runtime', 'schedules.json')),
     readJson(join(workspace, 'runtime', 'background-tasks.json')),
   ])
@@ -28,7 +27,6 @@ export async function loadLifeSnapshot(now = new Date()): Promise<LifeSnapshot> 
   const notes = [
     '短期连续行动不单独持久化；跨重启工作只由 Goal 表示。',
     '后台任务文件按原始 JSON 只读解析；不会实例化 registry，以免触发恢复状态写入。',
-    'Agenda 直接读取文件；缺失时不会调用 ensure/create。',
   ]
   return lifeSnapshotSchema.parse({
     schemaVersion: 1, generatedAt: now.toISOString(),
@@ -38,7 +36,6 @@ export async function loadLifeSnapshot(now = new Date()): Promise<LifeSnapshot> 
       tokenBudget: goal.tokenBudget, tokensUsed: goal.tokensUsed, timeUsedSeconds: goal.timeUsedSeconds, roundsUsed: goal.roundsUsed,
       revision: goal.revision, blockerKey: goal.blockerKey, blockerTurns: goal.blockerTurns, blockedReason: goal.blockedReason, updatedAt: goal.updatedAt.toISOString(),
     },
-    agenda: { exists: agendaRaw !== null, markdown: agendaRaw ?? '', sections: countSections(agendaRaw ?? '') },
     schedules, backgroundTasks,
     runtime: {
       lastWakeAt: runtime?.lastWakeAt?.toISOString() ?? null, updatedAt: runtime?.updatedAt.toISOString() ?? null,
@@ -55,5 +52,4 @@ function text(value: unknown, fallback: string): string { return typeof value ==
 function nullableText(value: unknown): string | null { return typeof value === 'string' ? value : null }
 function number(value: unknown): number { return typeof value === 'number' && Number.isFinite(value) ? value : 0 }
 function objectSize(value: unknown): number { return value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value).length : 0 }
-function countSections(markdown: string): Record<string, number> { const out: Record<string, number> = {}; let current = 'Preamble'; for (const line of markdown.split('\n')) { const heading = /^##\s+(.+)$/.exec(line); if (heading) { current = heading[1].trim(); out[current] = 0 } else if (/^\s*[-*]\s+\S/.test(line)) out[current] = (out[current] ?? 0) + 1 } return out }
 async function readInboxReadCursorCount(db: ReturnType<typeof getAdminPrisma>): Promise<number> { try { const rows = await db.$queryRawUnsafe<Array<{ value: unknown }>>('SELECT inbox_read_cursors AS value FROM bot_agent_runtime_state WHERE id = 1'); return objectSize(rows[0]?.value) } catch { return 0 } }

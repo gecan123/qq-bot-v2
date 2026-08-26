@@ -138,7 +138,7 @@ function operationRun(status: OperationRun['status']): OperationRun {
       deletedRuntimeStates: 1,
       deletedGoals: 1,
       createdRuntimeState: true,
-      removedDirectories: ['memory', 'journal', 'life', 'notebook'],
+      removedDirectories: ['memory', 'notebook'],
       removedWorkspaceEntries: 3,
     } : null,
     error: status === 'failed'

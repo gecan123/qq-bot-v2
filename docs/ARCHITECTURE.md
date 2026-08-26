@@ -76,7 +76,7 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - `bot_agent_ledger_entries` 保存 append-only LLM history；`bot_agent_runtime_state` 保存通知披露 cursor、inbox 已读 cursor、continuity、Goal revision、active capabilities、平台中立 conversation focus、last wake 和 ledger head；`bot_agent_checkpoint` 只缓存已验证 projection。
 - QQ 或飞书新消息都不会隐式切换 focus。Agent 必须先通过 `conversation open` 显式打开允许的群或私聊，`send_message` 才能向当前 focus 发送；focus 不从 transcript、memory 或日志重建。
 - `prompts/groups.md` 是群监听范围、主动发送权限、参与档位和 operator 固定群提示的唯一配置源。启动时严格解析并冻结；`mentions` 只允许结构化 @ reply，其普通消息不生成 notification；`selective` / `active` 的普通消息可聚合为 `delivery=passive` 的 QQ notification，但不主动唤醒，正文仍必须用 inbox 按需读取。档位不扩大发送授权。active 群可用一行稳定 `resident-hint` 进入常驻 source list，作为成果分享候选；完整风格正文仍只由 `chat_style` 按需读取，会变化的群文化与历史写 group memory。
-- `bot_agent_goal`、Memory、Notebook、Life Journal、Agenda、调度文件和 `logs/*` 都是 side state，不能作为 transcript replay 来源。
+- `bot_agent_goal`、Memory、Notebook、调度文件和 `logs/*` 都是 side state，不能作为 transcript replay 来源。
 - 外部平台已确认发送和本地数据库之间没有分布式事务，因此 `mailbox_handled` 是 durable 防重复边界，不承诺外部发送 exactly-once。统一 `MessageDelivery` 使用稳定 UUID 标识一次动作，并把结果明确区分为 `sent`、`failed`、`delivery_unknown`；当前不增加 outbox、自动重试、独立 egress 进程或平台降级层。
 - compaction、append 与 runtime 元数据使用数据库事务；checkpoint 刷新和 `afterCompact` 是 best-effort，不回滚已提交历史。
 - `data/agent-workspace/` 是 bot 生产的 workspace 数据，不是项目源码。

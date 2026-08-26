@@ -20,11 +20,11 @@ export function MemoryView({ snapshot, isRefreshing, refreshFailed }: { snapshot
   ))
 
   return <>
-    <PageHeader title="Memory / Life 溯源" description="浏览长期记忆、Life Journal 与 Notebook 文件；点击文件或条目可进入完整只读页面。" generatedAt={snapshot.generatedAt} isRefreshing={isRefreshing} refreshFailed={refreshFailed}/>
-    <StatGrid><StatCard label="Knowledge files" value={snapshot.counts.files}/><StatCard label="Memory entries" value={snapshot.counts.entries}/><StatCard label="Life Journal" value={`${snapshot.counts.journalFiles} files`} detail={`${snapshot.counts.journalEntries} sections`}/><StatCard label="Source links" value={snapshot.counts.sourceLinks} tone={snapshot.counts.sourceLinks ? 'good' : 'warn'}/></StatGrid>
+    <PageHeader title="Memory / Notebook 溯源" description="浏览稳定长期记忆与跨天过程笔记；点击文件或条目可进入完整只读页面。" generatedAt={snapshot.generatedAt} isRefreshing={isRefreshing} refreshFailed={refreshFailed}/>
+    <StatGrid><StatCard label="Knowledge files" value={snapshot.counts.files}/><StatCard label="Memory entries" value={snapshot.counts.memoryEntries}/><StatCard label="Notebook entries" value={snapshot.counts.notebookEntries}/><StatCard label="Source links" value={snapshot.counts.sourceLinks} tone={snapshot.counts.sourceLinks ? 'good' : 'warn'}/></StatGrid>
     <div className="filter-toolbar mt-4">
       <SearchInput value={search} onChange={setSearch} label="搜索知识" placeholder="搜索内容、文件名或条目 ID" />
-      <select aria-label="知识类型" value={kind} onChange={event => setKind(event.target.value as typeof kind)}><option value="all">全部类型</option><option value="memory">Memory</option><option value="journal">Life Journal</option><option value="notebook">Notebook</option></select>
+      <select aria-label="知识类型" value={kind} onChange={event => setKind(event.target.value as typeof kind)}><option value="all">全部类型</option><option value="memory">Memory</option><option value="notebook">Notebook</option></select>
       <span className="filter-count">{filteredFiles.length} / {snapshot.files.length} 文件 · {filteredEntries.length} / {snapshot.entries.length} 条目</span>
     </div>
     <div className="mt-4 grid items-start gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">

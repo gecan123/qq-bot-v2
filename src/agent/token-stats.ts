@@ -10,7 +10,6 @@ const log = createLogger('TOKEN_STATS')
 export type AgentTokenOperation =
   | 'agent.chat'
   | 'compaction'
-  | 'life_journal.review'
   | 'memory.maintenance'
   | 'goal.completion_judge'
   | 'agent.psychologist'

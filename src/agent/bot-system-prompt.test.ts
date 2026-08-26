@@ -100,7 +100,7 @@ describe('buildBotSystemPrompt', () => {
     })
 
     assert.match(prompt, /授权和安全边界内.*候选方向/s)
-    assert.match(prompt, /最近线索.*稳定兴趣.*Agenda.*关系.*已有成果.*候选方向/s)
+    assert.match(prompt, /最近线索.*稳定兴趣.*关系.*已有成果.*候选方向/s)
     assert.match(prompt, /研究.*创作.*自然联系熟人.*相互转化/s)
     assert.match(prompt, /一次只推进一个.*真实证据.*continue.*长期方向.*self Goal.*currentCommitment/s)
     assert.match(prompt, /不要.*承诺.*我会继续.*continue 发送后.*下一步.*goal_progress.*currentCommitment/s)

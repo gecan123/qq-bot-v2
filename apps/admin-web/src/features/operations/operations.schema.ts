@@ -31,10 +31,10 @@ const resetContextSchema = z.object({
 
 const resetKnowledgeSchema = z.object({
   directories: z.array(z.object({
-    name: z.enum(['memory', 'journal', 'life', 'notebook']),
+    name: z.enum(['memory', 'notebook']),
     exists: z.boolean(),
     files: z.number().int().nonnegative(),
-  }).strict()).length(4),
+  }).strict()).length(2),
 }).strict()
 
 const resetWorkspaceSchema = z.object({
@@ -63,7 +63,7 @@ export const operationResultPayloadSchema = z.object({
   deletedRuntimeStates: z.number().int().nonnegative(),
   deletedGoals: z.number().int().nonnegative(),
   createdRuntimeState: z.boolean(),
-  removedDirectories: z.array(z.enum(['memory', 'journal', 'life', 'notebook'])).max(4),
+  removedDirectories: z.array(z.enum(['memory', 'notebook'])).max(2),
   removedWorkspaceEntries: z.number().int().nonnegative().default(0),
 }).strict()
 

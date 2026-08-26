@@ -7,7 +7,7 @@
 - `docs/README.md`：仓库知识地图。
 - `docs/ARCHITECTURE.md`：运行形态、范围路由和模块边界。
 - `docs/AGENT_CONTEXT.md`：永续上下文和 replay 不变量。
-- `docs/MEMORY_ARCHITECTURE.md`：事实账本、LLM ledger 和四类长期状态的边界与流程。
+- `docs/MEMORY_ARCHITECTURE.md`：事实账本、LLM ledger、Memory 与 Notebook 的边界和流程。
 - `docs/TOOLS.md`：工具注册、LLM 路径和安全边界。
 - `docs/OPERATIONS.md`：命令、Git 格式、验证和日志。
 - `docs/TECH_DEBT.md`：已知清理候选。
@@ -70,7 +70,7 @@ Issues、PRD 和跨会话 tickets 使用 GitHub Issues，通过 `gh` 操作。�
 - 工具注册集中在 `src/agent/tools/index.ts`；声称某个工具存在前先查这个文件。
 - 不要把裸 shell 暴露给常驻 bot。Bash 类工具必须有命令 allowlist、固定 workspace、最小 env、输出/时间上限和审计日志。
 - `data/agent-workspace/` 是 bot 自己生产内容的区域，默认不是项目源码。除非用户明确要求，否则不要提交这里的生成物。
-- 有副作用的工具要格外谨慎：`send_message`、图片生成/下载、notebook/life_journal/memory/sticker 工具、browser 写操作，以及未来任何会写 DB 或外部服务的工具。
+- 有副作用的工具要格外谨慎：`send_message`、图片生成/下载、notebook/memory/sticker 工具、browser 写操作，以及未来任何会写 DB 或外部服务的工具。
 - WebAdmin 的观察 feature 保持只读；唯一写入口是固定 operations feature，必须经过预览、确认、Bot 停止检查、single-flight runner 和本地审计，禁止通用 shell、SQL、命令名或路径输入。
 - Codex、Claude Code 等开发助手在开发期间不得自动启动或重启本项目的真实 Bot/Agent 运行实例；任何启动或重启（包括验证、应用改动或故障恢复）都必须先向用户请求并获得当次明确确认，且执行前检查现有实例，避免并行运行多个实例。
 - 除非任务明确需要真实运行，否则不要启动会连接外部服务、QQ/NapCat、浏览器 sidecar、数据库或长期驻留的真实进程；优先使用静态检查、focused test、日志和已有运行证据。

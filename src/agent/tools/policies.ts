@@ -65,10 +65,6 @@ export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.fr
     parallel: ['list', 'search', 'read'],
     sideEffect: ['write', 'update', 'delete', 'compact'],
   }),
-  life_journal: byAction({
-    parallel: ['read_recent', 'read_day', 'read_entry', 'read_agenda'],
-    sideEffect: ['write', 'update', 'delete', 'compact', 'write_agenda'],
-  }),
   crypto_paper: byAction({
     exclusive: ['account', 'portfolio', 'orders'],
     sideEffect: ['buy', 'sell', 'reset'],

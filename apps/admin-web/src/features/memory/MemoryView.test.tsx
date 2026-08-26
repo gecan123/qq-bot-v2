@@ -13,7 +13,7 @@ test('filters knowledge files and entries with one search', () => {
   const snapshot: MemorySnapshot = {
     schemaVersion: 1,
     generatedAt: '2026-08-20T08:00:00.000Z',
-    counts: { files: 2, entries: 2, journalFiles: 0, journalEntries: 0, sourceLinks: 0 },
+    counts: { files: 2, memoryEntries: 2, notebookEntries: 0, sourceLinks: 0 },
     files: [
       { fileId: 'one', path: 'memory/alpha.md', kind: 'memory', updatedAt: '2026-08-20T08:00:00.000Z', size: 10, entryCount: 1 },
       { fileId: 'two', path: 'memory/beta.md', kind: 'memory', updatedAt: '2026-08-20T08:00:00.000Z', size: 10, entryCount: 1 },

@@ -1,4 +1,4 @@
-import { EmptyState, JsonBlock, PageHeader, Panel, StatCard, StatGrid, StatusBadge, WarningList } from '../../components/AdminUi.js'
+import { JsonBlock, PageHeader, Panel, StatCard, StatGrid, StatusBadge, WarningList } from '../../components/AdminUi.js'
 import { formatCount, formatTimestamp } from '../../lib/format.js'
 import type { HealthSnapshot } from './health.schema.js'
 
@@ -64,12 +64,10 @@ export function HealthView({ snapshot, isRefreshing, refreshFailed, isDeepChecki
           <dl className="grid grid-cols-2 gap-3 text-sm">
             <Metric label="Memory" value={`${snapshot.knowledge.counts.memory.entries} entries`} />
             <Metric label="Notebook" value={`${snapshot.knowledge.counts.notebook.entries} entries`} />
-            <Metric label="Life Journal" value={`${snapshot.knowledge.counts.lifeJournal.entries} entries`} />
             <Metric label="Knowledge issues" value={String(snapshot.knowledge.issueCount)} />
             <Metric label="Migration files" value={String(snapshot.migrations.files)} />
             <Metric label="Applied migrations" value={String(snapshot.migrations.applied)} />
           </dl>
-          {!snapshot.knowledge.agendaExists && <div className="mt-4"><EmptyState>Agenda 尚不存在；健康检查不会创建默认文件。</EmptyState></div>}
         </Panel>
       </div>
       <WarningList warnings={snapshot.warnings} />

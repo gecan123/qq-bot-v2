@@ -30,8 +30,6 @@ function dependencies(events: string[]): AdminOperationsAdapterDependencies {
         ...(input.scope !== 'context' ? {
           knowledge: { directories: [
             { name: 'memory' as const, exists: true, files: 2 },
-            { name: 'journal' as const, exists: false, files: 0 },
-            { name: 'life' as const, exists: true, files: 1 },
             { name: 'notebook' as const, exists: true, files: 1 },
           ] },
         } : {}),
@@ -55,7 +53,7 @@ function dependencies(events: string[]): AdminOperationsAdapterDependencies {
         deletedRuntimeStates: 1,
         deletedGoals: 1,
         createdRuntimeState: true,
-        removedDirectories: input.scope === 'context' ? [] : ['memory', 'journal', 'life', 'notebook'],
+        removedDirectories: input.scope === 'context' ? [] : ['memory', 'notebook'],
         removedWorkspaceEntries: input.scope === 'all' ? 2 : 0,
       }
     },

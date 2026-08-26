@@ -36,7 +36,6 @@ export const healthSnapshotSchema = z.object({
     counts: z.object({
       memory: z.object({ files: z.number().int().nonnegative(), entries: z.number().int().nonnegative() }).strict(),
       notebook: z.object({ files: z.number().int().nonnegative(), entries: z.number().int().nonnegative() }).strict(),
-      lifeJournal: z.object({ files: z.number().int().nonnegative(), entries: z.number().int().nonnegative() }).strict(),
     }).strict(),
     lifecycle: z.object({
       expired: z.number().int().nonnegative(),
@@ -45,7 +44,6 @@ export const healthSnapshotSchema = z.object({
       stableWithoutSources: z.number().int().nonnegative(),
     }).strict(),
     issueCount: z.number().int().nonnegative(),
-    agendaExists: z.boolean(),
   }).strict(),
   contextSurface: z.object({
     status: z.enum(['available', 'missing', 'invalid']),

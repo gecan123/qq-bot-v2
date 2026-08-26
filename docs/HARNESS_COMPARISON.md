@@ -12,7 +12,7 @@
 | s06 Subagent | 有意不提供通用能力 | 通用 clean-context subagent 已移除，避免维护第二套多轮 LLM 控制流；`trading_agent` 继续作为边界明确的专用金融研究 worker，主前台仍只有一个通用 LLM loop。 |
 | s07 Skill Loading | 已满足核心 | 主 Agent 有有界的 `skill list/load`；skill 内容由开发者直接维护在 `docs/agent-skills/`，不提供运行时编辑器。仍没有多 skill root 或自动相关选择。 |
 | s08 Context Compact | 已满足核心 | 有 token threshold/overflow 触发的摘要 compaction、完整 prefix summarization、safe cut、CAS append-only boundary 和 `beforeCompact` / `afterCompact` hooks，避免切开 tool call/result；完整 transcript 保留在 permanent ledger，LLM 请求另有 working-context 投影，旧图片只在视图中降级。聊天控制面不再提供 `/compact`。 |
-| s09 Memory | 已满足核心 | 主 Agent 的 `memory` 只暴露 `remember/recall/correct`；recall 做有界 entry 级相关召回并返回 provenance/revision，整理、晋升和合并由内部 maintenance 或 operator 处理。Notebook 保存主题过程，Life Journal 保存经历/感受/梦，Agenda 保存当前承诺和下一步。 |
+| s09 Memory | 已满足核心 | 主 Agent 的 `memory` 只暴露 `remember/recall/correct`；recall 做有界相关召回并返回 opaque ref，文件、revision、生命周期和整理都留在模块内部。Notebook 只保存跨天主题过程，当前承诺由 Goal 表示。 |
 | s10 System Prompt | 部分满足，适合本项目 | prompt 分 section 组装，但启动后冻结；这不完全等同教程的运行时动态拼接，但更利于当前 prompt cache 稳定性。 |
 | s11 Error Recovery | 核心已满足 | 有工具错误隔离、provider-neutral stop reason、transport/429/5xx/529/SSE overload 有界退避、`retry-after`、prompt-too-long 强制 compaction、`max_tokens` 预算升级与有界 continuation、显式同 provider fallback、round backoff、replay barrier 和幂等 shutdown。仍可补 OpenAI 错误的更细分类与恢复指标汇总。 |
 | s12 Task System | 部分满足 | 单一持久 Goal 支持 `origin=owner|self`、状态流转、revision、token/time/round 使用量、完成证据、独立无工具完成验收和三轮 blocker 门槛，并能跨 replay/compaction/restart 续跑；Agent 可自主建/弃 self Goal，owner Goal 可抢占。仍没有多任务图、依赖、认领或 blockedBy DAG。 |
@@ -20,7 +20,7 @@
 | s14 Cron Scheduler | 已满足所需子集 | `schedule create/list/get_occurrence/cancel` 只支持 30 秒至 3 天内的一次性 `at` / `afterSeconds`。独立 store 可跨重启恢复 timer，到期只产生一次稳定 `scheduled_wake` 注意事件；周期调度、命令执行和 run history 留给 operator。 |
 | s15 Agent Teams | 未满足 | 没有持久 teammate、inbox、多个 LLM loop。 |
 | s16 Team Protocols | 未满足 | 没有多 Agent request/response FSM、plan approval 或 teammate shutdown handshake；当前是本机多进程 platform 加单一 Agent Core，进程拆分不等于多 Agent 协议。 |
-| s17 Autonomous Agents | 产品目标上已较强满足 | 主 Agent 在发送或完成其他动作后持续寻找下一件事；只有显式 `rest` 才主动暂停且可被注意事件打断，不设置普通 idle backoff、每日 token 预算或跨日限流。显式 Life Journal/Agenda 保持生活连续性，active Goal 会在每轮和 compaction 后重注入为默认主线。 |
+| s17 Autonomous Agents | 产品目标上已较强满足 | 主 Agent 在发送或完成其他动作后持续寻找下一件事；只有显式 `rest` 才主动暂停且可被注意事件打断，不设置普通 idle backoff、每日 token 预算或跨日限流。active Goal 会在每轮和 compaction 后重注入为默认主线，Schedule 负责未来时点重新评估。 |
 | s18 Worktree Isolation | 未满足 | 当前 bot 不自主改仓库源码；若以后允许 Luna 自主改代码，需要补。 |
 | s19 MCP Plugin | 有意不提供 | 当前没有真实 MCP 连接需求，已删除未启用的 MCP manager、tool、配置和 SDK 依赖；有明确 server 与使用场景后再按实际契约接入。 |
 | s20 Comprehensive | 单 Agent 产品骨架成熟 | 已有单循环 + 永续 context/replay + working projection + mailbox + 单一持久 Goal + deferred typed tools + 工具内权限边界 + recovery + compaction + durable typed background task/schedule + explainable memory + hooks + skill + 安全并行 + 自主循环。 |

@@ -64,8 +64,8 @@ test('tool schemas disclose custom validation constraints that JSON Schema canno
   const memoryJson = zodToToolJsonSchema(memoryTool.schema)
   const memoryProps = memoryJson.properties as Record<string, Record<string, unknown>>
   assert.deepEqual(memoryProps.action.enum, ['remember', 'recall', 'correct'])
-  assert.match(String(memoryProps.action.description), /action=correct 时必须提供 file, entryId, expectedRevision, content/)
-  assert.match(String(memoryProps.file.description), /recall 命中项/)
+  assert.match(String(memoryProps.action.description), /action=correct 时必须提供 ref, content/)
+  assert.match(String(memoryProps.ref.description), /recall 命中项/)
   assert.equal('trust' in memoryProps, false)
 })
 

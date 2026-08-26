@@ -10,7 +10,6 @@ export interface LoopPolicyInput {
   onlyHelpToolCalls: boolean
   madeToolProgress: boolean
   toolContinuation?: ToolContinuationPolicy
-  correctionRetryPending: boolean
   recoverableCorrectionRounds: number
   maxRecoverableCorrectionRounds: number
 }
@@ -30,12 +29,11 @@ export type LoopPolicyDecision =
         | 'tool_no_progress'
         | 'seek_next_action'
         | 'attention_pending'
-      correctionRetryPending: boolean
       recoverableCorrectionRounds: number
     }
   | {
       action: 'wait_attention'
-      reason: 'tool_backoff' | 'action_correction'
+      reason: 'tool_backoff'
       timeout: 'action_retry'
       recoverableCorrectionRounds: number
     }
@@ -49,7 +47,7 @@ export function decideLoopPolicy(input: LoopPolicyInput): LoopPolicyDecision {
   if (input.stopRequested) return { action: 'stop', recoverableCorrectionRounds: input.recoverableCorrectionRounds }
   if (input.demand === 'attention') {
     return {
-      action: 'continue', reason: 'attention_pending', correctionRetryPending: false,
+      action: 'continue', reason: 'attention_pending',
       recoverableCorrectionRounds: input.recoverableCorrectionRounds,
     }
   }
@@ -60,19 +58,19 @@ export function decideLoopPolicy(input: LoopPolicyInput): LoopPolicyDecision {
       || (correctionRounds > 0 && input.onlyHelpToolCalls)
     if (continuingCorrection && correctionRounds < input.maxRecoverableCorrectionRounds) {
       return {
-        action: 'continue', reason: 'recoverable_tool_correction', correctionRetryPending: false,
+        action: 'continue', reason: 'recoverable_tool_correction',
         recoverableCorrectionRounds: correctionRounds + 1,
       }
     }
     if (!input.recoverableToolFailure && !input.onlyHelpToolCalls) correctionRounds = 0
     if (input.toolContinuation === 'immediate') {
-      return { action: 'continue', reason: 'tool_immediate', correctionRetryPending: false, recoverableCorrectionRounds: correctionRounds }
+      return { action: 'continue', reason: 'tool_immediate', recoverableCorrectionRounds: correctionRounds }
     }
     if (input.toolContinuation === 'wait_event') {
-      return { action: 'continue', reason: 'tool_external_started', correctionRetryPending: false, recoverableCorrectionRounds: 0 }
+      return { action: 'continue', reason: 'tool_external_started', recoverableCorrectionRounds: 0 }
     }
     if (input.toolContinuation === 'stop' || input.toolContinuation === 'wait_attention') {
-      return { action: 'continue', reason: 'tool_direction_complete', correctionRetryPending: false, recoverableCorrectionRounds: correctionRounds }
+      return { action: 'continue', reason: 'tool_direction_complete', recoverableCorrectionRounds: correctionRounds }
     }
     if (input.toolContinuation === 'backoff') {
       return {
@@ -82,28 +80,19 @@ export function decideLoopPolicy(input: LoopPolicyInput): LoopPolicyDecision {
       }
     }
     if (input.madeToolProgress) {
-      return { action: 'continue', reason: 'tool_progress', correctionRetryPending: false, recoverableCorrectionRounds: correctionRounds }
-    }
-    if (input.demand === 'continuation' && !input.correctionRetryPending) {
-      return { action: 'continue', reason: 'action_correction', correctionRetryPending: true, recoverableCorrectionRounds: correctionRounds }
+      return { action: 'continue', reason: 'tool_progress', recoverableCorrectionRounds: correctionRounds }
     }
     if (input.demand === 'continuation') {
-      return {
-        action: 'wait_attention', reason: 'action_correction', timeout: 'action_retry',
-        recoverableCorrectionRounds: correctionRounds,
-      }
+      return { action: 'continue', reason: 'action_correction', recoverableCorrectionRounds: correctionRounds }
     }
     return {
-      action: 'continue', reason: 'tool_no_progress', correctionRetryPending: false,
+      action: 'continue', reason: 'tool_no_progress',
       recoverableCorrectionRounds: correctionRounds,
     }
   }
 
-  if (input.demand === 'continuation' || input.correctionRetryPending) {
-    if (!input.correctionRetryPending) {
-      return { action: 'continue', reason: 'action_correction', correctionRetryPending: true, recoverableCorrectionRounds: correctionRounds }
-    }
-    return { action: 'wait_attention', reason: 'action_correction', timeout: 'action_retry', recoverableCorrectionRounds: correctionRounds }
+  if (input.demand === 'continuation') {
+    return { action: 'continue', reason: 'action_correction', recoverableCorrectionRounds: correctionRounds }
   }
-  return { action: 'continue', reason: 'seek_next_action', correctionRetryPending: false, recoverableCorrectionRounds: 0 }
+  return { action: 'continue', reason: 'seek_next_action', recoverableCorrectionRounds: 0 }
 }

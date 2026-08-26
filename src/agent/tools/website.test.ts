@@ -195,6 +195,55 @@ describe('website tool read/write/status', () => {
     }
   })
 
+  test('lists supported files below an allowed website directory', async () => {
+    const repoDir = await makeSiteRepo()
+    try {
+      await writeFile(join(repoDir, 'src/content/blog/second.mdx'), '# second\n', 'utf8')
+      const tool = createWebsiteTool({ repoDir, runner: makeRunner() })
+
+      const result = JSON.parse((await tool.execute({
+        action: 'list',
+        directory: 'src/content/blog',
+        limit: 100,
+      }, makeCtx())).content as string) as {
+        ok: boolean
+        files: string[]
+        totalFiles: number
+        truncated: boolean
+      }
+
+      assert.equal(result.ok, true)
+      assert.deepEqual(result.files, [
+        'src/content/blog/hello.md',
+        'src/content/blog/second.mdx',
+      ])
+      assert.equal(result.totalFiles, 2)
+      assert.equal(result.truncated, false)
+    } finally {
+      await rm(repoDir, { recursive: true, force: true })
+    }
+  })
+
+  test('rejects list outside src and public', async () => {
+    const repoDir = await makeSiteRepo()
+    try {
+      const tool = createWebsiteTool({ repoDir, runner: makeRunner() })
+      const result = JSON.parse((await tool.execute({
+        action: 'list',
+        directory: 'scripts',
+        limit: 100,
+      }, makeCtx())).content as string) as { ok: boolean; code: string }
+
+      assert.deepEqual(result, {
+        ok: false,
+        code: 'path_not_allowed',
+        directory: 'scripts',
+      })
+    } finally {
+      await rm(repoDir, { recursive: true, force: true })
+    }
+  })
+
   test('rejects reading disallowed files', async () => {
     const repoDir = await makeSiteRepo()
     try {

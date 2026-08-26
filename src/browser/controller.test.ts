@@ -46,6 +46,7 @@ describe('buildCloakLaunchOptions', () => {
       },
     )
   })
+
 })
 
 describe('pruneBrowserArtifacts', () => {
@@ -133,6 +134,7 @@ describe('BrowserController real browser fixture', { skip: !RUN_REAL_BROWSER }, 
       artifactDir: join(tmp, 'artifacts'),
       actionLogPath: join(tmp, 'browser-actions.ndjson'),
       actionTimeoutMs: 15_000,
+      readOnly: false,
       headless: process.env.BOT_BROWSER_HEADED_TESTS === '1' ? false : true,
     })
   })
@@ -151,6 +153,10 @@ describe('BrowserController real browser fixture', { skip: !RUN_REAL_BROWSER }, 
     const observed = await controller.execute({ action: 'observe', pageId: opened.pageId })
     assert.equal(observed.ok, true)
     assert.ok(observed.elements?.some((el) => el.label === 'Post comment'))
+
+    const read = await controller.execute({ action: 'read', pageId: opened.pageId, maxChars: 500 })
+    assert.equal(read.ok, true)
+    assert.match(read.text ?? '', /Post comment/)
 
     const comment = observed.elements?.find((el) => el.label === 'Write comment')
     assert.ok(comment)
@@ -191,5 +197,26 @@ describe('BrowserController real browser fixture', { skip: !RUN_REAL_BROWSER }, 
     const blockedDownload = await controller.execute({ action: 'download', pageId: opened.pageId, elementId: dmg.elementId })
     assert.equal(blockedDownload.ok, false)
     assert.equal(blockedDownload.requiresOwnerHelp, true)
+  })
+
+  it('can close the last page and create a fresh page on the next open', async () => {
+    let status = await controller.execute({ action: 'status' })
+    while ((status.pages?.length ?? 0) > 1) {
+      const page = status.pages?.find((candidate) => !candidate.active) ?? status.pages?.[0]
+      assert.ok(page)
+      const closed = await controller.execute({ action: 'close_page', pageId: page.pageId })
+      assert.equal(closed.ok, true)
+      status = await controller.execute({ action: 'status' })
+    }
+
+    const onlyPage = status.pages?.[0]
+    assert.ok(onlyPage)
+    const closed = await controller.execute({ action: 'close_page', pageId: onlyPage.pageId })
+    assert.equal(closed.ok, true)
+    assert.equal(closed.pages?.length, 0)
+
+    const navigated = await controller.execute({ action: 'open', url: fixtureUrl })
+    assert.equal(navigated.ok, true)
+    assert.ok(navigated.pageId)
   })
 })

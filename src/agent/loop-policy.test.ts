@@ -5,7 +5,7 @@ import { decideLoopPolicy, type LoopPolicyInput } from './loop-policy.js'
 const base: LoopPolicyInput = {
   ranRound: true, stopRequested: false, toolCallCount: 0, demand: 'none',
   recoverableToolFailure: false, onlyHelpToolCalls: false, madeToolProgress: false,
-  correctionRetryPending: false, recoverableCorrectionRounds: 0,
+  recoverableCorrectionRounds: 0,
   maxRecoverableCorrectionRounds: 3,
 }
 
@@ -23,7 +23,6 @@ describe('loop policy', () => {
       [{ toolCallCount: 1, madeToolProgress: true }, 'continue', 'tool_progress'],
       [{ toolCallCount: 1 }, 'continue', 'tool_no_progress'],
       [{ demand: 'continuation' }, 'continue', 'action_correction'],
-      [{ demand: 'continuation', correctionRetryPending: true }, 'wait_attention', 'action_correction'],
       [{}, 'continue', 'seek_next_action'],
     ]
     for (const [overrides, action, reason] of cases) {
@@ -33,7 +32,7 @@ describe('loop policy', () => {
     }
   })
 
-  test('caps immediate recoverable correction rounds by switching direction', () => {
+  test('caps immediate recoverable correction rounds before returning to the normal loop', () => {
     const decision = decideLoopPolicy({
       ...base, toolCallCount: 1, recoverableToolFailure: true,
       recoverableCorrectionRounds: 3,

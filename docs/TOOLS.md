@@ -27,7 +27,7 @@
 - `media_generation`：内部工具是 `generate_image`，创建图片生成/编辑后台任务，`count=1..4` 时固定最多并发 2 个图片请求，后续用 `background_task` 查结果。
 - `media_inspection`：内部工具是 `inspect_media`，用入站 `mediaId` 或生成图 `ephemeralRef` 返回有界真实预览 image block；缺失的入站图片描述进入 `media-description` lane，当前结果标记 `descriptionStatus=pending` 而不等待模型。原始媒体事实仍可保存，但图片解码统一限制为最多 4000 万像素、单边最多 8192px，动画只读取第一帧；超限图片不会进入预览或视觉模型请求。
 - `media_fetch`：内部 `fetch_content` 只暴露图片 URL / QQ 头像 action；激活它不会放开普通网页或 Reddit 抓取。
-- `workspace_management`：包含 `workspace_file` 和只读 `workspace_bash`。后者只允许 `pwd/ls/rg/cat/head/tail/wc`，不经过 shell；外部抓取、风格和金融分别用 typed capability。
+- `workspace_management`：包含 `workspace_file` 和只读 `workspace_bash`。后者只允许 `pwd/ls/rg/cat/head/tail/wc`，不经过 shell；外部抓取、网站、风格和金融分别用 typed capability。
 - `document_reading`：内部工具是 `read_file`，只接受 `inbox` 返回的 `type=file` 的 `mediaId`；支持有界分页读取纯文本、PDF、DOCX、XLSX、PPTX、RTF 和 OpenDocument，不接受路径或 URL，也不执行文件内容。
 - 跨平台当前会话保存在 runtime singleton 的 `conversation_focus`；`inbox_read_cursors` 记录各来源实际读取到的 messages row。它们用于重启恢复运行控制状态，不是 LLM 可见事实，不写入 ledger message。focus 只由 `conversation open/close` 改变，新 mailbox 不会自动切换它。
 - `invoke` 的 schema/capability resolution 是内部路由，不单独记成功 trace。对外 schema仍要求 `args` 是对象；若 provider 误传可解析为 JSON 对象的字符串，runtime 会在 schema 校验前归一化。调用只记录一次真实目标工具结果，hooks 也只围绕最终执行路径运行一次。
@@ -39,25 +39,26 @@
 - `outcome.continuation` 与进展分离：`immediate` 请求一次立即决策；`wait_event` 表示已启动或观察到真实后台工作，主循环不轮询它而是立刻做其他事；`wait_attention` / `stop` 表示当前方向告一段落，但不会停止整个 Agent；只有 `backoff` 表示一次有界技术退避。`continuationDetail` 最多透传 1000 字符到可丢弃活动观察面，不进入 ledger。后台任务 start、运行中的 `background_task get/list` 返回 `wait_event`；完成事件稍后进入注意队列。重启后直接查询不再有本机 completion event 保证的持久远端 session 时返回 `backoff`，避免故障紧密重试。
 - 需要后续程序判断的结果使用稳定 JSON，并包含明确的成功状态和错误 code。面向人的摘要或错误说明放在具名字段中，不与 JSON 前后拼接自然语言。
 - schema 校验失败返回具体 `issues`、当前工具名和立即重试同一工具的提示；未知顶层工具返回当前 `availableTools` 和恢复提示，已移除的 `send_image` / `workspace_command` 分别定向引导到 `send_message.imageRef` / `workspace_bash`，不做静默兼容。
-- `continuation=immediate` 的可恢复失败最多保留 3 个立即纠错轮；成功重试或额度用完后回到普通 cooldown。该进程内状态不进入 ledger 或 runtime singleton。
+- `continuation=immediate` 的可恢复失败最多保留 3 个立即纠错轮；成功重试或额度用完后回到普通行动循环。该进程内状态不进入 ledger 或 runtime singleton。
 - 外部搜索、网页、Reddit 和表情包结果按字段与条目做上限控制，并用 `truncated` 表示不完整；禁止截断完整 JSON 字符串。
 - `workspace_bash` 的直接命令和 `openbb_cli` 返回命令信封，区分退出码、内容格式、正文、stderr 与截断状态。任意 stdout 只作为字符串装入信封，不因看起来像 JSON 就自动解释。
 - `trading_agent action=start|continue` 返回本地 `taskId` 和 Vibe 的 `sessionId` / `attemptId`。正常完成后用 `background_task action=get` 读取有界结果；qq-bot 重启导致内存 task 丢失时，凭 `sessionId` 调 `status` / `result` 直接从 Vibe 的持久 session 恢复，不从日志重建。
 
 ## Browser
 
-- `browser` 是单一 action-driven 内部工具，配置条件是 `BOT_BROWSER_ENABLED=true`，默认不常驻；用 `help action=describe tool=browser` 查看 schema，再用 `invoke tool=browser args={...}` 调用。
+- `browser` 是单一 action-driven 内部工具，配置条件是 `BOT_BROWSER_ENABLED=true`，默认不常驻；用 `help action=describe tool=browser` 查看 schema，再用 `invoke tool=browser args={...}` 调用。`read` 从当前页面的 main/document 提取有界文本，长内容按 `nextTextOffset` 分页，不从日志或 profile 重建正文。
 - bot 进程只通过 loopback HTTP 调用 browser sidecar；sidecar 用 `pnpm browser:controller` 启动。
-- sidecar 使用 CloakBrowser `launchPersistentContext()`，默认 headed、persistent profile、`humanize=true`。
-- CloakBrowser 启动参数走 `.env.example` 里的 `BOT_BROWSER_*`：`HEADLESS`、`HUMANIZE`、`HUMAN_PRESET`、`PROXY`、`GEOIP`、`TIMEZONE`、`LOCALE`、`ARGS`、`EXTENSION_PATHS`。
+- sidecar 使用 CloakBrowser `launchPersistentContext()`，默认 headed、persistent profile、`humanize=true`、`BOT_BROWSER_READ_ONLY=true`。只读模式只允许打开、读取、观察、滚动、截图、安全导航键和普通链接；输入、下载、annotation、坐标点击和按钮操作直接拒绝，不用 HTTP 方法或按钮文案猜测页面是否只读。
+- CloakBrowser 启动参数走 `.env.example` 里的 `BOT_BROWSER_*`：`READ_ONLY`、`HEADLESS`、`HUMANIZE`、`HUMAN_PRESET`、`PROXY`、`GEOIP`、`TIMEZONE`、`LOCALE`、`ARGS`、`EXTENSION_PATHS`。
 - screenshot 返回压缩 image block 并进入 `AgentContext`；artifact 和 action log 留在磁盘，不从日志重建 replay。
 - browser artifact 默认最多保留 50 个且最长 14 天；每次新增截图、下载或 annotation 后，只清理 controller-owned 的 `screenshots/`、`downloads/`、`annotations/`，配置项是 `BOT_BROWSER_ARTIFACT_MAX_FILES` / `BOT_BROWSER_ARTIFACT_MAX_AGE_MS`。清理失败记 warning，但不让当前浏览动作失败。
-- 登录、2FA、账号安全、OAuth、支付、可执行/压缩包下载等高风险动作必须请求 owner help；普通浏览、cookie consent、Cloudflare/Turnstile/人机按钮可自主处理。
+- 登录、2FA、账号安全、OAuth、支付等高风险动作必须请求 owner help；密码、token、cookie 和验证码不能进入回复、Memory、Notebook、prompt 或日志。owner 首次手动登录时可临时用 `BOT_BROWSER_READ_ONLY=false` 启动 sidecar，完成后恢复只读并重启；Agent 日常运行不接收 credential。
 
 ## Website
 
 - 网站源码放在独立 Astro 仓库中；owner 负责首次建站、Git 认证、Vercel 项目和域名，bot 通过 `BOT_WEBSITE_REPO_DIR` 访问本机 checkout。
-- `website action=status|read|write|delete|move|publish` 分别用于查看状态、读取、写入、删除、移动和发布。读取返回 revision；覆盖、删除或移动已有文件必须带最新 revision。`BOT_WEBSITE_PUBLIC_URL` 仅用于状态/发布结果提示，不参与部署鉴权。
+- 查找文章或页面时用 `website list` 有界列出 `src/**`、`public/**` 下的真实文件，再用 `read` 获取内容和 revision。
+- `website action=status|list|read|write|delete|move|publish` 分别用于查看状态、发现文件、读取、写入、删除、移动和发布。读取返回 revision；覆盖、删除或移动已有文件必须带最新 revision。`BOT_WEBSITE_PUBLIC_URL` 仅用于状态/发布结果提示，不参与部署鉴权。
 - 读写路径允许 `src/**` 中受支持的 Astro 源码、内容、样式和素材，以及 `public/**` 中受支持的静态资源；因此 bot 可以建立页面、组件、布局和内容分类结构。仓库根配置、依赖、CI、部署配置和脚本仍不在允许范围；绝对路径、隐藏路径、路径逃逸、符号链接和非普通文件会被拒绝。
 - `publish` 只接受配置分支上的允许路径变更；先运行 `BOT_WEBSITE_CHECK_COMMAND`，再次校验工作区和暂存区，再 commit 并 push。Vercel 由网站仓库的 push 自动触发。
 
@@ -68,7 +69,7 @@
 - `send_message.music` 只接受 qq/163/kugou/kuwo/migu 的歌曲 ID，或字段受限且 URL 必须为 HTTPS 的 custom 音乐卡片；不接受任意 JSON 卡片。
 - assistant text 是内部历史/推理，不是公开发送通道。
 - `send_message` 成功不会隐式结束 Agent 当前活动；下一轮继续当前方向或立刻选择另一件事。只有真正想主动休息时才调用 `rest`。
-- content-only 且无 tool call 的 assistant 输出不会发送或执行。Runtime 会追加受控 `runtime_correction` 并立即重试一次；连续第二次进入一分钟可打断等待，防止既假完成又紧密空转。
+- content-only 且无 tool call 的 assistant 输出不会发送或执行。Runtime 会追加同一个受控行动纠错并立即重试；方向选择保持在主 Agent 内，不建立跨轮换方向状态。
 - QQ 群策略仍以 `prompts/groups.md` 为唯一来源：普通群消息不唤醒或打断 Agent；`mentions` 群只进入被动 inbox，`selective` / `active` 群可以额外形成 passive notification。飞书群以 `BOT_FEISHU_GROUP_IDS` 明确 allowlist；普通消息被动入库，结构化 @bot、编辑和撤回可以形成 attention。QQ 私聊目标必须是 NapCat 当前好友；飞书群目标必须在 allowlist，私聊目标必须已经由 Gateway 观察到。未授权会明确拒绝，不会模拟成功。
 - 私聊的主动发言冷却只限制没有同 target pending mailbox 的真正 ambient send。对新入站私聊的回复不必为了绕过冷却而添加 `reply_to`；`reply_to` 用于对应平台的引用/回复展示。
 - `qq_directory` 是只读目录。`list_friends` / `search_friends` 覆盖 NapCat 当前全部好友，因此这些结果都可作为 private `send_message` target；`list_groups` 只返回 NapCat 当前群列表与 `prompts/groups.md` 群 section 的交集，不扩大群监听或发送授权。`profile` 以 QQ 号为主键，把当前好友 remark/nickname 与 `messages` 中同一 sender 的群名片、sender nickname、出现群和时间合并为带来源的 identity view；它不把昵称当权限或稳定事实。结果有条数上限和 offset 分页，不提供加删好友、加退群或群管理动作。
@@ -77,7 +78,7 @@
 - Agent 不使用通用人工审批层；工具调用在各自的 target、revision、路径、schema、超时、allowlist 和审计边界内直接执行。
 - `inbox list` 只列出最近扫描窗口内 `latestRowId > lastReadRowId` 的待读来源；`read` 未显式传 `afterRowId` 时从持久已读 cursor 继续，并只推进到本次有界输出实际展示的最后一行。群读取必须显式指定监听白名单内的 groupId；私聊读取必须显式指定 peerId。read 结果用结构化 `media[].mediaId` 披露入站媒体 handle，整体仍有行数和字符上限，并作为普通 tool result 进入 AgentContext。群文件上传 notice 会用稳定的负数 synthetic messageId 落入同一 mailbox，此时 `replyable=false`，只能 ambient 回复。
 - `read_file` 位于 deferred `document_reading` capability 内，只能解析已落库的消息文件 handle；QQ 与飞书媒体都先进入统一 `media` / `media_blobs` 后才能读取。单次返回和可解析输入都有上限，压缩包与旧版 DOC/XLS/PPT 明确拒绝。
-- `workspace_bash` 的 workspace/repo 文件命令都只读且不经过 shell；只允许 `pwd/ls/rg/cat/head/tail/wc`。普通文件修改必须走 `workspace_file`，不能用它访问数据库、网络、金融、风格或指标。repo view 不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
+- `workspace_bash` 的 workspace/repo 文件命令都只读且不经过 shell；只允许 `pwd/ls/rg/cat/head/tail/wc`。普通文件修改必须走 `workspace_file`，不能用它访问数据库、网络、网站、金融、风格或指标。repo view 不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
 - `moomoo_skill` 只路由到固定 `skills/moomooapi/scripts/**` 下的代码内 allowlist。三个交易写脚本必须显式传唯一的 `--trd-env SIMULATE`；`REAL`、`--confirmed`、加密货币、组合订单、任意 Python/脚本路径和实时订阅长进程都会被拒绝。
 - `crypto_paper` 是独立 typed tool，只调用 Moomoo `get_snapshot.py` 获取 `CC.*USD` 买一/卖一行情，不创建 Crypto 交易 context。`buy` / `sell` 需要幂等 `clientOrderId`，资金和持仓在单个 serializable PostgreSQL transaction 中更新；`reset` 清空当前持仓并递增 generation，但保留历史订单。查询不是副作用，买卖和重置进入工具审计。
 - `trading_agent` 只连接配置的 loopback HTTP origin，拒绝远端 URL、URL 路径、凭据内嵌和重定向；请求、后台任务和结果都有超时/字符上限。发送给 Vibe 的每个 prompt 都附加固定的研究边界，禁止真实下单、撤单、券商授权、资金划转、定时任务和对外消息。`start` / `continue` / `cancel` 作为副作用审计，`status` / `result` 只读。
@@ -88,7 +89,7 @@
 - `memory` 对主 Agent 只暴露 `remember|recall|correct`，使用 `data/agent-workspace/memory/` 的 Markdown；Markdown 是事实来源，没有 SQLite/FTS 或 embedding 索引。`self`、`person`、`group`、`topic` 是语义范围，不是多层记忆。人物使用平台中立 participant key，只有配置的主人 QQ/飞书身份会统一为 `owner`，其他用户和群保持平台隔离。person/group remember 必须提供真实 `sourceMessageRowIds`；runtime 从 Message row 推导 context、`assertedByIds` 和证据语义。person recall 必须带 participant key 和当前 `context`，group recall 使用 `conversation list` 返回的 conversation key；match 只公开 opaque ref 和语义内容，`correct` 用 ref 做 revision-checked 原子替换，文件、entry ID、revision、分类和生命周期留在模块内部。
 - 每次成功创建 recent entry 后，memory maintenance 会检查当前文件：recent 至少 8 条、recent 正文至少 4000 字符、或 lexical review 找到重复/冲突时，才把它放进共享单并发 `maintenance` lane。专用关闭 thinking 的 reviewer 只返回受 schema 约束的 `promote / merge / discard`，store 校验 entryId、禁止自动删除 stable，并按 revision 一次原子应用；阈值以下不调用 LLM，revision 冲突会用最新文件重新排队。这个 side-data 维护不改写 `AgentContext`，也不参与 replay。
 - `skill` 从 `docs/agent-skills/` 读取 curated Markdown，并有输出上限。它披露不熟悉的专项规则、安全边界和标准工作流，不承担当前执行状态。
-- `website` 位于 deferred `website` capability 内；`status` / `read` 是只读操作，`write` / `delete` / `move` / `publish` 是副作用操作并进入工具审计。它不能修改依赖、构建配置、CI、Vercel 配置或网站仓库的隐藏文件。
+- `website` 位于 deferred `website` capability 内；`status` / `list` / `read` 是只读操作，`write` / `delete` / `move` / `publish` 是副作用操作并进入工具审计。它不能修改依赖、构建配置、CI、Vercel 配置或网站仓库的隐藏文件。
 - 主 system prompt 只保留身份、运行形态和能力入口；常驻提示词位于 `prompts/system/`，聊天硬约束与风格卡片位于 `prompts/chat-style/`，通过 typed `chat_style` 按需读取。
 - `BOT_TOOL_AUDIT_MODE=side_effects` 是开发默认值，只把副作用写入 `logs/tool-calls.ndjson`；`all` 恢复全部工具 trace，`off` 完全关闭。Postgres `agent_tool_calls` 默认不写，只有 `BOT_TOOL_AUDIT_DB_ENABLED=true` 时启用。
 - 同一 assistant turn 中，只有连续且命中显式只读 allowlist 的调用可以并行；副作用、未知工具和 `inspect_media` 默认构成顺序 barrier。并行完成先后不改变 ledger，tool result 必须按原 assistant tool-call 顺序 append。

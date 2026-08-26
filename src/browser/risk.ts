@@ -17,6 +17,11 @@ export interface BrowserRiskResult {
   requiresOwnerHelp: boolean
 }
 
+export interface BrowserReadOnlyDecision {
+  allowed: boolean
+  reason: string
+}
+
 const HIGH_RISK_TEXT_RE =
   /\b(pay|purchase|buy now|subscribe|checkout|billing|refund|delete account|close account|change password|reset password|2fa|two[- ]factor|passkey|oauth|authorize|connect app|grant access|export data|identity|passport|driver'?s license|ssn|bank|card number|cvv)\b/i
 
@@ -32,6 +37,18 @@ const HIGH_RISK_FIELD_RE =
 const HIGH_RISK_EXT_RE = /\.(?:dmg|pkg|exe|msi|app|bat|cmd|ps1|sh|bash|zsh|jar|scr|com|zip|rar|7z|tar|gz)$/i
 const HIGH_RISK_CONTENT_TYPE_RE =
   /(?:application\/x-msdownload|application\/x-apple-diskimage|application\/x-sh|application\/x-executable|application\/zip|application\/x-7z-compressed|application\/x-rar)/i
+
+const READ_ONLY_SAFE_KEYS = new Set([
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'End',
+  'Escape',
+  'Home',
+  'PageDown',
+  'PageUp',
+])
 
 export function classifyBrowserActionRisk(input: BrowserRiskInput): BrowserRiskResult {
   if (input.action === 'request_owner_help') {
@@ -72,6 +89,41 @@ export function classifyBrowserActionRisk(input: BrowserRiskInput): BrowserRiskR
   if (LOW_RISK_TEXT_RE.test(text)) return low('target looks like routine browsing friction')
   if (NORMAL_RISK_TEXT_RE.test(text)) return normal('target looks like normal account participation')
   return low('ordinary click')
+}
+
+export function classifyBrowserReadOnlyAction(input: BrowserRiskInput): BrowserReadOnlyDecision {
+  switch (input.action) {
+    case 'help':
+    case 'status':
+    case 'switch_page':
+    case 'close_page':
+    case 'observe':
+    case 'read':
+    case 'scroll':
+    case 'screenshot':
+    case 'request_owner_help':
+      return { allowed: true, reason: 'read-only browser action' }
+    case 'open':
+      return { allowed: true, reason: 'ordinary URL navigation' }
+    case 'press':
+      return READ_ONLY_SAFE_KEYS.has(input.text ?? '')
+        ? { allowed: true, reason: 'read-only navigation key' }
+        : { allowed: false, reason: 'key could submit or mutate page state' }
+    case 'click': {
+      const element = input.element
+      if (!element) return { allowed: false, reason: 'coordinate click cannot be verified as read-only' }
+      if (element.href && !/^\s*javascript:/i.test(element.href)) {
+        return { allowed: true, reason: 'ordinary link navigation' }
+      }
+      return { allowed: false, reason: 'only ordinary links are clickable in read-only mode' }
+    }
+    case 'type':
+      return { allowed: false, reason: 'typing is disabled in read-only mode' }
+    case 'download':
+      return { allowed: false, reason: 'downloads are disabled in read-only mode' }
+    case 'annotate':
+      return { allowed: false, reason: 'browser artifact writes are disabled in read-only mode' }
+  }
 }
 
 export function classifyDownload(fileName?: string, contentType?: string): BrowserRiskResult {

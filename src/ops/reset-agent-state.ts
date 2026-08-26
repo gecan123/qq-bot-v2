@@ -2,6 +2,7 @@ import { readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AGENT_RUNTIME_STATE_SCHEMA_VERSION } from '../agent/agent-ledger.types.js'
 import { createEmptyMailboxContinuityState } from '../agent/mailbox-continuity.js'
+import { isMailboxKey } from '../agent/mailbox.js'
 
 const KNOWLEDGE_DIRECTORIES = ['memory', 'notebook'] as const
 const WORKSPACE_CONTRACT_FILES: ['.gitignore', 'README.md'] = ['.gitignore', 'README.md']
@@ -14,6 +15,18 @@ export interface AgentStateResetTx {
   botAgentLedgerEntry: { deleteMany(): Promise<{ count: number }> }
   botAgentCheckpoint: { deleteMany(): Promise<{ count: number }> }
   botAgentRuntimeState: {
+    findUnique(input: {
+      where: { id: 1 }
+      select: {
+        mailboxCursors: true
+        inboxReadCursors: true
+        lastWakeAt: true
+      }
+    }): Promise<{
+      mailboxCursors: unknown
+      inboxReadCursors: unknown
+      lastWakeAt: Date | null
+    } | null>
     deleteMany(): Promise<{ count: number }>
     create(input: { data: Record<string, unknown> }): Promise<unknown>
   }
@@ -137,6 +150,15 @@ export async function resetAgentState(options: {
   if (options.scope === 'all' || options.scope === 'context') {
     if (!options.db) throw new Error(`database is required for reset scope ${options.scope}`)
     const deleted = await options.db.$transaction(async (tx) => {
+      const previousRuntime = await tx.botAgentRuntimeState.findUnique({
+        where: { id: 1 },
+        select: {
+          mailboxCursors: true,
+          inboxReadCursors: true,
+          lastWakeAt: true,
+        },
+      })
+      const deliveryContinuity = preserveDeliveryContinuity(previousRuntime)
       const checkpoints = await tx.botAgentCheckpoint.deleteMany()
       const ledgerEntries = await tx.botAgentLedgerEntry.deleteMany()
       const goals = await tx.botAgentGoal.deleteMany()
@@ -145,12 +167,12 @@ export async function resetAgentState(options: {
         data: {
           id: 1,
           schemaVersion: AGENT_RUNTIME_STATE_SCHEMA_VERSION,
-          mailboxCursors: {},
-          inboxReadCursors: {},
+          mailboxCursors: deliveryContinuity.mailboxCursors,
+          inboxReadCursors: deliveryContinuity.inboxReadCursors,
           mailboxContinuity: createEmptyMailboxContinuityState(),
           goalRevision: 0,
           conversationFocus: null,
-          lastWakeAt: null,
+          lastWakeAt: deliveryContinuity.lastWakeAt,
           ledgerHeadEntryId: null,
         },
       })
@@ -179,6 +201,34 @@ export async function resetAgentState(options: {
   }
 
   return result
+}
+
+function preserveDeliveryContinuity(runtime: {
+  mailboxCursors: unknown
+  inboxReadCursors: unknown
+  lastWakeAt: Date | null
+} | null): {
+  mailboxCursors: Record<string, number>
+  inboxReadCursors: Record<string, number>
+  lastWakeAt: Date | null
+} {
+  return {
+    mailboxCursors: normalizeDeliveryCursors(runtime?.mailboxCursors),
+    inboxReadCursors: normalizeDeliveryCursors(runtime?.inboxReadCursors),
+    lastWakeAt: runtime?.lastWakeAt instanceof Date && Number.isFinite(runtime.lastWakeAt.getTime())
+      ? new Date(runtime.lastWakeAt.getTime())
+      : null,
+  }
+}
+
+function normalizeDeliveryCursors(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const cursors: Record<string, number> = {}
+  for (const [mailbox, cursor] of Object.entries(value as Record<string, unknown>)) {
+    if (!isMailboxKey(mailbox) || !Number.isSafeInteger(cursor) || (cursor as number) < 0) continue
+    cursors[mailbox] = cursor as number
+  }
+  return cursors
 }
 
 async function inspectWorkspaceGeneratedEntries(

@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { classifyBrowserActionRisk, classifyDownload, redactBrowserValue } from './risk.js'
+import {
+  classifyBrowserActionRisk,
+  classifyBrowserReadOnlyAction,
+  classifyDownload,
+  redactBrowserValue,
+} from './risk.js'
 
 describe('classifyBrowserActionRisk', () => {
   it('allows routine human checks', () => {
@@ -52,6 +57,34 @@ describe('classifyDownload', () => {
   it('allows normal documents', () => {
     assert.equal(classifyDownload('paper.pdf', 'application/pdf').level, 'normal')
     assert.equal(classifyDownload('data.csv', 'text/csv').level, 'normal')
+  })
+})
+
+describe('read-only browser policy', () => {
+  it('allows reading, scrolling, ordinary links, and safe navigation keys', () => {
+    assert.equal(classifyBrowserReadOnlyAction({ action: 'read' }).allowed, true)
+    assert.equal(classifyBrowserReadOnlyAction({ action: 'scroll' }).allowed, true)
+    assert.equal(classifyBrowserReadOnlyAction({
+      action: 'click',
+      element: {
+        elementId: 'e1',
+        role: 'link',
+        label: 'Open discussion',
+        tagName: 'a',
+        href: '/r/test/comments/abc/topic',
+      },
+    }).allowed, true)
+    assert.equal(classifyBrowserReadOnlyAction({ action: 'press', text: 'PageDown' }).allowed, true)
+  })
+
+  it('blocks buttons, typing, downloads, and unverifiable clicks', () => {
+    assert.equal(classifyBrowserReadOnlyAction({
+      action: 'click',
+      element: { elementId: 'e1', role: 'button', label: 'View more', tagName: 'button' },
+    }).allowed, false)
+    assert.equal(classifyBrowserReadOnlyAction({ action: 'type', text: 'hello' }).allowed, false)
+    assert.equal(classifyBrowserReadOnlyAction({ action: 'download' }).allowed, false)
+    assert.equal(classifyBrowserReadOnlyAction({ action: 'click' }).allowed, false)
   })
 })
 

@@ -283,10 +283,13 @@ BOT_BROWSER_ACTION_LOG_PATH=logs/browser-actions.ndjson
 BOT_BROWSER_ACTION_TIMEOUT_MS=15000
 BOT_BROWSER_ARTIFACT_MAX_FILES=50
 BOT_BROWSER_ARTIFACT_MAX_AGE_MS=1209600000
+BOT_BROWSER_READ_ONLY=true
 BOT_BROWSER_HEADLESS=false
 BOT_BROWSER_HUMANIZE=true
 BOT_BROWSER_HUMAN_PRESET=default
 ```
+
+默认只读模式适合复用 owner 已建立的 Reddit 等站点登录态：Agent 可以打开、读取、滚动、使用安全导航键、点击普通链接和截图；输入、下载、写 annotation、坐标点击和按钮操作会被拒绝。首次建立或修复登录态时，由 owner 临时用 `BOT_BROWSER_READ_ONLY=false` 启动 headed sidecar 并手动完成登录；随后恢复 `true` 并重启 sidecar。不要把密码、验证码、token 或 cookie 交给 Agent。
 
 需要代理时：
 

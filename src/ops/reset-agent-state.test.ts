@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { describe, test } from 'node:test'
+import { AGENT_RUNTIME_STATE_SCHEMA_VERSION } from '../agent/agent-ledger.types.js'
 import {
   parseAgentStateResetScope,
   previewAgentStateReset,
@@ -13,18 +14,38 @@ import {
   type AgentStateResetScope,
 } from './reset-agent-state.js'
 
-function fakeResetDb(counts = {
+const DEFAULT_RESET_COUNTS = {
   ledgerEntries: 7,
   checkpoints: 1,
   runtimeStates: 1,
   goals: 1,
-}): { db: AgentStateResetDb; transactions: number; created: unknown[] } {
+}
+
+const DEFAULT_RUNTIME_CONTINUITY = {
+  mailboxCursors: {
+    'feishu:cli_test:private:oc_test': 1129,
+  },
+  inboxReadCursors: {
+    'feishu:cli_test:private:oc_test': 1129,
+  },
+  lastWakeAt: new Date('2026-08-26T07:05:00.000Z'),
+}
+
+function fakeResetDb(
+  counts = DEFAULT_RESET_COUNTS,
+  runtimeContinuity: {
+    mailboxCursors: unknown
+    inboxReadCursors: unknown
+    lastWakeAt: Date | null
+  } | null = counts.runtimeStates > 0 ? DEFAULT_RUNTIME_CONTINUITY : null,
+): { db: AgentStateResetDb; transactions: number; created: unknown[] } {
   const created: unknown[] = []
   const state = { transactions: 0 }
   const tx = {
     botAgentLedgerEntry: { deleteMany: async () => ({ count: counts.ledgerEntries }) },
     botAgentCheckpoint: { deleteMany: async () => ({ count: counts.checkpoints }) },
     botAgentRuntimeState: {
+      findUnique: async () => runtimeContinuity,
       deleteMany: async () => ({ count: counts.runtimeStates }),
       create: async (input: unknown) => { created.push(input); return input },
     },
@@ -227,7 +248,7 @@ describe('resetAgentState', () => {
     )
   })
 
-  test('context clears canonical runtime state and Goal while preserving knowledge', async () => {
+  test('context clears canonical context while preserving delivery continuity and knowledge', async () => {
     const workspaceDir = await createWorkspace()
     try {
       const fake = fakeResetDb()
@@ -241,7 +262,53 @@ describe('resetAgentState', () => {
       assert.equal(result.removedWorkspaceEntries, 0)
       await assertManagedStatePresent(workspaceDir)
       await assertGeneratedWorkspacePresent(workspaceDir)
-      assert.equal(fake.created.length, 1)
+      assert.deepEqual(fake.created, [{
+        data: {
+          id: 1,
+          schemaVersion: AGENT_RUNTIME_STATE_SCHEMA_VERSION,
+          mailboxCursors: DEFAULT_RUNTIME_CONTINUITY.mailboxCursors,
+          inboxReadCursors: DEFAULT_RUNTIME_CONTINUITY.inboxReadCursors,
+          mailboxContinuity: {
+            schemaVersion: 1,
+            roundSeq: 0,
+            lastInputTokens: null,
+            compactionEpoch: 0,
+            mailboxes: {},
+          },
+          goalRevision: 0,
+          conversationFocus: null,
+          lastWakeAt: DEFAULT_RUNTIME_CONTINUITY.lastWakeAt,
+          ledgerHeadEntryId: null,
+        },
+      }])
+    } finally {
+      await rm(workspaceDir, { recursive: true, force: true })
+    }
+  })
+
+  test('context drops invalid delivery continuity while preserving valid cursors', async () => {
+    const workspaceDir = await createWorkspace()
+    try {
+      const fake = fakeResetDb(DEFAULT_RESET_COUNTS, {
+        mailboxCursors: {
+          'qq_private:123': 9,
+          'invalid-mailbox': 10,
+        },
+        inboxReadCursors: {
+          'feishu:cli_test:private:oc_test': 8,
+          'qq_private:456': -1,
+        },
+        lastWakeAt: new Date(Number.NaN),
+      })
+
+      await resetAgentState({ scope: 'context', workspaceDir, db: fake.db })
+
+      const created = fake.created[0] as { data: Record<string, unknown> }
+      assert.deepEqual(created.data.mailboxCursors, { 'qq_private:123': 9 })
+      assert.deepEqual(created.data.inboxReadCursors, {
+        'feishu:cli_test:private:oc_test': 8,
+      })
+      assert.equal(created.data.lastWakeAt, null)
     } finally {
       await rm(workspaceDir, { recursive: true, force: true })
     }

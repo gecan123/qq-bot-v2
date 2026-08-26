@@ -8,6 +8,7 @@ export const BROWSER_ACTIONS = [
   'switch_page',
   'close_page',
   'observe',
+  'read',
   'click',
   'type',
   'press',
@@ -22,6 +23,7 @@ export type BrowserActionName = (typeof BROWSER_ACTIONS)[number]
 
 export const BROWSER_OBSERVE_ELEMENT_LIMIT = 30
 export const BROWSER_TEXT_OUTPUT_LIMIT = 6_000
+export const BROWSER_READ_TEXT_LIMIT = 4_000
 export const BROWSER_LABEL_LIMIT = 160
 
 export const browserActionInputSchema = z.object({
@@ -29,6 +31,9 @@ export const browserActionInputSchema = z.object({
   pageId: z.string().trim().min(1).max(80).optional(),
   url: z.string().trim().url().optional(),
   newPage: z.boolean().optional(),
+  scope: z.enum(['main', 'document']).optional(),
+  offset: z.number().int().nonnegative().max(1_000_000).optional(),
+  maxChars: z.number().int().min(200).max(BROWSER_READ_TEXT_LIMIT).optional(),
   elementId: z.string().trim().min(1).max(120).optional(),
   x: z.number().finite().optional(),
   y: z.number().finite().optional(),
@@ -82,6 +87,14 @@ export interface BrowserActionJsonResult {
   activePageId?: string
   pages?: BrowserPageSummary[]
   elements?: BrowserElementSummary[]
+  text?: string
+  textScope?: 'main' | 'document'
+  textOffset?: number
+  nextTextOffset?: number
+  totalTextChars?: number
+  scrollY?: number
+  viewportHeight?: number
+  documentHeight?: number
   artifactId?: string
   artifactPath?: string
   fileName?: string
@@ -97,6 +110,7 @@ export interface BrowserControllerConfig {
   actionTimeoutMs: number
   artifactMaxFiles?: number
   artifactMaxAgeMs?: number
+  readOnly?: boolean
   headless?: boolean
   humanize?: boolean
   humanPreset?: 'default' | 'careful'
@@ -134,6 +148,18 @@ export function browserJsonResultToText(result: BrowserActionJsonResult): string
 
   let serialized = JSON.stringify(clone)
   if (serialized.length <= BROWSER_TEXT_OUTPUT_LIMIT) return serialized
+
+  if (clone.text) {
+    const originalOffset = clone.textOffset ?? 0
+    while (clone.text.length > 0 && serialized.length > BROWSER_TEXT_OUTPUT_LIMIT) {
+      const overflow = serialized.length - BROWSER_TEXT_OUTPUT_LIMIT
+      clone.text = clone.text.slice(0, Math.max(0, clone.text.length - overflow - 64))
+      clone.truncated = true
+      clone.nextTextOffset = originalOffset + clone.text.length
+      serialized = JSON.stringify(clone)
+    }
+    if (serialized.length <= BROWSER_TEXT_OUTPUT_LIMIT) return serialized
+  }
 
   if (clone.elements) {
     const elements = [...clone.elements]

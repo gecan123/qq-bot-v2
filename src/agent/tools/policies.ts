@@ -91,7 +91,7 @@ export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.fr
     sideEffect: ['start', 'continue', 'cancel'],
   }),
   website: byAction({
-    parallel: ['status', 'read'],
+    parallel: ['status', 'list', 'read'],
     sideEffect: ['write', 'delete', 'move', 'publish'],
   }),
   web_search: fixed(PARALLEL_READ),

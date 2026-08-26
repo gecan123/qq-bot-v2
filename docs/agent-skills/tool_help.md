@@ -7,7 +7,7 @@ description: 不确定工具语法、deferred capability、参数 schema 或正�
 
 不确定工具语法、能力边界或下一步入口时使用本 skill。不要为了显得会用工具而加载，只有卡住时再看。
 
-- `workspace_bash`: 只读执行 `pwd/ls/rg/cat/head/tail/wc`，workspace 和 repo 都不经过 shell。
+- `workspace_bash`: 只读执行 `pwd/ls/rg/cat/head/tail/wc`，workspace 和 repo 都不经过 shell；网站文件用 `website list` 发现。
 - `help action=list`: 查看按需 capability。
 - `help action=describe tool=<name>`: 查看内部工具说明和参数 schema。
 - `invoke tool=<name> args=<object>`: 直接调用按需工具；目标 schema 和 policy 仍然生效。

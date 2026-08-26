@@ -7,6 +7,7 @@ import type { LaunchPersistentContextOptions } from 'cloakbrowser'
 import { compressForContext } from '../media/compress-for-context.js'
 import {
   BROWSER_OBSERVE_ELEMENT_LIMIT,
+  BROWSER_READ_TEXT_LIMIT,
   type BrowserActionInput,
   type BrowserActionJsonResult,
   type BrowserControllerConfig,
@@ -16,7 +17,11 @@ import {
   clampBrowserLabel,
 } from './protocol.js'
 import { buildBrowserActionLogEntry, logBrowserAction } from './action-log.js'
-import { classifyBrowserActionRisk, classifyDownload } from './risk.js'
+import {
+  classifyBrowserActionRisk,
+  classifyBrowserReadOnlyAction,
+  classifyDownload,
+} from './risk.js'
 import { createLogger } from '../logger.js'
 import { formatBeijingIso } from '../utils/beijing-time.js'
 import { createTaskScheduler, type TaskScheduler } from '../agent/task-scheduler.js'
@@ -88,10 +93,12 @@ export class BrowserController {
   private crashed = false
   private readonly taskScheduler: TaskScheduler
   private readonly pruneArtifactsImpl: typeof pruneBrowserArtifacts
+  private readonly readOnly: boolean
 
   constructor(private readonly config: BrowserControllerConfig, deps: BrowserControllerDeps = {}) {
     this.taskScheduler = deps.taskScheduler ?? createTaskScheduler({ housekeeping: { concurrency: 1 } })
     this.pruneArtifactsImpl = deps.pruneArtifacts ?? pruneBrowserArtifacts
+    this.readOnly = config.readOnly ?? true
   }
 
   async execute(rawInput: unknown): Promise<BrowserActionJsonResult> {
@@ -150,6 +157,8 @@ export class BrowserController {
         return this.closePage(input)
       case 'observe':
         return this.observe(input)
+      case 'read':
+        return this.read(input)
       case 'click':
         return this.click(input)
       case 'type':
@@ -176,11 +185,15 @@ export class BrowserController {
       message: [
         'browser 是单步真实浏览器工具. 一次只做一个 action.',
         '底层是 headed CloakBrowser persistent profile, 登录态和 cookie 可跨 sidecar 重启复用.',
-        '常用流程: open -> observe -> click/type/scroll -> screenshot/download/annotate.',
+        `当前模式: ${this.readOnly ? 'read-only' : 'full'}.`,
+        '常用阅读流程: open -> read/observe -> click/scroll -> read/screenshot.',
+        'read 返回有界页面正文; 长页面使用 nextTextOffset 继续读取.',
         'observe 返回可交互 elementId; click/type 优先传 elementId. 坐标点击只作为 fallback.',
         'screenshot 会把压缩图作为 image block 返回并进入 AgentContext.',
         '遇到登录/2FA/支付/账号安全/OAuth/可执行下载等高风险状态, 调 request_owner_help.',
-        '普通 Cloudflare/Turnstile/cookie consent/我是人类按钮应先自主处理.',
+        this.readOnly
+          ? 'read-only 模式只允许阅读动作、导航按键和普通链接；禁止输入、下载、annotation、坐标点击和按钮操作.'
+          : '普通 Cloudflare/Turnstile/cookie consent/我是人类按钮应先自主处理.',
       ].join('\n'),
     }
   }
@@ -189,7 +202,7 @@ export class BrowserController {
     return {
       ok: true,
       action: 'status',
-      message: this.context ? (this.crashed ? 'browser crashed' : 'browser ready') : 'browser not started',
+      message: `${this.context ? (this.crashed ? 'browser crashed' : 'browser ready') : 'browser not started'}; mode=${this.readOnly ? 'read-only' : 'full'}`,
       activePageId: this.activePageId ?? undefined,
       pages: await this.summarizePages(),
     }
@@ -200,6 +213,19 @@ export class BrowserController {
     const url = new URL(input.url)
     if (!['http:', 'https:'].includes(url.protocol)) {
       return this.fail(input.action, 'unsupported_url_protocol', 'only http/https URLs are allowed')
+    }
+    if (this.readOnly) {
+      const decision = classifyBrowserReadOnlyAction({ action: 'open', url: input.url })
+      if (!decision.allowed) {
+        return {
+          ok: false,
+          action: input.action,
+          code: 'browser_read_only_action_blocked',
+          risk: 'normal',
+          reason: decision.reason,
+          url: input.url,
+        }
+      }
     }
 
     const context = await this.ensureContext()
@@ -264,9 +290,39 @@ export class BrowserController {
     }
   }
 
+  private async read(input: BrowserActionInput): Promise<BrowserActionJsonResult> {
+    const record = await this.getPageRecord(input.pageId)
+    const page = record.page
+    const scope = input.scope ?? 'main'
+    const offset = input.offset ?? 0
+    const maxChars = input.maxChars ?? BROWSER_READ_TEXT_LIMIT
+    const snapshot = await readPageText(page, scope)
+    const start = Math.min(offset, snapshot.text.length)
+    const end = Math.min(snapshot.text.length, start + maxChars)
+    const text = snapshot.text.slice(start, end)
+    record.lastUsedAt = new Date()
+    return {
+      ok: true,
+      action: 'read',
+      pageId: record.pageId,
+      url: page.url(),
+      title: await safeTitle(page),
+      text,
+      textScope: snapshot.scope,
+      textOffset: start,
+      ...(end < snapshot.text.length ? { nextTextOffset: end, truncated: true } : {}),
+      totalTextChars: snapshot.text.length,
+      scrollY: snapshot.scrollY,
+      viewportHeight: snapshot.viewportHeight,
+      documentHeight: snapshot.documentHeight,
+    }
+  }
+
   private async click(input: BrowserActionInput): Promise<BrowserActionJsonResult> {
     const record = await this.getPageRecord(input.pageId)
     const element = input.elementId ? record.elements.get(input.elementId) ?? null : null
+    const readOnlyBlock = this.readOnlyBlock(input, record, element)
+    if (readOnlyBlock) return readOnlyBlock
     const risk = classifyBrowserActionRisk({ action: 'click', url: record.page.url(), element })
     if (risk.requiresOwnerHelp) return this.ownerHelpResult(input.action, risk.reason, record, risk.level)
 
@@ -293,6 +349,8 @@ export class BrowserController {
   private async type(input: BrowserActionInput): Promise<BrowserActionJsonResult> {
     const record = await this.getPageRecord(input.pageId)
     const element = input.elementId ? record.elements.get(input.elementId) ?? null : null
+    const readOnlyBlock = this.readOnlyBlock(input, record, element)
+    if (readOnlyBlock) return readOnlyBlock
     const risk = classifyBrowserActionRisk({ action: 'type', url: record.page.url(), element, text: input.text })
     if (risk.requiresOwnerHelp) return this.ownerHelpResult(input.action, risk.reason, record, risk.level)
     if (input.text == null) return this.fail(input.action, 'missing_text', 'type requires text')
@@ -320,6 +378,8 @@ export class BrowserController {
   private async press(input: BrowserActionInput): Promise<BrowserActionJsonResult> {
     if (!input.key) return this.fail(input.action, 'missing_key', 'press requires key')
     const record = await this.getPageRecord(input.pageId)
+    const readOnlyBlock = this.readOnlyBlock({ ...input, text: input.key }, record, null)
+    if (readOnlyBlock) return readOnlyBlock
     await record.page.keyboard.press(input.key, { delay: 30 })
     record.lastUsedAt = new Date()
     return { ok: true, action: 'press', pageId: record.pageId, url: record.page.url(), title: await safeTitle(record.page) }
@@ -331,8 +391,23 @@ export class BrowserController {
     const x = input.direction === 'left' ? -amount : input.direction === 'right' ? amount : 0
     const y = input.direction === 'up' ? -amount : input.direction === 'down' || !input.direction ? amount : 0
     await record.page.mouse.wheel(x, y)
+    const position = await record.page.evaluate<{ scrollY: number; documentHeight: number }>(`(() => ({
+      scrollY: Math.max(0, Math.round(window.scrollY || 0)),
+      documentHeight: Math.max(
+        document.documentElement ? document.documentElement.scrollHeight : 0,
+        document.body ? document.body.scrollHeight : 0,
+      ),
+    }))()`)
     record.lastUsedAt = new Date()
-    return { ok: true, action: 'scroll', pageId: record.pageId, url: record.page.url(), title: await safeTitle(record.page) }
+    return {
+      ok: true,
+      action: 'scroll',
+      pageId: record.pageId,
+      url: record.page.url(),
+      title: await safeTitle(record.page),
+      scrollY: position.scrollY,
+      documentHeight: position.documentHeight,
+    }
   }
 
   private async screenshot(input: BrowserActionInput): Promise<BrowserActionJsonResult> {
@@ -367,6 +442,8 @@ export class BrowserController {
   private async download(input: BrowserActionInput): Promise<BrowserActionJsonResult> {
     const record = await this.getPageRecord(input.pageId)
     const element = input.elementId ? record.elements.get(input.elementId) ?? null : null
+    const readOnlyBlock = this.readOnlyBlock(input, record, element)
+    if (readOnlyBlock) return readOnlyBlock
     if (!input.elementId) return this.fail(input.action, 'missing_element_id', 'download requires elementId')
 
     const hrefRisk = classifyDownload(element?.href ? basename(new URL(element.href, record.page.url()).pathname) : undefined)
@@ -405,8 +482,10 @@ export class BrowserController {
   }
 
   private async annotate(input: BrowserActionInput): Promise<BrowserActionJsonResult> {
-    if (!input.text) return this.fail(input.action, 'missing_text', 'annotate requires text')
     const record = await this.getPageRecord(input.pageId)
+    const readOnlyBlock = this.readOnlyBlock(input, record, null)
+    if (readOnlyBlock) return readOnlyBlock
+    if (!input.text) return this.fail(input.action, 'missing_text', 'annotate requires text')
     const url = record.page.url()
     const domain = safeFileName(new URL(url).hostname || 'unknown')
     const artifactId = input.artifactId ?? `note_${timestampId()}`
@@ -468,6 +547,30 @@ export class BrowserController {
       risk,
       reason,
       code: 'requires_owner_help',
+      pageId: record.pageId,
+      url: record.page.url(),
+    }
+  }
+
+  private readOnlyBlock(
+    input: BrowserActionInput,
+    record: PageRecord,
+    element: BrowserElementSummary | null,
+  ): BrowserActionJsonResult | null {
+    if (!this.readOnly) return null
+    const decision = classifyBrowserReadOnlyAction({
+      action: input.action,
+      url: record.page.url(),
+      element,
+      text: input.text,
+    })
+    if (decision.allowed) return null
+    return {
+      ok: false,
+      action: input.action,
+      code: 'browser_read_only_action_blocked',
+      risk: 'normal',
+      reason: decision.reason,
       pageId: record.pageId,
       url: record.page.url(),
     }
@@ -642,6 +745,45 @@ async function collectElements(page: Page): Promise<BrowserElementSummary[]> {
     ...element,
     label: clampBrowserLabel(element.label),
   }))
+}
+
+interface BrowserPageTextSnapshot {
+  text: string
+  scope: 'main' | 'document'
+  scrollY: number
+  viewportHeight: number
+  documentHeight: number
+}
+
+async function readPageText(
+  page: Page,
+  requestedScope: 'main' | 'document',
+): Promise<BrowserPageTextSnapshot> {
+  return page.evaluate<BrowserPageTextSnapshot>(`(() => {
+    const requestedScope = ${JSON.stringify(requestedScope)};
+    const main = requestedScope === 'main'
+      ? document.querySelector('main, [role="main"]')
+      : null;
+    const root = main || document.body || document.documentElement;
+    const raw = root && 'innerText' in root ? root.innerText : '';
+    const text = String(raw || '')
+      .split(/\\n+/)
+      .map((line) => line.replace(/\\s+/g, ' ').trim())
+      .filter(Boolean)
+      .join('\\n');
+    const documentElement = document.documentElement;
+    const body = document.body;
+    return {
+      text,
+      scope: main ? 'main' : 'document',
+      scrollY: Math.max(0, Math.round(window.scrollY || 0)),
+      viewportHeight: Math.max(0, Math.round(window.innerHeight || 0)),
+      documentHeight: Math.max(
+        documentElement ? documentElement.scrollHeight : 0,
+        body ? body.scrollHeight : 0,
+      ),
+    };
+  })()`)
 }
 
 async function safeTitle(page: Page): Promise<string> {

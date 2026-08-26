@@ -205,7 +205,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   if (browser) {
     capabilities.push({
       name: 'browser',
-      description: '真实浏览器操作: 打开网页、观察页面、点击、输入、截图、下载和请求主人协助.',
+      description: '真实浏览器阅读: 复用登录态打开网页、读取正文、观察页面、滚动、安全导航、截图和请求主人协助；controller 默认只读.',
       tools: [browser],
     })
   }

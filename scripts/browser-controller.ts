@@ -16,6 +16,7 @@ const actionLogPath = process.env.BOT_BROWSER_ACTION_LOG_PATH?.trim() || 'logs/b
 const actionTimeoutMs = parsePositiveInteger(process.env.BOT_BROWSER_ACTION_TIMEOUT_MS, 15_000)
 const artifactMaxFiles = parsePositiveInteger(process.env.BOT_BROWSER_ARTIFACT_MAX_FILES, 50)
 const artifactMaxAgeMs = parsePositiveInteger(process.env.BOT_BROWSER_ARTIFACT_MAX_AGE_MS, 14 * 24 * 60 * 60 * 1000)
+const readOnly = parseOptionalBoolean(process.env.BOT_BROWSER_READ_ONLY) ?? true
 const headless = parseOptionalBoolean(process.env.BOT_BROWSER_HEADLESS)
 const humanize = parseOptionalBoolean(process.env.BOT_BROWSER_HUMANIZE)
 const humanPreset = parseHumanPreset(process.env.BOT_BROWSER_HUMAN_PRESET)
@@ -37,6 +38,7 @@ const controller = new BrowserController({
   actionTimeoutMs,
   artifactMaxFiles,
   artifactMaxAgeMs,
+  readOnly,
   ...(headless != null ? { headless } : {}),
   ...(humanize != null ? { humanize } : {}),
   ...(humanPreset ? { humanPreset } : {}),
@@ -49,7 +51,7 @@ const controller = new BrowserController({
 })
 
 const server = await startBrowserServer({ host, port, controller })
-log.info({ host, port, profileDir }, 'browser_controller_started')
+log.info({ host, port, profileDir, readOnly }, 'browser_controller_started')
 
 async function shutdown(): Promise<void> {
   log.info('browser_controller_shutdown_requested')

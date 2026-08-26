@@ -188,7 +188,7 @@ pnpm agent:reset:knowledge
 pnpm agent:reset:all
 ```
 
-`context` 会重建空 runtime singleton。下一次冷启动不会把数据库中的既有消息重新拼成旧 prompt history。三个 scope 都不会删除入站 `messages`、`media`、表情池或运维日志；重置完成后也不会自动启动 Bot。
+`context` 会重建 runtime singleton，并保留 mailbox 披露 cursor、inbox 已读 cursor 和 `lastWakeAt` 投递边界，避免保留下来的旧 `messages` 在冷启动后重新变成待回复消息。旧 LLM history、Goal、conversation focus 和 mailbox continuity 仍会清空；下一次冷启动不会把数据库中的既有消息重新拼成旧 prompt history。三个 scope 都不会删除入站 `messages`、`media`、表情池或运维日志；重置完成后也不会自动启动 Bot。
 
 ## 命令清单完整性
 

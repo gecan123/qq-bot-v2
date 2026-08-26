@@ -17,6 +17,21 @@ describe('browser tool', () => {
     const result = await tool.execute({ action: 'status' }, { eventQueue: null as never, roundIndex: 1 })
     assert.equal(typeof result.content, 'string')
     assert.match(result.content as string, /"message":"ready"/)
+    assert.deepEqual(result.outcome, { ok: true, code: 'observed', progress: true })
+  })
+
+  it('marks an unchanged repeated observation as no progress', async () => {
+    const tool = createBrowserTool({
+      client: {
+        async action() {
+          return { ok: true, action: 'read', pageId: 'page_1', url: 'https://example.com', text: 'same' }
+        },
+      },
+    })
+
+    await tool.execute({ action: 'read', pageId: 'page_1' }, { eventQueue: null as never, roundIndex: 1 })
+    const repeated = await tool.execute({ action: 'read', pageId: 'page_1' }, { eventQueue: null as never, roundIndex: 2 })
+    assert.deepEqual(repeated.outcome, { ok: true, code: 'unchanged', progress: false })
   })
 
   it('keeps oversized observe results valid JSON while dropping tail elements', async () => {
@@ -64,6 +79,37 @@ describe('browser tool', () => {
     const result = await tool.execute({ action: 'screenshot' }, { eventQueue: null as never, roundIndex: 1 })
     assert.ok(Array.isArray(result.content))
     assert.equal(result.content[1]?.type, 'image')
+  })
+
+  it('keeps oversized page reads as bounded valid JSON with a continuation offset', async () => {
+    const tool = createBrowserTool({
+      client: {
+        async action() {
+          return {
+            ok: true,
+            action: 'read',
+            pageId: 'page_1',
+            text: Array.from({ length: 3_000 }, () => 'line').join('\n'),
+            textScope: 'main',
+            textOffset: 100,
+            nextTextOffset: 15_100,
+            totalTextChars: 30_000,
+          }
+        },
+      },
+    })
+
+    const result = await tool.execute({ action: 'read' }, { eventQueue: null as never, roundIndex: 1 })
+    assert.equal(typeof result.content, 'string')
+    const parsed = JSON.parse(result.content as string) as {
+      text?: string
+      nextTextOffset?: number
+      truncated?: boolean
+    }
+    assert.ok(parsed.text)
+    assert.equal(parsed.truncated, true)
+    assert.equal(parsed.nextTextOffset, 100 + (parsed.text?.length ?? 0))
+    assert.ok((result.content as string).length <= 6_000)
   })
 })
 

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, extname, join, normalize, resolve } from 'node:path'
 import { z } from 'zod'
 import type { Tool } from '../tool.js'
@@ -12,6 +12,8 @@ const READ_MAX_BYTES = 256 * 1024
 const WRITE_MAX_BYTES = 256 * 1024
 const WRITE_CONTENT_MAX_CHARS = Math.ceil(WRITE_MAX_BYTES / 3) * 4 + 16
 const COMMAND_OUTPUT_CAP = 4_000
+const DEFAULT_LIST_LIMIT = 100
+const LIST_LIMIT_CAP = 200
 const revisionSchema = z.string().regex(/^[a-f0-9]{64}$/)
 
 const WEBSITE_TEXT_EXTENSIONS = new Set([
@@ -80,6 +82,11 @@ export interface WebsiteToolDeps {
 const argsSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('status') }),
   z.object({
+    action: z.literal('list'),
+    directory: z.string().trim().min(1).max(240).default('src'),
+    limit: z.number().int().min(1).max(LIST_LIMIT_CAP).default(DEFAULT_LIST_LIMIT),
+  }),
+  z.object({
     action: z.literal('read'),
     file: z.string().trim().min(1).max(240),
     maxChars: z.number().int().min(100).max(READ_MAX_CHARS_CAP).optional(),
@@ -144,7 +151,7 @@ export function createWebsiteTool(deps: WebsiteToolDeps): Tool<Args> {
     name: 'website',
     description: [
       '管理 Luna 个人网站仓库的受控工具.',
-      '支持 status 查看仓库状态, read 读取允许路径, write 写入, delete 删除, move 移动, publish 检查并发布允许路径变更.',
+      '支持 status 查看仓库状态, list 发现 src/public 下的真实文件, read 读取允许路径, write 写入, delete 删除, move 移动, publish 检查并发布允许路径变更.',
       'read 返回 revision; 覆盖、删除或移动已有文件必须携带最新 revision.',
       '管理分类或文章前必须先 read src/content/CONTENT_GUIDE.md 和 src/content/categories.json，并严格按实时指南操作；需要模板时 read src/content/examples/category-entry.json 或 src/content/examples/article.md.',
       '新分类登记在 src/content/categories.json；文章只能写入 src/content/blog/<category-id>/<article-slug>.md 或 .mdx，所属分类由目录决定，frontmatter 不写 category/categories.',
@@ -157,6 +164,7 @@ export function createWebsiteTool(deps: WebsiteToolDeps): Tool<Args> {
     async execute(rawArgs) {
       const args = rawArgs as Args
       if (args.action === 'status') return status(runtime)
+      if (args.action === 'list') return listWebsiteFiles(runtime, args)
       if (args.action === 'read') return readWebsiteFile(runtime, args)
       if (args.action === 'write') return writeWebsiteFile(runtime, args)
       if (args.action === 'delete') return deleteWebsiteFile(runtime, args)
@@ -164,6 +172,50 @@ export function createWebsiteTool(deps: WebsiteToolDeps): Tool<Args> {
       return publishWebsite(runtime, args)
     },
   }
+}
+
+async function listWebsiteFiles(runtime: WebsiteRuntimeConfig, args: Extract<Args, { action: 'list' }>) {
+  const directory = safeWebsiteRelativePath(args.directory)
+  if (!directory || !isAllowedWebsiteDirectory(directory)) {
+    return jsonResult({ ok: false, code: 'path_not_allowed', directory: args.directory })
+  }
+
+  const root = await realpath(runtime.repoDir)
+  const start = resolve(root, directory)
+  let stats
+  try {
+    stats = await lstat(start)
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return jsonResult({ ok: false, code: 'directory_not_found', directory })
+    }
+    throw error
+  }
+  if (stats.isSymbolicLink() || !stats.isDirectory() || await realpath(start) !== start) {
+    return jsonResult({ ok: false, code: 'path_not_allowed', directory })
+  }
+
+  const files: string[] = []
+  const pending = [directory]
+  while (pending.length > 0) {
+    const current = pending.pop()!
+    const entries = await readdir(resolve(root, current), { withFileTypes: true })
+    for (const entry of entries) {
+      if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue
+      const relativePath = `${current}/${entry.name}`
+      if (entry.isDirectory()) pending.push(relativePath)
+      else if (entry.isFile() && isAllowedWebsiteReadPath(relativePath)) files.push(relativePath)
+    }
+  }
+  files.sort((left, right) => left.localeCompare(right))
+  const limit = args.limit ?? DEFAULT_LIST_LIMIT
+  return jsonResult({
+    ok: true,
+    directory,
+    files: files.slice(0, limit),
+    truncated: files.length > limit,
+    totalFiles: files.length,
+  })
 }
 
 async function status(runtime: WebsiteRuntimeConfig) {
@@ -918,4 +970,11 @@ function isAllowedWebsitePath(file: string): boolean {
     WEBSITE_TEXT_EXTENSIONS.has(ext) ||
     WEBSITE_BINARY_EXTENSIONS.has(ext)
   )
+}
+
+function isAllowedWebsiteDirectory(directory: string): boolean {
+  return directory === 'src'
+    || directory.startsWith('src/')
+    || directory === 'public'
+    || directory.startsWith('public/')
 }

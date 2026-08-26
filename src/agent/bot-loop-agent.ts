@@ -134,7 +134,7 @@ const ATTENTION_REQUIRED_CORRECTION = JSON.stringify({
 const CONTINUOUS_AUTONOMY_BOOTSTRAP = JSON.stringify({
   event: 'runtime_bootstrap',
   code: 'continuous_autonomy_started',
-  instruction: '现在开始自主生活。即使没有外部请求，也从聊天、网络探索、阅读、创作、自己的项目或稳定兴趣中选择一件可立即执行的事，并用真实工具开始行动。只有此刻真正想主动休息时才调用 rest。',
+  instruction: '现在开始自主生活。默认持续行动：当前方向完成后，选择下一件自己真正想做、值得做的事，并立即用真实工具开始；不要因为刚完成一件事、暂时没想法、owner 不在线或正在等回复就停下。只有此刻真的想主动休息时才调用 rest。',
 })
 const defaultKeepAlive = {
   open() {
@@ -146,7 +146,6 @@ const defaultKeepAlive = {
     }
   },
 }
-
 export interface BotLoopAgent {
   start(): Promise<void>
   stop(): Promise<void>
@@ -171,7 +170,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let ledgerHeadEntryId = deps.initialLedgerHeadEntryId ?? null
   let roundIndex = 0
   let consecutiveRounds = 0
-  let actionCorrectionRetryPending = false
   let attentionCorrectionIssued = false
   let shortWorkContinuationPending = false
   let recoverableToolCorrectionRounds = 0
@@ -735,15 +733,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       }
     }
 
-    if (
-      drained.consumed > 0
-      && disclosed === 0
-      && !goalMessagesAppended
-      && !autonomyBootstrapAppended
-    ) {
-      return { ranRound: false }
-    }
-
     if (deps.context.getSnapshot().messages.length === 0) {
       return { ranRound: false }
     }
@@ -845,7 +834,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls,
       madeToolProgress,
       ...(toolContinuation ? { toolContinuation } : {}),
-      correctionRetryPending: actionCorrectionRetryPending,
       recoverableCorrectionRounds: recoverableToolCorrectionRounds,
       maxRecoverableCorrectionRounds: MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS,
     })
@@ -858,7 +846,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       return
     }
     if (decision.action === 'continue') {
-      actionCorrectionRetryPending = decision.correctionRetryPending
       if (decision.reason === 'attention_pending' && !attentionCorrectionIssued) {
         await commitChanges({
           messages: [{ role: 'user', content: ATTENTION_REQUIRED_CORRECTION }],
@@ -875,7 +862,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     }
 
     const waitMs = autonomy.actionRetryWaitMs
-    const detail = toolContinuationDetail ?? loopWaitDetail(decision.reason, assistantTextOnly)
+    const detail = toolContinuationDetail ?? '外部能力要求短暂退避，等待后重试或切换方向'
     log.info({
       consecutiveRounds,
       waitMs,
@@ -883,16 +870,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       reason: decision.reason,
     }, 'loop_policy_wait')
     await waitForAttention(detail, waitMs)
-    actionCorrectionRetryPending = false
-  }
-
-  function loopWaitDetail(
-    reason: 'tool_backoff' | 'action_correction',
-    assistantTextOnly: boolean,
-  ): string {
-    if (reason === 'tool_backoff') return '外部能力要求短暂退避，等待后重试或切换方向'
-    if (reason === 'action_correction') return assistantTextOnly ? '模型仍只输出普通文本，等待短暂纠错' : '当前请求尚未完成，等待短暂重试'
-    return '当前行动协议连续失败，等待短暂重试'
   }
 
   async function waitForAttention(
@@ -910,7 +887,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   async function waitForExternalEvent(): Promise<void> {
     deps.activityReporter?.setPhase({
       phase: 'waiting',
-      detail: '上下文为空，等待第一条消息或计划事件',
+      detail: '当前没有上下文，等待第一条消息或计划事件',
       waitUntil: null,
     })
     const keepAlive = (deps.keepAlive ?? defaultKeepAlive).open()

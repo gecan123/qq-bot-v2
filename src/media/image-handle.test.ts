@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { describe, test, beforeEach, afterEach } from 'node:test'
-import { OutboundCache, setOutboundCacheForTest } from './outbound-cache.js'
+import { describe, test, beforeEach } from 'node:test'
+import { OutboundCache } from './outbound-cache.js'
 import { resolveImageHandle, resolvePersistedImage, releaseHandle } from './image-handle.js'
 
 const HASH_A = 'a'.repeat(64)
@@ -10,11 +10,6 @@ describe('resolveImageHandle (ephemeralRef path)', () => {
 
   beforeEach(() => {
     cache = new OutboundCache({ maxEntries: 10, maxBytes: 10000, ttlMs: 5000 })
-    setOutboundCacheForTest(cache)
-  })
-
-  afterEach(() => {
-    setOutboundCacheForTest(null)
   })
 
   test('resolve ephemeralRef acquires and returns image data', async () => {
@@ -26,7 +21,7 @@ describe('resolveImageHandle (ephemeralRef path)', () => {
       description: 'test image',
     })
 
-    const result = await resolveImageHandle({ ephemeralRef: HASH_A })
+    const result = await resolveImageHandle({ ephemeralRef: HASH_A }, { cache })
     assert.equal(result.dataHash, HASH_A)
     assert.equal(result.byteSize, 15)
     assert.equal(result.contentType, 'image/png')
@@ -35,7 +30,7 @@ describe('resolveImageHandle (ephemeralRef path)', () => {
     const entry = cache.get(HASH_A)!
     assert.equal(entry.refcount, 1, 'acquire should increment refcount')
 
-    releaseHandle({ ephemeralRef: HASH_A })
+    releaseHandle({ ephemeralRef: HASH_A }, cache)
     const afterRelease = cache.get(HASH_A)!
     assert.equal(afterRelease.refcount, 0, 'release should decrement refcount')
   })
@@ -49,14 +44,13 @@ describe('resolveImageHandle (ephemeralRef path)', () => {
       description: 'test',
     })
 
-    const result = await resolveImageHandle({ ephemeralRef: HASH_A }, { acquire: false })
+    const result = await resolveImageHandle({ ephemeralRef: HASH_A }, { acquire: false, cache })
     assert.equal(result.dataHash, HASH_A)
     assert.equal(cache.get(HASH_A)!.refcount, 0, 'should not increment refcount')
   })
 
   test('resolve expired ephemeralRef throws', async () => {
     const shortCache = new OutboundCache({ maxEntries: 10, maxBytes: 10000, ttlMs: 1 })
-    setOutboundCacheForTest(shortCache)
 
     shortCache.put({
       bytes: Buffer.from('test'),
@@ -69,7 +63,7 @@ describe('resolveImageHandle (ephemeralRef path)', () => {
     await new Promise((r) => setTimeout(r, 10))
 
     await assert.rejects(
-      () => resolveImageHandle({ ephemeralRef: HASH_A }),
+      () => resolveImageHandle({ ephemeralRef: HASH_A }, { cache: shortCache }),
       /expired or not found/,
     )
   })

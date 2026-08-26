@@ -1,6 +1,5 @@
-import { appendFile, mkdir } from 'node:fs/promises'
-import { dirname } from 'node:path'
 import { createLogger } from '../logger.js'
+import { appendLogLine } from './append-log-line.js'
 
 const log = createLogger('TOOL_CALL_LOG')
 
@@ -37,23 +36,12 @@ export interface ToolCallLogOptions {
   appender?: (path: string, line: string) => Promise<void>
 }
 
-let parentDirEnsured = new Set<string>()
-
-async function defaultAppender(path: string, line: string): Promise<void> {
-  const dir = dirname(path)
-  if (!parentDirEnsured.has(dir)) {
-    await mkdir(dir, { recursive: true })
-    parentDirEnsured.add(dir)
-  }
-  await appendFile(path, line, 'utf8')
-}
-
 export async function logToolCall(
   entry: ToolCallLogEntry,
   options: ToolCallLogOptions = {},
 ): Promise<void> {
   const path = options.path ?? DEFAULT_TOOL_CALL_LOG_PATH
-  const appender = options.appender ?? defaultAppender
+  const appender = options.appender ?? appendLogLine
   try {
     await appender(path, JSON.stringify(entry) + '\n')
   } catch (err) {
@@ -98,9 +86,4 @@ function shouldRedactKey(key: string): boolean {
 function summarizeString(value: string): string {
   if (value.length <= MAX_STRING_LENGTH) return value
   return `${value.slice(0, MAX_STRING_LENGTH)}...[truncated ${value.length - MAX_STRING_LENGTH} chars]`
-}
-
-/** 测试用 reset; 生产代码不应调用。 */
-export function __resetToolCallLogStateForTest(): void {
-  parentDirEnsured = new Set<string>()
 }

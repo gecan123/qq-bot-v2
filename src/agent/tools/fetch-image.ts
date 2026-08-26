@@ -4,7 +4,7 @@ import type { Tool } from '../tool.js'
 import type { ToolResultContentBlock } from '../agent-context.types.js'
 import { config } from '../../config/index.js'
 import { logFetch } from '../../ops/fetch-log.js'
-import { getOutboundCache } from '../../media/outbound-cache.js'
+import { getOutboundCache, type OutboundCache } from '../../media/outbound-cache.js'
 import { computeMediaHash } from '../../media/media-hash.js'
 import { compressForContext } from '../../media/compress-for-context.js'
 import type { ImageProduceResult } from '../../media/image-handle-schema.js'
@@ -63,6 +63,7 @@ export interface FetchImageDeps {
   logPath?: string
   appender?: (path: string, line: string) => Promise<void>
   now?: () => Date
+  cache?: OutboundCache
 }
 
 function parseContentType(raw: string): string {
@@ -101,6 +102,7 @@ export function createFetchImageTool(deps: FetchImageDeps = {}): Tool<Args> {
   const timeoutMs = deps.timeoutMs ?? config.fetchUrlTimeoutMs
   const userAgent = deps.userAgent ?? DEFAULT_USER_AGENT
   const now = deps.now ?? (() => new Date())
+  const cache = deps.cache ?? getOutboundCache()
 
   return {
     name: 'fetch_image',
@@ -163,7 +165,7 @@ export function createFetchImageTool(deps: FetchImageDeps = {}): Tool<Args> {
         ? outcome.bytes.subarray(0, IMAGE_MAX_BYTES)
         : outcome.bytes
       const dataHash = computeMediaHash(bytes)
-      getOutboundCache().put({
+      cache.put({
         bytes,
         dataHash,
         byteSize: bytes.byteLength,

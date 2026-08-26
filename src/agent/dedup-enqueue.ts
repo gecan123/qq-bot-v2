@@ -19,8 +19,6 @@ export interface DedupEnqueue {
   (event: BotEvent): boolean
   /** replay barrier 完成后释放临时集合；稳态不再跟踪 rowId。 */
   readonly finishReplay: () => void
-  /** 测试用: 暴露当前已入队的 rowId 集合大小. */
-  readonly seenCount: () => number
 }
 
 export function createDedupEnqueue(queue: EventQueue<BotEvent>): DedupEnqueue {
@@ -47,10 +45,6 @@ export function createDedupEnqueue(queue: EventQueue<BotEvent>): DedupEnqueue {
         replayActive = false
         seenMessageRowIds.clear()
       },
-      writable: false,
-    },
-    seenCount: {
-      value: () => seenMessageRowIds.size,
       writable: false,
     },
   })

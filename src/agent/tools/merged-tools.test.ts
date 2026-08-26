@@ -16,7 +16,7 @@ import { createBackgroundTaskTool } from './background-task.js'
 import { TASK_RESULT_TEXT_CAP_CHARS } from './get-task-result.js'
 import { createMemoryTool, memoryTool } from './memory.js'
 import { createFetchImageTool, runCurlImage } from './fetch-image.js'
-import { OutboundCache, setOutboundCacheForTest } from '../../media/outbound-cache.js'
+import { OutboundCache } from '../../media/outbound-cache.js'
 import type { SendTargetPolicy } from '../send-target-policy.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
 import type { ScheduleRuntime } from '../schedule-runtime.js'
@@ -626,33 +626,29 @@ describe('merged main-agent tools', () => {
 
   test('internal fetch image implementation produces handles for url and qq_avatar', async () => {
     const cache = new OutboundCache()
-    setOutboundCacheForTest(cache)
-    try {
-      const tool = createFetchImageTool({
-        curl: async (url) => ({
-          status: 200,
-          contentType: String(url).includes('qlogo') ? 'image/png' : 'image/png',
-          bytes: TINY_PNG,
-          durationMs: 1,
-        }),
-      })
+    const tool = createFetchImageTool({
+      cache,
+      curl: async (url) => ({
+        status: 200,
+        contentType: String(url).includes('qlogo') ? 'image/png' : 'image/png',
+        bytes: TINY_PNG,
+        durationMs: 1,
+      }),
+    })
 
-      const fromUrl = await tool.execute({ action: 'url', url: 'https://example.com/cat.png' }, makeCtx())
-      const avatar = await tool.execute({ action: 'qq_avatar', qq: 123, size: '640' }, makeCtx())
-      const parsedUrl = JSON.parse(Array.isArray(fromUrl.content) ? fromUrl.content[0]!.type === 'text' ? fromUrl.content[0]!.text : '{}' : fromUrl.content) as { ephemeralRef: string }
-      const parsedAvatar = JSON.parse(Array.isArray(avatar.content) ? avatar.content[0]!.type === 'text' ? avatar.content[0]!.text : '{}' : avatar.content) as { ephemeralRef: string }
+    const fromUrl = await tool.execute({ action: 'url', url: 'https://example.com/cat.png' }, makeCtx())
+    const avatar = await tool.execute({ action: 'qq_avatar', qq: 123, size: '640' }, makeCtx())
+    const parsedUrl = JSON.parse(Array.isArray(fromUrl.content) ? fromUrl.content[0]!.type === 'text' ? fromUrl.content[0]!.text : '{}' : fromUrl.content) as { ephemeralRef: string }
+    const parsedAvatar = JSON.parse(Array.isArray(avatar.content) ? avatar.content[0]!.type === 'text' ? avatar.content[0]!.text : '{}' : avatar.content) as { ephemeralRef: string }
 
-      assert.equal(Array.isArray(fromUrl.content), true)
-      assert.equal(Array.isArray(avatar.content), true)
-      assert.ok(Array.isArray(fromUrl.content) && fromUrl.content.some((block) => block.type === 'image'))
-      assert.ok(Array.isArray(avatar.content) && avatar.content.some((block) => block.type === 'image'))
-      assert.match(parsedUrl.ephemeralRef, /^[a-f0-9]{64}$/)
-      assert.match(parsedAvatar.ephemeralRef, /^[a-f0-9]{64}$/)
-      assert.ok(cache.get(parsedUrl.ephemeralRef))
-      assert.ok(cache.get(parsedAvatar.ephemeralRef))
-    } finally {
-      setOutboundCacheForTest(null)
-    }
+    assert.equal(Array.isArray(fromUrl.content), true)
+    assert.equal(Array.isArray(avatar.content), true)
+    assert.ok(Array.isArray(fromUrl.content) && fromUrl.content.some((block) => block.type === 'image'))
+    assert.ok(Array.isArray(avatar.content) && avatar.content.some((block) => block.type === 'image'))
+    assert.match(parsedUrl.ephemeralRef, /^[a-f0-9]{64}$/)
+    assert.match(parsedAvatar.ephemeralRef, /^[a-f0-9]{64}$/)
+    assert.ok(cache.get(parsedUrl.ephemeralRef))
+    assert.ok(cache.get(parsedAvatar.ephemeralRef))
   })
 
   test('runCurlImage fetches bytes from a local HTTP endpoint with curl', async () => {

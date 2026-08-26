@@ -1,6 +1,5 @@
-import { appendFile, mkdir } from 'node:fs/promises'
-import { dirname } from 'node:path'
 import { createLogger } from '../logger.js'
+import { appendLogLine } from '../ops/append-log-line.js'
 import { formatBeijingIso } from '../utils/beijing-time.js'
 import type { BrowserActionInput, BrowserActionJsonResult } from './protocol.js'
 import { redactBrowserValue } from './risk.js'
@@ -29,23 +28,12 @@ export interface BrowserActionLogOptions {
   appender?: (path: string, line: string) => Promise<void>
 }
 
-let parentDirEnsured = new Set<string>()
-
-async function defaultAppender(path: string, line: string): Promise<void> {
-  const dir = dirname(path)
-  if (!parentDirEnsured.has(dir)) {
-    await mkdir(dir, { recursive: true })
-    parentDirEnsured.add(dir)
-  }
-  await appendFile(path, line, 'utf8')
-}
-
 export async function logBrowserAction(
   entry: BrowserActionLogEntry,
   options: BrowserActionLogOptions = {},
 ): Promise<void> {
   const path = options.path ?? DEFAULT_BROWSER_ACTION_LOG_PATH
-  const appender = options.appender ?? defaultAppender
+  const appender = options.appender ?? appendLogLine
   try {
     await appender(path, JSON.stringify(entry) + '\n')
   } catch (err) {
@@ -79,8 +67,4 @@ export function buildBrowserActionLogEntry(input: {
     ...(input.result.artifactId ? { artifactId: input.result.artifactId } : {}),
     durationMs: Math.max(0, Math.round(finishedAt - input.startedAt)),
   }
-}
-
-export function __resetBrowserActionLogStateForTest(): void {
-  parentDirEnsured = new Set<string>()
 }

@@ -171,7 +171,3 @@ export function getOutboundCache(): OutboundCache {
   }
   return _instance
 }
-
-export function setOutboundCacheForTest(cache: OutboundCache | null): void {
-  _instance = cache
-}

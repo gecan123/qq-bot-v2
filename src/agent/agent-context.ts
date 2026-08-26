@@ -43,8 +43,6 @@ export interface AgentContext {
   /** Runtime Host 在 canonical commit/reload 后安装完整 projection。 */
   installProjection(snapshot: PersistedAgentSnapshot): void
   exportPersistedSnapshot(): PersistedAgentSnapshot
-  /** 测试用。 */
-  reset(): void
 }
 
 interface CreateAgentContextOptions {
@@ -110,10 +108,6 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
         messages: cloneMessages(messages),
         conversationFocus: cloneConversationFocus(conversationFocus),
       }
-    },
-    reset(): void {
-      messages = []
-      conversationFocus = null
     },
   }
   return impl

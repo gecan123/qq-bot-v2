@@ -1,7 +1,6 @@
-import { appendFile, mkdir } from 'node:fs/promises'
-import { dirname } from 'node:path'
 import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
+import { appendLogLine } from './append-log-line.js'
 
 const log = createLogger('FETCH_LOG')
 
@@ -30,31 +29,15 @@ interface LogFetchOptions {
   appender?: (path: string, line: string) => Promise<void>
 }
 
-let parentDirEnsured = new Set<string>()
-
-async function defaultAppender(path: string, line: string): Promise<void> {
-  const dir = dirname(path)
-  if (!parentDirEnsured.has(dir)) {
-    await mkdir(dir, { recursive: true })
-    parentDirEnsured.add(dir)
-  }
-  await appendFile(path, line, 'utf8')
-}
-
 export async function logFetch(
   entry: FetchLogEntry,
   options: LogFetchOptions = {},
 ): Promise<void> {
   const path = options.path ?? config.fetchLogPath
-  const appender = options.appender ?? defaultAppender
+  const appender = options.appender ?? appendLogLine
   try {
     await appender(path, JSON.stringify(entry) + '\n')
   } catch (err) {
     log.warn({ err, path }, 'fetch_log_write_failed')
   }
-}
-
-/** 测试用 reset; 生产代码不应调用。 */
-export function __resetFetchLogStateForTest(): void {
-  parentDirEnsured = new Set<string>()
 }

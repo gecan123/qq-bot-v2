@@ -1,6 +1,5 @@
-import { appendFile, mkdir } from 'node:fs/promises'
-import { dirname } from 'node:path'
 import { createLogger } from '../../logger.js'
+import { appendLogLine } from '../../ops/append-log-line.js'
 import { formatBeijingIso } from '../../utils/beijing-time.js'
 import type { ClaudeAssistantNativeBlock } from '../agent-context.types.js'
 
@@ -28,17 +27,6 @@ export interface LogClaudeThinkingBlocksInput {
   options?: ClaudeThinkingLogOptions
 }
 
-let parentDirEnsured = new Set<string>()
-
-async function defaultAppender(path: string, line: string): Promise<void> {
-  const dir = dirname(path)
-  if (!parentDirEnsured.has(dir)) {
-    await mkdir(dir, { recursive: true })
-    parentDirEnsured.add(dir)
-  }
-  await appendFile(path, line, 'utf8')
-}
-
 export async function logClaudeThinkingBlocks(
   input: LogClaudeThinkingBlocksInput,
 ): Promise<void> {
@@ -46,7 +34,7 @@ export async function logClaudeThinkingBlocks(
   if (mode === 'off' || input.blocks.length === 0) return
 
   const path = input.options?.path ?? DEFAULT_CLAUDE_THINKING_LOG_PATH
-  const appender = input.options?.appender ?? defaultAppender
+  const appender = input.options?.appender ?? appendLogLine
 
   for (const { blockIndex, block } of input.blocks) {
     const entry =
@@ -100,9 +88,4 @@ function summaryEntry(
     hasSignature: typeof block.signature === 'string' && block.signature.length > 0,
     toolCallIds,
   }
-}
-
-/** 测试用 reset; 生产代码不应调用。 */
-export function __resetClaudeThinkingLogStateForTest(): void {
-  parentDirEnsured = new Set<string>()
 }

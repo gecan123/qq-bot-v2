@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { Tool, ToolContext } from '../tool.js'
 import { imageHandleSchema, type ImageProduceResult } from '../../media/image-handle-schema.js'
 import { resolveImageHandle, releaseHandle } from '../../media/image-handle.js'
-import { getOutboundCache } from '../../media/outbound-cache.js'
+import { getOutboundCache, type OutboundCache } from '../../media/outbound-cache.js'
 import { computeMediaHash } from '../../media/media-hash.js'
 import { compressForContext } from '../../media/compress-for-context.js'
 import { generateImage, editImage } from '../../llm/image-gen.js'
@@ -64,12 +64,14 @@ type Args = z.output<typeof argsSchema>
 export interface GenerateImageDeps {
   generate?: (prompt: string, options?: ImageGenerationOptions) => Promise<Buffer>
   edit?: (prompt: string, source: Buffer[], options?: ImageGenerationOptions) => Promise<Buffer>
+  cache?: OutboundCache
   taskRegistry: BackgroundTaskRegistry
 }
 
 export function createGenerateImageTool(deps: GenerateImageDeps): Tool<RawArgs> {
   const generate = deps.generate ?? generateImage
   const edit = deps.edit ?? editImage
+  const cache = deps.cache ?? getOutboundCache()
 
   return {
     name: 'generate_image',
@@ -90,12 +92,12 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<RawArgs> 
       const sourceBytes: Buffer[] = []
       try {
         for (const image of sourceImages) {
-          const resolved = await resolveImageHandle(image, { acquire: true })
+          const resolved = await resolveImageHandle(image, { acquire: true, cache })
           sourceBytes.push(resolved.bytes)
         }
       } catch (err) {
         for (const image of sourceImages.slice(0, sourceBytes.length)) {
-          releaseHandle(image)
+          releaseHandle(image, cache)
         }
         return {
           content: JSON.stringify({
@@ -115,7 +117,7 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<RawArgs> 
         { toolName: 'generate_image', description },
       )
       if (!registration.ok) {
-        for (const image of sourceImages) releaseHandle(image)
+        for (const image of sourceImages) releaseHandle(image, cache)
         return registration.result
       }
       const task = registration.task
@@ -146,7 +148,6 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<RawArgs> 
                 ? `AI edited image ${index + 1}/${args.count}: ${args.prompt.slice(0, 200)}`
                 : `AI generated image ${index + 1}/${args.count}: ${args.prompt.slice(0, 200)}`
 
-              const cache = getOutboundCache()
               cache.put({
                 bytes: imageBytes,
                 dataHash,
@@ -235,7 +236,7 @@ export function createGenerateImageTool(deps: GenerateImageDeps): Tool<RawArgs> 
             summary: errorMsg,
           })
         } finally {
-          for (const image of sourceImages) releaseHandle(image)
+          for (const image of sourceImages) releaseHandle(image, cache)
         }
       }
 

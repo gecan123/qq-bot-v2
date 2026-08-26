@@ -1,4 +1,5 @@
 import { getOutboundCache } from './outbound-cache.js'
+import type { OutboundCache } from './outbound-cache.js'
 import type { ImageHandle, ResolvedImage } from './image-handle-schema.js'
 import { findResolvedMedia, type ResolvedMediaRecord } from './media-store.js'
 
@@ -26,7 +27,7 @@ export async function resolvePersistedImage(
 
 export async function resolveImageHandle(
   handle: ImageHandle,
-  opts: { acquire?: boolean } = {},
+  opts: { acquire?: boolean; cache?: OutboundCache } = {},
 ): Promise<ResolvedImage> {
   if ('mediaId' in handle) {
     const media = await resolvePersistedImage(handle.mediaId)
@@ -36,7 +37,7 @@ export async function resolveImageHandle(
     return media
   }
 
-  const cache = getOutboundCache()
+  const cache = opts.cache ?? getOutboundCache()
   const shouldAcquire = opts.acquire !== false
   const entry = shouldAcquire
     ? cache.acquire(handle.ephemeralRef)
@@ -55,9 +56,9 @@ export async function resolveImageHandle(
   }
 }
 
-export function releaseHandle(handle: ImageHandle): void {
+export function releaseHandle(handle: ImageHandle, cache?: OutboundCache): void {
   if ('ephemeralRef' in handle) {
-    getOutboundCache().release(handle.ephemeralRef)
+    (cache ?? getOutboundCache()).release(handle.ephemeralRef)
   }
 }
 

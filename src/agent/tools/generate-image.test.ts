@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { describe, test, beforeEach, afterEach } from 'node:test'
+import { describe, test, beforeEach } from 'node:test'
 import { createGenerateImageTool } from './generate-image.js'
-import { OutboundCache, setOutboundCacheForTest } from '../../media/outbound-cache.js'
+import { OutboundCache } from '../../media/outbound-cache.js'
 import type { ToolContext } from '../tool.js'
 import type { ToolResultContent } from '../agent-context.types.js'
 import { InMemoryEventQueue } from '../event-queue.js'
@@ -32,18 +32,14 @@ describe('generate_image tool', () => {
 
   beforeEach(() => {
     cache = new OutboundCache()
-    setOutboundCacheForTest(cache)
     eventQueue = new InMemoryEventQueue<BotEvent>()
     ctx = { eventQueue, roundIndex: 0 }
-  })
-
-  afterEach(() => {
-    setOutboundCacheForTest(null)
   })
 
   test('returns started immediately and completes in background', async () => {
     const taskRegistry = createInMemoryTaskRegistry()
     const tool = createGenerateImageTool({
+      cache,
       generate: async () => FAKE_PNG,
       taskRegistry,
     })
@@ -93,6 +89,7 @@ describe('generate_image tool', () => {
     taskRegistry.register({ toolName: 'existing', description: 'existing work' })
     let generateCalls = 0
     const tool = createGenerateImageTool({
+      cache,
       generate: async () => {
         generateCalls++
         return FAKE_PNG
@@ -114,6 +111,7 @@ describe('generate_image tool', () => {
   test('registers failure when generate throws', async () => {
     const taskRegistry = createInMemoryTaskRegistry()
     const tool = createGenerateImageTool({
+      cache,
       generate: async () => { throw new Error('API quota exceeded') },
       taskRegistry,
     })
@@ -144,6 +142,7 @@ describe('generate_image tool', () => {
   test('returns error synchronously when source image handle is invalid', async () => {
     const taskRegistry = createInMemoryTaskRegistry()
     const tool = createGenerateImageTool({
+      cache,
       generate: async () => FAKE_PNG,
       taskRegistry,
     })
@@ -171,6 +170,7 @@ describe('generate_image tool', () => {
     let editCalled = false
     const taskRegistry = createInMemoryTaskRegistry()
     const tool = createGenerateImageTool({
+      cache,
       generate: async () => { throw new Error('should not be called') },
       edit: async (_prompt, _src) => {
         editCalled = true
@@ -198,7 +198,7 @@ describe('generate_image tool', () => {
 
   test('schema accepts quality, count, and up to five source images', () => {
     const taskRegistry = createInMemoryTaskRegistry()
-    const tool = createGenerateImageTool({ taskRegistry })
+    const tool = createGenerateImageTool({ cache, taskRegistry })
     const handles = Array.from({ length: 5 }, (_, index) => ({ ephemeralRef: `${index}`.repeat(64) }))
     const defaulted = tool.schema.safeParse({ prompt: 'p' })
     const defaultedData = defaulted.success ? defaulted.data as { quality: string } : undefined
@@ -218,7 +218,7 @@ describe('generate_image tool', () => {
 
   test('rejects args that provide both image and images', () => {
     const taskRegistry = createInMemoryTaskRegistry()
-    const tool = createGenerateImageTool({ taskRegistry })
+    const tool = createGenerateImageTool({ cache, taskRegistry })
 
     assert.equal(tool.schema.safeParse({
       prompt: 'p',
@@ -249,6 +249,7 @@ describe('generate_image tool', () => {
     let editQuality: unknown
     const taskRegistry = createInMemoryTaskRegistry()
     const tool = createGenerateImageTool({
+      cache,
       generate: async () => { throw new Error('should not be called') },
       edit: async (_prompt, sources, options) => {
         editSources = sources
@@ -284,6 +285,7 @@ describe('generate_image tool', () => {
     const taskRegistry = createInMemoryTaskRegistry()
     let generateCalls = 0
     const tool = createGenerateImageTool({
+      cache,
       generate: async (_prompt, options) => {
         generateCalls++
         assert.equal(options?.quality, 'low')
@@ -318,6 +320,7 @@ describe('generate_image tool', () => {
     let active = 0
     let maxActive = 0
     const tool = createGenerateImageTool({
+      cache,
       generate: async () => {
         active++
         maxActive = Math.max(maxActive, active)
@@ -339,6 +342,7 @@ describe('generate_image tool', () => {
     const taskRegistry = createInMemoryTaskRegistry()
     let generateCalls = 0
     const tool = createGenerateImageTool({
+      cache,
       generate: async () => {
         generateCalls++
         if (generateCalls === 2) throw new Error('temporary image failure')
@@ -374,6 +378,7 @@ describe('generate_image tool', () => {
     })
     const taskRegistry = createInMemoryTaskRegistry()
     const tool = createGenerateImageTool({
+      cache,
       edit: async () => { throw new Error('edit failed') },
       taskRegistry,
     })

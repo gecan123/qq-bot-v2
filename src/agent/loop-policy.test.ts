@@ -21,6 +21,7 @@ describe('loop policy', () => {
       [{ toolCallCount: 1, toolContinuation: 'stop' }, 'continue', 'tool_direction_complete'],
       [{ toolCallCount: 1, toolContinuation: 'backoff' }, 'wait_attention', 'tool_backoff'],
       [{ toolCallCount: 1, madeToolProgress: true }, 'continue', 'tool_progress'],
+      [{ toolCallCount: 1 }, 'continue', 'tool_no_progress'],
       [{ actionRequired: true }, 'continue', 'action_correction'],
       [{ actionRequired: true, correctionRetryPending: true }, 'wait_attention', 'action_correction'],
       [{}, 'continue', 'seek_next_action'],

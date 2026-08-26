@@ -15,9 +15,12 @@ import {
 } from '../agent-ledger.types.js'
 import { createEmptyMailboxContinuityState } from '../mailbox-continuity.js'
 
-export interface TestAgentLedgerHarness {
+interface TestAgentLedgerHarness {
   repo: AgentLedgerRepo
   loader: AgentLedgerLoader
+  messageAppends: Array<Parameters<AgentLedgerRepo['appendMessages']>[0]>
+  compactionAppends: Array<Parameters<AgentLedgerRepo['appendCompaction']>[0]>
+  checkpointSaves: Array<Parameters<AgentLedgerRepo['saveCheckpoint']>[0]>
   snapshots: PersistedAgentSnapshot[]
   runtimeStates: AgentRuntimeState[]
   canonical(): CanonicalAgentState
@@ -26,6 +29,12 @@ export interface TestAgentLedgerHarness {
 export function createTestAgentLedger(input: {
   messages?: readonly DurableAgentMessage[]
   runtimeState?: Partial<Omit<AgentRuntimeState, 'schemaVersion' | 'ledgerHeadEntryId'>>
+  faults?: {
+    appendMessages?: Error
+    appendCompaction?: Error
+    saveCheckpoint?: Error
+    compactionHeadRaceOnce?: DurableAgentMessage
+  }
 } = {}): TestAgentLedgerHarness {
   let entries: AgentLedgerEntry[] = (input.messages ?? []).map((message, index) => ({
     id: BigInt(index + 1),
@@ -45,8 +54,12 @@ export function createTestAgentLedger(input: {
     inboxReadCursors: structuredClone(input.runtimeState?.inboxReadCursors ?? {}),
     ledgerHeadEntryId: entries.at(-1)?.id ?? null,
   }
+  const messageAppends: TestAgentLedgerHarness['messageAppends'] = []
+  const compactionAppends: TestAgentLedgerHarness['compactionAppends'] = []
+  const checkpointSaves: TestAgentLedgerHarness['checkpointSaves'] = []
   const snapshots: PersistedAgentSnapshot[] = []
   const runtimeStates: AgentRuntimeState[] = []
+  let compactionHeadRaced = false
 
   const applyPatch = (patch: AgentRuntimePatch | undefined): void => {
     if (!patch) return
@@ -71,6 +84,8 @@ export function createTestAgentLedger(input: {
       return canonical()
     },
     async appendMessages(append) {
+      messageAppends.push(structuredClone(append))
+      if (input.faults?.appendMessages) throw input.faults.appendMessages
       const appendedEntries: AgentLedgerEntry[] = append.messages.map((message) => ({
         id: nextId++,
         entryType: 'message',
@@ -84,6 +99,23 @@ export function createTestAgentLedger(input: {
       return { appendedEntries, runtimeState: structuredClone(runtimeState) }
     },
     async appendCompaction(append) {
+      compactionAppends.push(structuredClone(append))
+      if (input.faults?.appendCompaction) throw input.faults.appendCompaction
+      if (input.faults?.compactionHeadRaceOnce && !compactionHeadRaced) {
+        compactionHeadRaced = true
+        const entry: AgentLedgerEntry = {
+          id: nextId++,
+          entryType: 'message',
+          payload: {
+            schemaVersion: AGENT_LEDGER_SCHEMA_VERSION,
+            message: structuredClone(input.faults.compactionHeadRaceOnce),
+          },
+          createdAt: new Date('2026-07-15T00:00:01.000Z'),
+        }
+        entries.push(entry)
+        runtimeState.ledgerHeadEntryId = entry.id
+        throw new AgentLedgerHeadChangedError(append.expectedHeadEntryId, entry.id)
+      }
       assertHead(append.expectedHeadEntryId, runtimeState.ledgerHeadEntryId)
       const entry: AgentLedgerEntry = {
         id: nextId++,
@@ -103,13 +135,19 @@ export function createTestAgentLedger(input: {
       record()
       return structuredClone(runtimeState)
     },
-    async saveCheckpoint() {},
+    async saveCheckpoint(checkpoint) {
+      checkpointSaves.push(structuredClone(checkpoint))
+      if (input.faults?.saveCheckpoint) throw input.faults.saveCheckpoint
+    },
     async loadCheckpoint() { return null },
   }
 
   return {
     repo,
     loader: createAgentLedgerLoader({ repo }),
+    messageAppends,
+    compactionAppends,
+    checkpointSaves,
     snapshots,
     runtimeStates,
     canonical,

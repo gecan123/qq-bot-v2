@@ -96,7 +96,7 @@ describe('ContextView ledger entries', () => {
       isDemo
     />)
 
-    assert.ok(screen.getByRole('heading', { level: 1, name: '主 Agent 观测 · 示例' }))
+    assert.ok(screen.getByRole('heading', { level: 1, name: 'Agent 历史 · 示例' }))
     assert.ok(screen.getByText('示例数据，不是实际运行记录'))
     const userMessage = screen.getByRole('article', { name: '用户消息 #121' })
     assert.ok(within(userMessage).getByText('帮我看看 Luna 最近在忙什么，给我一个简短的进展摘要。', { selector: 'p' }))
@@ -114,7 +114,7 @@ describe('ContextView ledger entries', () => {
       refreshFailed={false}
     />)
 
-    const transcript = screen.getByRole('log', { name: '主 Agent canonical 对话' })
+    const transcript = screen.getByRole('log', { name: 'Agent canonical 历史' })
     assert.ok(within(transcript).getByText('会话已压缩'))
     assert.ok(within(transcript).getByText('请检查最新状态'))
     assert.ok(within(transcript).getByRole('heading', { level: 2, name: '检查完成' }))
@@ -162,9 +162,13 @@ describe('ContextView ledger entries', () => {
       refreshFailed={false}
     />)
 
-    assert.ok(screen.getByRole('heading', { level: 1, name: '主 Agent 观测' }))
-    assert.ok(screen.getByRole('heading', { level: 2, name: '对话与动作' }))
-    const summary = screen.getByLabelText('主 Agent 观测摘要')
+    assert.ok(screen.getByRole('heading', { level: 1, name: 'Agent 历史' }))
+    assert.ok(screen.getByRole('heading', { level: 2, name: '正式对话与动作' }))
+    const definition = screen.getByRole('complementary', { name: 'Agent 历史说明' })
+    assert.ok(definition.textContent?.includes('正式历史'))
+    assert.ok(definition.textContent?.includes('下一轮与重启后'))
+    assert.equal(screen.getByRole('link', { name: '排查执行过程' }).getAttribute('href'), '/timeline')
+    const summary = screen.getByLabelText('Agent 历史摘要')
     assert.ok(within(summary).getByLabelText('2 次工具调用'))
     assert.ok(within(summary).getByLabelText('0 次失败'))
     assert.ok(within(summary).getByLabelText('0 次未返回'))

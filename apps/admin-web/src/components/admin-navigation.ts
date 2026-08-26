@@ -18,15 +18,15 @@ export type NavigationItem = { to: NavigationPath; label: string; hint: string; 
 export const primaryNavigation: NavigationItem[] = [
   { to: '/', label: '现在', hint: '当前状态与进展', icon: LayoutDashboard },
   { to: '/qq', label: '会话', hint: 'QQ、飞书与媒体', icon: MessageCircleMore },
-  { to: '/memory', label: '知识', hint: 'Memory 与 Life', icon: BookOpenText },
+  { to: '/memory', label: '知识', hint: 'Memory 与 Notebook', icon: BookOpenText },
 ]
 
 export const investigationNavigation: NavigationItem[] = [
   { to: '/health', label: '系统健康', hint: '完整性与运行状态', icon: ShieldCheck },
   { to: '/logs', label: '进程日志', hint: '搜索与实时 tail', icon: ScrollText },
-  { to: '/timeline', label: '事件时间线', hint: '逐条活动证据', icon: Activity },
-  { to: '/context', label: '主 Agent', hint: 'Canonical 对话与 Ledger', icon: Database },
-  { to: '/life', label: 'Goal 与计划', hint: 'Agenda 与后台任务', icon: HeartPulse },
+  { to: '/context', label: 'Agent 历史', hint: '决定后续上下文的正式记录', icon: Database },
+  { to: '/timeline', label: '执行追踪', hint: '模型、工具与 Ledger 诊断', icon: Activity },
+  { to: '/life', label: 'Goal 与计划', hint: 'Schedule 与后台任务', icon: HeartPulse },
   { to: '/metrics', label: '用量指标', hint: 'Token、缓存与工具', icon: Gauge },
 ]
 

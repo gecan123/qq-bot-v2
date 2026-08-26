@@ -42,7 +42,7 @@ export function OverviewView({ snapshot, isRefreshing, refreshFailed }: Overview
   return <>
     <PageHeader
       title="现在"
-      description="先看 Agent 为什么醒来、此刻正在做什么和下一项可检查结果；底层 Ledger 与原始事件保留为下钻证据。"
+      description="先看 Agent 为什么醒来、此刻正在做什么和下一项可检查结果；Agent 历史与执行追踪保留为下钻证据。"
       generatedAt={snapshot.generatedAt}
       isRefreshing={isRefreshing}
       refreshFailed={refreshFailed}
@@ -125,9 +125,9 @@ export function OverviewView({ snapshot, isRefreshing, refreshFailed }: Overview
         <StatCard label="Cache hit" value={formatPercent(usage?.cacheHitRate ?? null)} detail={`${formatCount(usage?.cachedTokens ?? null)} cached`} />
       </StatGrid></div>
       <Panel className="mt-4" title="继续调查" description="需要核对证据或排障时，再进入底层页面。"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Jump to="/context" title="Ledger" detail="投影边界、entry 构成、最近原始历史" />
-        <Jump to="/timeline" title="事件时间线" detail="工具、token 与 ledger 的逐条记录" />
-        <Jump to="/life" title="Goal 与计划" detail="Goal、Agenda、Schedule、后台任务" />
+        <Jump to="/context" title="Agent 历史" detail="决定后续上下文的 canonical 对话与动作" />
+        <Jump to="/timeline" title="执行追踪" detail="模型、工具与 Ledger 写入的诊断证据" />
+        <Jump to="/life" title="Goal 与计划" detail="Goal、Schedule、后台任务" />
         <Jump to="/health" title="系统健康" detail="进程提示、DB、完整性、迁移" />
       </div></Panel>
     </details>

@@ -22,12 +22,17 @@ export function ContextView({ snapshot, isRefreshing, refreshFailed, isDemo = fa
   const activity = summarizeVisibleToolActivity(snapshot.entries)
   return <>
     <PageHeader
-      title={isDemo ? '主 Agent 观测 · 示例' : '主 Agent 观测'}
-      description="沿 canonical ledger 观察主 Agent 的对话、动作链与异常；页面只在完整快照到达后刷新。"
+      title={isDemo ? 'Agent 历史 · 示例' : 'Agent 历史'}
+      description="查看决定 Agent 下一轮与重启后上下文的 canonical ledger。"
       generatedAt={snapshot.generatedAt}
       isRefreshing={isRefreshing}
       refreshFailed={refreshFailed}
     />
+    <aside className="surface-definition" aria-label="Agent 历史说明">
+      <strong>{isDemo ? '这里演示 Agent 正式历史的结构' : '这是 Agent 的正式历史'}</strong>
+      <span>Canonical Ledger 决定下一轮与重启后可恢复的上下文；工具审计与 Token 观测不在这里充当记忆。</span>
+      <a href="/timeline">排查执行过程</a>
+    </aside>
     {isDemo && (
       <aside className="context-demo-notice" aria-label="示例数据说明">
         <strong>示例数据，不是实际运行记录</strong>
@@ -37,10 +42,10 @@ export function ContextView({ snapshot, isRefreshing, refreshFailed, isDemo = fa
     )}
     <Panel
       className="main-agent-panel"
-      title="对话与动作"
-      description="每个回合直接展示有效工具名、关键参数和结果摘要；完整输入、输出与 Ledger 关联按需展开。"
+      title="正式对话与动作"
+      description="按 canonical 顺序展示对话、工具调用与结果；完整输入、输出与 Ledger 关联按需展开。"
     >
-      <div className="context-session-bar" aria-label="主 Agent 观测摘要">
+      <div className="context-session-bar" aria-label="Agent 历史摘要">
         <section className="context-tool-usage" aria-label="工具使用统计">
           <div className="context-tool-usage-title" aria-label={`${activity.total} 次工具调用`}><Wrench size={13} /><span>工具调用</span><strong>{formatCount(activity.total)}</strong></div>
           <div className="context-tool-usage-list">
@@ -115,7 +120,7 @@ function ConversationTranscript({ entries, headId }: { entries: ContextEntry[]; 
         ref={viewportRef}
         className="agent-transcript"
         role="log"
-        aria-label="主 Agent canonical 对话"
+        aria-label="Agent canonical 历史"
         aria-live="off"
         onScroll={event => {
           const element = event.currentTarget

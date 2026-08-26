@@ -93,6 +93,8 @@ describe('OverviewView', () => {
     assert.ok(screen.getByText('active'))
     assert.ok(screen.getByText('75.0%'))
     assert.ok(screen.getByText('2 failed'))
+    assert.equal(screen.getByRole('link', { name: /Agent 历史/ }).getAttribute('href'), '/context')
+    assert.equal(screen.getByRole('link', { name: /执行追踪/ }).getAttribute('href'), '/timeline')
   })
 
   test('renders explicit empty runtime and Goal states', () => {

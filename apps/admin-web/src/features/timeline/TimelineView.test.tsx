@@ -20,10 +20,16 @@ test('filters events by text and event kind', () => {
   }
 
   render(<TimelineView snapshot={snapshot} isRefreshing={false} refreshFailed={false} />)
-  fireEvent.change(screen.getByLabelText('事件类型'), { target: { value: 'tool' } })
-  fireEvent.change(screen.getByLabelText('搜索事件'), { target: { value: 'needle' } })
+  assert.ok(screen.getByRole('heading', { level: 1, name: '执行追踪' }))
+  const definition = screen.getByRole('complementary', { name: '执行追踪说明' })
+  assert.ok(definition.textContent?.includes('运行诊断'))
+  assert.ok(definition.textContent?.includes('不会成为 Agent 后续上下文'))
+  assert.equal(screen.getByRole('link', { name: '查看 Agent 历史' }).getAttribute('href'), '/context')
+
+  fireEvent.change(screen.getByLabelText('记录类型'), { target: { value: 'tool' } })
+  fireEvent.change(screen.getByLabelText('搜索追踪记录'), { target: { value: 'needle' } })
 
   assert.ok(screen.getByText('搜索网页'))
   assert.equal(screen.queryByText('收到输入'), null)
-  assert.ok(screen.getByText('1 / 3 个事件'))
+  assert.ok(screen.getByText('1 / 3 条记录'))
 })

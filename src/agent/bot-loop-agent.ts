@@ -46,7 +46,7 @@ import {
   notificationRoutingForEvent,
 } from './notification.js'
 import { createLedgerCommitCoordinator } from './ledger-commit-coordinator.js'
-import { decideLoopPolicy } from './loop-policy.js'
+import { decideLoopPolicy, type LoopDemand } from './loop-policy.js'
 import { createCompactionCoordinator } from './compaction-coordinator.js'
 
 const log = createLogger('BOT_LOOP')
@@ -126,6 +126,11 @@ const ASSISTANT_TEXT_ONLY_CORRECTION = JSON.stringify({
   code: 'assistant_text_without_tool',
   instruction: '上一轮只输出了普通 assistant 文本；它不会发送给任何人，也不会执行其中的计划。现在调用一个具体工具继续行动；当前方向已完成或不可继续时，立刻选择另一件可执行的事。只有真正想主动休息时才调用 rest。',
 })
+const ATTENTION_REQUIRED_CORRECTION = JSON.stringify({
+  event: 'runtime_correction',
+  code: 'attention_pending',
+  instruction: '仍有未处理的高优先级私聊。暂停当前方向，先按 notification.open 读取并回应；处理后再回到原方向。',
+})
 const CONTINUOUS_AUTONOMY_BOOTSTRAP = JSON.stringify({
   event: 'runtime_bootstrap',
   code: 'continuous_autonomy_started',
@@ -167,6 +172,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let roundIndex = 0
   let consecutiveRounds = 0
   let actionCorrectionRetryPending = false
+  let attentionCorrectionIssued = false
   let shortWorkContinuationPending = false
   let recoverableToolCorrectionRounds = 0
   const recentToolNoveltyKeys = new Map<string, number>()
@@ -629,7 +635,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   async function step(): Promise<{
     ranRound: boolean
     toolCallCount?: number
-    actionRequired?: boolean
+    demand?: LoopDemand
     recoverableToolFailure?: boolean
     onlyHelpToolCalls?: boolean
     madeToolProgress?: boolean
@@ -796,6 +802,12 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       }
     }
     shortWorkContinuationPending = workContinuationRequested
+    const attentionPending = hasPendingPrivateMailboxAttention(deps.context.getSnapshot().messages)
+    const continuationRequired = goalAtRoundStart?.status === 'active'
+      || (drained.hadAttention && disclosed > 0)
+      || assistantTextOnly
+      || shortWorkContinuationAtRoundStart
+      || workContinuationRequested
     return {
       ranRound: true,
       toolCallCount,
@@ -805,12 +817,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       assistantTextOnly,
       ...(toolContinuation ? { toolContinuation } : {}),
       ...(toolContinuationDetail ? { toolContinuationDetail } : {}),
-      actionRequired: goalAtRoundStart?.status === 'active'
-        || (drained.hadAttention && disclosed > 0)
-        || hasPendingPrivateMailboxAttention(deps.context.getSnapshot().messages)
-        || assistantTextOnly
-        || shortWorkContinuationAtRoundStart
-        || workContinuationRequested,
+      demand: attentionPending ? 'attention' : continuationRequired ? 'continuation' : 'none',
     }
   }
 
@@ -818,7 +825,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     const {
       ranRound,
       toolCallCount = 0,
-      actionRequired = false,
+      demand = 'none',
       recoverableToolFailure = false,
       onlyHelpToolCalls = false,
       madeToolProgress = false,
@@ -833,7 +840,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       ranRound,
       stopRequested,
       toolCallCount,
-      actionRequired,
+      demand,
       recoverableToolFailure,
       onlyHelpToolCalls,
       madeToolProgress,
@@ -843,6 +850,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       maxRecoverableCorrectionRounds: MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS,
     })
     recoverableToolCorrectionRounds = decision.recoverableCorrectionRounds
+    if (demand !== 'attention') attentionCorrectionIssued = false
 
     if (decision.action === 'stop') return
     if (decision.action === 'wait_event') {
@@ -851,6 +859,12 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     }
     if (decision.action === 'continue') {
       actionCorrectionRetryPending = decision.correctionRetryPending
+      if (decision.reason === 'attention_pending' && !attentionCorrectionIssued) {
+        await commitChanges({
+          messages: [{ role: 'user', content: ATTENTION_REQUIRED_CORRECTION }],
+        })
+        attentionCorrectionIssued = true
+      }
       log.info({
         consecutiveRounds,
         reason: decision.reason,
@@ -865,7 +879,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     log.info({
       consecutiveRounds,
       waitMs,
-      actionRequired,
+      actionRequired: demand !== 'none',
       reason: decision.reason,
     }, 'loop_policy_wait')
     await waitForAttention(detail, waitMs)

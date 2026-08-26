@@ -1,10 +1,11 @@
 export type ToolContinuationPolicy = 'immediate' | 'wait_attention' | 'wait_event' | 'backoff' | 'stop'
+export type LoopDemand = 'none' | 'continuation' | 'attention'
 
 export interface LoopPolicyInput {
   ranRound: boolean
   stopRequested: boolean
   toolCallCount: number
-  actionRequired: boolean
+  demand: LoopDemand
   recoverableToolFailure: boolean
   onlyHelpToolCalls: boolean
   madeToolProgress: boolean
@@ -28,6 +29,7 @@ export type LoopPolicyDecision =
         | 'tool_direction_complete'
         | 'tool_no_progress'
         | 'seek_next_action'
+        | 'attention_pending'
       correctionRetryPending: boolean
       recoverableCorrectionRounds: number
     }
@@ -45,6 +47,12 @@ export function decideLoopPolicy(input: LoopPolicyInput): LoopPolicyDecision {
       : { action: 'wait_event', reason: 'no_actionable_context', recoverableCorrectionRounds: input.recoverableCorrectionRounds }
   }
   if (input.stopRequested) return { action: 'stop', recoverableCorrectionRounds: input.recoverableCorrectionRounds }
+  if (input.demand === 'attention') {
+    return {
+      action: 'continue', reason: 'attention_pending', correctionRetryPending: false,
+      recoverableCorrectionRounds: input.recoverableCorrectionRounds,
+    }
+  }
 
   let correctionRounds = input.recoverableCorrectionRounds
   if (input.toolCallCount > 0) {
@@ -76,10 +84,10 @@ export function decideLoopPolicy(input: LoopPolicyInput): LoopPolicyDecision {
     if (input.madeToolProgress) {
       return { action: 'continue', reason: 'tool_progress', correctionRetryPending: false, recoverableCorrectionRounds: correctionRounds }
     }
-    if (input.actionRequired && !input.correctionRetryPending) {
+    if (input.demand === 'continuation' && !input.correctionRetryPending) {
       return { action: 'continue', reason: 'action_correction', correctionRetryPending: true, recoverableCorrectionRounds: correctionRounds }
     }
-    if (input.actionRequired) {
+    if (input.demand === 'continuation') {
       return {
         action: 'wait_attention', reason: 'action_correction', timeout: 'action_retry',
         recoverableCorrectionRounds: correctionRounds,
@@ -91,7 +99,7 @@ export function decideLoopPolicy(input: LoopPolicyInput): LoopPolicyDecision {
     }
   }
 
-  if (input.actionRequired || input.correctionRetryPending) {
+  if (input.demand === 'continuation' || input.correctionRetryPending) {
     if (!input.correctionRetryPending) {
       return { action: 'continue', reason: 'action_correction', correctionRetryPending: true, recoverableCorrectionRounds: correctionRounds }
     }

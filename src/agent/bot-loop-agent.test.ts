@@ -2487,6 +2487,63 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(waits, 1)
   })
 
+  test('pending private attention interrupts unrelated tool progress with one stable correction', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage(
+      '{"event":"notification","source":{"type":"qq","mailbox":"qq_private:9001"},"kind":"inbox_update","priority":"high","delivery":"interrupt","groupKey":"qq_private:9001","count":1,"open":{"tool":"inbox","args":{"action":"read","source":"private","peerId":9001}},"data":{"mailbox":"qq_private:9001","throughRowId":88}}',
+    )
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    let llmCallCount = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const { repo, loader } = makeTestLedger(ctx.getSnapshot().messages)
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat(input) {
+          llmCallCount++
+          if (llmCallCount === 2) {
+            assert.match(
+              String(input.messages.at(-1)?.content),
+              /"code":"attention_pending"/,
+            )
+            await agent.stop()
+          }
+          return {
+            content: '',
+            toolCalls: [{ id: `unrelated-${llmCallCount}`, name: 'unrelated_work', args: {} }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools({
+        unrelated_work: async () => ({
+          content: '{"ok":true}',
+          outcome: { ok: true, progress: true },
+        }),
+      }),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      compactOptions: { triggerTokens: Number.MAX_SAFE_INTEGER },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 2)
+    assert.equal(
+      ctx.getSnapshot().messages.filter((message) => (
+        message.role === 'user' && message.content.includes('"code":"attention_pending"')
+      )).length,
+      1,
+    )
+  })
+
   test('repeated novelty key suppresses repeated progress but still switches direction immediately', async () => {
     const ctx = createAgentContext()
     ctx.appendUserMessage('已有上下文')

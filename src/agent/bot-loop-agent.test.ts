@@ -2557,6 +2557,55 @@ describe('BotLoopAgent.runOnceForTest', () => {
     )
   })
 
+  test('an already-read private disclosure does not keep forcing attention after restart', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage(
+      '{"event":"notification","source":{"type":"qq","mailbox":"qq_private:9001"},"kind":"inbox_update","priority":"high","delivery":"interrupt","groupKey":"qq_private:9001","count":1,"open":{"tool":"inbox","args":{"action":"read","source":"private","peerId":9001}},"data":{"mailbox":"qq_private:9001","throughRowId":88}}',
+    )
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const { repo, loader } = makeTestLedger(ctx.getSnapshot().messages)
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat() {
+          await agent.stop()
+          return {
+            content: '',
+            toolCalls: [{ id: 'read-private-done', name: 'unrelated_work', args: {} }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools({
+        unrelated_work: async () => ({
+          content: '{"ok":true}',
+          outcome: { ok: true, progress: true },
+        }),
+      }),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      initialInboxReadCursors: { 'qq_private:9001': 88 },
+      eventDebounceMs: 0,
+      compactOptions: { triggerTokens: Number.MAX_SAFE_INTEGER },
+    })
+
+    await agent.start()
+
+    assert.equal(
+      ctx.getSnapshot().messages.some((message) => (
+        message.role === 'user' && message.content.includes('"code":"attention_pending"')
+      )),
+      false,
+    )
+  })
+
   test('a non-disclosing wake continues autonomous work instead of waiting for another event', async () => {
     const ctx = createAgentContext({
       initialMessages: [{ role: 'user', content: '已有上下文' }],

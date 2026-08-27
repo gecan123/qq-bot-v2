@@ -791,7 +791,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       }
     }
     shortWorkContinuationPending = workContinuationRequested
-    const attentionPending = hasPendingPrivateMailboxAttention(deps.context.getSnapshot().messages)
+    const attentionPending = hasPendingPrivateMailboxAttention(
+      deps.context.getSnapshot().messages,
+      inboxReadCursors,
+    )
     const continuationRequired = goalAtRoundStart?.status === 'active'
       || (drained.hadAttention && disclosed > 0)
       || assistantTextOnly

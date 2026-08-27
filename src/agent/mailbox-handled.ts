@@ -92,10 +92,14 @@ export function findPendingMailboxThroughRowId(
 
 export function hasPendingPrivateMailboxAttention(
   messages: readonly AgentMessage[],
+  inboxReadCursors: Readonly<Record<string, number>> = {},
 ): boolean {
   return Object.entries(captureMailboxAttentionState(messages)).some(([mailbox, cursors]) => (
     (mailbox.startsWith('qq_private:') || mailbox.includes(':private:'))
-    && cursors.disclosedThroughRowId > cursors.handledThroughRowId
+    && cursors.disclosedThroughRowId > Math.max(
+      cursors.handledThroughRowId,
+      inboxReadCursors[mailbox] ?? 0,
+    )
   ))
 }
 

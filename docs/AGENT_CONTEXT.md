@@ -55,7 +55,7 @@
 - 新通知统一写成 `event=notification`；历史 ledger 中的 `event=inbox_update` 继续由 mailbox attention parser 兼容，不能迁移或改写旧 entry。后台任务通知只披露状态和 `background_task get` 打开动作；调度到期 notification 不含 intention，正文先写独立 occurrence store，再由 `schedule get_occurrence` 读取。来源 side state 不参与 transcript replay；通知本身一旦进入 ledger 就保持字节稳定。
 - 新 mailbox 不会自动切换当前会话。发送前必须通过 `conversation open` 显式选择允许的群或好友；`send_message` 只读取当前 focus，focus 变化和对应可见 tool result 同事务进入 runtime state。
 - 私聊发送是否属于“回应新入站”由同 target 的 durable pending mailbox 判断，不依赖 `reply_to`。`reply_to` 只控制对应平台的引用/回复展示；进程内主动私聊冷却不得拦截 pending mailbox 的回复。
-- 未追加 `mailbox_handled` 的私聊 mailbox 跨 round 保持行动锚点。高优先级私聊仍未处理时，Runtime 最多追加一次稳定 attention 纠错；普通无进展只继续下一轮，不建立换方向状态。普通完成、无进展和无披露事件都不会进入空闲等待。
+- 未追加 `mailbox_handled` 的私聊 mailbox 仍保留“尚未外发回应”的 durable 状态，用于回复冷却豁免和防重复边界；但强制 attention 只针对 `disclosedThroughRowId` 同时大于 handled cursor 与持久 `inboxReadCursors` 的未读范围。正文已经由有界 inbox result 展示后，不会因无需回复的旧私聊跨重启永久追加 attention 纠错；模型仍可根据内容决定是否外发。普通无进展只继续下一轮，不建立换方向状态。普通完成、无进展和无披露事件都不会进入空闲等待。
 - provider-confirmed `send_message` 仍与本地数据库不存在分布式事务。只有同 target 有 pending disclosure 时才 append `mailbox_handled`；这防止重复回应，但不承诺任一平台外发 exactly-once。稳定 action UUID 与 `sent|failed|delivery_unknown` 只表达本次 adapter 结果，不引入 outbox 或自动重试。
 - `mailbox_handled` 只表示这批入站已经回应，不表示回应中承诺的工作已完成。`send_message.work=continue` 只在进程内为下一轮保留短期行动锚点，不跨重启；`work=goal_progress` 必须绑定当前 active Goal 且其 `currentCommitment` 非空，否则 before-tool hook 以 `work_commitment_required` 拒绝外发。进度消息可以关闭 mailbox 防重，长期行动锚点仍由 Goal revision/continuation 契约跨轮与跨重启保留。
 - owner 和 self Goal 的 `complete` 在状态写入前各执行一次独立、无工具 LLM 验收。judger 只读取当前 canonical projection：优先从当前 goalId 首次出现处截取，marker 已被 compaction 移出时使用完整 projection；transcript 包在 untrusted envelope 中，不能从日志、Goal side table、Memory 或其他可变 side state 重建证据。

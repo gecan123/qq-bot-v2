@@ -64,7 +64,7 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 ## 自主循环
 
 - `send_message` 成功只是完成一个动作，不强制等待。当前会话内马上续做用 `work=continue`，它只为下一轮提供进程内行动锚点；需要跨注意周期或重启的长期进度仍用绑定 active Goal/currentCommitment 的 `work=goal_progress`。mailbox 在成功回复后仍可关闭防重。普通完成、无进展、后台任务已启动、无披露事件以及无工具轮都会立即进入下一次决策；Runtime 不维护跨轮换方向状态。模型只输出不会执行的普通文本时，Runtime 追加同一个受控行动纠错，仍不执行那段文本。
-- provider-confirmed 外发到有 pending 通知的同 target mailbox 后，Runtime 在 tool result 闭合后原子 append `mailbox_handled` 与 runtime cursor，避免把已经处理的旧行再次视为新请求。
+- provider-confirmed 外发到有 pending 通知的同 target mailbox 后，Runtime 在 tool result 闭合后原子 append `mailbox_handled` 与 runtime cursor，避免把已经处理的旧行再次视为新请求。私聊强制 attention 只覆盖尚未由有界 inbox result 展示的 pending 行；持久已读 cursor 已追上 disclosure 时不再跨重启强迫回应，但未写 `mailbox_handled` 的范围仍可作为后来真实回复的冷却豁免。
 - `rest` 是唯一的主动暂停工具。它在工具调用内部按明确的批准时长等待，记录真实理由和醒后重新评估方向；私聊、@、后台任务完成、调度事件或停止信号会提前打断。工具用一个进程内三小时滚动窗口限制实际休息：Asia/Singapore 白天最多 60 分钟，夜间最多 120 分钟，并在 00:00 / 06:00 边界结束后重新评估；请求会被剩余额度缩短，额度不足 10 分钟时明确拒绝并技术退避。休息区间不进入 prompt/ledger/runtime singleton，也不跨重启持久化。
 - Runtime 不再维护 idle backoff、自动休息顾问或“做完就停”的路径。全新空 ledger 会先 append 一条稳定的自主启动消息并立即开始第一轮。只有 provider/工具明确返回 `backoff` 或本轮抛出运行错误时才做有界技术退避；这些退避不是 Agent 主动休息，也不进入 ledger。收到停止信号才退出主循环。
 - 连续自主行动不设轮次上限，不会因为工作轮数达到固定值而强制冷却。工具用 `outcome.progress` 报告是否获得新事实或改变状态，只用 `continuation=immediate|wait_attention|wait_event|backoff|stop` 表达当前方向状态：除 `backoff` 外，Runtime 都立即开始下一轮；`wait_event` 只表示不要轮询当前后台任务，应改做其他事。可丢弃的 `continuationDetail` 只用于实时活动说明，`noveltyKey` 默认抑制进程内重复披露。`continuation=immediate` 的失败最多保留三轮紧密纠错，之后改走下一行动或短暂技术退避。

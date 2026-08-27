@@ -49,7 +49,7 @@ describe('mailbox handled cursor', () => {
     assert.equal(findPendingMailboxThroughRowId(messages, 'qq_private:123'), 10)
   })
 
-  test('treats only unhandled private disclosures as pending private attention', () => {
+  test('treats only unread and unhandled private disclosures as pending private attention', () => {
     const pending: AgentMessage[] = [
       {
         role: 'user',
@@ -65,6 +65,8 @@ describe('mailbox handled cursor', () => {
       },
     ]
     assert.equal(hasPendingPrivateMailboxAttention(pending), true)
+    assert.equal(hasPendingPrivateMailboxAttention(pending, { 'qq_private:123': 9 }), true)
+    assert.equal(hasPendingPrivateMailboxAttention(pending, { 'qq_private:123': 10 }), false)
 
     const handled = [
       ...pending,

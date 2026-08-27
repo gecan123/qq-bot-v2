@@ -33,6 +33,7 @@ type LlmScenarioConfig = {
 }
 
 export type OpenAiReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type AgentImageMode = 'description' | 'native'
 
 type ClaudeThinkingMode = 'disabled' | 'adaptive'
 type ClaudeThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
@@ -105,6 +106,7 @@ const CLAUDE_THINKING_EFFORTS: readonly ClaudeThinkingEffort[] = [
 ]
 const CLAUDE_THINKING_RETENTIONS: readonly ClaudeThinkingRetention[] = ['active-tool-cycle', 'always']
 const CLAUDE_THINKING_LOGS: readonly ClaudeThinkingLog[] = ['off', 'summary', 'raw']
+const AGENT_IMAGE_MODES: readonly AgentImageMode[] = ['description', 'native']
 const OPENAI_REASONING_EFFORTS: readonly OpenAiReasoningEffort[] = [
   'none',
   'minimal',
@@ -372,6 +374,12 @@ function parseLlmConfig(env: EnvSource) {
   const defaultModel = requireEnv(env, 'LLM_DEFAULT_MODEL')
   const fallbackModel = env.LLM_FALLBACK_MODEL?.trim() || null
   const contextWindowTokensByModel = parseModelContextWindows(env.LLM_MODEL_CONTEXT_WINDOWS_JSON)
+  const agentImageMode = parseEnumValue(
+    'LLM_AGENT_IMAGE_MODE',
+    env.LLM_AGENT_IMAGE_MODE,
+    AGENT_IMAGE_MODES,
+    'description',
+  )
   const claudeToolChoice = parseClaudeToolChoice(env.LLM_PROVIDER_CLAUDE_TOOL_CHOICE)
   const claudeThinking = parseClaudeThinking(env)
 
@@ -412,6 +420,7 @@ function parseLlmConfig(env: EnvSource) {
     defaultModel,
     fallbackModel,
     contextWindowTokensByModel,
+    agentImageMode,
     claudeToolChoice,
     claudeThinking,
     providers,

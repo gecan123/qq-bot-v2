@@ -46,8 +46,8 @@
 ## 图片与 working context
 
 - canonical tool image 使用稳定 `image_ref`（Media id、类型、可选尺寸/描述），严禁把 base64 写入 ledger。每个持久 handle 创建独立 Media 行，物理字节按内容哈希 upsert `MediaBlob` 并通过 `blobId` 共享；不能把 blobId 或 hash 当成消息侧 handle。
-- working context 在调用 provider 前按需解析近期图片引用；媒体已失效时使用确定性 unavailable marker。失效不能改变已持久化文字、阻止 replay 或让旧 compaction 失效。
-- working-context projection 可以做确定性、有界的 provider 适配，但不能删事实、改 role、拆 tool pair 或成为第二份持久历史。
+- working context 按显式主 Agent 图片策略投影全部图片引用：默认 `LLM_AGENT_IMAGE_MODE=description`，主模型只读取独立 `describeImage` 路由已经持久化的描述/确定性 marker；`native` 才把图片解析为真实 image block。策略表达“谁负责识图”，不根据主模型名称或其理论能力猜测。
+- 视觉模型解析媒体时若资源已失效，使用确定性 unavailable marker。失效不能改变已持久化文字、阻止 replay 或让旧 compaction 失效。working-context projection 不能查询后来变化的媒体描述、删事实、改 role、拆 tool pair 或成为第二份持久历史。
 
 ## Mailbox、Goal 与外部副作用
 

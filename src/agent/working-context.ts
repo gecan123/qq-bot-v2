@@ -8,12 +8,11 @@ import {
   agentImageRefStore,
   type AgentImageRefStore,
 } from '../media/agent-image-ref.js'
-
-const DEFAULT_RECENT_IMAGE_TOOL_RESULTS = 3
+import type { AgentImageMode } from '../config/index.js'
 
 export interface WorkingContextOptions {
-  /** Hydrate image refs only in this many most-recent tool-result messages. */
-  recentImageToolResults?: number
+  /** Missing/description uses persisted vision text; native sends original images to the main model. */
+  imageInputMode?: AgentImageMode
   imageRefs?: AgentImageRefStore
 }
 
@@ -35,11 +34,7 @@ export async function buildWorkingContextProjection(
   source: readonly DurableAgentMessage[],
   options: WorkingContextOptions = {},
 ): Promise<WorkingContextProjection> {
-  const recentImageToolResults = normalizeNonNegativeInteger(
-    options.recentImageToolResults,
-    DEFAULT_RECENT_IMAGE_TOOL_RESULTS,
-  )
-  const hydratedIndexes = findRecentImageToolResultIndexes(source, recentImageToolResults)
+  const usesNativeImageInput = options.imageInputMode === 'native'
   const imageRefs = options.imageRefs ?? agentImageRefStore
   const stats: WorkingContextStats = {
     sourceMessages: source.length,
@@ -50,8 +45,7 @@ export async function buildWorkingContextProjection(
   }
   const messages: AgentMessage[] = []
 
-  for (let index = 0; index < source.length; index++) {
-    const message = source[index]!
+  for (const message of source) {
     if (message.role !== 'tool' || typeof message.content === 'string') {
       messages.push(structuredClone(message))
       continue
@@ -63,7 +57,7 @@ export async function buildWorkingContextProjection(
         continue
       }
       if (block.type === 'image') {
-        if (hydratedIndexes.has(index)) {
+        if (usesNativeImageInput) {
           stats.hydratedImages++
           content.push({ type: 'image', source: { ...block.source } })
         } else {
@@ -72,13 +66,14 @@ export async function buildWorkingContextProjection(
             type: 'text',
             text: JSON.stringify({
               type: 'working_context_legacy_image_omitted',
+              reason: 'agent_image_mode_description',
               mediaType: block.source.media_type,
             }),
           })
         }
         continue
       }
-      if (!hydratedIndexes.has(index)) {
+      if (!usesNativeImageInput) {
         stats.omittedImages++
         content.push({ type: 'text', text: renderImageMarker('working_context_image_omitted', block) })
         continue
@@ -106,40 +101,19 @@ export async function buildWorkingContextProjection(
   return { messages, stats }
 }
 
-function findRecentImageToolResultIndexes(
-  messages: readonly DurableAgentMessage[],
-  limit: number,
-): Set<number> {
-  const indexes = new Set<number>()
-  if (limit === 0) return indexes
-  for (let index = messages.length - 1; index >= 0 && indexes.size < limit; index--) {
-    const message = messages[index]
-    if (
-      message?.role === 'tool'
-      && Array.isArray(message.content)
-      && message.content.some((block) => block.type === 'image_ref' || block.type === 'image')
-    ) {
-      indexes.add(index)
-    }
-  }
-  return indexes
-}
-
 function renderImageMarker(
   type: 'working_context_image_omitted' | 'working_context_image_unavailable',
   ref: ToolResultImageRefBlock,
 ): string {
   return JSON.stringify({
     type,
+    ...(type === 'working_context_image_omitted'
+      ? { reason: 'agent_image_mode_description' }
+      : {}),
     mediaId: ref.mediaId,
     mediaType: ref.mediaType,
     ...(ref.width == null ? {} : { width: ref.width }),
     ...(ref.height == null ? {} : { height: ref.height }),
     ...(ref.description == null ? {} : { description: ref.description }),
   })
-}
-
-function normalizeNonNegativeInteger(value: number | undefined, fallback: number): number {
-  if (value == null || !Number.isFinite(value)) return fallback
-  return Math.max(0, Math.floor(value))
 }

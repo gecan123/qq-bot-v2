@@ -7,6 +7,7 @@ import {
   config,
   OPENAI_AGENT_BASE_PROVIDER_NAME,
   OPENAI_AGENT_PROVIDER_NAME,
+  type AgentImageMode,
 } from '../config/index.js'
 import { createClaudeCodeLlmClient } from './claude-code/llm-client.js'
 import { createOpenAIAgentLlmClient } from './openai-agent/llm-client.js'
@@ -78,6 +79,8 @@ export interface LlmCallOutput {
 export interface LlmClient {
   /** 运行时实际 wire adapter；用于选择 provider-specific 性能路径。 */
   readonly provider?: 'claude-code' | 'openai-agent'
+  /** 主 Agent 图片处理策略：独立视觉描述，或把原图直接交给主模型。 */
+  readonly imageInputMode?: AgentImageMode
   chat(input: LlmCallInput): Promise<LlmCallOutput>
 }
 
@@ -123,6 +126,7 @@ export function createFallbackLlmClient(input: {
     ...(input.primary.provider === input.fallback.provider && input.primary.provider != null
       ? { provider: input.primary.provider }
       : {}),
+    imageInputMode: input.primary.imageInputMode ?? 'description',
     async chat(request) {
       try {
         return await input.primary.chat(request)
@@ -173,17 +177,22 @@ function createProviderLlmClient(model: string, options: CreateLlmClientOptions)
     throw new Error(`missing context-window metadata for model ${model}`)
   }
 
+  const imageInputMode = config.llm.agentImageMode
+
   if (config.llm.defaultProvider === OPENAI_AGENT_PROVIDER_NAME) {
     const openaiProvider = config.llm.providers[OPENAI_AGENT_BASE_PROVIDER_NAME]
     if (!openaiProvider) {
       throw new Error('需要 LLM_PROVIDER_OPENAI_URL / _API_KEY 指向 OpenAI-compatible endpoint')
     }
-    return createOpenAIAgentLlmClient({
-      model,
-      contextWindowTokens,
-      baseURL: openaiProvider.url,
-      apiKey: openaiProvider.apiKey,
-    })
+    return {
+      ...createOpenAIAgentLlmClient({
+        model,
+        contextWindowTokens,
+        baseURL: openaiProvider.url,
+        apiKey: openaiProvider.apiKey,
+      }),
+      imageInputMode,
+    }
   }
 
   if (config.llm.defaultProvider === CLAUDE_CODE_PROVIDER_NAME) {
@@ -193,15 +202,18 @@ function createProviderLlmClient(model: string, options: CreateLlmClientOptions)
         `需要 LLM_PROVIDER_${CLAUDE_CODE_BASE_PROVIDER_NAME.toUpperCase()}_URL / _API_KEY 指向 cliproxy`,
       )
     }
-    return createClaudeCodeLlmClient({
-      model,
-      contextWindowTokens,
-      baseURL: claudeProvider.url,
-      apiKey: claudeProvider.apiKey,
-      toolChoice: config.llm.claudeToolChoice,
-      thinking: options.claudeThinking ?? config.llm.claudeThinking,
-      thinkingLog: { mode: config.llm.claudeThinking.log },
-    })
+    return {
+      ...createClaudeCodeLlmClient({
+        model,
+        contextWindowTokens,
+        baseURL: claudeProvider.url,
+        apiKey: claudeProvider.apiKey,
+        toolChoice: config.llm.claudeToolChoice,
+        thinking: options.claudeThinking ?? config.llm.claudeThinking,
+        thinkingLog: { mode: config.llm.claudeThinking.log },
+      }),
+      imageInputMode,
+    }
   }
 
   throw new Error(

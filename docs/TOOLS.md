@@ -108,7 +108,7 @@
 - `psychologist` 的固定规则原文位于 `prompts/tools/psychologist.md`，每次只把本次独白作为 user message 追加。Claude-Code-compatible 路径因此复用现有最后 system block 的 1h cache breakpoint；是否真正命中仍以 `operation=agent.psychologist` 的 `cachedTokens` 为准。OpenAI-compatible provider 是否缓存由对应上游决定。缓存只复用固定输入前缀，不是工具状态或长期记忆。
 - 媒体描述使用 `src/llm/**` 下的 routing provider，和 agent chat client 分离。它是可缺失的 best-effort 增强：自动路径只对新图片/贴纸尝试一次，不扫描历史 backlog，不做 SDK 或队列重试；视频、语音和文件只允许显式按需调用。
 - 优先使用渐进式披露：system prompt 只放稳定边界和入口，长手册和可变数据放到工具或文件后面。
-- Agent chat 发送前会从 durable ledger projection 构建 working context；默认保留最近三个带图片的 tool result，更旧图片替换为稳定 marker 并记录 `working_context_projected`，不会改写 canonical ledger。
+- Agent chat 发送前会从 durable ledger projection 构建 working context。默认 `LLM_AGENT_IMAGE_MODE=description`：主模型只接收 `LLM_SCENARIO_DESCRIBE_IMAGE_*` 独立视觉路由已经持久化到 `image_ref` 的描述/marker；设为 `native` 才把所有持久 `image_ref` 解析为真实 image block。projection 不查询后来变化的媒体描述，也不会改写 canonical ledger。
 - runtime 当前不会在 `agent.chat` 前隐藏执行 Memory recall。主 Agent 在上下文不足时显式调用 `memory recall`；person/group 带具体 `id` 做定向召回，已有足够且未冲突的上下文时不重复调用。返回结果作为普通 tool result 进入 durable ledger，replay 不重新扫描可变 Markdown。未来若评估主动 recall，也必须使用有界 scope、弱匹配返回空并先把结果持久化，不能动态拼进 system prompt。
 - OpenAI compaction、Claude split-turn fallback 和 Memory maintenance reviewer 收到的历史或 side-data 都包在 `[UNTRUSTED_DATA ...]` 信封中，并与固定操作指令分离。Claude 普通 compaction 为复用主 prompt cache，会保留主 system、tools 和原始 working-context prefix，再追加可信 control message；返回的 tool call 永不执行。两种形态中的历史文字都只能作为待压缩数据，不能提升权限或触发工具。
 - checkpoint 只是 canonical ledger projection 的可丢弃缓存。启动时必须先验证 ledger/runtime；checkpoint 不匹配时直接重建，重建也失败则 fail closed，不能用可变 side-data、消息账本或日志补历史。

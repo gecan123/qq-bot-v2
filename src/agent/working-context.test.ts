@@ -10,14 +10,14 @@ function imageRef(mediaId: string, description?: string): ToolResultImageRefBloc
 }
 
 describe('buildWorkingContextProjection', () => {
-  test('hydrates only recent image-result messages without changing durable refs', async () => {
+  test('hydrates every durable image ref in native mode without changing the ledger', async () => {
     const source: DurableAgentMessage[] = [
       { role: 'tool', toolCallId: 'old', content: [imageRef('1', 'old image')] },
       { role: 'tool', toolCallId: 'new', content: [imageRef('2', 'new image')] },
     ]
     const resolved: string[] = []
     const projection = await buildWorkingContextProjection(source, {
-      recentImageToolResults: 1,
+      imageInputMode: 'native',
       imageRefs: {
         async persist() { throw new Error('not used') },
         async resolve(ref) {
@@ -30,29 +30,51 @@ describe('buildWorkingContextProjection', () => {
       },
     })
 
-    assert.deepEqual(resolved, ['2'])
-    assert.match(JSON.stringify(projection.messages[0]), /working_context_image_omitted/)
-    const oldMessage = projection.messages[0]!
-    assert.equal(oldMessage.role, 'tool')
-    assert.ok(Array.isArray(oldMessage.content))
-    assert.deepEqual(JSON.parse((oldMessage.content[0] as { type: 'text'; text: string }).text), {
+    assert.deepEqual(resolved, ['1', '2'])
+    assert.equal(JSON.stringify(projection.messages).match(/"type":"base64"/g)?.length, 2)
+    assert.doesNotMatch(JSON.stringify(source), /"type":"base64"/)
+    assert.deepEqual(projection.stats, {
+      sourceMessages: 2, projectedMessages: 2, hydratedImages: 2, omittedImages: 0, unavailableImages: 0,
+    })
+  })
+
+  test('projects every image ref to stable persisted descriptions in description mode without reading bytes', async () => {
+    const source: DurableAgentMessage[] = [
+      { role: 'tool', toolCallId: 'old', content: [imageRef('1', 'old image')] },
+      { role: 'tool', toolCallId: 'new', content: [imageRef('2')] },
+    ]
+    let resolveCalls = 0
+    const projection = await buildWorkingContextProjection(source, {
+      imageInputMode: 'description',
+      imageRefs: {
+        async persist() { throw new Error('not used') },
+        async resolve() { resolveCalls++; throw new Error('description mode must not read bytes') },
+      },
+    })
+
+    assert.equal(resolveCalls, 0)
+    const firstMessage = projection.messages[0]!
+    assert.equal(firstMessage.role, 'tool')
+    assert.ok(Array.isArray(firstMessage.content))
+    assert.deepEqual(JSON.parse((firstMessage.content[0] as { type: 'text'; text: string }).text), {
       type: 'working_context_image_omitted',
+      reason: 'agent_image_mode_description',
       mediaId: '1',
       mediaType: 'image/png',
       description: 'old image',
     })
-    assert.match(JSON.stringify(projection.messages[1]), /"type":"base64"/)
-    assert.doesNotMatch(JSON.stringify(source), /"type":"base64"/)
+    assert.doesNotMatch(JSON.stringify(projection.messages), /"type":"image"/)
     assert.deepEqual(projection.stats, {
-      sourceMessages: 2, projectedMessages: 2, hydratedImages: 1, omittedImages: 1, unavailableImages: 0,
+      sourceMessages: 2, projectedMessages: 2, hydratedImages: 0, omittedImages: 2, unavailableImages: 0,
     })
   })
 
-  test('renders a deterministic marker with persisted metadata when a recent ref is unavailable', async () => {
+  test('renders a deterministic marker with persisted metadata when an image ref is unavailable', async () => {
     const source: DurableAgentMessage[] = [{
       role: 'tool', toolCallId: 'missing', content: [imageRef('404', 'persisted description')],
     }]
     const options = {
+      imageInputMode: 'native' as const,
       imageRefs: {
         async persist() { throw new Error('not used') },
         async resolve() { return null },

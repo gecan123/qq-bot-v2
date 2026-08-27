@@ -125,7 +125,9 @@ export function createCompactionCoordinator(deps: {
             if (syntheticMessageCount < 0 || prefixMessageCount <= 0 || prefixMessageCount >= latestProjection.snapshot.messages.length) {
               throw new Error('cached Claude compaction prefix does not match canonical projection')
             }
-            const workingProjection = await buildWorkingContextProjection(latestProjection.snapshot.messages)
+            const workingProjection = await buildWorkingContextProjection(latestProjection.snapshot.messages, {
+              imageInputMode: deps.llm.imageInputMode ?? 'description',
+            })
             const cachedPrefix = workingProjection.messages.slice(0, prefixMessageCount)
             const visibleTools = deps.tools.list()
             summarize = (_request, { signal }) => summarizeCachedClaudeCompaction({

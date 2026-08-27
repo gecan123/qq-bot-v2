@@ -62,6 +62,7 @@ function buildInput(overrides: Partial<Parameters<typeof buildCurrentAgentContex
       async persist() { throw new Error('persist must not be called') },
       async resolve() { return null },
     },
+    imageInputMode: 'native' as const,
     reserveTokens: 10_000,
     keepRecentTokens: 2_000,
     claudeThinkingMode: 'adaptive' as const,

@@ -21,6 +21,7 @@ interface AgentContextCliConfig {
     defaultProvider: string
     defaultModel: string
     contextWindowTokensByModel: Record<string, number>
+    agentImageMode: 'description' | 'native'
     claudeThinking: {
       mode: 'disabled' | 'adaptive'
       retention: 'active-tool-cycle' | 'always'
@@ -88,6 +89,7 @@ async function buildDefaultOutput(
     surfaceRead,
     surfaceStatus: surfaceRead.status,
     imageRefs: runtime.imageRefs,
+    imageInputMode: runtime.config.llm.agentImageMode,
     reserveTokens: runtime.config.compaction.reserveTokens,
     keepRecentTokens: runtime.config.compaction.keepRecentTokens,
     claudeThinkingMode: runtime.config.llm.claudeThinking.mode,

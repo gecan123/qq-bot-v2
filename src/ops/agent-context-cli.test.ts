@@ -89,6 +89,7 @@ function fakeRuntime(calls: string[]): AgentContextCliRuntime {
         defaultProvider: 'openai-agent',
         defaultModel: 'gpt-test',
         contextWindowTokensByModel: { 'gpt-test': 400_000 },
+        agentImageMode: 'description',
         claudeThinking: { mode: 'disabled', retention: 'active-tool-cycle' },
       },
     },

@@ -135,7 +135,7 @@ JSON 报告带当前为 `2` 的 `schemaVersion`，总占用字段是 `estimatedS
 
 ## 本地运行
 
-`LLM_FALLBACK_MODEL` 默认不配置。需要时填写与 `LLM_DEFAULT_MODEL` 使用同一 `LLM_DEFAULT_PROVIDER` wire path 的模型；它只接管 overload/5xx，不用于鉴权、限流、参数错误或 context overflow。
+`LLM_FALLBACK_MODEL` 默认不配置。需要时填写与 `LLM_DEFAULT_MODEL` 使用同一 `LLM_DEFAULT_PROVIDER` wire path 的模型；它只接管 overload/5xx，不用于鉴权、限流、参数错误或 context overflow。主 Agent 图片策略由 `LLM_AGENT_IMAGE_MODE=description|native` 显式选择：默认 `description` 让独立 `describeImage` 场景模型负责识图，`native` 才把原图交给主模型；runtime 不按主模型名称猜测策略。
 
 - 从仓库根目录启动，确保 `.bot.pid`、logs、prompts 和相对路径稳定。
 - `pnpm dev` 通过 `src/platform.ts` 启动多进程 watch 模式；`pnpm dev:once` 启动同一组进程但不监听文件变化。supervisor 等待 Media Worker、QQ Gateway，以及按配置启用的 Feishu Gateway 和 Browser Controller 健康后，才启动 Agent Core。短期调度在 Agent Core 内部启动，LLM 请求由 Agent Core 与 Media Worker 直接发给 provider。

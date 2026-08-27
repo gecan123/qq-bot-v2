@@ -85,6 +85,7 @@ describe('config', () => {
     assert.equal(config.llm.defaultProvider, 'claude-code')
     assert.equal(config.llm.defaultModel, 'claude-sonnet-4-6')
     assert.equal(config.llm.fallbackModel, null)
+    assert.equal(config.llm.agentImageMode, 'description')
     assert.deepEqual(config.llm.providers.claude, {
       url: 'http://127.0.0.1:8317/v1',
       apiKey: 'sk-local',
@@ -209,6 +210,18 @@ describe('config', () => {
     }))
 
     assert.equal(config.llm.fallbackModel, 'claude-haiku-4-5')
+  })
+
+  test('defaults main-agent image handling to descriptions and accepts explicit native input', () => {
+    assert.equal(parseConfig(createBaseEnv()).llm.agentImageMode, 'description')
+    assert.equal(
+      parseConfig(createBaseEnv({ LLM_AGENT_IMAGE_MODE: 'native' })).llm.agentImageMode,
+      'native',
+    )
+    assert.throws(
+      () => parseConfig(createBaseEnv({ LLM_AGENT_IMAGE_MODE: 'auto' })),
+      /LLM_AGENT_IMAGE_MODE/,
+    )
   })
 
   test('throws when default provider is not an agent provider', () => {

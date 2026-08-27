@@ -109,6 +109,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
   ]
   const workingContext = await buildWorkingContextProjection(sourceMessages, {
     ...input.workingContext,
+    imageInputMode: input.llm.imageInputMode ?? 'description',
     ...(input.imageRefs ? { imageRefs: input.imageRefs } : {}),
   })
   const visibleTools = input.tools.list()

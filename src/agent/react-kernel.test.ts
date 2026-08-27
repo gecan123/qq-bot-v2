@@ -69,6 +69,58 @@ describe('runReactRound', () => {
     })
   })
 
+  test('uses the configured main-agent image mode when projecting durable image refs', async () => {
+    const context = createAgentContext({
+      initialMessages: [
+        {
+          role: 'assistant', content: '',
+          toolCalls: [{ id: 'image-1', name: 'inspect_media', args: {} }],
+        },
+        {
+          role: 'tool', toolCallId: 'image-1', content: [{
+            type: 'image_ref', mediaId: '42', mediaType: 'image/png', description: '一只白猫',
+          }],
+        },
+      ],
+    })
+    let resolveCalls = 0
+    const llm: LlmClient = {
+      imageInputMode: 'description',
+      async chat(input) {
+        assert.match(JSON.stringify(input.messages), /agent_image_mode_description/)
+        assert.match(JSON.stringify(input.messages), /一只白猫/)
+        assert.doesNotMatch(JSON.stringify(input.messages), /"type":"image"/)
+        return {
+          content: '',
+          toolCalls: [],
+          usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+          model: 'text-only',
+          contextWindowTokens: 200_000,
+        }
+      },
+    }
+
+    await runReactRound({
+      systemPrompt: 'system',
+      context,
+      llm,
+      tools: {
+        list: () => [],
+        classify: classifyExclusive,
+        async execute(): Promise<ToolExecutionResult> {
+          throw new Error('unexpected tool execution')
+        },
+      },
+      toolContext: { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 1 },
+      imageRefs: {
+        async persist() { throw new Error('unexpected persist') },
+        async resolve() { resolveCalls++; throw new Error('description mode must not resolve images') },
+      },
+    })
+
+    assert.equal(resolveCalls, 0)
+  })
+
   test('marks non-empty assistant text without tool calls for host correction', async () => {
     const context = createAgentContext({
       initialMessages: [{ role: 'user', content: '继续工作' }],

@@ -6,6 +6,7 @@ import { projectAgentLedger } from '../agent/agent-ledger-projection.js'
 import type { CanonicalAgentState } from '../agent/agent-ledger-repo.js'
 import { buildWorkingContextProjection } from '../agent/working-context.js'
 import type { AgentImageRefStore } from '../media/agent-image-ref.js'
+import type { AgentImageMode } from '../config/index.js'
 import { formatBeijingIso } from '../utils/beijing-time.js'
 import type { AgentContextSurfaceReadResult } from './agent-context-surface.js'
 import { analyzeAgentContext, type AgentContextReport } from './agent-context-report.js'
@@ -77,6 +78,7 @@ export async function buildCurrentAgentContextReport(input: {
   surfaceRead: AgentContextSurfaceReadResult
   surfaceStatus: AgentContextReport['surfaceStatus']
   imageRefs: AgentImageRefStore
+  imageInputMode: AgentImageMode
   reserveTokens: number
   keepRecentTokens: number
   claudeThinkingMode: ClaudeThinkingMode
@@ -100,6 +102,7 @@ export async function buildCurrentAgentContextReport(input: {
   if (projection === null) throw projectionError
   const working = await buildWorkingContextProjection(projection.snapshot.messages, {
     imageRefs: input.imageRefs,
+    imageInputMode: input.imageInputMode,
   })
   const latestProviderUsage = await input.source.loadLatestAgentChatUsage()
 

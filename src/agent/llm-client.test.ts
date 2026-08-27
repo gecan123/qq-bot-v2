@@ -73,13 +73,15 @@ describe('fallback llm client', () => {
       },
     }
 
-    const result = await createFallbackLlmClient({
-      primary,
-      fallback,
+    const client = createFallbackLlmClient({
+      primary: { ...primary, imageInputMode: 'native' },
+      fallback: { ...fallback, imageInputMode: 'description' },
       primaryModel: 'primary-model',
       fallbackModel: 'fallback-model',
-    }).chat(request)
+    })
+    const result = await client.chat(request)
 
+    assert.equal(client.imageInputMode, 'native')
     assert.deepEqual(calls, ['primary', 'fallback'])
     assert.equal(result.model, 'fallback-model')
   })

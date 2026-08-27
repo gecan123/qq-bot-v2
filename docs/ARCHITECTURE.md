@@ -57,7 +57,7 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - 自动压缩由动态 token threshold 触发；provider context overflow 每轮最多强制 compact-and-retry 一次。主 Agent 和聊天控制面不提供手动 compaction。
 - summarizer 和 hook 在事务外执行，最终用 expected head 做 CAS。head race 会基于新 head 重算一次；失败不会改变 canonical history。
 - 普通 commit 直接用事务返回的 appended entries/runtime state 增量安装 projection，不读取永久 prefix，也不刷新 checkpoint。checkpoint 只在启动或 compaction 后完整 canonical load 时 best-effort 刷新；runtime state 只保存控制元数据，两者都不能重建 transcript。
-- canonical 图片只保存稳定 `image_ref`，请求前才解析近期图片。媒体失效时投影确定性 unavailable marker，不改变旧 ledger。
+- canonical 图片只保存稳定 `image_ref`；请求前按 `LLM_AGENT_IMAGE_MODE` 投影：默认 `description` 复用独立媒体视觉路由已经持久化的描述，`native` 才解析真实 image block。该策略与主模型自身是否理论支持视觉解耦；媒体失效时投影确定性 unavailable marker，不改变旧 ledger。
 
 完整 replay、compaction、图片和 mailbox 不变量见 `docs/AGENT_CONTEXT.md`。
 

@@ -5,19 +5,42 @@ import type { Tool, ToolExecutionResult } from '../tool.js'
 
 const log = createLogger('TOOL_REST')
 
-export const DEFAULT_REST_DURATION_MINUTES = 10
-export const MAX_REST_DURATION_MINUTES = 60
-export const REST_COOLDOWN_MINUTES = 60
+export const MIN_REST_DURATION_MINUTES = 10
+export const DEFAULT_REST_DURATION_MINUTES = 30
+export const MAX_REST_DURATION_MINUTES = 120
+export const REST_WINDOW_MINUTES = 180
+export const DAY_REST_LIMIT_MINUTES = 60
+export const NIGHT_REST_LIMIT_MINUTES = 120
+export const REST_TIME_ZONE = 'Asia/Singapore'
 const MINUTE_MS = 60_000
+const HOUR_MS = 60 * MINUTE_MS
+const DAY_MS = 24 * HOUR_MS
+const NIGHT_END_HOUR = 6
+
+interface RestInterval {
+  startedAtMs: number
+  endedAtMs: number
+}
+
+export interface RestBudgetDecision {
+  period: 'day' | 'night'
+  requestedDurationMinutes: number
+  grantedDurationMinutes: number
+}
+
+export interface RestBudget {
+  authorize: (requestedDurationMinutes: number, nowMs: number) => RestBudgetDecision
+  record: (startedAtMs: number, endedAtMs: number) => void
+}
 
 const argsSchema = z.object({
-  durationMinutes: z.number().int().min(1).max(MAX_REST_DURATION_MINUTES)
+  durationMinutes: z.number().int().min(MIN_REST_DURATION_MINUTES).max(MAX_REST_DURATION_MINUTES)
     .default(DEFAULT_REST_DURATION_MINUTES)
-    .describe('主动休息分钟数，默认 10，范围 1..60。'),
+    .describe('期望休息分钟数，默认 30，范围 10..120；实际批准时长受最近三小时滚动额度和昼夜边界限制。'),
   reason: z.string().trim().min(1).max(300)
-    .describe('为什么此刻真正想主动休息；完成一件事、暂时没想法或在等回复都不是休息理由。'),
+    .describe('为什么此刻真正想暂停；疲惫、需要沉淀、没有具体牵引力或正在机械重复都可以是理由。'),
   resumeAction: z.string().trim().min(1).max(300)
-    .describe('休息结束或被打断后要立即开始的一个具体动作。'),
+    .describe('醒后先重新评估的方向或检查点；不是必须立即执行的承诺，没有牵引力时可以继续休息。'),
 }).strict()
 
 type RestArgs = z.infer<typeof argsSchema>
@@ -28,6 +51,7 @@ export interface RestToolDeps {
     clearTimeout: (handle: unknown) => void
   }
   now?: () => number
+  budget?: RestBudget
 }
 
 const defaultTimer = {
@@ -38,47 +62,53 @@ const defaultTimer = {
 export function createRestTool(deps: RestToolDeps = {}): Tool<RestArgs> {
   const timer = deps.timer ?? defaultTimer
   const now = deps.now ?? Date.now
-  let nextRestAllowedAtMs = 0
+  const budget = deps.budget ?? createRestBudget()
 
   return {
     name: 'rest',
     description: [
-      '唯一的主动休息入口。只有此刻真正想暂停活动时才调用；完成任务、暂时没想法、owner 不在线或等待外部回复都不是休息理由。',
-      '其他情况下必须直接选择下一件可执行的事继续行动，可以研究、创作、聊天、维护自己的项目或探索网络。',
-      '默认休息 10 分钟，最长 1 小时；必须写明真实 reason 和醒后立即执行的 resumeAction。',
-      '每次休息结束或被打断后有 60 分钟冷却，冷却期间不能再次休息，必须去做其他事情。',
+      '唯一的主动休息入口。真正想休息、放空、沉淀，或发现自己正在机械重复时直接调用；不需要先制造任务来证明有资格停下。',
+      '完成任务本身不自动等于需要休息；但做过一次有界方向搜索后仍没有真正想做、值得做的事，也不要为了显得忙碌而强行行动。',
+      '默认请求 30 分钟，范围 10..120；最近三小时白天 06:00..24:00 最多累计休息 60 分钟，夜间 00:00..06:00 最多 120 分钟，按 Asia/Singapore 计算。',
+      '工具会按剩余额度缩短时长，并在 00:00 或 06:00 边界结束后重新评估；额度不足 10 分钟时拒绝并短暂退避，不要连续重试或另建 Schedule 等待。',
       '私聊、@、后台任务完成、调度事件或 runtime 停止信号会提前打断休息，事件不会被本工具消费。',
     ].join(' '),
     schema: argsSchema,
     async execute(args, ctx) {
-      const requestedAt = now()
-      if (requestedAt < nextRestAllowedAtMs) {
-        const retryAfterMinutes = Math.ceil((nextRestAllowedAtMs - requestedAt) / MINUTE_MS)
-        const error = `休息冷却中，还需至少 ${retryAfterMinutes} 分钟；现在选择一个非 rest 的具体行动。`
-        log.info({ retryAfterMinutes }, 'rest_rejected_cooldown')
+      const requestedDurationMinutes = args.durationMinutes ?? DEFAULT_REST_DURATION_MINUTES
+      const startedAt = now()
+      const decision = budget.authorize(requestedDurationMinutes, startedAt)
+      const durationMinutes = decision.grantedDurationMinutes
+      if (durationMinutes < MIN_REST_DURATION_MINUTES) {
+        const error = '最近三小时的休息额度暂时不足以开始至少 10 分钟的休息；不要连续重试或创建 Schedule 等待。'
+        log.info({ ...decision }, 'rest_budget_exhausted')
         return {
           content: JSON.stringify({
             ok: false,
-            code: 'rest_cooldown',
-            retryAfterMinutes,
+            code: 'rest_budget_exhausted',
+            period: decision.period,
             error,
           }),
           outcome: {
             ok: false,
-            code: 'rest_cooldown',
+            code: 'rest_budget_exhausted',
             error,
             progress: false,
+            continuation: 'backoff',
+            continuationDetail: '主动休息额度暂时不足，短暂退避后重新评估，不要用工具调用填满等待时间',
           },
         }
       }
-      const durationMinutes = args.durationMinutes ?? DEFAULT_REST_DURATION_MINUTES
       const durationMs = durationMinutes * MINUTE_MS
-      const startedAt = requestedAt
       const attentionAbort = new AbortController()
       let timerHandle: unknown = null
       let elapsed = false
 
-      log.info({ durationMinutes, reason: args.reason, resumeAction: args.resumeAction }, 'rest_started')
+      log.info({
+        ...decision,
+        reason: args.reason,
+        resumeAction: args.resumeAction,
+      }, 'rest_started')
       try {
         const status = await Promise.race([
           ctx.eventQueue
@@ -96,11 +126,17 @@ export function createRestTool(deps: RestToolDeps = {}): Tool<RestArgs> {
           durationMinutes,
           elapsedMs: Math.max(0, now() - startedAt),
         }, 'rest_finished')
-        nextRestAllowedAtMs = now() + REST_COOLDOWN_MINUTES * MINUTE_MS
-        return restResult(status, durationMinutes, args.reason, args.resumeAction)
+        return restResult(
+          status,
+          requestedDurationMinutes,
+          durationMinutes,
+          args.reason,
+          args.resumeAction,
+        )
       } finally {
         attentionAbort.abort()
         if (!elapsed && timerHandle != null) timer.clearTimeout(timerHandle)
+        budget.record(startedAt, now())
       }
     },
   }
@@ -108,22 +144,100 @@ export function createRestTool(deps: RestToolDeps = {}): Tool<RestArgs> {
 
 function restResult(
   status: 'elapsed' | 'interrupted',
+  requestedDurationMinutes: number,
   durationMinutes: number,
   reason: string,
   resumeAction: string,
 ): ToolExecutionResult {
   return {
-    content: JSON.stringify({ ok: true, status, durationMinutes, reason, resumeAction }),
+    content: JSON.stringify({
+      ok: true,
+      status,
+      requestedDurationMinutes,
+      durationMinutes,
+      reason,
+      resumeAction,
+    }),
     outcome: {
       ok: true,
       code: status === 'elapsed' ? 'rest_elapsed' : 'rest_interrupted',
       progress: false,
       continuation: 'immediate',
       continuationDetail: status === 'elapsed'
-        ? '主动休息结束，立即执行醒后方向'
-        : '主动休息被注意事件打断，立即重新决定下一步',
+        ? '主动休息结束，重新评估是否有值得推进的具体方向'
+        : '主动休息被注意事件打断，先处理注意事件；处理后可再次按需要调用 rest',
     },
   }
+}
+
+export function createRestBudget(): RestBudget {
+  let intervals: RestInterval[] = []
+
+  return {
+    authorize(requestedDurationMinutes, nowMs) {
+      const windowStartMs = nowMs - REST_WINDOW_MINUTES * MINUTE_MS
+      intervals = intervals.filter(interval => interval.endedAtMs > windowStartMs)
+      const usedMs = intervals.reduce((total, interval) => {
+        const overlapStart = Math.max(interval.startedAtMs, windowStartMs)
+        const overlapEnd = Math.min(interval.endedAtMs, nowMs)
+        return total + Math.max(0, overlapEnd - overlapStart)
+      }, 0)
+      const localTime = localTimeOfDay(nowMs)
+      const period = localTime.hour < NIGHT_END_HOUR ? 'night' : 'day'
+      const limitMinutes = period === 'night'
+        ? NIGHT_REST_LIMIT_MINUTES
+        : DAY_REST_LIMIT_MINUTES
+      const remainingBudgetMinutes = Math.max(
+        0,
+        Math.floor((limitMinutes * MINUTE_MS - usedMs) / MINUTE_MS),
+      )
+      const untilBoundaryMinutes = Math.max(
+        0,
+        Math.floor(millisecondsUntilBoundary(localTime) / MINUTE_MS),
+      )
+
+      return {
+        period,
+        requestedDurationMinutes,
+        grantedDurationMinutes: Math.min(
+          requestedDurationMinutes,
+          remainingBudgetMinutes,
+          untilBoundaryMinutes,
+        ),
+      }
+    },
+    record(startedAtMs, endedAtMs) {
+      if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs)) return
+      if (endedAtMs <= startedAtMs) return
+      intervals.push({ startedAtMs, endedAtMs })
+    },
+  }
+}
+
+function localTimeOfDay(nowMs: number): { hour: number; minute: number; second: number; millisecond: number } {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: REST_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(nowMs))
+  const values = new Map(parts.map(part => [part.type, part.value]))
+  return {
+    hour: Number(values.get('hour')) % 24,
+    minute: Number(values.get('minute')),
+    second: Number(values.get('second')),
+    millisecond: ((nowMs % 1000) + 1000) % 1000,
+  }
+}
+
+function millisecondsUntilBoundary(localTime: ReturnType<typeof localTimeOfDay>): number {
+  const elapsedMs = localTime.hour * HOUR_MS
+    + localTime.minute * MINUTE_MS
+    + localTime.second * 1000
+    + localTime.millisecond
+  const boundaryMs = localTime.hour < NIGHT_END_HOUR ? NIGHT_END_HOUR * HOUR_MS : DAY_MS
+  return boundaryMs - elapsedMs
 }
 
 export const restTool = createRestTool()

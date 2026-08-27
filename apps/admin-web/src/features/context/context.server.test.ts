@@ -1,6 +1,84 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'vitest'
-import { buildContextEntryViews } from './context.server.js'
+import {
+  buildContextEntryViews,
+  buildContextThinkingArchive,
+  readContextThinkingBlockPayload,
+} from './context.server.js'
+
+describe('context thinking blocks', () => {
+  test('returns only displayable thinking text without provider replay credentials', () => {
+    const block = readContextThinkingBlockPayload({
+      schemaVersion: 1,
+      message: {
+        role: 'assistant',
+        content: '',
+        toolCalls: [],
+        nativeBlocks: [{
+          type: 'thinking',
+          thinking: '先看事实，再做判断。',
+          signature: 'provider-signature-must-stay-on-server',
+        }],
+      },
+    }, { entryId: '42', blockIndex: 0 })
+
+    assert.deepEqual(block, {
+      schemaVersion: 1,
+      entryId: '42',
+      blockIndex: 0,
+      type: 'thinking',
+      thinking: '先看事实，再做判断。',
+    })
+    assert.equal(Object.hasOwn(block, 'signature'), false)
+    assert.equal(Object.hasOwn(block, 'data'), false)
+  })
+
+  test('groups the complete thinking index by canonical assistant entry', () => {
+    const archive = buildContextThinkingArchive([
+      thinkingRow(42n, 0, 'thinking', 120),
+      thinkingRow(42n, 2, 'redacted_thinking', 0),
+      thinkingRow(39n, 0, 'thinking', 80),
+    ])
+
+    assert.deepEqual(archive, {
+      schemaVersion: 1,
+      entries: [{
+        entryId: '42',
+        createdAt: '2026-07-26T08:00:00.000Z',
+        blocks: [
+          { blockIndex: 0, type: 'thinking', charCount: 120 },
+          { blockIndex: 2, type: 'redacted_thinking', charCount: 0 },
+        ],
+      }, {
+        entryId: '39',
+        createdAt: '2026-07-26T08:00:00.000Z',
+        blocks: [{ blockIndex: 0, type: 'thinking', charCount: 80 }],
+      }],
+    })
+  })
+
+  test('keeps thinking text and replay signatures out of the initial ledger preview', () => {
+    const [entry] = buildContextEntryViews([
+      ledgerRow(42n, 'message', {
+        schemaVersion: 1,
+        message: {
+          role: 'assistant',
+          content: '',
+          toolCalls: [],
+          nativeBlocks: [{
+            type: 'thinking',
+            thinking: '只应在展开卡片后读取',
+            signature: 'provider-replay-signature',
+          }],
+        },
+      }),
+    ])
+
+    assert.equal(entry?.rawPreview.includes('只应在展开卡片后读取'), false)
+    assert.equal(entry?.rawPreview.includes('provider-replay-signature'), false)
+    assert.match(entry?.rawPreview ?? '', /思考正文按需读取 10 chars/)
+  })
+})
 
 describe('buildContextEntryViews', () => {
   test('groups a tool result under its assistant call and exposes semantic summaries', () => {
@@ -218,5 +296,20 @@ function ledgerRow(id: bigint, entryType: string, payload: unknown) {
     entryType,
     payload,
     createdAt: new Date('2026-07-26T08:00:00.000Z'),
+  }
+}
+
+function thinkingRow(
+  entryId: bigint,
+  blockIndex: number,
+  type: 'thinking' | 'redacted_thinking',
+  charCount: number,
+) {
+  return {
+    entryId,
+    createdAt: new Date('2026-07-26T08:00:00.000Z'),
+    blockIndex,
+    type,
+    charCount,
   }
 }

@@ -1,6 +1,14 @@
 import '@tanstack/react-start/server-only'
 import { getAdminPrisma } from '../../server/db.server.js'
-import { contextSnapshotSchema, type ContextSnapshot } from './context.schema.js'
+import {
+  contextSnapshotSchema,
+  contextThinkingArchiveSchema,
+  contextThinkingBlockSchema,
+  type ContextSnapshot,
+  type ContextThinkingArchive,
+  type ContextThinkingBlock,
+  type ContextThinkingBlockInput,
+} from './context.schema.js'
 
 const CONVERSATION_TEXT_LIMIT = 12_000
 
@@ -122,6 +130,95 @@ export interface ContextLedgerRow {
   entryType: string
   payload: unknown
   createdAt: Date
+}
+
+export interface ContextThinkingIndexRow {
+  entryId: bigint
+  createdAt: Date
+  blockIndex: number
+  type: 'thinking' | 'redacted_thinking'
+  charCount: number
+}
+
+export async function loadContextThinkingArchive(): Promise<ContextThinkingArchive> {
+  const db = getAdminPrisma()
+  const rows = await db.$queryRaw<ContextThinkingIndexRow[]>`
+    SELECT
+      entry.id AS "entryId",
+      entry.created_at AS "createdAt",
+      (block.ordinality - 1)::integer AS "blockIndex",
+      block.value->>'type' AS "type",
+      character_length(COALESCE(block.value->>'thinking', ''))::integer AS "charCount"
+    FROM bot_agent_ledger_entries AS entry
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(entry.payload #> '{message,nativeBlocks}') = 'array'
+          THEN entry.payload #> '{message,nativeBlocks}'
+        ELSE '[]'::jsonb
+      END
+    ) WITH ORDINALITY AS block(value, ordinality)
+    WHERE entry.entry_type = 'message'
+      AND entry.payload #>> '{message,role}' = 'assistant'
+      AND block.value->>'type' IN ('thinking', 'redacted_thinking')
+    ORDER BY entry.id DESC, block.ordinality ASC
+  `
+  return buildContextThinkingArchive(rows)
+}
+
+export async function loadContextThinkingBlock(
+  input: ContextThinkingBlockInput,
+): Promise<ContextThinkingBlock> {
+  const db = getAdminPrisma()
+  const row = await db.botAgentLedgerEntry.findUnique({
+    where: { id: BigInt(input.entryId) },
+    select: { payload: true },
+  })
+  if (!row) throw new Error('Thinking block 不存在。')
+  return readContextThinkingBlockPayload(row.payload, input)
+}
+
+export function buildContextThinkingArchive(
+  rows: readonly ContextThinkingIndexRow[],
+): ContextThinkingArchive {
+  const entries = new Map<string, ContextThinkingArchive['entries'][number]>()
+  for (const row of rows) {
+    const entryId = row.entryId.toString()
+    const entry = entries.get(entryId) ?? {
+      entryId,
+      createdAt: row.createdAt.toISOString(),
+      blocks: [],
+    }
+    entry.blocks.push({
+      blockIndex: row.blockIndex,
+      type: row.type,
+      charCount: row.charCount,
+    })
+    entries.set(entryId, entry)
+  }
+  return contextThinkingArchiveSchema.parse({ schemaVersion: 1, entries: [...entries.values()] })
+}
+
+export function readContextThinkingBlockPayload(
+  payload: unknown,
+  input: ContextThinkingBlockInput,
+): ContextThinkingBlock {
+  const payloadRecord = asRecord(payload)
+  if (payloadRecord?.schemaVersion !== 1) throw new Error('Thinking block 不存在。')
+  const message = asRecord(payloadRecord?.message)
+  const blocks = message?.role === 'assistant' && Array.isArray(message.nativeBlocks)
+    ? message.nativeBlocks
+    : null
+  const block = blocks === null ? null : asRecord(blocks[input.blockIndex])
+  if (!block || (block.type !== 'thinking' && block.type !== 'redacted_thinking')) {
+    throw new Error('Thinking block 不存在。')
+  }
+  return contextThinkingBlockSchema.parse({
+    schemaVersion: 1,
+    entryId: input.entryId,
+    blockIndex: input.blockIndex,
+    type: block.type,
+    thinking: block.type === 'thinking' && typeof block.thinking === 'string' ? block.thinking : null,
+  })
 }
 
 export function buildContextEntryViews(
@@ -370,7 +467,8 @@ function nonNegativeIntegerOrNull(value: unknown): number | null {
 function safePreview(value: unknown): string {
   const seen = new WeakSet<object>()
   const raw = JSON.stringify(value, (key, current) => {
-    if (/^(data|imageData|audioData|base64)$/i.test(key) && typeof current === 'string') return `[省略 ${current.length} chars]`
+    if (key === 'thinking' && typeof current === 'string') return `[思考正文按需读取 ${current.length} chars]`
+    if (/^(signature|data|imageData|audioData|base64)$/i.test(key) && typeof current === 'string') return `[省略 ${current.length} chars]`
     if (typeof current === 'string' && current.length > 600) return `${current.slice(0, 600)}…`
     if (current && typeof current === 'object') {
       if (seen.has(current)) return '[Circular]'

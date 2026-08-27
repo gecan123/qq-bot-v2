@@ -63,6 +63,34 @@ export const contextLedgerEntrySchema = z.discriminatedUnion('kind', [
   contextUnknownEntrySchema,
 ])
 
+export const contextThinkingBlockInputSchema = z.object({
+  entryId: z.string().regex(/^\d+$/),
+  blockIndex: z.number().int().nonnegative(),
+}).strict()
+
+const contextThinkingBlockTypeSchema = z.enum(['thinking', 'redacted_thinking'])
+
+export const contextThinkingArchiveSchema = z.object({
+  schemaVersion: z.literal(1),
+  entries: z.array(z.object({
+    entryId: z.string().regex(/^\d+$/),
+    createdAt: z.iso.datetime({ offset: true }),
+    blocks: z.array(z.object({
+      blockIndex: z.number().int().nonnegative(),
+      type: contextThinkingBlockTypeSchema,
+      charCount: z.number().int().nonnegative(),
+    }).strict()).min(1),
+  }).strict()),
+}).strict()
+
+export const contextThinkingBlockSchema = z.object({
+  schemaVersion: z.literal(1),
+  entryId: z.string().regex(/^\d+$/),
+  blockIndex: z.number().int().nonnegative(),
+  type: contextThinkingBlockTypeSchema,
+  thinking: z.string().nullable(),
+}).strict()
+
 export const contextSnapshotSchema = z.object({
   schemaVersion: z.literal(5),
   generatedAt: z.iso.datetime({ offset: true }),
@@ -112,3 +140,6 @@ export const contextSnapshotSchema = z.object({
 }).strict()
 
 export type ContextSnapshot = z.infer<typeof contextSnapshotSchema>
+export type ContextThinkingArchive = z.infer<typeof contextThinkingArchiveSchema>
+export type ContextThinkingBlock = z.infer<typeof contextThinkingBlockSchema>
+export type ContextThinkingBlockInput = z.infer<typeof contextThinkingBlockInputSchema>

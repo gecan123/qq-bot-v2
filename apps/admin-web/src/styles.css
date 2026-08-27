@@ -213,6 +213,41 @@ table { border-collapse: separate; border-spacing: 0; }
 .context-session-bar strong { color: #535d55; font-family: "SFMono-Regular", Consolas, monospace; font-size: 10px; font-weight: 700; }
 .context-session-bar .context-session-alert, .context-session-bar .context-session-alert strong { color: #a4483d; }
 .context-session-bar .context-session-warn, .context-session-bar .context-session-warn strong { color: #98651e; }
+.thinking-archive { border-bottom: 1px solid rgba(41,48,41,.09); background: rgba(242,244,238,.78); }
+.thinking-archive > summary, .thinking-card > summary { list-style: none; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; }
+.thinking-archive > summary::-webkit-details-marker, .thinking-card > summary::-webkit-details-marker { display: none; }
+.thinking-archive > summary {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 15px;
+  color: #59645d;
+}
+.thinking-archive-title, .thinking-archive-meta { display: inline-flex; align-items: center; gap: 7px; }
+.thinking-archive-title svg { color: #8e6123; }
+.thinking-archive-title strong { font-size: 11px; font-weight: 730; }
+.thinking-archive-meta { color: #878e87; font-size: 9px; white-space: nowrap; }
+.thinking-archive-meta svg, .thinking-card-size svg { transition: transform .15s ease; }
+.thinking-archive[open] > summary .thinking-archive-meta svg, .thinking-card[open] > summary .thinking-card-size svg { transform: rotate(90deg); }
+.thinking-archive-body { padding: 0 15px 14px; }
+.thinking-archive-note { margin: 0 0 9px; color: #7c847d; font-size: 9px; line-height: 1.55; }
+.thinking-archive-state { margin: 0; padding: 13px; border: 1px dashed rgba(41,48,41,.12); border-radius: 10px; color: #8a9089; background: rgba(255,255,252,.52); font-size: 10px; text-align: center; }
+.thinking-archive-state--error { color: #a4483d; }
+.thinking-card-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: min(52vh, 560px); overflow: auto; gap: 7px; padding-right: 3px; scrollbar-color: rgba(105,115,106,.25) transparent; }
+.thinking-card { min-width: 0; overflow: hidden; border: 1px solid rgba(70,91,78,.14); border-radius: 10px; background: rgba(255,255,252,.78); box-shadow: 0 2px 9px rgba(39,50,42,.025); }
+.thinking-card[open] { grid-column: 1 / -1; border-color: rgba(153,105,34,.24); background: rgba(255,253,247,.94); }
+.thinking-card > summary { display: flex; min-height: 44px; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 10px; }
+.thinking-card > summary > span:first-child { display: grid; min-width: 0; gap: 2px; }
+.thinking-card > summary strong { overflow: hidden; color: #49544d; font-family: "SFMono-Regular", Consolas, monospace; font-size: 10px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.thinking-card > summary small { color: #929891; font-size: 8px; }
+.thinking-card-size { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; color: #8b6a38; font-size: 8px; white-space: nowrap; }
+.thinking-card-body { border-top: 1px solid rgba(41,48,41,.08); color: #4b5650; background: rgba(239,242,236,.46); }
+.thinking-card-body p { margin: 0; padding: 12px; color: #858c85; font-size: 10px; }
+.thinking-card-body pre { max-height: min(48vh, 520px); margin: 0; overflow: auto; padding: 13px 14px; font-family: "SFMono-Regular", Consolas, monospace; font-size: 10px; line-height: 1.68; white-space: pre-wrap; overflow-wrap: anywhere; }
+.thinking-archive-more { display: flex; width: 100%; min-height: 44px; cursor: pointer; align-items: center; justify-content: center; gap: 8px; margin-top: 8px; border: 1px solid rgba(70,91,78,.13); border-radius: 10px; color: #5f6a63; background: rgba(255,255,252,.76); font-size: 10px; font-weight: 680; }
+.thinking-archive-more span { color: #959b94; font-size: 8px; font-weight: 550; }
 .agent-transcript-wrap { position: relative; }
 .agent-transcript {
   min-height: 440px;
@@ -344,6 +379,16 @@ table { border-collapse: separate; border-spacing: 0; }
 .context-technical > summary { display: flex; min-height: 45px; align-items: center; gap: 7px; padding: 0 15px; color: #70776f; font-size: 10px; font-weight: 680; }
 .context-technical > summary:hover { color: #98651d; }
 .context-technical-body { padding: 0 14px 14px; }
+
+@media (max-width: 1024px) {
+  .thinking-archive > summary { min-height: 52px; padding-inline: 13px; }
+  .thinking-archive-body { padding-inline: 13px; }
+  .thinking-card-list { grid-template-columns: minmax(0, 1fr); max-height: min(48vh, 520px); }
+  .thinking-card[open] { grid-column: auto; }
+  .thinking-card > summary { min-height: 48px; padding: 8px 11px; }
+  .thinking-card > summary strong { font-size: 11px; }
+  .thinking-card-body pre { max-height: 44vh; font-size: 11px; line-height: 1.7; }
+}
 
 @media (max-width: 639px) {
   .main-agent-panel > .panel-header { padding-block: 10px 8px; }

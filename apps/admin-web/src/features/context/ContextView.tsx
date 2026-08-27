@@ -1,22 +1,37 @@
-import { ArrowDown, Bell, ChevronRight, Wrench } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowDown, Bell, Brain, ChevronRight, Wrench } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { EmptyState, JsonBlock, PageHeader, Panel, StatusBadge, WarningList } from '../../components/AdminUi.js'
 import { formatCount, formatDuration, formatTimestamp } from '../../lib/format.js'
-import type { ContextSnapshot } from './context.schema.js'
+import type {
+  ContextSnapshot,
+  ContextThinkingArchive,
+  ContextThinkingBlock,
+  ContextThinkingBlockInput,
+} from './context.schema.js'
 
 type ContextEntry = ContextSnapshot['entries'][number]
 type MessageEntry = Extract<ContextEntry, { kind: 'message' }>
 type EvidenceDigest = NonNullable<
   NonNullable<ContextSnapshot['recentLlmCalls'][number]['evidence']>['canonicalRequest']
 >
+const THINKING_ARCHIVE_PAGE_SIZE = 40
 
-export function ContextView({ snapshot, isRefreshing, refreshFailed, isDemo = false }: {
+export function ContextView({
+  snapshot,
+  isRefreshing,
+  refreshFailed,
+  isDemo = false,
+  loadThinkingArchive,
+  loadThinkingBlock,
+}: {
   snapshot: ContextSnapshot
   isRefreshing: boolean
   refreshFailed: boolean
   isDemo?: boolean
+  loadThinkingArchive?: () => Promise<ContextThinkingArchive>
+  loadThinkingBlock?: (input: ContextThinkingBlockInput) => Promise<ContextThinkingBlock>
 }) {
   const usage = snapshot.latestUsage
   const activity = summarizeVisibleToolActivity(snapshot.entries)
@@ -72,6 +87,9 @@ export function ContextView({ snapshot, isRefreshing, refreshFailed, isDemo = fa
           <span><strong>{formatCount(snapshot.entries.length)} / {formatCount(snapshot.ledger.total)}</strong> 可见 entries</span>
         </div>
       </div>
+      {loadThinkingArchive && loadThinkingBlock && (
+        <ThinkingArchive loadArchive={loadThinkingArchive} loadBlock={loadThinkingBlock} />
+      )}
       <ConversationTranscript entries={snapshot.entries} headId={snapshot.ledger.headId} />
     </Panel>
 
@@ -97,6 +115,146 @@ export function ContextView({ snapshot, isRefreshing, refreshFailed, isDemo = fa
     </details>
     <WarningList warnings={snapshot.warnings} />
   </>
+}
+
+function ThinkingArchive({
+  loadArchive,
+  loadBlock,
+}: {
+  loadArchive: () => Promise<ContextThinkingArchive>
+  loadBlock: (input: ContextThinkingBlockInput) => Promise<ContextThinkingBlock>
+}) {
+  const [archive, setArchive] = useState<ContextThinkingArchive | null>(null)
+  const [error, setError] = useState(false)
+  const [visibleCount, setVisibleCount] = useState(THINKING_ARCHIVE_PAGE_SIZE)
+  const detailsRef = useRef<HTMLDetailsElement>(null)
+  const requestRef = useRef<Promise<ContextThinkingArchive> | null>(null)
+
+  const ensureArchive = useCallback(() => {
+    if (archive || requestRef.current) return
+    setError(false)
+    const request = loadArchive()
+    requestRef.current = request
+    void request.then(setArchive, () => setError(true)).finally(() => {
+      if (requestRef.current === request) requestRef.current = null
+    })
+  }, [archive, loadArchive])
+
+  const blockCount = archive?.entries.reduce((sum, entry) => sum + entry.blocks.length, 0) ?? null
+  const indexedBlocks = archive?.entries.flatMap(entry => entry.blocks.map(block => ({
+    entryId: entry.entryId,
+    createdAt: entry.createdAt,
+    block,
+  }))) ?? []
+  const visibleBlocks = indexedBlocks.slice(0, visibleCount)
+  const remainingCount = Math.max(0, indexedBlocks.length - visibleBlocks.length)
+
+  useEffect(() => {
+    if (detailsRef.current?.open) ensureArchive()
+  }, [ensureArchive])
+
+  return (
+    <details
+      ref={detailsRef}
+      className="thinking-archive"
+      suppressHydrationWarning
+      onToggle={event => {
+        if (event.currentTarget.open) ensureArchive()
+      }}
+    >
+      <summary>
+        <span className="thinking-archive-title"><Brain size={15} /><strong>思考档案</strong></span>
+        <span className="thinking-archive-meta">
+          {blockCount === null ? '展开后按需读取' : `${formatCount(blockCount)} 个区块`}
+          <ChevronRight size={14} />
+        </span>
+      </summary>
+      <div className="thinking-archive-body">
+        <p className="thinking-archive-note">页面保留全部历史思考；正文仅在展开卡片时读取，不会因此加入下一轮模型上下文。</p>
+        {error && <p className="thinking-archive-state thinking-archive-state--error">思考档案读取失败，请收起后重试。</p>}
+        {!archive && !error && <p className="thinking-archive-state">正在读取思考索引…</p>}
+        {archive?.entries.length === 0 && <p className="thinking-archive-state">当前 ledger 没有可显示的思考区块。</p>}
+        {archive && archive.entries.length > 0 && (
+          <>
+            <div className="thinking-card-list">
+              {visibleBlocks.map(({ entryId, createdAt, block }) => (
+                <ThinkingCard
+                  key={`${entryId}:${block.blockIndex}`}
+                  entryId={entryId}
+                  createdAt={createdAt}
+                  block={block}
+                  loadBlock={loadBlock}
+                />
+              ))}
+            </div>
+            {remainingCount > 0 && (
+              <button
+                type="button"
+                className="thinking-archive-more"
+                aria-label={`显示更早的 ${formatCount(remainingCount)} 个思考区块`}
+                onClick={() => setVisibleCount(count => count + THINKING_ARCHIVE_PAGE_SIZE)}
+              >
+                显示更早
+                <span>剩余 {formatCount(remainingCount)} 个</span>
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </details>
+  )
+}
+
+function ThinkingCard({
+  entryId,
+  createdAt,
+  block,
+  loadBlock,
+}: {
+  entryId: string
+  createdAt: string
+  block: ContextThinkingArchive['entries'][number]['blocks'][number]
+  loadBlock: (input: ContextThinkingBlockInput) => Promise<ContextThinkingBlock>
+}) {
+  const [content, setContent] = useState<ContextThinkingBlock | null>(null)
+  const [error, setError] = useState(false)
+  const requestRef = useRef<Promise<ContextThinkingBlock> | null>(null)
+
+  const ensureContent = () => {
+    if (block.type === 'redacted_thinking' || content || requestRef.current) return
+    setError(false)
+    const request = loadBlock({ entryId, blockIndex: block.blockIndex })
+    requestRef.current = request
+    void request.then(setContent, () => setError(true)).finally(() => {
+      if (requestRef.current === request) requestRef.current = null
+    })
+  }
+
+  return (
+    <details
+      className="thinking-card"
+      onToggle={event => {
+        if (event.currentTarget.open) ensureContent()
+      }}
+    >
+      <summary>
+        <span>
+          <strong>思考 #{entryId} · 区块 {block.blockIndex + 1}</strong>
+          <small>{formatTimestamp(createdAt)}</small>
+        </span>
+        <span className="thinking-card-size">
+          {block.type === 'redacted_thinking' ? '已脱敏' : `${formatCount(block.charCount)} 字符`}
+          <ChevronRight size={13} />
+        </span>
+      </summary>
+      <div className="thinking-card-body">
+        {block.type === 'redacted_thinking' && <p>模型提供的是脱敏思考区块，正文不可读取。</p>}
+        {block.type === 'thinking' && !content && !error && <p>正在读取思考正文…</p>}
+        {error && <p className="thinking-archive-state--error">思考正文读取失败，请收起后重试。</p>}
+        {content?.thinking !== null && content?.thinking !== undefined && <pre>{content.thinking}</pre>}
+      </div>
+    </details>
+  )
 }
 
 function ConversationTranscript({ entries, headId }: { entries: ContextEntry[]; headId: string | null }) {

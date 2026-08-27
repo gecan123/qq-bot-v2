@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 import assert from 'node:assert/strict'
-import { cleanup, render, screen, within } from '@testing-library/react'
-import { afterEach, describe, test } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, describe, test, vi } from 'vitest'
 import { contextDemoSnapshot } from './context.demo.js'
 import { contextSnapshotSchema, type ContextSnapshot } from './context.schema.js'
 import { ContextView } from './ContextView.js'
@@ -87,6 +87,72 @@ describe('ContextView LLM calls', () => {
 })
 
 describe('ContextView ledger entries', () => {
+  test('loads archived thinking only when its collapsible cards are opened', async () => {
+    const loadThinkingArchive = vi.fn(async () => ({
+      schemaVersion: 1 as const,
+      entries: [{
+        entryId: '42',
+        createdAt: '2026-07-26T07:59:39.000Z',
+        blocks: [{ blockIndex: 0, type: 'thinking' as const, charCount: 9 }],
+      }],
+    }))
+    const loadThinkingBlock = vi.fn(async (_input: { entryId: string; blockIndex: number }) => ({
+      schemaVersion: 1 as const,
+      entryId: '42',
+      blockIndex: 0,
+      type: 'thinking' as const,
+      thinking: '先检查当前状态，再决定下一步。',
+    }))
+
+    render(<ContextView
+      snapshot={snapshot}
+      isRefreshing={false}
+      refreshFailed={false}
+      loadThinkingArchive={loadThinkingArchive}
+      loadThinkingBlock={loadThinkingBlock}
+    />)
+
+    assert.equal(screen.queryByText('先检查当前状态，再决定下一步。'), null)
+    fireEvent.click(screen.getByText('思考档案'))
+    await waitFor(() => assert.equal(loadThinkingArchive.mock.calls.length, 1))
+
+    const cardSummary = await screen.findByText('思考 #42 · 区块 1')
+    assert.equal(loadThinkingBlock.mock.calls.length, 0)
+    fireEvent.click(cardSummary)
+    assert.ok(await screen.findByText('先检查当前状态，再决定下一步。'))
+    assert.deepEqual(loadThinkingBlock.mock.calls[0]?.[0], { entryId: '42', blockIndex: 0 })
+
+    fireEvent.click(cardSummary)
+    fireEvent.click(cardSummary)
+    await waitFor(() => assert.equal(loadThinkingBlock.mock.calls.length, 1))
+  })
+
+  test('reveals a large thinking archive in iPad-friendly batches', async () => {
+    const entries = Array.from({ length: 41 }, (_, index) => ({
+      entryId: String(100 - index),
+      createdAt: '2026-07-26T07:59:39.000Z',
+      blocks: [{ blockIndex: 0, type: 'thinking' as const, charCount: 9 }],
+    }))
+    render(<ContextView
+      snapshot={snapshot}
+      isRefreshing={false}
+      refreshFailed={false}
+      loadThinkingArchive={async () => ({ schemaVersion: 1, entries })}
+      loadThinkingBlock={async input => ({
+        schemaVersion: 1,
+        ...input,
+        type: 'thinking',
+        thinking: '正文',
+      })}
+    />)
+
+    fireEvent.click(screen.getByText('思考档案'))
+    assert.ok(await screen.findByText('思考 #61 · 区块 1'))
+    assert.equal(screen.queryByText('思考 #60 · 区块 1'), null)
+    fireEvent.click(screen.getByRole('button', { name: '显示更早的 1 个思考区块' }))
+    assert.ok(await screen.findByText('思考 #60 · 区块 1'))
+  })
+
   test('labels the in-memory example and renders a representative tool round', () => {
     assert.doesNotThrow(() => contextSnapshotSchema.parse(contextDemoSnapshot))
     render(<ContextView

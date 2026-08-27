@@ -4,7 +4,7 @@
 
 ## 默认可见能力
 
-- 主动休息：`rest` 是唯一的主动暂停入口，参数为期望 `durationMinutes=10..120`（默认 30）、真实 `reason` 和醒后重新评估方向的 `resumeAction`。工具按实际经过时间维护进程内三小时滚动窗口：Asia/Singapore 白天 06:00..24:00 最多累计休息 60 分钟，夜间 00:00..06:00 最多 120 分钟；本次时长自动取请求、剩余额度和下一昼夜边界的最小值。注意事件提前打断时只计实际时间；额度不足 10 分钟返回 `rest_budget_exhausted` 并短暂技术退避。窗口不按工具次数或工作量解锁，不跨重启持久化；不要连续重试或创建 Schedule 等待额度。
+- 主动休息：`rest` 是唯一的主动暂停入口，参数为期望 `durationMinutes=10..30`（默认 30）、真实 `reason` 和醒后重新评估方向的 `resumeAction`。一次休息完整结束后进入 60 分钟进程内冷却；冷却期间返回 `rest_recently_used` 并短暂技术退避，不披露剩余时间，也不要创建 Schedule 等待。私聊、@、后台任务完成、调度事件或停止信号会提前打断休息；被打断的本次休息不启动冷却。冷却不跨重启持久化。
 - 短期调度：`schedule action=create|list|get_occurrence|cancel`，active job 的公开 ID 字段统一为 `id`。`create` 只接受一次性 `at` 或 `afterSeconds`，触发必须位于 30 秒到 3 天内，最多 20 个 active job。同名同时间创建幂等返回 `existing`，同名不同时间返回冲突及已有 `id`，需先 cancel；`list` 返回有界公开摘要。active 状态保存在 schedule store，触发正文只写一次 occurrence store；到期 notification 只给名称、时间和 `get_occurrence` 打开参数，不执行预存命令。它是 normal+interrupt，轮次边界低于 high notification、高于 active Goal 和 passive notification。
 - 持久目标：`goal action=get|create_self|replan|complete|report_blocker|abandon_self`。没有未完成 Goal 时，Agent 可以为自己的兴趣直接创建 `origin=self` 的持久目标，必须给出真实 `motivation`、可核验 `completionCriteria` 和立即执行的 `currentCommitment`；owner Goal 初始没有承诺时由 Agent 先 `replan`。默认预算 1,000,000 tokens，单个上限 10,000,000，60 秒冷却和滚动 24 小时最多 64 个只是失控保险丝。Agent 可以放弃 self Goal，但不能放弃 owner Goal。配置的 owner 仍可用私聊 `/goal` 创建、暂停、恢复或取消，owner Goal 会直接抢占 self Goal。轮次边界优先级是 high+interrupt notification > normal+interrupt notification > active Goal > passive notification；前台仍是单一串行 BotLoop，等待后台或外部输入时可以做其他事情。`complete` 必须提交逐项真实证据，并对 owner/self Goal 各执行一次独立、无工具的 LLM 验收；只有 `{ok:true}` 才落完成状态，拒绝或验收不可用会保持 Goal 活跃且本次不重试。同一 blocker 每个连续 Goal round 用相同 `blockerKey` 报告，第三轮才转 `blocked`。Goal token budget 按主 Agent 未缓存 input 加 output 计量；judger 等辅助 LLM 使用量尚未计入。只有明确的 provider 硬额度/账单上限才转 `usage_limited`，普通临时 429 仍走已有有界重试和 round backoff。
 - QQ 与飞书发送位于 deferred `chat` capability：用 `help action=describe` 查看 schema 后，直接 `invoke conversation open` 显式打开允许的群或好友，最后 `invoke send_message` 发送文本、图片、图文或受控音乐卡片。`work` 必填：无后续承诺用 `state=none`；当前会话内马上续做用 `state=continue`，只保护下一轮且不跨重启；持久 Goal 的进度消息用 `state=goal_progress + goalId`，并由 before-tool hook 确认该 Goal 当前 active 且有 `currentCommitment`。
@@ -35,7 +35,7 @@
 ## 结果契约
 
 - 工具对 LLM 返回的事实只放在 `content`。运行时可以附带 `outcome` 和 `effects`，但二者不进入 `AgentContext`；循环语义读取结构化 outcome/effect，不反解析结果文本。`rest` 在工具调用内部等待，结束或被打断后以 `continuation=immediate` 返回。
-- 工具可以用 `outcome.progress=false` 声明一次成功调用没有获得新信息、改变状态或完成外部动作；事实性的 `content` 仍正常进入 ledger。普通无进展不会触发空闲等待，Runtime Host 会立即要求下一轮改做其他行动。
+- 工具可以用 `outcome.progress=false` 声明一次成功调用没有获得新信息、改变状态或完成外部动作；事实性的 `content` 仍正常进入 ledger。第一次无进展仍立即进入下一轮；若连续两轮的实际工具名、参数和结果 code 完全相同，Runtime Host 会等待 attention 或十分钟后再重新选择方向。该重复指纹只保存在当前进程，不进入 ledger/runtime singleton。
 - `outcome.continuation` 与进展分离：`immediate` 请求一次立即决策；`wait_event` 表示已启动或观察到真实后台工作，主循环不轮询它而是立刻做其他事；`wait_attention` / `stop` 表示当前方向告一段落，但不会停止整个 Agent；只有 `backoff` 表示一次有界技术退避。`continuationDetail` 最多透传 1000 字符到可丢弃活动观察面，不进入 ledger。后台任务 start、运行中的 `background_task get/list` 返回 `wait_event`；完成事件稍后进入注意队列。重启后直接查询不再有本机 completion event 保证的持久远端 session 时返回 `backoff`，避免故障紧密重试。
 - 需要后续程序判断的结果使用稳定 JSON，并包含明确的成功状态和错误 code。面向人的摘要或错误说明放在具名字段中，不与 JSON 前后拼接自然语言。
 - schema 校验失败返回具体 `issues`、当前工具名和立即重试同一工具的提示；未知顶层工具返回当前 `availableTools` 和恢复提示，已移除的 `send_image` / `workspace_command` 分别定向引导到 `send_message.imageRef` / `workspace_bash`，不做静默兼容。

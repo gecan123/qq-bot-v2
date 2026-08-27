@@ -10,9 +10,9 @@
 - QQ 与飞书发送位于 deferred `chat` capability：用 `help action=describe` 查看 schema 后，直接 `invoke conversation open` 显式打开允许的群或好友，最后 `invoke send_message` 发送文本、图片、图文或受控音乐卡片。`work` 必填：无后续承诺用 `state=none`；当前会话内马上续做用 `state=continue`，只保护下一轮且不跨重启；持久 Goal 的进度消息用 `state=goal_progress + goalId`，并由 before-tool hook 确认该 Goal 当前 active 且有 `currentCommitment`。
 - QQ 目录：`qq_directory`（分页列出/搜索 NapCat 当前全部好友；群目录只披露当前已加入且配置在 `prompts/groups.md` 的群；`profile` 按 QQ 号合并当前目录名和消息事实账本中观察到的历史群名片/昵称）。
 - 稳定按需壳：`help`（`list` / `describe` capability 或内部工具 schema）和 `invoke`（直接调用按需内部工具）。安全仍由目标工具 schema 和 policy 约束，不持久化激活状态。
-- 知识和历史：`memory`（稳定长期记忆）、`notebook`（按稳定 topic 维护研究/阅读/市场/项目过程）、`skill`、`inbox`（list/read 多来源消息正文）。Memory 和 Notebook 的人类可读叙述必须以中文为载体，技术标识可保留原文但要放进中文说明；结构字段和 ID 保持原样。
+- 知识和历史：`memory`（稳定长期记忆）、`notebook`（按稳定 topic 维护研究/阅读/市场/项目过程）、`skill`、`inbox`（list/read 多来源消息正文）。Memory 和 Notebook 的人类可读叙述必须以中文为载体，技术标识可保留原文但要放进中文说明；结构字段和 ID 保持原样。工具覆盖、当天产量、临时计划和一次性情绪不写成兴趣 Memory；明确的乐趣、投入、好奇或跨时间仍愿回访的原因才适合进入 self/topic Memory。
 - 表情包：`collect_sticker`（收藏、移除、列表、搜索和随机候选）。
-- 外部内容：typed `fetch_content` 和配置后可用的 `web_search`。金融能力统一位于 deferred `finance`：按配置包含 `openbb_cli`、`moomoo_skill`、`crypto_paper` 和 `trading_agent`。
+- 外部内容：typed `fetch_content` 和配置后可用的 `web_search`。金融能力统一位于 deferred `finance`：按配置包含 `openbb_cli`、`moomoo_skill`、`crypto_paper` 和 `trading_agent`。Luna 可在长期授权内自主经营本地 BTC/ETH/SOL Crypto 模拟仓；普通证券 Moomoo 模拟订单仍需用户逐次授权。
 - 风格和文本判断：`chat_style` 按需读取聊天约束、风格和群定制；发送路径不再运行阻塞式 AI 腔分类器。
 - 心理医生：`psychologist` 是默认可见的只读 LLM 工具，用于自我反思与行为检查，不提供医学诊断。只有当主 Agent 准备以“以后再说”“不打扰”“算了”“先歇着”等理由停下仍可立即推进的方向时，才把完整第一人称想法交给它；已经在推进、只是客观描述状态、确实没有当前方向或健康交还控制时不调用。它返回稳定的 `hasNegative` / `rewritten`，结果作为普通 tool result 进入 ledger；工具本身不保存会话状态，也不在每轮隐藏执行。
 - 运行时工作：`background_task`（通用异步任务 list/get；get 的文本结果有通用上限）、只读 `workspace_bash`；普通私有工作文件通过 deferred `workspace_management` 内的 `workspace_file` 修改。任务 registry 持久化到 `BOT_BACKGROUND_TASK_STATE_PATH`；所有遗留 running 在重启时明确变成 `interrupted`。全局未完成任务数由 `BOT_BACKGROUND_TASK_MAX_ACTIVE` 限制，默认 8；排队任务也占额度，超限会在启动图片生成、后台抓取或交易研究前明确拒绝。完成/失败 notification 不复制 description、summary 或结果正文，只携带状态和 `background_task get` 打开动作。当前定时唤醒不走 task registry，而由上述独立 schedule/occurrence store 恢复。
@@ -20,8 +20,8 @@
 ## Deferred capability
 
 - `browser`：配置 `BOT_BROWSER_ENABLED=true` 后出现，内部工具是单一 action-driven `browser`；截图、下载和 annotation 返回后，artifact retention 清理由 sidecar 的单 worker 合并执行。
-- `finance`：按配置包含 `openbb_cli`、`moomoo_skill`、`crypto_paper` 和 `trading_agent`。前三项负责数据与受限模拟交易；已有具体金融问题且需要跨来源证据、可复现策略规则、反证或历史回测时，使用 `trading_agent` 委派给本机 Vibe-Trading Agent。
-- `website`：配置 `BOT_WEBSITE_ENABLED=true` 和独立网站仓库路径后出现，内部工具是 `website`，用于维护 Luna 的 Astro 个人网站并发布到配置分支。
+- `finance`：按配置包含 `openbb_cli`、`moomoo_skill`、`crypto_paper` 和 `trading_agent`。前三项负责数据与受限模拟交易；已有具体金融问题且需要跨来源证据、可复现策略规则、反证或历史回测时，使用 `trading_agent` 委派给本机 Vibe-Trading Agent。自主市场方向先写 market Notebook 的判断与失效条件；模拟成交后可向一个相关对象分享并在真实变化后复盘，不机械盯盘。
+- `website`：配置 `BOT_WEBSITE_ENABLED=true` 和独立网站仓库路径后出现，内部工具是 `website`，用于维护 Luna 的 Astro 个人网站并发布到配置分支。轻量作品可以直接发布；真正重视的作品可先 draft、自读、向一个相关对象问具体反馈，再用 revision 修改并发布或更新。换题但重复同一种批量生产仍属于机械重复。
 - `external_research`：内部 `fetch_content` 只暴露普通网页和 Reddit action；配置 `TAVILY_API_KEY` 后同时包含 `web_search`。
 - `fetch_content action=url` 默认同步返回网页摘要；预计较慢或想同时处理其他事情时可传 `background=true`，它进入最多 3 并发的 `network` lane，立即返回 `taskId`，完成后通过 `background_task` 取结果。
 - `media_generation`：内部工具是 `generate_image`，创建图片生成/编辑后台任务，`count=1..4` 时固定最多并发 2 个图片请求，后续用 `background_task` 查结果。
@@ -68,7 +68,7 @@
 - `send_message` 的 target 必须由当前 conversation focus 明确给出。不能从 memory、消息文本或日志推断 target；切换来源时必须重新 `conversation open`。
 - `send_message.music` 只接受 qq/163/kugou/kuwo/migu 的歌曲 ID，或字段受限且 URL 必须为 HTTPS 的 custom 音乐卡片；不接受任意 JSON 卡片。
 - assistant text 是内部历史/推理，不是公开发送通道。
-- `send_message` 成功不会隐式结束 Agent 当前活动；下一轮继续当前方向或立刻选择另一件事。只有真正想主动休息时才调用 `rest`。
+- `send_message` 成功不会隐式结束 Agent 当前活动；下一轮重新判断当前方向是否仍有牵引力，有就继续，没有或已经机械重复时调用 `rest`。
 - content-only 且无 tool call 的 assistant 输出不会发送或执行。Runtime 会追加同一个受控行动纠错并立即重试；方向选择保持在主 Agent 内，不建立跨轮换方向状态。
 - QQ 群策略仍以 `prompts/groups.md` 为唯一来源：普通群消息不唤醒或打断 Agent；`mentions` 群只进入被动 inbox，`selective` / `active` 群可以额外形成 passive notification。飞书群以 `BOT_FEISHU_GROUP_IDS` 明确 allowlist；普通消息被动入库，结构化 @bot、编辑和撤回可以形成 attention。QQ 私聊目标必须是 NapCat 当前好友；飞书群目标必须在 allowlist，私聊目标必须已经由 Gateway 观察到。未授权会明确拒绝，不会模拟成功。
 - 私聊的主动发言冷却只限制没有同 target pending mailbox 的真正 ambient send。对新入站私聊的回复不必为了绕过冷却而添加 `reply_to`；`reply_to` 用于对应平台的引用/回复展示。
@@ -80,7 +80,7 @@
 - `read_file` 位于 deferred `document_reading` capability 内，只能解析已落库的消息文件 handle；QQ 与飞书媒体都先进入统一 `media` / `media_blobs` 后才能读取。单次返回和可解析输入都有上限，压缩包与旧版 DOC/XLS/PPT 明确拒绝。
 - `workspace_bash` 的 workspace/repo 文件命令都只读且不经过 shell；只允许 `pwd/ls/rg/cat/head/tail/wc`。普通文件修改必须走 `workspace_file`，不能用它访问数据库、网络、网站、金融、风格或指标。repo view 不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
 - `moomoo_skill` 只路由到固定 `skills/moomooapi/scripts/**` 下的代码内 allowlist。三个交易写脚本必须显式传唯一的 `--trd-env SIMULATE`；`REAL`、`--confirmed`、加密货币、组合订单、任意 Python/脚本路径和实时订阅长进程都会被拒绝。
-- `crypto_paper` 是独立 typed tool，只调用 Moomoo `get_snapshot.py` 获取 `CC.*USD` 买一/卖一行情，不创建 Crypto 交易 context。`buy` / `sell` 需要幂等 `clientOrderId`，资金和持仓在单个 serializable PostgreSQL transaction 中更新；`reset` 清空当前持仓并递增 generation，但保留历史订单。查询不是副作用，买卖和重置进入工具审计。
+- `crypto_paper` 是独立 typed tool，只调用 Moomoo `get_snapshot.py` 获取 `CC.*USD` 买一/卖一行情，不创建 Crypto 交易 context。`buy` / `sell` 必须提供 `decisionSource=owner|self`、真实 `note` 和幂等 `clientOrderId`。`self` 只允许 BTC/ETH/SOL；增加仓位的单次成本不超过当前权益 5%，买入后单币仓位不超过当前权益 20%，减仓不受开仓额度阻止。资金和持仓在单个 serializable PostgreSQL transaction 中更新；`reset` 清空当前持仓并递增 generation，但保留历史订单，且不在自主权限内。查询不是副作用，买卖和重置进入工具审计。
 - `trading_agent` 只连接配置的 loopback HTTP origin，拒绝远端 URL、URL 路径、凭据内嵌和重定向；请求、后台任务和结果都有超时/字符上限。发送给 Vibe 的每个 prompt 都附加固定的研究边界，禁止真实下单、撤单、券商授权、资金划转、定时任务和对外消息。`start` / `continue` / `cancel` 作为副作用审计，`status` / `result` 只读。
 - `workspace_file action=list|read|write|replace|delete|move` 只维护普通文本工作文件。读取返回 revision，修改已有文件必须带最新 revision；拒绝 hidden/symlink/路径逃逸/二进制、重复 `data/agent-workspace` 前缀，以及 `notebook/**`、`memory/**`、`skill-drafts/**`、`browser/**` 等 managed path。
 - `notebook action=write|list|search|read|update|delete|compact` 把研究、阅读、市场观察、项目过程和其他主题笔记存到 `notebook/<kind>/YYYY-MM.md`。每条记录必须有稳定单行 topic 和稳定 ID；list/search 可按 kind/topic 过滤，read 返回月文件 revision，修改要求最新 revision 并原子写回。compact 只允许同 kind、同月、同 topic 的记录。过程信息写 Notebook，稳定结论写 memory。

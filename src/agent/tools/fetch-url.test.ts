@@ -88,7 +88,10 @@ describe('fetch_url tool — happy path', () => {
       summary: '单仓优势: 依赖一致; 劣势: 构建复杂度.',
       truncated: false,
     })
-    assert.deepEqual(result.outcome, { ok: true })
+    assert.deepEqual(result.outcome, {
+      ok: true,
+      noveltyKey: 'fetch-origin:https://example.com',
+    })
     assert.equal(writes.length, 1)
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.source, 'url')
@@ -105,10 +108,17 @@ describe('fetch_url tool — happy path', () => {
       llm: mockLlm('讲缓存的笔记.'),
       appender: async () => {},
     })
-    const result = await tool.execute({ url: 'https://example.com/notes.txt' }, makeCtx())
+    const result = await tool.execute({
+      url: 'https://example.com/notes.txt',
+      hint: '我想知道缓存失效条件',
+    }, makeCtx())
     const payload = JSON.parse(result.content as string)
     assert.equal(payload.summary, '讲缓存的笔记.')
     assert.equal(payload.title, '')
+    assert.equal(
+      result.outcome?.noveltyKey,
+      'fetch-url:https://example.com/notes.txt:我想知道缓存失效条件',
+    )
   })
 })
 
@@ -209,7 +219,11 @@ describe('fetch_url tool — failure modes', () => {
     assert.equal(payload.code, 'summary_fallback')
     assert.equal(payload.title, 'Example article')
     assert.match(payload.fallback, /monorepos sometimes pay off/)
-    assert.deepEqual(result.outcome, { ok: true, code: 'summary_fallback' })
+    assert.deepEqual(result.outcome, {
+      ok: true,
+      code: 'summary_fallback',
+      noveltyKey: 'fetch-origin:https://example.com',
+    })
     const logged = JSON.parse(writes[0]!.trim())
     assert.equal(logged.errorKind, 'summarize_failed')
   })

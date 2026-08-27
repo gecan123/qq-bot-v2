@@ -130,7 +130,7 @@ export function createMemoryTool(deps: MemoryToolDeps = {}): Tool<Args> {
     name: 'memory',
     description: [
       '长期记忆只提供 remember、recall、correct 三个动作。',
-      '上下文不足且涉及旧事、偏好、稳定事实或经验时 recall；写前先 recall，避免重复。',
+      '上下文不足且涉及旧事、偏好、稳定事实或经验时 recall；写前先 recall，避免重复。工具使用记录、产量、临时计划和一次性情绪不记；明确的乐趣、投入、好奇或跨时间仍愿回访的原因可以记为 self/topic 偏好。',
       'recall 命中项包含一个不透明 ref；确认事实错误时只把该 ref 与新 content 交给 correct，文件、revision 和生命周期由工具内部管理。',
       'person recall 必须传稳定参与者 ID 与当前平台 context；group recall 的 id 使用 conversation list 返回的会话 key；不传 scope/id 才跨范围探索。',
       'person/group 的 remember 或 correct 必须引用真实 sourceMessageRowIds；证据类别由工具根据消息推导。内部 maintenance 负责整理和冲突处理。',

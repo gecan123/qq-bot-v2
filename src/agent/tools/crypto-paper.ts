@@ -11,6 +11,16 @@ const MAX_ORDERS = 100
 const MONEY_DP = 12
 const QUANTITY_DP = 18
 
+export const AUTONOMOUS_CRYPTO_PAPER_SYMBOLS = [
+  'CC.BTCUSD',
+  'CC.ETHUSD',
+  'CC.SOLUSD',
+] as const
+export const AUTONOMOUS_CRYPTO_PAPER_MAX_ORDER_EQUITY_RATIO = 0.05
+export const AUTONOMOUS_CRYPTO_PAPER_MAX_SYMBOL_EQUITY_RATIO = 0.20
+
+const autonomousCryptoPaperSymbols = new Set<string>(AUTONOMOUS_CRYPTO_PAPER_SYMBOLS)
+
 const symbolSchema = z.string().trim().toUpperCase().regex(
   /^CC\.[A-Z0-9]{2,16}USD$/,
   'symbol 必须是 Moomoo Crypto USD 现货币对，例如 CC.BTCUSD 或 CC.ETHUSD',
@@ -30,10 +40,11 @@ const argsSchema = z.discriminatedUnion('action', [
   }),
   z.object({
     action: z.enum(['buy', 'sell']).describe('按当前买一/卖一价立即模拟成交。'),
+    decisionSource: z.enum(['owner', 'self']).describe('owner=用户明确给出的交易意图；self=Luna 在长期授权边界内自主决定。'),
     symbol: symbolSchema,
     quantity: z.number().positive().max(1_000_000_000).describe('币数量，必须大于 0。'),
     clientOrderId: clientOrderIdSchema.describe('调用方生成的幂等 ID；重试同一订单时必须复用。'),
-    note: z.string().trim().min(1).max(200).optional().describe('可选的交易理由或备注。'),
+    note: z.string().trim().min(1).max(200).describe('本次交易的真实理由；自主交易必须对应 market Notebook 中的判断和失效条件。'),
   }),
   z.object({
     action: z.literal('reset').describe('重置虚拟资金、清空当前持仓并进入新 generation；历史订单保留。'),
@@ -42,6 +53,7 @@ const argsSchema = z.discriminatedUnion('action', [
 ])
 
 type Args = z.infer<typeof argsSchema>
+type TradeArgs = Extract<Args, { action: 'buy' | 'sell' }>
 type TradeSide = 'BUY' | 'SELL'
 
 export interface CryptoPaperQuote {
@@ -414,6 +426,108 @@ export function createMoomooCryptoQuoteProvider(): CryptoPaperQuoteProvider {
   }
 }
 
+interface PricedPaperPortfolio {
+  account: CryptoPaperAccountState
+  equity: Prisma.Decimal
+  unrealizedPnl: Prisma.Decimal
+  positions: Array<CryptoPaperPositionState & {
+    last: string
+    bid: string
+    ask: string
+    marketValue: string
+    estimatedExitFee: string
+    unrealizedPnl: string
+    quotedAt: string
+  }>
+}
+
+async function pricePaperPortfolio(
+  store: CryptoPaperStore,
+  quoteProvider: CryptoPaperQuoteProvider,
+  knownQuotes: ReadonlyMap<string, CryptoPaperQuote> = new Map(),
+): Promise<PricedPaperPortfolio> {
+  const [account, positions] = await Promise.all([
+    store.getAccount(),
+    store.getPositions(),
+  ])
+  const priced = await Promise.all(positions.map(async (position) => {
+    const quote = knownQuotes.get(position.symbol) ?? await quoteProvider(position.symbol)
+    const quantity = decimal(position.quantity)
+    const averageCost = decimal(position.averageCost)
+    const marketValue = fixed(quantity.mul(quote.bid))
+    const estimatedExitFee = fixed(marketValue.mul(account.feeRateBps).div(10_000))
+    const costBasis = fixed(quantity.mul(averageCost))
+    const unrealizedPnl = fixed(marketValue.minus(estimatedExitFee).minus(costBasis))
+    return {
+      ...position,
+      last: String(quote.last),
+      bid: String(quote.bid),
+      ask: String(quote.ask),
+      marketValue: marketValue.toString(),
+      estimatedExitFee: estimatedExitFee.toString(),
+      unrealizedPnl: unrealizedPnl.toString(),
+      quotedAt: formatBeijingIso(quote.quotedAt),
+    }
+  }))
+  const liquidationValue = priced.reduce(
+    (sum, position) => sum.plus(position.marketValue).minus(position.estimatedExitFee),
+    decimal(0),
+  )
+  const equity = fixed(decimal(account.cash).plus(liquidationValue))
+  const unrealizedPnl = fixed(priced.reduce(
+    (sum, position) => sum.plus(position.unrealizedPnl),
+    decimal(0),
+  ))
+  return { account, equity, unrealizedPnl, positions: priced }
+}
+
+async function enforceAutonomousTradeLimits(
+  args: TradeArgs,
+  quote: CryptoPaperQuote,
+  deps: { store: CryptoPaperStore; quoteProvider: CryptoPaperQuoteProvider },
+): Promise<void> {
+  if (args.decisionSource !== 'self') return
+  if (!autonomousCryptoPaperSymbols.has(args.symbol)) {
+    throw new CryptoPaperError(
+      'autonomous_symbol_not_allowed',
+      `自主模拟交易只允许 ${AUTONOMOUS_CRYPTO_PAPER_SYMBOLS.join('、')}`,
+    )
+  }
+  if (args.action === 'sell') return
+
+  const portfolio = await pricePaperPortfolio(
+    deps.store,
+    deps.quoteProvider,
+    new Map([[args.symbol, quote]]),
+  )
+  if (portfolio.equity.lte(0)) {
+    throw new CryptoPaperError('autonomous_equity_unavailable', '当前模拟账户权益不大于 0，不能自主增加仓位')
+  }
+
+  const quantity = decimal(args.quantity)
+  const orderNotional = fixed(quantity.mul(quote.ask))
+  const estimatedEntryFee = fixed(orderNotional.mul(portfolio.account.feeRateBps).div(10_000))
+  const orderCost = fixed(orderNotional.plus(estimatedEntryFee))
+  const maxOrderCost = fixed(portfolio.equity.mul(AUTONOMOUS_CRYPTO_PAPER_MAX_ORDER_EQUITY_RATIO))
+  if (orderCost.gt(maxOrderCost)) {
+    throw new CryptoPaperError(
+      'autonomous_order_limit_exceeded',
+      `自主买入成本 ${orderCost.toString()} 超过当前权益 5% 上限 ${maxOrderCost.toString()}`,
+    )
+  }
+
+  const existing = portfolio.positions.find((position) => position.symbol === args.symbol)
+  const quantityAfter = decimal(existing?.quantity ?? 0).plus(quantity)
+  const positionValueAfter = fixed(quantityAfter.mul(quote.ask))
+  const maxPositionValue = fixed(portfolio.equity.mul(AUTONOMOUS_CRYPTO_PAPER_MAX_SYMBOL_EQUITY_RATIO))
+  if (positionValueAfter.gt(maxPositionValue)) {
+    throw new CryptoPaperError(
+      'autonomous_position_limit_exceeded',
+      `自主买入后 ${args.symbol} 仓位价值 ${positionValueAfter.toString()} 超过当前权益 20% 上限 ${maxPositionValue.toString()}`,
+    )
+  }
+}
+
 export function createCryptoPaperTool(deps: {
   store: CryptoPaperStore
   quoteProvider: CryptoPaperQuoteProvider
@@ -423,9 +537,11 @@ export function createCryptoPaperTool(deps: {
     description: [
       'crypto_paper 就是 Crypto 模拟盘（paper trading）工具，不是实盘工具，也不需要再等待或寻找另一个“模拟盘工具”.',
       '它维护本地虚拟资金、持仓和成交，只用 Moomoo CC.*USD 行情，绝不调用 Moomoo Crypto 实盘交易接口.',
-      'action=buy/sell 按当前卖一/买一立即成交；必须提供稳定 clientOrderId，重试同一意图时复用它以避免重复成交.',
+      'action=buy/sell 按当前卖一/买一立即成交；必须提供 decisionSource、真实 note 和稳定 clientOrderId，重试同一意图时复用 ID.',
+      'decisionSource=self 使用 owner 的长期授权：只允许 BTC/ETH/SOL，增加仓位的单次成本不超过权益 5%，单币仓位不超过权益 20%；减仓不受开仓额度阻止.',
+      '自主交易前先在 market Notebook 写判断与失效条件，成交后可以向一个相关熟人或群分享模拟观点，之后按真实变化复盘；不要轮询行情.',
+      'decisionSource=owner 只用于用户明确给出交易意图的订单；普通证券 Moomoo 模拟仓仍需用户逐次授权.',
       'action=account/portfolio/orders 查询资金、持仓、盈亏和成交；action=reset 仅在 owner 明确要求后使用.',
-      '没有用户明确交易意图时，不得根据行情自主买卖；市场研究和观点记录不是下单授权.',
       '当前只支持现货多头和市价模拟成交，不支持限价单、做空、杠杆或真实资金.',
     ].join(' '),
     schema: argsSchema,
@@ -444,49 +560,18 @@ export function createCryptoPaperTool(deps: {
           return { content: JSON.stringify({ ok: true, liveTrading: false, reset: true, account }), outcome: { ok: true } }
         }
         if (args.action === 'portfolio') {
-          const [account, positions] = await Promise.all([
-            deps.store.getAccount(),
-            deps.store.getPositions(),
-          ])
-          const priced = await Promise.all(positions.map(async (position) => {
-            const quote = await deps.quoteProvider(position.symbol)
-            const quantity = decimal(position.quantity)
-            const averageCost = decimal(position.averageCost)
-            const marketValue = fixed(quantity.mul(quote.bid))
-            const estimatedExitFee = fixed(marketValue.mul(account.feeRateBps).div(10_000))
-            const costBasis = fixed(quantity.mul(averageCost))
-            const unrealizedPnl = fixed(marketValue.minus(estimatedExitFee).minus(costBasis))
-            return {
-              ...position,
-              last: String(quote.last),
-              bid: String(quote.bid),
-              ask: String(quote.ask),
-              marketValue: marketValue.toString(),
-              estimatedExitFee: estimatedExitFee.toString(),
-              unrealizedPnl: unrealizedPnl.toString(),
-              quotedAt: formatBeijingIso(quote.quotedAt),
-            }
-          }))
-          const liquidationValue = priced.reduce(
-            (sum, position) => sum.plus(position.marketValue).minus(position.estimatedExitFee),
-            decimal(0),
-          )
-          const equity = fixed(decimal(account.cash).plus(liquidationValue))
-          const unrealizedPnl = fixed(priced.reduce(
-            (sum, position) => sum.plus(position.unrealizedPnl),
-            decimal(0),
-          ))
+          const portfolio = await pricePaperPortfolio(deps.store, deps.quoteProvider)
           return {
             content: JSON.stringify({
               ok: true,
               liveTrading: false,
               pricing: 'moomoo_bid_liquidation',
-              account,
-              equity: equity.toString(),
-              realizedPnl: account.realizedPnl,
-              unrealizedPnl: unrealizedPnl.toString(),
-              totalPnl: equity.minus(account.initialCash).toString(),
-              positions: priced,
+              account: portfolio.account,
+              equity: portfolio.equity.toString(),
+              realizedPnl: portfolio.account.realizedPnl,
+              unrealizedPnl: portfolio.unrealizedPnl.toString(),
+              totalPnl: portfolio.equity.minus(portfolio.account.initialCash).toString(),
+              positions: portfolio.positions,
             }),
           }
         }
@@ -494,11 +579,18 @@ export function createCryptoPaperTool(deps: {
         const existing = await deps.store.getOrderByClientOrderId(args.clientOrderId)
         if (existing) {
           return {
-            content: JSON.stringify({ ok: true, liveTrading: false, duplicate: true, order: existing }),
+            content: JSON.stringify({
+              ok: true,
+              liveTrading: false,
+              decisionSource: args.decisionSource,
+              duplicate: true,
+              order: existing,
+            }),
             outcome: { ok: true },
           }
         }
         const quote = await deps.quoteProvider(args.symbol)
+        await enforceAutonomousTradeLimits(args, quote, deps)
         const side: TradeSide = args.action === 'buy' ? 'BUY' : 'SELL'
         const price = side === 'BUY' ? quote.ask : quote.bid
         const result = await deps.store.executeMarketOrder({
@@ -515,6 +607,7 @@ export function createCryptoPaperTool(deps: {
             ok: true,
             liveTrading: false,
             pricing: side === 'BUY' ? 'moomoo_ask' : 'moomoo_bid',
+            decisionSource: args.decisionSource,
             duplicate: result.duplicate,
             order: result.order,
           }),

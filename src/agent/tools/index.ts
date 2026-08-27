@@ -216,7 +216,11 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   if (financeTools.length > 0) {
     capabilities.push({
       name: 'finance',
-      description: '金融数据、受限模拟交易与深度研究：OpenBB、Moomoo、加密货币纸面账户，以及用于跨来源证据、策略规则和历史回测的 trading_agent；具体可用工具以 describe 结果为准.',
+      description: [
+        '金融数据、受限模拟交易与深度研究：OpenBB、Moomoo、本地 Crypto 纸面账户，以及用于跨来源证据、策略规则和历史回测的 trading_agent。',
+        ...(cryptoPaper ? ['Luna 可在长期授权边界内自主经营 BTC/ETH/SOL 本地模拟仓；'] : []),
+        '普通证券模拟订单仍需用户逐次授权。具体工具以 describe 结果为准.',
+      ].join(' '),
       tools: financeTools,
     })
   }
@@ -225,7 +229,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   if (website) {
     capabilities.push({
       name: 'website',
-      description: '维护 Luna 自己的长期创作空间“Luna 的自留地”: 文章写入 src/content/blog 并先读现有模板；也可维护 src 下的页面、组件、布局、样式和素材以及 public 静态资源。有真实成果时可主动维护，publish 只代表构建、commit 和 push 成功，确认正式页面可见后才能称为上线。不要为制造进展机械改动或发布空内容.',
+      description: '维护 Luna 自己的长期创作空间“Luna 的自留地”: 文章写入 src/content/blog 并先读现有模板；也可维护 src 下的页面、组件、布局、样式和素材以及 public 静态资源。已有值得打磨的作品时优先 read + revision 修改；重要作品可先 draft、向一个相关对象问具体反馈，再发布或更新。publish 只代表构建、commit 和 push 成功，确认正式页面可见后才能称为上线。不要为制造进展批量换题、机械改动或发布空内容.',
       tools: [website],
     })
   }

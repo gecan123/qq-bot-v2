@@ -241,7 +241,7 @@ workspace_bash: moomoo quote/get_snapshot US.AAPL
 
 当前开放行情及账户/订单/资金/持仓查询，以及普通证券模拟仓的 `place_order` / `modify_order` / `cancel_order`。交易写命令必须显式传 `--trd-env SIMULATE`；实盘、`--confirmed`、加密货币、组合订单和实时 push 未进入 allowlist。
 
-`crypto_paper` 是另一条完全本地的 Crypto 模拟仓路径。它只用 Moomoo `CC.*USD` 快照定价，账户、持仓和 append-only 成交写入 PostgreSQL，不调用 Crypto 实盘接口。首次启用或 schema 更新后先运行 `pnpm db:migrate`；可以先用 `action=account` / `portfolio` 验证，除非明确需要测试成交，否则不要为了健康检查创建模拟订单。
+`crypto_paper` 是另一条完全本地的 Crypto 模拟仓路径。它只用 Moomoo `CC.*USD` 快照定价，账户、持仓和 append-only 成交写入 PostgreSQL，不调用 Crypto 实盘接口。首次启用或 schema 更新后先运行 `pnpm db:migrate`；可以先用 `action=account` / `portfolio` 验证，不要为了健康检查创建模拟订单。买卖必须提供 `decisionSource=owner|self` 和真实 `note`：`owner` 对应用户逐次明确的订单，`self` 对应 Luna 的长期授权，只允许 BTC/ETH/SOL、单次增仓成本最多权益 5%、单币最多权益 20%，且不允许自主 reset。减仓不受开仓额度阻止。
 
 ## CloakBrowser / Mac
 

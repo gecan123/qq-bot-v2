@@ -48,6 +48,16 @@ describe('group policies', () => {
     assert.deepEqual(parseGroupPoliciesMarkdown('# 群聊配置\n\n暂无监听群。'), [])
   })
 
+  test('keeps the NGA image group selective and the AI community active', () => {
+    const policies = loadGroupPolicies()
+    assert.equal(policies.find((policy) => policy.id === 476109921)?.participation, 'selective')
+    assert.equal(policies.find((policy) => policy.id === 253631878)?.participation, 'active')
+    assert.match(
+      policies.find((policy) => policy.id === 253631878)?.guidance ?? '',
+      /具体问题.*反馈.*修改或复盘/s,
+    )
+  })
+
   test('loads the default policy file independently of the process working directory', () => {
     const originalCwd = cwd()
     const repositoryPolicyPath = fileURLToPath(new URL('../../prompts/groups.md', import.meta.url))

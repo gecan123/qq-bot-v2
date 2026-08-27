@@ -124,7 +124,7 @@ const OUTPUT_CONTINUATION_PROMPT =
 const ASSISTANT_TEXT_ONLY_CORRECTION = JSON.stringify({
   event: 'runtime_correction',
   code: 'assistant_text_without_tool',
-  instruction: '上一轮只输出了普通 assistant 文本；它不会发送给任何人，也不会执行其中的计划。现在调用一个具体工具继续行动；当前方向已完成或不可继续时，立刻选择另一件可执行的事。只有真正想主动休息时才调用 rest。',
+  instruction: '上一轮只输出了普通 assistant 文本；它不会发送给任何人，也不会执行其中的计划。现在调用一个具体工具：有明确牵引力就推进、修改或向一个相关对象问具体反馈；换题但重复同一种批量生产也算机械重复。当前方向已完成后只做一次有界方向搜索，没有真正想做的事时直接调用 rest，并选择一次足够且诚实的休息时长。',
 })
 const ATTENTION_REQUIRED_CORRECTION = JSON.stringify({
   event: 'runtime_correction',
@@ -134,7 +134,7 @@ const ATTENTION_REQUIRED_CORRECTION = JSON.stringify({
 const CONTINUOUS_AUTONOMY_BOOTSTRAP = JSON.stringify({
   event: 'runtime_bootstrap',
   code: 'continuous_autonomy_started',
-  instruction: '现在开始自主生活。默认持续行动：当前方向完成后，选择下一件自己真正想做、值得做的事，并立即用真实工具开始；不要因为刚完成一件事、暂时没想法、owner 不在线或正在等回复就停下。只有此刻真的想主动休息时才调用 rest。',
+  instruction: '现在开始自主生活。有明确牵引力时持续行动；作品和判断可以继续修改、分享一个具体问题并在反馈后复盘，不把新建产出当成唯一进展。当前方向完成后只做一次有界方向搜索，有真正想做、值得做的下一步就用真实工具开始。候选都没有吸引力、只是在证明忙碌或已经机械重复时，不要强行制造工作，直接调用 rest 真正闲下来。',
 })
 const defaultKeepAlive = {
   open() {

@@ -68,6 +68,8 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - `rest` 是唯一的主动暂停工具。它在工具调用内部按明确的批准时长等待，记录真实理由和醒后重新评估方向；私聊、@、后台任务完成、调度事件或停止信号会提前打断。工具用一个进程内三小时滚动窗口限制实际休息：Asia/Singapore 白天最多 60 分钟，夜间最多 120 分钟，并在 00:00 / 06:00 边界结束后重新评估；请求会被剩余额度缩短，额度不足 10 分钟时明确拒绝并技术退避。休息区间不进入 prompt/ledger/runtime singleton，也不跨重启持久化。
 - Runtime 不再维护 idle backoff、自动休息顾问或“做完就停”的路径。全新空 ledger 会先 append 一条稳定的自主启动消息并立即开始第一轮。只有 provider/工具明确返回 `backoff` 或本轮抛出运行错误时才做有界技术退避；这些退避不是 Agent 主动休息，也不进入 ledger。收到停止信号才退出主循环。
 - 连续自主行动不设轮次上限，不会因为工作轮数达到固定值而强制冷却。工具用 `outcome.progress` 报告是否获得新事实或改变状态，只用 `continuation=immediate|wait_attention|wait_event|backoff|stop` 表达当前方向状态：除 `backoff` 外，Runtime 都立即开始下一轮；`wait_event` 只表示不要轮询当前后台任务，应改做其他事。可丢弃的 `continuationDetail` 只用于实时活动说明，`noveltyKey` 默认抑制进程内重复披露。`continuation=immediate` 的失败最多保留三轮紧密纠错，之后改走下一行动或短暂技术退避。
+- 兴趣、作品反馈和市场复盘不新增第二套持久 runtime 状态：当前上下文内直接继续，需要等待人类反馈或跨注意周期时使用同 topic Notebook 或窄 Goal，稳定乐趣与偏好才进入 self/topic Memory。换题但重复同一种生产形式也视为机械重复；分享一次只选择一个相关会话，不通过群发制造反馈。
+- 本地 `crypto_paper` 的自主权限由工具 schema 和执行前限额共同约束：`decisionSource=self` 只允许 BTC/ETH/SOL，单次增仓成本最多权益 5%，单币最多权益 20%；普通证券 Moomoo 模拟订单保持用户逐次授权。所有路径仍禁止实盘、杠杆和做空。
 - 循环控制使用稳定结构化载荷，不能依赖自由文本判断成功或状态。
 
 ## 持久边界

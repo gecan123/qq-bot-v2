@@ -221,12 +221,16 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
       `抓取一个 URL 并返回 ≤ ${OUTPUT_CAP_CHARS} 字符的结构化 JSON 中文摘要 (目标 ≤ 500 中文字).`,
       '返回的不是原文, 是摘要. 如果摘要不够你判断, 没办法让这个工具给你更长 — 要么换工具 / 要么放弃这条.',
       '典型用法: 非 reddit 的外链页面. reddit 帖子请用 workspace_bash `fetch reddit post`, 不要走本工具.',
-      'hint 参数可选, 用来影响摘要侧重 (例: "我想知道作者的核心论点").',
+      'hint 参数可选, 用来影响摘要侧重 (例: "我想知道作者的核心论点"). 没有具体 hint 的同站连续抓取会被视为同一种宽泛浏览，不要靠换 URL 制造进展。',
       '抓不到 / 摘要失败时返回错误标记 + 原文截断, 可以忽略也可以再试一次.',
     ].join(' '),
     schema: argsSchema,
     async execute(rawArgs, ctx) {
       const args = rawArgs as Args
+      const normalizedHint = args.hint?.trim() ?? ''
+      const noveltyKey = normalizedHint.length > 0
+        ? `fetch-url:${args.url}:${normalizedHint}`
+        : `fetch-origin:${new URL(args.url).origin}`
       const startedAt = Date.now()
       const outcome = await fetchBody(args.url, { fetcher, userAgent, timeoutMs })
       const fetchDurationMs = Date.now() - startedAt
@@ -359,7 +363,7 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
             OUTPUT_CAP_CHARS,
             url.truncated || title.truncated || trimmedText.length > FALLBACK_RAW_CAP_CHARS,
           ),
-          outcome: { ok: true, code: 'summary_fallback' },
+          outcome: { ok: true, code: 'summary_fallback', noveltyKey },
         }
       }
 
@@ -379,7 +383,7 @@ export function createFetchUrlTool(deps: FetchUrlDeps = {}): Tool<Args> {
           OUTPUT_CAP_CHARS,
           url.truncated || title.truncated,
         ),
-        outcome: { ok: true },
+        outcome: { ok: true, noveltyKey },
       }
     },
   }

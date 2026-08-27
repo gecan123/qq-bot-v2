@@ -155,7 +155,7 @@ export function createWebsiteTool(deps: WebsiteToolDeps): Tool<Args> {
       'read 返回 revision; 覆盖、删除或移动已有文件必须携带最新 revision.',
       '管理分类或文章前必须先 read src/content/CONTENT_GUIDE.md 和 src/content/categories.json，并严格按实时指南操作；需要模板时 read src/content/examples/category-entry.json 或 src/content/examples/article.md.',
       '新分类登记在 src/content/categories.json；文章只能写入 src/content/blog/<category-id>/<article-slug>.md 或 .mdx，所属分类由目录决定，frontmatter 不写 category/categories.',
-      '文章 frontmatter 使用 title, description, pubDate, tags, draft，可选 updatedDate/cover；不要使用 date 代替 pubDate.',
+      '文章 frontmatter 使用 title, description, pubDate, tags, draft，可选 updatedDate/cover；不要使用 date 代替 pubDate。真正重视的作品可先 draft、自读、征求一个具体反馈，再用 revision 修改并发布；已经存在值得打磨的文章时，不把换题新建当默认动作.',
       '可读写 src/** 下受支持的 Astro 源码、内容、样式与素材，以及 public/** 下受支持的静态资源; 可以建立页面、组件、布局和内容分类结构.',
       '不要读写仓库根配置、依赖、CI、部署配置、脚本、隐藏文件或路径逃逸.',
       'publish 成功只表示构建通过且 Git commit/push 成功, 不表示 Vercel 已部署完成; 未确认正式 URL 可见目标内容前不得宣称已经上线.',

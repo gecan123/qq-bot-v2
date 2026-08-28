@@ -133,10 +133,10 @@ table { border-collapse: separate; border-spacing: 0; }
 .current-fact { padding: 11px 13px; background: rgba(17,42,33,.6); }
 .current-fact dt { color: rgba(229,237,231,.44); font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .current-fact dd { margin: 5px 0 0; color: #eef4ef; font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
-.commitment-card { display: grid; gap: 1px; margin: 0; overflow: hidden; border: 1px solid rgba(41,48,41,.08); border-radius: 12px; background: rgba(41,48,41,.07); }
-.commitment-card .current-fact { background: rgba(248,248,243,.92); }
-.commitment-card .current-fact dt { color: #9a9d96; }
-.commitment-card .current-fact dd { color: #3d443e; font-size: 10px; }
+.waiting-facts { display: grid; gap: 1px; margin: 0; overflow: hidden; border: 1px solid rgba(41,48,41,.08); border-radius: 12px; background: rgba(41,48,41,.07); }
+.waiting-facts .current-fact { background: rgba(248,248,243,.92); }
+.waiting-facts .current-fact dt { color: #9a9d96; }
+.waiting-facts .current-fact dd { color: #3d443e; font-size: 10px; }
 .activity-unavailable { position: relative; z-index: 1; display: flex; align-items: flex-start; gap: 8px; padding: 11px 18px; border-top: 1px solid rgba(255,255,255,.09); color: rgba(255,238,215,.78); background: rgba(60,20,13,.18); font-size: 10px; line-height: 1.65; }
 .activity-unavailable svg { flex: 0 0 auto; margin-top: 1px; }
 

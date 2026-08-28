@@ -106,7 +106,7 @@ export function OverviewView({ snapshot, isRefreshing, refreshFailed }: Overview
 
       <div className="space-y-4">
         <Panel title="下一步与等待" description="只展示 Runtime 明确记录的内容，不从日志猜测意图。">
-          {(activity.detail || activity.waitUntil) && <dl className="commitment-card mt-3"><CurrentFact label="等待说明" value={activity.detail ?? '—'} /><CurrentFact label="最晚等待到" value={formatTimestamp(activity.waitUntil)} /></dl>}
+          {(activity.detail || activity.waitUntil) && <dl className="waiting-facts mt-3"><CurrentFact label="等待说明" value={activity.detail ?? '—'} /><CurrentFact label="最晚等待到" value={formatTimestamp(activity.waitUntil)} /></dl>}
           {!activity.detail && !activity.waitUntil && <div className="empty-state"><span className="empty-state-dot" />当前没有结构化等待信息</div>}
         </Panel>
       </div>

@@ -24,7 +24,6 @@ export async function loadLifeSnapshot(now = new Date()): Promise<LifeSnapshot> 
     summary: nullableText(row.resultSummary ?? row.error)?.slice(0, 360) ?? null,
   }))
   const notes = [
-    '短期连续行动不单独持久化；未来唤醒由 Schedule 表示。',
     '后台任务文件按原始 JSON 只读解析；不会实例化 registry，以免触发恢复状态写入。',
   ]
   return lifeSnapshotSchema.parse({

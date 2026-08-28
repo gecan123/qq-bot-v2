@@ -98,7 +98,6 @@ export interface BotLoopAgentDeps {
 
 export interface BotLoopAutonomyOptions {
   actionRetryWaitMs?: number
-  repeatedNoProgressWaitMs?: number
   now?: () => Date
   waitForAttentionOrTimeout?: (
     queue: EventQueue<BotEvent>,
@@ -110,7 +109,6 @@ const DEFAULT_ERROR_BACKOFF_MS = 5_000
 const DEFAULT_EVENT_DEBOUNCE_MS = 3_000
 const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 86_400_000
 const DEFAULT_ACTION_RETRY_WAIT_MS = 60_000
-const DEFAULT_REPEATED_NO_PROGRESS_WAIT_MS = 10 * 60_000
 const DEFAULT_COMPACTION_FAILURE_BACKOFF_MS = 10 * 60_000
 const MAX_OUTPUT_CONTINUATIONS_PER_ROUND = 2
 const MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS = 3
@@ -153,10 +151,6 @@ export interface BotLoopAgent {
 export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   const autonomy = {
     actionRetryWaitMs: Math.max(1, deps.autonomy?.actionRetryWaitMs ?? DEFAULT_ACTION_RETRY_WAIT_MS),
-    repeatedNoProgressWaitMs: Math.max(
-      1,
-      deps.autonomy?.repeatedNoProgressWaitMs ?? DEFAULT_REPEATED_NO_PROGRESS_WAIT_MS,
-    ),
     now: deps.autonomy?.now ?? (() => new Date()),
     waitForAttentionOrTimeout: deps.autonomy?.waitForAttentionOrTimeout ?? waitForAttentionOrTimeout,
   }
@@ -172,8 +166,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let attentionCorrectionIssued = false
   let shortWorkContinuationPending = false
   let recoverableToolCorrectionRounds = 0
-  let previousNoProgressRepeatKey: string | null = null
-  let repeatedNoProgressRounds = 0
   const recentToolNoveltyKeys = new Map<string, number>()
   let lastContextWindowTokens =
     config.llm.contextWindowTokensByModel[config.llm.defaultModel] ?? 200_000
@@ -388,7 +380,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     onlyHelpToolCalls: boolean
     madeToolProgress: boolean
     assistantTextOnly: boolean
-    noProgressRepeatKey?: string
     toolContinuation?: ToolContinuation
     toolContinuationDetail?: string
   }> {
@@ -504,9 +495,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         && result.toolOutcomes.every((outcome) => outcome.requestedToolName === 'help'),
       madeToolProgress: toolControl.madeProgress,
       assistantTextOnly: result.assistantTextOnly,
-      ...(toolControl.noProgressRepeatKey
-        ? { noProgressRepeatKey: toolControl.noProgressRepeatKey }
-        : {}),
       ...(toolControl.continuation ? { toolContinuation: toolControl.continuation } : {}),
       ...(toolControl.continuationDetail
         ? { toolContinuationDetail: toolControl.continuationDetail }
@@ -516,7 +504,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
 
   function resolveToolControl(outcomes: readonly ReactToolOutcome[]): {
     madeProgress: boolean
-    noProgressRepeatKey?: string
     continuation?: ToolContinuation
     continuationDetail?: string
   } {
@@ -552,12 +539,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       ?? continuations.find(item => item.continuation === 'backoff')
       ?? continuations.find(item => item.continuation === 'wait_event')
       ?? continuations.find(item => item.continuation === 'wait_attention')
-    const noProgressRepeatKey = !madeProgress && outcomes.length > 0
-      ? outcomes.map(outcome => outcome.repeatKey).join(':')
-      : undefined
     return {
       madeProgress,
-      ...(noProgressRepeatKey ? { noProgressRepeatKey } : {}),
       ...(selected ? { continuation: selected.continuation } : {}),
       ...(selected?.detail ? { continuationDetail: selected.detail } : {}),
     }
@@ -618,7 +601,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     onlyHelpToolCalls?: boolean
     madeToolProgress?: boolean
     assistantTextOnly?: boolean
-    noProgressRepeatKey?: string
     toolContinuation?: ToolContinuation
     toolContinuationDetail?: string
   }> {
@@ -713,7 +695,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls,
       madeToolProgress,
       assistantTextOnly,
-      noProgressRepeatKey,
       toolContinuation,
       toolContinuationDetail,
     } = roundResult
@@ -740,7 +721,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls,
       madeToolProgress,
       assistantTextOnly,
-      ...(noProgressRepeatKey ? { noProgressRepeatKey } : {}),
       ...(toolContinuation ? { toolContinuation } : {}),
       ...(toolContinuationDetail ? { toolContinuationDetail } : {}),
       demand: attentionPending ? 'attention' : continuationRequired ? 'continuation' : 'none',
@@ -756,38 +736,12 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls = false,
       madeToolProgress = false,
       assistantTextOnly = false,
-      noProgressRepeatKey,
       toolContinuation,
       toolContinuationDetail,
     } = await step()
     if (ranRound) {
       consecutiveRounds++
     }
-
-    if (demand === 'attention' || noProgressRepeatKey == null) {
-      previousNoProgressRepeatKey = null
-      repeatedNoProgressRounds = 0
-    } else if (previousNoProgressRepeatKey === noProgressRepeatKey) {
-      repeatedNoProgressRounds++
-    } else {
-      previousNoProgressRepeatKey = noProgressRepeatKey
-      repeatedNoProgressRounds = 1
-    }
-
-    if (!stopRequested && demand !== 'attention' && repeatedNoProgressRounds >= 2) {
-      previousNoProgressRepeatKey = null
-      repeatedNoProgressRounds = 0
-      const waitMs = autonomy.repeatedNoProgressWaitMs
-      log.info({
-        consecutiveRounds,
-        waitMs,
-        actionRequired: demand !== 'none',
-        reason: 'repeated_no_progress',
-      }, 'loop_policy_wait')
-      await waitForAttention('连续两次执行了相同的无进展调用，暂停后重新选择具体方向', waitMs)
-      return
-    }
-
     const decision = decideLoopPolicy({
       ranRound,
       stopRequested,

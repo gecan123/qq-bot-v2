@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import type { AgentContext } from './agent-context.js'
 import type { DurableAgentMessage } from './agent-context.types.js'
 import type { LlmCallOutput, LlmClient } from './llm-client.js'
@@ -53,8 +52,6 @@ export interface ReactToolOutcome {
   continuation?: ToolContinuation
   continuationDetail?: string
   noveltyKey?: string
-  /** 仅供进程内识别相同无进展调用；不进入 ledger。 */
-  repeatKey: string
 }
 
 export interface ReactRoundResult {
@@ -236,8 +233,6 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
     for (let index = 0; index < batch.length; index++) {
       const batchCall = batch[index]!
       const result = results[index]!
-      const outcomeOk = result.outcome?.ok ?? true
-      const outcomeProgress = result.outcome?.progress ?? outcomeOk
       for (const effect of result.effects ?? []) {
         effects.push({
           toolCallId: batchCall.id,
@@ -249,23 +244,22 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
         toolCallId: batchCall.id,
         requestedToolName: batchCall.name,
         toolName: resolveEffectiveToolName(batchCall),
-        ok: outcomeOk,
-        progress: outcomeProgress,
+        ok: result.outcome?.ok ?? true,
+        progress: result.outcome?.progress ?? true,
         ...(result.outcome?.continuation ? { continuation: result.outcome.continuation } : {}),
         ...(result.outcome?.continuation && result.outcome.continuationDetail
           ? { continuationDetail: result.outcome.continuationDetail.slice(0, 1_000) }
           : {}),
         ...(result.outcome?.noveltyKey ? { noveltyKey: result.outcome.noveltyKey } : {}),
         ...(result.outcome?.code ? { code: result.outcome.code } : {}),
-        repeatKey: createToolRepeatKey(batchCall, result.outcome?.code),
       })
       log.info({
         roundIndex,
         requestedToolName: batchCall.name,
         toolName: resolveEffectiveToolName(batchCall),
-        ok: outcomeOk,
+        ok: result.outcome?.ok ?? true,
         code: result.outcome?.code,
-        progress: outcomeProgress,
+        progress: result.outcome?.progress ?? true,
         continuation: result.outcome?.continuation,
         continuationDetail: result.outcome?.continuationDetail?.slice(0, 1_000),
         noveltyKey: result.outcome?.noveltyKey,
@@ -317,30 +311,6 @@ export function resolveEffectiveToolName(call: LlmCallOutput['toolCalls'][number
   return typeof target === 'string' && target.trim().length > 0 ? target : call.name
 }
 
-function createToolRepeatKey(
-  call: LlmCallOutput['toolCalls'][number],
-  code: string | undefined,
-): string {
-  const payload = JSON.stringify(sortJsonValue({
-    toolName: resolveEffectiveToolName(call),
-    args: call.args,
-    code: code ?? null,
-  }))
-  return createHash('sha256').update(payload).digest('hex')
-}
-
-function sortJsonValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortJsonValue)
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, item]) => [key, sortJsonValue(item)]),
-    )
-  }
-  return value
-}
-
 function sumTokensUsed(completions: readonly LlmCallOutput[]): number {
   return completions.reduce(
     (sum, completion) => sum
@@ -374,19 +344,12 @@ async function executeToolCall(
     return await tools.execute(call, ctx)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    const error = `Tool execution failed: ${message}`
     return {
       content: JSON.stringify({
         ok: false,
         code: 'execution_failed',
-        error,
+        error: `Tool execution failed: ${message}`,
       }),
-      outcome: {
-        ok: false,
-        code: 'execution_failed',
-        error,
-        progress: false,
-      },
     }
   }
 }

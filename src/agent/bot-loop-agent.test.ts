@@ -2271,13 +2271,14 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(phases.some(phase => phase.phase === 'waiting'), false)
   })
 
-  test('two identical no-progress calls pause the autonomous loop for ten minutes', async () => {
-    const ctx = createAgentContext({
-      initialMessages: [{ role: 'user', content: '已有上下文' }],
-    })
+  test('no-progress rounds keep the autonomous loop moving without a direction state', async () => {
+    const ctx = createAgentContext()
+    ctx.appendUserMessage(
+      '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
+    )
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     let llmCallCount = 0
-    const waits: number[] = []
+    let waits = 0
     let agent: ReturnType<typeof createBotLoopAgent>
     const { repo, loader } = makeTestLedger(ctx.getSnapshot().messages)
 
@@ -2288,6 +2289,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       llm: {
         async chat() {
           llmCallCount++
+          if (llmCallCount === 3) await agent.stop()
           return {
             content: '',
             toolCalls: [{ id: `empty-${llmCallCount}`, name: 'inbox', args: { source: 'group', groupId: 99 } }],
@@ -2308,65 +2310,9 @@ describe('BotLoopAgent.runOnceForTest', () => {
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
-        async waitForAttentionOrTimeout(_queue, timeoutMs) {
-          waits.push(timeoutMs)
-          await agent.stop()
-          return 'elapsed'
-        },
-      },
-    })
-
-    await agent.start()
-
-    assert.equal(llmCallCount, 2)
-    assert.deepEqual(waits, [10 * 60_000])
-  })
-
-  test('different no-progress calls do not trigger the repeated-call pause', async () => {
-    const ctx = createAgentContext({
-      initialMessages: [{ role: 'user', content: '已有上下文' }],
-    })
-    const eventQueue = new InMemoryEventQueue<BotEvent>()
-    let llmCallCount = 0
-    let waits = 0
-    let agent: ReturnType<typeof createBotLoopAgent>
-    const { repo, loader } = makeTestLedger(ctx.getSnapshot().messages)
-
-    agent = createBotLoopAgent({
-      systemPrompt: '',
-      context: ctx,
-      eventQueue,
-      llm: {
-        async chat() {
-          llmCallCount++
-          if (llmCallCount === 3) await agent.stop()
-          return {
-            content: '',
-            toolCalls: [{
-              id: `empty-${llmCallCount}`,
-              name: 'inbox',
-              args: { source: 'group', groupId: 99 + llmCallCount },
-            }],
-            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
-            model: 'mock',
-            contextWindowTokens: 200_000,
-          }
-        },
-      },
-      tools: makeMockTools({
-        inbox: async () => ({
-          content: '{"ok":true,"messages":[]}',
-          outcome: { ok: true, code: 'empty', progress: false },
-        }),
-      }),
-      ledgerRepo: repo,
-      ledgerLoader: loader,
-      renderEvent: renderBotEvent,
-      eventDebounceMs: 0,
-      autonomy: {
         async waitForAttentionOrTimeout() {
           waits++
-          return 'elapsed'
+          throw new Error('no-progress work must not park the continuous loop')
         },
       },
     })
@@ -2375,6 +2321,12 @@ describe('BotLoopAgent.runOnceForTest', () => {
 
     assert.equal(llmCallCount, 3)
     assert.equal(waits, 0)
+    assert.equal(
+      ctx.getSnapshot().messages.some((message) => (
+        message.role === 'user' && message.content.includes('no_progress_switch_direction')
+      )),
+      false,
+    )
   })
 
   test('pending private attention interrupts unrelated tool progress with one stable correction', async () => {
@@ -2535,12 +2487,12 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(waits, 0)
   })
 
-  test('repeated novelty results use the same two-call pause', async () => {
+  test('repeated novelty key suppresses repeated progress without parking the loop', async () => {
     const ctx = createAgentContext()
     ctx.appendUserMessage('已有上下文')
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     let llmCallCount = 0
-    const waits: number[] = []
+    let waits = 0
     let agent: ReturnType<typeof createBotLoopAgent>
     const { repo, loader } = makeTestLedger(ctx.getSnapshot().messages)
 
@@ -2551,6 +2503,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
       llm: {
         async chat() {
           llmCallCount++
+          if (llmCallCount === 3) await agent.stop()
           return {
             content: '',
             toolCalls: [{ id: `skill-list-${llmCallCount}`, name: 'skill', args: { action: 'list' } }],
@@ -2576,18 +2529,17 @@ describe('BotLoopAgent.runOnceForTest', () => {
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
-        async waitForAttentionOrTimeout(_queue, timeoutMs) {
-          waits.push(timeoutMs)
-          await agent.stop()
-          return 'elapsed'
+        async waitForAttentionOrTimeout() {
+          waits++
+          throw new Error('duplicate read results must not idle the Agent')
         },
       },
     })
 
     await agent.start()
 
-    assert.equal(llmCallCount, 2)
-    assert.deepEqual(waits, [10 * 60_000])
+    assert.equal(llmCallCount, 3)
+    assert.equal(waits, 0)
   })
 
   test('attention with no tool keeps the continuous loop moving', async () => {

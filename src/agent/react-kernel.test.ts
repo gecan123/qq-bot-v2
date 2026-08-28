@@ -215,7 +215,6 @@ describe('runReactRound', () => {
       continuation: 'immediate',
       continuationDetail: '读取完成后立即决定下一步',
       noveltyKey: 'lookup:hello:v1',
-      repeatKey: 'd6e8c522fcebfbe2795820559fcda8c50c1a44000cd6951883e5e5a869e7cdc2',
     }])
     assert.deepEqual(context.getSnapshot().messages, [
       { role: 'user', content: 'hello' },
@@ -574,9 +573,6 @@ describe('runReactRound', () => {
     assert.equal(result.inputTokens, 6)
     assert.equal(result.tokensUsed, 10)
     assert.deepEqual(result.effects, [])
-    assert.equal(result.toolOutcomes[0]?.ok, false)
-    assert.equal(result.toolOutcomes[0]?.code, 'execution_failed')
-    assert.equal(result.toolOutcomes[0]?.progress, false)
     assert.deepEqual(context.getSnapshot().messages, [
       { role: 'user', content: 'lookup with failure' },
     ])

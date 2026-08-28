@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Split the generic one-round LLM/tool execution out of `BotLoopAgent` into a small ReAct Kernel while keeping QQ runtime state, snapshot persistence, mailbox disclosure, compaction, and pause scheduling in the Runtime Host.
+**Objective:** Split the generic one-round LLM/tool execution out of `BotLoopAgent` into a small ReAct Kernel while keeping QQ runtime state, snapshot persistence, mailbox disclosure, compaction, and pause scheduling in the Runtime Host.
 
 **Architecture:** Add `src/agent/react-kernel.ts` as the only module responsible for one ReAct round: read `AgentContext`, list tools, call `LlmClient`, append assistant tool calls, execute tools in order, and append only `ToolExecutionResult.content`. Keep `src/agent/bot-loop-agent.ts` as the Runtime Host that decides when to run the kernel and what to do before/after the round.
 
@@ -500,7 +500,7 @@ If no extra edits were needed, do not create an empty commit.
 
 ---
 
-## Non-Goals
+## Out of Scope
 
 - Do not change `AgentContext` schema or snapshot format.
 - Do not change LLM provider wire formats.

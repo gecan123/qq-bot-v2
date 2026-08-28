@@ -30,7 +30,6 @@ function successResult(): OperationResultPayload {
     deletedLedgerEntries: 1,
     deletedCheckpoints: 1,
     deletedRuntimeStates: 1,
-    deletedGoals: 0,
     createdRuntimeState: true,
     removedDirectories: [],
     removedWorkspaceEntries: 0,

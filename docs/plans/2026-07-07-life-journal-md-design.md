@@ -1,6 +1,6 @@
 # Life Journal Markdown Design
 
-## Goal
+## Objective
 
 Give Luna a lightweight self-written life record that supports continuity across rounds: what she noticed, did, promised, cared about, and may want to do next.
 
@@ -128,7 +128,7 @@ The first version should not make Life Journal a replay input. Prompt replay rem
 - Add loop guards before idle picker can trigger repeated self-driven rounds.
 - All generated files stay under `data/agent-workspace/life/`.
 
-## Non-Goals
+## Out of Scope
 
 - No Prisma schema changes in the first version.
 - No admin WebUI.
@@ -143,4 +143,3 @@ The first version should not make Life Journal a replay input. Prompt replay rem
 - Unit test agenda initialization and bounded updates.
 - Unit test idle picker reads only agenda and bounded recent journal context.
 - BotLoop tests should prove Life Journal writes do not alter replay invariants or inject unbounded content into `AgentContext`.
-

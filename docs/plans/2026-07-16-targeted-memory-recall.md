@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 让 person/group Memory recall 必须携带目标 ID，并优化 Agent 的召回工具引导。
+**Objective:** 让 person/group Memory recall 必须携带目标 ID，并优化 Agent 的召回工具引导。
 
 **Architecture:** 在现有 Markdown recall 路径增加可选 `id` 输入；当 scope 是 person/group 时用它选择唯一文件，其他召回路径保持不变。工具 schema 同步执行交叉字段校验，runtime 和 system prompt 不变。
 

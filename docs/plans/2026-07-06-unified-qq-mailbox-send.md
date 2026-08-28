@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Route every QQ message through priority-aware mailbox disclosure and replace send dry-run behavior with one authorized, explicit send contract.
+**Objective:** Route every QQ message through priority-aware mailbox disclosure and replace send dry-run behavior with one authorized, explicit send contract.
 
 **Architecture:** Keep `messages` as the inbound fact ledger and make `mailbox.ts` the sole disclosure path for QQ events. Introduce a centralized outbound target policy backed by monitored-group configuration and NapCat friend-list membership, then send all text/image payloads through shared segment construction and structured receipts.
 

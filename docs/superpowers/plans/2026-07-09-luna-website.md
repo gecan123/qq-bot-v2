@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a deferred `website` capability so Luna can maintain an owner-provisioned Astro site repository, check it, commit allowed content changes, and push to the configured production branch.
+**Objective:** Add a deferred `website` capability so Luna can maintain an owner-provisioned Astro site repository, check it, commit allowed content changes, and push to the configured production branch.
 
 **Architecture:** Keep the website repo separate from `qq-bot-v2`; `qq-bot-v2` only exposes a narrow tool around that repo. The tool has a fixed configured repo/branch/check command, validates every path against an Astro-content whitelist, returns bounded JSON, and never exposes arbitrary shell or deployment account controls.
 
@@ -1375,7 +1375,7 @@ If no fixes were needed, do not create an empty commit.
   - Status/read/write/publish: covered by tool actions and tests.
   - Push to configured branch: covered by publish flow.
   - No Vercel/DNS/repo creation: covered by docs and absence of actions.
-  - No Codex CLI in MVP: covered by non-goal and no implementation tasks.
+  - No Codex CLI in MVP: covered by non-objective and no implementation tasks.
   - AgentContext hygiene: covered by bounded JSON, clipped command output, no file/log replay.
 - Placeholder scan: no `TBD`, no "implement later", no "add appropriate".
 - Type consistency:

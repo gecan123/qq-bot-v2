@@ -33,9 +33,6 @@ import { createAgentTaskScheduler, type TaskScheduler } from '../task-scheduler.
 import { createQqDirectoryTool, type QqDirectoryDeps } from './qq-directory.js'
 import { createScheduleTool } from './schedule.js'
 import type { ScheduleRuntime } from '../schedule-runtime.js'
-import { createGoalTool } from './goal.js'
-import type { GoalStore } from '../goal-store.js'
-import type { GoalCompletionJudge } from '../goal-completion-judge.js'
 import type { MemoryMaintenanceRuntime } from '../memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
 import type { LoadMemorySourceEvidence } from '../memory-evidence.js'
@@ -66,8 +63,6 @@ export interface BotToolDeps {
   optionalTools?: BotOptionalTools
   taskScheduler?: TaskScheduler
   scheduleRuntime: ScheduleRuntime
-  goalStore?: GoalStore
-  goalCompletionJudge?: GoalCompletionJudge
   memoryMaintenance?: MemoryMaintenanceRuntime
   workspaceDir?: string
   workspaceStateCoordinator?: WorkspaceStateCoordinator
@@ -94,9 +89,6 @@ export interface BotToolManifest {
 }
 
 export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
-  if (deps.goalStore && !deps.goalCompletionJudge) {
-    throw new Error('goalCompletionJudge is required when goalStore is configured')
-  }
   const taskScheduler = deps.taskScheduler ?? createAgentTaskScheduler()
   const externalResearchFetchContent = createFetchContentTool({
     taskRegistry: deps.taskRegistry,
@@ -161,7 +153,6 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     rest,
     qqDirectory,
     backgroundTask,
-    ...(deps.goalStore ? [createGoalTool(deps.goalStore, deps.goalCompletionJudge!)] : []),
     skillTool,
     psychologist,
     createMemoryTool({
@@ -191,7 +182,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     },
     {
       name: 'notebook_management',
-      description: '跨天维护研究、阅读、市场和项目过程；稳定结论写 memory，持续承诺用 goal，定时唤醒用 schedule.',
+      description: '跨天维护研究、阅读、市场和项目过程；稳定结论写 memory，定时唤醒用 schedule.',
       tools: [notebook],
     },
     {

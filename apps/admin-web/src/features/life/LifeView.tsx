@@ -1,20 +1,16 @@
-import { EmptyState, JsonBlock, PageHeader, Panel, StatCard, StatGrid, StatusBadge } from '../../components/AdminUi.js'
-import { formatCount, formatDuration, formatTimestamp } from '../../lib/format.js'
+import { EmptyState, JsonBlock, PageHeader, Panel, StatCard, StatGrid } from '../../components/AdminUi.js'
+import { formatTimestamp } from '../../lib/format.js'
 import type { LifeSnapshot } from './life.schema.js'
 
 export function LifeView({ snapshot, isRefreshing, refreshFailed }: { snapshot: LifeSnapshot; isRefreshing: boolean; refreshFailed: boolean }) {
-  const goal = snapshot.goal
   const activeTasks = snapshot.backgroundTasks.filter(task => task.status === 'running' || task.status === 'pending').length
   return <>
-    <PageHeader title="Goal 与计划" description="Goal 是唯一持久执行主线；Schedule 与 Background Task 按各自真实存储读取。" generatedAt={snapshot.generatedAt} isRefreshing={isRefreshing} refreshFailed={refreshFailed}/>
+    <PageHeader title="计划" description="Schedule 与 Background Task 按各自真实存储读取。" generatedAt={snapshot.generatedAt} isRefreshing={isRefreshing} refreshFailed={refreshFailed}/>
     <StatGrid>
-      <StatCard label="Current goal" value={goal?.status ?? '无'} detail={goal?.objective ?? '暂无持久 Goal'} tone={goal ? 'info' : 'neutral'} />
-      <StatCard label="Goal usage" value={`${formatCount(goal?.tokensUsed ?? 0)} tokens`} detail={`${goal?.roundsUsed ?? 0} rounds · ${formatDuration((goal?.timeUsedSeconds ?? 0) * 1000)}`} />
       <StatCard label="Schedules" value={String(snapshot.schedules.length)} detail="持久计划" />
       <StatCard label="Background active" value={String(activeTasks)} detail={`${snapshot.backgroundTasks.length} 条最近记录`} tone={activeTasks ? 'warn' : 'good'} />
     </StatGrid>
     <div className="mt-4 grid gap-4 xl:grid-cols-2">
-      <Panel title="当前 Goal" description={goal ? `origin=${goal.origin} · revision=${goal.revision}` : undefined}>{goal ? <div className="space-y-3 text-sm"><p className="m-0 text-lg font-semibold">{goal.objective}</p>{goal.motivation && <p className="m-0 text-stone-600">{goal.motivation}</p>}<div className="flex flex-wrap gap-2"><StatusBadge tone={goal.status === 'active' ? 'good' : goal.status === 'blocked' ? 'bad' : 'neutral'}>{goal.status}</StatusBadge>{goal.tokenBudget && <StatusBadge>{goal.tokensUsed}/{goal.tokenBudget} tokens</StatusBadge>}{goal.blockerKey && <StatusBadge tone="bad">{goal.blockerKey} × {goal.blockerTurns}</StatusBadge>}</div>{goal.blockedReason && <p className="rounded-lg bg-red-50 p-3 text-red-800">{goal.blockedReason}</p>}<div className="grid gap-3 md:grid-cols-2"><div><h3 className="text-sm">当前承诺</h3><JsonBlock value={goal.currentCommitment}/></div><div><h3 className="text-sm">完成条件 / 证据</h3><JsonBlock value={{ criteria: goal.completionCriteria, evidence: goal.completionEvidence }}/></div></div></div> : <EmptyState>暂无持久 Goal</EmptyState>}</Panel>
       <Panel title="Runtime control state"><dl className="grid grid-cols-2 gap-3 text-sm"><Metric label="Last wake" value={formatTimestamp(snapshot.runtime.lastWakeAt)}/><Metric label="Updated" value={formatTimestamp(snapshot.runtime.updatedAt)}/><Metric label="Mailboxes" value={String(snapshot.runtime.mailboxCount)}/><Metric label="Inbox read cursors" value={String(snapshot.runtime.inboxReadCount)}/></dl><div className="mt-3"><JsonBlock value={{ focus: snapshot.runtime.focus }}/></div></Panel>
       <Panel title="Schedule / Background Task"><h3 className="mt-0 text-sm">Schedules</h3>{snapshot.schedules.length ? snapshot.schedules.map(item => <Row key={item.id} title={item.label} meta={`${item.status} · ${item.nextRunAt ?? '—'}`}/>) : <EmptyState>暂无 schedule</EmptyState>}<h3 className="mt-5 text-sm">最近后台任务</h3><div className="max-h-[480px] overflow-auto">{snapshot.backgroundTasks.map(item => <Row key={item.id} title={item.description || item.toolName} meta={`${item.toolName} · ${item.status} · attempt ${item.attempt} · ${formatTimestamp(item.updatedAt)}`} detail={item.summary}/>)}</div></Panel>
     </div>

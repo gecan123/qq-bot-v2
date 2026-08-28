@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Store Luna's journal and dream entries in `data/agent-workspace/journal/` files while keeping `write_journal` as the bounded progressive-disclosure tool interface.
+**Objective:** Store Luna's journal and dream entries in `data/agent-workspace/journal/` files while keeping `write_journal` as the bounded progressive-disclosure tool interface.
 
 **Architecture:** Keep `workspace_bash` as the low-level allowlisted file tool. Move `write_journal` storage behind a small workspace-backed repository that appends JSONL entries and exposes write/list/search/read actions with bounded output. Do not reconstruct prompt history from workspace files.
 

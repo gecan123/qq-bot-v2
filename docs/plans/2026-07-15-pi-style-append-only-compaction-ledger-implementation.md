@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 用线性 append-only ledger 替换可覆盖 snapshot，使原始 LLM 历史永久保留、当前 prompt 可确定性重建，并实现 Pi 风格的动态预算、token tail、split-turn、previous-summary、manual/threshold/overflow compaction。
+**Objective:** 用线性 append-only ledger 替换可覆盖 snapshot，使原始 LLM 历史永久保留、当前 prompt 可确定性重建，并实现 Pi 风格的动态预算、token tail、split-turn、previous-summary、manual/threshold/overflow compaction。
 
-**Architecture:** PostgreSQL ledger 是 LLM 历史唯一事实源；可变 runtime state 只保存 cursor、Goal revision、capability 等控制状态；checkpoint 只是带 ledger head 和 fingerprint 的可删除缓存。Runtime Host 是唯一 writer，先事务提交 ledger/runtime state，再更新内存 projection，最后 best-effort 写 checkpoint。
+**Architecture:** PostgreSQL ledger 是 LLM 历史唯一事实源；可变 runtime state 只保存 cursor、capability 等控制状态；checkpoint 只是带 ledger head 和 fingerprint 的可删除缓存。Runtime Host 是唯一 writer，先事务提交 ledger/runtime state，再更新内存 projection，最后 best-effort 写 checkpoint。
 
 **Tech Stack:** TypeScript 5.9、Node.js ESM、Prisma 7/PostgreSQL、`node:test`、现有 Claude Code/OpenAI agent provider adapters。
 
@@ -312,7 +312,6 @@ model BotAgentRuntimeState {
   schemaVersion          Int       @map("schema_version")
   mailboxCursors         Json      @map("mailbox_cursors")
   mailboxContinuity      Json      @map("mailbox_continuity")
-  goalRevision           Int       @map("goal_revision")
   activeToolCapabilities Json      @map("active_tool_capabilities")
   lastWakeAt             DateTime? @map("last_wake_at") @db.Timestamptz(6)
   ledgerHeadEntryId      BigInt?   @map("ledger_head_entry_id")
@@ -339,7 +338,7 @@ model BotAgentCheckpoint {
 - 删除 `bot_agent_snapshot_checkpoints`、`bot_agent_snapshot`。
 - 创建三个新表及 `entry_type IN ('message','compaction')` CHECK。
 - 插入 `id=1` 的空 runtime row。
-- 按已确认的 clean cutover 清空 `bot_agent_goal`，不搬运旧 snapshot/Goal。
+- 按已确认的 clean cutover 不搬运旧 snapshot。
 - 不创建 ledger UPDATE/DELETE 的应用路径；数据库权限收紧若当前部署用户模型不支持，则由 repo API 和测试保证。
 
 ### Step 4: 生成 client 并验证
@@ -374,7 +373,7 @@ git commit -m "feat: 增加追加式账本数据模型"
 
 1. `appendMessages` 按顺序批量追加并推进 `ledgerHeadEntryId`。
 2. 第二条 message create 失败时 entries 和 runtime patch 全部回滚。
-3. message append 和 mailbox cursor/Goal revision 同事务。
+3. message append 和 mailbox cursor 同事务。
 4. `appendCompaction({ expectedHeadEntryId })` 在 head 改变时抛 `AgentLedgerHeadChangedError`。
 5. checkpoint write 不在 canonical transaction 内。
 6. public repo interface 没有 update/delete ledger entry 方法。
@@ -520,7 +519,7 @@ test('commits assistant tool calls and every ordered tool result as one batch', 
 test('commits mailbox disclosure and cursor advancement atomically', async () => {})
 ```
 
-再覆盖 Goal revision、`mailbox_handled` 和 active capability 的 runtime patch 与对应可见 entry 同事务。
+再覆盖 `mailbox_handled` 和 active capability 的 runtime patch，与对应可见 entry 同事务。
 
 ### Step 2: 运行测试确认失败
 
@@ -579,7 +578,6 @@ pnpm exec tsx --test --import ./scripts/test-env.mjs --import tsx \
   src/agent/bot-loop-agent.test.ts \
   src/agent/runtime.test.ts \
   src/agent/mailbox-handled.test.ts \
-  src/agent/goal-runtime.test.ts
 ```
 
 Expected: PASS。
@@ -851,7 +849,7 @@ git commit -m "feat: 用稳定引用持久化工具图片"
 - provider context overflow 强制 compact-and-retry，绕过普通退避。
 - 同一 round overflow 最多 retry 一次，第二次抛原错误。
 - shutdown signal 中止未提交 summarizer。
-- mailbox/rest 机器状态和 Goal continuation 经 repeated compaction 不丢失。
+- mailbox/rest 机器状态经 repeated compaction 不丢失。
 
 ### Step 2: 运行测试确认失败
 
@@ -861,7 +859,6 @@ Run:
 pnpm exec tsx --test --import ./scripts/test-env.mjs --import tsx \
   src/agent/bot-loop-agent.test.ts \
   src/agent/runtime.test.ts \
-  src/agent/goal-runtime.test.ts \
   src/agent/mailbox-continuity.test.ts \
   src/agent/rest-resume-reminder.test.ts
 ```
@@ -890,7 +887,6 @@ Run:
 pnpm exec tsx --test --import ./scripts/test-env.mjs --import tsx \
   src/agent/bot-loop-agent.test.ts \
   src/agent/runtime.test.ts \
-  src/agent/goal-runtime.test.ts \
   src/agent/mailbox-continuity.test.ts \
   src/agent/rest-resume-reminder.test.ts
 ```
@@ -900,7 +896,7 @@ Expected: PASS。
 ### Step 5: Commit
 
 ```bash
-git add src/agent/bot-loop-agent.ts src/agent/bot-loop-agent.test.ts src/agent/runtime.ts src/agent/runtime.test.ts src/agent/llm-client.ts src/agent/claude-code/llm-client.ts src/agent/claude-code/llm-client.test.ts src/agent/openai-agent/llm-client.ts src/agent/openai-agent/llm-client.test.ts src/agent/goal-runtime.test.ts src/agent/mailbox-continuity.test.ts src/agent/rest-resume-reminder.test.ts
+git add src/agent/bot-loop-agent.ts src/agent/bot-loop-agent.test.ts src/agent/runtime.ts src/agent/runtime.test.ts src/agent/llm-client.ts src/agent/claude-code/llm-client.ts src/agent/claude-code/llm-client.test.ts src/agent/openai-agent/llm-client.ts src/agent/openai-agent/llm-client.test.ts src/agent/mailbox-continuity.test.ts src/agent/rest-resume-reminder.test.ts
 git commit -m "feat: 接入压缩触发和溢出恢复"
 ```
 
@@ -912,7 +908,7 @@ git commit -m "feat: 接入压缩触发和溢出恢复"
 - Create: `src/agent/compaction-control.test.ts`
 - Modify: `src/index.ts`
 
-### Step 1: 复制 Goal control 的安全测试矩阵
+### Step 1: 复制 owner 私聊控制的安全测试矩阵
 
 测试：
 
@@ -935,7 +931,7 @@ Expected: FAIL。
 
 ### Step 3: 实现和接线
 
-参照 `src/agent/goal-control.ts` 的 owner 身份判定和 startup replay gate，但调用 BotLoop 的 `requestManualCompaction(focus?)`。manual focus 作为 trusted 独立字段进入 compaction preparation，长度做小型上限，不进入 untrusted transcript。
+复用 owner 身份判定和 startup replay gate，但调用 BotLoop 的 `requestManualCompaction(focus?)`。manual focus 作为 trusted 独立字段进入 compaction preparation，长度做小型上限，不进入 untrusted transcript。
 
 ### Step 4: 运行测试
 
@@ -944,7 +940,6 @@ Run:
 ```bash
 pnpm exec tsx --test --import ./scripts/test-env.mjs --import tsx \
   src/agent/compaction-control.test.ts \
-  src/agent/goal-runtime.test.ts \
   src/agent/runtime.test.ts
 ```
 
@@ -1007,7 +1002,7 @@ Expected: FAIL。
 - `pnpm agent:ledger-check`：只读，错误时非零退出。
 - 删除 `agent:snapshot-check`，避免暗示 snapshot 仍是事实源。
 - `agent:doctor` 增加 head、latest compact、active/permanent counts、projection tokens、checkpoint 状态。
-- `agent:reset-memory` 明确是人工破坏性 reset：删除 ledger/runtime/checkpoint/Goal 以及现有 memory workspace，再重建空 runtime singleton。正常运行绝不调用。
+- `agent:reset-memory` 明确是人工破坏性 reset：删除 ledger/runtime/checkpoint 以及现有 memory workspace，再重建空 runtime singleton。正常运行绝不调用。
 
 ### Step 4: 运行测试和 CLI 静态检查
 

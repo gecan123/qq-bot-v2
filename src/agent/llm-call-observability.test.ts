@@ -66,7 +66,6 @@ describe('observeLlmCall', () => {
         operation: 'agent.chat',
         actor: 'main_agent',
         roundIndex: 7,
-        goalId: 'goal-1',
       },
       dependencies: {
         id: () => '11111111-1111-4111-8111-111111111111',
@@ -82,7 +81,6 @@ describe('observeLlmCall', () => {
       operation: 'agent.chat',
       actor: 'main_agent',
       roundIndex: 7,
-      goalId: 'goal-1',
       provider: 'claude-code',
       status: 'succeeded',
       durationMs: 125,
@@ -155,9 +153,8 @@ describe('observeLlmCall', () => {
           tools: [],
         },
         context: {
-          operation: 'goal.completion_judge',
-          actor: 'goal_judge',
-          goalId: 'goal-2',
+          operation: 'compaction',
+          actor: 'compactor',
         },
         dependencies: {
           id: () => '22222222-2222-4222-8222-222222222222',

@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Replace the overlapping ordinary Journal with a topic-oriented Notebook and move dream semantics into Life Journal while keeping Agenda separate.
+**Objective:** Replace the overlapping ordinary Journal with a topic-oriented Notebook and move dream semantics into Life Journal while keeping Agenda separate.
 
 **Architecture:** Notebook remains an explicit append/read/mutate Markdown tool for evolving topic work. Life Journal remains the selective daily episodic log and owns dream entries; Agenda remains mutable current state under the same tool.
 

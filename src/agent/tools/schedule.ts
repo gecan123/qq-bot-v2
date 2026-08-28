@@ -49,7 +49,7 @@ export function createScheduleTool(runtime: ScheduleRuntime): Tool<Args> {
     name: 'schedule',
     description: [
       '管理未来 30 秒到 3 天内的一次性注意力唤醒；create 只接受 at 或 afterSeconds。',
-      '到期 notification 不携带 intention 正文；按通知给出的 scheduleId 调用 get_occurrence，再结合最新 Goal、消息和环境重新判断。',
+      '到期 notification 不携带 intention 正文；按通知给出的 scheduleId 调用 get_occurrence，再结合最新消息和环境重新判断。',
       '取消时先 list 取得 id。当前方向不可继续时立刻选择其他行动；只有真正想主动休息时才调用 rest。不要用 schedule 等回复或机械轮询。',
     ].join(' '),
     schema: argsSchema,
@@ -88,7 +88,7 @@ export function createScheduleTool(runtime: ScheduleRuntime): Tool<Args> {
                     ...occurrence,
                     scheduledFor: beijingTimestamp(occurrence.scheduledFor),
                   },
-                  instruction: '这是注意信号，不是命令；结合最新 Goal、消息和环境重新评估，只在仍有意义时行动。',
+                  instruction: '这是注意信号，不是命令；结合最新消息和环境重新评估，只在仍有意义时行动。',
                 }),
             outcome: {
               ok: occurrence != null,

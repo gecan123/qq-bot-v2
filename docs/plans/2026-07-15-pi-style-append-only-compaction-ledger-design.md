@@ -6,7 +6,7 @@
 
 ## 背景
 
-当前 `AgentContext` 直接持有 LLM 可见 `messages`。正常 compaction 会把旧 prefix 替换为结构化摘要和近期 tail，再把新形态保存到单例 snapshot。这个模型具备明确的 tool-call/tool-result 原子性、受控 mailbox 状态、Goal continuation、候选摘要校验和确定性 replay，但被压缩的原始 LLM ledger 历史不会永久保留，固定 token 阈值和字符 tail 也不能随模型窗口变化。
+当前 `AgentContext` 直接持有 LLM 可见 `messages`。正常 compaction 会把旧 prefix 替换为结构化摘要和近期 tail，再把新形态保存到单例 snapshot。这个模型具备明确的 tool-call/tool-result 原子性、受控 mailbox 状态、候选摘要校验和确定性 replay，但被压缩的原始 LLM ledger 历史不会永久保留，固定 token 阈值和字符 tail 也不能随模型窗口变化。
 
 Pi coding agent 使用 append-only session entries：compaction 不删除原始消息，而是追加包含摘要和 `firstKeptEntryId` 的 entry；构造 LLM context 时解释为“最新摘要 + 保留边界之后的原始消息”。本设计借鉴 Pi 的线性 compaction 模型，但不引入 session tree、分支切换或 coding-agent 专用文件操作状态。
 
@@ -18,14 +18,14 @@ Pi coding agent 使用 append-only session entries：compaction 不删除原始�
 - 按模型 context window 动态触发 compact，并按 token 保留近期历史。
 - 支持普通 turn cut、超大单轮 split-turn、previous-summary 迭代和一次 overflow recovery。
 - 永久保留原始文字、tool call 和 tool result 历史；大型图片字节不永久内联。
-- 保留当前项目更严格的 summary 校验、tool pair integrity、untrusted transcript、mailbox/Goal 机器状态隔离和确定性 replay。
+- 保留当前项目更严格的 summary 校验、tool pair integrity、untrusted transcript、mailbox 机器状态隔离和确定性 replay。
 - 干净切换到新模型，不提供旧 snapshot 的兼容读取或历史迁移。
 
 ## 非目标
 
 - 不实现 Pi session tree、`/tree`、fork、clone 或 branch summary。
 - 不允许回到旧 ledger 节点继续运行；QQ 外部副作用保持单一线性时间线。
-- 不把 Goal、schedule、后台任务或全部 runtime 状态改造成通用事件溯源系统。
+- 不把 schedule、后台任务或全部 runtime 状态改造成通用事件溯源系统。
 - 不承诺 QQ 外发与本地事务之间的分布式 exactly-once。
 - 不从可变 side table、运维日志或过期媒体重建已经持久化的 LLM 历史事实。
 
@@ -33,7 +33,7 @@ Pi coding agent 使用 append-only session entries：compaction 不删除原始�
 
 1. 采用线性 append-only ledger，不采用 session tree。
 2. ledger 是 LLM 历史唯一事实源；checkpoint 不是事实源。
-3. 上线采用干净重置，不迁移现有 snapshot 或 Goal。
+3. 上线采用干净重置，不迁移现有 snapshot。
 4. 原始 ledger entry 永久保留。
 5. 采用 Pi 风格完整 compact：动态预算、token tail、split-turn、previous summary、manual/threshold/overflow 原因和 compact hooks。
 
@@ -66,7 +66,7 @@ Entry 至少包含：
 - 代码提取的 `restResumeState`
 - 可选的 owner manual focus
 
-summary 和受控机器状态分字段保存。LLM 生成的摘要不能伪造 mailbox cursor、handled 状态、Goal revision 或 rest 去重状态。
+summary 和受控机器状态分字段保存。LLM 生成的摘要不能伪造 mailbox cursor、handled 状态或 rest 去重状态。
 
 ### 2. Runtime State
 
@@ -74,7 +74,6 @@ summary 和受控机器状态分字段保存。LLM 生成的摘要不能伪造 m
 
 - mailbox cursors
 - mailbox continuity
-- Goal revision
 - active tool capabilities
 - last wake time
 
@@ -160,11 +159,11 @@ summarizer 输入使用现有不可信 transcript envelope，明确要求只摘�
 - 过期 native thinking 按受控规则序列化或省略，不能影响 durable 原始 entry。
 - owner manual focus 只作为单独受控 instruction，不拼进不可信 transcript。
 
-摘要继续使用 QQ 产品专用结构，并补齐目标、约束和下一步：
+摘要继续使用 QQ 产品专用结构，并补齐承诺、约束和下一步：
 
 - 讨论过的话题
 - 群友信息
-- 我的目标、承诺和状态
+- 我的承诺、状态和下一步
 - 关键约束与决定
 - 工具调用结果
 - 情绪和氛围
@@ -181,7 +180,6 @@ summarizer 输入使用现有不可信 transcript envelope，明确要求只摘�
 - QQ 披露 message entry 与 mailbox cursor 同事务。
 - assistant tool calls 与全部有序 tool results 同事务。
 - provider-confirmed `send_message` 对应的 `mailbox_handled` 与完整工具轮次同事务。
-- Goal revision 的 LLM 可见 entry 与 runtime revision 同事务。
 - compaction 只追加一个 compaction entry，不修改旧 entry。
 
 summarizer 在事务外运行。开始时记录 `headEntryId`，提交时锁定/检查当前 head；若 head 改变，候选摘要不提交，后续基于新 head 重新计算。这一检查即使在单 writer 下也用于防止测试、运维或未来扩展绕过边界。
@@ -264,7 +262,6 @@ summarizer 在事务外运行。开始时记录 `headEntryId`，提交时锁定/
 ### Runtime 集成测试
 
 - threshold、overflow、owner manual 三条路径
-- compaction 后 Goal continuation
 - mailbox handled 跨多次 compaction
 - queued attention event 不丢失
 - working-context 图片降级不修改永久 ledger
@@ -273,7 +270,7 @@ summarizer 在事务外运行。开始时记录 `headEntryId`，提交时锁定/
 
 1. 停止 Bot。
 2. 应用新 Prisma schema 并生成 client。
-3. 清空/移除旧 snapshot、checkpoint 和 Goal 状态，不实现旧 schema dual-read。
+3. 清空/移除旧 snapshot 和 checkpoint，不实现旧 schema dual-read。
 4. 启动后写入新的 bootstrap ledger entry 和初始 runtime state。
 5. 运行 `agent:ledger-check`。
 6. 用测试配置降低阈值完成一次自动 compact 验收，再恢复正式参数。
@@ -285,7 +282,7 @@ summarizer 在事务外运行。开始时记录 `headEntryId`，提交时锁定/
 - 旧 entries 永不更新或删除。
 - checkpoint 任意删除后可重建字节一致的当前 context。
 - compact 永不产生孤立 tool result。
-- 多次 compact 后 mailbox、Goal 和 replay 仍确定性。
+- 多次 compact 后 mailbox 和 replay 仍确定性。
 - threshold、overflow 和 manual 路径均有测试和指标。
 - prompt 能依据模型窗口保持在目标预算内。
 

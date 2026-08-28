@@ -9,7 +9,6 @@ import type { ToolExecutionResult, ToolExecutor } from './tool.js'
 import type { AgentMessage, PersistedAgentSnapshot } from './agent-context.types.js'
 import type { AgentActivityReporter, AgentActivityTrigger } from './activity-surface.js'
 import { renderBotEvent } from './render-event.js'
-import { createInMemoryGoalStore } from './goal-store.js'
 import {
   createEmptyMailboxContinuityState,
   MAILBOX_LIGHT_COMPENSATION_AFTER_MS,
@@ -33,7 +32,7 @@ function validLedgerSummary(content = '保留关键历史。'): string {
   return [
     '## 讨论过的话题', content,
     '## 群友信息', '无。',
-    '## 我的目标、承诺和状态', '继续当前目标。',
+    '## 我的承诺、状态和下一步', '继续当前工作。',
     '## 关键约束与决定', '遵守安全边界。',
     '## 工具调用结果', '无。',
     '## 情绪和氛围', '平静。',
@@ -48,12 +47,6 @@ function makeScheduledWake(): Extract<BotEvent, { type: 'scheduled_wake' }> {
     name: '回看线索',
     scheduledFor: new Date('2026-07-13T09:00:00.000Z'),
   }
-}
-
-const TEST_GOAL_COMMITMENT = {
-  action: '读取第一份证据',
-  reason: '先建立可验证的证据基线',
-  expectedEvidence: '一条带来源的事实记录',
 }
 
 function makeMockTools(impl: Record<string, () => Promise<ToolExecutionResult>> = {}): ToolExecutor {
@@ -688,69 +681,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.deepEqual(snapshots.at(-1)?.messages.at(-1), { role: 'user', content: marker })
   })
 
-  test('persists the handled marker before active goal accounting can fail', async () => {
-    const baseGoalStore = createInMemoryGoalStore()
-    const created = await baseGoalStore.createSelf({
-      objective: '完成当前回复',
-      motivation: '处理 owner 的新消息',
-      completionCriteria: ['成功回复并保存处理状态'],
-      currentCommitment: {
-        action: '回复当前注意消息',
-        reason: '这是当前目标的立即步骤',
-        expectedEvidence: '发送成功并保存 handled marker',
-      },
-    })
-    assert.ok(created.goal)
-    const goalStore = {
-      ...baseGoalStore,
-      async accountRound(): Promise<never> {
-        throw new Error('goal accounting failed')
-      },
-    }
-    const ctx = createAgentContext()
-    ctx.appendUserMessage(
-      '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
-    )
-    const { repo, loader, snapshots } = makeTestLedger(ctx.getSnapshot().messages)
-    const agent = createBotLoopAgent({
-      systemPrompt: '',
-      context: ctx,
-      eventQueue: new InMemoryEventQueue<BotEvent>(),
-      llm: makeMockLlm([{
-        content: '',
-        toolCalls: [{ id: 'send-1', name: 'send_message', args: { text: '收到' } }],
-        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
-        model: 'mock',
-        contextWindowTokens: 200_000,
-      }]),
-      tools: makeMockTools({
-        send_message: async () => ({
-          content: '{"ok":true,"status":"sent"}',
-          effects: [{ type: 'message_sent', target: { platform: 'qq', accountId: 'bot', kind: 'private', externalId: '9001' } }],
-        }),
-      }),
-      ledgerRepo: repo,
-      ledgerLoader: loader,
-      goalStore,
-      initialGoalRevision: created.goal.revision,
-      renderEvent: renderBotEvent,
-      eventDebounceMs: 0,
-    })
-
-    await assert.rejects(() => agent.runOnceForTest(), /goal accounting failed/)
-
-    const savedMessages = snapshots.at(-1)?.messages ?? []
-    assert.equal(
-      savedMessages.some(
-        (message) => message.role === 'tool' && message.toolCallId === 'send-1',
-      ),
-      true,
-    )
-    assert.deepEqual(savedMessages.at(-1), {
-      role: 'user',
-      content: '{"event":"mailbox_handled","mailbox":"qq_private:9001","throughRowId":88}',
-    })
-  })
 
   test('closes a durable inbox cursor when the confirmed send happens in a later step', async () => {
     const ctx = createAgentContext()
@@ -1871,14 +1801,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
   })
 
   test('discloses high-priority QQ notification before an earlier scheduled wake', async () => {
-    const goalStore = createInMemoryGoalStore()
-    const created = await goalStore.createSelf({
-      objective: '完成当前研究',
-      motivation: '把已有主线做完',
-      completionCriteria: ['得到可验证的结论'],
-      currentCommitment: TEST_GOAL_COMMITMENT,
-    })
-    assert.ok(created.goal)
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue(makeScheduledWake())
@@ -1908,8 +1830,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
       tools: makeMockTools(),
       ledgerRepo: repo,
       ledgerLoader: loader,
-      goalStore,
-      initialGoalRevision: created.goal.revision,
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
     })
@@ -1919,7 +1839,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
     assert.equal(JSON.parse(userMessages[0]!.content).priority, 'high')
     assert.equal(JSON.parse(userMessages[1]!.content).kind, 'schedule_due')
-    assert.equal(JSON.parse(userMessages[2]!.content).event, 'goal_continuation')
+    assert.equal(userMessages.length, 2)
   })
 
   test('keeps mailbox continuity at the newest message after priority reordering', async () => {
@@ -2074,98 +1994,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(JSON.parse(userMessages[2]!.content).kind, 'schedule_due')
   })
 
-  test('discloses scheduled wake before the active goal continuation', async () => {
-    const goalStore = createInMemoryGoalStore()
-    const created = await goalStore.createSelf({
-      objective: '完成当前研究',
-      motivation: '把已有主线做完',
-      completionCriteria: ['得到可验证的结论'],
-      currentCommitment: TEST_GOAL_COMMITMENT,
-    })
-    assert.ok(created.goal)
-    const ctx = createAgentContext()
-    const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue(makeScheduledWake())
-    const { repo, loader } = makeTestLedger(ctx.getSnapshot().messages)
-    const agent = createBotLoopAgent({
-      systemPrompt: '',
-      context: ctx,
-      eventQueue,
-      llm: makeMockLlm([{
-        content: '',
-        toolCalls: [],
-        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
-        model: 'mock',
-        contextWindowTokens: 200_000,
-      }]),
-      tools: makeMockTools(),
-      ledgerRepo: repo,
-      ledgerLoader: loader,
-      goalStore,
-      initialGoalRevision: created.goal.revision,
-      renderEvent: renderBotEvent,
-      eventDebounceMs: 0,
-    })
-
-    await agent.runOnceForTest()
-
-    const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
-    assert.equal(JSON.parse(userMessages[0]!.content).kind, 'schedule_due')
-    assert.equal(JSON.parse(userMessages[1]!.content).event, 'goal_continuation')
-  })
-
-  test('discloses active goal continuation before an ambient mailbox notification', async () => {
-    const goalStore = createInMemoryGoalStore()
-    const created = await goalStore.createSelf({
-      objective: '完成当前研究',
-      motivation: '把已有主线做完',
-      completionCriteria: ['得到可验证的结论'],
-      currentCommitment: TEST_GOAL_COMMITMENT,
-    })
-    assert.ok(created.goal)
-    const ctx = createAgentContext()
-    const eventQueue = new InMemoryEventQueue<BotEvent>()
-    eventQueue.enqueue({
-      type: 'napcat_message',
-      messageRowId: 89,
-      groupId: 999,
-      groupName: '环境群',
-      messageId: 20_089,
-      senderId: 9002,
-      senderNickname: 'Bob',
-      mentionedSelf: false,
-      sentAt: new Date('2026-07-13T09:00:01.000Z'),
-      renderedText: '普通群消息',
-    })
-    const { repo, loader } = makeTestLedger(ctx.getSnapshot().messages)
-    const agent = createBotLoopAgent({
-      systemPrompt: '',
-      context: ctx,
-      eventQueue,
-      llm: makeMockLlm([{
-        content: '',
-        toolCalls: [],
-        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 0 },
-        model: 'mock',
-        contextWindowTokens: 200_000,
-      }]),
-      tools: makeMockTools(),
-      ledgerRepo: repo,
-      ledgerLoader: loader,
-      goalStore,
-      initialGoalRevision: created.goal.revision,
-      renderEvent: renderBotEvent,
-      eventDebounceMs: 0,
-    })
-
-    await agent.runOnceForTest()
-
-    const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
-    assert.equal(JSON.parse(userMessages[0]!.content).event, 'goal_continuation')
-    assert.equal(JSON.parse(userMessages[1]!.content).priority, 'normal')
-  })
-
-  test('delegates tool execution failures to the React kernel durable error result path', async () => {
+   test('delegates tool execution failures to the React kernel durable error result path', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({ type: 'bootstrap' })

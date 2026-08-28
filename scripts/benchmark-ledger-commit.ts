@@ -92,7 +92,6 @@ function buildCompactedCanonical(entryCount: number, requestedActiveCount: numbe
       mailboxCursors: {},
       inboxReadCursors: {},
       mailboxContinuity: createEmptyMailboxContinuityState(),
-      goalRevision: 0,
       conversationFocus: null,
       lastWakeAt: null,
       ledgerHeadEntryId: BigInt(entryCount),

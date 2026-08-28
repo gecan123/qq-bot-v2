@@ -7,7 +7,7 @@
 - `memory`：Luna 对同一个自己、人物、群和主题形成的稳定语义记忆。
 - `notebook`：研究、阅读、市场和项目等仍在演进的跨天过程。
 
-持续承诺由 Goal 表示，定时重新唤醒由 Schedule 表示。Life Journal 和 Agenda 已退出系统。它们的职责不再由另一套长期日志承接：值得长期保留的结论写 Memory，过程写 Notebook，当前主线写 Goal，未来时点写 Schedule。
+定时重新唤醒由 Schedule 表示。Life Journal 和 Agenda 已退出系统。它们的职责不再由另一套长期日志承接：值得长期保留的结论写 Memory，跨天过程写 Notebook，未来时点写 Schedule；当前连续行动由主循环和 tool result 直接承接。
 
 这是一个单人格、单用户系统。现在只有一层语义 Memory；未来需要更多层时，应在 Memory 模块内部增加整理、索引或更稳定的表示，而不是提前把 `layer`、文件、revision 和生命周期暴露给主 Agent。
 
@@ -15,7 +15,7 @@
 
 1. `bot_agent_ledger_entries` 是唯一持久 LLM history source，`AgentContext` 是它的当前 projection。
 2. `messages` 是入站事实账本和 Memory 证据来源，不是 LLM history。
-3. Memory、Notebook、Goal、Schedule 和日志都是 side state，不能用于重建 transcript。
+3. Memory、Notebook、Schedule 和日志都是 side state，不能用于重建 transcript。
 
 只有显式工具读取的结果被 append 到 canonical ledger 后，side state 才进入可 replay 的 LLM 上下文。启动、compaction 或恢复都不得隐式扫描这些文件注入 prompt。
 
@@ -25,14 +25,13 @@
 | --- | --- | --- | --- | --- |
 | 我长期知道什么？ | `data/agent-workspace/memory/` | `memory remember/correct` | `memory recall` | 仅显式工具结果 |
 | 这个主题进行到哪里？ | `data/agent-workspace/notebook/` | `notebook write/update/delete/compact` | `notebook list/search/read` | 仅显式工具结果 |
-| 我现在持续承诺完成什么？ | `bot_agent_goal` | `goal` | 每轮受控 Goal 注入 | Goal 摘要进入 canonical context |
 | 未来什么时候重新评估？ | Schedule runtime | `schedule` | scheduled wake | wake 事件进入 canonical context |
 
 简单判断：
 
 - 已稳定、未来可能再次有用的事实、偏好、规则或经验：Memory。
 - 仍会增长、需要保留材料和阶段变化：Notebook。
-- 有明确完成条件、要跨多轮继续做：Goal。
+- 当前连续行动：由 canonical context、tool result 和进程内 `work=continue` 承接，不另建持久任务状态。
 - 到某个时间再重新评估：Schedule。
 - 只对当前对话有用：不持久化。
 
@@ -87,7 +86,7 @@ Notebook 保存过程，不承担“另一个 Memory 层”的角色。结论稳
 
 重置范围：
 
-- `context`：清空 canonical ledger/checkpoint/runtime/Goal，不删除 Memory 或 Notebook。
+- `context`：清空 canonical ledger/checkpoint/runtime，不删除 Memory 或 Notebook。
 - `knowledge`：只删除 `memory/` 与 `notebook/`，不连接数据库。
 - `all`：清空 context，并删除 workspace 中除 `.gitignore` 和 `README.md` 外的生成内容。
 

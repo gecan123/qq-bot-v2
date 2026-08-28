@@ -31,7 +31,6 @@ interface RuntimeStorageRow {
   mailboxCursors: unknown
   inboxReadCursors: unknown
   mailboxContinuity: unknown
-  goalRevision: number
   conversationFocus: unknown
   lastWakeAt: Date | null
   ledgerHeadEntryId: bigint | null
@@ -77,7 +76,6 @@ export interface AgentRuntimePatch {
   mailboxCursors?: MailboxCursors
   inboxReadCursors?: InboxReadCursors
   mailboxContinuity?: MailboxContinuityState
-  goalRevision?: number
   conversationFocus?: ConversationFocus
   lastWakeAt?: Date | null
 }
@@ -282,7 +280,6 @@ async function loadRuntimeState(client: AgentLedgerPersistenceClient): Promise<A
     mailboxCursors: row.mailboxCursors,
     inboxReadCursors: row.inboxReadCursors,
     mailboxContinuity: row.mailboxContinuity,
-    goalRevision: row.goalRevision,
     conversationFocus: row.conversationFocus,
     lastWakeAt: row.lastWakeAt,
     ledgerHeadEntryId: row.ledgerHeadEntryId,
@@ -306,7 +303,6 @@ async function persistRuntimeState(
   if (patch?.mailboxCursors !== undefined) data.mailboxCursors = next.mailboxCursors as never
   if (patch?.inboxReadCursors !== undefined) data.inboxReadCursors = next.inboxReadCursors as never
   if (patch?.mailboxContinuity !== undefined) data.mailboxContinuity = next.mailboxContinuity as never
-  if (patch?.goalRevision !== undefined) data.goalRevision = next.goalRevision
   if (patch && Object.hasOwn(patch, 'conversationFocus')) {
     data.conversationFocus = next.conversationFocus as never
   }
@@ -320,7 +316,6 @@ async function persistRuntimeState(
     mailboxCursors: row.mailboxCursors,
     inboxReadCursors: row.inboxReadCursors,
     mailboxContinuity: row.mailboxContinuity,
-    goalRevision: row.goalRevision,
     conversationFocus: row.conversationFocus,
     lastWakeAt: row.lastWakeAt,
     ledgerHeadEntryId: row.ledgerHeadEntryId,
@@ -355,7 +350,6 @@ function definedRuntimePatch(patch: AgentRuntimePatch | undefined): AgentRuntime
   if (patch.mailboxCursors !== undefined) defined.mailboxCursors = patch.mailboxCursors
   if (patch.inboxReadCursors !== undefined) defined.inboxReadCursors = patch.inboxReadCursors
   if (patch.mailboxContinuity !== undefined) defined.mailboxContinuity = patch.mailboxContinuity
-  if (patch.goalRevision !== undefined) defined.goalRevision = patch.goalRevision
   if (Object.hasOwn(patch, 'conversationFocus')) {
     defined.conversationFocus = patch.conversationFocus
   }

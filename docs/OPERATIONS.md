@@ -33,7 +33,7 @@ pnpm agent:reset-state -- --scope knowledge
 pnpm agent:reset-state -- --scope all
 ```
 
-`context` 删除 `bot_agent_ledger_entries`、`bot_agent_checkpoint`、`bot_agent_runtime_state` 和 `bot_agent_goal`，再重建空 runtime singleton，保留 workspace。`knowledge` 只删除 `data/agent-workspace/{memory,journal,life,notebook}`，不连接数据库；其中 `journal` 只是遗留目录清理项。`all` 执行 context 清理，并删除 `data/agent-workspace/` 下除契约文件 `README.md`、`.gitignore` 外的全部 Agent 生成内容，包括长期知识、普通笔记、runtime 状态、浏览器 profile/artifact、草稿和缓存。三种 scope 都保留消息/媒体事实账本、表情池和运维日志。空 ledger 冷启动不会把既有消息拼成旧 prompt history。
+`context` 删除 `bot_agent_ledger_entries`、`bot_agent_checkpoint` 和 `bot_agent_runtime_state`，再重建空 runtime singleton，保留 workspace。`knowledge` 只删除 `data/agent-workspace/{memory,journal,life,notebook}`，不连接数据库；其中 `journal` 只是遗留目录清理项。`all` 执行 context 清理，并删除 `data/agent-workspace/` 下除契约文件 `README.md`、`.gitignore` 外的全部 Agent 生成内容，包括长期知识、普通笔记、runtime 状态、浏览器 profile/artifact、草稿和缓存。三种 scope 都保留消息/媒体事实账本、表情池和运维日志。空 ledger 冷启动不会把既有消息拼成旧 prompt history。
 
 scope 必须显式提供，命令可重复执行；标准 package script 已内置破坏性确认参数，检测到 `.bot.pid` 对应进程仍存活时会拒绝运行。
 
@@ -74,7 +74,7 @@ pnpm peek -- -f -n 9999
 
 ### WebAdmin（本机管理模式）
 
-`apps/admin-web` 的“现在”首页展示实时活动、Goal commitment 与最近工具进展，其他观察页面提供 Ledger、原始事件、生命状态、Memory、跨平台 Conversations/Media、指标和健康下钻。Health 的自动刷新只读 head/count/checkpoint 元数据；完整 canonical replay 必须由 operator 点击 Deep Integrity 手动触发，并展示最近检查时间、耗时和摘要。“管理操作”页面只开放固定 `reset_state`：选择 `context`、`knowledge` 或 `all`，且没有自动恢复路径。
+`apps/admin-web` 的“现在”首页展示实时活动与最近工具进展，其他观察页面提供 Ledger、原始事件、计划、Memory、跨平台 Conversations/Media、指标和健康下钻。Health 的自动刷新只读 head/count/checkpoint 元数据；完整 canonical replay 必须由 operator 点击 Deep Integrity 手动触发，并展示最近检查时间、耗时和摘要。“管理操作”页面只开放固定 `reset_state`：选择 `context`、`knowledge` 或 `all`，且没有自动恢复路径。
 
 观察数据流是：
 
@@ -116,7 +116,7 @@ pnpm repo-check
 pnpm bench:ledger-commit
 ```
 
-构建不连接数据库；真实页面加载才通过 Server Function 使用 `DATABASE_URL`。观察 feature 不允许更新 ledger、runtime state、checkpoint、Goal、消息、媒体或 workspace side-data。唯一 mutation adapter 是 `features/operations/operations.server.ts`，它不能调用 shell、package script、任意 SQL 或接受路径输入。WebAdmin run state、审计日志、页面 cache 和查询 DTO 都不是 replay source，不能重建或改写 `AgentContext`。
+构建不连接数据库；真实页面加载才通过 Server Function 使用 `DATABASE_URL`。观察 feature 不允许更新 ledger、runtime state、checkpoint、消息、媒体或 workspace side-data。唯一 mutation adapter 是 `features/operations/operations.server.ts`，它不能调用 shell、package script、任意 SQL 或接受路径输入。WebAdmin run state、审计日志、页面 cache 和查询 DTO 都不是 replay source，不能重建或改写 `AgentContext`。
 
 ### Agent Context 占用分析
 
@@ -149,7 +149,7 @@ JSON 报告带当前为 `2` 的 `schemaVersion`，总占用字段是 `estimatedS
 
 ### 飞书接入
 
-飞书默认关闭。启用时配置 `BOT_FEISHU_ENABLED=true`、`BOT_FEISHU_APP_ID`、`BOT_FEISHU_APP_SECRET`，并用逗号分隔的 `BOT_FEISHU_GROUP_IDS` 明确允许群聊 `chat_id`。可选 `BOT_OWNER_FEISHU_OPEN_ID` 只把主人飞书身份与 QQ 主人统一为 Memory 的 `owner`；当前 `/goal` 和审批控制面仍只接受主人 QQ 私聊。`BOT_FEISHU_GATEWAY_URL` 默认是 `http://127.0.0.1:37927`，必须保持 loopback。
+飞书默认关闭。启用时配置 `BOT_FEISHU_ENABLED=true`、`BOT_FEISHU_APP_ID`、`BOT_FEISHU_APP_SECRET`，并用逗号分隔的 `BOT_FEISHU_GROUP_IDS` 明确允许群聊 `chat_id`。可选 `BOT_OWNER_FEISHU_OPEN_ID` 只把主人飞书身份与 QQ 主人统一为 Memory 的 `owner`。`BOT_FEISHU_GATEWAY_URL` 默认是 `http://127.0.0.1:37927`，必须保持 loopback。
 
 飞书应用需在开放平台启用机器人能力、长连接事件订阅和消息/资源所需权限。Gateway 用官方 SDK 的 WebSocket 接收事件，图片和文件下载后进入现有 `media` / `media_blobs`，单文件上限 20MB。收到的 `receive_v1` 若 `update_time > create_time` 会保存为 edit；首次真实切换还需验证用户后续编辑是否由飞书再次投递。当前不导入旧飞书历史，也不在重启后补拉停机窗口；不要把 Feishu Gateway 的 ready 状态理解成历史已对账。
 
@@ -164,24 +164,6 @@ BOT_SCHEDULE_STATE_PATH=data/agent-workspace/runtime/schedules.json
 Agent Core 启动时完整读取和校验 v2 store，再为每个一次性 `at` / `afterSeconds` job 挂 timer；schedule tool 直接调用同进程 `ScheduleRuntime`。停机期间已经到期的 job 在恢复后触发它唯一的 occurrence，不做周期合并。未知 version、损坏 JSON 或非法 job 会让 Agent Core 启动显式失败；从含 recurring job 的 v1 store 切换时应在平台停止后由 operator 清理旧 schedule 状态。Timer、处理或 event delivery 异常由 `SCHEDULE` logger 记录 `scheduleId` 和原始错误。
 
 同目录还维护 `${BOT_SCHEDULE_STATE_PATH}.occurrences` 和 `${BOT_SCHEDULE_STATE_PATH}.deliveries`。到期流程先持久化 occurrence 和 pending delivery，再删除 active job 并直接 enqueue `scheduled_wake`；该事件写入 canonical ledger 后才删除 pending delivery。启动时会跳过仍 active 的 pending 项、重放尚未提交的 delivery，并根据 canonical ledger 清理已经提交的项，因此不需要独立 Scheduler、Agent Events HTTP 端点或内部调度 URL。graceful shutdown 会等待串行 mutation 并清除 timer handle，但不删除尚未完成的持久 job 或 pending delivery。不要在运行期间手工编辑这三个文件。
-
-## Owner Goal
-
-配置的 owner 与 bot 的 QQ 私聊是最高优先级 Goal 控制面。Agent 也可以通过 `goal action=create_self` 创建自己的持久 Goal，但不能改写或放弃 owner Goal；新的 owner Goal 会直接抢占当前 self Goal。owner 命令必须从消息开头精确使用 `/goal`：
-
-```text
-/goal
-/goal 完成目标描述
-/goal --tokens 50000 完成目标描述
-/goal pause
-/goal resume
-/goal resume --tokens 80000
-/goal clear
-```
-
-不带参数用于查询。新的 owner Goal 不会覆盖仍未完成的 owner Goal，必须先完成或 `clear`；但会抢占 self Goal。达到 token budget 后状态变为 `budget_limited`；恢复时的新预算必须大于已经使用的 token。`clear` 是取消而非物理删除，便于 revision 和迟到调用保持单调、可判旧。Goal 跨重启继续，missed owner 私聊命令会在普通 mailbox replay 前按 message row 顺序补应用。
-
-self Goal 默认 1,000,000 tokens，允许自行指定到 10,000,000；滚动 24 小时最多 64 个、相邻创建至少 60 秒。两项限制只用于阻止失控循环，不是日常行为准入。创建 self Goal 必须同时写入包含具体动作、选择理由和预期证据的 `currentCommitment`；完成当前步骤或证据使路线失效时用 `replan` 更新。Agent 用 `abandon_self` 放弃自己的 Goal 时必须保留理由；该动作不能作用于 owner Goal。
 
 ## 薄审计模式
 
@@ -198,7 +180,7 @@ BOT_TOOL_AUDIT_DB_ENABLED=false
 - 仓库对外展示的机器可读时间统一为北京时间 `YYYY-MM-DDTHH:mm:ss.SSS+08:00`；PostgreSQL `timestamptz` 仍保存绝对时刻。
 - 启动时当前 system prompt 会写入 `logs/system-prompt.txt`，便于检查。
 - 启动恢复会先连接 NapCat，并等待 QQ 首次群历史 backfill 的所有来源尝试完成，再执行已有数据库事实的 missed-message replay；单群补拉失败记录 source-level error，其余来源和 replay 继续。飞书当前只从 WebSocket ready 后接收新事件，不做历史导入或重启补拉。
-- `SIGINT` / `SIGTERM` 会触发幂等 graceful shutdown：停止 ingress、中止未提交 compaction、等待当前 round、drain backfill/飞书会话队列、停止 jobs、同步最终 Goal/runtime 状态，最后断开数据库。关闭 NapCat WebSocket 时会先禁用 SDK 自动重连，避免退出流程被重新建立的连接拖住；单阶段超时或失败会记录 `shutdown_phase_failed`，并继续后续清理。
+- `SIGINT` / `SIGTERM` 会触发幂等 graceful shutdown：停止 ingress、中止未提交 compaction、等待当前 round、drain backfill/飞书会话队列、停止 jobs、同步最终 runtime 状态，最后断开数据库。关闭 NapCat WebSocket 时会先禁用 SDK 自动重连，避免退出流程被重新建立的连接拖住；单阶段超时或失败会记录 `shutdown_phase_failed`，并继续后续清理。
 
 ## 数据保留
 

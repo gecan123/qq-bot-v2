@@ -140,7 +140,6 @@ export function fingerprintCanonicalAgentState(canonical: CanonicalAgentState): 
       mailboxCursors: canonical.runtimeState.mailboxCursors,
       inboxReadCursors: canonical.runtimeState.inboxReadCursors,
       mailboxContinuity: canonical.runtimeState.mailboxContinuity,
-      goalRevision: canonical.runtimeState.goalRevision,
       conversationFocus: canonical.runtimeState.conversationFocus,
       lastWakeAt: canonical.runtimeState.lastWakeAt?.toISOString() ?? null,
       ledgerHeadEntryId: canonical.runtimeState.ledgerHeadEntryId?.toString() ?? null,
@@ -194,7 +193,6 @@ function parseCheckpointProjection(
     snapshot,
     mailboxCursors: runtimeState.mailboxCursors,
     mailboxContinuity: runtimeState.mailboxContinuity,
-    goalRevision: runtimeState.goalRevision,
   })
   if (!validation.ok) return null
   return {

@@ -19,7 +19,6 @@ export interface LlmCallObservationContext {
   operation: AgentTokenOperation
   actor: string
   roundIndex?: number
-  goalId?: string
   taskId?: string
   attempt?: number
 }
@@ -51,7 +50,6 @@ export async function observeLlmCall(input: {
       operation: input.context.operation,
       actor: input.context.actor,
       ...(input.context.roundIndex != null ? { roundIndex: input.context.roundIndex } : {}),
-      ...(input.context.goalId ? { goalId: input.context.goalId } : {}),
       ...(input.context.taskId ? { taskId: input.context.taskId } : {}),
       ...(input.context.attempt != null ? { attempt: input.context.attempt } : {}),
       provider: providerEvidence?.provider ?? input.llm.provider,
@@ -79,7 +77,6 @@ export async function observeLlmCall(input: {
       operation: input.context.operation,
       actor: input.context.actor,
       ...(input.context.roundIndex != null ? { roundIndex: input.context.roundIndex } : {}),
-      ...(input.context.goalId ? { goalId: input.context.goalId } : {}),
       ...(input.context.taskId ? { taskId: input.context.taskId } : {}),
       ...(input.context.attempt != null ? { attempt: input.context.attempt } : {}),
       provider: providerEvidence?.provider ?? input.llm.provider,

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add bounded memory listing and permanent deletion, teach Luna to consolidate memory autonomously, then remove the superseded `memory/self` files.
+**Objective:** Add bounded memory listing and permanent deletion, teach Luna to consolidate memory autonomously, then remove the superseded `memory/self` files.
 
 **Architecture:** Keep filesystem invariants in `memory-store.ts`: listing returns metadata only, while deletion reuses the existing safe path resolver and reports per-file outcomes. `memory.ts` exposes typed `list` and `delete` actions; prompt text gives one resident hint and keeps the detailed workflow in `memory_hygiene`.
 

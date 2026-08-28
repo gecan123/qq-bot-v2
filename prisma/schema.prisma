@@ -90,7 +90,6 @@ model BotAgentRuntimeState {
   mailboxCursors         Json      @map("mailbox_cursors")
   inboxReadCursors       Json      @map("inbox_read_cursors")
   mailboxContinuity      Json      @map("mailbox_continuity")
-  goalRevision           Int       @map("goal_revision")
   conversationFocus      Json?     @map("conversation_focus")
   lastWakeAt             DateTime? @map("last_wake_at") @db.Timestamptz(6)
   ledgerHeadEntryId      BigInt?   @map("ledger_head_entry_id")
@@ -110,38 +109,6 @@ model BotAgentCheckpoint {
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("bot_agent_checkpoint")
-}
-
-/// 主 Agent 的单一持久目标控制状态。id 永远为 1；goalId 用来隔离目标替换后的迟到调用。
-/// 该表只控制 runtime 调度，LLM 可见事实仍必须 append 到 BotAgentLedgerEntry。
-model BotAgentGoal {
-  id                      Int      @id @default(1)
-  goalId                  String   @unique @map("goal_id") @db.Uuid
-  objective               String   @db.Text
-  origin                  String   @default("owner") @db.VarChar(16)
-  motivation              String?  @db.Text
-  completionCriteria      Json?    @map("completion_criteria")
-  currentCommitment       Json?    @map("current_commitment")
-  status                  String   @db.VarChar(32)
-  tokenBudget             Int?     @map("token_budget")
-  tokensUsed              Int      @default(0) @map("tokens_used")
-  timeUsedSeconds         Int      @default(0) @map("time_used_seconds")
-  roundsUsed              Int      @default(0) @map("rounds_used")
-  revision                Int      @default(1)
-  sourceMessageRowId      Int?     @map("source_message_row_id")
-  lastControlMessageRowId Int?     @map("last_control_message_row_id")
-  blockerKey              String?  @map("blocker_key") @db.VarChar(120)
-  blockerTurns            Int      @default(0) @map("blocker_turns")
-  lastBlockerRound        Int?     @map("last_blocker_round")
-  blockedReason           String?  @map("blocked_reason") @db.Text
-  completionEvidence      Json?    @map("completion_evidence")
-  selfGoalWindowStartedAt DateTime? @map("self_goal_window_started_at") @db.Timestamptz(3)
-  selfGoalWindowCount     Int      @default(0) @map("self_goal_window_count")
-  lastSelfGoalCreatedAt   DateTime? @map("last_self_goal_created_at") @db.Timestamptz(3)
-  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt               DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
-
-  @@map("bot_agent_goal")
 }
 
 /// Luna 的表情包收藏池。collect_sticker 工具写入, compaction 后注入摘要进 context。
@@ -194,7 +161,6 @@ model AgentTokenUsage {
   durationMs   Int?     @map("duration_ms")
   stopReason   String?  @map("stop_reason") @db.VarChar(64)
   errorKind    String?  @map("error_kind") @db.VarChar(191)
-  goalId       String?  @map("goal_id") @db.VarChar(191)
   taskId       String?  @map("task_id") @db.VarChar(191)
   attempt      Int?
   model        String   @db.VarChar(191)

@@ -2,21 +2,21 @@
 
 ## 背景
 
-`qq-bot-v2` 当前以 bot/backend 为主，没有在役的管理 WebUI。仓库已经具备可支撑管理台的主要事实源和只读分析能力：QQ `messages` / `media` 事实账本、append-only `bot_agent_ledger_entries`、runtime/checkpoint/Goal 控制状态、`agent_tool_calls`、`agent_token_usage`，以及 `agent:context`、`agent:metrics` 等运维报告。
+`qq-bot-v2` 当前以 bot/backend 为主，没有在役的管理 WebUI。仓库已经具备可支撑管理台的主要事实源和只读分析能力：QQ `messages` / `media` 事实账本、append-only `bot_agent_ledger_entries`、runtime/checkpoint 控制状态、`agent_tool_calls`、`agent_token_usage`，以及 `agent:context`、`agent:metrics` 等运维报告。
 
 本轮希望借鉴 Kagami WebAdmin 的观察面和交互模式，同时把新管理台作为较新前端技术栈的受控试验田。试验必须隔离在 WebAdmin 边界内，不能改变主 Agent 的 canonical history、replay、compaction 或副作用契约。
 
 ## 目标
 
 - 为内部运维提供数据密集、可深链接、移动端可用的管理界面。
-- 优先呈现主 Agent 上下文、ledger、工具/Token 指标、QQ 消息与媒体、Goal 和调度状态。
+- 优先呈现主 Agent 上下文、ledger、工具/Token 指标、QQ 消息与媒体和调度状态。
 - 采用较新的全栈 React 技术，验证类型安全路由、URL 状态和 server function 工作流。
 - 保持 WebAdmin 可独立演进、升级或移除，不把框架依赖扩散进 bot/runtime。
 
 ## 非目标
 
 - 第一阶段不提供 `compact`、wake、发送 QQ 消息、触发调度或直接修改长期状态等写操作。
-- 不从 WebAdmin 更新或删除 ledger entry、runtime state、checkpoint 或 Goal 表。
+- 不从 WebAdmin 更新或删除 ledger entry、runtime state 或 checkpoint。
 - 不把日志、checkpoint、side-data 或管理台缓存提升为新的 replay/事实来源。
 - 不复活旧 Admin Web 的 per-scene runtime、reading session、opportunity 等已退役模型。
 - 不为管理台引入 Kagami 的多卫星服务、DuckDB metric 或独立 OSS 拓扑。
@@ -93,7 +93,7 @@ TanStack Start WebAdmin
 ### 1. 总览
 
 - bot/runtime 最近活动时间和可用性。
-- 当前 Goal、QQ focus、最近 wake。
+- QQ focus、最近 wake。
 - token/cache、工具调用与失败摘要。
 - 最新 compaction、checkpoint 状态和告警。
 
@@ -126,7 +126,6 @@ TanStack Start WebAdmin
 
 ### 5. Runtime 状态
 
-- Goal 状态、预算、进度、blocker 和 revision。
 - schedules、mailbox cursors/continuity、active capabilities、QQ focus。
 - 后台 task 概览和最近错误（仅展示已有稳定观测数据）。
 

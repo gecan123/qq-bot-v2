@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Persist the Claude Code harness comparison table and add minimal runtime support for s05 TodoWrite and s07 Skill Loading.
+**Objective:** Persist the Claude Code harness comparison table and add minimal runtime support for s05 TodoWrite and s07 Skill Loading.
 
 **Architecture:** Keep `BotLoopAgent`, `AgentContext`, replay, and compaction unchanged. Add two small registered tools: an in-memory `todo` tool for current-process planning and a bounded file-backed `skill` tool for loading curated docs from `docs/agent-skills/`.
 

@@ -77,7 +77,6 @@ describe('agent observability db SQL', () => {
       null,
       null,
       null,
-      null,
       'gpt-5',
       100,
       80,

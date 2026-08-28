@@ -51,7 +51,6 @@ export interface AgentRuntimeState {
   mailboxCursors: MailboxCursors
   inboxReadCursors: InboxReadCursors
   mailboxContinuity: MailboxContinuityState
-  goalRevision: number
   conversationFocus: ConversationFocus
   lastWakeAt: Date | null
   ledgerHeadEntryId: bigint | null

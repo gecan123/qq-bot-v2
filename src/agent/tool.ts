@@ -21,8 +21,6 @@ export interface ToolContext {
   eventQueue: EventQueue<BotEvent>
   /** 当前 round 的元信息,用于工具内日志。 */
   roundIndex: number
-  /** active Goal 内单调递增的 round；只在主循环执行 Goal 时存在，并跨重启恢复。 */
-  goalRoundIndex?: number
 }
 
 export interface Tool<TArgs = unknown> {

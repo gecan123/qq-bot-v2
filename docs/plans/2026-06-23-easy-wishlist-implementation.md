@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add the easiest Luna wishlist items: configurable image quality, batched image generation with up to five input images, journal recall, and sticker pool browsing/search.
+**Objective:** Add the easiest Luna wishlist items: configurable image quality, batched image generation with up to five input images, journal recall, and sticker pool browsing/search.
 
 **Architecture:** Keep changes at the bot/backend tool layer. Preserve the single persistent `AgentContext`; large or mutable content stays behind tool calls, `OutboundCache`, Prisma rows, and bounded tool results. Extend existing tools instead of adding new user-facing tool names unless a test shows the current shape becomes unmaintainable.
 

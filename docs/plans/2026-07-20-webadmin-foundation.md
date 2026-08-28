@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 建立基于 TanStack Start 的只读 WebAdmin 第一条完整纵向切片：workspace、应用壳、server-only Postgres 查询、类型安全 Overview DTO、轮询总览页和验证门禁。
+**Objective:** 建立基于 TanStack Start 的只读 WebAdmin 第一条完整纵向切片：workspace、应用壳、server-only Postgres 查询、类型安全 Overview DTO、轮询总览页和验证门禁。
 
-**Architecture:** `apps/admin-web` 是独立 TanStack Start Node 应用。浏览器只调用同源 Server Function；Server Function 通过 server-only Prisma client 调用可注入的只读 query service，返回经 Zod 校验、BigInt/Date 已序列化且不包含秘密的 DTO。第一条纵向切片只展示 ledger/runtime/Goal/token/tool-call 汇总，不执行任何写操作。
+**Architecture:** `apps/admin-web` 是独立 TanStack Start Node 应用。浏览器只调用同源 Server Function；Server Function 通过 server-only Prisma client 调用可注入的只读 query service，返回经 Zod 校验、BigInt/Date 已序列化且不包含秘密的 DTO。第一条纵向切片只展示 ledger/runtime/token/tool-call 汇总，不执行任何写操作。
 
 **Tech Stack:** TanStack Start 1.168.32、React 19.2.7、TanStack Router 1.170.18、TanStack Query 5.101.2、Vite 8.1.5、Tailwind CSS 4.3.3、Zod 4.4.3、Vitest 4.1.10、Testing Library 16.3.2、Prisma 7.4.0。
 
@@ -84,7 +84,7 @@ packages:
 - 修改前先读仓库根 `AGENTS.md`、`docs/ARCHITECTURE.md`、`docs/AGENT_CONTEXT.md` 和对应设计/实施计划。
 - 浏览器代码不得导入 Prisma、Node API、环境变量、bot runtime 或 server-only 模块。
 - 数据库和文件访问只允许出现在显式 `*.server.ts` 模块；server-only 模块首行导入 `@tanstack/react-start/server-only`。
-- 第一阶段所有管理接口只读。禁止直接更新 ledger、runtime state、checkpoint、Goal、消息、媒体或 workspace side-data。
+- 第一阶段所有管理接口只读。禁止直接更新 ledger、runtime state、checkpoint、消息、媒体或 workspace side-data。
 - 所有跨 server/client 数据必须经过 Zod DTO；BigInt 转十进制字符串，Date 转 ISO 8601。
 - 默认绑定 `127.0.0.1`。没有另行设计鉴权前，不得暴露到非可信网络。
 - 新行为测试先行；至少运行本 app 的 test、typecheck、build，再运行根 `pnpm repo-check`。
@@ -435,15 +435,6 @@ export const overviewSnapshotSchema = z.object({
     lastWakeAt: z.iso.datetime({ offset: true }).nullable(),
     focus: focusSchema.nullable(),
   }).strict(),
-  goal: z.object({
-    goalId: z.string().uuid(),
-    objective: z.string(),
-    status: z.string(),
-    tokensUsed: z.number().int().nonnegative(),
-    tokenBudget: z.number().int().positive().nullable(),
-    revision: z.number().int().positive(),
-    updatedAt: z.iso.datetime({ offset: true }),
-  }).strict().nullable(),
   latestAgentUsage: z.object({
     ts: z.iso.datetime({ offset: true }),
     model: z.string(),
@@ -468,7 +459,7 @@ export type OverviewSnapshot = z.infer<typeof overviewSnapshotSchema>
 
 - ledger count 12、head `42n`、latest type `compaction`
 - runtime focus `{ type: 'group', groupId: 123 }`
-- active Goal 和最新 `agent.chat` usage
+- 最新 `agent.chat` usage
 - tool call 24h 总数 9、失败数 2
 
 断言：
@@ -508,17 +499,6 @@ export interface OverviewDb {
       updatedAt: Date
     } | null>
   }
-  botAgentGoal: {
-    findUnique(input: object): Promise<{
-      goalId: string
-      objective: string
-      status: string
-      tokensUsed: number
-      tokenBudget: number | null
-      revision: number
-      updatedAt: Date
-    } | null>
-  }
   agentTokenUsage: {
     findFirst(input: object): Promise<{
       ts: Date
@@ -541,7 +521,7 @@ export async function loadOverviewSnapshot(
   now: Date = new Date(),
 ): Promise<OverviewSnapshot> {
   const since = new Date(now.getTime() - 24 * 60 * 60 * 1000)
-  const [entryCount, head, runtime, goal, usage, calls, failed] = await Promise.all([
+  const [entryCount, head, runtime, usage, calls, failed] = await Promise.all([
     db.botAgentLedgerEntry.count(),
     db.botAgentLedgerEntry.findFirst({
       orderBy: { id: 'desc' },
@@ -550,13 +530,6 @@ export async function loadOverviewSnapshot(
     db.botAgentRuntimeState.findUnique({
       where: { id: 1 },
       select: { qqConversationFocus: true, lastWakeAt: true, updatedAt: true },
-    }),
-    db.botAgentGoal.findUnique({
-      where: { id: 1 },
-      select: {
-        goalId: true, objective: true, status: true, tokensUsed: true,
-        tokenBudget: true, revision: true, updatedAt: true,
-      },
     }),
     db.agentTokenUsage.findFirst({
       where: { operation: 'agent.chat' },
@@ -588,7 +561,6 @@ export async function loadOverviewSnapshot(
       lastWakeAt: runtime?.lastWakeAt?.toISOString() ?? null,
       focus,
     },
-    goal: goal === null ? null : { ...goal, updatedAt: goal.updatedAt.toISOString() },
     latestAgentUsage: usage === null ? null : {
       ...usage,
       ts: usage.ts.toISOString(),
@@ -756,11 +728,10 @@ git commit -m "feat: 建立管理台只读服务端边界"
 - `Ledger entries` 与 `12`
 - `Head #42`
 - `群 123`
-- Goal objective 和 status
 - `75.0%` cache hit rate
 - `2 / 9` 工具失败
 
-再渲染 `runtime.available=false`、Goal/usage 为空的 fixture，断言显示明确的 `Runtime 状态缺失` 和 `暂无活跃 Goal`，不抛异常。
+再渲染 `runtime.available=false`、usage 为空的 fixture，断言显示明确的 `Runtime 状态缺失`，不抛异常。
 
 **Step 2: 运行测试确认失败**
 
@@ -804,7 +775,7 @@ type OverviewViewProps = {
 
 ```text
 Header: QQ Bot WebAdmin | 只读模式 | 更新于 ... | 刷新中/刷新失败
-Cards: Ledger entries | Ledger head | Runtime/focus | Goal
+Cards: Ledger entries | Ledger head | Runtime/focus
 Cards: Latest agent token | Cache hit | Tools 24h | Tool failures
 Warnings: 有内容时显示中性告警条
 ```

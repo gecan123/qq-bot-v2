@@ -40,7 +40,6 @@ function runtimeState(head: bigint | null): AgentRuntimeState {
     mailboxCursors: {},
     inboxReadCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
-    goalRevision: 0,
     conversationFocus: null,
     lastWakeAt: null,
     ledgerHeadEntryId: head,

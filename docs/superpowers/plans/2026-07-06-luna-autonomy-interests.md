@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Give Luna stable browsing interests and concrete life-recording choices so idle time more often becomes self-directed activity instead of immediate rest.
+**Objective:** Give Luna stable browsing interests and concrete life-recording choices so idle time more often becomes self-directed activity instead of immediate rest.
 
 **Architecture:** Make one scoped prompt-only change in `prompts/bot-system.md`. Reuse the existing `browser`, `workspace_bash`, `journal`, `memory`, `toolbox`, media, finance, sticker, and repo-read paths without changing their schemas or runtime behavior.
 

@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 把多 section 提示词迁移为“一文件一加载单元”的目录结构，并把模糊的 `special_cases` 拆成明确的 `roleplay` 与 `nsfw` 主题。
+**Objective:** 把多 section 提示词迁移为“一文件一加载单元”的目录结构，并把模糊的 `special_cases` 拆成明确的 `roleplay` 与 `nsfw` 主题。
 
 **Architecture:** `prompts/system/` 保存三个常驻 system prompt 组成单元，`prompts/chat-style/` 保存按需聊天规则卡片。读取方统一使用现有 `loadPrompt()` 读取完整文件；不增加旧路径或旧 section 兼容层，不改变 ledger、replay、compaction、runtime state 或工具结果格式。
 
@@ -421,7 +421,7 @@ Expected: 两个命令退出码均为 0。
 pnpm typecheck
 ```
 
-Expected target: PASS。若仍只出现仓库已知的 generated Prisma `currentCommitment` baseline 错误，记录完整错误并确认本次 diff 没有触及 schema/generated client；不得把 baseline failure 误报成本次验证通过，也不得顺手扩展范围修复。
+Expected target: PASS。若仍出现仓库已知的 generated Prisma baseline 错误，记录完整错误并确认本次 diff 没有触及 schema/generated client；不得把 baseline failure 误报成本次验证通过，也不得顺手扩展范围修复。
 
 **Step 4: Review replay and scope boundaries**
 

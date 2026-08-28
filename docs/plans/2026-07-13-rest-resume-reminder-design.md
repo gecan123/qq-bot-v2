@@ -9,15 +9,15 @@
 - 不在每轮注入 reminder。
 - 不增加新的原生 `system` message role。
 - 不禁止 Luna 主动休息。
-- 不修改 Goal、Agenda、每日 token 预算或自动冷却策略。
+- 不修改 Agenda、每日 token 预算或自动冷却策略。
 - 不把模型生成的 `preferredDirection` 或任何外部内容复制进高显著性的 reminder。
 
 ## 行为
 
 1. `pause` / `rest` 正常等待结束并 append 原有 tool result。
 2. 只有 `status=elapsed` 的自然醒来才有资格产生 reminder；被私聊、@、后台任务或停止信号打断时不产生。
-3. Runtime 在 compaction 和 Goal continuation 处理完成后，把一条固定模板的 `<system-reminder>` 作为 user-role message append 到 `AgentContext` 并立即保存 snapshot。
-4. Reminder 只引用本轮最近 `pause` tool result 中的 `resumePlan`，不复制里面的模型生成文本；compaction 或 Goal continuation 可以位于 tool result 与 reminder 之间。
+3. Runtime 在 compaction 处理完成后，把一条固定模板的 `<system-reminder>` 作为 user-role message append 到 `AgentContext` 并立即保存 snapshot。
+4. Reminder 只引用本轮最近 `pause` tool result 中的 `resumePlan`，不复制里面的模型生成文本；compaction 可以位于 tool result 与 reminder 之间。
 5. 同一段尚未发生非 `pause` 工具调用的空闲周期只提醒一次。
 6. 即使已经发生实际动作，两次 reminder 之间也至少间隔 10 分钟。
 7. 去重和频率判断从 durable ledger 中的 reminder marker 与后续 assistant tool calls 确定性计算，不依赖进程内计数器或可变 side table。
@@ -40,7 +40,7 @@
 - Reminder append 后属于 `AgentContext` ledger；snapshot/replay 不从日志或 Life Agenda 重建。
 - Compaction 只携带无 instruction 的固定 `rest_resume_state`，不重新发出 reminder；该状态仍在 durable ledger 内，并与摘要一起持久化。
 - tool call/result 先完整闭合，再 append reminder，不切开 Anthropic tool 原子组。
-- Runtime 在 compaction 前从完整 ledger 判定本轮资格，实际 append 放在 compaction 和 Goal continuation 之后，保证 reminder 是下一轮可见的最新自主控制信息；后续高优先事件仍可正常排在它后面并抢占注意力。
+- Runtime 在 compaction 前从完整 ledger 判定本轮资格，实际 append 放在 compaction 之后，保证 reminder 是下一轮可见的最新自主控制信息；后续高优先事件仍可正常排在它后面并抢占注意力。
 
 ## 验证
 

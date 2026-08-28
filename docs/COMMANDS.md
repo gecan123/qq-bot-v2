@@ -175,9 +175,9 @@ pnpm db:query -- '{"sql":"SELECT row_id, search_text FROM messages WHERE convers
 
 | 想达到的效果 | 命令 | 删除内容 | 保留内容 |
 | --- | --- | --- | --- |
-| 忘掉旧 LLM 对话和工具调用 | `pnpm agent:reset:context` | canonical Ledger、checkpoint、runtime state、Goal | Memory、Notebook、消息、媒体、表情池、日志 |
+| 忘掉旧 LLM 对话和工具调用 | `pnpm agent:reset:context` | canonical Ledger、checkpoint、runtime state | Memory、Notebook、消息、媒体、表情池、日志 |
 | 只清空长期知识 | `pnpm agent:reset:knowledge` | Memory 与 Notebook 目录 | LLM context、消息、媒体、表情池、日志 |
-| 清空 Agent context 和 workspace | `pnpm agent:reset:all` | context、Goal、长期知识、草稿、缓存和 runtime 文件 | 消息、媒体、表情池、运维日志 |
+| 清空 Agent context 和 workspace | `pnpm agent:reset:all` | context、长期知识、草稿、缓存和 runtime 文件 | 消息、媒体、表情池、运维日志 |
 | 使用底层通用入口 | `pnpm agent:reset-state -- --scope context|knowledge|all` | 由显式 scope 决定 | 由显式 scope 决定 |
 
 可直接执行：
@@ -188,7 +188,7 @@ pnpm agent:reset:knowledge
 pnpm agent:reset:all
 ```
 
-`context` 会重建 runtime singleton，并保留 mailbox 披露 cursor、inbox 已读 cursor 和 `lastWakeAt` 投递边界，避免保留下来的旧 `messages` 在冷启动后重新变成待回复消息。旧 LLM history、Goal、conversation focus 和 mailbox continuity 仍会清空；下一次冷启动不会把数据库中的既有消息重新拼成旧 prompt history。三个 scope 都不会删除入站 `messages`、`media`、表情池或运维日志；重置完成后也不会自动启动 Bot。
+`context` 会重建 runtime singleton，并保留 mailbox 披露 cursor、inbox 已读 cursor 和 `lastWakeAt` 投递边界，避免保留下来的旧 `messages` 在冷启动后重新变成待回复消息。旧 LLM history、conversation focus 和 mailbox continuity 仍会清空；下一次冷启动不会把数据库中的既有消息重新拼成旧 prompt history。三个 scope 都不会删除入站 `messages`、`media`、表情池或运维日志；重置完成后也不会自动启动 Bot。
 
 ## 命令清单完整性
 

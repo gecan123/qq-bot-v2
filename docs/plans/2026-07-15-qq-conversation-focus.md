@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Replace the always-on explicit-target `send_message` contract with a deferred `qq` capability whose durable current conversation supplies the send target and whose optional `reply_to` selects reply mode.
+**Objective:** Replace the always-on explicit-target `send_message` contract with a deferred `qq` capability whose durable current conversation supplies the send target and whose optional `reply_to` selects reply mode.
 
 **Architecture:** Reuse the existing stable `help` / `invoke` shell. Persist a `qqConversationFocus` control field in `AgentContext`, expose a `qq_conversation` subtool to manage it, and move `send_message` into the `qq` capability. Keep the existing sender, authorization, media, music, mute diagnostics, audit, and mailbox-handled paths; only target selection and model-facing arguments change.
 

@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Remove the unused generic `delegate` LLM worker, its scheduler lane, policy, tests, and documentation without changing the main Agent ledger or specialized background workers.
+**Objective:** Remove the unused generic `delegate` LLM worker, its scheduler lane, policy, tests, and documentation without changing the main Agent ledger or specialized background workers.
 
 **Architecture:** The main `BotLoopAgent` remains the only general LLM loop. Existing typed background workers and `background_task` remain intact; only the generic clean-context delegate is removed. Historical ledger entries remain immutable and replayable because replay validates tool-call/result structure rather than requiring every historical tool to remain registered.
 
@@ -26,7 +26,6 @@ assert.deepEqual(runtime.tools.list().map((tool) => tool.name), [
   'qq_directory',
   'background_task',
   'approval',
-  'goal',
   'todo',
   'skill',
   'memory',
@@ -85,7 +84,6 @@ const tools: Tool[] = [
   qqDirectory,
   backgroundTask,
   ...(deps.approvalManager ? [createApprovalTool(deps.approvalManager)] : []),
-  ...(deps.goalStore ? [createGoalTool(deps.goalStore)] : []),
   todoTool,
   skillTool,
   // existing tools continue unchanged
@@ -142,23 +140,12 @@ git add src/agent/runtime.test.ts src/agent/task-scheduler.test.ts \
 git commit -m "refactor: 移除通用 delegate 能力"
 ```
 
-### Task 3: Remove runtime guidance and stale local-context commentary
+### Task 3: Remove stale local-context commentary
 
 **Files:**
-- Modify: `src/agent/goal-render.ts:20-25`
 - Modify: `src/agent/agent-context.ts:22-30`
 
-**Step 1: Update Goal scheduling guidance**
-
-Replace the background guidance with:
-
-```ts
-background: '可使用现有 background_task 并发独立工作；不要创建第二个主循环。',
-```
-
-This preserves the existing single-loop contract without advertising a removed tool.
-
-**Step 2: Generalize the AgentContext comment**
+**Step 1: Generalize the AgentContext comment**
 
 Replace the delegate-specific comment with:
 
@@ -168,23 +155,22 @@ Replace the delegate-specific comment with:
 
 Keep every `AgentContext` method unchanged.
 
-**Step 3: Run relevant tests**
+**Step 2: Run relevant tests**
 
 Run:
 
 ```bash
 pnpm exec tsx --test --import ./scripts/test-env.mjs --import tsx \
-  src/agent/goal-runtime.test.ts \
   src/agent/agent-context.test.ts \
   src/agent/bot-system-prompt.test.ts
 ```
 
 Expected: PASS.
 
-**Step 4: Commit the runtime wording cleanup**
+**Step 3: Commit the runtime wording cleanup**
 
 ```bash
-git add src/agent/goal-render.ts src/agent/agent-context.ts
+git add src/agent/agent-context.ts
 git commit -m "refactor: 清理 delegate 运行时引导"
 ```
 
@@ -208,7 +194,7 @@ git commit -m "refactor: 清理 delegate 运行时引导"
 **Step 2: Update the technical-debt inventory**
 
 - Remove the delegate P0 section. If the P0 section would otherwise be empty, state that there are currently no known P0 correctness defects.
-- Remove delegate-specific usage attribution and cache-key wording. Keep the broader gap that auxiliary LLM calls lack unified `actor/operation/taskId/goalId` accounting and stable prompt-family separation.
+- Remove delegate-specific usage attribution and cache-key wording. Keep the broader gap that auxiliary LLM calls lack unified `actor/operation/taskId` accounting and stable prompt-family separation.
 - Remove “fix delegate” from the recommended repayment order and renumber the remaining items.
 
 Do not resolve the separate Memory retention decision in this commit; it belongs to the later P1 design.

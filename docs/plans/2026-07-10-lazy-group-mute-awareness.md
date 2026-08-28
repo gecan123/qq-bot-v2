@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 让 Luna 仅在群消息发送失败后按需确认自身是否被禁言，并通过稳定的 `send_message` tool result 感知该事实。
+**Objective:** 让 Luna 仅在群消息发送失败后按需确认自身是否被禁言，并通过稳定的 `send_message` tool result 感知该事实。
 
 **Architecture:** 新增一个可注入、无缓存的 `GroupMuteInspector`，封装 NapCat `get_group_shut_list` 并把当前 SDK 的 `qid` / `shutUpTime` 规范化为 `{ muted, mutedUntil? }`。`send_message` 仅在群发送失败时调用它；确认失败降级为普通 `send_failed`，成功发送和私聊发送不产生额外查询。
 

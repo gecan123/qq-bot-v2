@@ -25,7 +25,7 @@ function dependencies(events: string[]): AdminOperationsAdapterDependencies {
       return {
         scope: input.scope,
         ...(input.scope !== 'knowledge' ? {
-          context: { ledgerEntries: 7, checkpoints: 1, runtimeStates: 1, goals: 1 },
+          context: { ledgerEntries: 7, checkpoints: 1, runtimeStates: 1 },
         } : {}),
         ...(input.scope !== 'context' ? {
           knowledge: { directories: [
@@ -51,7 +51,6 @@ function dependencies(events: string[]): AdminOperationsAdapterDependencies {
         deletedLedgerEntries: 7,
         deletedCheckpoints: 1,
         deletedRuntimeStates: 1,
-        deletedGoals: 1,
         createdRuntimeState: true,
         removedDirectories: input.scope === 'context' ? [] : ['memory', 'notebook'],
         removedWorkspaceEntries: input.scope === 'all' ? 2 : 0,

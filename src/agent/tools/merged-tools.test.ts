@@ -8,7 +8,6 @@ import * as zod from 'zod'
 import { createInMemoryTaskRegistry } from '../background-task-registry.js'
 import { InMemoryEventQueue } from '../event-queue.js'
 import type { BotEvent } from '../event.js'
-import { createInMemoryGoalStore } from '../goal-store.js'
 import type { Tool, ToolContext } from '../tool.js'
 import type { MessageSender } from '../../messaging/message-sender.js'
 import { buildBotToolManifest, buildBotTools, type BotToolManifest } from './index.js'
@@ -21,7 +20,6 @@ import type { SendTargetPolicy } from '../send-target-policy.js'
 import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.js'
 import type { ScheduleRuntime } from '../schedule-runtime.js'
 import type { ConversationController } from './conversation.js'
-import type { GoalCompletionJudge } from '../goal-completion-judge.js'
 import type { LlmClient } from '../llm-client.js'
 
 function makeCtx(): ToolContext {
@@ -85,12 +83,6 @@ const mockScheduleRuntime: ScheduleRuntime = {
   async stop() {},
 }
 
-const acceptingGoalJudge: GoalCompletionJudge = {
-  async evaluate() {
-    return { ok: true, reason: '验收证据满足目标' }
-  },
-}
-
 const mockLlm: LlmClient = {
   async chat() {
     return {
@@ -118,28 +110,6 @@ function findManifestTool(manifest: BotToolManifest, name: string): Tool {
 }
 
 describe('merged main-agent tools', () => {
-  test('requires a completion judge whenever the Goal store is configured', () => {
-    assert.throws(() => buildBotToolManifest({
-      llm: mockLlm,
-      sender: mockSender,
-      targetPolicy,
-      conversations,
-      selfNumber: 999,
-      taskRegistry: createInMemoryTaskRegistry(),
-      scheduleRuntime: mockScheduleRuntime,
-      groupIds: [],
-      metadata: { groupNames: new Map() },
-      groupPolicies: [],
-      qqDirectory: {
-        groupIds: [],
-        async loadFriends() { return [] },
-        async loadGroups() { return [] },
-      },
-      optionalTools: disabledOptionalTools,
-      goalStore: createInMemoryGoalStore(),
-    }), /goalCompletionJudge/)
-  })
-
   test('defers low-frequency state tools while keeping continuity tools always-on', () => {
     const manifest = buildBotToolManifest({
       llm: mockLlm,
@@ -158,8 +128,6 @@ describe('merged main-agent tools', () => {
         async loadGroups() { return [] },
       },
       optionalTools: disabledOptionalTools,
-      goalStore: createInMemoryGoalStore(),
-      goalCompletionJudge: acceptingGoalJudge,
     })
 
     const alwaysOnNames = manifest.alwaysOnTools.map((tool) => tool.name)
@@ -175,7 +143,6 @@ describe('merged main-agent tools', () => {
     assert.deepEqual(capabilities.get('notebook_management'), ['notebook'])
     assert.deepEqual(capabilities.get('sticker_management'), ['collect_sticker'])
     assert.ok(alwaysOnNames.includes('memory'))
-    assert.ok(alwaysOnNames.includes('goal'))
     assert.ok(alwaysOnNames.includes('psychologist'))
   })
 
@@ -197,14 +164,11 @@ describe('merged main-agent tools', () => {
         async loadGroups() { return [] },
       },
       optionalTools: disabledOptionalTools,
-      goalStore: createInMemoryGoalStore(),
-      goalCompletionJudge: acceptingGoalJudge,
     }).map((tool) => tool.name)
 
     assert.ok(names.includes('background_task'))
     assert.ok(names.includes('qq_directory'))
     assert.ok(names.includes('memory'))
-    assert.ok(names.includes('goal'))
     assert.ok(names.includes('inbox'))
     assert.ok(names.includes('rest'))
     assert.ok(names.includes('skill'))
@@ -323,8 +287,6 @@ describe('merged main-agent tools', () => {
         tradingAgent: mockTradingAgentTool,
         website: mockWebsiteTool,
       },
-      goalStore: createInMemoryGoalStore(),
-      goalCompletionJudge: acceptingGoalJudge,
     })
     const capabilities = new Map(manifest.capabilities.map((capability) => [
       capability.name,
@@ -355,7 +317,6 @@ describe('merged main-agent tools', () => {
     assert.equal(alwaysOnNames.includes('collect_sticker'), false)
     assert.ok(alwaysOnNames.includes('memory'))
     assert.ok(alwaysOnNames.includes('rest'))
-    assert.ok(alwaysOnNames.includes('goal'))
     assert.ok(alwaysOnNames.includes('chat_style'))
     assert.ok(alwaysOnNames.includes('psychologist'))
     assert.equal(alwaysOnNames.includes('ai_tone'), false)

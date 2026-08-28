@@ -11,7 +11,6 @@ export type AgentTokenOperation =
   | 'agent.chat'
   | 'compaction'
   | 'memory.maintenance'
-  | 'goal.completion_judge'
   | 'agent.psychologist'
   | 'persona.self_test'
   | 'fetch_url.summary'
@@ -22,7 +21,6 @@ export interface TokenUsageEntry {
   operation: AgentTokenOperation
   actor?: string
   roundIndex?: number
-  goalId?: string
   taskId?: string
   attempt?: number
   provider?: string
@@ -57,7 +55,6 @@ export function recordTokenUsage(entry: TokenUsageEntry): void {
     operation: entry.operation,
     ...(entry.actor ? { actor: entry.actor } : {}),
     ...(entry.roundIndex != null ? { roundIndex: entry.roundIndex } : {}),
-    ...(entry.goalId ? { goalId: entry.goalId } : {}),
     ...(entry.taskId ? { taskId: entry.taskId } : {}),
     ...(entry.attempt != null ? { attempt: entry.attempt } : {}),
     ...(entry.provider ? { provider: entry.provider } : {}),

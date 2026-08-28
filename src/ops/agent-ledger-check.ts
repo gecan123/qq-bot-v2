@@ -43,7 +43,6 @@ export interface CanonicalAgentStatePrismaClient {
       mailboxCursors: unknown
       inboxReadCursors: unknown
       mailboxContinuity: unknown
-      goalRevision: number
       conversationFocus: unknown
       lastWakeAt: Date | null
       ledgerHeadEntryId: bigint | null
@@ -91,7 +90,6 @@ export async function loadCanonicalAgentState(
       mailboxCursors: runtime.mailboxCursors,
       inboxReadCursors: runtime.inboxReadCursors,
       mailboxContinuity: runtime.mailboxContinuity,
-      goalRevision: runtime.goalRevision,
       conversationFocus: runtime.conversationFocus,
       lastWakeAt: runtime.lastWakeAt,
       ledgerHeadEntryId: runtime.ledgerHeadEntryId,

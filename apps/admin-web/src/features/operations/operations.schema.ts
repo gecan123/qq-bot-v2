@@ -26,7 +26,6 @@ const resetContextSchema = z.object({
   ledgerEntries: z.number().int().nonnegative(),
   checkpoints: z.number().int().nonnegative(),
   runtimeStates: z.number().int().nonnegative(),
-  goals: z.number().int().nonnegative(),
 }).strict()
 
 const resetKnowledgeSchema = z.object({
@@ -61,7 +60,6 @@ export const operationResultPayloadSchema = z.object({
   deletedLedgerEntries: z.number().int().nonnegative(),
   deletedCheckpoints: z.number().int().nonnegative(),
   deletedRuntimeStates: z.number().int().nonnegative(),
-  deletedGoals: z.number().int().nonnegative(),
   createdRuntimeState: z.boolean(),
   removedDirectories: z.array(z.enum(['memory', 'notebook'])).max(2),
   removedWorkspaceEntries: z.number().int().nonnegative().default(0),

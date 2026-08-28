@@ -13,7 +13,6 @@ import { createDeferredToolExecutor, type ToolExecutor } from './tool.js'
 import {
   createGenerateImageTaskLogHook,
   createSendMessageSafetyGuard,
-  createSendMessageWorkCommitmentHook,
 } from './tool-policy-hooks.js'
 import { buildBotToolManifest, type BotOptionalTools } from './tools/index.js'
 import type { AgentContext } from './agent-context.js'
@@ -56,8 +55,6 @@ import {
 } from './schedule-occurrence-store.js'
 import { createPersistentScheduleDeliveryStore } from './schedule-delivery-store.js'
 import { createScheduleDeliveryCoordinator } from './schedule-delivery-coordinator.js'
-import type { GoalStore } from './goal-store.js'
-import { createGoalCompletionJudge } from './goal-completion-judge.js'
 import type { MemoryMaintenanceRuntime } from './memory-maintenance.js'
 import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
 import { createLogger } from '../logger.js'
@@ -116,8 +113,6 @@ export interface AgentRuntimeInput {
   initialInboxReadCursors?: Readonly<InboxReadCursors>
   initialMailboxContinuity?: MailboxContinuityState
   initialLastWakeAt?: Date | null
-  initialGoalRevision?: number
-  goalStore?: GoalStore
   taskScheduler?: TaskScheduler
   memoryMaintenance?: MemoryMaintenanceRuntime
   workspaceDir?: string
@@ -187,12 +182,6 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     eventQueue: scheduleDeliveryCoordinator?.eventQueue ?? input.eventQueue,
     logger: input.scheduleLogger ?? createScheduleRuntimeLogHandler(),
   })
-  const goalCompletionJudge = input.goalStore
-    ? createGoalCompletionJudge({
-        llm: input.llm,
-        getMessages: () => input.context.getSnapshot().messages,
-      })
-    : undefined
   const qqTargetPolicy = createSendTargetPolicy({
     groupIds,
     groupAmbientSendIds,
@@ -289,8 +278,6 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       taskRegistry,
       taskScheduler: input.taskScheduler,
       scheduleRuntime,
-      goalStore: input.goalStore,
-      goalCompletionJudge,
       memoryMaintenance: input.memoryMaintenance,
       workspaceDir: input.workspaceDir,
       workspaceStateCoordinator: input.workspaceStateCoordinator,
@@ -318,12 +305,7 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       persistToDb: input.toolAuditDbEnabled ?? false,
     },
     hooks: {
-      beforeTool: [
-        createSendMessageWorkCommitmentHook({
-          getCurrentGoal: async () => await input.goalStore?.get() ?? null,
-        }),
-        sendMessageSafetyGuard.beforeTool,
-      ],
+      beforeTool: [sendMessageSafetyGuard.beforeTool],
       afterTool: [sendMessageSafetyGuard.afterTool, createGenerateImageTaskLogHook()],
     },
   })
@@ -358,8 +340,6 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
     },
     initialMailboxContinuity: input.initialMailboxContinuity,
     initialLastWakeAt: input.initialLastWakeAt ?? null,
-    initialGoalRevision: input.initialGoalRevision ?? 0,
-    goalStore: input.goalStore,
     renderEvent: renderBotEvent,
     eventDebounceMs: input.eventDebounceMs,
     groupParticipations,

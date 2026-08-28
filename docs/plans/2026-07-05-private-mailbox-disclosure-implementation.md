@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Stop automatically disclosing private-message bodies and instead emit one bounded mailbox notification per private peer while preserving direct disclosure for group `@bot` messages.
+**Objective:** Stop automatically disclosing private-message bodies and instead emit one bounded mailbox notification per private peer while preserving direct disclosure for group `@bot` messages.
 
 **Architecture:** Generalize `src/agent/mailbox.ts` so a mailbox batch can contain either ordinary group events or private events. The bot loop keeps one direct-vs-mailbox branch; rendering selects group or private metadata and read instructions from the event type. Existing per-source cursors, replay, `inbox source=private`, database schema, and outbound private messaging remain unchanged.
 

@@ -1,6 +1,6 @@
 # Tool Policy Hook Design
 
-## Goal
+## Objective
 
 Build phase 2 of the harness route: add a thin internal policy hook on top of the phase 1 tool hook pipeline, without changing user-visible tool behavior, system prompt bytes, replay, or `AgentContext`.
 

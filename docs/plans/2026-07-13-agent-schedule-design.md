@@ -2,7 +2,7 @@
 
 ## 目标
 
-把现有一次性 `schedule` 升级成 Luna 在未来三天内重新驱动自己的统一入口。它支持一次性时间、固定间隔和 cron 墙上时间；到期只向单一 `BotLoopAgent` 注入注意事件，由 Agent 结合最新消息、Goal 和外部状态重新判断下一步。
+把现有一次性 `schedule` 升级成 Luna 在未来三天内重新驱动自己的统一入口。它支持一次性时间、固定间隔和 cron 墙上时间；到期只向单一 `BotLoopAgent` 注入注意事件，由 Agent 结合最新消息和外部状态重新判断下一步。
 
 这个能力用于数分钟到数天的复查、阶段性实验和短期例行活动，不引入第二个 Agent loop，也不持久化未来工具调用。
 
@@ -12,7 +12,6 @@
 
 - `pause` 负责眼下 30–600 秒的自然休息。
 - `todo` 负责当前进程内已经决定执行的多步清单。
-- `goal` 负责跨轮、跨重启的长期主线和完成标准。
 
 现有 `schedule` 只接受 30 秒到 7 天的相对延迟，创建一个一次性 durable wake。仓库运行日志和持久任务状态没有发现真实调用，因此不需要围绕旧 recovery descriptor 保留兼容层。保留工具名和“到期唤醒”的产品语义，内部改成独立的短期 schedule definition。
 
@@ -179,7 +178,7 @@ Shutdown 清理全部 timer handle，但不改写持久 job。下次启动从 st
 
 ## Prompt 引导
 
-在常驻 system prompt 的 `[自主生活]` 后增加稳定 `[短期调度]` 指导，并在行动优先级中把 `scheduled_wake` 放在高优先通知之后、默认 Goal / 自由活动之前：
+在常驻 system prompt 的 `[自主生活]` 后增加稳定 `[短期调度]` 指导，并在行动优先级中把 `scheduled_wake` 放在高优先通知之后、自由活动之前：
 
 - 值得继续的事情当前不适合一直做，但未来三天内存在明确复查时间时，主动使用 `schedule`。
 - 一次复查用 `at`，固定间隔实验用 `every`，墙上时间规则用 `cron`。
@@ -187,7 +186,7 @@ Shutdown 清理全部 timer handle，但不改写持久 job。下次启动从 st
 - 不用 schedule 等人回复、轮询新消息或机械刷新网站、群聊和行情。
 - 不创建目的相同且时间重叠的任务；不确定时先 `list`。
 - 周期任务应稀疏，并写清真正想观察的变化。
-- `scheduled_wake` 是注意信号，不是不可变命令；先结合最新消息、Goal 和外部状态判断 intention 是否仍有效。
+- `scheduled_wake` 是注意信号，不是不可变命令；先结合最新消息和外部状态判断 intention 是否仍有效。
 - 醒来后实际尝试一个有意义的步骤，或取消失效任务；不要什么都没做就原样重新安排。
 
 职责对照保持明确：
@@ -195,7 +194,6 @@ Shutdown 清理全部 timer handle，但不改写持久 job。下次启动从 st
 ```text
 todo     = 当前准备立即执行的多步清单
 schedule = 未来三天内重新获取注意力
-goal     = 跨轮、跨重启的长期主线
 Agenda   = 当前承诺和下一步，不负责定时触发
 pause    = 眼下短暂休息
 ```
@@ -228,7 +226,7 @@ pause    = 眼下短暂休息
 - 周期任务错过多次只合并一次。
 - 超过三天的任务清理且不唤醒。
 - `scheduled_wake` 渲染成稳定 JSON 并进入 ledger。
-- schedule wake 能结束休息，高优先 mailbox 仍可先处理，之后返回 active Goal。
+- schedule wake 能结束休息，高优先 mailbox 仍可先处理。
 - `schedule` 在默认 always-on 工具面中存在。
 
 ### Prompt

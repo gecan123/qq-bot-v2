@@ -44,14 +44,6 @@ describe('tool-call-log side effect classification', () => {
     }
   })
 
-  test('classifies goal reads separately from state transitions', () => {
-    assert.equal(isSideEffectTool('goal', { action: 'get' }), false)
-    assert.equal(isSideEffectTool('goal', { action: 'create_self' }), true)
-    assert.equal(isSideEffectTool('goal', { action: 'complete' }), true)
-    assert.equal(isSideEffectTool('goal', { action: 'report_blocker' }), true)
-    assert.equal(isSideEffectTool('goal', { action: 'abandon_self' }), true)
-  })
-
   test('fails closed for unknown tools/actions and covers runtime state mutations', () => {
     assert.equal(isSideEffectTool('unknown_future_tool', {}), true)
     assert.equal(isSideEffectTool('schedule', { action: 'create' }), true)

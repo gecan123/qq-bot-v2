@@ -28,20 +28,6 @@ export const overviewSnapshotSchema = z.object({
     lastWakeAt: z.iso.datetime({ offset: true }).nullable(),
     focus: focusSchema.nullable(),
   }).strict(),
-  goal: z.object({
-    goalId: z.string().uuid(),
-    objective: z.string(),
-    status: z.string(),
-    tokensUsed: z.number().int().nonnegative(),
-    tokenBudget: z.number().int().positive().nullable(),
-    revision: z.number().int().positive(),
-    currentCommitment: z.object({
-      action: z.string(),
-      reason: z.string(),
-      expectedEvidence: z.string(),
-    }).strict().nullable(),
-    updatedAt: z.iso.datetime({ offset: true }),
-  }).strict().nullable(),
   activity: z.object({
     available: z.boolean(),
     sourceStatus: z.enum(['available', 'missing', 'invalid', 'stale']),

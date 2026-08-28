@@ -45,10 +45,6 @@ export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.fr
   qq_directory: fixed(PARALLEL_READ),
   background_task: byAction({ parallel: ['list', 'get'] }),
   schedule: byAction({ parallel: ['list', 'get_occurrence'], sideEffect: ['create', 'cancel'] }),
-  goal: byAction({
-    parallel: ['get'],
-    sideEffect: ['create_self', 'complete', 'report_blocker', 'abandon_self'],
-  }),
   skill: fixed(PARALLEL_READ),
   psychologist: fixed(EXCLUSIVE_READ),
   memory: byAction({

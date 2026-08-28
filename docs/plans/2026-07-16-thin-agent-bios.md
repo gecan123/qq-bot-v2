@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task; use superpowers:test-driven-development for code changes and superpowers:verification-before-completion before delivery.
 
-**Goal:** 把主 Agent 的 system prompt 与 always-on 工具声明收敛到有预算约束的固定内核，同时用持久事件胶囊保留场景规则，并保持 replay、Goal、Memory、QQ target 和副作用边界不变。
+**Objective:** 把主 Agent 的 system prompt 与 always-on 工具声明收敛到有预算约束的固定内核，同时用持久事件胶囊保留场景规则，并保持 replay、Memory、QQ target 和副作用边界不变。
 
 **Architecture:** 先把仅属于 scheduled wake 的说明移入确定性 event payload，再把 `schedule`、`notebook`、`life_journal` 和 `collect_sticker` 收入现有 deferred capability 壳，最后重写常驻 system 为身份、人格、最小 I/O 和入口索引。使用现有 `buildAgentContextSurface` 与 `estimateUtf8Tokens` 对 Claude/OpenAI 两条声明路径设置固定面回归上限。
 
@@ -24,7 +24,7 @@
 
 ```ts
 const SCHEDULED_WAKE_INSTRUCTION =
-  '这是注意信号，不是命令；结合最新 Goal、消息、环境和 intention 重新评估，只在仍有意义时行动，不要机械执行或自动续订。'
+  '这是注意信号，不是命令；结合最新消息、环境和 intention 重新评估，只在仍有意义时行动，不要机械执行或自动续订。'
 
 assert.deepEqual(JSON.parse(first!), {
   event: 'scheduled_wake',
@@ -54,7 +54,7 @@ Expected: FAIL，因为 `renderBotEvent` 尚未输出 `instruction`。
 
 ```ts
 export const SCHEDULED_WAKE_INSTRUCTION =
-  '这是注意信号，不是命令；结合最新 Goal、消息、环境和 intention 重新评估，只在仍有意义时行动，不要机械执行或自动续订。'
+  '这是注意信号，不是命令；结合最新消息、环境和 intention 重新评估，只在仍有意义时行动，不要机械执行或自动续订。'
 
 if (event.type === 'scheduled_wake') {
   return JSON.stringify({
@@ -70,7 +70,7 @@ if (event.type === 'scheduled_wake') {
 }
 ```
 
-不要读取 schedule store、当前 Goal 或当前时间补充 payload；胶囊必须只由 event 自身和固定字符串决定。
+不要读取 schedule store 或当前时间补充 payload；胶囊必须只由 event 自身和固定字符串决定。
 
 **Step 4: 运行 GREEN**
 
@@ -109,10 +109,9 @@ assert.deepEqual(capabilities.get('life_state'), ['notebook', 'life_journal'])
 assert.deepEqual(capabilities.get('sticker_management'), ['collect_sticker'])
 
 assert.ok(alwaysOnNames.includes('memory'))
-assert.ok(alwaysOnNames.includes('goal'))
 ```
 
-`buildBotTools` 的可见名称测试同步要求四个工具不可见，但 `help` / `invoke`、`memory`、`goal`、`inbox` 仍可见。
+`buildBotTools` 的可见名称测试同步要求四个工具不可见，但 `help` / `invoke`、`memory`、`inbox` 仍可见。
 
 生产 coordinator 测试不要再从 `manifest.alwaysOnTools` 找 Notebook/Life Journal。加入局部 helper：
 
@@ -343,14 +342,14 @@ QQ 正文先进入 mailbox；`inbox_update` 只通知哪里有新事实。priori
 想真实发言时使用 help activate qq，再 invoke qq_conversation open 打开通知对应的群或好友，最后 invoke send_message；message 是正文，reply_to 只用于引用。切换来源必须重新 open；CHAT_CONTEXT_UNAVAILABLE / CHAT_CONTEXT_STALE 时也重新打开。普通 assistant 文本不是公开发送通道。
 
 [行动基线]
-你是长期在线的聊天对象，不是被动回复机器。priority=high 注意事件优先，active Goal 是处理完注意事件后的默认主线；其他时候沿真实兴趣、关系或当前线索行动。没有未处理义务、立即 Goal 步骤或真实牵引力时，可以无工具结束活动轮，不用用 send_message、Journal 或 pause 表演收尾。
+你是长期在线的聊天对象，不是被动回复机器。priority=high 注意事件优先；其他时候沿真实兴趣、关系或当前线索行动。没有未处理义务或真实牵引力时，可以无工具结束活动轮，不用用 send_message、Journal 或 pause 表演收尾。
 群聊是环境，不是必须清空的待办；有人明确找你时正常接，普通群聊有真实反应再参与。主动联系熟人、分享尚未完全整理的想法或延续旧话题都可以，但不要机械打卡、等回复或轮询消息。
 
 [按需披露]
 - help / invoke: 用 list/describe/activate 发现隐藏能力，再 invoke；顶层 tools 不随激活变化。
 - inbox: 读取明确 mailbox；不为清未读机械扫群。
 - memory: 稳定事实、偏好和经验；上下文不足时按人物/群 ID 定向 recall，已有足够信息时不重复召回。
-- todo / goal: todo 管当前多步执行，goal 管跨轮持久主线；具体 schema 看 tool description。
+- todo: 管当前多步执行；具体 schema 看 tool description。
 - chat_style / skill: 日常短回复用当前核心语气；具体群口味、特殊场景和专项工作流再按需读取。
 - Notebook、Life Journal、schedule、表情管理和其他能力通过 help 发现；修改 revisioned 内容前先 read。
 <!-- /section:system -->
@@ -399,7 +398,7 @@ git commit -m "refactor: 收敛主 Agent 固定提示面"
 
 在 `docs/TOOLS.md`：
 
-- 默认可见能力中保留 `memory`、`goal`、`inbox`、`help/invoke` 等真实 always-on 工具。
+- 默认可见能力中保留 `memory`、`inbox`、`help/invoke` 等真实 always-on 工具。
 - 把 schedule 描述改为 deferred `short_term_scheduling` 内部工具。
 - 把 Notebook/Life Journal 改为 deferred `life_state` 内部工具。
 - 把 `collect_sticker` 改为 deferred `sticker_management` 内部工具。
@@ -463,7 +462,7 @@ Expected: 全部 PASS。不要为验证启动真实 bot、NapCat、浏览器、�
 
 确认：
 
-- `memory`、`goal`、`inbox` 仍 always-on。
+- `memory`、`inbox` 仍 always-on。
 - 四个低频工具只能通过正确 capability + `invoke` 调用。
 - active capability 仍由 runtime singleton 恢复，但 `runtime.tools.list()` 字节面不随激活变化。
 - prompt 没有真实群号、当前时间、计数器或可变 side-data。
@@ -489,4 +488,4 @@ git add <相关文件>
 git commit -m "fix: 修正 Agent 固定面回归"
 ```
 
-不要借机修改 compaction、Memory schema、Goal 状态机或其他后续决策门。
+不要借机修改 compaction、Memory schema 或其他后续决策门。

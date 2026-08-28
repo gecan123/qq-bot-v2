@@ -30,7 +30,6 @@ export interface AgentStateResetTx {
     deleteMany(): Promise<{ count: number }>
     create(input: { data: Record<string, unknown> }): Promise<unknown>
   }
-  botAgentGoal: { deleteMany(): Promise<{ count: number }> }
 }
 
 export interface AgentStateResetDb {
@@ -41,7 +40,6 @@ export interface AgentStateResetPreviewDb {
   botAgentLedgerEntry: { count(): Promise<number> }
   botAgentCheckpoint: { count(): Promise<number> }
   botAgentRuntimeState: { count(): Promise<number> }
-  botAgentGoal: { count(): Promise<number> }
 }
 
 export interface AgentStateResetPreview {
@@ -50,7 +48,6 @@ export interface AgentStateResetPreview {
     ledgerEntries: number
     checkpoints: number
     runtimeStates: number
-    goals: number
   }
   knowledge?: {
     directories: Array<{
@@ -74,7 +71,6 @@ export interface AgentStateResetResult {
   deletedLedgerEntries: number
   deletedCheckpoints: number
   deletedRuntimeStates: number
-  deletedGoals: number
   createdRuntimeState: boolean
   removedDirectories: Array<(typeof KNOWLEDGE_DIRECTORIES)[number]>
   removedWorkspaceEntries: number
@@ -100,13 +96,12 @@ export async function previewAgentStateReset(options: {
 
   if (options.scope === 'all' || options.scope === 'context') {
     if (!options.db) throw new Error(`database is required for reset preview scope ${options.scope}`)
-    const [ledgerEntries, checkpoints, runtimeStates, goals] = await Promise.all([
+    const [ledgerEntries, checkpoints, runtimeStates] = await Promise.all([
       options.db.botAgentLedgerEntry.count(),
       options.db.botAgentCheckpoint.count(),
       options.db.botAgentRuntimeState.count(),
-      options.db.botAgentGoal.count(),
     ])
-    preview.context = { ledgerEntries, checkpoints, runtimeStates, goals }
+    preview.context = { ledgerEntries, checkpoints, runtimeStates }
   }
 
   if (options.scope === 'all' || options.scope === 'knowledge') {
@@ -141,7 +136,6 @@ export async function resetAgentState(options: {
     deletedLedgerEntries: 0,
     deletedCheckpoints: 0,
     deletedRuntimeStates: 0,
-    deletedGoals: 0,
     createdRuntimeState: false,
     removedDirectories: [],
     removedWorkspaceEntries: 0,
@@ -161,7 +155,6 @@ export async function resetAgentState(options: {
       const deliveryContinuity = preserveDeliveryContinuity(previousRuntime)
       const checkpoints = await tx.botAgentCheckpoint.deleteMany()
       const ledgerEntries = await tx.botAgentLedgerEntry.deleteMany()
-      const goals = await tx.botAgentGoal.deleteMany()
       const runtimeStates = await tx.botAgentRuntimeState.deleteMany()
       await tx.botAgentRuntimeState.create({
         data: {
@@ -170,18 +163,16 @@ export async function resetAgentState(options: {
           mailboxCursors: deliveryContinuity.mailboxCursors,
           inboxReadCursors: deliveryContinuity.inboxReadCursors,
           mailboxContinuity: createEmptyMailboxContinuityState(),
-          goalRevision: 0,
           conversationFocus: null,
           lastWakeAt: deliveryContinuity.lastWakeAt,
           ledgerHeadEntryId: null,
         },
       })
-      return { checkpoints, ledgerEntries, goals, runtimeStates }
+      return { checkpoints, ledgerEntries, runtimeStates }
     })
     result.deletedLedgerEntries = deleted.ledgerEntries.count
     result.deletedCheckpoints = deleted.checkpoints.count
     result.deletedRuntimeStates = deleted.runtimeStates.count
-    result.deletedGoals = deleted.goals.count
     result.createdRuntimeState = true
   }
 

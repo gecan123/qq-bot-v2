@@ -12,7 +12,7 @@
 
 - `bot_agent_ledger_entries` 是唯一持久 LLM history source；`AgentContext` 是其当前内存 projection。
 - `messages` 是入站事实账本。它服务于搜索、媒体解析、审计和 replay recovery，但不能替代 `AgentContext`。
-- `bot_agent_runtime_state` 保存 mailbox cursors、continuity、Goal revision、active capabilities、跨平台 conversation focus、last wake 和 ledger head，但不保存或重建 transcript；`bot_agent_checkpoint` 只是可丢弃的 projection cache。
+- `bot_agent_runtime_state` 保存 mailbox cursors、continuity、active capabilities、跨平台 conversation focus、last wake 和 ledger head，但不保存或重建 transcript；`bot_agent_checkpoint` 只是可丢弃的 projection cache。
 - 新的 LLM 可见事实只能通过受控 append 或 compaction 进入；compaction 把完整待压缩 prefix 交给摘要器，只追加新的 boundary entry，不更新或删除旧历史。
 - late media description 和 side table 更新不得改写已经 append 的历史。
 - 对外 QQ / 飞书发言必须先用 `conversation open` 显式打开 target，再走 `send_message`；新 mailbox 不会自动切换当前会话。
@@ -88,7 +88,7 @@ Browser → TanStack Start Server Function → read service → PostgreSQL
 
 运行前把 `apps/admin-web/.env.example` 复制为不提交的 `apps/admin-web/.env.local`，配置 `DATABASE_URL`，并先运行 `pnpm db:generate`。默认只绑定 `127.0.0.1:20030`。当前没有管理员鉴权，不得改为非可信网络监听或直接公开部署。
 
-WebAdmin 的观察 feature 不能更新或删除 ledger、runtime state、checkpoint、Goal、消息、媒体或 workspace side-data，也不能用页面缓存或查询结果重建 `AgentContext`。唯一写入口是带预览、确认、停机检查、single-flight 和审计的固定 `reset_state` operation；不接受通用 shell、SQL、命令名或路径输入。
+WebAdmin 的观察 feature 不能更新或删除 ledger、runtime state、checkpoint、消息、媒体或 workspace side-data，也不能用页面缓存或查询结果重建 `AgentContext`。唯一写入口是带预览、确认、停机检查、single-flight 和审计的固定 `reset_state` operation；不接受通用 shell、SQL、命令名或路径输入。
 
 ## 运行形态
 

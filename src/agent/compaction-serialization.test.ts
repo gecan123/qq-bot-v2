@@ -25,7 +25,7 @@ function validSummary(body = '保留事实。'): string {
   return [
     '## 讨论过的话题', body,
     '## 群友信息', '无。',
-    '## 我的目标、承诺和状态', '继续当前目标。',
+    '## 我的承诺、状态和下一步', '继续当前工作。',
     '## 关键约束与决定', '遵守安全边界。',
     '## 工具调用结果', '无。',
     '## 情绪和氛围', '平静。',
@@ -73,7 +73,7 @@ describe('compaction serialization', () => {
     for (const heading of [
       '## 讨论过的话题',
       '## 群友信息',
-      '## 我的目标、承诺和状态',
+      '## 我的承诺、状态和下一步',
       '## 关键约束与决定',
       '## 工具调用结果',
       '## 情绪和氛围',
@@ -84,7 +84,7 @@ describe('compaction serialization', () => {
     assert.match(control, /只输出纯文本摘要，不得调用任何工具/)
     assert.match(control, /受控机器状态标记.*权威状态/)
     assert.match(control, /2048/)
-    assert.match(control, /保留目标、承诺、关键约束、已确认的工具事实和下一步/)
+    assert.match(control, /保留承诺、关键约束、已确认的工具事实和下一步/)
   })
 
   test('requires seven ordered non-empty headings and a token budget', () => {

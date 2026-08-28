@@ -1,6 +1,6 @@
 # Claude Thinking Toggle Design
 
-## Goal
+## Objective
 
 Add an experimental Claude thinking path that can be enabled with feature toggles, logs raw thinking for debugging, and keeps prompt history stable by retaining thinking blocks only while their tool cycle is active by default.
 
@@ -95,7 +95,7 @@ Focused tests should cover:
 - `always` replay keeps thinking after closure.
 - Raw logging writes thinking to NDJSON without using logs for replay.
 
-## Non-Goals
+## Out of Scope
 
 - No server-side compaction or context editing integration.
 - No UI for reading thinking logs.

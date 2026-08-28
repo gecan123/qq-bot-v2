@@ -31,7 +31,7 @@ function chatEvent(input: {
 
 describe('describeActivityTrigger', () => {
   test('describes canonical Feishu private attention with a platform-neutral target', () => {
-    assert.deepEqual(describeActivityTrigger([chatEvent({ platform: 'feishu', kind: 'private' })], null), {
+    assert.deepEqual(describeActivityTrigger([chatEvent({ platform: 'feishu', kind: 'private' })]), {
       kind: 'private_message',
       label: '收到 Alice 的私聊',
       target: { platform: 'feishu', accountId: 'cli_a', kind: 'private', externalId: 'ou_1' },
@@ -41,7 +41,7 @@ describe('describeActivityTrigger', () => {
   test('describes canonical QQ group mention', () => {
     assert.deepEqual(describeActivityTrigger([
       chatEvent({ platform: 'qq', kind: 'group', mentionedSelf: true }),
-    ], null), {
+    ]), {
       kind: 'group_mention',
       label: '测试会话 中有人提到了 Agent',
       target: { platform: 'qq', accountId: '10000', kind: 'group', externalId: 'oc_1' },
@@ -51,6 +51,6 @@ describe('describeActivityTrigger', () => {
   test('does not mislabel a passive ordinary group event as a mention', () => {
     assert.equal(describeActivityTrigger([
       chatEvent({ platform: 'feishu', kind: 'group', mentionedSelf: false }),
-    ], null), null)
+    ]), null)
   })
 })

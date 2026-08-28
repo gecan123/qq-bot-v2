@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 在自然休息结束后有界 append 一次 Claude Code 风格 reminder，促使 Luna 立即执行刚留下的 resume plan，同时保持 replay、tool 原子性与单提交可回滚。
+**Objective:** 在自然休息结束后有界 append 一次 Claude Code 风格 reminder，促使 Luna 立即执行刚留下的 resume plan，同时保持 replay、tool 原子性与单提交可回滚。
 
 **Architecture:** `rest` 工具通过 runtime-only pause effect 披露休息是自然结束还是被打断；`BotLoopAgent` 只对自然结束调用一个纯函数，根据 durable ledger 判断当前空闲周期是否已经提醒以及 10 分钟上限。Reminder 使用固定模板，不复制模型或外部内容，append 后立即进入 snapshot。
 
@@ -94,7 +94,6 @@ Expected: PASS。
 **Files:**
 - Modify: `src/agent/bot-loop-agent.ts`
 - Test: `src/agent/bot-loop-agent.test.ts`
-- Test: `src/agent/goal-runtime.test.ts`
 
 **Step 1: Write the failing tests**
 
@@ -102,7 +101,7 @@ Expected: PASS。
 
 - elapsed pause effect 在 tool result 完整 append 后增加 reminder；
 - interrupted 或 legacy pause effect 不增加；
-- reminder 位于本轮 compaction / Goal continuation 之后；
+- reminder 位于本轮 compaction 之后；
 - reminder append 后发生额外 snapshot save。
 
 **Step 2: Run test to verify it fails**
@@ -113,7 +112,7 @@ Expected: FAIL，因为 BotLoop 尚未 append reminder。
 
 **Step 3: Write minimal implementation**
 
-让 `runRound()` 返回 `didCompleteRest`。`step()` 保持原有 round snapshot 并执行 Life Journal，再在 compaction 前从完整 ledger 调用纯策略判定资格；随后执行 compaction 和 Goal continuation，最后 append reminder，并在 reminder 或 compaction 改变 ledger 时立即保存。
+让 `runRound()` 返回 `didCompleteRest`。`step()` 保持原有 round snapshot 并执行 Life Journal，再在 compaction 前从完整 ledger 调用纯策略判定资格；随后执行 compaction，最后 append reminder，并在 reminder 或 compaction 改变 ledger 时立即保存。
 
 **Step 4: Run test to verify it passes**
 
@@ -142,7 +141,6 @@ node_modules/.bin/tsx --test --import ./scripts/test-env.mjs --import tsx \
   src/agent/effect-interpreter.test.ts \
   src/agent/react-kernel.test.ts \
   src/agent/bot-loop-agent.test.ts \
-  src/agent/goal-runtime.test.ts \
   src/agent/compaction.test.ts \
   src/agent/snapshot-integrity.test.ts
 ```
@@ -173,7 +171,6 @@ git add docs/plans/2026-07-13-rest-resume-reminder-design.md \
   src/agent/effect-interpreter.ts \
   src/agent/effect-interpreter.test.ts \
   src/agent/bot-loop-agent.ts \
-  src/agent/bot-loop-agent.test.ts \
-  src/agent/goal-runtime.test.ts
+  src/agent/bot-loop-agent.test.ts
 git commit -m "feat: 增加醒后自主行动提醒"
 ```

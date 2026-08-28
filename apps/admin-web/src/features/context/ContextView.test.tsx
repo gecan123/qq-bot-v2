@@ -19,7 +19,6 @@ const snapshot: ContextSnapshot = {
   },
   runtime: {
     ledgerHeadId: '42',
-    goalRevision: 3,
     updatedAt: '2026-07-26T07:59:00.000Z',
   },
   latestUsage: {
@@ -53,8 +52,8 @@ const snapshot: ContextSnapshot = {
   }, {
     callId: '22222222-2222-4222-8222-222222222222',
     ts: '2026-07-26T07:58:30.000Z',
-    operation: 'goal.completion_judge',
-    actor: 'goal_judge',
+    operation: 'compaction',
+    actor: 'compactor',
     provider: 'openai-agent',
     model: 'gpt-test',
     status: 'failed',
@@ -78,7 +77,7 @@ describe('ContextView LLM calls', () => {
 
     assert.ok(screen.getByText('最近 LLM 调用'))
     assert.ok(screen.getByText('agent.chat'))
-    assert.ok(screen.getByText('goal.completion_judge'))
+    assert.ok(screen.getByText('compaction'))
     assert.ok(screen.getByText('claude-code · claude-test'))
     assert.ok(screen.getByText('server'))
     assert.ok(screen.getAllByText('inbox').length >= 1)

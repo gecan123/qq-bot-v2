@@ -123,7 +123,6 @@ table { border-collapse: separate; border-spacing: 0; }
 .current-activity-body { position: relative; z-index: 1; display: grid; gap: 21px; padding: 21px 19px 23px; }
 .current-eyebrow { margin: 0; color: rgba(238,241,236,.48); font-size: 9px; font-weight: 720; letter-spacing: .12em; text-transform: uppercase; }
 .current-primary h3 { max-width: 850px; margin: 8px 0 0; color: #fff; font-size: clamp(18px, 2.5vw, 27px); font-weight: 620; letter-spacing: -.025em; line-height: 1.35; }
-.current-goal-meta { display: flex; align-items: center; gap: 9px; margin-top: 9px; color: rgba(233,240,235,.5); font-size: 9px; }
 .current-activity .status-badge { color: #dce9df; border-color: rgba(255,255,255,.14); background: rgba(255,255,255,.075); }
 .current-step { display: flex; gap: 12px; margin-top: 21px; padding: 14px 15px; border: 1px solid rgba(255,255,255,.095); border-radius: 13px; background: rgba(9,25,19,.16); }
 .current-step-marker { flex: 0 0 auto; width: 6px; height: 6px; margin-top: 6px; border-radius: 999px; background: #f0be60; box-shadow: 0 0 0 5px rgba(240,190,96,.1); }

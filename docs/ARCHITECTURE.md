@@ -10,7 +10,7 @@
 2. Agent Core 先用专用 PostgreSQL session 获取 advisory lock，再连接 Prisma。启动恢复只从 `bot_agent_ledger_entries` 加载 canonical history，并校验 `bot_agent_runtime_state`。可丢弃的 `bot_agent_checkpoint` 只有完全匹配时才可复用；missing、stale 或 corrupt 都从 canonical ledger 重建。
 3. QQ Gateway 独占 NapCat WebSocket、首次群历史 backfill、好友/群目录查询和 QQ 外发。按配置启用的 Feishu Gateway 独占官方 WebSocket client、飞书资源下载和飞书外发，并通过 loopback HTTP 向 Agent Core 暴露健康、已观察会话与发送边界；两个 Gateway 都不是 Agent。
 4. `src/bot/**` 与 `src/services/feishu-ingress.ts` 把平台事件规范化为追加式 `messages` / `media` 事实；每次附件保留独立、稳定的 `mediaId`，物理字节通过 `media.blobId` 引用按 SHA-256 唯一的 `media_blobs`，单个飞书下载资源上限为 20MB。Agent Core 先做 missed-message replay，再由 database mailbox watcher 按递增 `rowId` 读取新事实，`src/agent/mailbox.ts` 按平台与会话聚合成不含正文的确定性通知。
-5. `src/agent/runtime.ts` 装配 context projection、tools、system prompt 和 `BotLoopAgent`。QQ 与飞书始终共用一个主 Agent、一个 mailbox 调度器和一个持久 LLM ledger；轮次边界统一按 attention、scheduled wake、active Goal、普通环境事件披露。
+5. `src/agent/runtime.ts` 装配 context projection、tools、system prompt 和 `BotLoopAgent`。QQ 与飞书始终共用一个主 Agent、一个 mailbox 调度器和一个持久 LLM ledger；轮次边界统一按 attention、scheduled wake 和普通环境事件披露。
 6. `src/agent/bot-loop-agent.ts` 是唯一 Runtime Host；它把 expected-head append/增量 projection 委托给 `LedgerCommitCoordinator`，把 threshold/overflow/CAS 重算委托给 `CompactionCoordinator`，把 continue/wait/backoff/stop 决策委托给纯 `LoopPolicy`。事务成功后才推进内存 `AgentContext`。
 7. `src/agent/react-kernel.ts` 只处理一轮通用 ReAct。连续且显式只读的 tool calls 可以并行，副作用和未知调用是 barrier；tool results 始终按 assistant tool-call 顺序成组 append。只有 `ToolExecutionResult.content` 进入 ledger，`outcome` / `effects` 由 Runtime Host 解释。
 
@@ -20,11 +20,9 @@
 
 Agent Core 和 Media Worker 直接使用 provider 注册表中的 URL/API Key；system prompt、tools、canonical/provider 请求构造、响应解析、token evidence 和 ledger commit 仍由各自现有 client 负责，不经过本机 LLM 转发进程。进程间只使用 PostgreSQL 事实边界和必要的薄 HTTP；当前不引入 Redis、Kafka、通用 broker 或第二套 workflow engine。
 
-Goal 也不创建第二个主 Agent。`bot_agent_goal` 只保存控制状态；状态变化通过 revision 事件进入 ledger。owner Goal 可以抢占 self Goal，旧 goalId 的迟到调用会被拒绝。owner 和 self Goal 的 `complete` 都会触发一次独立、无工具的 LLM 验收；它只读取 untrusted envelope 中的当前 canonical projection 和本次证据，只有 `{ok:true}` 才调用 `GoalStore.complete()`，拒绝或验收调用失败都保持 Goal 活跃且同一次尝试不重试。judger 不控制 blocker、预算或下一步，也不形成第二个 Agent。
-
 ## 本机 WebAdmin
 
-`apps/admin-web` 是独立的 TanStack Start Node 应用，不参与 ingress 或主 Agent 调度；`pnpm dev:all` 只提供一键本地生命周期管理。“现在”首页结合当前 Goal/commitment、已完成工具审计和 `logs/agent-activity.json`，直接解释 Agent 的唤醒原因、实时 phase、当前工具、等待条件与最近进展；进程日志页只从固定的 `logs/processes/*.log` 白名单读取有界尾部，Context/Ledger、原始事件、生命状态、Memory、QQ、指标和健康页保留为只读技术下钻。
+`apps/admin-web` 是独立的 TanStack Start Node 应用，不参与 ingress 或主 Agent 调度；`pnpm dev:all` 只提供一键本地生命周期管理。“现在”首页结合已完成工具审计和 `logs/agent-activity.json`，直接解释 Agent 的唤醒原因、实时 phase、当前工具、等待条件与最近进展；进程日志页只从固定的 `logs/processes/*.log` 白名单读取有界尾部，Context/Ledger、原始事件、计划、Memory、QQ、指标和健康页保留为只读技术下钻。
 
 观察数据流固定为：
 
@@ -63,33 +61,33 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 
 ## 自主循环
 
-- `send_message` 成功只是完成一个动作，不强制等待。当前会话内马上续做用 `work=continue`，它只为下一轮提供进程内行动锚点；需要跨注意周期或重启的长期进度仍用绑定 active Goal/currentCommitment 的 `work=goal_progress`。mailbox 在成功回复后仍可关闭防重。普通完成、第一次无进展、后台任务已启动、无披露事件以及无工具轮都会立即进入下一次决策；若连续两轮的实际工具名、参数和结果 code 完全相同且都无进展，Runtime 等待 attention 或十分钟后再重新选择方向。模型只输出不会执行的普通文本时，Runtime 追加同一个受控行动纠错，仍不执行那段文本。
+- `send_message` 成功只是完成一个动作，不强制等待。当前会话内马上续做用 `work=continue`，它只为下一轮提供进程内行动锚点；mailbox 在成功回复后仍可关闭防重。普通完成、第一次无进展、后台任务已启动、无披露事件以及无工具轮都会立即进入下一次决策；若连续两轮的实际工具名、参数和结果 code 完全相同且都无进展，Runtime 等待 attention 或十分钟后再重新选择方向。模型只输出不会执行的普通文本时，Runtime 追加同一个受控行动纠错，仍不执行那段文本。
 - provider-confirmed 外发到有 pending 通知的同 target mailbox 后，Runtime 在 tool result 闭合后原子 append `mailbox_handled` 与 runtime cursor，避免把已经处理的旧行再次视为新请求。私聊强制 attention 只覆盖尚未由有界 inbox result 展示的 pending 行；持久已读 cursor 已追上 disclosure 时不再跨重启强迫回应，但未写 `mailbox_handled` 的范围仍可作为后来真实回复的冷却豁免。
 - `rest` 是唯一的主动暂停工具。它在工具调用内部等待 10..30 分钟，记录真实理由和醒后重新评估方向；私聊、@、后台任务完成、调度事件或停止信号会提前打断。一次休息完整结束后进入 60 分钟进程内硬冷却；冷却拒绝不披露剩余时间，被 attention 提前打断的本次休息不启动冷却。冷却状态不进入 prompt/ledger/runtime singleton，也不跨重启持久化。
 - Runtime 不再维护 idle backoff、自动休息顾问或“做完就停”的路径。全新空 ledger 会先 append 一条稳定的自主启动消息并立即开始第一轮。只有 provider/工具明确返回 `backoff` 或本轮抛出运行错误时才做有界技术退避；这些退避不是 Agent 主动休息，也不进入 ledger。收到停止信号才退出主循环。
 - 连续自主行动不设总轮次上限，不会因为工作轮数达到固定值而强制冷却。工具用 `outcome.progress` 报告是否获得新事实或改变状态，只用 `continuation=immediate|wait_attention|wait_event|backoff|stop` 表达当前方向状态：除 `backoff` 外，Runtime 默认立即开始下一轮；`wait_event` 只表示不要轮询当前后台任务，应改做其他事。可丢弃的 `continuationDetail` 只用于实时活动说明，`noveltyKey` 默认抑制进程内重复披露；此外 Runtime 对连续两轮相同的无进展工具调用做十分钟进程内等待。`continuation=immediate` 的失败最多保留三轮紧密纠错，之后改走下一行动或短暂技术退避。
-- 兴趣、作品反馈和市场复盘不新增第二套持久 runtime 状态：当前上下文内直接继续，需要等待人类反馈或跨注意周期时使用同 topic Notebook 或窄 Goal，稳定乐趣与偏好才进入 self/topic Memory。换题但重复同一种生产形式也视为机械重复；分享一次只选择一个相关会话，不通过群发制造反馈。
+- 兴趣、作品反馈和市场复盘不新增第二套持久 runtime 状态：当前上下文内直接继续，需要等待人类反馈或跨天保留过程时使用同 topic Notebook，未来时点重新评估用 Schedule，稳定乐趣与偏好才进入 self/topic Memory。换题但重复同一种生产形式也视为机械重复；分享一次只选择一个相关会话，不通过群发制造反馈。
 - 本地 `crypto_paper` 的自主权限由工具 schema 和执行前限额共同约束：`decisionSource=self` 只允许 BTC/ETH/SOL，单次增仓成本最多权益 5%，单币最多权益 20%；普通证券 Moomoo 模拟订单保持用户逐次授权。所有路径仍禁止实盘、杠杆和做空。
 - 循环控制使用稳定结构化载荷，不能依赖自由文本判断成功或状态。
 
 ## 持久边界
 
 - `messages` / `media` 是入站事实账本，`media_blobs` 是可由 Media 引用和保留期 GC 管理的内容寻址物理存储；它们只用于 missed replay、搜索、审计和按需读取，不是 prompt history。
-- `bot_agent_ledger_entries` 保存 append-only LLM history；`bot_agent_runtime_state` 保存通知披露 cursor、inbox 已读 cursor、continuity、Goal revision、active capabilities、平台中立 conversation focus、last wake 和 ledger head；`bot_agent_checkpoint` 只缓存已验证 projection。
+- `bot_agent_ledger_entries` 保存 append-only LLM history；`bot_agent_runtime_state` 保存通知披露 cursor、inbox 已读 cursor、continuity、平台中立 conversation focus、last wake 和 ledger head；`bot_agent_checkpoint` 只缓存已验证 projection。
 - QQ 或飞书新消息都不会隐式切换 focus。Agent 必须先通过 `conversation open` 显式打开允许的群或私聊，`send_message` 才能向当前 focus 发送；focus 不从 transcript、memory 或日志重建。
 - `prompts/groups.md` 是群监听范围、主动发送权限、参与档位和 operator 固定群提示的唯一配置源。启动时严格解析并冻结；`mentions` 只允许结构化 @ reply，其普通消息不生成 notification；`selective` / `active` 的普通消息可聚合为 `delivery=passive` 的 QQ notification，但不主动唤醒，正文仍必须用 inbox 按需读取。档位不扩大发送授权。active 群可用一行稳定 `resident-hint` 进入常驻 source list，作为成果分享候选；完整风格正文仍只由 `chat_style` 按需读取，会变化的群文化与历史写 group memory。
-- `bot_agent_goal`、Memory、Notebook、调度文件和 `logs/*` 都是 side state，不能作为 transcript replay 来源。
+- Memory、Notebook、调度文件和 `logs/*` 都是 side state，不能作为 transcript replay 来源。
 - 外部平台已确认发送和本地数据库之间没有分布式事务，因此 `mailbox_handled` 是 durable 防重复边界，不承诺外部发送 exactly-once。统一 `MessageDelivery` 使用稳定 UUID 标识一次动作，并把结果明确区分为 `sent`、`failed`、`delivery_unknown`；当前不增加 outbox、自动重试、独立 egress 进程或平台降级层。
 - compaction、append 与 runtime 元数据使用数据库事务；checkpoint 刷新和 `afterCompact` 是 best-effort，不回滚已提交历史。
 - `data/agent-workspace/` 是 bot 生产的 workspace 数据，不是项目源码。
 
-不实现 pi 风格 session tree。跨平台外发、mailbox cursor、Goal revision 和工具副作用必须共享一条可审计的线性时间线，否则“哪条分支已发送、已处理”没有唯一答案。需要并行时使用有明确类型和边界的 background task，并把结果汇回主 ledger。
+不实现 pi 风格 session tree。跨平台外发、mailbox cursor 和工具副作用必须共享一条可审计的线性时间线，否则“哪条分支已发送、已处理”没有唯一答案。需要并行时使用有明确类型和边界的 background task，并把结果汇回主 ledger。
 
 ## 生命周期边界
 
 - 平台启动顺序固定为 `sidecars -> health barrier -> Agent Core`。QQ Gateway 内部执行 `connect -> initial backfill barrier -> ready`；启用飞书时 Feishu Gateway 执行 `bot identity -> WebSocket -> ready`，当前不补拉停机期间的飞书历史。Agent Core 执行 `metadata -> replay -> database mailbox watcher -> runtime`。replay 的允许会话列表显式注入，不能从可变全局 config 隐式读取。
 - clean cutover 不迁移旧 `BotAgentSnapshot`；部署 schema 后使用显式 reset 命令初始化空 ledger/runtime，再启动新版本。
-- `SIGINT` / `SIGTERM` 先由 platform supervisor 向所有子进程转发。Agent Core 的幂等 shutdown coordinator 停止 mailbox watcher、中止未提交 compaction、停止并等待 Agent、停止每日 retention runner、进程内 ScheduleRuntime 和自身 jobs、同步最终 Goal/runtime 状态，最后断开自己的数据库连接；QQ Gateway、Feishu Gateway 和 Media Worker 分别清理自己拥有的资源。
+- `SIGINT` / `SIGTERM` 先由 platform supervisor 向所有子进程转发。Agent Core 的幂等 shutdown coordinator 停止 mailbox watcher、中止未提交 compaction、停止并等待 Agent、停止每日 retention runner、进程内 ScheduleRuntime 和自身 jobs、同步最终 runtime 状态，最后断开自己的数据库连接；QQ Gateway、Feishu Gateway 和 Media Worker 分别清理自己拥有的资源。
 - shutdown 各阶段 best-effort 且有超时；前一阶段失败不会阻止后续清理，Prisma disconnect 始终最后执行。
 
 ## 主要模块

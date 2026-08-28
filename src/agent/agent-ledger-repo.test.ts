@@ -27,7 +27,6 @@ interface FakeState {
     mailboxCursors: unknown
     inboxReadCursors: unknown
     mailboxContinuity: unknown
-    goalRevision: number
     conversationFocus: unknown
     lastWakeAt: Date | null
     ledgerHeadEntryId: bigint | null
@@ -51,7 +50,6 @@ function initialRuntime(): AgentRuntimeState {
     mailboxCursors: {},
     inboxReadCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
-    goalRevision: 0,
     conversationFocus: null,
     lastWakeAt: null,
     ledgerHeadEntryId: null,
@@ -217,7 +215,6 @@ describe('createAgentLedgerRepo', () => {
         messages,
         runtimePatch: {
           mailboxCursors: { 'qq_private:100': 9 },
-          goalRevision: 4,
         },
       }),
       /injected create failure 2/,
@@ -226,7 +223,6 @@ describe('createAgentLedgerRepo', () => {
     assert.deepEqual(fake.state().entries, [])
     assert.equal(fake.state().runtime.ledgerHeadEntryId, null)
     assert.deepEqual(fake.state().runtime.mailboxCursors, {})
-    assert.equal(fake.state().runtime.goalRevision, 0)
   })
 
   test('rejects invalid JSON-like tool content before opening a transaction', async () => {
@@ -256,22 +252,20 @@ describe('createAgentLedgerRepo', () => {
     assert.equal(fake.transactionCount(), 0)
   })
 
-  test('commits a visible message with mailbox cursor and Goal revision in one transaction', async () => {
+  test('commits a visible message with mailbox cursor in one transaction', async () => {
     const fake = createFakeClient()
     const repo = createAgentLedgerRepo({ client: fake.client })
 
     await repo.appendMessages({
       expectedHeadEntryId: null,
-      messages: [{ role: 'user', content: '{"event":"goal_state_changed"}' }],
+      messages: [{ role: 'user', content: '{"event":"mailbox_update"}' }],
       runtimePatch: {
         mailboxCursors: { 'qq_private:100': 12 },
-        goalRevision: 7,
       },
     })
 
     assert.equal(fake.state().entries.length, 1)
     assert.deepEqual(fake.state().runtime.mailboxCursors, { 'qq_private:100': 12 })
-    assert.equal(fake.state().runtime.goalRevision, 7)
     assert.equal(fake.transactionCount(), 1)
   })
 

@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:test-driven-development for every code task and superpowers:verification-before-completion before delivery.
 
-**Goal:** 把现有 `agent:context` 从 provider 精确分摊实现收敛为小型启动快照和单遍近似估算，同时保留 canonical、working projection、只读和零 LLM 污染边界。
+**Objective:** 把现有 `agent:context` 从 provider 精确分摊实现收敛为小型启动快照和单遍近似估算，同时保留 canonical、working projection、只读和零 LLM 污染边界。
 
 **Architecture:** bot 启动时原子写入只含三个固定 token 合计的小型 surface v2。CLI raw read canonical state，构建 deterministic projection 和 working projection，单遍遍历 `AgentMessage` 分类，再渲染 schema v2 文本或 JSON。旧 surface/report schema 直接替换，不增加兼容 bridge。
 

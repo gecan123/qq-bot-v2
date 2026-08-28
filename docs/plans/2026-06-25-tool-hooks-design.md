@@ -1,6 +1,6 @@
 # Tool Hooks Design
 
-## Goal
+## Objective
 
 Add a small tool hook pipeline as the first step toward the `learn-claude-code` harness route, without changing current tool behavior, prompt bytes, replay, or `AgentContext` serialization.
 

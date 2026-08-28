@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add a Markdown-only Life Journal, Agenda, and bounded idle picker so Luna can maintain her own lived continuity without adding DB schema or rewriting architecture.
+**Objective:** Add a Markdown-only Life Journal, Agenda, and bounded idle picker so Luna can maintain her own lived continuity without adding DB schema or rewriting architecture.
 
 **Architecture:** Keep all durable state under `data/agent-workspace/life/`. Add a small store for bounded Markdown file operations, a self-review runtime that uses the existing `LlmClient` to let Luna write journal/agenda content, and optional BotLoop hooks so the feature does not disturb replay invariants. Idle picker reads `agenda.md` first and only bounded recent journal context when needed.
 

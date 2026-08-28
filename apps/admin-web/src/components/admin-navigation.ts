@@ -26,7 +26,7 @@ export const investigationNavigation: NavigationItem[] = [
   { to: '/logs', label: '进程日志', hint: '搜索与实时 tail', icon: ScrollText },
   { to: '/context', label: 'Agent 历史', hint: '决定后续上下文的正式记录', icon: Database },
   { to: '/timeline', label: '执行追踪', hint: '模型、工具与 Ledger 诊断', icon: Activity },
-  { to: '/life', label: 'Goal 与计划', hint: 'Schedule 与后台任务', icon: HeartPulse },
+  { to: '/life', label: '计划', hint: 'Schedule 与后台任务', icon: HeartPulse },
   { to: '/metrics', label: '用量指标', hint: 'Token、缓存与工具', icon: Gauge },
 ]
 

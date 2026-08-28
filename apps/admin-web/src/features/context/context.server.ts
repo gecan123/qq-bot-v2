@@ -19,7 +19,7 @@ export async function loadContextSnapshot(now = new Date()): Promise<ContextSnap
     db.botAgentLedgerEntry.findMany({ orderBy: { id: 'desc' }, take: 80 }),
     db.botAgentLedgerEntry.groupBy({ by: ['entryType'], _count: { _all: true }, orderBy: { _count: { entryType: 'desc' } } }),
     db.botAgentCheckpoint.findUnique({ where: { id: 1 }, select: { throughEntryId: true, updatedAt: true } }),
-    db.botAgentRuntimeState.findUnique({ where: { id: 1 }, select: { ledgerHeadEntryId: true, goalRevision: true, updatedAt: true } }),
+    db.botAgentRuntimeState.findUnique({ where: { id: 1 }, select: { ledgerHeadEntryId: true, updatedAt: true } }),
     db.agentTokenUsage.findFirst({
       where: { operation: 'agent.chat', status: 'succeeded' },
       orderBy: [{ ts: 'desc' }, { id: 'desc' }],
@@ -64,7 +64,6 @@ export async function loadContextSnapshot(now = new Date()): Promise<ContextSnap
     },
     runtime: {
       ledgerHeadId: runtimeHeadId,
-      goalRevision: runtime?.goalRevision ?? null,
       updatedAt: runtime?.updatedAt.toISOString() ?? null,
     },
     latestUsage: usage === null ? null : {

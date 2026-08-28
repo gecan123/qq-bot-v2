@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add an experimental Claude thinking toggle with raw thinking debug logs and prompt replay retention that defaults to active tool cycles only.
+**Objective:** Add an experimental Claude thinking toggle with raw thinking debug logs and prompt replay retention that defaults to active tool cycles only.
 
 **Architecture:** Extend config first, then carry provider-native Claude thinking blocks through parsing, LLM output, `AgentContext`, and Claude request replay. Keep default behavior unchanged by leaving thinking disabled unless the new env flag is set.
 

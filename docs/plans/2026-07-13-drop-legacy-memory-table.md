@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:test-driven-development and superpowers:verification-before-completion while executing this plan.
 
-**Goal:** Remove the unused PostgreSQL `memory_entries` table and every live-code dependency on its Prisma model.
+**Objective:** Remove the unused PostgreSQL `memory_entries` table and every live-code dependency on its Prisma model.
 
-**Architecture:** Markdown files under `data/agent-workspace/memory/` remain the sole long-term memory store. A forward Prisma migration drops the legacy table; reset-memory only clears active snapshot/goal rows and managed workspace directories.
+**Architecture:** Markdown files under `data/agent-workspace/memory/` remain the sole long-term memory store. A forward Prisma migration drops the legacy table; reset-memory only clears active runtime rows and managed workspace directories.
 
 **Tech Stack:** TypeScript, Node test runner, Prisma, PostgreSQL, pnpm.
 

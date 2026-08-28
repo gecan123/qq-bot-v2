@@ -43,7 +43,6 @@ const musicSchema = z.object({
 const workBindingSchema = z.discriminatedUnion('state', [
   z.object({ state: z.literal('none') }),
   z.object({ state: z.literal('continue') }),
-  z.object({ state: z.literal('goal_progress'), goalId: z.string().uuid() }),
 ])
 const argsSchema = z.object({
   message: z.string().min(1).max(MAX_TEXT_LENGTH).nullable().optional(),
@@ -66,7 +65,6 @@ interface Args {
   work:
     | { state: 'none' }
     | { state: 'continue' }
-    | { state: 'goal_progress'; goalId: string }
 }
 
 export interface SendMessageDeps {
@@ -88,7 +86,7 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
       '支持文本、图片、引用回复和群内 @；reply_to 与 mention_external_id 使用平台消息或用户 ID。',
       'music 是 QQ 专属扩展；飞书目标会明确失败，不会假装成功。',
       '每次调用生成稳定 actionId，结果只会是 sent、failed 或 delivery_unknown。',
-      'work 必填：none 表示没有后续工作，continue 表示当前会话立即继续，goal_progress 绑定 active Goal。',
+      'work 必填：none 表示没有后续工作，continue 表示当前会话立即继续下一轮。',
     ].join(' '),
     schema: argsSchema,
     async execute(rawArgs) {

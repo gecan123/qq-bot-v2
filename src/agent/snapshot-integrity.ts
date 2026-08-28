@@ -5,7 +5,6 @@ export interface BotSnapshotIntegrityInput {
   snapshot: PersistedAgentSnapshot
   mailboxCursors: unknown
   mailboxContinuity?: unknown
-  goalRevision: unknown
 }
 
 export interface BotSnapshotIntegrityResult {
@@ -17,7 +16,6 @@ export interface BotSnapshotIntegrityResult {
     assistantToolCalls: number
     toolResults: number
     mailboxCursors: number
-    goalRevision: number
   }
 }
 
@@ -39,7 +37,6 @@ export function validateBotSnapshotIntegrity(input: BotSnapshotIntegrityInput): 
   validateMessages(messages, errors, warnings)
   validateMailboxCursors(mailboxCursors, errors)
   validateMailboxContinuity(input.mailboxContinuity, errors)
-  const goalRevision = validateGoalRevision(input.goalRevision, errors)
 
   return {
     ok: errors.length === 0,
@@ -55,7 +52,6 @@ export function validateBotSnapshotIntegrity(input: BotSnapshotIntegrityInput): 
       }, 0),
       toolResults: messages.filter((message) => isRecord(message) && message.role === 'tool').length,
       mailboxCursors: mailboxCursors.length,
-      goalRevision,
     },
   }
 }
@@ -99,14 +95,6 @@ function validateExactKeys(
     || actualKeys.some((key, index) => key !== sortedExpectedKeys[index])) {
     errors.push(`${path} must contain exactly ${sortedExpectedKeys.join(', ')}`)
   }
-}
-
-function validateGoalRevision(value: unknown, errors: string[]): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    errors.push('goalRevision must be a non-negative safe integer')
-    return 0
-  }
-  return value as number
 }
 
 function validateStableJson(snapshot: PersistedAgentSnapshot, errors: string[]): void {

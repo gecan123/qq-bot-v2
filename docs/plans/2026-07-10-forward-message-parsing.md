@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Expand inbound NapCat `forward` segments into bounded, recursively parsed message trees that are persisted once and rendered deterministically.
+**Objective:** Expand inbound NapCat `forward` segments into bounded, recursively parsed message trees that are persisted once and rendered deterministically.
 
 **Architecture:** Keep the existing synchronous segment parser for ordinary messages and add an asynchronous forward-aware entry point with an injected NapCat loader. Normalize each forwarded child through `get_msg`, fall back to the child payload on failure, then reuse the same recursive parser. Extend the existing media and text walkers to traverse the new structured segment.
 

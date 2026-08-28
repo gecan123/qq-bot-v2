@@ -30,7 +30,6 @@ function run(status: OperationRun['status']): OperationRun {
       deletedLedgerEntries: 7,
       deletedCheckpoints: 1,
       deletedRuntimeStates: 1,
-      deletedGoals: 1,
       createdRuntimeState: true,
       removedDirectories: [],
       removedWorkspaceEntries: 0,

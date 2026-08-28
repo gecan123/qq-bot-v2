@@ -32,7 +32,6 @@ export interface AgentTokenUsageEvent {
   durationMs?: number
   stopReason?: string
   errorKind?: string
-  goalId?: string
   taskId?: string
   attempt?: number
   inputTokens: number | null
@@ -105,7 +104,6 @@ export function buildInsertAgentTokenUsageSql(entry: AgentTokenUsageEvent): Pris
       "duration_ms",
       "stop_reason",
       "error_kind",
-      "goal_id",
       "task_id",
       "attempt",
       "model",
@@ -126,7 +124,6 @@ export function buildInsertAgentTokenUsageSql(entry: AgentTokenUsageEvent): Pris
       ${entry.durationMs ?? null},
       ${entry.stopReason ?? null},
       ${entry.errorKind ?? null},
-      ${entry.goalId ?? null},
       ${entry.taskId ?? null},
       ${entry.attempt ?? null},
       ${entry.model},

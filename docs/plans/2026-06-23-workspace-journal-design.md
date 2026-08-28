@@ -1,6 +1,6 @@
 # Workspace Journal Design
 
-## Goal
+## Objective
 
 Move Luna's journal and dream storage toward the private workspace model while keeping progressive disclosure and a semantic tool boundary.
 
@@ -49,7 +49,7 @@ The workspace files are durable facts, but they do not reconstruct prompt histor
 
 No historical migration is required for this experimental project unless explicitly requested. If needed later, a one-off script can export `JournalEntry` rows to JSONL.
 
-## Non-Goals
+## Out of Scope
 
 - Do not expose raw shell as the journal interface.
 - Do not add admin WebUI.

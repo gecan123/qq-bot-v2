@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Extend the existing ten-minute Life Journal review so the same auxiliary LLM call can write up to three recent Memory entries without changing recall or ledger behavior.
+**Objective:** Extend the existing ten-minute Life Journal review so the same auxiliary LLM call can write up to three recent Memory entries without changing recall or ledger behavior.
 
 **Architecture:** Add bounded `memoryCandidates` to the existing structured review result, persist each candidate through `writeMemoryEntry`, and enqueue newly created entries into the existing Memory maintenance runtime. Keep `LifeJournalRuntime`, its throttle, async scheduler, token operation, Journal/Agenda stores, and plain-text fallback behavior intact.
 

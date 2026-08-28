@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 成功回复 QQ mailbox 后向 durable AgentContext 追加确定性的 handled cursor，避免自主轮次把同一批消息再次当成新请求。
+**Objective:** 成功回复 QQ mailbox 后向 durable AgentContext 追加确定性的 handled cursor，避免自主轮次把同一批消息再次当成新请求。
 
 **Architecture:** `send_message` 成功时产生只供 Runtime Host 使用的 `message_sent` effect。Runtime Host 用纯函数扫描 durable ledger 中的 `inbox_update` 与 `mailbox_handled` 事件，找到发送目标仍未关闭的最新 `throughRowId`，追加一个稳定的 `mailbox_handled` user event，并随现有 post-round snapshot 保存。
 

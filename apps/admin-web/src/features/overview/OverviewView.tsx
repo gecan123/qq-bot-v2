@@ -31,7 +31,6 @@ const phaseLabels: Record<OverviewSnapshot['activity']['phase'], string> = {
 export function OverviewView({ snapshot, isRefreshing, refreshFailed }: OverviewViewProps) {
   const usage = snapshot.latestAgentUsage
   const activity = snapshot.activity
-  const currentGoal = isCurrentGoal(snapshot.goal) ? snapshot.goal : null
   const status = phaseLabels[activity.phase]
   const tone = phaseTone(activity.phase)
   const currentStep = describeCurrentStep(snapshot)
@@ -67,13 +66,12 @@ export function OverviewView({ snapshot, isRefreshing, refreshFailed }: Overview
 
       <div className="current-activity-body">
         <div className="current-primary">
-          <p className="current-eyebrow">{currentGoal ? '当前目标' : snapshot.goal ? '最近目标' : '当前目标'}</p>
-          <h3>{snapshot.goal?.objective ?? '暂无持久 Goal'}</h3>
-          {snapshot.goal && <div className="current-goal-meta"><StatusBadge tone={goalTone(snapshot.goal.status)}>{snapshot.goal.status}</StatusBadge><span>{formatCount(snapshot.goal.tokensUsed)} tokens · revision {snapshot.goal.revision}</span></div>}
+          <p className="current-eyebrow">当前动作</p>
+          <h3>{currentStep}</h3>
 
           <div className="current-step">
             <span className="current-step-marker" aria-hidden="true" />
-            <div><p>当前步骤</p><strong>{currentStep}</strong></div>
+            <div><p>Runtime 状态</p><strong>{activity.detail ?? status}</strong></div>
           </div>
 
           {activity.activeTools.length > 1 && (
@@ -107,11 +105,9 @@ export function OverviewView({ snapshot, isRefreshing, refreshFailed }: Overview
       </Panel>
 
       <div className="space-y-4">
-        <Panel title="下一步与等待" description="只展示持久 Goal 和 Runtime 明确记录的内容，不从日志猜测意图。">
-          {currentGoal?.currentCommitment
-            ? <dl className="commitment-card"><CurrentFact label="动作" value={currentGoal.currentCommitment.action} /><CurrentFact label="为什么" value={currentGoal.currentCommitment.reason} /><CurrentFact label="预期证据" value={currentGoal.currentCommitment.expectedEvidence} /></dl>
-            : <div className="empty-state"><span className="empty-state-dot" />当前没有结构化 commitment</div>}
+        <Panel title="下一步与等待" description="只展示 Runtime 明确记录的内容，不从日志猜测意图。">
           {(activity.detail || activity.waitUntil) && <dl className="commitment-card mt-3"><CurrentFact label="等待说明" value={activity.detail ?? '—'} /><CurrentFact label="最晚等待到" value={formatTimestamp(activity.waitUntil)} /></dl>}
+          {!activity.detail && !activity.waitUntil && <div className="empty-state"><span className="empty-state-dot" />当前没有结构化等待信息</div>}
         </Panel>
       </div>
     </div>
@@ -127,7 +123,7 @@ export function OverviewView({ snapshot, isRefreshing, refreshFailed }: Overview
       <Panel className="mt-4" title="继续调查" description="需要核对证据或排障时，再进入底层页面。"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Jump to="/context" title="Agent 历史" detail="决定后续上下文的 canonical 对话与动作" />
         <Jump to="/timeline" title="执行追踪" detail="模型、工具与 Ledger 写入的诊断证据" />
-        <Jump to="/life" title="Goal 与计划" detail="Goal、Schedule、后台任务" />
+        <Jump to="/life" title="计划" detail="Schedule 与后台任务" />
         <Jump to="/health" title="系统健康" detail="进程提示、DB、完整性、迁移" />
       </div></Panel>
     </details>
@@ -160,12 +156,10 @@ function Jump({ to, title, detail }: { to: '/context' | '/timeline' | '/life' | 
 function describeCurrentStep(snapshot: OverviewSnapshot): string {
   const tool = snapshot.activity.activeTools[0]
   if (tool) return describeActiveTool(tool.toolName, tool.argsSummary)
-  if (isCurrentGoal(snapshot.goal) && snapshot.goal.currentCommitment) return snapshot.goal.currentCommitment.action
   return snapshot.activity.detail ?? (snapshot.activity.available ? '正在等待 Agent 更新下一步' : '无法确认实时步骤')
 }
 
 function describeNextStep(snapshot: OverviewSnapshot): string {
-  if (isCurrentGoal(snapshot.goal) && snapshot.goal.currentCommitment) return snapshot.goal.currentCommitment.expectedEvidence
   if (snapshot.activity.phase === 'waiting') return snapshot.activity.detail ?? '等待新的注意事件'
   if (snapshot.activity.activeTools.length > 0) return '工具完成后保存结果，再由 Agent 决定下一步'
   return '等待下一条结构化活动状态'
@@ -182,7 +176,6 @@ function describeActiveTool(toolName: string, args: unknown): string {
     case 'browser': return action === 'open' ? '正在打开网页' : '正在操作浏览器'
     case 'pause':
     case 'rest': return '正在短暂休息'
-    case 'goal': return '正在读取或更新持久 Goal'
     default: return `正在执行 ${toolName}`
   }
 }
@@ -206,15 +199,4 @@ function phaseIcon(phase: OverviewSnapshot['activity']['phase']) {
   if (phase === 'tool') return <Wrench size={20} />
   if (phase === 'error') return <AlertTriangle size={20} />
   return <Circle size={18} />
-}
-
-function isCurrentGoal(goal: OverviewSnapshot['goal']): goal is NonNullable<OverviewSnapshot['goal']> {
-  return Boolean(goal && !['completed', 'abandoned', 'cancelled'].includes(goal.status))
-}
-
-function goalTone(status: string): ActivityTone {
-  if (status === 'active') return 'good'
-  if (['completed'].includes(status)) return 'info'
-  if (['abandoned', 'cancelled'].includes(status)) return 'neutral'
-  return 'warn'
 }

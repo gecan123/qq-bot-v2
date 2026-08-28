@@ -92,7 +92,6 @@ export function createAgentContext(options: CreateAgentContextOptions = {}): Age
       const validation = validateBotSnapshotIntegrity({
         snapshot,
         mailboxCursors: {},
-        goalRevision: 0,
       })
       if (!validation.ok) {
         throw new Error(`projection integrity validation failed: ${validation.errors.join('; ')}`)

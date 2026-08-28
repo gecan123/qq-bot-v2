@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add a minimal hook pipeline to `createToolExecutor` so later permission, background, MCP, and audit behavior can attach to one stable tool boundary.
+**Objective:** Add a minimal hook pipeline to `createToolExecutor` so later permission, background, MCP, and audit behavior can attach to one stable tool boundary.
 
 **Architecture:** Keep `BotLoopAgent` unchanged. Extend `src/agent/tool.ts` with typed `beforeTool` and `afterTool` hooks around validated tool execution. Hook-blocked calls still return a normal `ToolExecutionResult` for the original tool call id and are traced through the existing tool-call log.
 

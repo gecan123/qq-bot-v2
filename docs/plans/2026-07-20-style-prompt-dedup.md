@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 清理 `bot-style.md` 内部重复并固定 section 所有权，同时保持 system、constraints、工具路由和 replay 边界不变。
+**Objective:** 清理 `bot-style.md` 内部重复并固定 section 所有权，同时保持 system、constraints、工具路由和 replay 边界不变。
 
 **Architecture:** `chat_style` 和 `workspace_bash style` 继续通过现有 `loadPromptSection` 读取同一组 section；只改变 `bot-style.md` 的静态内容。用 focused tests 断言 index、base、anti-patterns 和 special-cases 各自拥有正确内容。
 

@@ -15,7 +15,7 @@
 新文档按以下顺序组织：
 
 1. 先声明“持久化状态不都属于记忆”。
-2. 用一张表区分 `messages`、`AgentContext`、working projection、`memory`、Notebook、Life Journal、Agenda、Goal 和日志。
+2. 用一张表区分 `messages`、`AgentContext`、working projection、`memory`、Notebook、Life Journal、Agenda 和日志。
 3. 用数据流图说明入站事实如何经 mailbox/inbox 进入 ledger，以及四种长期状态如何通过显式工具结果被按需披露。
 4. 给出写入路由：稳定事实写 memory；演进过程写 Notebook；经历/感受/梦写 Life Journal；当前承诺/下一步写 Agenda。
 5. 说明各层的读取、维护、并发、格式、reset 与 replay 边界。
@@ -28,7 +28,7 @@
 - Memory maintenance 的 revision 冲突重排队是正确方向。
 - Notebook 保持显式维护，不自动晋升到 memory。
 - Life Journal reviewer 更新 Agenda 未使用 revision，且 reviewer append 与主 Agent mutation 缺少统一串行边界，是当前最高优先级一致性风险。
-- `agent:reset-memory` 实际同时清理 snapshot、Goal 和四类 workspace 状态，命名比行为窄；后续应拆分 scope 或改名。
+- `agent:reset-memory` 实际同时清理 snapshot 和四类 workspace 状态，命名比行为窄；后续应拆分 scope 或改名。
 
 ## 非目标
 

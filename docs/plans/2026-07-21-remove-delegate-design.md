@@ -19,7 +19,7 @@
 - 保留 `trading_agent`、Memory maintenance、Life review、媒体处理等专用后台 worker。
 - 保留 `runReactRound()` 的 `stagedMessages`；主 Agent 的 Runtime Host 仍需要它。
 
-删除后，通用 Goal 调查和群聊由主 Agent 串行处理。未来只有在出现可测量的群聊响应延迟，而且现有专用后台任务无法覆盖时，才按实际需求设计目标明确的 research worker。
+删除后，通用调查和群聊由主 Agent 串行处理。未来只有在出现可测量的群聊响应延迟，而且现有专用后台任务无法覆盖时，才按实际需求设计目标明确的 research worker。
 
 ## 代码范围
 
@@ -35,13 +35,12 @@
 - `src/agent/task-scheduler.ts`：移除默认 `delegate` lane。
 - 依赖完整工具列表或 scheduler lane 的测试：更新期望值。
 - `src/agent/agent-context.ts`：移除仅以 delegate 为例的注释；保留局部 context API。
-- `src/agent/goal-render.ts`：不再引导主 Agent 使用 delegate。
 
 不修改：
 
 - `runReactRound()` 和 `stagedMessages`。
 - `BackgroundTaskRegistry` 与 `background_task`。
-- Agent ledger、runtime state、QQ focus、Goal 和 prompt cache 的数据模型。
+- Agent ledger、runtime state、QQ focus 和 prompt cache 的数据模型。
 - Prisma schema 和 migrations。
 
 ## 文档范围

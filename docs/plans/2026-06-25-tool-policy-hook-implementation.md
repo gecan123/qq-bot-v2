@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add a thin internal policy hook that can block explicitly destructive or approval-required tool calls before execution.
+**Objective:** Add a thin internal policy hook that can block explicitly destructive or approval-required tool calls before execution.
 
 **Architecture:** Extend the existing `Tool` interface with optional internal policy metadata. Implement `createToolPolicyHook()` as a `BeforeToolHook` and attach it in `src/index.ts` when constructing `createToolExecutor`. Keep built-in tool behavior unchanged unless a tool explicitly opts into destructive or approval-required metadata.
 

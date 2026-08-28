@@ -19,18 +19,6 @@ export interface OverviewDb {
       updatedAt: Date
     } | null>
   }
-  botAgentGoal: {
-    findUnique(input: object): Promise<{
-      goalId: string
-      objective: string
-      status: string
-      tokensUsed: number
-      tokenBudget: number | null
-      revision: number
-      currentCommitment: unknown
-      updatedAt: Date
-    } | null>
-  }
   agentTokenUsage: {
     findFirst(input: object): Promise<{
       ts: Date
@@ -56,7 +44,7 @@ export async function loadOverviewSnapshot(
   activityInput: OverviewActivityInput = { status: 'missing' },
   toolActivity: OverviewToolActivityInput = emptyToolActivity,
 ): Promise<OverviewSnapshot> {
-  const [entryCount, head, runtime, goal, usage] = await Promise.all([
+  const [entryCount, head, runtime, usage] = await Promise.all([
     db.botAgentLedgerEntry.count(),
     db.botAgentLedgerEntry.findFirst({
       orderBy: { id: 'desc' },
@@ -65,19 +53,6 @@ export async function loadOverviewSnapshot(
     db.botAgentRuntimeState.findUnique({
       where: { id: 1 },
       select: { conversationFocus: true, lastWakeAt: true, updatedAt: true },
-    }),
-    db.botAgentGoal.findUnique({
-      where: { id: 1 },
-      select: {
-        goalId: true,
-        objective: true,
-        status: true,
-        tokensUsed: true,
-        tokenBudget: true,
-        revision: true,
-        currentCommitment: true,
-        updatedAt: true,
-      },
     }),
     db.agentTokenUsage.findFirst({
       where: { operation: 'agent.chat' },
@@ -115,11 +90,6 @@ export async function loadOverviewSnapshot(
       updatedAt: runtime?.updatedAt.toISOString() ?? null,
       lastWakeAt: runtime?.lastWakeAt?.toISOString() ?? null,
       focus,
-    },
-    goal: goal === null ? null : {
-      ...goal,
-      currentCommitment: parseCommitment(goal.currentCommitment),
-      updatedAt: goal.updatedAt.toISOString(),
     },
     activity,
     recentActions: toolActivity.recentCalls.map(row => ({
@@ -174,22 +144,6 @@ function mapActivity(input: OverviewActivityInput): OverviewSnapshot['activity']
   }
 }
 
-function parseCommitment(
-  value: unknown,
-): NonNullable<OverviewSnapshot['goal']>['currentCommitment'] {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  const record = value as Record<string, unknown>
-  return typeof record.action === 'string'
-    && typeof record.reason === 'string'
-    && typeof record.expectedEvidence === 'string'
-    ? {
-        action: record.action,
-        reason: record.reason,
-        expectedEvidence: record.expectedEvidence,
-      }
-    : null
-}
-
 function describeToolAction(
   toolName: string,
   args: unknown,
@@ -216,8 +170,6 @@ function describeToolAction(
     case 'conversation':
     case 'qq_conversation':
       return { title: action === 'open' ? '切换了会话' : '更新了会话状态', detail: action ? `动作：${action}` : '更新了显式发送目标' }
-    case 'goal':
-      return { title: '更新了当前 Goal', detail: action ? `动作：${action}` : '读取或更新了持久 Goal' }
     case 'pause':
     case 'rest':
       return { title: '完成了一次短暂休息', detail: reason ?? '休息计时结束或被注意事件打断' }

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the DB-backed person/group-only `memory` tool with a local Markdown memory library that supports `self`, `person`, `group`, and `topic` scopes.
+**Objective:** Replace the DB-backed person/group-only `memory` tool with a local Markdown memory library that supports `self`, `person`, `group`, and `topic` scopes.
 
 **Architecture:** Add a focused file-backed memory store under `src/agent/memory-store.ts`, then make `src/agent/tools/memory.ts` call that store directly. Generated memory files live under `data/agent-workspace/memory/` and enter `AgentContext` only through bounded tool results.
 

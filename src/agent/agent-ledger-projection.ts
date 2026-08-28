@@ -180,7 +180,6 @@ export function parseAgentRuntimeState(value: unknown): AgentRuntimeState {
     'mailboxCursors',
     'inboxReadCursors',
     'mailboxContinuity',
-    'goalRevision',
     'conversationFocus',
     'lastWakeAt',
     'ledgerHeadEntryId',
@@ -216,7 +215,6 @@ export function parseAgentRuntimeState(value: unknown): AgentRuntimeState {
       state.mailboxContinuity,
       `${path}.mailboxContinuity`,
     ) as unknown as AgentRuntimeState['mailboxContinuity'],
-    goalRevision: requireNonNegativeSafeInteger(state.goalRevision, `${path}.goalRevision`),
     conversationFocus: parseConversationFocus(
       state.conversationFocus,
       `${path}.conversationFocus`,
@@ -459,7 +457,6 @@ function assertSnapshotIntegrity(
     snapshot,
     mailboxCursors: runtimeState.mailboxCursors,
     mailboxContinuity: runtimeState.mailboxContinuity,
-    goalRevision: runtimeState.goalRevision,
   })
   if (!result.ok) {
     throw new AgentLedgerIntegrityError(result.errors.map((error) => `${label}: ${error}`))

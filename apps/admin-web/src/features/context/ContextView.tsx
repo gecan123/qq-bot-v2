@@ -105,7 +105,6 @@ export function ContextView({
               <Metric label="Runtime head" value={snapshot.runtime.ledgerHeadId ?? '—'} />
               <Metric label="Checkpoint through" value={snapshot.ledger.checkpointThroughId ?? '—'} />
               <Metric label="Checkpoint updated" value={formatTimestamp(snapshot.ledger.checkpointUpdatedAt)} />
-              <Metric label="Goal revision" value={String(snapshot.runtime.goalRevision ?? '—')} />
               <Metric label="Runtime updated" value={formatTimestamp(snapshot.runtime.updatedAt)} />
             </dl>
           </Panel>

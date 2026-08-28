@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Synchronize the repository architecture overview with the current ReAct execution, background scheduling, event-return, and snapshot persistence boundaries.
+**Objective:** Synchronize the repository architecture overview with the current ReAct execution, background scheduling, event-return, and snapshot persistence boundaries.
 
 **Architecture:** Keep `docs/ARCHITECTURE.md` as the concise runtime overview and make it defer detailed invariants to the existing focused documents. Mirror only the affected high-level wording into `README.md` and the Prisma schema comment; do not change runtime behavior or add new repository checks.
 
@@ -40,7 +40,7 @@ Describe `context_snapshot` as the persisted `AgentContext` shape containing LLM
 
 **Step 2: List atomic row metadata**
 
-Include `mailbox_cursors`, `mailbox_continuity`, `goal_revision`, and legacy recovery boundary `last_wake_at` as row-level runtime control state.
+Include `mailbox_cursors`, `mailbox_continuity`, and legacy recovery boundary `last_wake_at` as row-level runtime control state.
 
 **Step 3: Correct the Prisma comment**
 

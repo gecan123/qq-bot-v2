@@ -6,17 +6,17 @@
 
 - Postgres `bot_agent_ledger_entries` 是唯一持久 LLM history source。普通事实写成 `message` entry；压缩写成 `compaction` entry。运行时没有更新或删除旧 entry 的接口。
 - `AgentContext` 是当前 canonical ledger 的内存 projection，不是另一份事实源。`messages` / `media` 是 QQ 与飞书共享的入站事实账本，只用于 missed replay、搜索、审计和按需读取，不能重建 prompt transcript。
-- `bot_agent_runtime_state` 只保存通知披露 cursors、inbox 已读 cursors、continuity、Goal revision、active tool capabilities、平台中立 conversation focus、last wake 和 ledger head。它不保存 LLM history；focus 只能由 `conversation open/close` 改变，不能从消息、memory、日志或其他 side state 推断。
+- `bot_agent_runtime_state` 只保存通知披露 cursors、inbox 已读 cursors、continuity、平台中立 conversation focus、last wake 和 ledger head。它不保存 LLM history；focus 只能由 `conversation open/close` 改变，不能从消息、memory、日志或其他 side state 推断。
 - `bot_agent_checkpoint` 是可丢弃的 projection cache。启动始终先验证 canonical ledger；checkpoint 只有 schema、head、fingerprint 和 projection 都匹配时才命中。missing、stale、corrupt 都从 canonical ledger 重建，checkpoint 写失败不影响已提交历史。
 - 普通 message/runtime commit 必须携带当前 expected head。事务返回 appended entries 与新 runtime state 后，`LedgerCommitCoordinator` 只基于当前已验证 active projection 增量安装；不得在日常 commit 热路径重新 SELECT/fingerprint 永久 prefix。完整 chain 校验保留在启动、compaction 后刷新、`agent:ledger-check` 和显式 Deep Integrity。
-- `bot_agent_goal`、workspace Markdown、调度文件和 `logs/*` 都是 side state，永远不能作为 transcript replay 来源。`logs/agent-activity.json` 仅供 WebAdmin 观察进程 phase、等待和并发工具，缺失或损坏不得影响 replay 或 Agent 行为。
+- workspace Markdown、调度文件和 `logs/*` 都是 side state，永远不能作为 transcript replay 来源。`logs/agent-activity.json` 仅供 WebAdmin 观察进程 phase、等待和并发工具，缺失或损坏不得影响 replay 或 Agent 行为。
 
 ## Append 与原子性
 
 - 新的 LLM 可见事实只能通过 Runtime Host 的受控 append 或 compaction projection 进入。
 - assistant tool call 和对应 tool result 是不可拆的原子组。结果按 assistant 中的 tool-call 顺序持久化；并行完成时序不进入 ledger。
 - `ToolExecutionResult.content` 是唯一持久化工具结果。`outcome` 和 `effects` 只服务当前轮控制流；`progress`、`continuation` 和普通 `noveltyKey` 都不进入 replay，重复新颖性只作为有界进程内防空转状态。只有 Runtime Host 验证后的稳定 marker（例如 `mailbox_handled`、`runtime_correction`）可以另外 append。content-only 且无 tool call 的 assistant 输出不是有效行动或公开发言；Runtime Host 追加同一个稳定行动纠错并立即继续，方向选择仍由主 Agent 完成。
-- 可见消息与通知披露 cursor、inbox 已读 cursor、continuity、Goal revision 或 conversation focus 变化必须在同一事务提交。`inbox` 只把实际呈现在有界 tool result 中的最新 row 标为已读，输出截断时不能跳过未展示行。持久化成功前不得推进内存 projection；提交失败时 runtime-local control state 必须回滚到 canonical projection。
+- 可见消息与通知披露 cursor、inbox 已读 cursor、continuity 或 conversation focus 变化必须在同一事务提交。`inbox` 只把实际呈现在有界 tool result 中的最新 row 标为已读，输出截断时不能跳过未展示行。持久化成功前不得推进内存 projection；提交失败时 runtime-local control state 必须回滚到 canonical projection。
 - late media、side table 或日志变化不得回写已 append entry。
 
 ## 确定性 replay
@@ -40,7 +40,7 @@
 - trigger 只有动态 threshold 和 provider context overflow。threshold 使用 provider input prefix 加本轮新 entry 的本地估算；overflow 每轮最多强制 compact-and-retry 一次。
 - `beforeCompact` 和 summarizer 在事务外运行，支持 abort；CAS `appendCompaction(expectedHeadEntryId)` 成功后才安装 candidate。head race 丢弃 candidate 并基于新 head 重算一次。
 - threshold 失败退避十分钟；overflow 不读该退避。summarizer 或 commit 失败不改变 canonical history；checkpoint 和 `afterCompact` 失败只记录，不回滚已提交 compaction；shutdown 会中止未提交 summarizer。
-- active Goal 在 compaction 后追加稳定 continuation。mailbox continuity 的 compaction epoch 与 compaction entry 同事务提交；mailbox attention 状态进入 compaction payload 的受控字段，不交给 summarizer 改写。
+- mailbox continuity 的 compaction epoch 与 compaction entry 同事务提交；mailbox attention 状态进入 compaction payload 的受控字段，不交给 summarizer 改写。
 - compaction 只改变 LLM messages projection，不得清空或从 transcript 重建 active capabilities、conversation focus 等 runtime control state。
 
 ## 图片与 working context
@@ -49,7 +49,7 @@
 - working context 按显式主 Agent 图片策略投影全部图片引用：默认 `LLM_AGENT_IMAGE_MODE=description`，主模型只读取独立 `describeImage` 路由已经持久化的描述/确定性 marker；`native` 才把图片解析为真实 image block。策略表达“谁负责识图”，不根据主模型名称或其理论能力猜测。
 - 视觉模型解析媒体时若资源已失效，使用确定性 unavailable marker。失效不能改变已持久化文字、阻止 replay 或让旧 compaction 失效。working-context projection 不能查询后来变化的媒体描述、删事实、改 role、拆 tool pair 或成为第二份持久历史。
 
-## Mailbox、Goal 与外部副作用
+## Mailbox 与外部副作用
 
 - bot 在 QQ 与飞书所有允许来源间共享一个串行 `AgentContext`。异步来源统一追加不含正文的 `notification` envelope；`priority` 表示重要性，`delivery=interrupt|next_round|passive` 独立决定披露节奏，`open.tool/open.args` 指向来源自己的按需读取入口。两个平台的正文先写 `messages` / `media`：私聊、结构化 @bot、编辑和撤回可以形成 attention；普通群消息只由 `inbox list/read` 被动、有界读取，QQ 的 selective/active 群还可以聚合为 normal+passive。
 - 新通知统一写成 `event=notification`；历史 ledger 中的 `event=inbox_update` 继续由 mailbox attention parser 兼容，不能迁移或改写旧 entry。后台任务通知只披露状态和 `background_task get` 打开动作；调度到期 notification 不含 intention，正文先写独立 occurrence store，再由 `schedule get_occurrence` 读取。来源 side state 不参与 transcript replay；通知本身一旦进入 ledger 就保持字节稳定。
@@ -57,11 +57,9 @@
 - 私聊发送是否属于“回应新入站”由同 target 的 durable pending mailbox 判断，不依赖 `reply_to`。`reply_to` 只控制对应平台的引用/回复展示；进程内主动私聊冷却不得拦截 pending mailbox 的回复。
 - 未追加 `mailbox_handled` 的私聊 mailbox 仍保留“尚未外发回应”的 durable 状态，用于回复冷却豁免和防重复边界；但强制 attention 只针对 `disclosedThroughRowId` 同时大于 handled cursor 与持久 `inboxReadCursors` 的未读范围。正文已经由有界 inbox result 展示后，不会因无需回复的旧私聊跨重启永久追加 attention 纠错；模型仍可根据内容决定是否外发。普通无进展先继续下一轮；若连续两轮的实际工具名、参数和结果 code 完全相同，则进程内等待 attention 或十分钟后再重新选择方向。该重复状态不进入 ledger/runtime singleton。
 - provider-confirmed `send_message` 仍与本地数据库不存在分布式事务。只有同 target 有 pending disclosure 时才 append `mailbox_handled`；这防止重复回应，但不承诺任一平台外发 exactly-once。稳定 action UUID 与 `sent|failed|delivery_unknown` 只表达本次 adapter 结果，不引入 outbox 或自动重试。
-- `mailbox_handled` 只表示这批入站已经回应，不表示回应中承诺的工作已完成。`send_message.work=continue` 只在进程内为下一轮保留短期行动锚点，不跨重启；`work=goal_progress` 必须绑定当前 active Goal 且其 `currentCommitment` 非空，否则 before-tool hook 以 `work_commitment_required` 拒绝外发。进度消息可以关闭 mailbox 防重，长期行动锚点仍由 Goal revision/continuation 契约跨轮与跨重启保留。
-- owner 和 self Goal 的 `complete` 在状态写入前各执行一次独立、无工具 LLM 验收。judger 只读取当前 canonical projection：优先从当前 goalId 首次出现处截取，marker 已被 compaction 移出时使用完整 projection；transcript 包在 untrusted envelope 中，不能从日志、Goal side table、Memory 或其他可变 side state 重建证据。
-- 只有严格解析出的 `{ok:true}` 才允许调用 `GoalStore.complete()`；`ok:false`、provider 或协议失败都不改变 Goal 状态，同一次尝试不自动重试。拒绝或不可用原因只通过正常 `goal` tool result 进入 ledger；judger 不决定 blocker，也不创建第二个 Agent。
+- `mailbox_handled` 只表示这批入站已经回应，不表示回应中承诺的工作已完成。`send_message.work=continue` 只在进程内为下一轮保留短期行动锚点，不跨重启；跨天过程用 Notebook，未来时点重新评估用 Schedule。
 - 主动休息只由主 Agent 显式调用 `rest`，默认请求 30 分钟、范围 10..30；等待发生在该工具执行内部，不读取或改写 canonical projection。一次休息完整结束后，工具只在当前进程保存 60 分钟硬冷却；冷却期间不披露剩余时间并返回稳定拒绝，注意事件提前打断的本次休息不启动冷却。该可丢弃控制状态不进入 ledger/runtime singleton、不跨重启持久化，也不根据工具次数、工作量或所谓精力判断资格。
-- 不实现 pi 风格 session tree。跨平台外发、mailbox cursor、Goal revision 和工具副作用需要一条可审计的线性时间线；分叉历史会让“哪条分支已发送/已处理”失去唯一答案。并行工作只通过有明确类型和边界的 background task 完成，结果回到主 ledger。
+- 不实现 pi 风格 session tree。跨平台外发、mailbox cursor 和工具副作用需要一条可审计的线性时间线；分叉历史会让“哪条分支已发送/已处理”失去唯一答案。并行工作只通过有明确类型和边界的 background task 完成，结果回到主 ledger。
 
 ## 代码地图
 

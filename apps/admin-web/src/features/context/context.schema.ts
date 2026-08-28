@@ -103,7 +103,6 @@ export const contextSnapshotSchema = z.object({
   }).strict(),
   runtime: z.object({
     ledgerHeadId: z.string().nullable(),
-    goalRevision: z.number().int().nonnegative().nullable(),
     updatedAt: z.iso.datetime({ offset: true }).nullable(),
   }).strict(),
   latestUsage: z.object({

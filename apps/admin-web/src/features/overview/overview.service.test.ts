@@ -29,24 +29,6 @@ function createFakeDb(focus: unknown): OverviewDb {
         }
       },
     },
-    botAgentGoal: {
-      async findUnique() {
-        return {
-          goalId: '550e8400-e29b-41d4-a716-446655440000',
-          objective: '建立只读 WebAdmin',
-          status: 'active',
-          tokensUsed: 800,
-          tokenBudget: 10_000,
-          revision: 3,
-          currentCommitment: {
-            action: '建立当前活动观察面',
-            reason: '让管理员一眼看懂 Agent 在做什么',
-            expectedEvidence: '首页显示实时 phase 和最近进展',
-          },
-          updatedAt: new Date('2026-07-20T07:58:00.000Z'),
-        }
-      },
-    },
     agentTokenUsage: {
       async findFirst() {
         return {
@@ -129,8 +111,6 @@ describe('loadOverviewSnapshot', () => {
     assert.equal(result.ledger.headEntryId, '42')
     assert.equal(result.ledger.latestEntryType, 'compaction')
     assert.deepEqual(result.runtime.focus, { type: 'group', id: '123' })
-    assert.equal(result.goal?.objective, '建立只读 WebAdmin')
-    assert.equal(result.goal?.currentCommitment?.action, '建立当前活动观察面')
     assert.equal(result.activity.phase, 'tool')
     assert.equal(result.activity.activeTools[0]?.toolName, 'browser')
     assert.equal(result.recentActions[0]?.title, '搜索了网络信息')

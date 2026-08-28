@@ -25,7 +25,7 @@ function resetPayload(scope: 'context' | 'knowledge' | 'all' = 'context'): Opera
     needed: true,
     context: scope === 'knowledge'
       ? null
-      : { ledgerEntries: 7, checkpoints: 1, runtimeStates: 1, goals: 1 },
+      : { ledgerEntries: 7, checkpoints: 1, runtimeStates: 1 },
     knowledge: scope === 'context'
       ? null
       : { directories: [
@@ -48,7 +48,6 @@ function resetResult(scope: 'context' | 'knowledge' | 'all' = 'context'): Operat
     deletedLedgerEntries: 7,
     deletedCheckpoints: 1,
     deletedRuntimeStates: 1,
-    deletedGoals: 1,
     createdRuntimeState: true,
     removedDirectories: [],
     removedWorkspaceEntries: scope === 'all' ? 1 : 0,
@@ -161,7 +160,6 @@ describe('createAdminOperationsService', () => {
     port.preview = async request => ({
       payload: {
         ...resetPayload(request.scope),
-        context: { ledgerEntries: 8, checkpoints: 1, runtimeStates: 1, goals: 1 },
       },
       stateFingerprint: 'b'.repeat(64),
     })

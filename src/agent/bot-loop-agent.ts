@@ -1,7 +1,7 @@
 import type { AgentContext } from './agent-context.js'
 import type { AgentMessage, ConversationFocus } from './agent-context.types.js'
 import { conversationKey } from '../chat/conversation.js'
-import { isLlmContextOverflowError, isLlmUsageLimitError, type LlmClient } from './llm-client.js'
+import { isLlmContextOverflowError, type LlmClient } from './llm-client.js'
 import type { MessageSentTarget, ToolContinuation, ToolExecutor } from './tool.js'
 import type { EventQueue } from './event-queue.js'
 import type { BotEvent } from './event.js'
@@ -19,8 +19,6 @@ import {
   type MailboxDisclosure,
   type MailboxCursors,
 } from './mailbox.js'
-import type { AgentGoal, GoalStore } from './goal-store.js'
-import { renderGoalContinuation, renderGoalStateEvent } from './goal-render.js'
 import {
   decideMailboxCompensation,
   parseMailboxContinuityState,
@@ -69,14 +67,10 @@ export interface BotLoopAgentDeps {
   initialMailboxContinuity?: MailboxContinuityState
   /** 新来源在尚无 cursor 时使用的旧式恢复边界。 */
   initialLastWakeAt?: Date | null
-  /** 从 runtime singleton 恢复的 goal control revision；只控制 LLM 可见状态事件的去重。 */
-  initialGoalRevision?: number
   initialLedgerHeadEntryId?: bigint | null
   /** 跨平台会话焦点也是 runtime control state，与可见 tool result 同事务落盘。 */
   getConversationFocus?: () => ConversationFocus
   syncConversationFocus?: (focus: ConversationFocus) => void
-  /** 单一持久 goal 控制面；不存在时保持旧自主循环行为。 */
-  goalStore?: GoalStore
   /**
    * 把 BotEvent 翻译成 user-role AgentMessage 的纯函数。
    * 字节稳定 = cache 命中前提:同样的 messageRowId 渲染必须每次输出同样字节。
@@ -172,7 +166,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let mailboxCursors: MailboxCursors = { ...deps.initialMailboxCursors }
   let inboxReadCursors: InboxReadCursors = { ...deps.initialInboxReadCursors }
   let mailboxContinuity = parseMailboxContinuityState(deps.initialMailboxContinuity)
-  let goalRevision = Math.max(0, deps.initialGoalRevision ?? 0)
   let ledgerHeadEntryId = deps.initialLedgerHeadEntryId ?? null
   let roundIndex = 0
   let consecutiveRounds = 0
@@ -189,7 +182,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     mailboxCursors: MailboxCursors
     inboxReadCursors: InboxReadCursors
     mailboxContinuity: MailboxContinuityState
-    goalRevision: number
     conversationFocus: ConversationFocus
     lastWakeAt: Date | null
     ledgerHeadEntryId: bigint | null
@@ -197,7 +189,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     mailboxCursors = { ...input.mailboxCursors }
     inboxReadCursors = { ...input.inboxReadCursors }
     mailboxContinuity = parseMailboxContinuityState(input.mailboxContinuity)
-    goalRevision = input.goalRevision
     lastWakeAt = input.lastWakeAt == null ? null : new Date(input.lastWakeAt)
     ledgerHeadEntryId = input.ledgerHeadEntryId
     deps.syncConversationFocus?.(input.conversationFocus)
@@ -250,8 +241,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   function drainEvents(): {
     consumed: number
     hadAttention: boolean
-    beforeGoal: MailboxDisclosure[]
-    afterGoal: MailboxDisclosure[]
+    interrupting: MailboxDisclosure[]
+    passive: MailboxDisclosure[]
     cursors: MailboxCursors
     events: BotEvent[]
   } {
@@ -284,8 +275,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     return {
       consumed: events.length,
       hadAttention: events.some(isAttentionEvent),
-      beforeGoal: [...highInterruptingDisclosures, ...normalInterruptingDisclosures],
-      afterGoal: ordinaryDisclosures,
+      interrupting: [...highInterruptingDisclosures, ...normalInterruptingDisclosures],
+      passive: ordinaryDisclosures,
       cursors: plan.cursors,
       events,
     }
@@ -386,11 +377,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     return disclosed
   }
 
-  async function runRound(goalRoundIndex?: number): Promise<{
+  async function runRound(): Promise<{
     inputTokens: number | null
     contextWindowTokens: number
     providerPrefixHeadEntryId: bigint | null
-    tokensUsed: number
     toolCallCount: number
     sentTargets: MessageSentTarget[]
     workContinuationRequested: boolean
@@ -405,7 +395,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     roundIndex++
     let recoveredContextOverflow = false
     let outputContinuations = 0
-    let recoveryTokensUsed = 0
     const stagedMessages: AgentMessage[] = []
     let result: Awaited<ReturnType<typeof runReactRound>>
     let providerPrefixHeadEntryId = ledgerHeadEntryId
@@ -420,7 +409,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
           toolContext: {
             eventQueue: deps.eventQueue,
             roundIndex,
-            ...(goalRoundIndex != null ? { goalRoundIndex } : {}),
           },
           stagedMessages,
           compactionKeepRecentTokens:
@@ -435,7 +423,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         break
       } catch (err) {
         if (err instanceof LlmOutputTruncatedError) {
-          recoveryTokensUsed += err.tokensUsed
           const partial = err.completion
           const canContinue =
             outputContinuations < MAX_OUTPUT_CONTINUATIONS_PER_ROUND
@@ -469,10 +456,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
           contextWindowTokens: overflowContextWindow,
         })
         if (!compacted) throw err
-        const syncedAfterRecoveryCompaction = await syncGoalState()
-        if (syncedAfterRecoveryCompaction.goal?.status === 'active') {
-          await appendGoalContinuation(syncedAfterRecoveryCompaction.goal, 'post_compaction')
-        }
         log.warn({ roundIndex }, 'context_overflow_compacted_retrying_round')
       }
     }
@@ -511,7 +494,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       inputTokens: result.inputTokens,
       contextWindowTokens: result.contextWindowTokens,
       providerPrefixHeadEntryId,
-      tokensUsed: recoveryTokensUsed + result.tokensUsed,
       toolCallCount: result.toolCallCount,
       sentTargets,
       workContinuationRequested,
@@ -614,25 +596,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     return markers
   }
 
-  async function syncGoalState(): Promise<{ goal: AgentGoal | null; appended: boolean }> {
-    const goal = await deps.goalStore?.get() ?? null
-    if (!goal || goal.revision <= goalRevision) return { goal, appended: false }
-    await commitChanges({
-      messages: [{ role: 'user', content: renderGoalStateEvent(goal) }],
-      runtimePatch: { goalRevision: goal.revision },
-    })
-    return { goal, appended: true }
-  }
-
-  async function appendGoalContinuation(
-    goal: AgentGoal,
-    reason: 'automatic_continuation' | 'post_compaction',
-  ): Promise<void> {
-    await commitChanges({
-      messages: [{ role: 'user', content: renderGoalContinuation(goal, reason) }],
-    })
-  }
-
   async function maybeCompact(
     inputTokens: number | null,
     contextWindowTokens: number,
@@ -659,17 +622,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     toolContinuation?: ToolContinuation
     toolContinuationDetail?: string
   }> {
-    const goalAtRoundStart = await deps.goalStore?.get() ?? null
     const stagedMessages: AgentMessage[] = []
     const stagedContinuity = parseMailboxContinuityState(mailboxContinuity)
     const stagedWake = { lastWakeAt }
-    let nextGoalRevision = goalRevision
-    let goalMessagesAppended = false
-    if (goalAtRoundStart && goalAtRoundStart.revision > goalRevision) {
-      stagedMessages.push({ role: 'user', content: renderGoalStateEvent(goalAtRoundStart) })
-      nextGoalRevision = goalAtRoundStart.revision
-      goalMessagesAppended = true
-    }
     const debounceMs = deps.eventDebounceMs ?? DEFAULT_EVENT_DEBOUNCE_MS
     if (deps.eventQueue.size() > 0 && debounceMs > 0 && !stopRequested) {
       await new Promise<void>((resolve) => {
@@ -685,30 +640,21 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       })
     }
     const drained = drainEvents()
-    const trigger = describeActivityTrigger(drained.events, goalAtRoundStart)
+    const trigger = describeActivityTrigger(drained.events)
     deps.activityReporter?.setTrigger(trigger)
     deps.activityReporter?.setPhase({
       phase: 'thinking',
       roundIndex: roundIndex + 1,
-      detail: goalAtRoundStart?.status === 'active'
-        ? '正在推进当前持久 Goal'
-        : '正在根据最新上下文决定下一步',
+      detail: '正在根据最新上下文决定下一步',
     })
     let disclosed = await discloseEvents(
-      drained.beforeGoal,
+      drained.interrupting,
       stagedMessages,
       stagedContinuity,
       stagedWake,
     )
-    if (goalAtRoundStart?.status === 'active') {
-      stagedMessages.push({
-        role: 'user',
-        content: renderGoalContinuation(goalAtRoundStart, 'automatic_continuation'),
-      })
-      goalMessagesAppended = true
-    }
     disclosed += await discloseEvents(
-      drained.afterGoal,
+      drained.passive,
       stagedMessages,
       stagedContinuity,
       stagedWake,
@@ -726,14 +672,13 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
 
     const cursorsChanged = JSON.stringify(drained.cursors) !== JSON.stringify(mailboxCursors)
     let eventsCommitted = false
-    if (stagedMessages.length > 0 || cursorsChanged || nextGoalRevision !== goalRevision) {
+    if (stagedMessages.length > 0 || cursorsChanged) {
       try {
         await commitChanges({
           messages: stagedMessages,
           runtimePatch: {
             mailboxCursors: drained.cursors,
             mailboxContinuity: stagedContinuity,
-            goalRevision: nextGoalRevision,
             lastWakeAt: stagedWake.lastWakeAt,
           },
         })
@@ -756,27 +701,11 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     }
 
     const shortWorkContinuationAtRoundStart = shortWorkContinuationPending
-    const roundStartedAt = Date.now()
-    let roundResult: Awaited<ReturnType<typeof runRound>>
-    try {
-      roundResult = await runRound(
-        goalAtRoundStart?.status === 'active' ? goalAtRoundStart.roundsUsed + 1 : undefined,
-      )
-    } catch (error) {
-      if (goalAtRoundStart?.status === 'active' && deps.goalStore && isLlmUsageLimitError(error)) {
-        await deps.goalStore.markUsageLimited({
-          goalId: goalAtRoundStart.goalId,
-          reason: error instanceof Error ? error.message : 'provider usage limit',
-        })
-        await syncGoalState()
-      }
-      throw error
-    }
+    const roundResult = await runRound()
     const {
       inputTokens,
       contextWindowTokens,
       providerPrefixHeadEntryId,
-      tokensUsed,
       toolCallCount,
       sentTargets,
       workContinuationRequested,
@@ -790,32 +719,17 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     } = roundResult
     const handledMailboxMarkers = collectHandledMailboxMarkers(sentTargets)
     await commitChanges({ messages: handledMailboxMarkers })
-    if (goalAtRoundStart?.status === 'active' && deps.goalStore) {
-      await deps.goalStore.accountRound({
-        goalId: goalAtRoundStart.goalId,
-        tokensUsed,
-        timeUsedSeconds: Math.max(0, Math.round((Date.now() - roundStartedAt) / 1000)),
-      })
-      await syncGoalState()
-    }
-    const compacted = await maybeCompact(
+    await maybeCompact(
       inputTokens,
       contextWindowTokens,
       providerPrefixHeadEntryId,
     )
-    if (compacted) {
-      const syncedAfterCompaction = await syncGoalState()
-      if (syncedAfterCompaction.goal?.status === 'active') {
-        await appendGoalContinuation(syncedAfterCompaction.goal, 'post_compaction')
-      }
-    }
     shortWorkContinuationPending = workContinuationRequested
     const attentionPending = hasPendingPrivateMailboxAttention(
       deps.context.getSnapshot().messages,
       inboxReadCursors,
     )
-    const continuationRequired = goalAtRoundStart?.status === 'active'
-      || (drained.hadAttention && disclosed > 0)
+    const continuationRequired = (drained.hadAttention && disclosed > 0)
       || assistantTextOnly
       || shortWorkContinuationAtRoundStart
       || workContinuationRequested
@@ -987,7 +901,6 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       log.info('bot_loop_stop_requested')
     },
     async flush() {
-      await syncGoalState()
       await deps.activityReporter?.flush()
     },
     async runOnceForTest() {

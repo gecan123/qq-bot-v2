@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add a localhost-only WebAdmin management page that previews, confirms, runs, and audits the four fixed Agent state maintenance operations.
+**Objective:** Add a localhost-only WebAdmin management page that previews, confirms, runs, and audits the four fixed Agent state maintenance operations.
 
 **Architecture:** CLI and WebAdmin share typed functions under `src/ops`; no browser input can select a command, path, or shell argument. A server-only adapter builds previews and executes operations, while a single-flight runner persists bounded run state and NDJSON audit events under `logs/`. Every execution repeats the Bot-stopped guard and preview fingerprint check before mutation.
 
@@ -124,7 +124,7 @@ git commit -m "refactor: 统一 Bot 停止检查"
 
 Add a fake preview DB and temporary workspace. Assert that:
 
-- `context` reports counts for ledger, checkpoint, runtime, and Goal without mutation.
+- `context` reports counts for ledger, checkpoint, and runtime without mutation.
 - `knowledge` reports `memory`, `journal`, `life`, and `notebook` existence/file counts.
 - `all` combines both sections.
 - preview never starts a transaction or removes a path.
@@ -134,7 +134,7 @@ Expected DTO:
 ```ts
 {
   scope: 'all',
-  context: { ledgerEntries: 7, checkpoints: 1, runtimeStates: 1, goals: 1 },
+  context: { ledgerEntries: 7, checkpoints: 1, runtimeStates: 1 },
   knowledge: {
     directories: [
       { name: 'memory', exists: true, files: 2 },
@@ -163,7 +163,6 @@ export interface AgentStateResetPreviewDb {
   botAgentLedgerEntry: { count(): Promise<number> }
   botAgentCheckpoint: { count(): Promise<number> }
   botAgentRuntimeState: { count(): Promise<number> }
-  botAgentGoal: { count(): Promise<number> }
 }
 
 export async function previewAgentStateReset(options: {

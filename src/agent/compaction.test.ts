@@ -75,7 +75,7 @@ function validLedgerSummary(content = '保留了关键历史。'): string {
   return [
     '## 讨论过的话题', content,
     '## 群友信息', '无。',
-    '## 我的目标、承诺和状态', '继续当前目标。',
+    '## 我的承诺、状态和下一步', '继续当前工作。',
     '## 关键约束与决定', '遵守安全边界。',
     '## 工具调用结果', '无。',
     '## 情绪和氛围', '平静。',
@@ -393,7 +393,6 @@ function runtimeStateFor(entries: readonly AgentLedgerEntry[]) {
     mailboxCursors: {},
     inboxReadCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
-    goalRevision: 0,
     conversationFocus: null,
     lastWakeAt: null,
     ledgerHeadEntryId: entries.at(-1)?.id ?? null,

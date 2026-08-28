@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Make Claude compaction reuse the main Agent's cached prompt prefix while preserving the existing append-only ledger, cut boundary, recent tail, validation, and replay behavior.
+**Objective:** Make Claude compaction reuse the main Agent's cached prompt prefix while preserving the existing append-only ledger, cut boundary, recent tail, validation, and replay behavior.
 
 **Architecture:** Add provider-only message cache-breakpoint metadata to the existing LLM request contract, compute a future compaction breakpoint from the same atomic history rules used by compaction, and let the Claude summarizer reuse the main system, visible tools, thinking configuration, and original working-context prefix. OpenAI and the existing durable compaction payload remain unchanged.
 

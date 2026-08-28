@@ -20,7 +20,7 @@ QQ / 飞书入站
   -> ledger 与 runtime state 原子提交
 ```
 
-QQ Gateway、Feishu Gateway 和 Media Worker 通过 PostgreSQL 事实边界或薄 HTTP 与 Agent Core 协作；不使用通用 broker。短期 ScheduleRuntime、occurrence 与 pending delivery 都由 Agent Core 进程内持有，Agent Core 和 Media Worker 直接调用配置的 LLM provider。只有 Agent Core 可以拥有 `AgentContext`、推进 runtime singleton 和写 canonical ledger。PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton、Goal 和观测数据；Memory、Notebook、schedule 与 background task 元数据主要保存在 workspace Markdown/JSON。WebAdmin 的观察 feature 保持只读，固定 operations feature 是唯一受控写入口。
+QQ Gateway、Feishu Gateway 和 Media Worker 通过 PostgreSQL 事实边界或薄 HTTP 与 Agent Core 协作；不使用通用 broker。短期 ScheduleRuntime、occurrence 与 pending delivery 都由 Agent Core 进程内持有，Agent Core 和 Media Worker 直接调用配置的 LLM provider。只有 Agent Core 可以拥有 `AgentContext`、推进 runtime singleton 和写 canonical ledger。PostgreSQL 保存入站事实、append-only LLM ledger、runtime singleton 和观测数据；Memory、Notebook、schedule 与 background task 元数据主要保存在 workspace Markdown/JSON。WebAdmin 的观察 feature 保持只读，固定 operations feature 是唯一受控写入口。
 
 现有设计的可靠性基础包括：append-only canonical history、确定性 replay、compaction CAS、tool call/result 原子组、显式跨平台 conversation focus、集中 tool policy、渐进式披露、有界 scheduler，以及 WebAdmin 的只读观察边界和固定 operations 写入边界。下面条目是在这些契约之上的具体缺口。
 
@@ -68,17 +68,16 @@ QQ Gateway、Feishu Gateway 和 Media Worker 通过 PostgreSQL 事实边界或�
 - 当前 Gateway 把 `im.message.receive_v1` 中 `update_time > create_time` 的 payload 追加为 `edit` 事实；当前 Node SDK 事件类型只有消息接收和撤回，没有单独的消息编辑事件声明。
 - 因此代码已能处理收到的编辑态 payload，但尚未用真实飞书连接证明“用户在首次入库后编辑消息”会再次触发接收事件。切换时应把它列入 smoke test；若平台不重投，再基于实际 OpenAPI 能力增加有界查询，不先建设轮询平台或历史同步系统。
 
-### Goal 总成本与非 Agent LLM 路径尚未统一
+### 非 Agent LLM 路径尚未统一
 
-- `LlmClient` 路径已经统一记录 callId、actor/operation/taskId/goalId、provider/model、成功/失败/取消、耗时、stop reason、token/cache 和不含正文的四段结构 evidence；主 Agent、compaction、Memory maintenance、Goal completion judge、startup probe、`fetch_url` 摘要与长期状态翻译均已接入。
+- `LlmClient` 路径已经统一记录 callId、actor/operation/taskId、provider/model、成功/失败/取消、耗时、stop reason、token/cache 和不含正文的四段结构 evidence；主 Agent、compaction、Memory maintenance、startup probe、`fetch_url` 摘要与长期状态翻译均已接入。
 - 媒体描述等 `src/llm/openai-adapter.ts` 路径仍主要使用 AsyncLocal usage 聚合，没有进入同一逐调用 trace；不同稳定 prompt family 的 cache key 分离也没有形成统一契约。
-- Goal token budget 当前只覆盖主 Agent round 的未缓存 input + output；包括完成验收在内的辅助 LLM 调用不进入完整任务成本。
-- 目标：决定是否让非 `LlmClient` 路径复用同一安全 trace，再建立稳定 prompt-family 分离，并明确 Goal budget 是“主循环预算”还是“目标总成本预算”。
+- 目标：决定是否让非 `LlmClient` 路径复用同一安全 trace，再建立稳定 prompt-family 分离。
 
 ### BotLoopAgent 职责过密
 
 - persistence、compaction 与循环决策已经提取为三个深模块；主循环仍是唯一 orchestration，没有引入第二套 runtime。
-- 剩余 mailbox/Goal/recovery 只有在继续出现可独立测试的稳定边界时再提取，不按行数机械拆分。
+- 剩余 mailbox/recovery 只有在继续出现可独立测试的稳定边界时再提取，不按行数机械拆分。
 
 ### 数据库 singleton 约束主要依赖应用代码
 
@@ -105,7 +104,7 @@ QQ Gateway、Feishu Gateway 和 Media Worker 通过 PostgreSQL 事实边界或�
 
 - Memory 与 Notebook writer 当前只有单进程按资源键协调。在单 bot writer 部署下这是明确运行约束；只有未来允许多个 writer 进程共享 workspace 时，才增加跨进程互斥或改成单 writer service。
 - 长期状态当前坚持 Markdown 扫描和确定性 lexical scoring。先积累规模、延迟和召回质量证据；只有出现可复现瓶颈时，才评估可从 Markdown 重建的 SQLite FTS/BM25 或 embedding 派生索引。
-- s12 多任务图/依赖、s15/s16 多 Agent team/protocol 和 s18 worktree isolation 只有在产品确实需要长期协作或自主改代码时再引入，不把单一 Goal 扩成第二主循环。
+- s12 多任务图/依赖、s15/s16 多 Agent team/protocol 和 s18 worktree isolation 只有在产品确实需要长期协作或自主改代码时再引入，不提前增加第二主循环。
 
 ## 推荐偿还顺序
 

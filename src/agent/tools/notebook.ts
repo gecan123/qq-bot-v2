@@ -108,7 +108,7 @@ export function createNotebookTool(deps: NotebookToolDeps = {}): Tool<Args> {
       '按稳定 topic 维护研究、阅读、市场观察和项目过程笔记；不是日记，也不是稳定长期记忆.',
       'write 需要 kind、topic 和过程内容；list/search/read 用于跨天继续同一主题.',
       'update/delete/compact 前先 read 取得最新 revision；compact 只允许同 kind、同月、同 topic.',
-      '已经足够稳定、以后可直接依赖的结论应另写 memory；当前持续承诺用 goal，未来时点重新评估用 schedule.',
+      '已经足够稳定、以后可直接依赖的结论应另写 memory；未来时点重新评估用 schedule.',
       'topic/content 必须以中文为叙述载体；命令、路径、URL、API 名和专有名词可保留原文，但要用中文说明.',
     ].join(' '),
     schema: argsSchema,

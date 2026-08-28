@@ -172,7 +172,7 @@ describe('runRepoChecks', () => {
         ].join('\n'),
         'apps/admin-web/src/features/overview/overview.functions.ts': [
           "import { createServerFn } from '@tanstack/react-start'",
-          'export const mutate = createServerFn().handler(() => prisma.botAgentGoal.update({}))',
+          'export const mutate = createServerFn().handler(() => prisma.botAgentRuntimeState.update({}))',
         ].join('\n'),
       },
     } as Parameters<typeof runRepoChecks>[0] & {

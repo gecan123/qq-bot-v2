@@ -120,7 +120,7 @@ Memory v2 和 canonicalize 是一次性维护操作。预览表明已经达到�
 
 ### Reset preview
 
-为 reset 增加只读 preview service。context scope 统计 ledger、checkpoint、runtime 和 Goal 行；knowledge scope 统计四个目标目录；all scope 还列出 `agent-workspace` 中除两个契约文件外的全部待删顶层条目。执行仍调用现有事务化 `resetAgentState`。
+为 reset 增加只读 preview service。context scope 统计 ledger、checkpoint 和 runtime 行；knowledge scope 统计四个目标目录；all scope 还列出 `agent-workspace` 中除两个契约文件外的全部待删顶层条目。执行仍调用现有事务化 `resetAgentState`。
 
 ### 中文迁移 preview
 

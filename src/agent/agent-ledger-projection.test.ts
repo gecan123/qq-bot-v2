@@ -55,7 +55,6 @@ function runtimeState(
     schemaVersion: AGENT_RUNTIME_STATE_SCHEMA_VERSION,
     mailboxCursors: {},
     mailboxContinuity: createEmptyMailboxContinuityState(),
-    goalRevision: 0,
     conversationFocus: null,
     lastWakeAt: null,
     ledgerHeadEntryId,

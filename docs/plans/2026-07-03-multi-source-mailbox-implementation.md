@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Keep one global AgentContext while disclosing direct QQ messages immediately, reducing ambient group traffic to bounded mailbox notifications, and allowing bounded on-demand mailbox reads.
+**Objective:** Keep one global AgentContext while disclosing direct QQ messages immediately, reducing ambient group traffic to bounded mailbox notifications, and allowing bounded on-demand mailbox reads.
 
 **Architecture:** `messages` remains the immutable source of truth. A mailbox checkpoint containing per-source message-row cursors is persisted atomically beside the AgentContext snapshot. The bot loop classifies drained message events into direct disclosures or source-grouped ambient notifications; an `inbox` tool reads exact source history on demand.
 

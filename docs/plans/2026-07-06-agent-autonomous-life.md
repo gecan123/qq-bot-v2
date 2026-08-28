@@ -4,7 +4,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Let the agent continue self-directed work after sending and schedule its own wake-up through `pause`, without a fixed consecutive-round ceiling.
+**Objective:** Let the agent continue self-directed work after sending and schedule its own wake-up through `pause`, without a fixed consecutive-round ceiling.
 
 **Architecture:** Keep self-wake timing inside the existing blocking `pause/rest` tool so no mutable scheduler state enters replay. Remove send-success waiting from BotLoop, return the agent's next intention after rest, and let idle/no-progress scheduling provide bounded waits without capping productive consecutive rounds.
 

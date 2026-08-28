@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Replace string-parsed control signals and machine-actionable prose with explicit runtime metadata and valid bounded JSON results.
+**Objective:** Replace string-parsed control signals and machine-actionable prose with explicit runtime metadata and valid bounded JSON results.
 
 **Architecture:** Extend `ToolExecutionResult` with runtime-only `outcome` and `control` metadata while keeping `content` as the sole AgentContext payload. Convert cross-tool handoffs and runtime events to deterministic JSON, but retain summaries and reference prose as strings inside explicit fields.
 

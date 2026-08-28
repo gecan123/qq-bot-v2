@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 将现有一次性 `schedule` 升级为有 3 天硬边界、支持 `at` / `every` / `cron`、可跨重启恢复的 Agent 短期调度能力，让到期事件只唤醒 Agent 重新判断下一步。
+**Objective:** 将现有一次性 `schedule` 升级为有 3 天硬边界、支持 `at` / `every` / `cron`、可跨重启恢复的 Agent 短期调度能力，让到期事件只唤醒 Agent 重新判断下一步。
 
-**Architecture:** 使用独立、版本化的 JSON store 保存最多 20 个活跃 schedule；同一 Node.js 进程内的 `ScheduleRuntime` 为每个任务维护一个 timer，到期后先持久化状态，再向现有事件队列写入 `scheduled_wake`。工具只负责 create/list/cancel，不保存未来工具调用；Agent 被唤醒后基于最新 Goal、消息和环境重新决策。
+**Architecture:** 使用独立、版本化的 JSON store 保存最多 20 个活跃 schedule；同一 Node.js 进程内的 `ScheduleRuntime` 为每个任务维护一个 timer，到期后先持久化状态，再向现有事件队列写入 `scheduled_wake`。工具只负责 create/list/cancel，不保存未来工具调用；Agent 被唤醒后基于最新消息和环境重新决策。
 
 **Tech Stack:** TypeScript、Zod、Croner、Node.js timers、atomic JSON persistence、`node:test`
 
@@ -209,7 +209,7 @@ git commit -m "feat: 增加短期调度持久存储"
   name: "检查任务进展",
   scheduleKind: "at",
   scheduledFor: new Date("2026-07-13T08:00:00.000Z"),
-  intention: "检查当前 Goal 和新消息，再判断是否继续",
+  intention: "检查新消息和当前环境，再判断是否继续",
   runCount: 1,
 }
 ```
@@ -223,7 +223,7 @@ git commit -m "feat: 增加短期调度持久存储"
   "name": "检查任务进展",
   "scheduleKind": "at",
   "scheduledFor": "2026-07-13T16:00:00+08:00",
-  "intention": "检查当前 Goal 和新消息，再判断是否继续",
+  "intention": "检查新消息和当前环境，再判断是否继续",
   "runCount": 1
 }
 ```
@@ -525,14 +525,14 @@ prompt 测试应锁定一个静态 `[短期调度]` 段落，位于 `[自主生�
 - schedule 不能用于等待某个人回复、轮询消息，或机械刷新网站/市场。
 - 创建前先 list，避免重复 schedule。
 - wake 是注意力提示，不是必须执行的命令。
-- 唤醒后根据最新 Goal、消息和环境选择行动、取消或结束，不盲目续订。
-- todo / schedule / goal / Agenda / pause 的职责边界清晰。
+- 唤醒后根据最新消息和环境选择行动、取消或结束，不盲目续订。
+- todo / schedule / Agenda / pause 的职责边界清晰。
 
 bot loop 测试覆盖：
 
 - `scheduled_wake` 会结束 pause/rest 状态并进入 attention path。
 - 已排队的高优先级 QQ 消息先于 scheduled wake 处理。
-- scheduled wake 高于默认 Goal 驱动或自由活动，但不绕过现有高优先级消息。
+- scheduled wake 高于自由活动，但不绕过现有高优先级消息。
 
 **Step 2: 运行测试确认失败**
 

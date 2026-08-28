@@ -36,7 +36,6 @@ describe('validateBotSnapshotIntegrity', () => {
           },
         },
       },
-      goalRevision: 4,
     })
 
     assert.deepEqual(result, {
@@ -48,7 +47,6 @@ describe('validateBotSnapshotIntegrity', () => {
         assistantToolCalls: 1,
         toolResults: 1,
         mailboxCursors: 2,
-        goalRevision: 4,
       },
     })
   })
@@ -68,7 +66,6 @@ describe('validateBotSnapshotIntegrity', () => {
         ],
       },
       mailboxCursors: {},
-      goalRevision: 0,
     })
 
     assert.equal(result.ok, false)
@@ -91,7 +88,6 @@ describe('validateBotSnapshotIntegrity', () => {
         ],
       },
       mailboxCursors: { 'bad-key': -1 },
-      goalRevision: -1,
     })
 
     assert.equal(result.ok, false)
@@ -99,7 +95,6 @@ describe('validateBotSnapshotIntegrity', () => {
     assert.match(result.errors.join('\n'), /messages\[2\] tool JSON content is invalid/)
     assert.match(result.errors.join('\n'), /mailboxCursors\.bad-key has invalid key/)
     assert.match(result.errors.join('\n'), /mailboxCursors\.bad-key must be a non-negative safe integer/)
-    assert.match(result.errors.join('\n'), /goalRevision must be a non-negative safe integer/)
   })
 
   test('rejects duplicate tool results after a matched assistant tool call', () => {
@@ -118,7 +113,6 @@ describe('validateBotSnapshotIntegrity', () => {
         ],
       },
       mailboxCursors: {},
-      goalRevision: 0,
     })
 
     assert.equal(result.ok, false)
@@ -139,7 +133,6 @@ describe('validateBotSnapshotIntegrity', () => {
         compactionEpoch: 0,
         mailboxes: { bad: {} },
       },
-      goalRevision: 0,
     })
 
     assert.equal(result.ok, false)
@@ -158,7 +151,6 @@ describe('validateBotSnapshotIntegrity', () => {
     const result = validateBotSnapshotIntegrity({
       snapshot: malformed,
       mailboxCursors: {},
-      goalRevision: 0,
     })
 
     assert.equal(result.ok, false)
@@ -173,7 +165,6 @@ describe('validateBotSnapshotIntegrity', () => {
         conversationFocus: null,
       },
       mailboxCursors: {},
-      goalRevision: 0,
     })
 
     assert.equal(result.ok, false)
@@ -198,7 +189,6 @@ describe('validateBotSnapshotIntegrity', () => {
           conversationFocus,
         } as unknown as PersistedAgentSnapshot,
         mailboxCursors: {},
-        goalRevision: 0,
       })
 
       assert.equal(result.ok, false, `expected rejection for ${JSON.stringify(conversationFocus)}`)

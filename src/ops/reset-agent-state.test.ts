@@ -18,7 +18,6 @@ const DEFAULT_RESET_COUNTS = {
   ledgerEntries: 7,
   checkpoints: 1,
   runtimeStates: 1,
-  goals: 1,
 }
 
 const DEFAULT_RUNTIME_CONTINUITY = {
@@ -49,7 +48,6 @@ function fakeResetDb(
       deleteMany: async () => ({ count: counts.runtimeStates }),
       create: async (input: unknown) => { created.push(input); return input },
     },
-    botAgentGoal: { deleteMany: async () => ({ count: counts.goals }) },
   }
   return {
     created,
@@ -100,13 +98,11 @@ function fakePreviewDb(counts = {
   ledgerEntries: 7,
   checkpoints: 1,
   runtimeStates: 1,
-  goals: 1,
 }): AgentStateResetPreviewDb {
   return {
     botAgentLedgerEntry: { count: async () => counts.ledgerEntries },
     botAgentCheckpoint: { count: async () => counts.checkpoints },
     botAgentRuntimeState: { count: async () => counts.runtimeStates },
-    botAgentGoal: { count: async () => counts.goals },
   }
 }
 
@@ -137,7 +133,7 @@ describe('previewAgentStateReset', () => {
 
       assert.deepEqual(preview, {
         scope: 'context',
-        context: { ledgerEntries: 7, checkpoints: 1, runtimeStates: 1, goals: 1 },
+        context: { ledgerEntries: 7, checkpoints: 1, runtimeStates: 1 },
       })
       await assertManagedStatePresentForPreview(workspaceDir)
     } finally {
@@ -179,7 +175,6 @@ describe('previewAgentStateReset', () => {
         ledgerEntries: 7,
         checkpoints: 1,
         runtimeStates: 1,
-        goals: 1,
       })
       assert.equal(preview.knowledge?.directories.length, 2)
       assert.deepEqual(preview.workspace, {
@@ -241,7 +236,7 @@ describe('resetAgentState', () => {
     assert.equal(parseAgentStateResetScope(['--scope', 'context']), 'context')
     assert.equal(parseAgentStateResetScope(['--scope', 'knowledge']), 'knowledge')
     assert.throws(() => parseAgentStateResetScope([]), /--scope is required/)
-    assert.throws(() => parseAgentStateResetScope(['--scope', 'goal']), /invalid reset scope/)
+    assert.throws(() => parseAgentStateResetScope(['--scope', 'runtime']), /invalid reset scope/)
     assert.throws(
       () => parseAgentStateResetScope(['--scope', 'all', '--scope', 'knowledge']),
       /exactly one --scope/,
@@ -257,7 +252,6 @@ describe('resetAgentState', () => {
       assert.equal(fake.transactions, 1)
       assert.equal(result.scope, 'context')
       assert.equal(result.deletedLedgerEntries, 7)
-      assert.equal(result.deletedGoals, 1)
       assert.deepEqual(result.removedDirectories, [])
       assert.equal(result.removedWorkspaceEntries, 0)
       await assertManagedStatePresent(workspaceDir)
@@ -275,7 +269,6 @@ describe('resetAgentState', () => {
             compactionEpoch: 0,
             mailboxes: {},
           },
-          goalRevision: 0,
           conversationFocus: null,
           lastWakeAt: DEFAULT_RUNTIME_CONTINUITY.lastWakeAt,
           ledgerHeadEntryId: null,
@@ -346,10 +339,9 @@ describe('resetAgentState', () => {
       assert.equal(await readFile(join(workspaceDir, '.gitignore'), 'utf8'), '*')
       assert.deepEqual((await readdir(workspaceDir)).sort(), ['.gitignore', 'README.md'])
 
-      const empty = fakeResetDb({ ledgerEntries: 0, checkpoints: 0, runtimeStates: 0, goals: 0 })
+      const empty = fakeResetDb({ ledgerEntries: 0, checkpoints: 0, runtimeStates: 0 })
       const secondResult = await resetAgentState({ scope: 'all', workspaceDir, db: empty.db })
       assert.equal(secondResult.deletedLedgerEntries, 0)
-      assert.equal(secondResult.deletedGoals, 0)
       assert.deepEqual(secondResult.removedDirectories, ['memory', 'notebook'])
       assert.equal(secondResult.removedWorkspaceEntries, 0)
     } finally {

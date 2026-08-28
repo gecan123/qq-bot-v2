@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Document the current memory architecture after Journal-to-Notebook consolidation and identify the next consistency improvements.
+**Objective:** Document the current memory architecture after Journal-to-Notebook consolidation and identify the next consistency improvements.
 
 **Architecture:** Add one dedicated stable architecture document, link it from existing entry points, and keep tool-level details in `docs/TOOLS.md`. Treat inbound facts, the durable LLM ledger, and workspace side-data as distinct layers.
 

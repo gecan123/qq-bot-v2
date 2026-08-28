@@ -39,13 +39,7 @@ import {
   writeRuntimeAgentContextSurface,
 } from './ops/agent-context-surface.js'
 import { createAgentTaskScheduler } from './agent/task-scheduler.js'
-import { createBotGoalStore } from './agent/goal-store.js'
 import { createWorkspaceStateCoordinator } from './agent/workspace-state-coordinator.js'
-import {
-  createStartupGoalControlGate,
-  replayOwnerGoalCommands,
-  tryHandleOwnerGoalMessage,
-} from './agent/goal-control.js'
 import { createAgentActivityReporter } from './agent/activity-surface.js'
 import {
   createQqGatewayMessageSender,
@@ -120,7 +114,6 @@ async function main() {
   // 4. 永续上下文 + 持久化 + 启动恢复
   const ledgerRepo = createAgentLedgerRepo()
   const ledgerLoader = createAgentLedgerLoader({ repo: ledgerRepo })
-  const goalStore = createBotGoalStore()
   const loadedLedger = await ledgerLoader.load()
   const context = createAgentContext()
   context.installProjection(loadedLedger.projection.snapshot)
@@ -132,7 +125,6 @@ async function main() {
       permanentEntries: loadedLedger.projection.permanentEntryCount,
       mailboxSources: Object.keys(loadedLedger.runtimeState.mailboxCursors).length,
       mailboxContinuitySources: Object.keys(loadedLedger.runtimeState.mailboxContinuity.mailboxes).length,
-      goalRevision: loadedLedger.runtimeState.goalRevision,
       lastWakeAt: loadedLedger.runtimeState.lastWakeAt
         ? formatBeijingIso(loadedLedger.runtimeState.lastWakeAt)
         : null,
@@ -161,39 +153,6 @@ async function main() {
   const enqueueDedupedMessageEvent = createDedupEnqueue(eventQueue)
   writeFileSync(BOT_PID_FILE, String(process.pid))
   log.info({ pidFile: BOT_PID_FILE, pid: process.pid }, 'pid_file_written')
-  type OwnerGoalControlEvent = {
-    messageRowId: number
-    peerId: number
-    senderId: number
-    renderedText: string
-  }
-  const processOwnerGoalControl = async (event: OwnerGoalControlEvent): Promise<void> => {
-    try {
-      const control = await tryHandleOwnerGoalMessage({
-        owner: config.owner,
-        peerId: event.peerId,
-        senderId: event.senderId,
-        messageRowId: event.messageRowId,
-        renderedText: event.renderedText,
-        goalStore,
-      })
-      if (control.handled) {
-        log.info(
-          {
-            messageRowId: event.messageRowId,
-            action: control.command?.action ?? 'invalid',
-            ok: control.mutation?.ok ?? false,
-            code: control.mutation?.code,
-            error: control.error ?? control.mutation?.error,
-          },
-          'owner_goal_control_processed',
-        )
-      }
-    } catch (error) {
-      log.error({ error, messageRowId: event.messageRowId }, 'owner_goal_control_failed_message_still_enqueued')
-    }
-  }
-  const startupGoalControlGate = createStartupGoalControlGate(processOwnerGoalControl)
   const passiveGroupNotificationSources = new Set<string | number>()
   for (const policy of config.groupPolicies) {
     if (policy.participation === 'mentions') continue
@@ -214,24 +173,6 @@ async function main() {
         || event.type === 'napcat_private_message')
       && !shouldQueueChatEvent(event, passiveGroupNotificationSources)
     ) return false
-    if (event.type === 'napcat_private_message') {
-      await startupGoalControlGate.submit(event)
-    } else if (
-      event.type === 'chat_message'
-      && event.conversation.platform === 'qq'
-      && event.conversation.kind === 'private'
-    ) {
-      const peerId = Number(event.conversation.externalId)
-      const senderId = Number(event.senderExternalId)
-      if (Number.isSafeInteger(peerId) && Number.isSafeInteger(senderId)) {
-        await startupGoalControlGate.submit({
-          messageRowId: event.messageRowId,
-          peerId,
-          senderId,
-          renderedText: event.renderedText,
-        })
-      }
-    }
     return enqueueDedupedMessageEvent(event)
   }
 
@@ -333,17 +274,6 @@ async function main() {
 
   // 9. 关机期间消息回放. 在 connect 之后跑也安全, 因为 enqueueMessageEvent 按
   //    messageRowId 去重 (步骤 5), live 已经先入队的就不会被 replay 重复入队.
-  const replayedGoalControls = await replayOwnerGoalCommands({
-    owner: config.owner,
-    selfNumber: config.selfNumber,
-    mailboxCursors: loadedLedger.runtimeState.mailboxCursors,
-    legacyLastWakeAt: loadedLedger.runtimeState.lastWakeAt,
-    goalStore,
-  })
-  if (replayedGoalControls.matched > 0) {
-    log.info(replayedGoalControls, 'owner goal control replay 完成')
-  }
-  await startupGoalControlGate.finishReplay()
   const qqFriends = await loadQqFriends()
   const allowedConversations = [
     ...config.botTargetGroupIds.map((groupId) => ({
@@ -449,8 +379,6 @@ async function main() {
     initialInboxReadCursors: loadedLedger.runtimeState.inboxReadCursors,
     initialMailboxContinuity: loadedLedger.runtimeState.mailboxContinuity,
     initialLastWakeAt: loadedLedger.runtimeState.lastWakeAt,
-    initialGoalRevision: loadedLedger.runtimeState.goalRevision,
-    goalStore,
     taskScheduler,
     memoryMaintenance,
     workspaceStateCoordinator,

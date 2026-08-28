@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Isolate test observability data, replace the misleading reset command with explicit safe scopes, and add configurable best-effort retention for observability tables and NDJSON logs.
+**Objective:** Isolate test observability data, replace the misleading reset command with explicit safe scopes, and add configurable best-effort retention for observability tables and NDJSON logs.
 
 **Architecture:** Keep the existing single-process startup flow. Test isolation is established before application imports; metrics filters share one default mock-exclusion contract across log and DB sources; reset uses one scope-aware operation with context and knowledge boundaries; observability retention runs after the existing fact-ledger retention and isolates failures per target.
 
@@ -90,7 +90,7 @@ git commit -m "fix: 隔离测试日志并排除模拟指标"
 
 Define `AgentStateResetScope = 'all' | 'context' | 'knowledge'`. Add tests proving:
 
-- `context` deletes ledger/checkpoint/runtime/Goal and recreates runtime, without deleting directories.
+- `context` deletes ledger/checkpoint/runtime and recreates runtime, without deleting directories.
 - `knowledge` deletes the four managed directories without opening a DB transaction.
 - `all` clears context plus every generated entry under `agent-workspace`, preserving only `README.md` and `.gitignore`.
 - repeated operations are idempotent.

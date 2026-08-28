@@ -37,7 +37,6 @@ const triggerSchema = z.object({
     'scheduled_wake',
     'background_task',
     'bootstrap',
-    'goal',
     'manual_wake',
   ]),
   label: z.string().min(1).max(500),

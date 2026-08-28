@@ -8,8 +8,7 @@ import { lifeSnapshotSchema, type LifeSnapshot } from './life.schema.js'
 export async function loadLifeSnapshot(now = new Date()): Promise<LifeSnapshot> {
   const db = getAdminPrisma()
   const workspace = getWorkspaceRoot()
-  const [goal, runtime, inboxReadCount, schedulesRaw, tasksRaw] = await Promise.all([
-    db.botAgentGoal.findUnique({ where: { id: 1 } }),
+  const [runtime, inboxReadCount, schedulesRaw, tasksRaw] = await Promise.all([
     db.botAgentRuntimeState.findUnique({ where: { id: 1 }, select: { lastWakeAt: true, updatedAt: true, conversationFocus: true, mailboxCursors: true } }),
     readInboxReadCursorCount(db),
     readJson(join(workspace, 'runtime', 'schedules.json')),
@@ -25,17 +24,11 @@ export async function loadLifeSnapshot(now = new Date()): Promise<LifeSnapshot> 
     summary: nullableText(row.resultSummary ?? row.error)?.slice(0, 360) ?? null,
   }))
   const notes = [
-    '短期连续行动不单独持久化；跨重启工作只由 Goal 表示。',
+    '短期连续行动不单独持久化；未来唤醒由 Schedule 表示。',
     '后台任务文件按原始 JSON 只读解析；不会实例化 registry，以免触发恢复状态写入。',
   ]
   return lifeSnapshotSchema.parse({
     schemaVersion: 1, generatedAt: now.toISOString(),
-    goal: goal && {
-      goalId: goal.goalId, objective: goal.objective, origin: goal.origin, motivation: goal.motivation, status: goal.status,
-      completionCriteria: goal.completionCriteria, currentCommitment: goal.currentCommitment, completionEvidence: goal.completionEvidence,
-      tokenBudget: goal.tokenBudget, tokensUsed: goal.tokensUsed, timeUsedSeconds: goal.timeUsedSeconds, roundsUsed: goal.roundsUsed,
-      revision: goal.revision, blockerKey: goal.blockerKey, blockerTurns: goal.blockerTurns, blockedReason: goal.blockedReason, updatedAt: goal.updatedAt.toISOString(),
-    },
     schedules, backgroundTasks,
     runtime: {
       lastWakeAt: runtime?.lastWakeAt?.toISOString() ?? null, updatedAt: runtime?.updatedAt.toISOString() ?? null,

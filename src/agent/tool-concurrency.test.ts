@@ -24,7 +24,6 @@ const tools = createDeferredToolExecutor({
     'memory',
     'notebook',
     'schedule',
-    'goal',
     'fetch_content',
     'workspace_bash',
   ].map(policyTool),
@@ -49,9 +48,6 @@ describe('tool concurrency policy', () => {
     assert.equal(isParallelSafeToolCall(tools, call('schedule', { action: 'create' })), false)
     assert.equal(isParallelSafeToolCall(tools, call('schedule', { action: 'cancel' })), false)
     assert.equal(isParallelSafeToolCall(tools, call('schedule')), false)
-    assert.equal(isParallelSafeToolCall(tools, call('goal', { action: 'get' })), true)
-    assert.equal(isParallelSafeToolCall(tools, call('goal', { action: 'complete' })), false)
-    assert.equal(isParallelSafeToolCall(tools, call('goal', { action: 'report_blocker' })), false)
     assert.equal(isParallelSafeToolCall(tools, call('unknown_future_tool')), false)
   })
 

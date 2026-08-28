@@ -104,7 +104,6 @@ function fakeRuntime(calls: string[]): AgentContextCliRuntime {
             mailboxCursors: {},
             inboxReadCursors: {},
             mailboxContinuity: createEmptyMailboxContinuityState(),
-            goalRevision: 0,
             conversationFocus: null,
             lastWakeAt: null,
             ledgerHeadEntryId: null,

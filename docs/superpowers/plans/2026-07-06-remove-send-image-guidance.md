@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Prevent the agent from calling the nonexistent `send_image` tool while preserving `send_message(imageRef)` as the only QQ image-send path.
+**Objective:** Prevent the agent from calling the nonexistent `send_image` tool while preserving `send_message(imageRef)` as the only QQ image-send path.
 
 **Architecture:** Keep the typed tool surface unchanged. Strengthen the existing `send_message` description and resident system prompt, then add regression assertions covering both guidance layers and the manifest inventory; unknown tools must continue to fail explicitly instead of being aliased.
 

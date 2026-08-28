@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Make high-priority mailbox notifications identify the complete row window that must be read, without skipping group messages before a late `@bot` mention.
+**Objective:** Make high-priority mailbox notifications identify the complete row window that must be read, without skipping group messages before a late `@bot` mention.
 
 **Architecture:** Keep mailbox cursor persistence and the `inbox read` query contract unchanged. Render both the exclusive starting cursor (`afterRowId`) and inclusive batch end (`throughRowId`) in each notification, then instruct the agent to paginate high-priority reads until the returned messages cover the batch end.
 

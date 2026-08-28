@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 修复 Agent runtime 的 compaction 信息丢失、启动恢复竞态、退出一致性、辅助 LLM 阻塞与计量、测试环境耦合和 deferred trace 失真。
+**Objective:** 修复 Agent runtime 的 compaction 信息丢失、启动恢复竞态、退出一致性、辅助 LLM 阻塞与计量、测试环境耦合和 deferred trace 失真。
 
 **Architecture:** 保留 single-context Runtime Host 和稳定 tool surface。通过显式 startup barrier、lifecycle coordinator、统一 usage operation 与依赖注入收紧边界；所有行为改动采用 focused TDD，并在每个阶段提交。
 

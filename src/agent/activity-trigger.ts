@@ -1,10 +1,8 @@
-import type { AgentGoal } from './goal-store.js'
 import type { AgentActivityTrigger } from './activity-surface.js'
 import type { BotEvent } from './event.js'
 
 export function describeActivityTrigger(
   events: readonly BotEvent[],
-  goal: AgentGoal | null,
 ): AgentActivityTrigger | null {
   for (const event of events) {
     if (event.type === 'chat_message') {
@@ -81,9 +79,6 @@ export function describeActivityTrigger(
     if (event.type === 'wake') {
       return { kind: 'manual_wake', label: '收到运行时唤醒信号', target: null }
     }
-  }
-  if (goal?.status === 'active') {
-    return { kind: 'goal', label: `继续推进 Goal：${goal.objective}`.slice(0, 500), target: null }
   }
   return null
 }

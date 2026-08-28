@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 在不引入 SQLite、FTS、embedding 或隐藏动态上下文的前提下，把现有 Markdown 长期状态做成并发安全、来源可追查、纯词法可用、compaction 可恢复的可靠记忆机制。
+**Objective:** 在不引入 SQLite、FTS、embedding 或隐藏动态上下文的前提下，把现有 Markdown 长期状态做成并发安全、来源可追查、纯词法可用、compaction 可恢复的可靠记忆机制。
 
 **Architecture:** 保留 `messages` 事实账本、`AgentContext` LLM ledger、Memory/Notebook/Life Journal/Agenda 四类 side-data 的现有边界。Markdown 继续是长期状态的唯一事实来源；所有写入共享一个进程内 keyed coordinator，并以 revision CAS 和原子替换保证一致性。召回继续显式调用 `memory` 工具并扫描 Markdown；只有在离线评测证明有收益后，才考虑把有界召回结果 append 到 `AgentContext`，不做隐藏注入。
 
@@ -685,7 +685,6 @@ model BotAgentSnapshotCheckpoint {
   contextSnapshot   Json     @map("context_snapshot")
   mailboxCursors    Json     @map("mailbox_cursors")
   mailboxContinuity Json     @map("mailbox_continuity")
-  goalRevision      Int      @map("goal_revision")
   lastWakeAt        DateTime? @map("last_wake_at") @db.Timestamptz(3)
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 

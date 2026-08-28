@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Expose stable inbound media handles through `inbox` and make sticker collection guidance match the actual always-on tool surface.
+**Objective:** Expose stable inbound media handles through `inbox` and make sticker collection guidance match the actual always-on tool surface.
 
 **Architecture:** Project media references directly from the persisted message `content` into a bounded `media` array on each inbox message. Keep frozen message text unchanged for deterministic replay, keep `collect_sticker` always-on, and remove its redundant deferred capability and stale prompt guidance.
 

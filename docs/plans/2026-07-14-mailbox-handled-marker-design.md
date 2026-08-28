@@ -31,7 +31,7 @@ Runtime Host 从 durable ledger 中按顺序归并两类稳定 JSON user event�
 
 同一轮向同一目标发送多段内容时只追加一个标记。不同目标分别处理。没有待处理通知、发送失败或发送被拒绝时不追加。
 
-标记在本轮 tool result 全部闭合后追加，并由一次专门的 snapshot save 在 Goal round accounting 和 Goal revision bookkeeping 之前保存。后续轮次仍可继续研究、调用工具或主动聊天，但 system prompt 明确禁止把 `throughRowId` 不大于 handled cursor 的消息再次当成新请求回应；基于新动机主动延续话题和 cursor 之后的新消息不受影响。
+标记在本轮 tool result 全部闭合后追加，并由一次专门的 snapshot save 保存。后续轮次仍可继续研究、调用工具或主动聊天，但 system prompt 明确禁止把 `throughRowId` 不大于 handled cursor 的消息再次当成新请求回应；基于新动机主动延续话题和 cursor 之后的新消息不受影响。
 
 compaction 不能把这两个 cursor 只留给自然语言摘要。Runtime 从被压缩 prefix 的 durable `inbox_update`、`mailbox_handled` 和已有受控 state 中确定性归并状态，旧 state 不进入 summarizer history，并在摘要后重写一个稳定事件：
 
@@ -48,7 +48,7 @@ compaction 不能把这两个 cursor 只留给自然语言摘要。Runtime 从�
 - `src/agent/effect-interpreter.ts`：只接受来自 `send_message` 的 `message_sent` effect，并返回去重后的目标。
 - 新增纯函数模块：从 durable ledger 解析待处理 mailbox 范围并渲染稳定 `mailbox_handled` 事件。
 - `src/agent/compaction.ts`：从待压缩 prefix 捕获 mailbox 注意状态，隔离 summarizer，并受控重写 `mailbox_attention_state`。
-- `src/agent/bot-loop-agent.ts`：在成功发送轮次末尾追加标记，先保存 tool result + marker，再执行 Goal bookkeeping。
+- `src/agent/bot-loop-agent.ts`：在成功发送轮次末尾追加标记并保存 tool result + marker。
 - `prompts/bot-system.md`：解释标记语义，不改变消息正文来源或 replay 规则。
 
 ## 边界与错误处理

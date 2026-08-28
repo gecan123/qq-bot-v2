@@ -6,11 +6,10 @@ import { LifeView } from './LifeView.js'
 
 afterEach(cleanup)
 
-test('shows Goal, Schedule and background tasks without an Agenda panel', () => {
+test('shows Schedule and background tasks without an Agenda panel', () => {
   const snapshot: LifeSnapshot = {
     schemaVersion: 1,
     generatedAt: '2026-08-26T08:00:00.000Z',
-    goal: null,
     schedules: [],
     backgroundTasks: [],
     runtime: {
@@ -25,7 +24,7 @@ test('shows Goal, Schedule and background tasks without an Agenda panel', () => 
 
   render(<LifeView snapshot={snapshot} isRefreshing={false} refreshFailed={false} />)
 
-  assert.ok(screen.getByText('Goal 与计划'))
+  assert.ok(screen.getByText('计划'))
   assert.ok(screen.getByText('Schedule / Background Task'))
   assert.equal(screen.queryByText('Life Agenda'), null)
 })

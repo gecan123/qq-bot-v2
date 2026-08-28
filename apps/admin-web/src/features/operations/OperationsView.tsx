@@ -115,7 +115,7 @@ export function OperationsView({
                 setConfirmation('')
               }}
             >
-              <option value="context">context · Ledger / Runtime / Goal</option>
+              <option value="context">context · Ledger / Runtime</option>
               <option value="knowledge">knowledge · Memory / Journal / Life / Notebook</option>
               <option value="all">all · context + 全部 Agent workspace</option>
             </select>

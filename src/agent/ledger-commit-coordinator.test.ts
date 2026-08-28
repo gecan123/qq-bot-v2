@@ -14,7 +14,9 @@ describe('LedgerCommitCoordinator', () => {
     const runtimeState = {
       schemaVersion: AGENT_RUNTIME_STATE_SCHEMA_VERSION,
       mailboxCursors: {}, inboxReadCursors: {}, mailboxContinuity: createEmptyMailboxContinuityState(),
-      goalRevision: 0, conversationFocus: null, lastWakeAt: null, ledgerHeadEntryId: 2n,
+      conversationFocus: null,
+      lastWakeAt: null,
+      ledgerHeadEntryId: 2n,
     }
     const repo = {
       async loadCanonicalState() { loads++; throw new Error('must not reload') },

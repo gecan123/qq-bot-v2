@@ -12,11 +12,26 @@ export interface LoopPolicyInput {
   toolContinuation?: ToolContinuationPolicy
   recoverableCorrectionRounds: number
   maxRecoverableCorrectionRounds: number
+  noProgressRounds: number
+  maxNoProgressRounds: number
 }
 
-export type LoopPolicyDecision =
-  | { action: 'wait_event'; reason: 'no_actionable_context'; recoverableCorrectionRounds: number }
-  | { action: 'stop'; recoverableCorrectionRounds: number }
+interface LoopPolicyState {
+  recoverableCorrectionRounds: number
+  noProgressRounds: number
+}
+
+export type LoopPolicyDecision = (
+  | {
+      action: 'wait_event'
+      reason:
+        | 'no_actionable_context'
+        | 'tool_external_started'
+        | 'tool_direction_complete'
+        | 'no_progress_limit'
+        | 'direction_complete'
+    }
+  | { action: 'stop' }
   | {
       action: 'continue'
       reason:
@@ -24,32 +39,25 @@ export type LoopPolicyDecision =
         | 'tool_immediate'
         | 'tool_progress'
         | 'action_correction'
-        | 'tool_external_started'
-        | 'tool_direction_complete'
         | 'tool_no_progress'
-        | 'seek_next_action'
         | 'attention_pending'
-      recoverableCorrectionRounds: number
     }
   | {
       action: 'wait_attention'
       reason: 'tool_backoff'
       timeout: 'action_retry'
-      recoverableCorrectionRounds: number
     }
+) & LoopPolicyState
 
 export function decideLoopPolicy(input: LoopPolicyInput): LoopPolicyDecision {
   if (!input.ranRound) {
     return input.stopRequested
-      ? { action: 'stop', recoverableCorrectionRounds: input.recoverableCorrectionRounds }
-      : { action: 'wait_event', reason: 'no_actionable_context', recoverableCorrectionRounds: input.recoverableCorrectionRounds }
+      ? state(input, { action: 'stop' })
+      : state(input, { action: 'wait_event', reason: 'no_actionable_context' }, { noProgressRounds: 0 })
   }
-  if (input.stopRequested) return { action: 'stop', recoverableCorrectionRounds: input.recoverableCorrectionRounds }
+  if (input.stopRequested) return state(input, { action: 'stop' })
   if (input.demand === 'attention') {
-    return {
-      action: 'continue', reason: 'attention_pending',
-      recoverableCorrectionRounds: input.recoverableCorrectionRounds,
-    }
+    return state(input, { action: 'continue', reason: 'attention_pending' }, { noProgressRounds: 0 })
   }
 
   let correctionRounds = input.recoverableCorrectionRounds
@@ -57,42 +65,74 @@ export function decideLoopPolicy(input: LoopPolicyInput): LoopPolicyDecision {
     const continuingCorrection = input.recoverableToolFailure
       || (correctionRounds > 0 && input.onlyHelpToolCalls)
     if (continuingCorrection && correctionRounds < input.maxRecoverableCorrectionRounds) {
-      return {
-        action: 'continue', reason: 'recoverable_tool_correction',
+      return state(input, { action: 'continue', reason: 'recoverable_tool_correction' }, {
         recoverableCorrectionRounds: correctionRounds + 1,
-      }
+      })
     }
     if (!input.recoverableToolFailure && !input.onlyHelpToolCalls) correctionRounds = 0
-    if (input.toolContinuation === 'immediate') {
-      return { action: 'continue', reason: 'tool_immediate', recoverableCorrectionRounds: correctionRounds }
-    }
     if (input.toolContinuation === 'wait_event') {
-      return { action: 'continue', reason: 'tool_external_started', recoverableCorrectionRounds: 0 }
+      return state(input, { action: 'wait_event', reason: 'tool_external_started' }, {
+        recoverableCorrectionRounds: 0,
+        noProgressRounds: 0,
+      })
     }
     if (input.toolContinuation === 'stop' || input.toolContinuation === 'wait_attention') {
-      return { action: 'continue', reason: 'tool_direction_complete', recoverableCorrectionRounds: correctionRounds }
+      return state(input, { action: 'wait_event', reason: 'tool_direction_complete' }, {
+        recoverableCorrectionRounds: correctionRounds,
+        noProgressRounds: 0,
+      })
     }
     if (input.toolContinuation === 'backoff') {
-      return {
-        action: 'wait_attention', reason: 'tool_backoff',
-        timeout: 'action_retry',
-        recoverableCorrectionRounds: correctionRounds,
-      }
+      return state(input, {
+        action: 'wait_attention', reason: 'tool_backoff', timeout: 'action_retry',
+      }, { recoverableCorrectionRounds: correctionRounds })
     }
     if (input.madeToolProgress) {
-      return { action: 'continue', reason: 'tool_progress', recoverableCorrectionRounds: correctionRounds }
+      return state(input, {
+        action: 'continue',
+        reason: input.toolContinuation === 'immediate' ? 'tool_immediate' : 'tool_progress',
+      }, { recoverableCorrectionRounds: correctionRounds, noProgressRounds: 0 })
     }
     if (input.demand === 'continuation') {
-      return { action: 'continue', reason: 'action_correction', recoverableCorrectionRounds: correctionRounds }
+      return state(input, { action: 'continue', reason: 'action_correction' }, {
+        recoverableCorrectionRounds: correctionRounds,
+        noProgressRounds: 0,
+      })
     }
-    return {
-      action: 'continue', reason: 'tool_no_progress',
+    const noProgressRounds = input.noProgressRounds + 1
+    if (noProgressRounds >= Math.max(1, input.maxNoProgressRounds)) {
+      return state(input, { action: 'wait_event', reason: 'no_progress_limit' }, {
+        recoverableCorrectionRounds: correctionRounds,
+        noProgressRounds: 0,
+      })
+    }
+    return state(input, { action: 'continue', reason: 'tool_no_progress' }, {
       recoverableCorrectionRounds: correctionRounds,
-    }
+      noProgressRounds,
+    })
   }
 
   if (input.demand === 'continuation') {
-    return { action: 'continue', reason: 'action_correction', recoverableCorrectionRounds: correctionRounds }
+    return state(input, { action: 'continue', reason: 'action_correction' }, {
+      recoverableCorrectionRounds: correctionRounds,
+      noProgressRounds: 0,
+    })
   }
-  return { action: 'continue', reason: 'seek_next_action', recoverableCorrectionRounds: 0 }
+  return state(input, { action: 'wait_event', reason: 'direction_complete' }, {
+    recoverableCorrectionRounds: 0,
+    noProgressRounds: 0,
+  })
+}
+
+function state<TDecision extends Omit<LoopPolicyDecision, keyof LoopPolicyState>>(
+  input: LoopPolicyInput,
+  decision: TDecision,
+  overrides: Partial<LoopPolicyState> = {},
+): TDecision & LoopPolicyState {
+  return {
+    ...decision,
+    recoverableCorrectionRounds:
+      overrides.recoverableCorrectionRounds ?? input.recoverableCorrectionRounds,
+    noProgressRounds: overrides.noProgressRounds ?? input.noProgressRounds,
+  }
 }

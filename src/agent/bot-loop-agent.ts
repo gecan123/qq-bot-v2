@@ -98,21 +98,42 @@ export interface BotLoopAgentDeps {
 
 export interface BotLoopAutonomyOptions {
   actionRetryWaitMs?: number
+  wakeIntervalMs?: number
   now?: () => Date
   waitForAttentionOrTimeout?: (
     queue: EventQueue<BotEvent>,
     timeoutMs: number,
   ) => Promise<'attention' | 'elapsed'>
+  waitForEventOrTimeout?: (
+    queue: EventQueue<BotEvent>,
+    timeoutMs: number,
+  ) => Promise<'event' | 'elapsed'>
 }
 
 const DEFAULT_ERROR_BACKOFF_MS = 5_000
 const DEFAULT_EVENT_DEBOUNCE_MS = 3_000
 const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 86_400_000
 const DEFAULT_ACTION_RETRY_WAIT_MS = 60_000
+const DEFAULT_AUTONOMY_WAKE_INTERVAL_MS = 30 * 60_000
 const DEFAULT_COMPACTION_FAILURE_BACKOFF_MS = 10 * 60_000
 const MAX_OUTPUT_CONTINUATIONS_PER_ROUND = 2
 const MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS = 3
+const MAX_NO_PROGRESS_ROUNDS = 2
 const MAX_RECENT_TOOL_NOVELTY_KEYS = 256
+const AUTONOMY_DISCOVERY_DIRECTIONS = [
+  {
+    id: 'unfinished_commitments',
+    instruction: '检查最近上下文里已经承诺、开始但尚未验证完成的事情；只选择一个仍可执行的具体缺口。',
+  },
+  {
+    id: 'existing_artifacts',
+    instruction: '检查已有 Notebook、工作文件、作品或后台结果；优先改进一个已有对象，不要批量新建相似内容。',
+  },
+  {
+    id: 'bounded_curiosity',
+    instruction: '从当前已授权能力里选择一个具体问题做一次有界探索；必须能获得新证据或改变可观察状态。',
+  },
+] as const
 const OUTPUT_CONTINUATION_PROMPT =
   '[runtime recovery] 上一段 assistant 输出达到长度上限。请从中断处继续，不要重复已完成内容，并用一个完整的工具调用结束本轮。'
 const ASSISTANT_TEXT_ONLY_CORRECTION = JSON.stringify({
@@ -151,8 +172,10 @@ export interface BotLoopAgent {
 export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   const autonomy = {
     actionRetryWaitMs: Math.max(1, deps.autonomy?.actionRetryWaitMs ?? DEFAULT_ACTION_RETRY_WAIT_MS),
+    wakeIntervalMs: Math.max(1, deps.autonomy?.wakeIntervalMs ?? DEFAULT_AUTONOMY_WAKE_INTERVAL_MS),
     now: deps.autonomy?.now ?? (() => new Date()),
     waitForAttentionOrTimeout: deps.autonomy?.waitForAttentionOrTimeout ?? waitForAttentionOrTimeout,
+    waitForEventOrTimeout: deps.autonomy?.waitForEventOrTimeout ?? waitForEventOrTimeout,
   }
   let stopRequested = false
   let cancelDebounceSleep: (() => void) | null = null
@@ -164,11 +187,47 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let roundIndex = 0
   let consecutiveRounds = 0
   let attentionCorrectionIssued = false
+  let assistantTextOnlyCorrectionIssued = false
   let shortWorkContinuationPending = false
   let recoverableToolCorrectionRounds = 0
+  let noProgressRounds = 0
+  let autonomyDiscoveryActive = false
+  let autonomyDiscoveryPromptPending = false
+  let autonomyDiscoverySource: 'idle_timeout' | 'rest_elapsed' = 'idle_timeout'
+  let autonomyDiscoveryDirectionIndex = 0
+  let autonomyDiscoveryDirection: (typeof AUTONOMY_DISCOVERY_DIRECTIONS)[number] =
+    AUTONOMY_DISCOVERY_DIRECTIONS[0]
   const recentToolNoveltyKeys = new Map<string, number>()
+  const autonomyDiscoveryTools = createAutonomyDiscoveryToolExecutor(deps.tools)
   let lastContextWindowTokens =
     config.llm.contextWindowTokensByModel[config.llm.defaultModel] ?? 200_000
+
+  function beginAutonomyDiscovery(source: 'idle_timeout' | 'rest_elapsed'): void {
+    autonomyDiscoveryActive = true
+    autonomyDiscoveryPromptPending = true
+    autonomyDiscoverySource = source
+    autonomyDiscoveryDirection = AUTONOMY_DISCOVERY_DIRECTIONS[
+      autonomyDiscoveryDirectionIndex % AUTONOMY_DISCOVERY_DIRECTIONS.length
+    ]!
+    autonomyDiscoveryDirectionIndex++
+    noProgressRounds = 0
+    assistantTextOnlyCorrectionIssued = false
+  }
+
+  function endAutonomyDiscovery(): void {
+    autonomyDiscoveryActive = false
+    autonomyDiscoveryPromptPending = false
+  }
+
+  function renderAutonomyDiscoveryPrompt(): string {
+    return JSON.stringify({
+      event: 'runtime_autonomy_tick',
+      source: autonomyDiscoverySource,
+      code: 'autonomy_discovery_required',
+      direction: autonomyDiscoveryDirection,
+      instruction: '这是 runtime 定时主动唤醒，不是外部新任务。现在完成一次有界方向搜索：先按 direction 检查，再选择一个能产生新证据或改变可观察状态的具体行动。探索期间 rest 不可用；不要用 close、重复读取、重复 Schedule 或改写理由证明忙碌。找到真实方向就立即推进；连续两轮仍无进展时 runtime 会重新等待下一次唤醒。',
+    })
+  }
 
   function installRuntimeState(input: {
     mailboxCursors: MailboxCursors
@@ -369,7 +428,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     return disclosed
   }
 
-  async function runRound(): Promise<{
+  async function runRound(tools: ToolExecutor): Promise<{
     inputTokens: number | null
     contextWindowTokens: number
     providerPrefixHeadEntryId: bigint | null
@@ -380,6 +439,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     onlyHelpToolCalls: boolean
     madeToolProgress: boolean
     assistantTextOnly: boolean
+    assistantTextOnlyCorrectionAppended: boolean
+    restElapsed: boolean
     toolContinuation?: ToolContinuation
     toolContinuationDetail?: string
   }> {
@@ -396,7 +457,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
           systemPrompt: deps.systemPrompt,
           context: deps.context,
           llm: deps.llm,
-          tools: deps.tools,
+          tools,
           toolContext: {
             eventQueue: deps.eventQueue,
             roundIndex,
@@ -457,7 +518,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     } = interpretToolEffects(result.effects)
 
     stagedMessages.push(...result.messagesToAppend)
-    if (result.assistantTextOnly) {
+    const assistantTextOnlyCorrectionAppended =
+      result.assistantTextOnly && !assistantTextOnlyCorrectionIssued
+    if (assistantTextOnlyCorrectionAppended) {
       stagedMessages.push({ role: 'user', content: ASSISTANT_TEXT_ONLY_CORRECTION })
     }
     const nextContinuity = parseMailboxContinuityState(mailboxContinuity)
@@ -495,6 +558,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         && result.toolOutcomes.every((outcome) => outcome.requestedToolName === 'help'),
       madeToolProgress: toolControl.madeProgress,
       assistantTextOnly: result.assistantTextOnly,
+      assistantTextOnlyCorrectionAppended,
+      restElapsed: result.toolOutcomes.some((outcome) => (
+        outcome.toolName === 'rest' && outcome.code === 'rest_elapsed'
+      )),
       ...(toolControl.continuation ? { toolContinuation: toolControl.continuation } : {}),
       ...(toolControl.continuationDetail
         ? { toolContinuationDetail: toolControl.continuationDetail }
@@ -601,6 +668,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     onlyHelpToolCalls?: boolean
     madeToolProgress?: boolean
     assistantTextOnly?: boolean
+    assistantTextOnlyCorrectionAppended?: boolean
+    restElapsed?: boolean
+    autonomyDiscoveryRound?: boolean
     toolContinuation?: ToolContinuation
     toolContinuationDetail?: string
   }> {
@@ -622,6 +692,11 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       })
     }
     const drained = drainEvents()
+    if (drained.events.length > 0) {
+      endAutonomyDiscovery()
+      noProgressRounds = 0
+      assistantTextOnlyCorrectionIssued = false
+    }
     const trigger = describeActivityTrigger(drained.events)
     deps.activityReporter?.setTrigger(trigger)
     deps.activityReporter?.setPhase({
@@ -641,14 +716,23 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       stagedContinuity,
       stagedWake,
     )
-    let autonomyBootstrapAppended = false
     if (
       !stopRequested
       && deps.context.getSnapshot().messages.length === 0
       && stagedMessages.length === 0
     ) {
       stagedMessages.push({ role: 'user', content: CONTINUOUS_AUTONOMY_BOOTSTRAP })
-      autonomyBootstrapAppended = true
+    }
+    let autonomyDiscoveryAppended = false
+    if (
+      !stopRequested
+      && autonomyDiscoveryActive
+      && autonomyDiscoveryPromptPending
+      && drained.events.length === 0
+    ) {
+      stagedMessages.push({ role: 'user', content: renderAutonomyDiscoveryPrompt() })
+      autonomyDiscoveryPromptPending = false
+      autonomyDiscoveryAppended = true
     }
     log.debug({ roundIndex: roundIndex + 1, eventsConsumed: drained.consumed, eventsDisclosed: disclosed }, 'round_start')
 
@@ -666,6 +750,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         })
         eventsCommitted = true
       } catch (error) {
+        if (autonomyDiscoveryAppended) autonomyDiscoveryPromptPending = true
         for (const event of drained.events) deps.eventQueue.enqueue(event)
         throw error
       }
@@ -683,7 +768,10 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     }
 
     const shortWorkContinuationAtRoundStart = shortWorkContinuationPending
-    const roundResult = await runRound()
+    const autonomyDiscoveryAtRoundStart = autonomyDiscoveryActive
+    const roundResult = await runRound(
+      autonomyDiscoveryAtRoundStart ? autonomyDiscoveryTools : deps.tools,
+    )
     const {
       inputTokens,
       contextWindowTokens,
@@ -695,6 +783,8 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls,
       madeToolProgress,
       assistantTextOnly,
+      assistantTextOnlyCorrectionAppended,
+      restElapsed,
       toolContinuation,
       toolContinuationDetail,
     } = roundResult
@@ -710,8 +800,14 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       deps.context.getSnapshot().messages,
       inboxReadCursors,
     )
+    if (assistantTextOnly) {
+      assistantTextOnlyCorrectionIssued = assistantTextOnlyCorrectionAppended
+        || assistantTextOnlyCorrectionIssued
+    } else {
+      assistantTextOnlyCorrectionIssued = false
+    }
     const continuationRequired = (drained.hadAttention && disclosed > 0)
-      || assistantTextOnly
+      || assistantTextOnlyCorrectionAppended
       || shortWorkContinuationAtRoundStart
       || workContinuationRequested
     return {
@@ -721,6 +817,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls,
       madeToolProgress,
       assistantTextOnly,
+      assistantTextOnlyCorrectionAppended,
+      restElapsed,
+      autonomyDiscoveryRound: autonomyDiscoveryAtRoundStart,
       ...(toolContinuation ? { toolContinuation } : {}),
       ...(toolContinuationDetail ? { toolContinuationDetail } : {}),
       demand: attentionPending ? 'attention' : continuationRequired ? 'continuation' : 'none',
@@ -736,6 +835,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       onlyHelpToolCalls = false,
       madeToolProgress = false,
       assistantTextOnly = false,
+      assistantTextOnlyCorrectionAppended = false,
+      restElapsed = false,
+      autonomyDiscoveryRound = false,
       toolContinuation,
       toolContinuationDetail,
     } = await step()
@@ -749,16 +851,25 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       demand,
       recoverableToolFailure,
       onlyHelpToolCalls,
-      madeToolProgress,
+      madeToolProgress: madeToolProgress || restElapsed,
       ...(toolContinuation ? { toolContinuation } : {}),
       recoverableCorrectionRounds: recoverableToolCorrectionRounds,
       maxRecoverableCorrectionRounds: MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS,
+      noProgressRounds,
+      maxNoProgressRounds: MAX_NO_PROGRESS_ROUNDS,
     })
     recoverableToolCorrectionRounds = decision.recoverableCorrectionRounds
+    noProgressRounds = decision.noProgressRounds
     if (demand !== 'attention') attentionCorrectionIssued = false
+    if (restElapsed) {
+      beginAutonomyDiscovery('rest_elapsed')
+    } else if (autonomyDiscoveryRound && madeToolProgress) {
+      endAutonomyDiscovery()
+    }
 
     if (decision.action === 'stop') return
     if (decision.action === 'wait_event') {
+      endAutonomyDiscovery()
       await waitForExternalEvent()
       return
     }
@@ -774,6 +885,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         reason: decision.reason,
         correctionRound: recoverableToolCorrectionRounds,
         assistantTextOnly,
+        assistantTextOnlyCorrectionAppended,
       }, 'loop_policy_continue')
       return
     }
@@ -802,14 +914,17 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   }
 
   async function waitForExternalEvent(): Promise<void> {
+    const timeoutMs = autonomy.wakeIntervalMs
     deps.activityReporter?.setPhase({
       phase: 'waiting',
-      detail: '当前没有上下文，等待第一条消息或计划事件',
-      waitUntil: null,
+      detail: '当前方向已结束，等待外部事件或下一次自主探索',
+      waitUntil: new Date(autonomy.now().getTime() + timeoutMs).toISOString(),
     })
     const keepAlive = (deps.keepAlive ?? defaultKeepAlive).open()
     try {
-      await deps.eventQueue.waitForEvent()
+      consecutiveRounds = 0
+      const result = await autonomy.waitForEventOrTimeout(deps.eventQueue, timeoutMs)
+      if (result === 'elapsed' && !stopRequested) beginAutonomyDiscovery('idle_timeout')
     } finally {
       keepAlive.close()
     }
@@ -863,6 +978,30 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   }
 }
 
+function createAutonomyDiscoveryToolExecutor(tools: ToolExecutor): ToolExecutor {
+  return {
+    list: () => tools.list(),
+    classify: (call) => tools.classify(call),
+    async execute(call, ctx) {
+      if (call.name !== 'rest') return tools.execute(call, ctx)
+      const instruction = '定时自主探索尚未结束，本轮不能再次 rest。先按 autonomy_discovery_required 的 direction 做一次具体、有界的机会检查；不要改写休息理由或创建 Schedule 代替。'
+      return {
+        content: JSON.stringify({
+          ok: false,
+          code: 'rest_unavailable_during_autonomy_discovery',
+          instruction,
+        }),
+        outcome: {
+          ok: false,
+          code: 'rest_unavailable_during_autonomy_discovery',
+          error: instruction,
+          progress: false,
+        },
+      }
+    },
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -892,6 +1031,27 @@ async function waitForAttentionOrTimeout(
     ])
   } finally {
     attentionAbort.abort()
+    if (timer != null) clearTimeout(timer)
+  }
+}
+
+async function waitForEventOrTimeout(
+  queue: EventQueue<BotEvent>,
+  timeoutMs: number,
+): Promise<'event' | 'elapsed'> {
+  const eventAbort = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | null = null
+  try {
+    return await Promise.race([
+      queue
+        .waitForEvent({ signal: eventAbort.signal })
+        .then(() => 'event' as const),
+      new Promise<'elapsed'>((resolve) => {
+        timer = setTimeout(() => resolve('elapsed'), timeoutMs)
+      }),
+    ])
+  } finally {
+    eventAbort.abort()
     if (timer != null) clearTimeout(timer)
   }
 }

@@ -7,6 +7,8 @@ const base: LoopPolicyInput = {
   recoverableToolFailure: false, onlyHelpToolCalls: false, madeToolProgress: false,
   recoverableCorrectionRounds: 0,
   maxRecoverableCorrectionRounds: 3,
+  noProgressRounds: 0,
+  maxNoProgressRounds: 2,
 }
 
 describe('loop policy', () => {
@@ -15,15 +17,15 @@ describe('loop policy', () => {
       [{ ranRound: false }, 'wait_event', 'no_actionable_context'],
       [{ stopRequested: true }, 'stop'],
       [{ toolCallCount: 1, recoverableToolFailure: true }, 'continue', 'recoverable_tool_correction'],
-      [{ toolCallCount: 1, toolContinuation: 'immediate' }, 'continue', 'tool_immediate'],
-      [{ toolCallCount: 1, toolContinuation: 'wait_event' }, 'continue', 'tool_external_started'],
-      [{ toolCallCount: 1, toolContinuation: 'wait_attention' }, 'continue', 'tool_direction_complete'],
-      [{ toolCallCount: 1, toolContinuation: 'stop' }, 'continue', 'tool_direction_complete'],
+      [{ toolCallCount: 1, madeToolProgress: true, toolContinuation: 'immediate' }, 'continue', 'tool_immediate'],
+      [{ toolCallCount: 1, toolContinuation: 'wait_event' }, 'wait_event', 'tool_external_started'],
+      [{ toolCallCount: 1, toolContinuation: 'wait_attention' }, 'wait_event', 'tool_direction_complete'],
+      [{ toolCallCount: 1, toolContinuation: 'stop' }, 'wait_event', 'tool_direction_complete'],
       [{ toolCallCount: 1, toolContinuation: 'backoff' }, 'wait_attention', 'tool_backoff'],
       [{ toolCallCount: 1, madeToolProgress: true }, 'continue', 'tool_progress'],
       [{ toolCallCount: 1 }, 'continue', 'tool_no_progress'],
       [{ demand: 'continuation' }, 'continue', 'action_correction'],
-      [{}, 'continue', 'seek_next_action'],
+      [{}, 'wait_event', 'direction_complete'],
     ]
     for (const [overrides, action, reason] of cases) {
       const decision = decideLoopPolicy({ ...base, ...overrides })
@@ -39,6 +41,24 @@ describe('loop policy', () => {
     })
     assert.equal(decision.action, 'continue')
     assert.equal('reason' in decision ? decision.reason : undefined, 'tool_no_progress')
+  })
+
+  test('parks after two consecutive no-progress tool rounds', () => {
+    const first = decideLoopPolicy({
+      ...base,
+      toolCallCount: 1,
+    })
+    assert.equal(first.action, 'continue')
+    assert.equal(first.noProgressRounds, 1)
+
+    const second = decideLoopPolicy({
+      ...base,
+      toolCallCount: 1,
+      noProgressRounds: first.noProgressRounds,
+    })
+    assert.equal(second.action, 'wait_event')
+    assert.equal('reason' in second ? second.reason : undefined, 'no_progress_limit')
+    assert.equal(second.noProgressRounds, 0)
   })
 
   test('pending attention outranks unrelated tool progress', () => {

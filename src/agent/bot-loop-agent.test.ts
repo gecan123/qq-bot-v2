@@ -2200,11 +2200,10 @@ describe('BotLoopAgent.runOnceForTest', () => {
   })
 
 
-  test('background work starts and the Agent immediately does something else', async () => {
-    const ctx = createAgentContext()
-    ctx.appendUserMessage(
-      '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
-    )
+  test('background work starts and the Agent waits for its completion or the next autonomy tick', async () => {
+    const ctx = createAgentContext({
+      initialMessages: [{ role: 'user', content: '已有上下文' }],
+    })
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     const phases: Array<Parameters<AgentActivityReporter['setPhase']>[0]> = []
     let llmCallCount = 0
@@ -2218,12 +2217,9 @@ describe('BotLoopAgent.runOnceForTest', () => {
       llm: {
         async chat() {
           llmCallCount++
-          if (llmCallCount === 2) await agent.stop()
           return {
             content: '',
-            toolCalls: llmCallCount === 1
-              ? [{ id: 'start-research', name: 'trading_agent', args: { action: 'start' } }]
-              : [{ id: 'write-while-waiting', name: 'write_note', args: {} }],
+            toolCalls: [{ id: 'start-research', name: 'trading_agent', args: { action: 'start' } }],
             usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
             model: 'mock',
             contextWindowTokens: 200_000,
@@ -2242,10 +2238,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
             noveltyKey: 'background-task:bg-1:running',
           },
         }),
-        write_note: async () => ({
-          content: '{"ok":true,"status":"written"}',
-          outcome: { ok: true, code: 'written', progress: true },
-        }),
       }),
       ledgerRepo: repo,
       ledgerLoader: loader,
@@ -2259,23 +2251,23 @@ describe('BotLoopAgent.runOnceForTest', () => {
         async flush() {},
       },
       autonomy: {
-        async waitForAttentionOrTimeout() {
-          throw new Error('background work must not idle the main Agent')
+        async waitForEventOrTimeout() {
+          await agent.stop()
+          return 'event'
         },
       },
     })
 
     await agent.start()
 
-    assert.equal(llmCallCount, 2)
-    assert.equal(phases.some(phase => phase.phase === 'waiting'), false)
+    assert.equal(llmCallCount, 1)
+    assert.equal(phases.some(phase => phase.phase === 'waiting'), true)
   })
 
-  test('no-progress rounds keep the autonomous loop moving without a direction state', async () => {
-    const ctx = createAgentContext()
-    ctx.appendUserMessage(
-      '{"event":"inbox_update","mailbox":"qq_private:9001","throughRowId":88}',
-    )
+  test('two no-progress rounds park until an event or autonomy tick', async () => {
+    const ctx = createAgentContext({
+      initialMessages: [{ role: 'user', content: '已有上下文' }],
+    })
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     let llmCallCount = 0
     let waits = 0
@@ -2289,7 +2281,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
       llm: {
         async chat() {
           llmCallCount++
-          if (llmCallCount === 3) await agent.stop()
           return {
             content: '',
             toolCalls: [{ id: `empty-${llmCallCount}`, name: 'inbox', args: { source: 'group', groupId: 99 } }],
@@ -2310,23 +2301,176 @@ describe('BotLoopAgent.runOnceForTest', () => {
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
-        async waitForAttentionOrTimeout() {
+        async waitForEventOrTimeout() {
           waits++
-          throw new Error('no-progress work must not park the continuous loop')
+          await agent.stop()
+          return 'event'
         },
       },
     })
 
     await agent.start()
 
-    assert.equal(llmCallCount, 3)
-    assert.equal(waits, 0)
+    assert.equal(llmCallCount, 2)
+    assert.equal(waits, 1)
+  })
+
+  test('parks after bounded no-progress and wakes itself for a rest-gated discovery round', async () => {
+    const ctx = createAgentContext({
+      initialMessages: [{ role: 'user', content: '已有上下文' }],
+    })
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    let llmCallCount = 0
+    let restCallCount = 0
+    let idleWaitCount = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const { repo, loader } = makeTestLedger(ctx.getSnapshot().messages)
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat(input) {
+          llmCallCount++
+          if (llmCallCount === 3) {
+            assert.match(
+              String(input.messages.at(-1)?.content),
+              /"code":"autonomy_discovery_required"/,
+            )
+          }
+          return {
+            content: '',
+            toolCalls: llmCallCount <= 2
+              ? [{ id: `empty-${llmCallCount}`, name: 'inbox', args: {} }]
+              : llmCallCount === 3
+                ? [{ id: 'rest-again', name: 'rest', args: {} }]
+                : [{ id: 'real-work', name: 'real_work', args: {} }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools({
+        inbox: async () => ({
+          content: '{"ok":true,"messages":[]}',
+          outcome: { ok: true, code: 'empty', progress: false },
+        }),
+        rest: async () => {
+          restCallCount++
+          return { content: '{"ok":true,"status":"elapsed"}' }
+        },
+        real_work: async () => {
+          await agent.stop()
+          return {
+            content: '{"ok":true,"revision":"v2"}',
+            outcome: { ok: true, code: 'updated', progress: true },
+          }
+        },
+      }),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      compactOptions: { triggerTokens: Number.MAX_SAFE_INTEGER },
+      autonomy: {
+        wakeIntervalMs: 12_345,
+        async waitForEventOrTimeout(_queue, timeoutMs) {
+          idleWaitCount++
+          assert.equal(timeoutMs, 12_345)
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 4)
+    assert.equal(idleWaitCount, 1)
+    assert.equal(restCallCount, 0)
+    assert.equal(
+      ctx.getSnapshot().messages.filter((message) => (
+        message.role === 'user' && message.content.includes('autonomy_discovery_required')
+      )).length,
+      1,
+    )
     assert.equal(
       ctx.getSnapshot().messages.some((message) => (
-        message.role === 'user' && message.content.includes('no_progress_switch_direction')
+        message.role === 'tool'
+        && typeof message.content === 'string'
+        && message.content.includes('rest_unavailable_during_autonomy_discovery')
       )),
-      false,
+      true,
     )
+  })
+
+  test('an elapsed rest requires discovery before rest can run again', async () => {
+    const ctx = createAgentContext({
+      initialMessages: [{ role: 'user', content: '已有上下文' }],
+    })
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    let llmCallCount = 0
+    let restCallCount = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const { repo, loader } = makeTestLedger(ctx.getSnapshot().messages)
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat(input) {
+          llmCallCount++
+          if (llmCallCount === 2) {
+            assert.match(
+              String(input.messages.at(-1)?.content),
+              /"source":"rest_elapsed".*"code":"autonomy_discovery_required"/,
+            )
+          }
+          return {
+            content: '',
+            toolCalls: llmCallCount <= 2
+              ? [{ id: `rest-${llmCallCount}`, name: 'rest', args: {} }]
+              : [{ id: 'real-work', name: 'real_work', args: {} }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools({
+        rest: async () => {
+          restCallCount++
+          return {
+            content: '{"ok":true,"status":"elapsed"}',
+            outcome: {
+              ok: true,
+              code: 'rest_elapsed',
+              progress: false,
+              continuation: 'immediate',
+            },
+          }
+        },
+        real_work: async () => {
+          await agent.stop()
+          return {
+            content: '{"ok":true,"revision":"v2"}',
+            outcome: { ok: true, code: 'updated', progress: true },
+          }
+        },
+      }),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      compactOptions: { triggerTokens: Number.MAX_SAFE_INTEGER },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 3)
+    assert.equal(restCallCount, 1)
   })
 
   test('pending private attention interrupts unrelated tool progress with one stable correction', async () => {
@@ -2487,7 +2631,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(waits, 0)
   })
 
-  test('repeated novelty key suppresses repeated progress without parking the loop', async () => {
+  test('repeated novelty key suppresses repeated progress and parks after the bounded retry', async () => {
     const ctx = createAgentContext()
     ctx.appendUserMessage('已有上下文')
     const eventQueue = new InMemoryEventQueue<BotEvent>()
@@ -2503,7 +2647,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
       llm: {
         async chat() {
           llmCallCount++
-          if (llmCallCount === 3) await agent.stop()
           return {
             content: '',
             toolCalls: [{ id: `skill-list-${llmCallCount}`, name: 'skill', args: { action: 'list' } }],
@@ -2529,20 +2672,21 @@ describe('BotLoopAgent.runOnceForTest', () => {
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
-        async waitForAttentionOrTimeout() {
+        async waitForEventOrTimeout() {
           waits++
-          throw new Error('duplicate read results must not idle the Agent')
+          await agent.stop()
+          return 'event'
         },
       },
     })
 
     await agent.start()
 
-    assert.equal(llmCallCount, 3)
-    assert.equal(waits, 0)
+    assert.equal(llmCallCount, 2)
+    assert.equal(waits, 1)
   })
 
-  test('attention with no tool keeps the continuous loop moving', async () => {
+  test('attention with no tool gets one correction before the loop parks', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({
@@ -2561,9 +2705,6 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const llm: LlmClient = {
       async chat() {
         llmCallCount++
-        if (llmCallCount === 3) {
-          await agent.stop()
-        }
         return {
           content: '',
           toolCalls: [],
@@ -2585,14 +2726,15 @@ describe('BotLoopAgent.runOnceForTest', () => {
       renderEvent: renderBotEvent,
       eventDebounceMs: 0,
       autonomy: {
-        async waitForAttentionOrTimeout() {
-          throw new Error('empty action rounds must keep correcting without waiting')
+        async waitForEventOrTimeout() {
+          await agent.stop()
+          return 'event'
         },
       },
     })
 
     await agent.start()
-    assert.equal(llmCallCount, 3)
+    assert.equal(llmCallCount, 2)
   })
 
   test('assistant text-only 结束会写入受控纠错并立即重试工具行动', async () => {
@@ -2671,7 +2813,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     )
   })
 
-  test('连续 assistant text-only 后继续使用同一个行动纠错', async () => {
+  test('连续 assistant text-only 只纠错一次后进入定时事件等待', async () => {
     const ctx = createAgentContext({
       initialMessages: [{ role: 'user', content: '已有上下文' }],
     })
@@ -2686,19 +2828,11 @@ describe('BotLoopAgent.runOnceForTest', () => {
       llm: {
         async chat(input) {
           llmCallCount++
-          if (llmCallCount === 3) {
+          if (llmCallCount === 2) {
             assert.match(
               String(input.messages.at(-1)?.content),
               /"code":"assistant_text_without_tool"/,
             )
-            await agent.stop()
-            return {
-              content: '',
-              toolCalls: [{ id: 'next-action', name: 'next_action', args: {} }],
-              usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
-              model: 'mock',
-              contextWindowTokens: 200_000,
-            }
           }
           return {
             content: '我稍后会继续。',
@@ -2709,28 +2843,30 @@ describe('BotLoopAgent.runOnceForTest', () => {
           }
         },
       },
-      tools: makeMockTools({
-        next_action: async () => ({
-          content: '{"ok":true}',
-          outcome: { ok: true, progress: true },
-        }),
-      }),
+      tools: makeMockTools({}),
       ledgerRepo: repo,
       ledgerLoader: loader,
       renderEvent: () => null,
       eventDebounceMs: 0,
       compactOptions: { triggerTokens: Number.MAX_SAFE_INTEGER },
       autonomy: {
-        async waitForAttentionOrTimeout() {
+        async waitForEventOrTimeout() {
           waits++
-          throw new Error('text-only correction must continue without waiting')
+          await agent.stop()
+          return 'event'
         },
       },
     })
 
     await agent.start()
-    assert.equal(llmCallCount, 3)
-    assert.equal(waits, 0)
+    assert.equal(llmCallCount, 2)
+    assert.equal(waits, 1)
+    assert.equal(
+      ctx.getSnapshot().messages.filter((message) => (
+        message.role === 'user' && message.content.includes('assistant_text_without_tool')
+      )).length,
+      1,
+    )
   })
 
   test('send_message 参数不做隐藏思考 preflight 拦截', async () => {

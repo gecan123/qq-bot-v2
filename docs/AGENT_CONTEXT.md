@@ -15,7 +15,7 @@
 
 - 新的 LLM 可见事实只能通过 Runtime Host 的受控 append 或 compaction projection 进入。
 - assistant tool call 和对应 tool result 是不可拆的原子组。结果按 assistant 中的 tool-call 顺序持久化；并行完成时序不进入 ledger。
-- `ToolExecutionResult.content` 是唯一持久化工具结果。`outcome` 和 `effects` 只服务当前轮控制流；`progress`、`continuation` 和普通 `noveltyKey` 都不进入 replay，重复新颖性只作为有界进程内防空转状态。只有 Runtime Host 验证后的稳定 marker（例如 `mailbox_handled`、`runtime_correction`）可以另外 append。content-only 且无 tool call 的 assistant 输出不是有效行动或公开发言；Runtime Host 追加同一个稳定行动纠错并立即继续，方向选择仍由主 Agent 完成。
+- `ToolExecutionResult.content` 是唯一持久化工具结果。`outcome` 和 `effects` 只服务当前轮控制流；`progress`、`continuation` 和普通 `noveltyKey` 都不进入 replay，重复新颖性只作为有界进程内防空转状态。只有 Runtime Host 验证后的稳定 marker（例如 `mailbox_handled`、`runtime_correction`、`runtime_autonomy_tick`）可以另外 append。content-only 且无 tool call 的 assistant 输出不是有效行动或公开发言；Runtime Host 最多追加一次稳定行动纠错并重试，再次无行动则进入定时事件等待，方向选择仍由主 Agent 完成。
 - 可见消息与通知披露 cursor、inbox 已读 cursor、continuity 或 conversation focus 变化必须在同一事务提交。`inbox` 只把实际呈现在有界 tool result 中的最新 row 标为已读，输出截断时不能跳过未展示行。持久化成功前不得推进内存 projection；提交失败时 runtime-local control state 必须回滚到 canonical projection。
 - late media、side table 或日志变化不得回写已 append entry。
 
@@ -55,10 +55,10 @@
 - 新通知统一写成 `event=notification`；历史 ledger 中的 `event=inbox_update` 继续由 mailbox attention parser 兼容，不能迁移或改写旧 entry。后台任务通知只披露状态和 `background_task get` 打开动作；调度到期 notification 不含 intention，正文先写独立 occurrence store，再由 `schedule get_occurrence` 读取。来源 side state 不参与 transcript replay；通知本身一旦进入 ledger 就保持字节稳定。
 - 新 mailbox 不会自动切换当前会话。发送前必须通过 `conversation open` 显式选择允许的群或好友；`send_message` 只读取当前 focus，focus 变化和对应可见 tool result 同事务进入 runtime state。
 - 私聊发送是否属于“回应新入站”由同 target 的 durable pending mailbox 判断，不依赖 `reply_to`。`reply_to` 只控制对应平台的引用/回复展示；进程内主动私聊冷却不得拦截 pending mailbox 的回复。
-- 未追加 `mailbox_handled` 的私聊 mailbox 仍保留“尚未外发回应”的 durable 状态，用于回复冷却豁免和防重复边界；但强制 attention 只针对 `disclosedThroughRowId` 同时大于 handled cursor 与持久 `inboxReadCursors` 的未读范围。正文已经由有界 inbox result 展示后，不会因无需回复的旧私聊跨重启永久追加 attention 纠错；模型仍可根据内容决定是否外发。普通无进展只继续下一轮，不建立换方向状态。普通完成、无进展和无披露事件都不会进入空闲等待。
+- 未追加 `mailbox_handled` 的私聊 mailbox 仍保留“尚未外发回应”的 durable 状态，用于回复冷却豁免和防重复边界；但强制 attention 只针对 `disclosedThroughRowId` 同时大于 handled cursor 与持久 `inboxReadCursors` 的未读范围。正文已经由有界 inbox result 展示后，不会因无需回复的旧私聊跨重启永久追加 attention 纠错；模型仍可根据内容决定是否外发。普通工具无进展只允许一次紧密重试；连续两轮无进展、方向完成或显式等待会进入最长 30 分钟的事件等待。外部事件立即唤醒且保留队列事实；超时则由 Runtime Host append canonical `runtime_autonomy_tick`，轮换检查未完成承诺、已有产物和有界好奇方向。tick 不是外部事实，但与其他受控 runtime message 一样进入唯一 ledger，保证 replay 看见同一牵引；轮换索引和探索门控是可丢弃进程内状态。
 - provider-confirmed `send_message` 仍与本地数据库不存在分布式事务。只有同 target 有 pending disclosure 时才 append `mailbox_handled`；这防止重复回应，但不承诺任一平台外发 exactly-once。稳定 action UUID 与 `sent|failed|delivery_unknown` 只表达本次 adapter 结果，不引入 outbox 或自动重试。
 - `mailbox_handled` 只表示这批入站已经回应，不表示回应中承诺的工作已完成。`send_message.work=continue` 只在进程内为下一轮保留短期行动锚点，不跨重启；跨天过程用 Notebook，未来时点重新评估用 Schedule。
-- 主动休息只由主 Agent 显式调用 `rest`，默认请求 30 分钟、范围 10..120；等待发生在该工具执行内部，不读取或改写 canonical projection。工具只在当前进程保存最近三小时的实际休息区间：按 Asia/Singapore，白天 06:00..24:00 最多累计 60 分钟，夜间 00:00..06:00 最多 120 分钟；本次批准时长取请求、剩余额度和下一昼夜边界的最小值，注意事件打断只记录实际经过时间。该可丢弃控制状态不进入 ledger/runtime singleton、不跨重启持久化，也不根据工具次数、工作量或所谓精力判断资格。
+- 主动休息只由主 Agent 显式调用 `rest`，默认请求 30 分钟、范围 10..120；等待发生在该工具执行内部，不读取或改写 canonical projection。工具只在当前进程保存最近三小时的实际休息区间：按 Asia/Singapore，白天 06:00..24:00 最多累计 60 分钟，夜间 00:00..06:00 最多 120 分钟；本次批准时长取请求、剩余额度和下一昼夜边界的最小值，注意事件打断只记录实际经过时间。自然结束后 Runtime append 一次 `runtime_autonomy_tick` 并在该探索阶段拒绝再次 `rest`，直到一次工具行动获得真实进展；被注意事件打断则优先处理该事件。休息额度和探索门控均不进入 runtime singleton、不跨重启持久化，也不根据工具次数、工作量或所谓精力判断资格。
 - 不实现 pi 风格 session tree。跨平台外发、mailbox cursor 和工具副作用需要一条可审计的线性时间线；分叉历史会让“哪条分支已发送/已处理”失去唯一答案。并行工作只通过有明确类型和边界的 background task 完成，结果回到主 ledger。
 
 ## 代码地图

@@ -52,6 +52,7 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /send_message\.work.*当前会话内马上继续/s)
     assert.match(prompt, /无承诺用 none.*有则用 continue/s)
     assert.match(prompt, /只输出文本.*不调工具.*runtime 纠错/s)
+    assert.match(prompt, /思考、判断和行动规划.*简体中文.*引用原文.*保留原语言/s)
     assert.match(prompt, /有具体牵引力.*持续生活和行动.*一次有界方向搜索.*有就开始.*没有就停/s)
     assert.match(prompt, /重复检查.*重复发布.*为了证明忙碌.*直接用 `rest` 闲下来/s)
     assert.match(prompt, /换了题目.*同一种批量生产.*重读.*删减.*修改/s)

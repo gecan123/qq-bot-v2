@@ -5,6 +5,13 @@ const evidenceDigestSchema = z.object({
   toolNames: z.array(z.string()),
 }).strict()
 
+const contextThinkingBlockTypeSchema = z.enum(['thinking', 'redacted_thinking'])
+const contextThinkingBlockIndexSchema = z.object({
+  blockIndex: z.number().int().nonnegative(),
+  type: contextThinkingBlockTypeSchema,
+  charCount: z.number().int().nonnegative(),
+}).strict()
+
 const contextEntryBaseSchema = z.object({
   id: z.string(),
   entryType: z.string(),
@@ -28,6 +35,7 @@ const contextMessageEntrySchema = contextEntryBaseSchema.extend({
       value: z.string(),
     }).strict()),
   }).strict()),
+  thinkingBlocks: z.array(contextThinkingBlockIndexSchema),
   toolCallId: z.string().nullable(),
   toolName: z.string().nullable(),
   parentEntryId: z.string().nullable(),
@@ -68,18 +76,12 @@ export const contextThinkingBlockInputSchema = z.object({
   blockIndex: z.number().int().nonnegative(),
 }).strict()
 
-const contextThinkingBlockTypeSchema = z.enum(['thinking', 'redacted_thinking'])
-
 export const contextThinkingArchiveSchema = z.object({
   schemaVersion: z.literal(1),
   entries: z.array(z.object({
     entryId: z.string().regex(/^\d+$/),
     createdAt: z.iso.datetime({ offset: true }),
-    blocks: z.array(z.object({
-      blockIndex: z.number().int().nonnegative(),
-      type: contextThinkingBlockTypeSchema,
-      charCount: z.number().int().nonnegative(),
-    }).strict()).min(1),
+    blocks: z.array(contextThinkingBlockIndexSchema).min(1),
   }).strict()),
 }).strict()
 
@@ -92,7 +94,7 @@ export const contextThinkingBlockSchema = z.object({
 }).strict()
 
 export const contextSnapshotSchema = z.object({
-  schemaVersion: z.literal(5),
+  schemaVersion: z.literal(6),
   generatedAt: z.iso.datetime({ offset: true }),
   ledger: z.object({
     total: z.number().int().nonnegative(),

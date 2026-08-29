@@ -90,7 +90,11 @@ export function ContextView({
       {loadThinkingArchive && loadThinkingBlock && (
         <ThinkingArchive loadArchive={loadThinkingArchive} loadBlock={loadThinkingBlock} />
       )}
-      <ConversationTranscript entries={snapshot.entries} headId={snapshot.ledger.headId} />
+      <ConversationTranscript
+        entries={snapshot.entries}
+        headId={snapshot.ledger.headId}
+        loadThinkingBlock={loadThinkingBlock}
+      />
     </Panel>
 
     <details className="context-technical mt-4">
@@ -256,7 +260,15 @@ function ThinkingCard({
   )
 }
 
-function ConversationTranscript({ entries, headId }: { entries: ContextEntry[]; headId: string | null }) {
+function ConversationTranscript({
+  entries,
+  headId,
+  loadThinkingBlock,
+}: {
+  entries: ContextEntry[]
+  headId: string | null
+  loadThinkingBlock?: (input: ContextThinkingBlockInput) => Promise<ContextThinkingBlock>
+}) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const [following, setFollowing] = useState(true)
   const pairedResults = useMemo(() => pairToolResults(entries), [entries])
@@ -291,7 +303,12 @@ function ConversationTranscript({ entries, headId }: { entries: ContextEntry[]; 
               if (entry.kind === 'compaction') return <CompactionMessage key={entry.id} entry={entry} />
               if (entry.kind === 'unknown') return <UnknownMessage key={entry.id} entry={entry} />
               if (entry.role === 'user') return <UserMessage key={entry.id} entry={entry} />
-              if (entry.role === 'assistant') return <AssistantMessage key={entry.id} entry={entry} results={pairedResults.byCall} />
+              if (entry.role === 'assistant') return <AssistantMessage
+                key={entry.id}
+                entry={entry}
+                results={pairedResults.byCall}
+                loadThinkingBlock={loadThinkingBlock}
+              />
               return <OrphanToolResult key={entry.id} entry={entry} />
             })}
       </div>
@@ -433,7 +450,15 @@ function stringValue(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null
 }
 
-function AssistantMessage({ entry, results }: { entry: MessageEntry; results: Map<string, MessageEntry> }) {
+function AssistantMessage({
+  entry,
+  results,
+  loadThinkingBlock,
+}: {
+  entry: MessageEntry
+  results: Map<string, MessageEntry>
+  loadThinkingBlock?: (input: ContextThinkingBlockInput) => Promise<ContextThinkingBlock>
+}) {
   const hasReply = entry.summary.trim().length > 0
   return (
     <article className="agent-message agent-message--assistant" aria-label={`Main Agent 消息 #${entry.id}`}>
@@ -442,15 +467,32 @@ function AssistantMessage({ entry, results }: { entry: MessageEntry; results: Ma
       {entry.toolCalls.length > 0 && (
         <section className="agent-process-group" role="region" aria-label={`Agent 动作 #${entry.id}`}>
           <header className="agent-process-heading">
-            <strong>动作链</strong>
+            <strong>思考与行为</strong>
             <span>{toolGroupSummary(entry, results)}</span>
           </header>
-          <div className="agent-tool-stack">
-            {entry.toolCalls.map(call => <ToolCallCard
-              key={call.id}
-              call={call}
-              result={results.get(`${entry.id}:${call.id}`) ?? null}
-            />)}
+          {loadThinkingBlock && entry.thinkingBlocks.length > 0 && (
+            <section className="agent-thinking-step" aria-label={`为什么这样做 #${entry.id}`}>
+              <header><Brain size={13} /><strong>为什么这样做</strong><span>{formatCount(entry.thinkingBlocks.reduce((sum, block) => sum + block.charCount, 0))} 字符</span></header>
+              <div className="agent-thinking-blocks">
+                {entry.thinkingBlocks.map(block => <ThinkingCard
+                  key={`${entry.id}:${block.blockIndex}`}
+                  entryId={entry.id}
+                  createdAt={entry.createdAt}
+                  block={block}
+                  loadBlock={loadThinkingBlock}
+                />)}
+              </div>
+            </section>
+          )}
+          <div className="agent-action-step">
+            <div className="agent-action-step-label"><Wrench size={12} /><strong>实际行为</strong></div>
+            <div className="agent-tool-stack">
+              {entry.toolCalls.map(call => <ToolCallCard
+                key={call.id}
+                call={call}
+                result={results.get(`${entry.id}:${call.id}`) ?? null}
+              />)}
+            </div>
           </div>
         </section>
       )}

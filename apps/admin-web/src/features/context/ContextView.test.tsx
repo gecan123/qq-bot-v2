@@ -8,7 +8,7 @@ import { contextSnapshotSchema, type ContextSnapshot } from './context.schema.js
 import { ContextView } from './ContextView.js'
 
 const snapshot: ContextSnapshot = {
-  schemaVersion: 5,
+  schemaVersion: 6,
   generatedAt: '2026-07-26T08:00:00.000Z',
   ledger: {
     total: 12,
@@ -86,6 +86,35 @@ describe('ContextView LLM calls', () => {
 })
 
 describe('ContextView ledger entries', () => {
+  test('keeps each thought beside the behavior it produced', async () => {
+    const loadThinkingBlock = vi.fn(async (input: { entryId: string; blockIndex: number }) => ({
+      schemaVersion: 1 as const,
+      ...input,
+      type: 'thinking' as const,
+      thinking: '先检查当前状态，再调用搜索工具。',
+    }))
+    const assistant = assistantEntry()
+    if (assistant.kind !== 'message') throw new Error('assistant fixture must be a message')
+    assistant.thinkingBlocks = [{ blockIndex: 0, type: 'thinking', charCount: 15 }]
+
+    render(<ContextView
+      snapshot={{ ...snapshot, entries: [assistant, toolEntry()] }}
+      isRefreshing={false}
+      refreshFailed={false}
+      loadThinkingBlock={loadThinkingBlock}
+    />)
+
+    const action = screen.getByRole('region', { name: 'Agent 动作 #42' })
+    assert.ok(within(action).getByRole('region', { name: '为什么这样做 #42' }))
+    assert.ok(within(action).getByText('实际行为'))
+    assert.ok(within(action).getByRole('article', { name: '工具调用 web_search · 成功' }))
+    assert.equal(within(action).queryByText('先检查当前状态，再调用搜索工具。'), null)
+
+    fireEvent.click(within(action).getByText('思考 #42 · 区块 1'))
+    assert.ok(await within(action).findByText('先检查当前状态，再调用搜索工具。'))
+    assert.deepEqual(loadThinkingBlock.mock.calls[0]?.[0], { entryId: '42', blockIndex: 0 })
+  })
+
   test('loads archived thinking only when its collapsible cards are opened', async () => {
     const loadThinkingArchive = vi.fn(async () => ({
       schemaVersion: 1 as const,
@@ -273,7 +302,7 @@ function compactionEntry(): ContextSnapshot['entries'][number] {
 function userEntry(): ContextSnapshot['entries'][number] {
   return {
     kind: 'message', id: '41', entryType: 'message', createdAt: '2026-07-26T07:58:00.000Z', role: 'user',
-    summary: '请检查最新状态', toolCalls: [], toolCallId: null, toolName: null, parentEntryId: null, result: null, rawPreview: '{}',
+    summary: '请检查最新状态', toolCalls: [], thinkingBlocks: [], toolCallId: null, toolName: null, parentEntryId: null, result: null, rawPreview: '{}',
   }
 }
 
@@ -285,7 +314,7 @@ function assistantEntry(): ContextSnapshot['entries'][number] {
       id: 'call-search', name: 'web_search', displayName: 'web_search', transportName: null,
       argsPreview: '{\n  "query": "状态"\n}', parameters: [{ label: 'query', value: '状态' }],
     }],
-    toolCallId: null, toolName: null, parentEntryId: null, result: null, rawPreview: '{}',
+    thinkingBlocks: [], toolCallId: null, toolName: null, parentEntryId: null, result: null, rawPreview: '{}',
   }
 }
 
@@ -301,14 +330,14 @@ function assistantInvokeEntry(): ContextSnapshot['entries'][number] {
         { label: 'target', value: 'QQ 私聊 · 3999414673' },
       ],
     }],
-    toolCallId: null, toolName: null, parentEntryId: null, result: null, rawPreview: '{}',
+    thinkingBlocks: [], toolCallId: null, toolName: null, parentEntryId: null, result: null, rawPreview: '{}',
   }
 }
 
 function invokeResultEntry(): ContextSnapshot['entries'][number] {
   return {
     kind: 'message', id: '45', entryType: 'message', createdAt: '2026-07-26T08:01:01.000Z', role: 'tool',
-    summary: '已打开 QQ 私聊 3999414673', toolCalls: [], toolCallId: 'call-open', toolName: 'invoke', parentEntryId: '44',
+    summary: '已打开 QQ 私聊 3999414673', toolCalls: [], thinkingBlocks: [], toolCallId: 'call-open', toolName: 'invoke', parentEntryId: '44',
     result: { ok: true, status: 'succeeded', code: null, reason: null }, rawPreview: '{}',
   }
 }
@@ -316,7 +345,7 @@ function invokeResultEntry(): ContextSnapshot['entries'][number] {
 function toolEntry(): ContextSnapshot['entries'][number] {
   return {
     kind: 'message', id: '43', entryType: 'message', createdAt: '2026-07-26T07:59:40.000Z', role: 'tool',
-    summary: '找到 3 条结果', toolCalls: [], toolCallId: 'call-search', toolName: 'web_search', parentEntryId: '42',
+    summary: '找到 3 条结果', toolCalls: [], thinkingBlocks: [], toolCallId: 'call-search', toolName: 'web_search', parentEntryId: '42',
     result: { ok: true, status: 'succeeded', code: null, reason: null }, rawPreview: '{}',
   }
 }
@@ -335,6 +364,6 @@ function notificationEntry(): ContextSnapshot['entries'][number] {
         conversation: { platform: 'qq', accountId: '3999414673', kind: 'private', externalId: '714457117' },
       },
     }),
-    toolCalls: [], toolCallId: null, toolName: null, parentEntryId: null, result: null, rawPreview: '{}',
+    toolCalls: [], thinkingBlocks: [], toolCallId: null, toolName: null, parentEntryId: null, result: null, rawPreview: '{}',
   }
 }

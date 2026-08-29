@@ -53,7 +53,7 @@ export async function loadContextSnapshot(now = new Date()): Promise<ContextSnap
   if (checkpoint?.throughEntryId && headId && checkpoint.throughEntryId > BigInt(headId)) warnings.push('Checkpoint throughEntryId 超过 canonical ledger head。')
 
   return contextSnapshotSchema.parse({
-    schemaVersion: 5,
+    schemaVersion: 6,
     generatedAt: now.toISOString(),
     ledger: {
       total,
@@ -314,6 +314,7 @@ function buildContextEntryView(row: ContextLedgerRow): ContextSnapshot['entries'
       return {
         ...messageEntry(common, 'assistant', previewText(message.content)),
         toolCalls,
+        thinkingBlocks: readThinkingBlockIndex(message.nativeBlocks),
       }
     }
     if (typeof message.toolCallId !== 'string' || !Object.hasOwn(message, 'content')) {
@@ -355,11 +356,29 @@ function messageEntry(
     role,
     summary,
     toolCalls: [],
+    thinkingBlocks: [],
     toolCallId: null,
     toolName: null,
     parentEntryId: null,
     result: null,
   }
+}
+
+function readThinkingBlockIndex(
+  value: unknown,
+): Extract<ContextSnapshot['entries'][number], { kind: 'message' }>['thinkingBlocks'] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item, blockIndex) => {
+    const block = asRecord(item)
+    if (!block || (block.type !== 'thinking' && block.type !== 'redacted_thinking')) return []
+    return [{
+      blockIndex,
+      type: block.type,
+      charCount: block.type === 'thinking' && typeof block.thinking === 'string'
+        ? block.thinking.length
+        : 0,
+    }]
+  })
 }
 
 function readToolResult(value: unknown): {

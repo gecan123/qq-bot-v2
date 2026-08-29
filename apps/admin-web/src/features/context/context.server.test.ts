@@ -77,6 +77,9 @@ describe('context thinking blocks', () => {
     assert.equal(entry?.rawPreview.includes('只应在展开卡片后读取'), false)
     assert.equal(entry?.rawPreview.includes('provider-replay-signature'), false)
     assert.match(entry?.rawPreview ?? '', /思考正文按需读取 10 chars/)
+    assert.deepEqual(entry?.kind === 'message' ? entry.thinkingBlocks : null, [
+      { blockIndex: 0, type: 'thinking', charCount: 10 },
+    ])
   })
 })
 
@@ -132,6 +135,7 @@ describe('buildContextEntryViews', () => {
         argsPreview: '{\n  "reason": "等待新输入"\n}',
         parameters: [{ label: 'reason', value: '等待新输入' }],
       }],
+      thinkingBlocks: [],
       toolCallId: null,
       toolName: null,
       parentEntryId: null,
@@ -153,6 +157,7 @@ describe('buildContextEntryViews', () => {
       role: 'tool',
       summary: '已完成当前动作，等待新输入。',
       toolCalls: [],
+      thinkingBlocks: [],
       toolCallId: 'call-yield',
       toolName: 'yield',
       parentEntryId: '102',

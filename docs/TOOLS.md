@@ -66,6 +66,7 @@
 
 - 对外 QQ 或飞书发言必须走统一 `send_message`，底层由 `MessageDelivery` 路由到平台 adapter。每次动作使用稳定 UUID；结果只可能是 `sent`、`failed` 或 `delivery_unknown`，后两者都不会伪装成功或自动重试。
 - `send_message` 的 target 必须由当前 conversation focus 明确给出。不能从 memory、消息文本或日志推断 target；切换来源时必须重新 `conversation open`。
+- `send_message` 的普通聊天仍保持 500 字以内；小说、完整作品或其他连续长文本应在一次调用中提交。QQ egress 对超过 500 字的纯文本自动按段落或句末切成最多 1500 字的 node，并通过 node-only 消息折叠为合并转发；总正文上限 20000 字。引用、@、图片、音乐等混合消息不改变原发送语义。
 - `send_message.music` 只接受 qq/163/kugou/kuwo/migu 的歌曲 ID，或字段受限且 URL 必须为 HTTPS 的 custom 音乐卡片；不接受任意 JSON 卡片。
 - assistant text 是内部历史/推理，不是公开发送通道。
 - `send_message` 成功不会隐式结束 Agent 当前活动；下一轮重新判断当前方向是否仍有牵引力，有就继续，没有或已经机械重复时调用 `rest`。

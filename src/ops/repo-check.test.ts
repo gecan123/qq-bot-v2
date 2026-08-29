@@ -80,7 +80,7 @@ const validFiles = {
   'prompts/system/persona.md': '你是 Luna。\n',
   'prompts/system/owner.md': '[关系基线]\n',
   'prompts/chat-style/index.md': 'constraints\nbase\nanti_patterns\nroleplay\nnsfw\n',
-  'prompts/chat-style/constraints.md': '聊天约束\n单条消息 ≤ 500 字.\n',
+  'prompts/chat-style/constraints.md': '聊天约束\n普通聊天单条消息 ≤ 500 字.\n小说一次提交完整正文，QQ egress 自动按段落分段并折叠。\n',
   'prompts/chat-style/base.md': '全局说话风格。\n',
   'prompts/chat-style/anti-patterns.md': '常见反例。\n',
   'prompts/chat-style/roleplay.md': '角色扮演。\n',

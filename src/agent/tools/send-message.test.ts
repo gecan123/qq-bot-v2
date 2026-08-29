@@ -79,6 +79,21 @@ test('send_message preserves QQ music validation rules', () => {
   }).success, true)
 })
 
+test('send_message accepts one bounded long work and rejects oversized text', () => {
+  const tool = createSendMessageTool({
+    conversations,
+    targetPolicy: { async authorize() { return { allowed: true } } },
+    delivery: { async send() { return { status: 'sent' } } },
+  })
+  assert.equal(tool.schema.safeParse({
+    message: '长'.repeat(20_000), work: { state: 'none' },
+  }).success, true)
+  assert.equal(tool.schema.safeParse({
+    message: '长'.repeat(20_001), work: { state: 'none' },
+  }).success, false)
+  assert.match(tool.description, /完整长文本必须一次提交.*自动分段折叠/s)
+})
+
 test('send_message diagnoses a failed QQ group delivery as muted', async () => {
   const qqTarget = {
     platform: 'qq' as const, accountId: '10000', kind: 'group' as const, externalId: '123',

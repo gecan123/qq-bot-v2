@@ -14,7 +14,7 @@ import {
   type GroupMuteInspector,
 } from '../../messaging/group-mute-inspector.js'
 
-const MAX_TEXT_LENGTH = 500
+const MAX_TEXT_LENGTH = 20_000
 const imageRefSchema = z.string().regex(/^(?:media:\d+|ephemeral:[a-f0-9]{64})$/)
 const httpsUrlSchema = z.string().url().refine((value) => new URL(value).protocol === 'https:', {
   message: '必须使用 https URL',
@@ -45,7 +45,9 @@ const workBindingSchema = z.discriminatedUnion('state', [
   z.object({ state: z.literal('continue') }),
 ])
 const argsSchema = z.object({
-  message: z.string().min(1).max(MAX_TEXT_LENGTH).nullable().optional(),
+  message: z.string().min(1).max(MAX_TEXT_LENGTH)
+    .describe('消息正文。普通聊天保持简短；完整长文本一次提交，不要拆成多次调用。QQ 纯文本超过 500 字时由 egress 自动分段折叠。')
+    .nullable().optional(),
   imageRef: imageRefSchema.nullable().optional(),
   music: musicSchema.nullable().optional(),
   reply_to: z.union([z.string().min(1), z.number().int().positive()]).optional(),
@@ -84,6 +86,7 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
     description: [
       '向当前显式打开的 QQ / 飞书会话真实发送消息；发送前必须先用 conversation open。',
       '支持文本、图片、引用回复和群内 @；reply_to 与 mention_external_id 使用平台消息或用户 ID。',
+      '完整长文本必须一次提交；QQ 纯文本超过 500 字时由 egress 自动分段折叠，不要自行拆成多次 send_message。',
       'music 是 QQ 专属扩展；飞书目标会明确失败，不会假装成功。',
       '每次调用生成稳定 actionId，结果只会是 sent、failed 或 delivery_unknown。',
       'work 必填：none 表示没有后续工作，continue 表示当前会话立即继续下一轮。',

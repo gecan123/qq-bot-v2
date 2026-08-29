@@ -379,8 +379,12 @@ function checkPromptLayout(files: RepoCheckFiles, errors: string[]): void {
     }
   }
 
-  if (!files['prompts/chat-style/constraints.md'].includes('单条消息 ≤ 500 字')) {
-    errors.push('prompts/chat-style/constraints.md must define the 500-character message limit')
+  const chatConstraints = files['prompts/chat-style/constraints.md']
+  if (!chatConstraints.includes('普通聊天单条消息 ≤ 500 字')) {
+    errors.push('prompts/chat-style/constraints.md must define the ordinary-chat 500-character limit')
+  }
+  if (!chatConstraints.includes('一次提交完整正文') || !chatConstraints.includes('自动按段落分段并折叠')) {
+    errors.push('prompts/chat-style/constraints.md must define the folded long-text exception')
   }
 
   const systemPrompt = files['prompts/system/system.md']

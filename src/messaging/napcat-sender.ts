@@ -1,6 +1,8 @@
 import { napcat } from '../bot/napcat.js'
+import { config } from '../config/index.js'
 import { createLogger } from '../logger.js'
 import { previewText } from '../utils/business-log.js'
+import { planQqFoldedText } from './qq-folded-text.js'
 
 export interface NapcatSegment {
   type: string
@@ -28,13 +30,36 @@ export async function sendGroupReply(groupId: number, segments: NapcatSegment[])
       .map((s) => String(s.data.text ?? ''))
       .join(''),
   )
-  const deliveryType = segments.some((segment) => segment.type === 'reply') ? 'reply_to_message' : 'send_message'
+  const folded = planQqFoldedText(segments, { userId: config.selfNumber, nickname: 'Luna' })
+  if (folded.kind === 'too_long') {
+    log.error(
+      {
+        direction: 'outbound',
+        actor: 'bot',
+        flow: 'napcat_send',
+        targetType: 'group',
+        targetId: groupId,
+        groupId,
+        deliveryType: 'folded_message',
+        deliveryResult: 'rejected',
+        charCount: folded.charCount,
+        maxChars: folded.maxChars,
+        textPreview,
+      },
+      '折叠消息超过长度上限',
+    )
+    return { success: false, attempts: 0 }
+  }
+  const deliveryType = folded.kind === 'folded'
+    ? 'folded_message'
+    : segments.some((segment) => segment.type === 'reply') ? 'reply_to_message' : 'send_message'
   const mode = deliveryType === 'reply_to_message' ? 'reply' : 'ambient'
-  const segmentTypes = segments.map((segment) => segment.type)
+  const outboundSegments = folded.kind === 'folded' ? folded.nodes : segments
+  const segmentTypes = outboundSegments.map((segment) => segment.type)
 
   for (let attempt = 1; attempt <= RETRY_LIMIT; attempt++) {
     try {
-      const result = await napcat.send_group_msg({ group_id: groupId, message: segments as never })
+      const result = await napcat.send_group_msg({ group_id: groupId, message: outboundSegments as never })
       log.info(
         {
           direction: 'outbound',
@@ -116,13 +141,36 @@ export async function sendPrivateMessage(userId: number, segments: NapcatSegment
       .map((s) => String(s.data.text ?? ''))
       .join(''),
   )
-  const segmentTypes = segments.map((segment) => segment.type)
-  const deliveryType = segments.some((segment) => segment.type === 'reply') ? 'reply_to_message' : 'send_message'
+  const folded = planQqFoldedText(segments, { userId: config.selfNumber, nickname: 'Luna' })
+  if (folded.kind === 'too_long') {
+    log.error(
+      {
+        direction: 'outbound',
+        actor: 'bot',
+        flow: 'napcat_send',
+        targetType: 'private',
+        targetId: userId,
+        userId,
+        deliveryType: 'folded_message',
+        deliveryResult: 'rejected',
+        charCount: folded.charCount,
+        maxChars: folded.maxChars,
+        textPreview,
+      },
+      '折叠消息超过长度上限',
+    )
+    return { success: false, attempts: 0 }
+  }
+  const deliveryType = folded.kind === 'folded'
+    ? 'folded_message'
+    : segments.some((segment) => segment.type === 'reply') ? 'reply_to_message' : 'send_message'
   const mode = deliveryType === 'reply_to_message' ? 'reply' : 'ambient'
+  const outboundSegments = folded.kind === 'folded' ? folded.nodes : segments
+  const segmentTypes = outboundSegments.map((segment) => segment.type)
 
   for (let attempt = 1; attempt <= RETRY_LIMIT; attempt++) {
     try {
-      const result = await napcat.send_private_msg({ user_id: userId, message: segments as never })
+      const result = await napcat.send_private_msg({ user_id: userId, message: outboundSegments as never })
       log.info(
         {
           direction: 'outbound',

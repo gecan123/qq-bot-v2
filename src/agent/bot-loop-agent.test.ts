@@ -823,6 +823,114 @@ describe('BotLoopAgent.runOnceForTest', () => {
     })
   })
 
+  test('keeps a mentioned group actionable while inbox pages through the high-priority disclosure', async () => {
+    const ctx = createAgentContext()
+    const mailbox = 'qq:3999414673:group:476109921'
+    ctx.appendUserMessage(JSON.stringify({
+      event: 'notification',
+      kind: 'inbox_update',
+      priority: 'high',
+      delivery: 'interrupt',
+      open: {
+        tool: 'inbox',
+        args: { action: 'read', afterRowId: 7803 },
+      },
+      data: { mailbox, throughRowId: 7821 },
+    }))
+    let llmCallCount = 0
+    let inboxCallCount = 0
+    let waits = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const { repo, loader } = makeTestLedger(ctx.getSnapshot().messages)
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: {
+        async chat() {
+          llmCallCount++
+          const toolCalls = llmCallCount === 1
+            ? [{ id: 'read-first-page', name: 'inbox', args: {} }]
+            : llmCallCount === 2
+              ? [{ id: 'unrelated-2', name: 'unrelated_work', args: {} }]
+              : llmCallCount === 3
+                ? [{ id: 'read-second-page', name: 'inbox', args: {} }]
+                : [{ id: 'send-group-reply', name: 'send_message', args: { text: '收到' } }]
+          return {
+            content: '',
+            toolCalls,
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools({
+        inbox: async () => {
+          inboxCallCount++
+          const throughRowId = inboxCallCount === 1 ? 7813 : 7821
+          return {
+            content: JSON.stringify({
+              ok: true,
+              hasMore: inboxCallCount === 1,
+              nextAfterRowId: throughRowId,
+              messages: [{ rowId: throughRowId }],
+            }),
+            outcome: { ok: true, code: 'observed', progress: true },
+            effects: [{ type: 'inbox_read', mailbox, throughRowId }],
+          }
+        },
+        unrelated_work: async () => ({
+          content: '{"ok":true,"status":"unchanged"}',
+          outcome: { ok: true, code: 'unchanged', progress: false },
+        }),
+        send_message: async () => {
+          await agent.stop()
+          return {
+            content: '{"ok":true,"status":"sent"}',
+            outcome: { ok: true, code: 'sent', progress: true },
+            effects: [{
+              type: 'message_sent',
+              target: {
+                platform: 'qq',
+                accountId: '3999414673',
+                kind: 'group',
+                externalId: '476109921',
+              },
+            }],
+          }
+        },
+      }),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: {
+        async waitForAttentionOrTimeout() {
+          waits++
+          await agent.stop()
+          return 'elapsed'
+        },
+        async waitForEventOrTimeout() {
+          waits++
+          await agent.stop()
+          return 'elapsed'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 4)
+    assert.equal(inboxCallCount, 2)
+    assert.equal(waits, 0)
+    assert.deepEqual(ctx.getSnapshot().messages.at(-1), {
+      role: 'user',
+      content: `{"event":"mailbox_handled","mailbox":"${mailbox}","throughRowId":7821}`,
+    })
+  })
+
   test('does not append a handled marker when send_message has no confirmed effect', async () => {
     const ctx = createAgentContext()
     ctx.appendUserMessage(

@@ -482,7 +482,12 @@ function parseMailboxAttentionState(value: unknown, path: string): MailboxAttent
     }
     const cursorPath = `${path}.${mailbox}`
     const cursors = requireRecord(record[mailbox], cursorPath)
-    requireExactKeys(cursors, ['disclosedThroughRowId', 'handledThroughRowId'], [], cursorPath)
+    requireExactKeys(
+      cursors,
+      ['disclosedThroughRowId', 'handledThroughRowId'],
+      ['highPriorityThroughRowId'],
+      cursorPath,
+    )
     parsed[mailbox] = {
       disclosedThroughRowId: requireNonNegativeSafeInteger(
         cursors.disclosedThroughRowId,
@@ -492,6 +497,14 @@ function parseMailboxAttentionState(value: unknown, path: string): MailboxAttent
         cursors.handledThroughRowId,
         `${cursorPath}.handledThroughRowId`,
       ),
+      ...(cursors.highPriorityThroughRowId === undefined
+        ? {}
+        : {
+            highPriorityThroughRowId: requireNonNegativeSafeInteger(
+              cursors.highPriorityThroughRowId,
+              `${cursorPath}.highPriorityThroughRowId`,
+            ),
+          }),
     }
   }
   return parsed

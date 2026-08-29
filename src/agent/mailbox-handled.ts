@@ -4,6 +4,7 @@ import { isMailboxKey } from './mailbox.js'
 export interface MailboxAttentionCursorState {
   disclosedThroughRowId: number
   handledThroughRowId: number
+  highPriorityThroughRowId?: number
 }
 
 export type MailboxAttentionState = Record<string, MailboxAttentionCursorState>
@@ -36,6 +37,9 @@ export function captureMailboxAttentionState(
       mergeMailboxCursors(merged, disclosure.mailbox, {
         disclosedThroughRowId: disclosure.throughRowId,
         handledThroughRowId: 0,
+        ...(disclosure.highPriority && !isPrivateMailbox(disclosure.mailbox)
+          ? { highPriorityThroughRowId: disclosure.throughRowId }
+          : {}),
       })
       continue
     }
@@ -60,13 +64,17 @@ export function captureMailboxAttentionState(
 
 function parseMailboxDisclosure(
   payload: Record<string, unknown>,
-): { mailbox: string; throughRowId: number } | null {
+): { mailbox: string; throughRowId: number; highPriority: boolean } | null {
   if (
     payload.event === 'inbox_update'
     && isMailboxKey(payload.mailbox)
     && isPositiveSafeInteger(payload.throughRowId)
   ) {
-    return { mailbox: payload.mailbox, throughRowId: payload.throughRowId }
+    return {
+      mailbox: payload.mailbox,
+      throughRowId: payload.throughRowId,
+      highPriority: isPrivateMailbox(payload.mailbox),
+    }
   }
   if (
     payload.event !== 'notification'
@@ -80,6 +88,7 @@ function parseMailboxDisclosure(
   return {
     mailbox: payload.data.mailbox,
     throughRowId: payload.data.throughRowId,
+    highPriority: payload.priority === 'high' && payload.delivery === 'interrupt',
   }
 }
 
@@ -95,16 +104,17 @@ export function findPendingMailboxThroughRowId(
     : null
 }
 
-export function hasPendingPrivateMailboxAttention(
+export function hasPendingMailboxAttention(
   messages: readonly AgentMessage[],
   inboxReadCursors: Readonly<Record<string, number>> = {},
 ): boolean {
   return Object.entries(captureMailboxAttentionState(messages)).some(([mailbox, cursors]) => (
-    (mailbox.startsWith('qq_private:') || mailbox.includes(':private:'))
-    && cursors.disclosedThroughRowId > Math.max(
-      cursors.handledThroughRowId,
-      inboxReadCursors[mailbox] ?? 0,
-    )
+    Math.max(
+      isPrivateMailbox(mailbox)
+        ? cursors.disclosedThroughRowId
+        : cursors.highPriorityThroughRowId ?? 0,
+      0,
+    ) > Math.max(cursors.handledThroughRowId, inboxReadCursors[mailbox] ?? 0)
   ))
 }
 
@@ -140,7 +150,7 @@ export function findPendingHighPriorityInboxReadDefaults(
 
     const contextBefore = payload.open.args.contextBefore
     return {
-      afterRowId: payload.open.args.afterRowId,
+      afterRowId: Math.max(payload.open.args.afterRowId, consumedThroughRowId),
       ...(isPositiveSafeInteger(contextBefore) ? { contextBefore } : {}),
     }
   }
@@ -172,6 +182,9 @@ export function renderMailboxAttentionStateEvent(state: MailboxAttentionState): 
     mailboxes[mailbox] = {
       disclosedThroughRowId: cursors.disclosedThroughRowId,
       handledThroughRowId: cursors.handledThroughRowId,
+      ...((cursors.highPriorityThroughRowId ?? 0) > 0
+        ? { highPriorityThroughRowId: cursors.highPriorityThroughRowId }
+        : {}),
     }
   }
   return JSON.stringify({ event: 'mailbox_attention_state', mailboxes })
@@ -200,15 +213,20 @@ function parseMailboxAttentionStatePayload(
     if (
       !isMailboxKey(mailbox)
       || !isRecord(cursors)
-      || !hasExactKeys(cursors, ['disclosedThroughRowId', 'handledThroughRowId'])
+      || !hasExactKeys(cursors, ['disclosedThroughRowId', 'handledThroughRowId'], ['highPriorityThroughRowId'])
       || !isNonNegativeSafeInteger(cursors.disclosedThroughRowId)
       || !isNonNegativeSafeInteger(cursors.handledThroughRowId)
+      || (cursors.highPriorityThroughRowId !== undefined
+        && !isNonNegativeSafeInteger(cursors.highPriorityThroughRowId))
     ) {
       return null
     }
     state[mailbox] = {
       disclosedThroughRowId: cursors.disclosedThroughRowId,
       handledThroughRowId: cursors.handledThroughRowId,
+      ...(isPositiveSafeInteger(cursors.highPriorityThroughRowId)
+        ? { highPriorityThroughRowId: cursors.highPriorityThroughRowId }
+        : {}),
     }
   }
   return state
@@ -220,9 +238,18 @@ function mergeMailboxCursors(
   incoming: MailboxAttentionCursorState,
 ): void {
   const current = merged.get(mailbox)
-  if (!current && incoming.disclosedThroughRowId === 0 && incoming.handledThroughRowId === 0) {
+  if (
+    !current
+    && incoming.disclosedThroughRowId === 0
+    && incoming.handledThroughRowId === 0
+    && (incoming.highPriorityThroughRowId ?? 0) === 0
+  ) {
     return
   }
+  const highPriorityThroughRowId = Math.max(
+    current?.highPriorityThroughRowId ?? 0,
+    incoming.highPriorityThroughRowId ?? 0,
+  )
   merged.set(mailbox, {
     disclosedThroughRowId: Math.max(
       current?.disclosedThroughRowId ?? 0,
@@ -232,7 +259,12 @@ function mergeMailboxCursors(
       current?.handledThroughRowId ?? 0,
       incoming.handledThroughRowId,
     ),
+    ...(highPriorityThroughRowId > 0 ? { highPriorityThroughRowId } : {}),
   })
+}
+
+function isPrivateMailbox(mailbox: string): boolean {
+  return mailbox.startsWith('qq_private:') || mailbox.includes(':private:')
 }
 
 function assertMailboxKey(mailbox: string): void {
@@ -249,9 +281,14 @@ function isNonNegativeSafeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0
 }
 
-function hasExactKeys(value: Record<string, unknown>, expected: string[]): boolean {
+function hasExactKeys(
+  value: Record<string, unknown>,
+  expected: string[],
+  optional: string[] = [],
+): boolean {
   const keys = Object.keys(value)
-  return keys.length === expected.length && expected.every((key) => Object.hasOwn(value, key))
+  return expected.every((key) => Object.hasOwn(value, key))
+    && keys.every((key) => expected.includes(key) || optional.includes(key))
 }
 
 function parseJsonObject(content: string): Record<string, unknown> | null {

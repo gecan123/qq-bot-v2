@@ -28,7 +28,7 @@ import {
 } from './mailbox-continuity.js'
 import {
   findPendingMailboxThroughRowId,
-  hasPendingPrivateMailboxAttention,
+  hasPendingMailboxAttention,
   renderMailboxHandledEvent,
 } from './mailbox-handled.js'
 import { config } from '../config/index.js'
@@ -796,7 +796,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       providerPrefixHeadEntryId,
     )
     shortWorkContinuationPending = workContinuationRequested
-    const attentionPending = hasPendingPrivateMailboxAttention(
+    const attentionPending = hasPendingMailboxAttention(
       deps.context.getSnapshot().messages,
       inboxReadCursors,
     )

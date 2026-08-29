@@ -69,21 +69,22 @@ function parse(content: unknown): Record<string, any> {
 }
 
 describe('inbox tool', () => {
-  test('reads an allowed conversation in ascending local row order', async () => {
+  test('reads at least ten messages and exposes the next page cursor', async () => {
     const calls: unknown[] = []
     const inbox = tool({
       findMessages: async (args) => {
         calls.push(args)
-        return [row({ rowId: 11 }), row({ rowId: 12 })]
+        return Array.from({ length: args.take }, (_, index) => row({ rowId: 11 + index }))
       },
     })
 
-    const result = await inbox.execute({
+    const args = inbox.schema.parse({
       action: 'read',
       conversation: qqGroup,
       afterRowId: 10,
-      limit: 2,
-    }, context())
+      limit: 5,
+    }) as Parameters<typeof inbox.execute>[0]
+    const result = await inbox.execute(args, context())
     const payload = parse(result.content)
 
     assert.deepEqual(calls, [{
@@ -95,9 +96,14 @@ describe('inbox tool', () => {
         rowId: { gt: 10 },
       },
       orderBy: { rowId: 'asc' },
-      take: 2,
+      take: 11,
     }])
-    assert.deepEqual(payload.messages.map((message: any) => message.rowId), [11, 12])
+    assert.equal(payload.requestedLimit, 10)
+    assert.deepEqual(payload.messages.map((message: any) => message.rowId), [
+      11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+    ])
+    assert.equal(payload.hasMore, true)
+    assert.equal(payload.nextAfterRowId, 20)
     assert.equal(payload.messages[0].mailbox, 'qq:10000:group:20000')
     assert.equal(payload.messages[0].messageExternalId, '1011')
     assert.equal(payload.messages[0].sentAt, '2026-08-21T08:00+08:00')
@@ -106,7 +112,7 @@ describe('inbox tool', () => {
     assert.deepEqual(result.effects, [{
       type: 'inbox_read',
       mailbox: 'qq:10000:group:20000',
-      throughRowId: 12,
+      throughRowId: 20,
     }])
   })
 
@@ -143,7 +149,7 @@ describe('inbox tool', () => {
           rowId: { gt: 43 },
         },
         orderBy: { rowId: 'asc' },
-        take: 10,
+        take: 11,
       },
       {
         where: {

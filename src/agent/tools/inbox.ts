@@ -11,6 +11,7 @@ import { conversationKey } from '../../chat/conversation.js'
 const log = createLogger('INBOX')
 
 const DEFAULT_READ_LIMIT = 20
+const MIN_READ_LIMIT = 10
 const MAX_READ_LIMIT = 50
 const MAX_CONTEXT_BEFORE = 8
 const LIST_SCAN_LIMIT = 500
@@ -35,7 +36,10 @@ const argsSchema = z.discriminatedUnion('action', [
     afterRowId: z.number().int().nonnegative().optional().describe('只返回 messages.rowId 大于此值的事实.'),
     contextBefore: z.number().int().min(1).max(MAX_CONTEXT_BEFORE).optional()
       .describe('按通知补偿同一 mailbox 在 afterRowId 之前最近的消息, 最大 8 条.'),
-    limit: z.number().int().min(1).max(MAX_READ_LIMIT).optional().describe('返回条数, 默认 20, 最大 50.'),
+    limit: z.number().int().min(1).max(MAX_READ_LIMIT)
+      .transform((value) => Math.max(MIN_READ_LIMIT, value))
+      .optional()
+      .describe('返回条数, 最少 10, 默认 20, 最大 50.'),
   }),
 ])
 
@@ -93,7 +97,7 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
     description: [
       '按需查看没有自动进入上下文的 QQ / 飞书 mailbox.',
       'action=list 列出最近有消息的允许会话; action=read 读取一个明确平台会话.',
-      'read 结果按 messages.rowId 升序, 用 afterRowId 继续分页.',
+      'read 结果按 messages.rowId 升序, 每页至少 10 条; hasMore=true 时用 nextAfterRowId 作为 afterRowId 继续分页.',
       '通知中的 readArgs 可能带 contextBefore, 此时 previousMessages 是 runtime 为长间隔或远距离上下文自动补偿的同 mailbox 前置消息.',
       'inbox 更新通知只是元数据; 需要理解或引用正文时再调用本工具.',
       '需要引用时只把精确目标消息自身的 rowId 填入 send_message.reply_to.row_id；messageExternalId 仅供理解平台关系，不要作为发送参数。不能确认目标时省略引用，不要猜相邻消息。',
@@ -150,7 +154,8 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
         }
       }
 
-      const limit = args.limit ?? DEFAULT_READ_LIMIT
+      // Keep direct/internal callers safe even when they bypass Zod validation.
+      const limit = Math.max(MIN_READ_LIMIT, args.limit ?? DEFAULT_READ_LIMIT)
       const mailbox = conversationKey(args.conversation)
       const allowedConversations = new Map(
         (await loadAllowedConversations())
@@ -170,7 +175,9 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
         ?? 0
 
       const where = { ...sourceWhere, rowId: { gt: afterRowId } }
-      const rows = await findMessages({ where, orderBy: { rowId: 'asc' }, take: limit })
+      const queriedRows = await findMessages({ where, orderBy: { rowId: 'asc' }, take: limit + 1 })
+      const rows = queriedRows.slice(0, limit)
+      const hasMoreRows = queriedRows.length > limit
       const previousRows = contextBefore > 0 && afterRowId > 0
         ? await findMessages({
             where: { ...sourceWhere, rowId: { lte: afterRowId } },
@@ -184,6 +191,7 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
         contextBefore,
         requestedLimit: limit,
         returnedMessages: rows.length,
+        hasMore: hasMoreRows,
         returnedPreviousMessages: previousRows.length,
       }, 'inbox_read_completed')
       const content = renderBoundedRead(
@@ -192,6 +200,7 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
         rows,
         contextBefore,
         limit,
+        hasMoreRows,
         deps.selfExternalIds,
       )
       if (rows.length === 0 && previousRows.length === 0) {
@@ -261,6 +270,7 @@ function renderBoundedRead(
   rows: readonly InboxMessageRow[],
   requestedContextBefore: number,
   requestedLimit: number,
+  hasMoreRows: boolean,
   selfExternalIds: Partial<Record<ChatPlatform, string>>,
 ): string {
   const messages: Array<Record<string, unknown>> = []
@@ -275,6 +285,7 @@ function renderBoundedRead(
       reversedCopy(previousMessagesNearestFirst),
       [...messages, projected.value],
       false,
+      hasMoreRows,
     )
     if (candidate.length > INBOX_OUTPUT_CAP_CHARS) {
       truncated = true
@@ -295,6 +306,7 @@ function renderBoundedRead(
       reversedCopy(nextPreviousNearestFirst),
       messages,
       truncated,
+      hasMoreRows,
     )
     if (candidate.length > INBOX_OUTPUT_CAP_CHARS) {
       truncated = true
@@ -312,6 +324,7 @@ function renderBoundedRead(
     reversedCopy(previousMessagesNearestFirst),
     messages,
     truncated,
+    hasMoreRows || messages.length < rows.length,
   )
 }
 
@@ -361,12 +374,16 @@ function renderReadPayload(
   previousMessages: Array<Record<string, unknown>>,
   messages: Array<Record<string, unknown>>,
   truncated: boolean,
+  hasMore: boolean,
 ): string {
+  const nextAfterRowId = messages.at(-1)?.rowId
   return JSON.stringify({
     ok: true,
     mailbox,
     requestedLimit,
     truncated,
+    hasMore,
+    ...(Number.isSafeInteger(nextAfterRowId) ? { nextAfterRowId } : {}),
     ...(requestedContextBefore > 0
       ? { requestedContextBefore, previousMessages }
       : {}),

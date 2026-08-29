@@ -148,7 +148,11 @@ describe('projectAgentLedger', () => {
         firstKeptEntryId: '2',
         mailboxAttentionState: {
           'qq_private:20': { disclosedThroughRowId: 9, handledThroughRowId: 8 },
-          'qq_group:10': { disclosedThroughRowId: 7, handledThroughRowId: 7 },
+          'qq_group:10': {
+            disclosedThroughRowId: 7,
+            handledThroughRowId: 7,
+            highPriorityThroughRowId: 7,
+          },
         },
       }),
       messageEntry(4n, { role: 'user', content: '新问题' }),
@@ -172,7 +176,7 @@ describe('projectAgentLedger', () => {
         {
           role: 'user',
           content: '{"event":"mailbox_attention_state","mailboxes":'
-            + '{"qq_group:10":{"disclosedThroughRowId":7,"handledThroughRowId":7},'
+            + '{"qq_group:10":{"disclosedThroughRowId":7,"handledThroughRowId":7,"highPriorityThroughRowId":7},'
             + '"qq_private:20":{"disclosedThroughRowId":9,"handledThroughRowId":8}}}',
         },
         { role: 'user', content: '保留问题' },
@@ -189,7 +193,11 @@ describe('projectAgentLedger', () => {
       compactionEntry(2n, {
         summary: '平台中立摘要',
         mailboxAttentionState: {
-          'qq:bot:group:123': { disclosedThroughRowId: 7, handledThroughRowId: 6 },
+          'qq:bot:group:123': {
+            disclosedThroughRowId: 7,
+            handledThroughRowId: 6,
+            highPriorityThroughRowId: 7,
+          },
           'feishu:app%3Atenant:private:ou%3A1': {
             disclosedThroughRowId: 9,
             handledThroughRowId: 8,

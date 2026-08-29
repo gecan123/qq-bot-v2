@@ -5,7 +5,7 @@ import {
   captureMailboxAttentionState,
   findPendingHighPriorityInboxReadDefaults,
   findPendingMailboxThroughRowId,
-  hasPendingPrivateMailboxAttention,
+  hasPendingMailboxAttention,
   isMailboxAttentionStateMessage,
   renderMailboxAttentionStateEvent,
   renderMailboxHandledEvent,
@@ -86,11 +86,12 @@ describe('mailbox handled cursor', () => {
     )
   })
 
-  test('treats only unread and unhandled private disclosures as pending private attention', () => {
+  test('keeps unread high-priority group mentions and private disclosures actionable', () => {
+    const groupMailbox = 'qq:3999414673:group:476109921'
     const pending: AgentMessage[] = [
       {
         role: 'user',
-        content: '{"event":"inbox_update","mailbox":"qq_group:99","throughRowId":20}',
+        content: `{"event":"notification","kind":"inbox_update","priority":"high","delivery":"interrupt","open":{"tool":"inbox","args":{"action":"read","afterRowId":7803}},"data":{"mailbox":"${groupMailbox}","throughRowId":7821}}`,
       },
       {
         role: 'user',
@@ -101,9 +102,28 @@ describe('mailbox handled cursor', () => {
         content: '{"event":"mailbox_handled","mailbox":"qq_private:123","throughRowId":8}',
       },
     ]
-    assert.equal(hasPendingPrivateMailboxAttention(pending), true)
-    assert.equal(hasPendingPrivateMailboxAttention(pending, { 'qq_private:123': 9 }), true)
-    assert.equal(hasPendingPrivateMailboxAttention(pending, { 'qq_private:123': 10 }), false)
+    assert.equal(hasPendingMailboxAttention(pending, {
+      [groupMailbox]: 7809,
+      'qq_private:123': 10,
+    }), true)
+    assert.deepEqual(
+      findPendingHighPriorityInboxReadDefaults(pending, groupMailbox, 7809),
+      { afterRowId: 7809 },
+    )
+    assert.equal(hasPendingMailboxAttention(pending, {
+      [groupMailbox]: 7821,
+      'qq_private:123': 10,
+    }), false)
+    assert.equal(hasPendingMailboxAttention([{
+      role: 'user',
+      content: `{"event":"mailbox_attention_state","mailboxes":{"${groupMailbox}":{"disclosedThroughRowId":7821,"handledThroughRowId":0,"highPriorityThroughRowId":7821}}}`,
+    }], { [groupMailbox]: 7809 }), true)
+
+    const normalGroup: AgentMessage[] = [{
+      role: 'user',
+      content: '{"event":"notification","kind":"inbox_update","priority":"normal","delivery":"passive","open":{"tool":"inbox","args":{"action":"read","afterRowId":19}},"data":{"mailbox":"qq_group:99","throughRowId":20}}',
+    }]
+    assert.equal(hasPendingMailboxAttention(normalGroup), false)
 
     const handled = [
       ...pending,
@@ -112,7 +132,7 @@ describe('mailbox handled cursor', () => {
         content: '{"event":"mailbox_handled","mailbox":"qq_private:123","throughRowId":10}',
       },
     ]
-    assert.equal(hasPendingPrivateMailboxAttention(handled), false)
+    assert.equal(hasPendingMailboxAttention(handled, { [groupMailbox]: 7821 }), false)
   })
 
   test('ignores malformed JSON, non-user messages, and other mailboxes', () => {
@@ -172,7 +192,7 @@ describe('mailbox handled cursor', () => {
     const messages: AgentMessage[] = [
       {
         role: 'user',
-        content: '{"event":"mailbox_attention_state","mailboxes":{"qq_private:9001":{"disclosedThroughRowId":80,"handledThroughRowId":70},"qq_group:99":{"disclosedThroughRowId":55,"handledThroughRowId":55}}}',
+        content: '{"event":"mailbox_attention_state","mailboxes":{"qq_private:9001":{"disclosedThroughRowId":80,"handledThroughRowId":70},"qq_group:99":{"disclosedThroughRowId":55,"handledThroughRowId":55,"highPriorityThroughRowId":55}}}',
       },
       {
         role: 'user',
@@ -189,7 +209,11 @@ describe('mailbox handled cursor', () => {
     ]
 
     assert.deepEqual(captureMailboxAttentionState(messages), {
-      'qq_group:99': { disclosedThroughRowId: 55, handledThroughRowId: 55 },
+      'qq_group:99': {
+        disclosedThroughRowId: 55,
+        handledThroughRowId: 55,
+        highPriorityThroughRowId: 55,
+      },
       'qq_private:9001': { disclosedThroughRowId: 88, handledThroughRowId: 75 },
       'qq_private:9002': { disclosedThroughRowId: 0, handledThroughRowId: 12 },
     })
@@ -198,12 +222,16 @@ describe('mailbox handled cursor', () => {
   test('renders sorted byte-stable state and recognizes only valid controlled messages', () => {
     const content = renderMailboxAttentionStateEvent({
       'qq_private:9002': { disclosedThroughRowId: 12, handledThroughRowId: 4 },
-      'qq_group:99': { disclosedThroughRowId: 55, handledThroughRowId: 55 },
+      'qq_group:99': {
+        disclosedThroughRowId: 55,
+        handledThroughRowId: 55,
+        highPriorityThroughRowId: 55,
+      },
     })
 
     assert.equal(
       content,
-      '{"event":"mailbox_attention_state","mailboxes":{"qq_group:99":{"disclosedThroughRowId":55,"handledThroughRowId":55},"qq_private:9002":{"disclosedThroughRowId":12,"handledThroughRowId":4}}}',
+      '{"event":"mailbox_attention_state","mailboxes":{"qq_group:99":{"disclosedThroughRowId":55,"handledThroughRowId":55,"highPriorityThroughRowId":55},"qq_private:9002":{"disclosedThroughRowId":12,"handledThroughRowId":4}}}',
     )
     assert.equal(isMailboxAttentionStateMessage({ role: 'user', content }), true)
     assert.equal(isMailboxAttentionStateMessage({

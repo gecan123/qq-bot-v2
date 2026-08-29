@@ -83,6 +83,12 @@ test('send_message exposes music as one provider-compatible object schema', () =
   assert.ok(props.message)
   assert.ok(props.reply_to)
   assert.ok(props.mention_external_id)
+  const replyVariants = props.reply_to.anyOf as Array<Record<string, unknown>> | undefined
+  const reply = replyVariants?.find((variant) => variant.type === 'object') ?? props.reply_to
+  const replyProps = reply.properties as Record<string, Record<string, unknown>>
+  assert.ok(replyProps.row_id)
+  assert.deepEqual(replyProps.expect.enum, ['message', 'mentioned_self'])
+  assert.match(String(replyProps.row_id.description), /messages\.rowId.*messageExternalId.*mediaId/s)
   const musicVariants = props.music.anyOf as Array<Record<string, unknown>>
   const music = musicVariants.find((variant) => variant.type === 'object')
 

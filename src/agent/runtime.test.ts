@@ -187,7 +187,7 @@ describe('createAgentRuntime', () => {
       name: 'invoke',
       args: {
         tool: 'send_message',
-        args: { message: 'hi', reply_to: 5, work: { state: 'none' } },
+        args: { message: 'hi', work: { state: 'none' } },
       },
     }, {
       eventQueue: new InMemoryEventQueue<BotEvent>(),
@@ -209,7 +209,6 @@ describe('createAgentRuntime', () => {
     assert.deepEqual(sent, [{
       target: { type: 'private', userId: 2002 },
       segments: [
-        { type: 'reply', data: { id: '5' } },
         { type: 'text', data: { text: 'hi' } },
       ],
     }])

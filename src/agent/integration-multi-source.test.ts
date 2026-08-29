@@ -59,7 +59,7 @@ test('QQ and Feishu events share one BotLoop, durable ledger and explicit focus'
   const outputs = [
     toolOutput('open-feishu', 'conversation', { action: 'open', target: feishuPrivate }),
     toolOutput('send-feishu', 'send_message', {
-      message: '飞书回复', reply_to: 'om_2', work: { state: 'none' },
+      message: '飞书回复', reply_to: { row_id: 2, expect: 'message' }, work: { state: 'none' },
     }),
   ]
   let outputIndex = 0
@@ -96,7 +96,26 @@ test('QQ and Feishu events share one BotLoop, durable ledger and explicit focus'
       description: 'cross-platform chat',
       tools: [
         createConversationTool(conversations),
-        createSendMessageTool({ delivery, targetPolicy, conversations }),
+        createSendMessageTool({
+          delivery,
+          targetPolicy,
+          conversations,
+          loadReplyMessage: async (rowId) => ({
+            rowId,
+            eventKind: 'message',
+            platform: 'feishu',
+            accountId: 'cli_1',
+            conversationKind: 'private',
+            conversationExternalId: 'oc_owner',
+            messageExternalId: 'om_2',
+            senderExternalId: 'ou_owner',
+            senderName: '飞书主人',
+            senderConversationName: null,
+            content: [{ type: 'text', content: 'hidden-2' }],
+            resolvedText: 'hidden-2',
+            searchText: 'hidden-2',
+          }),
+        }),
       ],
     }],
   })

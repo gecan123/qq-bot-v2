@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { ConversationRef } from '../../chat/conversation.js'
+import { prisma } from '../../database/client.js'
 import type { MessageDelivery } from '../../messaging/message-delivery.js'
 import type { MusicShare } from '../../messaging/segment-builder.js'
 import type { ImageHandle } from '../../media/image-handle-schema.js'
@@ -44,13 +45,20 @@ const workBindingSchema = z.discriminatedUnion('state', [
   z.object({ state: z.literal('none') }),
   z.object({ state: z.literal('continue') }),
 ])
+const replyTargetSchema = z.object({
+  row_id: z.number().int().positive()
+    .describe('inbox read 返回的本地 messages.rowId；不要填写 messageExternalId、mediaId 或相邻消息的 rowId。'),
+  expect: z.enum(['message', 'mentioned_self'])
+    .describe('回应结构化 @bot 时必须用 mentioned_self；普通上下文引用用 message。'),
+})
 const argsSchema = z.object({
   message: z.string().min(1).max(MAX_TEXT_LENGTH)
     .describe('消息正文。普通聊天保持简短；完整长文本一次提交，不要拆成多次调用。QQ 纯文本超过 500 字时由 egress 自动分段折叠。')
     .nullable().optional(),
   imageRef: imageRefSchema.nullable().optional(),
   music: musicSchema.nullable().optional(),
-  reply_to: z.union([z.string().min(1), z.number().int().positive()]).optional(),
+  reply_to: replyTargetSchema.nullable().optional()
+    .describe('可选引用目标。只有确认了精确消息时才填写；不确定时省略，不要猜。'),
   mention_external_id: z.union([z.string().min(1), z.number().int().positive()]).optional(),
   work: workBindingSchema,
 }).refine((value) => value.message != null || value.imageRef != null || value.music != null, {
@@ -62,7 +70,7 @@ interface Args {
   image?: ImageHandle
   imageRef?: string | null
   music?: MusicShare | null
-  reply_to?: string | number
+  reply_to?: z.infer<typeof replyTargetSchema> | null
   mention_external_id?: string | number
   work:
     | { state: 'none' }
@@ -78,6 +86,24 @@ export interface SendMessageDeps {
   promoteImage?: typeof promoteToMedia
   actionId?: () => string
   groupMuteInspector?: GroupMuteInspector
+  selfExternalIds?: Partial<Record<ConversationRef['platform'], string>>
+  loadReplyMessage?: (rowId: number) => Promise<ReplyMessageRow | null>
+}
+
+export interface ReplyMessageRow {
+  rowId: number
+  eventKind: string
+  platform: string
+  accountId: string
+  conversationKind: string
+  conversationExternalId: string
+  messageExternalId: string
+  senderExternalId: string
+  senderName: string | null
+  senderConversationName: string | null
+  content: unknown
+  resolvedText: string | null
+  searchText: string
 }
 
 export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
@@ -85,7 +111,8 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
     name: 'send_message',
     description: [
       '向当前显式打开的 QQ / 飞书会话真实发送消息；发送前必须先用 conversation open。',
-      '支持文本、图片、引用回复和群内 @；reply_to 与 mention_external_id 使用平台消息或用户 ID。',
+      '支持文本、图片、引用回复和群内 @；reply_to 使用 inbox read 返回的本地 rowId，并在发送前验证当前会话与预期关系；mention_external_id 使用平台用户 ID。',
+      '回应 mentionedSelf=true 的结构化 @ 时，reply_to.expect 必须用 mentioned_self；不能确认精确引用目标时省略 reply_to，不要猜相邻消息。',
       '完整长文本必须一次提交；QQ 纯文本超过 500 字时由 egress 自动分段折叠，不要自行拆成多次 send_message。',
       'music 是 QQ 专属扩展；飞书目标会明确失败，不会假装成功。',
       '每次调用生成稳定 actionId，结果只会是 sent、failed 或 delivery_unknown。',
@@ -98,7 +125,11 @@ export function createSendMessageTool(deps: SendMessageDeps): Tool<Args> {
       const args = rawArgs as Args
       const text = args.message ? normalizeSendText(args.message) : undefined
       const image = args.image ?? imageRefToHandle(args.imageRef ?? null)
-      const replyToExternalId = args.reply_to == null ? undefined : String(args.reply_to)
+      const reply = args.reply_to == null
+        ? { ok: true as const, replyToExternalId: undefined }
+        : await resolveReplyTarget(deps, current.target, args.reply_to)
+      if (!reply.ok) return reply.result
+      const replyToExternalId = reply.replyToExternalId
       const mentionExternalId = args.mention_external_id == null
         ? undefined
         : String(args.mention_external_id)
@@ -172,6 +203,142 @@ export function normalizeSendText(text: string): string {
     .replace(/[ \t]+\n/gu, '\n')
     .replace(/\n{3,}/gu, '\n\n')
     .trim()
+}
+
+async function resolveReplyTarget(
+  deps: SendMessageDeps,
+  target: ConversationRef,
+  replyTo: NonNullable<Args['reply_to']>,
+): Promise<
+  | { ok: true; replyToExternalId: string }
+  | { ok: false; result: ToolExecutionResult }
+> {
+  let row: ReplyMessageRow | null
+  try {
+    row = await (deps.loadReplyMessage ?? defaultLoadReplyMessage)(replyTo.row_id)
+  } catch (error) {
+    return {
+      ok: false,
+      result: failedResult({
+        status: 'failed',
+        code: 'reply_target_unavailable',
+        error: error instanceof Error ? error.message : String(error),
+        target,
+        replyTo: { rowId: replyTo.row_id },
+      }),
+    }
+  }
+  if (!row) {
+    return {
+      ok: false,
+      result: failedResult({
+        status: 'failed',
+        code: 'reply_target_not_found',
+        error: `reply target rowId=${replyTo.row_id} was not found`,
+        target,
+        replyTo: { rowId: replyTo.row_id },
+      }),
+    }
+  }
+
+  const preview = replyPreview(row)
+  if (
+    row.platform !== target.platform
+    || row.accountId !== target.accountId
+    || row.conversationKind !== target.kind
+    || row.conversationExternalId !== target.externalId
+  ) {
+    return {
+      ok: false,
+      result: failedResult({
+        status: 'failed',
+        code: 'reply_target_wrong_conversation',
+        error: 'reply target does not belong to the currently open conversation',
+        target,
+        replyTo: preview,
+      }),
+    }
+  }
+  if (row.eventKind === 'recall') {
+    return {
+      ok: false,
+      result: failedResult({
+        status: 'failed',
+        code: 'reply_target_not_replyable',
+        error: 'reply target has been recalled',
+        target,
+        replyTo: preview,
+      }),
+    }
+  }
+  if (replyTo.expect === 'mentioned_self') {
+    const selfExternalId = deps.selfExternalIds?.[target.platform]
+    if (!selfExternalId) {
+      return {
+        ok: false,
+        result: failedResult({
+          status: 'failed',
+          code: 'reply_target_identity_unavailable',
+          error: `self identity is unavailable for platform=${target.platform}`,
+          target,
+          replyTo: preview,
+        }),
+      }
+    }
+    if (!messageMentions(row.content, selfExternalId)) {
+      return {
+        ok: false,
+        result: failedResult({
+          status: 'failed',
+          code: 'reply_target_not_mentioned_self',
+          error: 'reply target does not structurally mention the bot',
+          target,
+          replyTo: preview,
+        }),
+      }
+    }
+  }
+  return { ok: true, replyToExternalId: row.messageExternalId }
+}
+
+async function defaultLoadReplyMessage(rowId: number): Promise<ReplyMessageRow | null> {
+  return prisma.message.findUnique({
+    where: { rowId },
+    select: {
+      rowId: true,
+      eventKind: true,
+      platform: true,
+      accountId: true,
+      conversationKind: true,
+      conversationExternalId: true,
+      messageExternalId: true,
+      senderExternalId: true,
+      senderName: true,
+      senderConversationName: true,
+      content: true,
+      resolvedText: true,
+      searchText: true,
+    },
+  }) as Promise<ReplyMessageRow | null>
+}
+
+function replyPreview(row: ReplyMessageRow): Record<string, unknown> {
+  const rawText = row.resolvedText ?? row.searchText
+  return {
+    rowId: row.rowId,
+    senderExternalId: row.senderExternalId,
+    senderName: row.senderConversationName ?? row.senderName ?? row.senderExternalId,
+    text: rawText.length > 300 ? `${rawText.slice(0, 300)}…` : rawText,
+  }
+}
+
+function messageMentions(content: unknown, selfExternalId: string): boolean {
+  if (!Array.isArray(content)) return false
+  return content.some((segment) => {
+    if (!segment || typeof segment !== 'object' || Array.isArray(segment)) return false
+    const value = segment as Record<string, unknown>
+    return value.type === 'at' && value.targetId === selfExternalId
+  })
 }
 
 async function deliver(

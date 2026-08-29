@@ -118,6 +118,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     delivery: deps.delivery ?? createMessageDelivery([createQqDeliveryAdapter(deps.sender)]),
     targetPolicy: deps.targetPolicy as ConversationSendPolicy,
     conversations: deps.conversations,
+    selfExternalIds: { qq: String(deps.selfNumber), ...deps.selfExternalIds },
     ...(deps.groupMuteInspector ? { groupMuteInspector: deps.groupMuteInspector } : {}),
   })
   const backgroundTask = createBackgroundTaskTool({ taskRegistry: deps.taskRegistry })

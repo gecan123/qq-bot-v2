@@ -7,7 +7,7 @@
 - 时间：`clock` 按需返回当前北京时间（UTC+08:00），只保留到分钟。普通单条 mailbox notification 只有一个 `occurredAt`，批量通知只有 `timeRange`，`inbox` 消息的 `sentAt` 也只保留到分钟；调度到期仍保留唯一的精确 `scheduledFor`。后台任务耗时等运行控制时间不写入 notification。历史消息里的时间只表示事件发生时刻，不代表“现在”。
 - 主动休息：`rest` 是唯一的主动暂停入口，参数为期望 `durationMinutes=10..120`（默认 30）、真实 `reason` 和醒后重新评估方向的 `resumeAction`。工具按实际经过时间维护进程内三小时滚动窗口：Asia/Singapore 白天 06:00..24:00 最多累计休息 60 分钟，夜间 00:00..06:00 最多 120 分钟；本次时长自动取请求、剩余额度和下一昼夜边界的最小值。注意事件提前打断时只计实际时间；额度不足 10 分钟返回 `rest_budget_exhausted` 并短暂技术退避。窗口不按工具次数或工作量解锁，不跨重启持久化；不要连续重试或创建 Schedule 等待额度。
 - 短期调度：`schedule action=create|list|get_occurrence|cancel`，active job 的公开 ID 字段统一为 `id`。`create` 只接受一次性 `at` 或 `afterSeconds`，触发必须位于 30 秒到 3 天内，最多 20 个 active job。同名同时间创建幂等返回 `existing`，同名不同时间返回冲突及已有 `id`，需先 cancel；`list` 返回有界公开摘要。active 状态保存在 schedule store，触发正文只写一次 occurrence store；到期 notification 只给名称、时间和 `get_occurrence` 打开参数，不执行预存命令。它是 normal+interrupt，轮次边界低于 high notification、高于 passive notification。
-- QQ 与飞书发送位于 deferred `chat` capability：用 `help action=describe` 查看 schema 后，直接 `invoke conversation open` 显式打开允许的群或好友，最后 `invoke send_message` 发送文本、图片、图文或受控音乐卡片。`work` 必填：无后续承诺用 `state=none`；当前会话内马上续做用 `state=continue`，只保护下一轮且不跨重启。
+- QQ 与飞书发送位于 deferred `chat` capability：用 `help action=describe` 查看 schema 后，直接 `invoke conversation open` 显式打开允许的群或好友，最后 `invoke send_message` 发送文本、图片、图文或受控音乐卡片。引用目标使用 `inbox read` 返回的本地 `rowId`；发送模块先核对当前会话、可回复状态和 `expect=message|mentioned_self`，再解析平台消息 ID。`work` 必填：无后续承诺用 `state=none`；当前会话内马上续做用 `state=continue`，只保护下一轮且不跨重启。
 - QQ 目录：`qq_directory`（分页列出/搜索 NapCat 当前全部好友；群目录只披露当前已加入且配置在 `prompts/groups.md` 的群；`profile` 按 QQ 号合并当前目录名和消息事实账本中观察到的历史群名片/昵称）。
 - 稳定按需壳：`help`（`list` / `describe` capability 或内部工具 schema）和 `invoke`（直接调用按需内部工具）。安全仍由目标工具 schema 和 policy 约束，不持久化激活状态。
 - 知识和历史：`memory`（稳定长期记忆）、`notebook`（按稳定 topic 维护研究/阅读/市场/项目过程）、`skill`、`inbox`（list/read 多来源消息正文）。Memory 和 Notebook 的人类可读叙述必须以中文为载体，技术标识可保留原文但要放进中文说明；结构字段和 ID 保持原样。工具覆盖、当天产量、临时计划和一次性情绪不写成兴趣 Memory；明确的乐趣、投入、好奇或跨时间仍愿回访的原因才适合进入 self/topic Memory。
@@ -72,12 +72,12 @@
 - `send_message` 成功不会隐式结束 Agent 当前活动；下一轮重新判断当前方向是否仍有牵引力，有就继续，没有或已经机械重复时调用 `rest`。
 - content-only 且无 tool call 的 assistant 输出不会发送或执行。Runtime 会追加同一个受控行动纠错并立即重试；方向选择保持在主 Agent 内，不建立跨轮换方向状态。
 - QQ 群策略仍以 `prompts/groups.md` 为唯一来源：普通群消息不唤醒或打断 Agent；`mentions` 群只进入被动 inbox，`selective` / `active` 群可以额外形成 passive notification。飞书群以 `BOT_FEISHU_GROUP_IDS` 明确 allowlist；普通消息被动入库，结构化 @bot、编辑和撤回可以形成 attention。QQ 私聊目标必须是 NapCat 当前好友；飞书群目标必须在 allowlist，私聊目标必须已经由 Gateway 观察到。未授权会明确拒绝，不会模拟成功。
-- 私聊的主动发言冷却只限制没有同 target pending mailbox 的真正 ambient send。对新入站私聊的回复不必为了绕过冷却而添加 `reply_to`；`reply_to` 用于对应平台的引用/回复展示。
+- 私聊的主动发言冷却只限制没有同 target pending mailbox 的真正 ambient send。对新入站私聊的回复不必为了绕过冷却而添加 `reply_to`；`reply_to` 只用于对应平台的引用/回复展示，必须提供精确目标的本地 `row_id`，不确定时应省略而不是猜测相邻消息。
 - `qq_directory` 是只读目录。`list_friends` / `search_friends` 覆盖 NapCat 当前全部好友，因此这些结果都可作为 private `send_message` target；`list_groups` 只返回 NapCat 当前群列表与 `prompts/groups.md` 群 section 的交集，不扩大群监听或发送授权。`profile` 以 QQ 号为主键，把当前好友 remark/nickname 与 `messages` 中同一 sender 的群名片、sender nickname、出现群和时间合并为带来源的 identity view；它不把昵称当权限或稳定事实。结果有条数上限和 offset 分页，不提供加删好友、加退群或群管理动作。
 - 群 `send_message` 最终失败后才按需查询机器人自身的当前禁言状态；确认命中时 tool result 返回 `reason=group_muted` 和可用的 `mutedUntil`，否则返回 `reason=send_failed`。该事实不缓存，也不会阻止后续真实发送。
 - 外部工具必须保留输出上限和超时；审计强度由 `BOT_TOOL_AUDIT_MODE` 控制，开发默认只记副作用。
 - Agent 不使用通用人工审批层；工具调用在各自的 target、revision、路径、schema、超时、allowlist 和审计边界内直接执行。
-- `inbox list` 只列出最近扫描窗口内 `latestRowId > lastReadRowId` 的待读来源；`read` 未显式传 `afterRowId` 时从持久已读 cursor 继续，并只推进到本次有界输出实际展示的最后一行。群读取必须显式指定监听白名单内的 groupId；私聊读取必须显式指定 peerId。read 结果用结构化 `media[].mediaId` 披露入站媒体 handle，整体仍有行数和字符上限，并作为普通 tool result 进入 AgentContext。群文件上传 notice 会用稳定的负数 synthetic messageId 落入同一 mailbox，此时 `replyable=false`，只能 ambient 回复。
+- `inbox list` 只列出最近扫描窗口内 `latestRowId > lastReadRowId` 的待读来源；`read` 未显式传 `afterRowId` 时从持久已读 cursor 继续，并只推进到本次有界输出实际展示的最后一行。群读取必须显式指定监听白名单内的 groupId；私聊读取必须显式指定 peerId。read 结果用本地 `rowId` 作为 `send_message.reply_to.row_id`，`messageExternalId` 只用于披露平台关系；结构化 `media[].mediaId` 是入站媒体 handle，不能混作引用 ID。整体仍有行数和字符上限，并作为普通 tool result 进入 AgentContext。群文件上传 notice 会用稳定的负数 synthetic messageId 落入同一 mailbox，此时 `replyable=false`，只能 ambient 回复。
 - `read_file` 位于 deferred `document_reading` capability 内，只能解析已落库的消息文件 handle；QQ 与飞书媒体都先进入统一 `media` / `media_blobs` 后才能读取。单次返回和可解析输入都有上限，压缩包与旧版 DOC/XLS/PPT 明确拒绝。
 - `workspace_bash` 的 workspace/repo 文件命令都只读且不经过 shell；只允许 `pwd/ls/rg/cat/head/tail/wc`。普通文件修改必须走 `workspace_file`，不能用它访问数据库、网络、网站、金融、风格或指标。repo view 不能读取 secrets、runtime data、logs、`node_modules`、`.git` 或私有群 prompt 文件。
 - `moomoo_skill` 只路由到固定 `skills/moomooapi/scripts/**` 下的代码内 allowlist。三个交易写脚本必须显式传唯一的 `--trd-env SIMULATE`；`REAL`、`--confirmed`、加密货币、组合订单、任意 Python/脚本路径和实时订阅长进程都会被拒绝。

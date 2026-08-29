@@ -20,7 +20,10 @@ function makeCtx() {
 
 const sendMessageSchema = z.object({
   message: z.string().nullable().optional(),
-  reply_to: z.number().int().positive().optional(),
+  reply_to: z.object({
+    row_id: z.number().int().positive(),
+    expect: z.enum(['message', 'mentioned_self']),
+  }).optional(),
   work: z.discriminatedUnion('state', [
     z.object({ state: z.literal('none') }),
     z.object({ state: z.literal('continue') }),
@@ -81,7 +84,7 @@ describe('createSendMessageSafetyGuard', () => {
     const reply = await exec.execute({
       id: 'reply', name: 'send_message', args: {
         message: '第一句',
-        reply_to: 456,
+        reply_to: { row_id: 456, expect: 'message' },
       },
     }, makeCtx())
     nowMs += 12 * 60 * 60_000

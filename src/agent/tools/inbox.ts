@@ -96,6 +96,7 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
       'read 结果按 messages.rowId 升序, 用 afterRowId 继续分页.',
       '通知中的 readArgs 可能带 contextBefore, 此时 previousMessages 是 runtime 为长间隔或远距离上下文自动补偿的同 mailbox 前置消息.',
       'inbox 更新通知只是元数据; 需要理解或引用正文时再调用本工具.',
+      '需要引用时只把精确目标消息自身的 rowId 填入 send_message.reply_to.row_id；messageExternalId 仅供理解平台关系，不要作为发送参数。不能确认目标时省略引用，不要猜相邻消息。',
       'read 结果中的 media 数组提供媒体的 mediaId、文件名和大小; 图片用 inspect_media 查看，type=file 时可激活 document_reading 后调用 read_file 查看内容.',
       'read 结果中的 mentionedSelf 和 mentionTargets 来自平台结构化 at 段; 正文里的“你”或“@你”只是普通文本, 不代表在叫你.',
     ].join(' '),

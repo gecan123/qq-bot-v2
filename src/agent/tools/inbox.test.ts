@@ -101,6 +101,8 @@ describe('inbox tool', () => {
     assert.equal(payload.messages[0].mailbox, 'qq:10000:group:20000')
     assert.equal(payload.messages[0].messageExternalId, '1011')
     assert.equal(payload.messages[0].sentAt, '2026-08-21T08:00+08:00')
+    assert.match(inbox.description, /精确目标消息自身的 rowId.*send_message\.reply_to\.row_id/s)
+    assert.match(inbox.description, /messageExternalId.*不要作为发送参数/s)
     assert.deepEqual(result.effects, [{
       type: 'inbox_read',
       mailbox: 'qq:10000:group:20000',

@@ -188,7 +188,6 @@ describe('mailbox disclosure planning', () => {
       delivery: 'passive',
       groupKey: 'qq_group:111',
       count: 2,
-      occurredAt: '2026-07-03T09:03:04.000+08:00',
       open: {
         tool: 'inbox',
         args: { action: 'read', source: 'group', groupId: 111, afterRowId: 9 },
@@ -200,13 +199,29 @@ describe('mailbox disclosure planning', () => {
         throughRowId: 12,
         senderCount: 2,
         timeRange: {
-          from: '2026-07-03T09:02:03.000+08:00',
-          to: '2026-07-03T09:03:04.000+08:00',
+          from: '2026-07-03T09:02+08:00',
+          to: '2026-07-03T09:03+08:00',
         },
         readArgs: { action: 'read', source: 'group', groupId: 111, afterRowId: 9 },
       },
     })
     assert.doesNotMatch(rendered, /DO_NOT_DISCLOSE/)
+  })
+
+  test('renders one minute-level time anchor for a single message', () => {
+    const rendered = renderMailboxNotification('qq_group:111', [
+      groupEvent({
+        rowId: 10,
+        groupId: 111,
+        text: 'DO_NOT_DISCLOSE',
+        sentAt: '2026-07-03T01:02:59.999Z',
+      }),
+    ])
+    const payload = JSON.parse(rendered)
+
+    assert.equal(payload.occurredAt, '2026-07-03T09:02+08:00')
+    assert.equal(payload.data.timeRange, undefined)
+    assert.equal((rendered.match(/2026-07-03T09:02\+08:00/g) ?? []).length, 1)
   })
 
   test('marks a group mailbox batch high priority when any message mentions the bot', () => {
@@ -328,6 +343,11 @@ describe('mailbox disclosure planning', () => {
     const payload = JSON.parse(rendered)
 
     assert.equal(payload.data.mode, 'backlog')
+    assert.equal(payload.occurredAt, undefined)
+    assert.deepEqual(payload.data.timeRange, {
+      from: '2026-07-03T09:00+08:00',
+      to: '2026-07-03T10:00+08:00',
+    })
     assert.deepEqual(payload.data.readArgs, { action: 'read', source: 'private', peerId: 9001, afterRowId: 19 })
     assert.deepEqual(payload.data.latestReadArgs, {
       action: 'read',

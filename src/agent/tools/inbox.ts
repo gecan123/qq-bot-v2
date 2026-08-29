@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { prisma } from '../../database/client.js'
 import { createLogger } from '../../logger.js'
-import { formatBeijingIso } from '../../utils/beijing-time.js'
+import { formatBeijingMinuteIso } from '../../utils/beijing-time.js'
 import type { Tool } from '../tool.js'
 import { createToolResultProgressTracker } from '../tool-progress.js'
 import type { InboxReadCursors } from '../inbox-read-cursors.js'
@@ -330,7 +330,7 @@ function projectMessage(
       replyToExternalId: row.replyToExternalId ?? null,
       rootExternalId: row.rootExternalId ?? null,
       threadExternalId: row.threadExternalId ?? null,
-      sentAt: formatBeijingIso(row.sentAt ?? row.createdAt),
+      sentAt: formatBeijingMinuteIso(row.sentAt ?? row.createdAt),
       senderExternalId: row.senderExternalId,
       senderName: row.senderConversationName ?? row.senderName ?? row.senderExternalId,
       replyable: row.eventKind !== 'recall',

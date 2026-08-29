@@ -22,7 +22,6 @@ describe('renderBotEvent — scheduled wake', () => {
       delivery: 'interrupt',
       groupKey: 'schedule:schedule-1',
       count: 1,
-      occurredAt: '2026-07-12T08:01:00.000+08:00',
       open: { tool: 'schedule', args: { action: 'get_occurrence', scheduleId: 'schedule-1' } },
       data: { name: '任务检查', scheduledFor: '2026-07-12T08:01:00.000+08:00' },
     })
@@ -126,7 +125,7 @@ describe('renderBotEvent — background tasks', () => {
       groupKey: 'background_task:task-7',
       count: 1,
       open: { tool: 'background_task', args: { action: 'get', taskId: 'task-7' } },
-      data: { status: 'completed', elapsedMs: 1234 },
+      data: { status: 'completed' },
     })
     assert.doesNotMatch(first!, /生成犬娘图片|图片已生成/)
   })

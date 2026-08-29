@@ -45,6 +45,7 @@ import { maybeCreateMoomooSkillTool } from './moomoo-skill.js'
 import type { GroupMuteInspector } from '../../messaging/group-mute-inspector.js'
 import type { LlmClient } from '../llm-client.js'
 import { createPsychologistTool } from './psychologist.js'
+import { createClockTool } from './clock.js'
 
 export interface BotToolDeps {
   llm: LlmClient
@@ -142,6 +143,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   })
   const psychologist = createPsychologistTool({ llm: deps.llm })
   const rest = createRestTool()
+  const clock = createClockTool()
   const schedule = createScheduleTool(deps.scheduleRuntime)
   const notebook = createNotebookTool({
     rootDir: deps.workspaceDir,
@@ -151,6 +153,7 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
   const workspaceBash = createWorkspaceBashTool({ workspaceDir: deps.workspaceDir })
   const tools: Tool[] = [
     rest,
+    clock,
     qqDirectory,
     backgroundTask,
     skillTool,

@@ -144,6 +144,7 @@ describe('merged main-agent tools', () => {
     assert.deepEqual(capabilities.get('sticker_management'), ['collect_sticker'])
     assert.ok(alwaysOnNames.includes('memory'))
     assert.ok(alwaysOnNames.includes('psychologist'))
+    assert.ok(alwaysOnNames.includes('clock'))
   })
 
   test('buildBotTools exposes default entries and defers heavy typed tools', () => {
@@ -173,6 +174,7 @@ describe('merged main-agent tools', () => {
     assert.ok(names.includes('rest'))
     assert.ok(names.includes('skill'))
     assert.ok(names.includes('psychologist'))
+    assert.ok(names.includes('clock'))
     assert.ok(names.includes('help'))
     assert.ok(names.includes('invoke'))
     assert.equal(names.includes('toolbox'), false)
@@ -319,6 +321,7 @@ describe('merged main-agent tools', () => {
     assert.ok(alwaysOnNames.includes('rest'))
     assert.ok(alwaysOnNames.includes('chat_style'))
     assert.ok(alwaysOnNames.includes('psychologist'))
+    assert.ok(alwaysOnNames.includes('clock'))
     assert.equal(alwaysOnNames.includes('ai_tone'), false)
     assert.equal(alwaysOnNames.includes('journal'), false)
     assert.deepEqual(capabilities.get('short_term_scheduling'), ['schedule'])

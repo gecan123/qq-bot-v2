@@ -42,6 +42,7 @@ function byAction(input: {
  */
 export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.freeze({
   rest: fixed(EXCLUSIVE_READ),
+  clock: fixed(PARALLEL_READ),
   qq_directory: fixed(PARALLEL_READ),
   background_task: byAction({ parallel: ['list', 'get'] }),
   schedule: byAction({ parallel: ['list', 'get_occurrence'], sideEffect: ['create', 'cancel'] }),

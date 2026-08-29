@@ -7,6 +7,7 @@ import {
   formatBeijingDate,
   formatBeijingDateTime,
   formatBeijingIso,
+  formatBeijingMinuteIso,
   formatBeijingMonth,
   shiftBeijingDate,
 } from './beijing-time.js'
@@ -17,6 +18,10 @@ describe('Beijing time formatting', () => {
   test('renders an explicit +08:00 offset', () => {
     assert.equal(formatBeijingIso(instant), '2026-07-12T10:23:34.056+08:00')
     assert.equal(new Date(formatBeijingIso(instant)).getTime(), instant.getTime())
+  })
+
+  test('renders a minute-level wall-clock baseline', () => {
+    assert.equal(formatBeijingMinuteIso(instant), '2026-07-12T10:23+08:00')
   })
 
   test('renders stable human, month, and compact forms', () => {

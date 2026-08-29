@@ -84,6 +84,7 @@ describe('createAgentRuntime', () => {
     assert.match(runtime.systemPrompt, /测试群/)
     assert.deepEqual(runtime.tools.list().map((tool) => tool.name), [
       'rest',
+      'clock',
       'qq_directory',
       'background_task',
       'skill',

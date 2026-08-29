@@ -40,6 +40,12 @@ export function formatBeijingIso(date: Date): string {
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}.${milliseconds}${BEIJING_UTC_OFFSET}`
 }
 
+/** 给 LLM 的普通墙上时间基线；保留日期、分钟和明确偏移，不制造秒级计时噪声。 */
+export function formatBeijingMinuteIso(date: Date): string {
+  const parts = beijingParts(date)
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}${BEIJING_UTC_OFFSET}`
+}
+
 /** 面向人类阅读的北京时间，不携带偏移；调用方应在标签中写明“北京时间”。 */
 export function formatBeijingDateTime(date: Date): string {
   const parts = beijingParts(date)

@@ -28,7 +28,6 @@ export function renderBotEvent(event: BotEvent): string | null {
       delivery: 'interrupt',
       groupKey: `schedule:${event.scheduleId}`,
       count: 1,
-      occurredAt: scheduledFor,
       open: {
         tool: 'schedule',
         args: {
@@ -71,7 +70,6 @@ export function renderBotEvent(event: BotEvent): string | null {
       },
       data: {
         status,
-        elapsedMs: event.elapsedMs,
       },
     })
   }

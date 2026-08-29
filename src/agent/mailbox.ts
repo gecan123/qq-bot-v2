@@ -1,5 +1,5 @@
 import type { BotEvent } from './event.js'
-import { formatBeijingIso } from '../utils/beijing-time.js'
+import { formatBeijingMinuteIso } from '../utils/beijing-time.js'
 import type { GroupParticipation } from '../config/group-policies.js'
 import { renderNotificationEnvelope } from './notification.js'
 import { conversationKey } from '../chat/conversation.js'
@@ -103,8 +103,8 @@ export function renderMailboxNotification(
   const afterRowId = Math.max(0, first.messageRowId - 1)
   const throughRowId = last.messageRowId
   const timeRange = {
-    from: formatBeijingIso(first.sentAt),
-    to: formatBeijingIso(last.sentAt),
+    from: formatBeijingMinuteIso(first.sentAt),
+    to: formatBeijingMinuteIso(last.sentAt),
   }
   const contextArgs = options.contextBefore == null || options.contextBefore <= 0
     ? {}
@@ -144,7 +144,7 @@ export function renderMailboxNotification(
     firstRowId: first.messageRowId,
     throughRowId,
     senderCount,
-    timeRange,
+    ...(events.length === 1 ? {} : { timeRange }),
     readArgs: source.readArgs,
   }
 
@@ -158,7 +158,7 @@ export function renderMailboxNotification(
       delivery: priority === 'high' ? 'interrupt' : 'passive',
       groupKey: mailboxKey,
       count: events.length,
-      occurredAt: timeRange.to,
+      ...(events.length === 1 ? { occurredAt: timeRange.to } : {}),
       open: { tool: 'inbox', args: source.readArgs },
       data,
     })
@@ -175,7 +175,6 @@ export function renderMailboxNotification(
     delivery: priority === 'high' ? 'interrupt' : 'passive',
     groupKey: mailboxKey,
     count: events.length,
-    occurredAt: timeRange.to,
     open: { tool: 'inbox', args: latestReadArgs },
     data: {
       ...data,
@@ -194,7 +193,10 @@ export function renderMailboxBacklogNotification(
     ...readArgsForSource(event.source, event.recentAfterRowId),
     limit: MAILBOX_BACKLOG_RECENT_LIMIT,
   }
-  const occurredAt = formatBeijingIso(event.timeRange.to)
+  const timeRange = {
+    from: formatBeijingMinuteIso(event.timeRange.from),
+    to: formatBeijingMinuteIso(event.timeRange.to),
+  }
   const platform = event.source.type === 'conversation'
     ? event.source.conversation.platform
     : 'qq'
@@ -214,7 +216,7 @@ export function renderMailboxBacklogNotification(
     delivery: event.priority === 'high' ? 'interrupt' : 'passive',
     groupKey: event.mailboxKey,
     count: event.count,
-    occurredAt,
+    ...(event.count === 1 ? { occurredAt: timeRange.to } : {}),
     open: { tool: 'inbox', args: latestReadArgs },
     data: {
       mode: 'backlog',
@@ -228,10 +230,7 @@ export function renderMailboxBacklogNotification(
       firstRowId: event.firstRowId,
       throughRowId: event.throughRowId,
       senderCount: event.senderCount,
-      timeRange: {
-        from: formatBeijingIso(event.timeRange.from),
-        to: occurredAt,
-      },
+      ...(event.count === 1 ? {} : { timeRange }),
       readArgs,
       latestReadArgs,
     },

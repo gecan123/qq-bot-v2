@@ -100,6 +100,7 @@ describe('inbox tool', () => {
     assert.deepEqual(payload.messages.map((message: any) => message.rowId), [11, 12])
     assert.equal(payload.messages[0].mailbox, 'qq:10000:group:20000')
     assert.equal(payload.messages[0].messageExternalId, '1011')
+    assert.equal(payload.messages[0].sentAt, '2026-08-21T08:00+08:00')
     assert.deepEqual(result.effects, [{
       type: 'inbox_read',
       mailbox: 'qq:10000:group:20000',

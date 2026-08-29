@@ -4,6 +4,7 @@
 
 ## 默认可见能力
 
+- 时间：`clock` 按需返回当前北京时间（UTC+08:00），只保留到分钟。普通单条 mailbox notification 只有一个 `occurredAt`，批量通知只有 `timeRange`，`inbox` 消息的 `sentAt` 也只保留到分钟；调度到期仍保留唯一的精确 `scheduledFor`。后台任务耗时等运行控制时间不写入 notification。历史消息里的时间只表示事件发生时刻，不代表“现在”。
 - 主动休息：`rest` 是唯一的主动暂停入口，参数为期望 `durationMinutes=10..120`（默认 30）、真实 `reason` 和醒后重新评估方向的 `resumeAction`。工具按实际经过时间维护进程内三小时滚动窗口：Asia/Singapore 白天 06:00..24:00 最多累计休息 60 分钟，夜间 00:00..06:00 最多 120 分钟；本次时长自动取请求、剩余额度和下一昼夜边界的最小值。注意事件提前打断时只计实际时间；额度不足 10 分钟返回 `rest_budget_exhausted` 并短暂技术退避。窗口不按工具次数或工作量解锁，不跨重启持久化；不要连续重试或创建 Schedule 等待额度。
 - 短期调度：`schedule action=create|list|get_occurrence|cancel`，active job 的公开 ID 字段统一为 `id`。`create` 只接受一次性 `at` 或 `afterSeconds`，触发必须位于 30 秒到 3 天内，最多 20 个 active job。同名同时间创建幂等返回 `existing`，同名不同时间返回冲突及已有 `id`，需先 cancel；`list` 返回有界公开摘要。active 状态保存在 schedule store，触发正文只写一次 occurrence store；到期 notification 只给名称、时间和 `get_occurrence` 打开参数，不执行预存命令。它是 normal+interrupt，轮次边界低于 high notification、高于 passive notification。
 - QQ 与飞书发送位于 deferred `chat` capability：用 `help action=describe` 查看 schema 后，直接 `invoke conversation open` 显式打开允许的群或好友，最后 `invoke send_message` 发送文本、图片、图文或受控音乐卡片。`work` 必填：无后续承诺用 `state=none`；当前会话内马上续做用 `state=continue`，只保护下一轮且不跨重启。

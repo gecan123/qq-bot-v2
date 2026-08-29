@@ -108,6 +108,63 @@ describe('inbox tool', () => {
     }])
   })
 
+  test('recovers pending high-priority notification defaults when the model omits afterRowId', async () => {
+    const calls: unknown[] = []
+    const inbox = tool({
+      getReadCursors: () => ({ 'qq:10000:group:20000': 20 }),
+      getPendingReadDefaults: () => ({ afterRowId: 43, contextBefore: 2 }),
+      findMessages: async (args) => {
+        calls.push(args)
+        return args.orderBy.rowId === 'asc'
+          ? [row({
+              rowId: 51,
+              content: [{ type: 'at', targetId: '10000' }, { type: 'text', content: '看一下' }],
+              text: '@10000看一下',
+            })]
+          : [row({ rowId: 43 })]
+      },
+    })
+
+    const result = await inbox.execute({
+      action: 'read',
+      conversation: qqGroup,
+      limit: 10,
+    }, context())
+
+    assert.deepEqual(calls, [
+      {
+        where: {
+          platform: 'qq',
+          accountId: '10000',
+          conversationKind: 'group',
+          conversationExternalId: '20000',
+          rowId: { gt: 43 },
+        },
+        orderBy: { rowId: 'asc' },
+        take: 10,
+      },
+      {
+        where: {
+          platform: 'qq',
+          accountId: '10000',
+          conversationKind: 'group',
+          conversationExternalId: '20000',
+          rowId: { lte: 43 },
+        },
+        orderBy: { rowId: 'desc' },
+        take: 2,
+      },
+    ])
+    const payload = parse(result.content)
+    assert.equal(payload.messages[0].rowId, 51)
+    assert.equal(payload.messages[0].mentionedSelf, true)
+    assert.deepEqual(result.effects, [{
+      type: 'inbox_read',
+      mailbox: 'qq:10000:group:20000',
+      throughRowId: 51,
+    }])
+  })
+
   test('renders edits and recalls as explicit corrections', async () => {
     const inbox = tool({
       findMessages: async () => [

@@ -3,6 +3,7 @@ import { describe, test } from 'node:test'
 import type { AgentMessage } from './agent-context.types.js'
 import {
   captureMailboxAttentionState,
+  findPendingHighPriorityInboxReadDefaults,
   findPendingMailboxThroughRowId,
   hasPendingPrivateMailboxAttention,
   isMailboxAttentionStateMessage,
@@ -47,6 +48,42 @@ describe('mailbox handled cursor', () => {
       content: '{"event":"notification","id":"qq:qq_private:123:10","source":{"type":"qq","mailbox":"qq_private:123"},"kind":"inbox_update","priority":"high","delivery":"interrupt","groupKey":"qq_private:123","count":1,"open":{"tool":"inbox","args":{"action":"read"}},"data":{"mailbox":"qq_private:123","throughRowId":10}}',
     }]
     assert.equal(findPendingMailboxThroughRowId(messages, 'qq_private:123'), 10)
+  })
+
+  test('recovers unread high-priority inbox read defaults from the latest notification', () => {
+    const messages: AgentMessage[] = [
+      {
+        role: 'user',
+        content: '{"event":"notification","id":"qq:group:1:40","source":{"type":"qq","mailbox":"qq:10000:group:20000"},"kind":"inbox_update","priority":"normal","delivery":"passive","groupKey":"qq:10000:group:20000","count":1,"open":{"tool":"inbox","args":{"action":"read","afterRowId":39}},"data":{"mailbox":"qq:10000:group:20000","throughRowId":40}}',
+      },
+      {
+        role: 'user',
+        content: '{"event":"notification","id":"qq:group:1:51","source":{"type":"qq","mailbox":"qq:10000:group:20000"},"kind":"inbox_update","priority":"high","delivery":"interrupt","groupKey":"qq:10000:group:20000","count":8,"open":{"tool":"inbox","args":{"action":"read","afterRowId":43,"contextBefore":2}},"data":{"mailbox":"qq:10000:group:20000","throughRowId":51}}',
+      },
+    ]
+
+    assert.deepEqual(
+      findPendingHighPriorityInboxReadDefaults(messages, 'qq:10000:group:20000', 20),
+      { afterRowId: 43, contextBefore: 2 },
+    )
+    assert.equal(
+      findPendingHighPriorityInboxReadDefaults(messages, 'qq:10000:group:20000', 51),
+      null,
+    )
+    assert.equal(
+      findPendingHighPriorityInboxReadDefaults([
+        ...messages,
+        {
+          role: 'user',
+          content: '{"event":"mailbox_handled","mailbox":"qq:10000:group:20000","throughRowId":51}',
+        },
+      ], 'qq:10000:group:20000', 20),
+      null,
+    )
+    assert.equal(
+      findPendingHighPriorityInboxReadDefaults(messages, 'qq:10000:group:other', 0),
+      null,
+    )
   })
 
   test('treats only unread and unhandled private disclosures as pending private attention', () => {

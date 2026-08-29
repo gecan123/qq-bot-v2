@@ -8,6 +8,11 @@ export interface MailboxAttentionCursorState {
 
 export type MailboxAttentionState = Record<string, MailboxAttentionCursorState>
 
+export interface PendingInboxReadDefaults {
+  afterRowId: number
+  contextBefore?: number
+}
+
 export function captureMailboxAttentionState(
   messages: readonly AgentMessage[],
 ): MailboxAttentionState {
@@ -101,6 +106,46 @@ export function hasPendingPrivateMailboxAttention(
       inboxReadCursors[mailbox] ?? 0,
     )
   ))
+}
+
+export function findPendingHighPriorityInboxReadDefaults(
+  messages: readonly AgentMessage[],
+  mailbox: string,
+  inboxReadCursor = 0,
+): PendingInboxReadDefaults | null {
+  assertMailboxKey(mailbox)
+  const handledThroughRowId = captureMailboxAttentionState(messages)[mailbox]?.handledThroughRowId ?? 0
+  const consumedThroughRowId = Math.max(inboxReadCursor, handledThroughRowId)
+
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]!
+    if (message.role !== 'user' || typeof message.content !== 'string') continue
+    const payload = parseJsonObject(message.content)
+    if (
+      !payload
+      || payload.event !== 'notification'
+      || payload.kind !== 'inbox_update'
+      || payload.priority !== 'high'
+      || payload.delivery !== 'interrupt'
+      || !isRecord(payload.data)
+      || payload.data.mailbox !== mailbox
+      || !isPositiveSafeInteger(payload.data.throughRowId)
+      || payload.data.throughRowId <= consumedThroughRowId
+      || !isRecord(payload.open)
+      || payload.open.tool !== 'inbox'
+      || !isRecord(payload.open.args)
+      || payload.open.args.action !== 'read'
+      || !isNonNegativeSafeInteger(payload.open.args.afterRowId)
+    ) continue
+
+    const contextBefore = payload.open.args.contextBefore
+    return {
+      afterRowId: payload.open.args.afterRowId,
+      ...(isPositiveSafeInteger(contextBefore) ? { contextBefore } : {}),
+    }
+  }
+
+  return null
 }
 
 export function renderMailboxHandledEvent(mailbox: string, throughRowId: number): string {

@@ -38,7 +38,7 @@ import type { WorkspaceStateCoordinator } from '../workspace-state-coordinator.j
 import type { LoadMemorySourceEvidence } from '../memory-evidence.js'
 import { createConversationTool, type ConversationController } from './conversation.js'
 import type { ConversationSummary } from './conversation.js'
-import type { ParticipantRef } from '../../chat/conversation.js'
+import type { ConversationRef, ParticipantRef } from '../../chat/conversation.js'
 import { applyBotToolPolicy } from './policies.js'
 import type { InboxReadCursors } from '../inbox-read-cursors.js'
 import { maybeCreateMoomooSkillTool } from './moomoo-skill.js'
@@ -58,6 +58,10 @@ export interface BotToolDeps {
   groupIds: readonly number[]
   selfNumber: number
   getInboxReadCursors?: () => Readonly<InboxReadCursors>
+  getPendingInboxReadDefaults?: (conversation: ConversationRef) => {
+    afterRowId: number
+    contextBefore?: number
+  } | null
   metadata: TargetMetadataMaps
   groupPolicies: readonly GroupPolicy[]
   qqDirectory: QqDirectoryDeps
@@ -135,6 +139,9 @@ export function buildBotToolManifest(deps: BotToolDeps): BotToolManifest {
     ],
     selfExternalIds: { qq: String(deps.selfNumber), ...deps.selfExternalIds },
     ...(deps.getInboxReadCursors ? { getReadCursors: deps.getInboxReadCursors } : {}),
+    ...(deps.getPendingInboxReadDefaults
+      ? { getPendingReadDefaults: deps.getPendingInboxReadDefaults }
+      : {}),
   })
   const chatStyle = createChatStyleTool({
     groupIds: deps.groupIds,

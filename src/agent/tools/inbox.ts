@@ -74,6 +74,10 @@ export interface InboxToolDeps {
   loadAllowedConversations?: () => Promise<readonly ConversationRef[]>
   selfExternalIds: Partial<Record<ChatPlatform, string>>
   getReadCursors?: () => Readonly<InboxReadCursors>
+  getPendingReadDefaults?: (conversation: ConversationRef) => {
+    afterRowId: number
+    contextBefore?: number
+  } | null
   findMessages?: (args: InboxFindManyArgs) => Promise<InboxMessageRow[]>
 }
 
@@ -145,7 +149,6 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
         }
       }
 
-      const contextBefore = args.contextBefore ?? 0
       const limit = args.limit ?? DEFAULT_READ_LIMIT
       const mailbox = conversationKey(args.conversation)
       const allowedConversations = new Map(
@@ -156,7 +159,14 @@ export function createInboxTool(deps: InboxToolDeps): Tool<Args> {
       if (!allowed) return errorResult(`conversation=${mailbox} is not allowed`)
       const sourceWhere = conversationWhere(allowed)
 
-      const afterRowId = args.afterRowId ?? getReadCursors()[mailbox] ?? 0
+      const pendingDefaults = args.afterRowId == null
+        ? deps.getPendingReadDefaults?.(allowed) ?? null
+        : null
+      const contextBefore = args.contextBefore ?? pendingDefaults?.contextBefore ?? 0
+      const afterRowId = args.afterRowId
+        ?? pendingDefaults?.afterRowId
+        ?? getReadCursors()[mailbox]
+        ?? 0
 
       const where = { ...sourceWhere, rowId: { gt: afterRowId } }
       const rows = await findMessages({ where, orderBy: { rowId: 'asc' }, take: limit })

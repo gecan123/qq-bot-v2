@@ -60,7 +60,10 @@ import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js
 import { createLogger } from '../logger.js'
 import { createConversationController, type ConversationSummary } from './tools/conversation.js'
 import type { ParticipantRef } from '../chat/conversation.js'
-import { findPendingMailboxThroughRowId } from './mailbox-handled.js'
+import {
+  findPendingHighPriorityInboxReadDefaults,
+  findPendingMailboxThroughRowId,
+} from './mailbox-handled.js'
 import {
   createActivityTrackingToolExecutor,
   type AgentActivityReporter,
@@ -285,6 +288,14 @@ export function createAgentRuntime(input: AgentRuntimeInput): AgentRuntime {
       groupIds,
       selfNumber: input.selfNumber,
       getInboxReadCursors: () => inboxReadCursors,
+      getPendingInboxReadDefaults: (conversation) => {
+        const mailbox = conversationKey(conversation)
+        return findPendingHighPriorityInboxReadDefaults(
+          input.context.getSnapshot().messages,
+          mailbox,
+          inboxReadCursors[mailbox] ?? 0,
+        )
+      },
       metadata: input.metadata,
       groupPolicies: input.groupPolicies,
       qqDirectory: {

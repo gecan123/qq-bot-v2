@@ -2513,6 +2513,162 @@ describe('BotLoopAgent.runOnceForTest', () => {
     )
   })
 
+  test('parks when autonomous discovery only repeats maintenance actions', async () => {
+    const ctx = createAgentContext({
+      initialMessages: [{ role: 'user', content: '已有上下文' }],
+    })
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    let llmCallCount = 0
+    let idleWaitCount = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const { repo, loader } = makeTestLedger(ctx.getSnapshot().messages)
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat() {
+          llmCallCount++
+          const toolCall = llmCallCount <= 2
+            ? { id: `empty-${llmCallCount}`, name: 'inbox', args: {} }
+            : llmCallCount === 3
+              ? { id: 'self-check', name: 'psychologist', args: {} }
+              : llmCallCount === 4
+                ? { id: 'rewrite-notes', name: 'notebook', args: {} }
+                : { id: 'test-stop', name: 'stop_work', args: {} }
+          return {
+            content: '',
+            toolCalls: [toolCall],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools({
+        inbox: async () => ({
+          content: '{"ok":true,"messages":[]}',
+          outcome: { ok: true, code: 'empty', progress: false },
+        }),
+        psychologist: async () => ({
+          content: '{"ok":true,"reflection":"still stuck"}',
+          outcome: { ok: true },
+        }),
+        notebook: async () => ({
+          content: '{"ok":true,"updated":true}',
+          outcome: { ok: true, code: 'updated', progress: true },
+        }),
+        stop_work: async () => ({
+          content: '{"ok":true}',
+          outcome: { ok: true, progress: false, continuation: 'stop' },
+        }),
+      }),
+      ledgerRepo: repo,
+      ledgerLoader: loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      compactOptions: { triggerTokens: Number.MAX_SAFE_INTEGER },
+      autonomy: {
+        wakeIntervalMs: 12_345,
+        async waitForEventOrTimeout() {
+          idleWaitCount++
+          if (idleWaitCount === 1) return 'elapsed'
+          await agent.stop()
+          return 'event'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 4)
+    assert.equal(idleWaitCount, 2)
+  })
+
+  test('appends a clean behavioral reset after every discovery direction stalls', async () => {
+    const ctx = createAgentContext({
+      initialMessages: [{ role: 'user', content: '已有上下文' }],
+    })
+    const eventQueue = new InMemoryEventQueue<BotEvent>()
+    let llmCallCount = 0
+    let idleWaitCount = 0
+    let agent: ReturnType<typeof createBotLoopAgent>
+    const ledger = makeTestLedger(ctx.getSnapshot().messages)
+    const summaryKinds: string[] = []
+
+    agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue,
+      llm: {
+        async chat() {
+          llmCallCount++
+          return {
+            content: '',
+            toolCalls: llmCallCount <= 2
+              ? [{ id: `empty-${llmCallCount}`, name: 'inbox', args: {} }]
+              : llmCallCount % 2 === 1
+                ? [{ id: `self-check-${llmCallCount}`, name: 'psychologist', args: {} }]
+                : [{ id: `rewrite-${llmCallCount}`, name: 'notebook', args: {} }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 1 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: makeMockTools({
+        inbox: async () => ({
+          content: '{"ok":true,"messages":[]}',
+          outcome: { ok: true, code: 'empty', progress: false },
+        }),
+        psychologist: async () => ({
+          content: '{"ok":true,"reflection":"same loop"}',
+          outcome: { ok: true },
+        }),
+        notebook: async () => ({
+          content: '{"ok":true,"updated":true}',
+          outcome: { ok: true, progress: true },
+        }),
+      }),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      compactOptions: {
+        triggerTokens: Number.MAX_SAFE_INTEGER,
+        summarizeCandidate: async (request) => {
+          summaryKinds.push(request.kind)
+          return validLedgerSummary('只保留有外部依据的事实。')
+        },
+      },
+      autonomy: {
+        wakeIntervalMs: 12_345,
+        async waitForEventOrTimeout() {
+          idleWaitCount++
+          if (idleWaitCount <= 3) return 'elapsed'
+          await agent.stop()
+          return 'event'
+        },
+      },
+    })
+
+    await agent.start()
+
+    assert.equal(llmCallCount, 8)
+    assert.equal(idleWaitCount, 4)
+    assert.deepEqual(summaryKinds, ['behavioral_reset'])
+    assert.equal(ledger.compactionAppends.length, 1)
+    assert.equal(ledger.compactionAppends[0]?.payload.reason, 'behavioral_reset')
+    assert.equal(ledger.compactionAppends[0]?.payload.firstKeptEntryId, null)
+    assert.equal(
+      ledger.canonical().entries.filter((entry) => entry.entryType === 'message').length > 1,
+      true,
+    )
+    assert.equal(ctx.getSnapshot().messages.length, 1)
+    assert.match(String(ctx.getSnapshot().messages[0]?.content), /\[历史摘要\]/)
+  })
+
   test('an elapsed rest requires discovery before rest can run again', async () => {
     const ctx = createAgentContext({
       initialMessages: [{ role: 'user', content: '已有上下文' }],

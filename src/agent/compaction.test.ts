@@ -117,6 +117,7 @@ function prepare(input: {
   contextWindowTokens?: number
   reserveTokens?: number
   keepRecentTokens?: number
+  reason?: 'threshold' | 'overflow' | 'behavioral_reset'
 }): CompactionPreparation | null {
   return prepareCompaction({
     entries: input.entries,
@@ -126,7 +127,7 @@ function prepare(input: {
     contextWindowTokens: input.contextWindowTokens ?? 100,
     reserveTokens: input.reserveTokens ?? 20,
     keepRecentTokens: input.keepRecentTokens ?? 1,
-    reason: 'threshold',
+    reason: input.reason ?? 'threshold',
   })
 }
 
@@ -314,6 +315,24 @@ test('prepareCompaction keeps assistant tool calls and all ordered results atomi
   assert.notEqual(result.tailEntries[0]?.payload.message.role, 'tool')
 })
 
+test('prepareCompaction behavioral reset summarizes the complete active projection', () => {
+  const entries = [
+    ledgerMessage(1n, user('找一个新方向')),
+    ledgerMessage(2n, asst('', [{ id: 'self-check', name: 'psychologist' }])),
+    ledgerMessage(3n, tool('self-check', '{"ok":true}')),
+    ledgerMessage(4n, user('autonomy discovery direction two')),
+  ]
+
+  const result = prepare({ entries, reason: 'behavioral_reset', contextTokens: 10 })
+
+  assertReady(result)
+  assert.equal(result.firstKeptEntryId, null)
+  assert.deepEqual(result.entriesToSummarize.map((entry) => entry.id), [1n, 2n, 3n, 4n])
+  assert.deepEqual(result.historyEntries.map((entry) => entry.id), [1n, 2n, 3n, 4n])
+  assert.deepEqual(result.tailEntries, [])
+  assert.equal(result.isSplitTurn, false)
+})
+
 test('prepareCompaction marks an oversized latest turn split only at an atomic boundary', () => {
   const entries = [
     ledgerMessage(1n, user('old turn')),
@@ -499,4 +518,35 @@ test('createCompactionCandidate validates the complete projected ledger', async 
 
   assert.equal(result.status, 'invalid')
   assert.equal(result.reason, 'candidate_projection_invalid')
+})
+
+test('createCompactionCandidate uses the behavioral reset summarizer and clean boundary', async () => {
+  const entries = [
+    ledgerMessage(1n, user('找一个新方向')),
+    ledgerMessage(2n, asst('', [{ id: 'self-check', name: 'psychologist' }])),
+    ledgerMessage(3n, tool('self-check', '{"ok":true}')),
+  ]
+  const preparation = prepare({ entries, reason: 'behavioral_reset', contextTokens: 10 })
+  assertReady(preparation)
+  const kinds: string[] = []
+
+  const result = await createCandidate({
+    entries,
+    runtimeState: runtimeStateFor(entries),
+    preparation,
+    summarize: async (request) => {
+      kinds.push(request.kind)
+      assert.match(request.systemPrompt, /外部证据/)
+      assert.match(request.systemPrompt, /自我诊断/)
+      return validLedgerSummary('只保留已验证事实。')
+    },
+  })
+
+  assert.equal(result.status, 'ready')
+  if (result.status !== 'ready') return
+  assert.deepEqual(kinds, ['behavioral_reset'])
+  assert.equal(result.payload.firstKeptEntryId, null)
+  assert.equal(result.payload.reason, 'behavioral_reset')
+  assert.equal(result.projection.activeEntryCount, 0)
+  assert.equal(result.projection.snapshot.messages.length, 1)
 })

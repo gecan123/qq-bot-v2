@@ -8,7 +8,12 @@ import type { BotEvent } from './event.js'
 import type { AgentLedgerLoader } from './agent-ledger-loader.js'
 import { type AgentLedgerRepo, type AgentRuntimePatch } from './agent-ledger-repo.js'
 import type { MaybeCompactOptions } from './compaction.js'
-import { LlmOutputTruncatedError, runReactRound, type ReactToolOutcome } from './react-kernel.js'
+import {
+  LlmOutputTruncatedError,
+  resolveEffectiveToolName,
+  runReactRound,
+  type ReactToolOutcome,
+} from './react-kernel.js'
 import { interpretToolEffects } from './effect-interpreter.js'
 import { createLogger } from '../logger.js'
 import {
@@ -120,6 +125,17 @@ const MAX_OUTPUT_CONTINUATIONS_PER_ROUND = 2
 const MAX_RECOVERABLE_TOOL_CORRECTION_ROUNDS = 3
 const MAX_NO_PROGRESS_ROUNDS = 2
 const MAX_RECENT_TOOL_NOVELTY_KEYS = 256
+const AUTONOMY_MAINTENANCE_TOOL_NAMES = new Set([
+  'clock',
+  'conversation',
+  'help',
+  'memory',
+  'notebook',
+  'psychologist',
+  'schedule',
+  'send_message',
+  'skill',
+])
 const AUTONOMY_DISCOVERY_DIRECTIONS = [
   {
     id: 'unfinished_commitments',
@@ -195,6 +211,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
   let autonomyDiscoveryPromptPending = false
   let autonomyDiscoverySource: 'idle_timeout' | 'rest_elapsed' = 'idle_timeout'
   let autonomyDiscoveryDirectionIndex = 0
+  let failedAutonomyDirections = 0
   let autonomyDiscoveryDirection: (typeof AUTONOMY_DISCOVERY_DIRECTIONS)[number] =
     AUTONOMY_DISCOVERY_DIRECTIONS[0]
   const recentToolNoveltyKeys = new Map<string, number>()
@@ -694,6 +711,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     const drained = drainEvents()
     if (drained.events.length > 0) {
       endAutonomyDiscovery()
+      failedAutonomyDirections = 0
       noProgressRounds = 0
       assistantTextOnlyCorrectionIssued = false
     }
@@ -864,7 +882,29 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     if (restElapsed) {
       beginAutonomyDiscovery('rest_elapsed')
     } else if (autonomyDiscoveryRound && madeToolProgress) {
+      failedAutonomyDirections = 0
       endAutonomyDiscovery()
+    } else if (!autonomyDiscoveryRound && madeToolProgress) {
+      failedAutonomyDirections = 0
+    }
+    if (
+      autonomyDiscoveryRound
+      && decision.action === 'wait_event'
+      && decision.reason === 'no_progress_limit'
+    ) {
+      failedAutonomyDirections++
+      if (failedAutonomyDirections >= AUTONOMY_DISCOVERY_DIRECTIONS.length) {
+        const compacted = await compactionCoordinator.compact({
+          reason: 'behavioral_reset',
+          contextWindowTokens: lastContextWindowTokens,
+        })
+        if (compacted) {
+          log.info({ failedAutonomyDirections }, 'autonomy_behavioral_reset_committed')
+          failedAutonomyDirections = 0
+        } else {
+          log.warn({ failedAutonomyDirections }, 'autonomy_behavioral_reset_skipped')
+        }
+      }
     }
 
     if (decision.action === 'stop') return
@@ -983,7 +1023,19 @@ function createAutonomyDiscoveryToolExecutor(tools: ToolExecutor): ToolExecutor 
     list: () => tools.list(),
     classify: (call) => tools.classify(call),
     async execute(call, ctx) {
-      if (call.name !== 'rest') return tools.execute(call, ctx)
+      const effectiveToolName = resolveEffectiveToolName(call)
+      if (effectiveToolName !== 'rest') {
+        const result = await tools.execute(call, ctx)
+        if (!AUTONOMY_MAINTENANCE_TOOL_NAMES.has(effectiveToolName)) return result
+        return {
+          ...result,
+          outcome: {
+            ok: result.outcome?.ok ?? true,
+            ...result.outcome,
+            progress: false,
+          },
+        }
+      }
       const instruction = '定时自主探索尚未结束，本轮不能再次 rest。先按 autonomy_discovery_required 的 direction 做一次具体、有界的机会检查；不要改写休息理由或创建 Schedule 代替。'
       return {
         content: JSON.stringify({

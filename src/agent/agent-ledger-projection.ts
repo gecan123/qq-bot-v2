@@ -144,7 +144,12 @@ function parseCompactionPayload(value: unknown, path: string): CompactionLedgerP
     throw new AgentLedgerIntegrityError(`${path}.summary must be a non-empty string`)
   }
   const reason = payload.reason
-  if (reason !== 'threshold' && reason !== 'overflow' && reason !== 'manual') {
+  if (
+    reason !== 'threshold'
+    && reason !== 'overflow'
+    && reason !== 'behavioral_reset'
+    && reason !== 'manual'
+  ) {
     throw new AgentLedgerIntegrityError(`${path}.reason is unsupported: ${String(reason)}`)
   }
   if (typeof payload.isSplitTurn !== 'boolean') {

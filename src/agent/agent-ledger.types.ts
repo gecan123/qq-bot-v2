@@ -11,7 +11,7 @@ import type { InboxReadCursors } from './inbox-read-cursors.js'
 export const AGENT_LEDGER_SCHEMA_VERSION = 1 as const
 export const AGENT_RUNTIME_STATE_SCHEMA_VERSION = 4 as const
 
-export type CompactionReason = 'threshold' | 'overflow'
+export type CompactionReason = 'threshold' | 'overflow' | 'behavioral_reset'
 
 export interface MessageLedgerPayload {
   schemaVersion: typeof AGENT_LEDGER_SCHEMA_VERSION

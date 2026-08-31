@@ -41,7 +41,7 @@ export interface ReadyCompactionPreparation {
   status: 'ready'
   reason: CompactionReason
   expectedHeadEntryId: bigint | null
-  firstKeptEntryId: bigint
+  firstKeptEntryId: bigint | null
   entriesToSummarize: MessageAgentLedgerEntry[]
   historyEntries: MessageAgentLedgerEntry[]
   splitTurnPrefixEntries: MessageAgentLedgerEntry[]
@@ -110,7 +110,8 @@ export function selectCompactionCacheBreakpointMessageIndex(
 
 /**
  * 只做确定性切点准备，不调用 LLM、不写 ledger，也不修改 AgentContext。
- * threshold 使用严格大于；overflow 由上下文溢出显式触发。
+ * threshold 使用严格大于；overflow 由上下文溢出显式触发；
+ * behavioral_reset 在完整原子轮次后压缩全部 active messages。
  */
 export function prepareCompaction(input: {
   entries: readonly AgentLedgerEntry[]
@@ -150,6 +151,26 @@ export function prepareCompaction(input: {
   )
   if (units == null) {
     return { status: 'cannot_compact', reason: 'invalid_atomic_history', expectedHeadEntryId }
+  }
+  if (input.reason === 'behavioral_reset') {
+    if (units.length === 0) {
+      return { status: 'cannot_compact', reason: 'no_legal_cut', expectedHeadEntryId }
+    }
+    const entriesToSummarize = units.flatMap((unit) => unit.items)
+    return {
+      status: 'ready',
+      reason: input.reason,
+      expectedHeadEntryId,
+      firstKeptEntryId: null,
+      entriesToSummarize,
+      historyEntries: entriesToSummarize,
+      splitTurnPrefixEntries: [],
+      tailEntries: [],
+      isSplitTurn: false,
+      tokensBefore: input.contextTokens,
+      estimatedTailTokens: 0,
+      previousCompaction,
+    }
   }
   if (units.length < 2) {
     return { status: 'cannot_compact', reason: 'no_legal_cut', expectedHeadEntryId }
@@ -236,7 +257,9 @@ export async function createCompactionCandidate(input: {
     const mainSummary = await input.summarize(buildCompactionSummarizerRequest({
       previousSummary,
       entries: historyEntries,
-      kind: 'history',
+      kind: input.preparation.reason === 'behavioral_reset'
+        ? 'behavioral_reset'
+        : 'history',
     }), { signal })
     if (signal.aborted) return { status: 'cancelled', reason: 'aborted' }
     if (input.preparation.isSplitTurn) {
@@ -281,7 +304,7 @@ export async function createCompactionCandidate(input: {
   const payload: CompactionLedgerPayload = {
     schemaVersion: AGENT_LEDGER_SCHEMA_VERSION,
     summary: validation.summary,
-    firstKeptEntryId: input.preparation.firstKeptEntryId.toString(),
+    firstKeptEntryId: input.preparation.firstKeptEntryId?.toString() ?? null,
     tokensBefore: input.preparation.tokensBefore,
     estimatedTokensAfter: safeTokenSum(
       input.preparation.estimatedTailTokens,

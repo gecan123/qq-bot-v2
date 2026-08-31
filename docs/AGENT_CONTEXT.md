@@ -35,9 +35,10 @@
 
 - compaction 不改写旧 prefix。它只追加一个带 summary、`firstKeptEntryId`、previous compaction link、token metrics、reason 和受控机器状态的 entry；projection 只解释最新 compaction boundary。
 - cut point 以 entry token 预算选择，并保持 tool pair 原子性。若单个 tool turn 跨过目标预算，允许 split-turn：summary 同时包含历史部分和该 turn 已压缩的前缀，tail 从合法 assistant boundary 开始。
-- 被压缩的完整 prefix 都进入 summarizer，不能按比例静默丢弃头部。Claude 的普通 history compaction 复用主 Agent 的 system、tools 和原始 working-context prefix，只在末尾追加可信 control message；受控机器 marker 只能作为线索，不能由摘要改写为权威状态。OpenAI 与 Claude split-turn fallback 继续使用隔离的 `[UNTRUSTED_DATA]` 序列化请求。summary 必须通过固定 heading、token 上限和完整 candidate projection 校验。
+- 被压缩的完整 prefix 都进入 summarizer，不能按比例静默丢弃头部。Claude 的普通 history compaction 复用主 Agent 的 system、tools 和原始 working-context prefix，只在末尾追加可信 control message；受控机器 marker 只能作为线索，不能由摘要改写为权威状态。OpenAI、Claude split-turn fallback 和 behavioral reset 使用隔离的 `[UNTRUSTED_DATA]` 序列化请求。summary 必须通过固定 heading、token 上限和完整 candidate projection 校验。
 - Claude 主请求会在同一原子 cut 规则算出的 future compaction boundary 增加 provider-only 1h cache breakpoint；真正压缩时在相同 prefix 末尾再次声明该 breakpoint。cache marker 不进入 ledger/projection，cache miss 也不改变摘要语义。压缩调用可携带相同 tool declarations，但其 tool call 永不执行；tool call、空输出或截断都按 summarizer failure 处理。
-- trigger 只有动态 threshold 和 provider context overflow。threshold 使用 provider input prefix 加本轮新 entry 的本地估算；overflow 每轮最多强制 compact-and-retry 一次。
+- trigger 包括动态 threshold、provider context overflow 和自主行为重置。threshold 使用 provider input prefix 加本轮新 entry 的本地估算；overflow 每轮最多强制 compact-and-retry 一次。自主探索连续两轮没有真实进展就回到事件等待；轮换的三个方向全部失败后追加 `behavioral_reset` compaction，把当前 active projection 全部压入带 `firstKeptEntryId=null` 的事实交接。旧 entries 仍完整保留，下一次 projection 从该摘要和 compaction 后的新消息开始。
+- behavioral reset 摘要只保留有外部证据的事实、承诺、产物、约束、工具结果和 blocker；合并重复维护动作，并排除无独立证据的模型自我诊断。它不由 token 压力触发，也不删除历史或改变 runtime control state。
 - `beforeCompact` 和 summarizer 在事务外运行，支持 abort；CAS `appendCompaction(expectedHeadEntryId)` 成功后才安装 candidate。head race 丢弃 candidate 并基于新 head 重算一次。
 - threshold 失败退避十分钟；overflow 不读该退避。summarizer 或 commit 失败不改变 canonical history；checkpoint 和 `afterCompact` 失败只记录，不回滚已提交 compaction；shutdown 会中止未提交 summarizer。
 - mailbox continuity 的 compaction epoch 与 compaction entry 同事务提交；mailbox attention 状态进入 compaction payload 的受控字段，不交给 summarizer 改写。
@@ -55,7 +56,7 @@
 - 新通知统一写成 `event=notification`；历史 ledger 中的 `event=inbox_update` 继续由 mailbox attention parser 兼容，不能迁移或改写旧 entry。后台任务通知只披露状态和 `background_task get` 打开动作；调度到期 notification 不含 intention，正文先写独立 occurrence store，再由 `schedule get_occurrence` 读取。来源 side state 不参与 transcript replay；通知本身一旦进入 ledger 就保持字节稳定。
 - 新 mailbox 不会自动切换当前会话。发送前必须通过 `conversation open` 显式选择允许的群或好友；`send_message` 只读取当前 focus，focus 变化和对应可见 tool result 同事务进入 runtime state。
 - 私聊发送是否属于“回应新入站”由同 target 的 durable pending mailbox 判断，不依赖 `reply_to`。`reply_to` 只控制对应平台的引用/回复展示：模型提供 `messages.rowId` 和预期关系，发送模块验证当前 conversation、可回复状态及结构化 @ 后才解析平台消息 ID；进程内主动私聊冷却不得拦截 pending mailbox 的回复。
-- 未追加 `mailbox_handled` 的私聊 mailbox 仍保留“尚未外发回应”的 durable 状态，用于回复冷却豁免和防重复边界；但强制 attention 只针对 `disclosedThroughRowId` 同时大于 handled cursor 与持久 `inboxReadCursors` 的未读范围。正文已经由有界 inbox result 展示后，不会因无需回复的旧私聊跨重启永久追加 attention 纠错；模型仍可根据内容决定是否外发。普通工具无进展只允许一次紧密重试；连续两轮无进展、方向完成或显式等待会进入最长 30 分钟的事件等待。外部事件立即唤醒且保留队列事实；超时则由 Runtime Host append canonical `runtime_autonomy_tick`，轮换检查未完成承诺、已有产物和有界好奇方向。tick 不是外部事实，但与其他受控 runtime message 一样进入唯一 ledger，保证 replay 看见同一牵引；轮换索引和探索门控是可丢弃进程内状态。
+- 未追加 `mailbox_handled` 的私聊 mailbox 仍保留“尚未外发回应”的 durable 状态，用于回复冷却豁免和防重复边界；但强制 attention 只针对 `disclosedThroughRowId` 同时大于 handled cursor 与持久 `inboxReadCursors` 的未读范围。正文已经由有界 inbox result 展示后，不会因无需回复的旧私聊跨重启永久追加 attention 纠错；模型仍可根据内容决定是否外发。普通工具无进展只允许一次紧密重试；连续两轮无进展、方向完成或显式等待会进入最长 30 分钟的事件等待。外部事件立即唤醒且保留队列事实；超时则由 Runtime Host append canonical `runtime_autonomy_tick`，轮换检查未完成承诺、已有产物和有界好奇方向。自主探索期间，心理记录、Notebook/Memory 自我维护、会话开关、外发总结、Schedule、Clock、Help 和 Skill 管理仍可执行和入账，但不能单独证明找到了新方向；新外部证据或可观察工作结果才解除探索门控。tick 不是外部事实，但与其他受控 runtime message 一样进入唯一 ledger，保证 replay 看见同一牵引；轮换索引、失败方向计数和探索门控是可丢弃进程内状态。
 - provider-confirmed `send_message` 仍与本地数据库不存在分布式事务。只有同 target 有 pending disclosure 时才 append `mailbox_handled`；这防止重复回应，但不承诺任一平台外发 exactly-once。稳定 action UUID 与 `sent|failed|delivery_unknown` 只表达本次 adapter 结果，不引入 outbox 或自动重试。
 - `mailbox_handled` 只表示这批入站已经回应，不表示回应中承诺的工作已完成。`send_message.work=continue` 只在进程内为下一轮保留短期行动锚点，不跨重启；跨天过程用 Notebook，未来时点重新评估用 Schedule。
 - 主动休息只由主 Agent 显式调用 `rest`，默认请求 30 分钟、范围 10..120；等待发生在该工具执行内部，不读取或改写 canonical projection。工具只在当前进程保存最近三小时的实际休息区间：按 Asia/Singapore，白天 06:00..24:00 最多累计 60 分钟，夜间 00:00..06:00 最多 120 分钟；本次批准时长取请求、剩余额度和下一昼夜边界的最小值，注意事件打断只记录实际经过时间。自然结束后 Runtime append 一次 `runtime_autonomy_tick` 并在该探索阶段拒绝再次 `rest`，直到一次工具行动获得真实进展；被注意事件打断则优先处理该事件。休息额度和探索门控均不进入 runtime singleton、不跨重启持久化，也不根据工具次数、工作量或所谓精力判断资格。
@@ -67,7 +68,7 @@
 - `src/agent/agent-ledger-projection.ts`：canonical 校验与确定性 projection。
 - `src/agent/agent-ledger-loader.ts`：checkpoint 分类、rebuild 和安装输入。
 - `src/agent/ledger-commit-coordinator.ts`：expected-head commit 与 active projection 增量安装。
-- `src/agent/compaction-coordinator.ts`：threshold/overflow、candidate、CAS 重算、失败退避和 post-compact refresh。
+- `src/agent/compaction-coordinator.ts`：threshold/overflow/behavioral reset、candidate、CAS 重算、失败退避和 post-compact refresh。
 - `src/agent/agent-context.ts`：当前内存 projection。
 - `src/agent/bot-loop-agent.ts`：Runtime Host、事务边界、trigger 与失败恢复。
 - `src/agent/loop-policy.ts`：持续行动、技术退避和空上下文等待的结构化决策。

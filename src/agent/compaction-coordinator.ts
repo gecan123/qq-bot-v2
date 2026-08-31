@@ -9,7 +9,10 @@ import {
   type MaybeCompactOptions,
 } from './compaction.js'
 import { runAfterCompactHook } from './compaction-hooks.js'
-import { estimateLedgerContextTokens } from './compaction-token-estimator.js'
+import {
+  estimateLedgerContextTokens,
+  estimateMessageTokens,
+} from './compaction-token-estimator.js'
 import { projectAgentLedger } from './agent-ledger-projection.js'
 import { parseMailboxContinuityState, recordMailboxCompaction } from './mailbox-continuity.js'
 import type { LlmClient } from './llm-client.js'
@@ -20,12 +23,18 @@ import { createLogger } from '../logger.js'
 const log = createLogger('COMPACTION_COORDINATOR')
 
 export interface CompactionCoordinator {
-  compact(input: {
-    reason: CompactionReason
-    contextTokens: number
-    contextWindowTokens: number
-    providerPrefixHeadEntryId?: bigint | null
-  }): Promise<boolean>
+  compact(input:
+    | {
+        reason: Exclude<CompactionReason, 'behavioral_reset'>
+        contextTokens: number
+        contextWindowTokens: number
+        providerPrefixHeadEntryId?: bigint | null
+      }
+    | {
+        reason: 'behavioral_reset'
+        contextWindowTokens: number
+      }
+  ): Promise<boolean>
   start(): void
   stop(): void
 }
@@ -78,6 +87,14 @@ export function createCompactionCoordinator(deps: {
 
       for (let headAttempt = 0; headAttempt < 2; headAttempt++) {
         const canonical = await deps.repo.loadCanonicalState()
+        const latestProjection = projectAgentLedger(canonical)
+        const projectedContextTokens = latestProjection.snapshot.messages.reduce(
+          (sum, message) => Math.min(
+            Number.MAX_SAFE_INTEGER,
+            sum + estimateMessageTokens(message).tokens,
+          ),
+          0,
+        )
         const effectiveContextTokens = input.reason === 'threshold'
           && input.providerPrefixHeadEntryId != null
           ? estimateLedgerContextTokens({
@@ -87,13 +104,14 @@ export function createCompactionCoordinator(deps: {
                 inputTokens: input.contextTokens,
               },
             }).tokens
-          : input.contextTokens
+          : input.reason === 'behavioral_reset'
+            ? projectedContextTokens
+            : input.contextTokens
         if (
           input.reason === 'threshold'
           && effectiveContextTokens <= Math.max(0, input.contextWindowTokens - reserveTokens)
         ) return false
 
-        const latestProjection = projectAgentLedger(canonical)
         const previousCompaction = [...canonical.entries]
           .reverse()
           .find((entry): entry is CompactionAgentLedgerEntry => entry.entryType === 'compaction') ?? null
@@ -118,7 +136,12 @@ export function createCompactionCoordinator(deps: {
         let candidate: Awaited<ReturnType<typeof createCompactionCandidate>>
         try {
           let summarize = options.summarizeCandidate
-          if (summarize == null && deps.llm.provider === 'claude-code' && !preparation.isSplitTurn) {
+          if (
+            summarize == null
+            && input.reason !== 'behavioral_reset'
+            && deps.llm.provider === 'claude-code'
+            && !preparation.isSplitTurn
+          ) {
             const activeMessageCount = preparation.entriesToSummarize.length + preparation.tailEntries.length
             const syntheticMessageCount = latestProjection.snapshot.messages.length - activeMessageCount
             const prefixMessageCount = syntheticMessageCount + preparation.entriesToSummarize.length

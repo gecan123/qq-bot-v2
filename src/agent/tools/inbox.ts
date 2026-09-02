@@ -37,9 +37,8 @@ const argsSchema = z.discriminatedUnion('action', [
     contextBefore: z.number().int().min(1).max(MAX_CONTEXT_BEFORE).optional()
       .describe('按通知补偿同一 mailbox 在 afterRowId 之前最近的消息, 最大 8 条.'),
     limit: z.number().int().min(1).max(MAX_READ_LIMIT)
-      .transform((value) => Math.max(MIN_READ_LIMIT, value))
       .optional()
-      .describe('返回条数, 最少 10, 默认 20, 最大 50.'),
+      .describe('请求返回条数, 低于 10 时按 10 处理, 默认 20, 最大 50.'),
   }),
 ])
 

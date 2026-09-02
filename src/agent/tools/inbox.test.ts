@@ -3,6 +3,7 @@ import { describe, test } from 'node:test'
 import type { ToolContext } from '../tool.js'
 import type { BotEvent } from '../event.js'
 import { InMemoryEventQueue } from '../event-queue.js'
+import { zodToToolJsonSchema } from '../tool-schema.js'
 import {
   createInboxTool,
   INBOX_OUTPUT_CAP_CHARS,
@@ -69,6 +70,10 @@ function parse(content: unknown): Record<string, any> {
 }
 
 describe('inbox tool', () => {
+  test('exposes a JSON-schema-compatible model contract', () => {
+    assert.doesNotThrow(() => zodToToolJsonSchema(tool().schema))
+  })
+
   test('reads at least ten messages and exposes the next page cursor', async () => {
     const calls: unknown[] = []
     const inbox = tool({

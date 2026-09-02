@@ -32,15 +32,17 @@ export function captureMailboxAttentionState(
       continue
     }
 
-    const disclosure = parseMailboxDisclosure(payload)
-    if (disclosure) {
-      mergeMailboxCursors(merged, disclosure.mailbox, {
-        disclosedThroughRowId: disclosure.throughRowId,
-        handledThroughRowId: 0,
-        ...(disclosure.highPriority && !isPrivateMailbox(disclosure.mailbox)
-          ? { highPriorityThroughRowId: disclosure.throughRowId }
-          : {}),
-      })
+    const disclosures = parseMailboxDisclosures(payload)
+    if (disclosures.length > 0) {
+      for (const disclosure of disclosures) {
+        mergeMailboxCursors(merged, disclosure.mailbox, {
+          disclosedThroughRowId: disclosure.throughRowId,
+          handledThroughRowId: 0,
+          ...(disclosure.highPriority && !isPrivateMailbox(disclosure.mailbox)
+            ? { highPriorityThroughRowId: disclosure.throughRowId }
+            : {}),
+        })
+      }
       continue
     }
     if (
@@ -62,19 +64,33 @@ export function captureMailboxAttentionState(
   return state
 }
 
-function parseMailboxDisclosure(
+function parseMailboxDisclosures(
   payload: Record<string, unknown>,
-): { mailbox: string; throughRowId: number; highPriority: boolean } | null {
+): Array<{ mailbox: string; throughRowId: number; highPriority: boolean }> {
+  if (payload.event === 'conversation_deltas' && Array.isArray(payload.mailboxes)) {
+    return payload.mailboxes.flatMap((value) => {
+      if (
+        !isRecord(value)
+        || !isMailboxKey(value.mailbox)
+        || !isPositiveSafeInteger(value.throughRowId)
+      ) return []
+      return [{
+        mailbox: value.mailbox,
+        throughRowId: value.throughRowId,
+        highPriority: value.priority === 'high',
+      }]
+    })
+  }
   if (
     payload.event === 'inbox_update'
     && isMailboxKey(payload.mailbox)
     && isPositiveSafeInteger(payload.throughRowId)
   ) {
-    return {
+    return [{
       mailbox: payload.mailbox,
       throughRowId: payload.throughRowId,
       highPriority: isPrivateMailbox(payload.mailbox),
-    }
+    }]
   }
   if (
     payload.event !== 'notification'
@@ -83,13 +99,13 @@ function parseMailboxDisclosure(
     || !isMailboxKey(payload.data.mailbox)
     || !isPositiveSafeInteger(payload.data.throughRowId)
   ) {
-    return null
+    return []
   }
-  return {
+  return [{
     mailbox: payload.data.mailbox,
     throughRowId: payload.data.throughRowId,
     highPriority: payload.priority === 'high' && payload.delivery === 'interrupt',
-  }
+  }]
 }
 
 export function findPendingMailboxThroughRowId(

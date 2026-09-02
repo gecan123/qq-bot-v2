@@ -50,6 +50,24 @@ describe('mailbox handled cursor', () => {
     assert.equal(findPendingMailboxThroughRowId(messages, 'qq_private:123'), 10)
   })
 
+  test('recognizes every mailbox disclosed by a compact conversation delta', () => {
+    const messages: AgentMessage[] = [{
+      role: 'user',
+      content: '{"event":"conversation_deltas","mailboxes":[{"mailbox":"qq:bot:group:111","throughRowId":21,"priority":"normal","messages":[{"rowId":21,"text":"one"}]},{"mailbox":"qq:bot:group:222","throughRowId":32,"priority":"high","messages":[{"rowId":32,"text":"two"}]}]}',
+    }]
+
+    assert.equal(findPendingMailboxThroughRowId(messages, 'qq:bot:group:111'), 21)
+    assert.equal(findPendingMailboxThroughRowId(messages, 'qq:bot:group:222'), 32)
+    assert.equal(hasPendingMailboxAttention(messages, {
+      'qq:bot:group:111': 21,
+      'qq:bot:group:222': 31,
+    }), true)
+    assert.equal(hasPendingMailboxAttention(messages, {
+      'qq:bot:group:111': 21,
+      'qq:bot:group:222': 32,
+    }), false)
+  })
+
   test('recovers unread high-priority inbox read defaults from the latest notification', () => {
     const messages: AgentMessage[] = [
       {

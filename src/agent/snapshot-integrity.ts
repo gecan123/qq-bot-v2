@@ -300,5 +300,9 @@ function validateMailboxContinuity(value: unknown, errors: string[]): void {
     if (inputTokens != null && (!Number.isSafeInteger(inputTokens) || (inputTokens as number) < 0)) {
       errors.push(`mailboxContinuity.mailboxes.${key}.inputTokens must be null or a non-negative safe integer`)
     }
+    const engagedUntilMs = anchorObj.engagedUntilMs
+    if (engagedUntilMs != null && (!Number.isSafeInteger(engagedUntilMs) || (engagedUntilMs as number) < 0)) {
+      errors.push(`mailboxContinuity.mailboxes.${key}.engagedUntilMs must be a non-negative safe integer`)
+    }
   }
 }

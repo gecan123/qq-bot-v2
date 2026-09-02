@@ -13,6 +13,7 @@ import {
   createEmptyMailboxContinuityState,
   MAILBOX_LIGHT_COMPENSATION_AFTER_MS,
   recordMailboxDisclosure,
+  recordMailboxEngagement,
 } from './mailbox-continuity.js'
 import { createTestAgentLedger } from './test-support/agent-ledger.js'
 
@@ -46,6 +47,33 @@ function makeScheduledWake(): Extract<BotEvent, { type: 'scheduled_wake' }> {
     scheduleId: 'schedule-1',
     name: '回看线索',
     scheduledFor: new Date('2026-07-13T09:00:00.000Z'),
+  }
+}
+
+function makeGroupChatEvent(input: {
+  rowId: number
+  groupId: string
+  text: string
+  mentionedSelf?: boolean
+}): Extract<BotEvent, { type: 'chat_message' }> {
+  return {
+    type: 'chat_message',
+    eventKind: 'message',
+    messageRowId: input.rowId,
+    conversation: {
+      platform: 'qq',
+      accountId: 'bot',
+      kind: 'group',
+      externalId: input.groupId,
+    },
+    conversationName: `群 ${input.groupId}`,
+    messageExternalId: `message-${input.rowId}`,
+    senderExternalId: `sender-${input.rowId}`,
+    senderName: `成员 ${input.rowId}`,
+    mentionedSelf: input.mentionedSelf ?? false,
+    sentAt: new Date(`2026-08-31T01:00:${String(input.rowId).padStart(2, '0')}Z`),
+    renderedText: input.text,
+    mediaIds: [],
   }
 }
 
@@ -645,6 +673,165 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(queue.size(), 1, 'failed disclosure must remain retryable')
   })
 
+  test('records a durable engagement lease after a confirmed group send', async () => {
+    const ctx = createAgentContext({ initialMessages: [{ role: 'user', content: 'reply now' }] })
+    const ledger = makeTestLedger(ctx.getSnapshot().messages)
+    const now = new Date('2026-08-31T01:00:00.000Z')
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: new InMemoryEventQueue<BotEvent>(),
+      llm: makeMockLlm([{
+        content: '',
+        toolCalls: [{ id: 'send-group', name: 'send_message', args: { text: '收到' } }],
+        usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 2 },
+        model: 'mock',
+        contextWindowTokens: 200_000,
+      }]),
+      tools: makeMockTools({
+        send_message: async () => ({
+          content: '{"ok":true,"status":"sent"}',
+          effects: [{
+            type: 'message_sent',
+            target: { platform: 'qq', accountId: 'bot', kind: 'group', externalId: '111' },
+          }],
+        }),
+      }),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: { now: () => now },
+    })
+
+    await agent.runOnceForTest()
+
+    assert.equal(
+      ledger.runtimeStates.at(-1)?.mailboxContinuity.mailboxes['qq:bot:group:111']?.engagedUntilMs,
+      now.getTime() + 30 * 60_000,
+    )
+  })
+
+  test('directly discloses several engaged groups while leaving other groups in inbox', async () => {
+    const ctx = createAgentContext()
+    const queue = new InMemoryEventQueue<BotEvent>()
+    queue.enqueue(makeGroupChatEvent({ rowId: 11, groupId: '111', text: 'A 的新消息' }))
+    queue.enqueue(makeGroupChatEvent({ rowId: 12, groupId: '222', text: 'B 的新消息' }))
+    queue.enqueue(makeGroupChatEvent({ rowId: 13, groupId: '333', text: 'C 的未参与消息' }))
+    const now = new Date('2026-08-31T01:00:30.000Z')
+    const continuity = createEmptyMailboxContinuityState()
+    recordMailboxEngagement(continuity, 'qq:bot:group:111', now.getTime() - 1_000)
+    recordMailboxEngagement(continuity, 'qq:bot:group:222', now.getTime() - 1_000)
+    const ledger = makeTestLedger([])
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: queue,
+      llm: makeMockLlm([{
+        content: '', toolCalls: [],
+        usage: { inputTokens: 20, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock', contextWindowTokens: 200_000,
+      }]),
+      tools: makeMockTools(),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      initialMailboxContinuity: continuity,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: { now: () => now },
+    })
+
+    await agent.runOnceForTest()
+
+    const visible = ctx.getSnapshot().messages.filter(message => message.role === 'user')
+    const delta = visible.map(message => JSON.parse(message.content)).find(payload => payload.event === 'conversation_deltas')
+    const notification = visible.map(message => JSON.parse(message.content)).find(payload => payload.event === 'notification')
+    assert.deepEqual(delta.mailboxes.map((item: { mailbox: string }) => item.mailbox), [
+      'qq:bot:group:111',
+      'qq:bot:group:222',
+    ])
+    assert.match(JSON.stringify(delta), /A 的新消息/)
+    assert.match(JSON.stringify(delta), /B 的新消息/)
+    assert.doesNotMatch(JSON.stringify(delta), /C 的未参与消息/)
+    assert.equal(notification.data.mailbox, 'qq:bot:group:333')
+    assert.deepEqual(ledger.messageAppends[0]?.runtimePatch?.inboxReadCursors, {
+      'qq:bot:group:111': 11,
+      'qq:bot:group:222': 12,
+    })
+  })
+
+  test('requeues directly disclosed messages when the atomic cursor commit fails', async () => {
+    const ctx = createAgentContext()
+    const queue = new InMemoryEventQueue<BotEvent>()
+    queue.enqueue(makeGroupChatEvent({ rowId: 21, groupId: '111', text: '不能丢' }))
+    const now = new Date('2026-08-31T01:00:30.000Z')
+    const continuity = createEmptyMailboxContinuityState()
+    recordMailboxEngagement(continuity, 'qq:bot:group:111', now.getTime() - 1_000)
+    const ledger = makeTestLedger([], { failAppend: true })
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: queue,
+      llm: makeMockLlm([]),
+      tools: makeMockTools(),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      initialMailboxContinuity: continuity,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: { now: () => now },
+    })
+
+    await assert.rejects(agent.runOnceForTest(), /ledger commit failed/)
+
+    assert.match(String(ledger.messageAppends[0]?.messages[0]?.content), /conversation_deltas/)
+    assert.deepEqual(ledger.messageAppends[0]?.runtimePatch?.inboxReadCursors, {
+      'qq:bot:group:111': 21,
+    })
+    assert.deepEqual(ctx.getSnapshot().messages, [])
+    assert.equal(queue.size(), 1)
+  })
+
+  test('keeps an oversized engaged batch unread and falls back to inbox notification', async () => {
+    const ctx = createAgentContext()
+    const queue = new InMemoryEventQueue<BotEvent>()
+    for (let rowId = 1; rowId <= 20; rowId++) {
+      queue.enqueue(makeGroupChatEvent({
+        rowId,
+        groupId: '111',
+        text: `message-${rowId}-${'x'.repeat(2_000)}`,
+      }))
+    }
+    const now = new Date('2026-08-31T01:00:30.000Z')
+    const continuity = createEmptyMailboxContinuityState()
+    recordMailboxEngagement(continuity, 'qq:bot:group:111', now.getTime() - 1_000)
+    const ledger = makeTestLedger([])
+    const agent = createBotLoopAgent({
+      systemPrompt: '',
+      context: ctx,
+      eventQueue: queue,
+      llm: makeMockLlm([{
+        content: '', toolCalls: [],
+        usage: { inputTokens: 20, cachedTokens: 0, outputTokens: 0 },
+        model: 'mock', contextWindowTokens: 200_000,
+      }]),
+      tools: makeMockTools(),
+      ledgerRepo: ledger.repo,
+      ledgerLoader: ledger.loader,
+      initialMailboxContinuity: continuity,
+      renderEvent: renderBotEvent,
+      eventDebounceMs: 0,
+      autonomy: { now: () => now },
+    })
+
+    await agent.runOnceForTest()
+
+    const first = ctx.getSnapshot().messages[0]
+    assert.equal(first?.role, 'user')
+    assert.equal(JSON.parse(first!.content).event, 'notification')
+    assert.equal(ledger.messageAppends[0]?.runtimePatch?.inboxReadCursors, undefined)
+  })
+
   test('appends and persists a handled marker after a confirmed private send', async () => {
     const ctx = createAgentContext()
     ctx.appendUserMessage(
@@ -1049,7 +1236,7 @@ describe('BotLoopAgent.runOnceForTest', () => {
     )
   })
 
-  test('drains mentioned group events as high-priority mailbox notifications, runs LLM, executes tools', async () => {
+  test('drains mentioned group events as direct high-priority deltas, runs LLM, executes tools', async () => {
     const ctx = createAgentContext()
     const eventQueue = new InMemoryEventQueue<BotEvent>()
     eventQueue.enqueue({
@@ -1105,10 +1292,11 @@ describe('BotLoopAgent.runOnceForTest', () => {
     assert.equal(messages.length, 3, 'user + assistant + tool')
     assert.equal(messages[0]?.role, 'user')
     if (messages[0]?.role === 'user') {
-      const notification = JSON.parse(messages[0].content)
-      assert.equal(notification.data.mailbox, 'qq_group:999')
-      assert.equal(notification.priority, 'high')
-      assert.doesNotMatch(messages[0].content, /hello/)
+      const delta = JSON.parse(messages[0].content)
+      assert.equal(delta.event, 'conversation_deltas')
+      assert.equal(delta.mailboxes[0].mailbox, 'qq_group:999')
+      assert.equal(delta.mailboxes[0].priority, 'high')
+      assert.match(messages[0].content, /hello/)
     }
     assert.equal(messages[1]?.role, 'assistant')
     if (messages[1]?.role === 'assistant') {
@@ -2034,8 +2222,8 @@ describe('BotLoopAgent.runOnceForTest', () => {
           readArgs?: { contextBefore?: number }
         }
       })
-    assert.equal(notifications[0]?.priority, 'high')
-    assert.equal(notifications[0]?.data?.throughRowId, 101)
+    assert.equal((notifications[0] as { event?: string }).event, 'conversation_deltas')
+    assert.equal((notifications[0] as { mailboxes?: Array<{ throughRowId?: number }> }).mailboxes?.[0]?.throughRowId, 101)
     assert.equal(notifications[1]?.data?.mode, 'backlog')
     assert.equal(continuityAfterReordering?.mailboxes['qq_group:999']?.lastMessageAtMs, highAt.getTime())
     assert.equal(notifications[2]?.data?.throughRowId, 102)
@@ -2097,8 +2285,9 @@ describe('BotLoopAgent.runOnceForTest', () => {
     const userMessages = ctx.getSnapshot().messages.filter((message) => message.role === 'user')
     assert.equal(JSON.parse(userMessages[0]!.content).data.mode, 'backlog')
     assert.equal(JSON.parse(userMessages[0]!.content).priority, 'high')
-    assert.equal(JSON.parse(userMessages[1]!.content).priority, 'high')
-    assert.equal(JSON.parse(userMessages[1]!.content).data.throughRowId, 101)
+    assert.equal(JSON.parse(userMessages[1]!.content).event, 'conversation_deltas')
+    assert.equal(JSON.parse(userMessages[1]!.content).mailboxes[0].priority, 'high')
+    assert.equal(JSON.parse(userMessages[1]!.content).mailboxes[0].throughRowId, 101)
     assert.equal(JSON.parse(userMessages[2]!.content).kind, 'schedule_due')
   })
 

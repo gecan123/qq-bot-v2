@@ -8,6 +8,7 @@ import {
   mailboxKeyForEvent,
   planMailboxDisclosures,
   renderMailboxBacklogNotification,
+  renderMailboxDeltaBatch,
   renderMailboxNotification,
 } from './mailbox.js'
 
@@ -98,6 +99,57 @@ function platformEvent(input: {
 }
 
 describe('mailbox disclosure planning', () => {
+  test('renders several live group mailboxes as one compact deterministic delta', () => {
+    const first = platformEvent({
+      rowId: 11,
+      platform: 'qq',
+      accountId: 'bot',
+      conversationId: '111',
+    })
+    const second = platformEvent({
+      rowId: 12,
+      platform: 'qq',
+      accountId: 'bot',
+      conversationId: '222',
+    })
+    second.mentionedSelf = true
+
+    const content = renderMailboxDeltaBatch([
+      { kind: 'mailbox', mailboxKey: 'qq:bot:group:111', events: [first] },
+      { kind: 'mailbox', mailboxKey: 'qq:bot:group:222', events: [second] },
+    ])
+    assert.notEqual(content, null)
+    const payload = JSON.parse(content!)
+
+    assert.equal(payload.event, 'conversation_deltas')
+    assert.deepEqual(payload.mailboxes.map((item: Record<string, unknown>) => item.mailbox), [
+      'qq:bot:group:111',
+      'qq:bot:group:222',
+    ])
+    assert.deepEqual(payload.mailboxes[0].messages, [{
+      rowId: 11,
+      sentAt: '2026-07-03T08:02+08:00',
+      senderExternalId: 'sender-11',
+      senderName: 'sender-11',
+      text: 'body-11',
+    }])
+    assert.equal(payload.mailboxes[1].priority, 'high')
+    assert.equal(payload.mailboxes[1].messages[0].mentionedSelf, true)
+    assert.doesNotMatch(JSON.stringify(payload), /replyToExternalId|null|tool|readArgs/)
+  })
+
+  test('rejects an oversized live delta so the caller can keep it in inbox', () => {
+    const events = Array.from({ length: 20 }, (_, index) => groupEvent({
+      rowId: index + 1,
+      groupId: 111,
+      text: `body-${index}-${'x'.repeat(2_000)}`,
+    }))
+
+    assert.equal(renderMailboxDeltaBatch([
+      { kind: 'mailbox', mailboxKey: 'qq_group:111', events },
+    ]), null)
+  })
+
   test('isolates conversations by platform and account while preserving local row order', () => {
     const qq = platformEvent({ rowId: 1, platform: 'qq', accountId: '10000', conversationId: 'shared' })
     const feishu = platformEvent({ rowId: 2, platform: 'feishu', accountId: 'cli_1', conversationId: 'shared' })
@@ -272,7 +324,7 @@ describe('mailbox disclosure planning', () => {
     assert.doesNotMatch(rendered, /DO_NOT_DISCLOSE_CHATTY_BODY/)
   })
 
-  test('renders large batches as backlog with recent-read args', () => {
+  test('keeps large live batches on the exact unread range', () => {
     const events = Array.from({ length: MAILBOX_BACKLOG_THRESHOLD + 1 }, (_, index) =>
       groupEvent({
         rowId: 1_000 + index * 3,
@@ -284,20 +336,12 @@ describe('mailbox disclosure planning', () => {
 
     const rendered = renderMailboxNotification('qq_group:111', events)
     const payload = JSON.parse(rendered)
-    const firstRecent = events[events.length - MAILBOX_BACKLOG_RECENT_LIMIT]!
-
-    assert.equal(payload.data.mode, 'backlog')
+    assert.equal(payload.data.mode, undefined)
     assert.equal(payload.count, MAILBOX_BACKLOG_THRESHOLD + 1)
     assert.deepEqual(payload.data.readArgs, { action: 'read', source: 'group', groupId: 111, afterRowId: 999 })
-    assert.deepEqual(payload.data.latestReadArgs, {
-      action: 'read',
-      source: 'group',
-      groupId: 111,
-      afterRowId: firstRecent.messageRowId - 1,
-      limit: MAILBOX_BACKLOG_RECENT_LIMIT,
-    })
+    assert.equal(payload.data.latestReadArgs, undefined)
     assert.equal(payload.data.throughRowId, events.at(-1)!.messageRowId)
-    assert.deepEqual(payload.open, { tool: 'inbox', args: payload.data.latestReadArgs })
+    assert.deepEqual(payload.open, { tool: 'inbox', args: payload.data.readArgs })
     assert.doesNotMatch(rendered, /body-/)
   })
 
@@ -356,6 +400,7 @@ describe('mailbox disclosure planning', () => {
       afterRowId: 170,
       limit: MAILBOX_BACKLOG_RECENT_LIMIT,
     })
+    assert.deepEqual(payload.open, { tool: 'inbox', args: payload.data.readArgs })
     assert.doesNotMatch(rendered, /Alice.+SECRET|SECRET/)
   })
 
@@ -387,7 +432,7 @@ describe('mailbox disclosure planning', () => {
     assert.deepEqual(payload.source, { type: 'feishu', mailbox: 'feishu:cli_1:group:oc_1' })
     assert.deepEqual(payload.data.conversation, { ...conversation, name: '飞书群' })
     assert.equal(payload.data.qqSource, undefined)
-    assert.deepEqual(payload.open.args.conversation, conversation)
+    assert.deepEqual(payload.open, { tool: 'inbox', args: payload.data.latestReadArgs })
   })
 
   test('discloses configured group participation for replay backlog notifications', () => {

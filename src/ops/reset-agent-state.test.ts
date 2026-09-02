@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { describe, test } from 'node:test'
 import { AGENT_RUNTIME_STATE_SCHEMA_VERSION } from '../agent/agent-ledger.types.js'
+import { createEmptyMailboxContinuityState } from '../agent/mailbox-continuity.js'
 import {
   parseAgentStateResetScope,
   previewAgentStateReset,
@@ -262,13 +263,7 @@ describe('resetAgentState', () => {
           schemaVersion: AGENT_RUNTIME_STATE_SCHEMA_VERSION,
           mailboxCursors: DEFAULT_RUNTIME_CONTINUITY.mailboxCursors,
           inboxReadCursors: DEFAULT_RUNTIME_CONTINUITY.inboxReadCursors,
-          mailboxContinuity: {
-            schemaVersion: 1,
-            roundSeq: 0,
-            lastInputTokens: null,
-            compactionEpoch: 0,
-            mailboxes: {},
-          },
+          mailboxContinuity: createEmptyMailboxContinuityState(),
           conversationFocus: null,
           lastWakeAt: DEFAULT_RUNTIME_CONTINUITY.lastWakeAt,
           ledgerHeadEntryId: null,

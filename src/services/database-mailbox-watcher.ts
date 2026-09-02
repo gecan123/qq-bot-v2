@@ -69,7 +69,11 @@ export function messageRowToChatEvent(
     ...(row.conversationName ? { conversationName: row.conversationName } : {}),
     messageExternalId: row.messageExternalId,
     ...(row.replyToExternalId ? { replyToExternalId: row.replyToExternalId } : {}),
+    ...(row.rootExternalId ? { rootExternalId: row.rootExternalId } : {}),
     ...(row.threadExternalId ? { threadExternalId: row.threadExternalId } : {}),
+    mediaIds: row.mediaReferenceIds
+      .map(referenceId => Number(referenceId))
+      .filter(mediaId => Number.isSafeInteger(mediaId) && mediaId > 0),
     senderExternalId: row.senderExternalId,
     senderName: row.senderConversationName ?? row.senderName ?? row.senderExternalId,
     mentionedSelf: conversation.kind === 'private' || messageMentions(row.content, selfExternalId),

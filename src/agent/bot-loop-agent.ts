@@ -20,14 +20,18 @@ import {
   isHighPriorityMailboxDisclosure,
   planMailboxDisclosures,
   renderMailboxBacklogNotification,
+  renderMailboxDeltaBatch,
   renderMailboxNotification,
   type MailboxDisclosure,
   type MailboxCursors,
+  type MailboxMessageDisclosure,
 } from './mailbox.js'
 import {
   decideMailboxCompensation,
+  isMailboxEngaged,
   parseMailboxContinuityState,
   recordMailboxDisclosure,
+  recordMailboxEngagement,
   recordMailboxRound,
   type MailboxContinuityState,
 } from './mailbox-continuity.js'
@@ -355,9 +359,47 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
     messages: AgentMessage[],
     continuity: MailboxContinuityState,
     wakeState: { lastWakeAt: Date | null },
-  ): Promise<number> {
+  ): Promise<{
+    disclosed: number
+    inboxReads: Array<{ mailbox: string; throughRowId: number }>
+  }> {
     let disclosed = 0
-    for (const disclosure of disclosures) {
+    const inboxReads: Array<{ mailbox: string; throughRowId: number }> = []
+    const nowMs = autonomy.now().getTime()
+    for (let index = 0; index < disclosures.length;) {
+      const disclosure = disclosures[index]!
+      if (shouldDirectMailboxDisclosure(disclosure, continuity, nowMs)) {
+        const directMailboxes: MailboxMessageDisclosure[] = []
+        let directContent: string | null = null
+        while (
+          index < disclosures.length
+          && shouldDirectMailboxDisclosure(disclosures[index]!, continuity, nowMs)
+        ) {
+          const candidate = [
+            ...directMailboxes,
+            disclosures[index] as MailboxMessageDisclosure,
+          ]
+          const rendered = renderMailboxDeltaBatch(candidate)
+          if (rendered == null) break
+          directMailboxes.push(disclosures[index] as MailboxMessageDisclosure)
+          directContent = rendered
+          index++
+        }
+        if (directContent != null) {
+          messages.push({ role: 'user', content: directContent })
+          for (const direct of directMailboxes) {
+            const latest = direct.events.at(-1)!
+            const wasEngaged = isMailboxEngaged(continuity, direct.mailboxKey, nowMs)
+            recordMailboxDisclosure(continuity, direct.mailboxKey, latest.sentAt.getTime())
+            if (wasEngaged) recordMailboxEngagement(continuity, direct.mailboxKey, nowMs)
+            inboxReads.push({ mailbox: direct.mailboxKey, throughRowId: latest.messageRowId })
+            disclosed++
+          }
+          wakeState.lastWakeAt = autonomy.now()
+          continue
+        }
+        // An oversized live batch stays unread and falls back to the ordinary inbox notification.
+      }
       if (disclosure.kind === 'backlog') {
         const groupId = disclosure.event.source.type === 'group'
           ? disclosure.event.source.groupId
@@ -383,6 +425,7 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         )
         disclosed++
         wakeState.lastWakeAt = new Date()
+        index++
         continue
       }
 
@@ -427,12 +470,19 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
         }
         disclosed++
         wakeState.lastWakeAt = new Date()
+        index++
         continue
       }
 
-      if (disclosure.event.type === 'wake') continue
+      if (disclosure.event.type === 'wake') {
+        index++
+        continue
+      }
       const rendered = await deps.renderEvent(disclosure.event)
-      if (rendered == null || rendered.length === 0) continue
+      if (rendered == null || rendered.length === 0) {
+        index++
+        continue
+      }
       messages.push({ role: 'user', content: rendered })
       disclosed++
       if (
@@ -441,8 +491,28 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       ) {
         wakeState.lastWakeAt = new Date()
       }
+      index++
     }
-    return disclosed
+    return { disclosed, inboxReads }
+  }
+
+  function isGroupMailboxDisclosure(disclosure: MailboxMessageDisclosure): boolean {
+    const first = disclosure.events[0]!
+    return first.type === 'napcat_message'
+      || (first.type === 'chat_message' && first.conversation.kind === 'group')
+  }
+
+  function shouldDirectMailboxDisclosure(
+    disclosure: MailboxDisclosure,
+    continuity: Readonly<MailboxContinuityState>,
+    nowMs: number,
+  ): disclosure is MailboxMessageDisclosure {
+    return disclosure.kind === 'mailbox'
+      && isGroupMailboxDisclosure(disclosure)
+      && (
+        isMailboxEngaged(continuity, disclosure.mailboxKey, nowMs)
+        || isHighPriorityMailboxDisclosure(disclosure)
+      )
   }
 
   async function runRound(tools: ToolExecutor): Promise<{
@@ -722,18 +792,30 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       roundIndex: roundIndex + 1,
       detail: '正在根据最新上下文决定下一步',
     })
-    let disclosed = await discloseEvents(
+    const interruptingDisclosure = await discloseEvents(
       drained.interrupting,
       stagedMessages,
       stagedContinuity,
       stagedWake,
     )
-    disclosed += await discloseEvents(
+    const passiveDisclosure = await discloseEvents(
       drained.passive,
       stagedMessages,
       stagedContinuity,
       stagedWake,
     )
+    const disclosed = interruptingDisclosure.disclosed + passiveDisclosure.disclosed
+    let stagedInboxReadCursors = inboxReadCursors
+    for (const read of [
+      ...interruptingDisclosure.inboxReads,
+      ...passiveDisclosure.inboxReads,
+    ]) {
+      stagedInboxReadCursors = advanceInboxReadCursor(
+        stagedInboxReadCursors,
+        read.mailbox,
+        read.throughRowId,
+      )
+    }
     if (
       !stopRequested
       && deps.context.getSnapshot().messages.length === 0
@@ -762,6 +844,9 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
           messages: stagedMessages,
           runtimePatch: {
             mailboxCursors: drained.cursors,
+            ...(stagedInboxReadCursors === inboxReadCursors
+              ? {}
+              : { inboxReadCursors: stagedInboxReadCursors }),
             mailboxContinuity: stagedContinuity,
             lastWakeAt: stagedWake.lastWakeAt,
           },
@@ -807,7 +892,22 @@ export function createBotLoopAgent(deps: BotLoopAgentDeps): BotLoopAgent {
       toolContinuationDetail,
     } = roundResult
     const handledMailboxMarkers = collectHandledMailboxMarkers(sentTargets)
-    await commitChanges({ messages: handledMailboxMarkers })
+    const continuityAfterSends = parseMailboxContinuityState(mailboxContinuity)
+    const engagementNowMs = autonomy.now().getTime()
+    const engagedGroupMailboxes = new Set(
+      sentTargets
+        .filter(target => target.kind === 'group')
+        .map(conversationKey),
+    )
+    for (const mailbox of engagedGroupMailboxes) {
+      recordMailboxEngagement(continuityAfterSends, mailbox, engagementNowMs)
+    }
+    await commitChanges({
+      messages: handledMailboxMarkers,
+      ...(engagedGroupMailboxes.size > 0
+        ? { runtimePatch: { mailboxContinuity: continuityAfterSends } }
+        : {}),
+    })
     await maybeCompact(
       inputTokens,
       contextWindowTokens,

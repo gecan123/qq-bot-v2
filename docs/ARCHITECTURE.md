@@ -1,6 +1,6 @@
 # 架构
 
-`qq-bot-v2` 是一个同时接入 QQ 与飞书的单 Agent runtime。默认运行形态是一个平台 supervisor 管理多个边界清晰的本机进程：Agent Core、QQ Gateway、按配置启用的 Feishu Gateway、Media Worker，以及按配置启用的 Browser Controller；WebAdmin 保持业务独立，但本地开发可用 `pnpm dev:all` 交给同一 supervisor 管理生命周期。短期调度在 Agent Core 内部运行，Agent Core 与 Media Worker 直接调用配置的 LLM provider。两个平台的群聊和私聊入站事件都先写入同一套 Postgres 事实账本，再由同一个串行 `BotLoopAgent` 消费并写入唯一 canonical ledger。私聊、结构化 `@bot`、编辑和撤回可以形成 attention；普通群消息留在被动 inbox，正文默认由 Agent 通过 `inbox` 按需读取。
+`qq-bot-v2` 是一个同时接入 QQ 与飞书的单 Agent runtime。默认运行形态是一个平台 supervisor 管理多个边界清晰的本机进程：Agent Core、QQ Gateway、按配置启用的 Feishu Gateway、Media Worker，以及按配置启用的 Browser Controller；WebAdmin 保持业务独立，但本地开发可用 `pnpm dev:all` 交给同一 supervisor 管理生命周期。短期调度在 Agent Core 内部运行，Agent Core 与 Media Worker 直接调用配置的 LLM provider。两个平台的群聊和私聊入站事件都先写入同一套 Postgres 事实账本，再由同一个串行 `BotLoopAgent` 消费并写入唯一 canonical ledger。私聊、结构化 `@bot`、编辑和撤回可以形成 attention；普通群消息默认留在被动 inbox。Agent 成功向群外发后，该 mailbox 在短期 engagement lease 内改走有界、紧凑的直接增量披露，多个群可以同时 engaged；超限批次仍回退 inbox。
 
 这是实验性新项目。除非任务明确要求历史兼容或迁移保留，否则优先选择干净的目标模型，不为旧 adapter、dual-write bridge 或旧 snapshot 增加长期兼容层。生产级高可用、长期稳定运行和自动故障恢复也不是默认目标；没有用户要求或可测量真实痛点时，不为假设性故障提前增加 HA、failover、跨重启自动续跑、复杂重试/对账或运维平台。正确性、确定性 replay、明确失败状态和外部副作用安全边界仍然必须保持。
 
@@ -75,7 +75,7 @@ WebAdmin 的查询结果、TanStack Query cache 和页面状态都不是 replay 
 - `messages` / `media` 是入站事实账本，`media_blobs` 是可由 Media 引用和保留期 GC 管理的内容寻址物理存储；它们只用于 missed replay、搜索、审计和按需读取，不是 prompt history。
 - `bot_agent_ledger_entries` 保存 append-only LLM history；`bot_agent_runtime_state` 保存通知披露 cursor、inbox 已读 cursor、continuity、平台中立 conversation focus、last wake 和 ledger head；`bot_agent_checkpoint` 只缓存已验证 projection。
 - QQ 或飞书新消息都不会隐式切换 focus。Agent 必须先通过 `conversation open` 显式打开允许的群或私聊，`send_message` 才能向当前 focus 发送；focus 不从 transcript、memory 或日志重建。
-- `prompts/groups.md` 是群监听范围、主动发送权限、参与档位和 operator 固定群提示的唯一配置源。启动时严格解析并冻结；`mentions` 只允许结构化 @ reply，其普通消息不生成 notification；`selective` / `active` 的普通消息可聚合为 `delivery=passive` 的 QQ notification，但不主动唤醒，正文仍必须用 inbox 按需读取。档位不扩大发送授权。active 群可用一行稳定 `resident-hint` 进入常驻 source list，作为成果分享候选；完整风格正文仍只由 `chat_style` 按需读取，会变化的群文化与历史写 group memory。
+- `prompts/groups.md` 是群监听范围、主动发送权限、参与档位和 operator 固定群提示的唯一配置源。启动时严格解析并冻结；`mentions` 只允许结构化 @ reply，其普通消息不生成 notification；`selective` / `active` 的普通消息可聚合为 `delivery=passive` 的 QQ notification，但不主动唤醒。未 engaged 的正文仍用 inbox 按需读取；provider-confirmed 群外发后的短期 lease 内，Runtime 可以直接追加有界 `conversation_deltas`。档位不扩大发送授权。active 群可用一行稳定 `resident-hint` 进入常驻 source list，作为成果分享候选；完整风格正文仍只由 `chat_style` 按需读取，会变化的群文化与历史写 group memory。
 - Memory、Notebook、调度文件和 `logs/*` 都是 side state，不能作为 transcript replay 来源。
 - 外部平台已确认发送和本地数据库之间没有分布式事务，因此 `mailbox_handled` 是 durable 防重复边界，不承诺外部发送 exactly-once。统一 `MessageDelivery` 使用稳定 UUID 标识一次动作，并把结果明确区分为 `sent`、`failed`、`delivery_unknown`；当前不增加 outbox、自动重试、独立 egress 进程或平台降级层。
 - compaction、append 与 runtime 元数据使用数据库事务；checkpoint 刷新和 `afterCompact` 是 best-effort，不回滚已提交历史。

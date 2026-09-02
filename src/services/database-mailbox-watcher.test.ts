@@ -46,12 +46,17 @@ describe('database mailbox message mapping', () => {
       },
       conversationName: '测试群',
       messageExternalId: '42',
+      mediaIds: [],
       senderExternalId: '30000',
       senderName: '群名片',
       mentionedSelf: true,
       sentAt: new Date('2026-08-21T00:00:00Z'),
       renderedText: '@bot hello',
     })
+
+    assert.deepEqual(messageRowToChatEvent(messageRow({
+      mediaReferenceIds: ['15', 'bad', '16'],
+    }), '[图片]', '10000').mediaIds, [15, 16])
 
     assert.equal(messageRowToChatEvent(messageRow({
       rowId: 8,

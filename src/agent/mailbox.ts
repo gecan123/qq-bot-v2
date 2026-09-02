@@ -7,6 +7,8 @@ import { conversationKey } from '../chat/conversation.js'
 export type MailboxCursors = Record<string, number>
 export const MAILBOX_BACKLOG_THRESHOLD = 100
 export const MAILBOX_BACKLOG_RECENT_LIMIT = 50
+export const MAILBOX_DELTA_OUTPUT_CAP_CHARS = 12_000
+const MAILBOX_DELTA_TEXT_CAP_CHARS = 2_000
 const MAILBOX_KEY_PATTERN = /^(?:qq_(?:group|private):\d+|(?:qq|feishu):[^:]+:(?:group|private):[^:]+)$/
 
 export function isMailboxKey(value: unknown): value is string {
@@ -23,6 +25,8 @@ export type MailboxDisclosure =
   | { kind: 'direct'; event: BotEvent }
   | { kind: 'mailbox'; mailboxKey: string; events: MailboxEvent[] }
   | { kind: 'backlog'; event: MailboxBacklogEvent }
+
+export type MailboxMessageDisclosure = Extract<MailboxDisclosure, { kind: 'mailbox' }>
 
 export interface MailboxDisclosurePlan {
   disclosures: MailboxDisclosure[]
@@ -148,24 +152,6 @@ export function renderMailboxNotification(
     readArgs: source.readArgs,
   }
 
-  if (events.length <= MAILBOX_BACKLOG_THRESHOLD) {
-    const platform = first.type === 'chat_message' ? first.conversation.platform : 'qq'
-    return renderNotificationEnvelope({
-      id: `${platform}:${mailboxKey}:${throughRowId}`,
-      source: { type: platform, mailbox: mailboxKey },
-      kind: 'inbox_update',
-      priority,
-      delivery: priority === 'high' ? 'interrupt' : 'passive',
-      groupKey: mailboxKey,
-      count: events.length,
-      ...(events.length === 1 ? { occurredAt: timeRange.to } : {}),
-      open: { tool: 'inbox', args: source.readArgs },
-      data,
-    })
-  }
-
-  const firstRecent = events[Math.max(0, events.length - MAILBOX_BACKLOG_RECENT_LIMIT)]!
-  const latestReadArgs = recentReadArgsForEvent(firstRecent)
   const platform = first.type === 'chat_message' ? first.conversation.platform : 'qq'
   return renderNotificationEnvelope({
     id: `${platform}:${mailboxKey}:${throughRowId}`,
@@ -175,13 +161,75 @@ export function renderMailboxNotification(
     delivery: priority === 'high' ? 'interrupt' : 'passive',
     groupKey: mailboxKey,
     count: events.length,
-    open: { tool: 'inbox', args: latestReadArgs },
-    data: {
-      ...data,
-      mode: 'backlog',
-      latestReadArgs,
-    },
+    ...(events.length === 1 ? { occurredAt: timeRange.to } : {}),
+    open: { tool: 'inbox', args: source.readArgs },
+    data,
   })
+}
+
+export function renderMailboxDeltaBatch(
+  disclosures: readonly MailboxMessageDisclosure[],
+): string | null {
+  if (disclosures.length === 0) {
+    throw new Error('mailbox delta batch requires at least one disclosure')
+  }
+  const content = JSON.stringify({
+    event: 'conversation_deltas',
+    mailboxes: disclosures.map((disclosure) => {
+      const first = disclosure.events[0]!
+      const last = disclosure.events.at(-1)!
+      return {
+        mailbox: disclosure.mailboxKey,
+        throughRowId: last.messageRowId,
+        priority: disclosure.events.some(isHighPriorityMailboxEvent) ? 'high' : 'normal',
+        ...(first.type === 'chat_message'
+          ? {
+              conversation: {
+                ...first.conversation,
+                ...(first.conversationName ? { name: first.conversationName } : {}),
+              },
+            }
+          : first.type === 'napcat_message'
+            ? { qqSource: { type: 'group', groupId: first.groupId, ...(first.groupName ? { groupName: first.groupName } : {}) } }
+            : { qqSource: { type: 'private', peerId: first.peerId, senderName: first.senderNickname } }),
+        messages: disclosure.events.map(projectDeltaMessage),
+      }
+    }),
+  })
+  return content.length <= MAILBOX_DELTA_OUTPUT_CAP_CHARS ? content : null
+}
+
+function projectDeltaMessage(event: MailboxEvent): Record<string, unknown> {
+  const textTruncated = event.renderedText.length > MAILBOX_DELTA_TEXT_CAP_CHARS
+  const text = textTruncated
+    ? `${event.renderedText.slice(0, MAILBOX_DELTA_TEXT_CAP_CHARS)}…`
+    : event.renderedText
+  if (event.type === 'chat_message') {
+    return {
+      rowId: event.messageRowId,
+      ...(event.eventKind === 'message' ? {} : { eventKind: event.eventKind }),
+      sentAt: formatBeijingMinuteIso(event.sentAt),
+      senderExternalId: event.senderExternalId,
+      senderName: event.senderName,
+      ...(event.mentionedSelf ? { mentionedSelf: true } : {}),
+      ...(event.eventKind === 'recall' ? { replyable: false } : {}),
+      ...(event.replyToExternalId ? { replyToExternalId: event.replyToExternalId } : {}),
+      ...(event.rootExternalId ? { rootExternalId: event.rootExternalId } : {}),
+      ...(event.threadExternalId ? { threadExternalId: event.threadExternalId } : {}),
+      text,
+      ...(textTruncated ? { textTruncated: true } : {}),
+      ...(event.mediaIds && event.mediaIds.length > 0 ? { mediaIds: event.mediaIds } : {}),
+    }
+  }
+  return {
+    rowId: event.messageRowId,
+    sentAt: formatBeijingMinuteIso(event.sentAt),
+    senderExternalId: String(event.senderId),
+    senderName: event.senderNickname,
+    ...(event.mentionedSelf ? { mentionedSelf: true } : {}),
+    text,
+    ...(textTruncated ? { textTruncated: true } : {}),
+  }
 }
 
 export function renderMailboxBacklogNotification(
@@ -217,7 +265,7 @@ export function renderMailboxBacklogNotification(
     groupKey: event.mailboxKey,
     count: event.count,
     ...(event.count === 1 ? { occurredAt: timeRange.to } : {}),
-    open: { tool: 'inbox', args: latestReadArgs },
+    open: { tool: 'inbox', args: event.priority === 'high' ? readArgs : latestReadArgs },
     data: {
       mode: 'backlog',
       mailbox: event.mailboxKey,
@@ -235,22 +283,6 @@ export function renderMailboxBacklogNotification(
       latestReadArgs,
     },
   })
-}
-
-function recentReadArgsForEvent(event: MailboxEvent): Record<string, unknown> {
-  const afterRowId = Math.max(0, event.messageRowId - 1)
-  if (event.type === 'chat_message') {
-    return {
-      action: 'read',
-      conversation: event.conversation,
-      afterRowId,
-      limit: MAILBOX_BACKLOG_RECENT_LIMIT,
-    }
-  }
-  if (event.type === 'napcat_private_message') {
-    return { action: 'read', source: 'private', peerId: event.peerId, afterRowId, limit: MAILBOX_BACKLOG_RECENT_LIMIT }
-  }
-  return { action: 'read', source: 'group', groupId: event.groupId, afterRowId, limit: MAILBOX_BACKLOG_RECENT_LIMIT }
 }
 
 function isHighPriorityMailboxEvent(event: MailboxEvent): boolean {

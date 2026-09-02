@@ -43,7 +43,7 @@ function messageRow(input: {
     searchText: input.text,
     resolvedText: input.text,
     sentAt: null,
-    createdAt: new Date(`2026-08-21T00:00:${String(input.rowId).padStart(2, '0')}Z`),
+    createdAt: new Date(Date.parse('2026-08-21T00:00:00Z') + input.rowId * 1_000),
   }
 }
 
@@ -197,5 +197,61 @@ describe('replayMissedMessages', () => {
 
     assert.deepEqual(hidden, { enqueued: 0, skippedDuplicates: 0 })
     assert.deepEqual(passive, { enqueued: 1, skippedDuplicates: 0 })
+  })
+
+  test('marks a large passive group replay high priority when its backlog contains an @', async () => {
+    const selfExternalId = '10000'
+    const rows = Array.from({ length: 101 }, (_, index) => messageRow({
+      rowId: index + 2,
+      platform: 'qq',
+      accountId: '10000',
+      kind: 'group',
+      conversationId: '20000',
+      messageId: String(index + 1),
+      senderId: '30000',
+      text: `message-${index + 1}`,
+      ...(index === 25 ? { mentionedSelf: selfExternalId } : {}),
+    }))
+    stubFindMany(() => rows)
+    ;(prisma.message as unknown as {
+      count(): Promise<number>
+    }).count = async () => rows.length
+    ;(prisma.message as unknown as {
+      findFirst(args: {
+        where?: Prisma.MessageWhereInput
+        orderBy?: { rowId: 'asc' | 'desc' }
+      }): Promise<Message | null>
+    }).findFirst = async (args) => {
+      if (JSON.stringify(args.where).includes('array_contains')) return rows[25]!
+      return args.orderBy?.rowId === 'desc'
+        ? rows.at(-1)!
+        : rows[rows.length - 50]!
+    }
+    const events: BotEvent[] = []
+
+    const result = await replayMissedMessages({
+      mailboxCursors: { 'qq:10000:group:20000': 1 },
+      legacyLastWakeAt: null,
+    }, {
+      enqueueMessageEvent: (event) => {
+        events.push(event)
+        return true
+      },
+      allowedConversations: [{
+        platform: 'qq',
+        accountId: '10000',
+        kind: 'group',
+        externalId: '20000',
+      }],
+      passiveConversationKeys: ['qq:10000:group:20000'],
+      selfExternalIds: { qq: selfExternalId },
+      ensureReady,
+    })
+
+    assert.deepEqual(result, { enqueued: 1, skippedDuplicates: 0 })
+    assert.equal(events.length, 1)
+    assert.equal(events[0]?.type, 'mailbox_backlog')
+    if (events[0]?.type !== 'mailbox_backlog') assert.fail('expected mailbox_backlog')
+    assert.equal(events[0].priority, 'high')
   })
 })

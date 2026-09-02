@@ -3,13 +3,15 @@ export const MAILBOX_FULL_COMPENSATION_AFTER_ROUNDS = 30
 export const MAILBOX_FULL_COMPENSATION_AFTER_TOKENS = 128_000
 export const MAILBOX_LIGHT_CONTEXT_BEFORE = 1
 export const MAILBOX_FULL_CONTEXT_BEFORE = 8
+export const MAILBOX_ENGAGEMENT_LEASE_MS = 30 * 60 * 1_000
 
-const MAILBOX_CONTINUITY_SCHEMA_VERSION = 1
+const MAILBOX_CONTINUITY_SCHEMA_VERSION = 2
 export interface MailboxContinuityAnchor {
   lastMessageAtMs: number
   roundSeq: number
   inputTokens: number | null
   compactionEpoch: number
+  engagedUntilMs?: number
 }
 
 export interface MailboxContinuityState {
@@ -132,7 +134,46 @@ export function recordMailboxDisclosure(
     roundSeq: state.roundSeq,
     inputTokens: state.lastInputTokens,
     compactionEpoch: state.compactionEpoch,
+    ...(currentAnchor?.engagedUntilMs == null
+      ? {}
+      : { engagedUntilMs: currentAnchor.engagedUntilMs }),
   }
+}
+
+export function recordMailboxEngagement(
+  state: MailboxContinuityState,
+  mailboxKey: string,
+  nowMs: number,
+  leaseMs = MAILBOX_ENGAGEMENT_LEASE_MS,
+): void {
+  if (!isMailboxKey(mailboxKey)) throw new TypeError(`invalid mailbox key: ${mailboxKey}`)
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
+    throw new RangeError('engagement time must be a non-negative safe integer')
+  }
+  if (!Number.isSafeInteger(leaseMs) || leaseMs <= 0) {
+    throw new RangeError('engagement lease must be a positive safe integer')
+  }
+
+  const current = state.mailboxes[mailboxKey]
+  const engagedUntilMs = nowMs + leaseMs
+  if (!Number.isSafeInteger(engagedUntilMs)) {
+    throw new RangeError('engagement expiry must be a safe integer')
+  }
+  state.mailboxes[mailboxKey] = {
+    lastMessageAtMs: Math.max(current?.lastMessageAtMs ?? 0, nowMs),
+    roundSeq: state.roundSeq,
+    inputTokens: state.lastInputTokens,
+    compactionEpoch: state.compactionEpoch,
+    engagedUntilMs: Math.max(current?.engagedUntilMs ?? 0, engagedUntilMs),
+  }
+}
+
+export function isMailboxEngaged(
+  state: Readonly<MailboxContinuityState>,
+  mailboxKey: string,
+  nowMs: number,
+): boolean {
+  return (state.mailboxes[mailboxKey]?.engagedUntilMs ?? -1) >= nowMs
 }
 
 export function recordMailboxRound(
@@ -158,12 +199,14 @@ function parseAnchor(value: unknown): MailboxContinuityAnchor | null {
   const lastMessageAtMs = nonNegativeInteger(obj.lastMessageAtMs)
   const roundSeq = nonNegativeInteger(obj.roundSeq)
   const compactionEpoch = nonNegativeInteger(obj.compactionEpoch)
+  const engagedUntilMs = nonNegativeInteger(obj.engagedUntilMs)
   if (lastMessageAtMs == null || roundSeq == null || compactionEpoch == null) return null
   return {
     lastMessageAtMs,
     roundSeq,
     inputTokens: nullableNonNegativeInteger(obj.inputTokens),
     compactionEpoch,
+    ...(engagedUntilMs == null ? {} : { engagedUntilMs }),
   }
 }
 

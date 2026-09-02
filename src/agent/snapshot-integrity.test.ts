@@ -131,7 +131,16 @@ describe('validateBotSnapshotIntegrity', () => {
         roundSeq: -1,
         lastInputTokens: 'many',
         compactionEpoch: 0,
-        mailboxes: { bad: {} },
+        mailboxes: {
+          bad: {},
+          'qq:bot:group:111': {
+            lastMessageAtMs: 1,
+            roundSeq: 1,
+            inputTokens: null,
+            compactionEpoch: 0,
+            engagedUntilMs: 'later',
+          },
+        },
       },
     })
 
@@ -139,6 +148,7 @@ describe('validateBotSnapshotIntegrity', () => {
     assert.match(result.errors.join('\n'), /mailboxContinuity\.roundSeq/)
     assert.match(result.errors.join('\n'), /mailboxContinuity\.lastInputTokens/)
     assert.match(result.errors.join('\n'), /mailboxContinuity\.mailboxes\.bad has invalid key/)
+    assert.match(result.errors.join('\n'), /engagedUntilMs/)
   })
 
   test('reports malformed message fields instead of throwing inside the validator', () => {

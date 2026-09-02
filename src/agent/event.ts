@@ -25,7 +25,10 @@ export interface ChatMessageEvent {
   mentionedSelf: boolean
   sentAt: Date
   renderedText: string
+  /** 当前入站事实中可按需 inspect/read 的稳定 Media handles。 */
+  mediaIds?: number[]
   replyToExternalId?: string
+  rootExternalId?: string
   threadExternalId?: string
 }
 

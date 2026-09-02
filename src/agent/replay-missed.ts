@@ -33,6 +33,7 @@ interface ReplaySource {
   mailboxKey: string
   conversation: ConversationRef
   where: Prisma.MessageWhereInput
+  attentionWhere: Prisma.MessageWhereInput | null
 }
 
 interface ReplayCounters {
@@ -62,9 +63,17 @@ export async function replayMissedMessages(
         : null
     if (!boundary) return []
 
-    const attentionFilter: Prisma.MessageWhereInput = conversation.kind === 'group'
-      && !passiveKeys.has(mailboxKey)
+    const baseWhere: Prisma.MessageWhereInput = {
+      platform: conversation.platform,
+      accountId: conversation.accountId,
+      conversationKind: conversation.kind,
+      conversationExternalId: conversation.externalId,
+      senderExternalId: { not: selfExternalId },
+      ...boundary,
+    }
+    const attentionWhere: Prisma.MessageWhereInput | null = conversation.kind === 'group'
       ? {
+          ...baseWhere,
           OR: [
             { eventKind: { in: ['edit', 'recall'] } },
             {
@@ -73,20 +82,13 @@ export async function replayMissedMessages(
             },
           ],
         }
-      : {}
+      : null
 
     return [{
       mailboxKey,
       conversation,
-      where: {
-        platform: conversation.platform,
-        accountId: conversation.accountId,
-        conversationKind: conversation.kind,
-        conversationExternalId: conversation.externalId,
-        senderExternalId: { not: selfExternalId },
-        ...boundary,
-        ...attentionFilter,
-      },
+      where: attentionWhere && !passiveKeys.has(mailboxKey) ? attentionWhere : baseWhere,
+      attentionWhere,
     }]
   })
 
@@ -127,6 +129,11 @@ async function replaySource(
   }
 
   const count = await prisma.message.count({ where: source.where })
+  const containsAttention = source.conversation.kind === 'private'
+    || (source.attentionWhere != null && await prisma.message.findFirst({
+      where: source.attentionWhere,
+      select: { rowId: true },
+    }) != null)
   const first = rows[0]!
   const last = await prisma.message.findFirst({
     where: source.where,
@@ -141,7 +148,7 @@ async function replaySource(
   const event: BotEvent = {
     type: 'mailbox_backlog',
     mailboxKey: source.mailboxKey,
-    priority: source.conversation.kind === 'private' ? 'high' : 'normal',
+    priority: containsAttention ? 'high' : 'normal',
     source: {
       type: 'conversation',
       conversation: source.conversation,

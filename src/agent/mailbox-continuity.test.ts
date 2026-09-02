@@ -3,6 +3,8 @@ import { describe, test } from 'node:test'
 import {
   createEmptyMailboxContinuityState,
   decideMailboxCompensation,
+  isMailboxEngaged,
+  MAILBOX_ENGAGEMENT_LEASE_MS,
   MAILBOX_FULL_COMPENSATION_AFTER_ROUNDS,
   MAILBOX_FULL_COMPENSATION_AFTER_TOKENS,
   MAILBOX_FULL_CONTEXT_BEFORE,
@@ -11,6 +13,7 @@ import {
   parseMailboxContinuityState,
   recordMailboxCompaction,
   recordMailboxDisclosure,
+  recordMailboxEngagement,
   recordMailboxRound,
 } from './mailbox-continuity.js'
 
@@ -95,6 +98,28 @@ describe('mailbox continuity compensation', () => {
     })
   })
 
+  test('tracks several engaged mailboxes independently and expires each lease', () => {
+    const state = createEmptyMailboxContinuityState()
+    recordMailboxEngagement(state, 'qq:bot:group:111', 1_000)
+    recordMailboxEngagement(state, 'qq:bot:group:222', 2_000)
+
+    assert.equal(isMailboxEngaged(state, 'qq:bot:group:111', 1_000 + MAILBOX_ENGAGEMENT_LEASE_MS), true)
+    assert.equal(isMailboxEngaged(state, 'qq:bot:group:111', 1_001 + MAILBOX_ENGAGEMENT_LEASE_MS), false)
+    assert.equal(isMailboxEngaged(state, 'qq:bot:group:222', 1_001 + MAILBOX_ENGAGEMENT_LEASE_MS), true)
+  })
+
+  test('preserves and refreshes engagement when recording a newer disclosure', () => {
+    const state = createEmptyMailboxContinuityState()
+    recordMailboxEngagement(state, 'qq:bot:group:111', 1_000)
+    recordMailboxDisclosure(state, 'qq:bot:group:111', 2_000)
+    recordMailboxEngagement(state, 'qq:bot:group:111', 2_000)
+
+    assert.equal(
+      state.mailboxes['qq:bot:group:111']?.engagedUntilMs,
+      2_000 + MAILBOX_ENGAGEMENT_LEASE_MS,
+    )
+  })
+
   test('sanitizes malformed persisted state', () => {
     const state = parseMailboxContinuityState({
       schemaVersion: 99,
@@ -107,13 +132,15 @@ describe('mailbox continuity compensation', () => {
           roundSeq: 4,
           inputTokens: 900,
           compactionEpoch: 1,
+          engagedUntilMs: 2_000,
         },
         invalid: { lastMessageAtMs: 100, roundSeq: 4, inputTokens: 900, compactionEpoch: 1 },
       },
     })
 
-    assert.equal(state.schemaVersion, 1)
+    assert.equal(state.schemaVersion, 2)
     assert.equal(state.roundSeq, 12)
     assert.deepEqual(Object.keys(state.mailboxes), ['qq_private:9001'])
+    assert.equal(state.mailboxes['qq_private:9001']?.engagedUntilMs, 2_000)
   })
 })

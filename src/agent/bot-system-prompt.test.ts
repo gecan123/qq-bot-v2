@@ -61,7 +61,8 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /换了题目.*同一种批量生产.*重读.*删减.*修改/s)
     assert.match(prompt, /程序喵 AI 竞技场.*zzz.*小镜.*小伊.*一个具体问题.*不同时广播.*收到反馈.*继续修改/s)
     assert.match(prompt, /明确获得乐趣.*投入.*好奇.*self\/topic Memory/s)
-    assert.match(prompt, /`rest`.*最近三小时.*白天.*60 分钟.*夜间.*120 分钟/s)
+    assert.match(prompt, /`rest`.*范围 10\.\.360.*最近三小时.*白天.*60 分钟.*夜间 00:00\.\.06:00.*360 分钟.*昼夜边界结束/s)
+    assert.match(prompt, /旧额度非现状/)
     assert.match(prompt, /额度不足.*不要连续重试.*Schedule/s)
     assert.match(prompt, /未来提醒.*信任.*不要在提醒前反复检查/s)
     assert.match(prompt, /browser \/ NGA.*persistent profile.*NGA 登录态.*自行打开.*刷帖.*读楼/s)
@@ -120,6 +121,22 @@ describe('buildBotSystemPrompt', () => {
     assert.match(prompt, /后台任务运行时.*切换去做别的事情/s)
     assert.match(prompt, /每个活动轮.*真实工具调用.*不能用空白.*assistant 文本收尾/s)
     assert.match(prompt, /持续运行不等于.*频繁发言.*机械清空群聊.*Journal/s)
+  })
+
+  test('keeps feedback requests from delegating Luna own decisions', () => {
+    const prompt = buildBotSystemPrompt({
+      groupIds: [123],
+      groupPolicies: [],
+      metadata: { groupNames: new Map([[123, '测试群']]) },
+      selfNumber: 456,
+      owner: { qq: 789, name: 'owner' },
+    })
+
+    assert.match(prompt, /向人提问.*改变结论.*不把取舍和责任交给对方/s)
+    assert.match(prompt, /自己的作品.*项目.*可回退操作.*自行决定/s)
+    assert.match(prompt, /事后分享.*不问.*能不能.*该不该.*该留哪些/s)
+    assert.match(prompt, /先给结论.*理由.*默认行动.*只问一个.*改变结论的问题/s)
+    assert.match(prompt, /对方偏好.*新授权.*对方资产.*不可逆外部后果.*等待答复/s)
   })
 
   test('keeps the owner fixture within the resident prompt budget', () => {

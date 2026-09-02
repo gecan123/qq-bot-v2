@@ -7,10 +7,10 @@ const log = createLogger('TOOL_REST')
 
 export const MIN_REST_DURATION_MINUTES = 10
 export const DEFAULT_REST_DURATION_MINUTES = 30
-export const MAX_REST_DURATION_MINUTES = 120
+export const MAX_REST_DURATION_MINUTES = 360
 export const REST_WINDOW_MINUTES = 180
 export const DAY_REST_LIMIT_MINUTES = 60
-export const NIGHT_REST_LIMIT_MINUTES = 120
+export const NIGHT_REST_LIMIT_MINUTES = 360
 export const REST_TIME_ZONE = 'Asia/Singapore'
 const MINUTE_MS = 60_000
 const HOUR_MS = 60 * MINUTE_MS
@@ -36,7 +36,7 @@ export interface RestBudget {
 const argsSchema = z.object({
   durationMinutes: z.number().int().min(MIN_REST_DURATION_MINUTES).max(MAX_REST_DURATION_MINUTES)
     .default(DEFAULT_REST_DURATION_MINUTES)
-    .describe('期望休息分钟数，默认 30，范围 10..120；实际批准时长受最近三小时滚动额度和昼夜边界限制。'),
+    .describe('期望休息分钟数，默认 30，范围 10..360；实际批准时长受最近三小时滚动额度和昼夜边界限制。'),
   reason: z.string().trim().min(1).max(300)
     .describe('为什么此刻真正想暂停；疲惫、需要沉淀、没有具体牵引力或正在机械重复都可以是理由。'),
   resumeAction: z.string().trim().min(1).max(300)
@@ -70,8 +70,8 @@ export function createRestTool(deps: RestToolDeps = {}): Tool<RestArgs> {
       '唯一的主动休息入口。真正想休息、放空、沉淀，或发现自己正在机械重复时直接调用；不需要先制造任务来证明有资格停下。',
       '完成任务本身不自动等于需要休息；但做过一次有界方向搜索后仍没有真正想做、值得做的事，也不要为了显得忙碌而强行行动。',
       '休息自然结束后，Runtime 会要求先完成一次有界方向搜索，并暂时拒绝再次 rest；获得真实新证据或改变可观察状态后才解除该限制。',
-      '默认请求 30 分钟，范围 10..120；最近三小时白天 06:00..24:00 最多累计休息 60 分钟，夜间 00:00..06:00 最多 120 分钟，按 Asia/Singapore 计算。',
-      '工具会按剩余额度缩短时长，并在 00:00 或 06:00 边界结束后重新评估；额度不足 10 分钟时拒绝并短暂退避，不要连续重试或另建 Schedule 等待。',
+      '默认请求 30 分钟，范围 10..360；最近三小时白天 06:00..24:00 最多累计休息 60 分钟，夜间 00:00..06:00 最多 360 分钟，按 Asia/Singapore 计算。',
+      '工具会按剩余额度缩短时长，并在 00:00 或 06:00 边界结束后重新评估；夜间休息最晚会在 06:00 自然结束并交还控制。旧的 rest_budget_exhausted 结果不代表当前进程仍无额度；当次额度不足 10 分钟时拒绝并短暂退避，不要连续重试或另建 Schedule 等待。',
       '私聊、@、后台任务完成、调度事件或 runtime 停止信号会提前打断休息，事件不会被本工具消费。',
     ].join(' '),
     schema: argsSchema,

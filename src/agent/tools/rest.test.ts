@@ -61,10 +61,14 @@ describe('rest tool', () => {
     assert.equal((parsed.data as { durationMinutes: number }).durationMinutes, 30)
     assert.equal(MIN_REST_DURATION_MINUTES, 10)
     assert.equal(DEFAULT_REST_DURATION_MINUTES, 30)
-    assert.equal(MAX_REST_DURATION_MINUTES, 120)
+    assert.equal(MAX_REST_DURATION_MINUTES, 360)
     assert.equal(REST_WINDOW_MINUTES, 180)
     assert.equal(DAY_REST_LIMIT_MINUTES, 60)
-    assert.equal(NIGHT_REST_LIMIT_MINUTES, 120)
+    assert.equal(NIGHT_REST_LIMIT_MINUTES, 360)
+    assert.match(
+      restTool.description,
+      /旧的 rest_budget_exhausted 结果不代表当前进程仍无额度/,
+    )
     assert.equal(restTool.schema.safeParse({
       durationMinutes: 10,
       reason: '想休息',
@@ -76,12 +80,12 @@ describe('rest tool', () => {
       resumeAction: '醒来后重新评估是否还想继续阅读',
     }).success, false)
     assert.equal(restTool.schema.safeParse({
-      durationMinutes: 120,
+      durationMinutes: 360,
       reason: '想休息',
       resumeAction: '醒来后重新评估是否还想继续阅读',
     }).success, true)
     assert.equal(restTool.schema.safeParse({
-      durationMinutes: 121,
+      durationMinutes: 361,
       reason: '想休息',
       resumeAction: '醒来后重新评估是否还想继续阅读',
     }).success, false)
@@ -116,6 +120,25 @@ describe('rest tool', () => {
       continuation: 'immediate',
       continuationDetail: '主动休息结束，重新评估是否有值得推进的具体方向',
     })
+  })
+
+  test('allows a full night rest and naturally returns control at 06:00', async () => {
+    let nowMs = Date.parse('2026-08-26T16:00:00.000Z') // 00:00 Asia/Singapore
+    const timer = makeFakeTimer((delayMs) => { nowMs += delayMs })
+    const tool = createRestTool({ timer, now: () => nowMs })
+    const { ctx } = makeContext()
+    const promise = tool.execute({
+      durationMinutes: 360,
+      reason: '夜里想好好休息',
+      resumeAction: '早上醒来后重新评估当天方向',
+    }, ctx)
+
+    assert.deepEqual(timer.delays, [360 * 60_000])
+    timer.fire()
+    const payload = JSON.parse((await promise).content as string)
+    assert.equal(payload.status, 'elapsed')
+    assert.equal(payload.durationMinutes, 360)
+    assert.equal(nowMs, Date.parse('2026-08-26T22:00:00.000Z')) // 06:00 Asia/Singapore
   })
 
   test('attention interrupts rest, records actual elapsed time, and does not consume the event', async () => {
@@ -193,18 +216,17 @@ describe('rest rolling budget', () => {
     assert.equal(budget.authorize(30, noon + 40 * 60_000).grantedDurationMinutes, 20)
   })
 
-  test('allows two thirds of a rolling three-hour night window', () => {
+  test('allows resting through the full night window', () => {
     const budget = createRestBudget()
     const midnight = Date.parse('2026-08-26T16:00:00.000Z') // 00:00 Asia/Singapore
 
-    assert.deepEqual(budget.authorize(120, midnight), {
+    assert.deepEqual(budget.authorize(360, midnight), {
       period: 'night',
-      requestedDurationMinutes: 120,
-      grantedDurationMinutes: 120,
+      requestedDurationMinutes: 360,
+      grantedDurationMinutes: 360,
     })
     budget.record(midnight, midnight + 120 * 60_000)
-    assert.equal(budget.authorize(10, midnight + 120 * 60_000).grantedDurationMinutes, 0)
-    assert.equal(budget.authorize(10, midnight + 190 * 60_000).grantedDurationMinutes, 10)
+    assert.equal(budget.authorize(360, midnight + 120 * 60_000).grantedDurationMinutes, 240)
   })
 
   test('never grants a rest across the next day/night boundary', () => {

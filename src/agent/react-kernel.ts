@@ -233,6 +233,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
     for (let index = 0; index < batch.length; index++) {
       const batchCall = batch[index]!
       const result = results[index]!
+      const progress = result.outcome?.progress ?? (result.outcome?.ok ?? true)
       for (const effect of result.effects ?? []) {
         effects.push({
           toolCallId: batchCall.id,
@@ -245,7 +246,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
         requestedToolName: batchCall.name,
         toolName: resolveEffectiveToolName(batchCall),
         ok: result.outcome?.ok ?? true,
-        progress: result.outcome?.progress ?? true,
+        progress,
         ...(result.outcome?.continuation ? { continuation: result.outcome.continuation } : {}),
         ...(result.outcome?.continuation && result.outcome.continuationDetail
           ? { continuationDetail: result.outcome.continuationDetail.slice(0, 1_000) }
@@ -259,7 +260,7 @@ export async function runReactRound(input: ReactRoundInput): Promise<ReactRoundR
         toolName: resolveEffectiveToolName(batchCall),
         ok: result.outcome?.ok ?? true,
         code: result.outcome?.code,
-        progress: result.outcome?.progress ?? true,
+        progress,
         continuation: result.outcome?.continuation,
         continuationDetail: result.outcome?.continuationDetail?.slice(0, 1_000),
         noveltyKey: result.outcome?.noveltyKey,

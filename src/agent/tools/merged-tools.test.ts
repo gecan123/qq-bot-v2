@@ -254,13 +254,13 @@ describe('merged main-agent tools', () => {
         content: '共享 coordinator',
       } as never, makeCtx())
       await notebook.execute({
-        action: 'write',
+        action: 'checkpoint',
         kind: 'research',
-        topic: 'runtime wiring',
-        content: '共享 coordinator',
+        topic: '运行时接线',
+        content: '共享 coordinator 当前状态。',
       } as never, makeCtx())
       assert.equal(resourceKeys.some((key) => key === 'memory:self/self.md'), true)
-      assert.equal(resourceKeys.some((key) => key.startsWith('notebook:research/')), true)
+      assert.equal(resourceKeys.some((key) => key === 'notebook'), true)
     } finally {
       process.chdir(originalCwd)
       await rm(temporaryCwd, { recursive: true, force: true })

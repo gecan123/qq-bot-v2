@@ -39,6 +39,24 @@ describe('schedule tool', () => {
     const result = await tool.execute({ action: 'get_occurrence', scheduleId: 'schedule-1' }, ctx)
     assert.equal(JSON.parse(result.content as string).ok, true)
   })
+
+  test('read-only and idempotent actions do not report progress', async () => {
+    const job = {
+      id: 'schedule-1', name: '一次提醒', intention: '重新判断',
+      at: '2026-07-13T00:01:00.000Z', createdAt: '2026-07-13T00:00:00.000Z',
+    }
+    const tool = createScheduleTool(stubRuntime({
+      async create() { return { status: 'existing', schedule: job } },
+      async list() { return [job] },
+      async cancel(id) { return { status: 'already_absent', id } },
+    }))
+
+    assert.equal((await tool.execute({ action: 'list' }, ctx)).outcome?.progress, false)
+    assert.equal((await tool.execute({
+      action: 'create', name: '一次提醒', intention: '重新判断', at: '2026-07-13T00:01:00.000Z',
+    }, ctx)).outcome?.progress, false)
+    assert.equal((await tool.execute({ action: 'cancel', id: 'missing' }, ctx)).outcome?.progress, false)
+  })
 })
 
 function stubRuntime(overrides: Partial<ScheduleRuntime> = {}): ScheduleRuntime {

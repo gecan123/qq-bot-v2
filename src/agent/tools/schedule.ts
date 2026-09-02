@@ -67,14 +67,14 @@ export function createScheduleTool(runtime: ScheduleRuntime): Tool<Args> {
               status: result.status,
               schedule: publicSchedule(result.schedule),
             }),
-            outcome: { ok: true, code: result.status },
+            outcome: { ok: true, code: result.status, progress: result.status === 'created' },
           }
         }
         if (args.action === 'list') {
           const schedules = await runtime.list()
           return {
             content: JSON.stringify({ ok: true, schedules: schedules.map(publicSchedule) }),
-            outcome: { ok: true, code: 'listed' },
+            outcome: { ok: true, code: 'listed', progress: false },
           }
         }
         if (args.action === 'get_occurrence') {
@@ -100,7 +100,7 @@ export function createScheduleTool(runtime: ScheduleRuntime): Tool<Args> {
         const result = await runtime.cancel(args.id)
         return {
           content: JSON.stringify({ ok: true, status: result.status, id: result.id }),
-          outcome: { ok: true, code: result.status },
+          outcome: { ok: true, code: result.status, progress: result.status === 'cancelled' },
         }
       } catch (error) {
         if (!(error instanceof ScheduleRuntimeError)) throw error
@@ -134,7 +134,7 @@ function runtimeErrorResult(error: ScheduleRuntimeError): ToolExecutionResult {
         ? { id: error.scheduleId, cancel: { action: 'cancel', id: error.scheduleId } }
         : {}),
     }),
-    outcome: { ok: false, code: error.code },
+    outcome: { ok: false, code: error.code, progress: false },
   }
 }
 

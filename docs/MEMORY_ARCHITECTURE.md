@@ -24,7 +24,7 @@
 | 问题 | 存储 | 写入口 | 读入口 | 是否参与 replay |
 | --- | --- | --- | --- | --- |
 | 我长期知道什么？ | `data/agent-workspace/memory/` | `memory remember/correct` | `memory recall` | 仅显式工具结果 |
-| 这个主题进行到哪里？ | `data/agent-workspace/notebook/` | `notebook write/update/delete/compact` | `notebook list/search/read` | 仅显式工具结果 |
+| 这个主题进行到哪里？ | `data/agent-workspace/notebook/` | `notebook checkpoint` | `notebook list/search/read` | 仅显式工具结果 |
 | 未来什么时候重新评估？ | Schedule runtime | `schedule` | scheduled wake | wake 事件进入 canonical context |
 
 简单判断：
@@ -63,7 +63,7 @@ Memory 写入前应先 recall，减少重复。事实发生变化时用 correct�
 
 ## Notebook
 
-Notebook 的路径为 `notebook/<kind>/YYYY-MM.md`，`kind` 当前为 `research/reading/market/project/general`。每条记录有稳定 topic、稳定 ID 和 revisioned 月文件。
+Notebook 的路径为 `notebook/<kind>/YYYY-MM.md`，`kind` 当前为 `research/reading/market/project/general`。主 Agent 只提交一个稳定 topic 的完整当前状态：首次 checkpoint 创建记录，后续 checkpoint 保留稳定 ID、更新 `updatedAt` 并替换正文；同 kind、同 topic 的旧重复记录会在下一次 checkpoint 时跨月份收敛。list/search 只披露每个 topic 的最新状态，月文件 revision、去重和原子写入都留在 Notebook 模块内部。
 
 Notebook 保存过程，不承担“另一个 Memory 层”的角色。结论稳定后，用自己的话写入 Memory；不要自动复制整段 Notebook。未来若出现真实需求，可让 Memory 内部引用 Notebook source ref，但不应把跨容器晋升做成常驻 prompt 规则。
 

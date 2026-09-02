@@ -360,10 +360,10 @@ describe('createToolExecutor', () => {
 
   test('classifies notebook mutations as side effects', async () => {
     const writes: string[] = []
-    const notebook: Tool<{ action: 'write' | 'list' | 'search' | 'read' | 'update' | 'delete' | 'compact' }> = {
+    const notebook: Tool<{ action: 'checkpoint' | 'list' | 'search' | 'read' }> = {
       name: 'notebook',
       description: 'notebook',
-      schema: z.object({ action: z.enum(['write', 'list', 'search', 'read', 'update', 'delete', 'compact']) }),
+      schema: z.object({ action: z.enum(['checkpoint', 'list', 'search', 'read']) }),
       async execute() {
         return { content: JSON.stringify({ ok: true }) }
       },
@@ -378,21 +378,14 @@ describe('createToolExecutor', () => {
       },
     })
 
-    await exec.execute({ id: 'write', name: 'notebook', args: { action: 'write' } }, makeCtx())
+    await exec.execute({ id: 'checkpoint', name: 'notebook', args: { action: 'checkpoint' } }, makeCtx())
     await exec.execute({ id: 'list', name: 'notebook', args: { action: 'list' } }, makeCtx())
     await exec.execute({ id: 'search', name: 'notebook', args: { action: 'search' } }, makeCtx())
     await exec.execute({ id: 'read', name: 'notebook', args: { action: 'read' } }, makeCtx())
-    await exec.execute({ id: 'update', name: 'notebook', args: { action: 'update' } }, makeCtx())
-    await exec.execute({ id: 'delete', name: 'notebook', args: { action: 'delete' } }, makeCtx())
-    await exec.execute({ id: 'compact', name: 'notebook', args: { action: 'compact' } }, makeCtx())
-
     assert.equal(JSON.parse(writes[0]!).sideEffect, true)
     assert.equal(JSON.parse(writes[1]!).sideEffect, false)
     assert.equal(JSON.parse(writes[2]!).sideEffect, false)
     assert.equal(JSON.parse(writes[3]!).sideEffect, false)
-    assert.equal(JSON.parse(writes[4]!).sideEffect, true)
-    assert.equal(JSON.parse(writes[5]!).sideEffect, true)
-    assert.equal(JSON.parse(writes[6]!).sideEffect, true)
   })
 
   test('routes call to correct tool by name and validates args', async () => {
@@ -578,7 +571,7 @@ describe('createToolExecutor', () => {
     assert.deepEqual(payload.availableTools, ['workspace_bash'])
     assert.equal(payload.retryable, true)
     assert.match(payload.hint, /availableTools.*help describe/)
-    assert.deepEqual(result.outcome, { ok: false, code: 'unknown_tool', error: 'Unknown tool: nope' })
+    assert.deepEqual(result.outcome, { ok: false, code: 'unknown_tool', error: 'Unknown tool: nope', progress: false })
   })
 
   test('returns targeted recovery hints for removed tool names', async () => {
@@ -607,6 +600,7 @@ describe('createToolExecutor', () => {
     assert.match(result.content as string, /Invalid tool arguments/)
     assert.equal(result.outcome?.ok, false)
     assert.equal(result.outcome?.code, 'invalid_arguments')
+    assert.equal(result.outcome?.progress, false)
   })
 
   test('thrown errors inside execute become tool error envelope', async () => {
@@ -625,6 +619,7 @@ describe('createToolExecutor', () => {
       ok: false,
       code: 'execution_failed',
       error: 'Tool execution failed: kaboom',
+      progress: false,
     })
   })
 

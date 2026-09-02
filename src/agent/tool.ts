@@ -181,7 +181,7 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
             retryable: availableTools.length > 0,
             hint: buildUnknownToolHint(call.name, availableTools),
           }),
-          outcome: { ok: false, code: 'unknown_tool', error },
+          outcome: { ok: false, code: 'unknown_tool', error, progress: false },
         }
         await traceToolCall(options.trace, call, ctx.roundIndex, startedAt, result, {
           forcedError: error,
@@ -205,7 +205,7 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
             retryable: true,
             hint: buildInvalidToolArgumentsHint(call.name),
           }),
-          outcome: { ok: false, code: 'invalid_arguments', error },
+          outcome: { ok: false, code: 'invalid_arguments', error, progress: false },
         }
         await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result, {
           tool,
@@ -228,7 +228,7 @@ export function createToolExecutor(tools: Tool[], options: ToolExecutorOptions =
         const error = `Tool execution failed: ${message}`
         const result = {
           content: JSON.stringify({ ok: false, code: 'execution_failed', error }),
-          outcome: { ok: false, code: 'execution_failed', error },
+          outcome: { ok: false, code: 'execution_failed', error, progress: false },
         }
         await traceToolCall(options.trace, normalizedCall, ctx.roundIndex, startedAt, result, {
           tool,

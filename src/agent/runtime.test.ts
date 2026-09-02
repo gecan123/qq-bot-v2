@@ -288,7 +288,7 @@ describe('createAgentRuntime', () => {
         intention: '结合最新上下文重新检查进展',
         afterSeconds: 30,
       })
-      assert.deepEqual(beforeStart.outcome, { ok: false, code: 'not_started' })
+      assert.deepEqual(beforeStart.outcome, { ok: false, code: 'not_started', progress: false })
 
       await runtime.startBackgroundServices()
       const created = await executeSchedule(runtime, {
@@ -297,7 +297,7 @@ describe('createAgentRuntime', () => {
         intention: '结合最新上下文重新检查进展',
         afterSeconds: 30,
       })
-      assert.deepEqual(created.outcome, { ok: true, code: 'created' })
+      assert.deepEqual(created.outcome, { ok: true, code: 'created', progress: true })
 
       const listed = await executeSchedule(runtime, { action: 'list' })
       assert.equal(JSON.parse(listed.content as string).schedules.length, 1)

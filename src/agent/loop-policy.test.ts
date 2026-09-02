@@ -61,6 +61,24 @@ describe('loop policy', () => {
     assert.equal(second.noProgressRounds, 0)
   })
 
+  test('immediate continuation does not reset no-progress rounds', () => {
+    const first = decideLoopPolicy({
+      ...base, toolCallCount: 1, toolContinuation: 'immediate',
+    })
+    assert.equal(first.action, 'continue')
+    assert.equal('reason' in first ? first.reason : undefined, 'tool_immediate')
+    assert.equal(first.noProgressRounds, 1)
+
+    const second = decideLoopPolicy({
+      ...base,
+      toolCallCount: 1,
+      toolContinuation: 'immediate',
+      noProgressRounds: first.noProgressRounds,
+    })
+    assert.equal(second.action, 'wait_event')
+    assert.equal('reason' in second ? second.reason : undefined, 'no_progress_limit')
+  })
+
   test('pending attention outranks unrelated tool progress', () => {
     const decision = decideLoopPolicy({
       ...base,

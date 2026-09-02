@@ -97,7 +97,7 @@ export function createConversationTool(controller: ConversationController): Tool
     name: 'conversation',
     description: [
       '管理当前 QQ / 飞书会话焦点。',
-      'list 列出允许打开的会话；current 查看当前会话；open 显式打开；close 清除。',
+      'list 列出允许打开的会话；current 查看当前会话；open 显式打开；close 只清除会话焦点并结束当前方向，不停止 Runtime。',
       '发送前必须先确认或打开正确会话；新入站消息不会隐式切换 target。',
     ].join(' '),
     schema: argsSchema,
@@ -126,7 +126,12 @@ export function createConversationTool(controller: ConversationController): Tool
         controller.close()
         return {
           content: JSON.stringify({ ok: true, action: args.action, current: null }),
-          outcome: { ok: true, code: changed ? 'closed' : 'unchanged', progress: changed },
+          outcome: {
+            ok: true,
+            code: changed ? 'closed' : 'unchanged',
+            progress: false,
+            continuation: 'wait_attention',
+          },
         }
       }
 
@@ -137,7 +142,12 @@ export function createConversationTool(controller: ConversationController): Tool
       return {
         content: JSON.stringify({ ...result, action: args.action }),
         outcome: result.ok
-          ? { ok: true, code: changed ? 'opened' : 'unchanged', progress: changed }
+          ? {
+              ok: true,
+              code: changed ? 'opened' : 'unchanged',
+              progress: false,
+              continuation: 'immediate',
+            }
           : {
               ok: false,
               code: result.code,

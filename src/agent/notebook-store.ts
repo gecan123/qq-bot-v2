@@ -8,7 +8,7 @@ import {
   formatBeijingMonth,
 } from '../utils/beijing-time.js'
 import type { WorkspaceStateCoordinator } from './workspace-state-coordinator.js'
-import { assertTextRevision, atomicWriteText, revisionOfText, withResourceWrite } from './workspace-document.js'
+import { atomicWriteText, revisionOfText, withResourceWrite } from './workspace-document.js'
 
 export type NotebookKind = 'research' | 'reading' | 'market' | 'project' | 'general'
 
@@ -18,6 +18,7 @@ export interface NotebookRecord {
   topic: string
   content: string
   createdAt: string
+  updatedAt: string
 }
 
 export interface NotebookStoreOptions {
@@ -54,9 +55,15 @@ export interface NotebookRecordSnapshot {
   revision: string
 }
 
+export interface NotebookCheckpointResult extends NotebookRecordSnapshot {
+  created: boolean
+  changed: boolean
+  consolidatedIds: string[]
+}
+
 export class NotebookStoreError extends Error {
   constructor(
-    readonly code: 'not_found' | 'revision_conflict' | 'invalid_selection' | 'invalid_input',
+    readonly code: 'invalid_input' | 'topic_limit_reached',
     message: string,
   ) {
     super(message)
@@ -78,7 +85,13 @@ interface NotebookFileSnapshot {
   segments: NotebookSegment[]
 }
 
+interface NotebookTopicMatch {
+  snapshot: NotebookFileSnapshot
+  segment: NotebookSegment
+}
+
 const NOTEBOOK_KINDS: readonly NotebookKind[] = ['research', 'reading', 'market', 'project', 'general']
+const GENERAL_TOPIC_LIMIT = 5
 
 function withCoordinatedWrite<T>(
   options: NotebookStoreOptions,
@@ -108,6 +121,10 @@ function normalizeTopic(topic: string): string {
   return normalized
 }
 
+function topicKey(kind: NotebookKind, topic: string): string {
+  return `${kind}:${normalizeTopic(topic).toLocaleLowerCase()}`
+}
+
 function revisionOf(raw: string): string {
   return revisionOfText(raw)
 }
@@ -116,36 +133,99 @@ async function atomicWrite(path: string, raw: string): Promise<void> {
   await atomicWriteText(path, raw)
 }
 
-function assertRevision(raw: string, expectedRevision: string): void {
-  assertTextRevision(raw, expectedRevision, () => new NotebookStoreError(
-      'revision_conflict',
-      'notebook file changed; read the entry again and retry with the latest revision',
-    ))
-}
-
-export async function appendNotebookRecord(
+export async function checkpointNotebookRecord(
   options: NotebookStoreOptions,
   input: NotebookInput,
-): Promise<NotebookRecord> {
+): Promise<NotebookCheckpointResult> {
   const now = options.now?.() ?? new Date()
-  const month = formatBeijingMonth(now)
-  const resourceKey = `notebook:${input.kind}/${month}.md`
-  const write = async (): Promise<NotebookRecord> => {
-    const entry: NotebookRecord = {
-      id: options.id?.() ?? generateId(now),
-      kind: input.kind,
-      topic: normalizeTopic(input.topic),
-      content: input.content.trim(),
-      createdAt: formatBeijingIso(now),
+  const topic = normalizeTopic(input.topic)
+  const content = input.content.trim()
+  return withCoordinatedWrite(options, 'notebook', async () => {
+    const matches = await findNotebookTopicMatches(options.rootDir, input.kind, topic)
+    if (matches.length === 0) {
+      if (input.kind === 'general') {
+        const existingTopics = await currentTopicNames(options.rootDir, input.kind)
+        if (existingTopics.length >= GENERAL_TOPIC_LIMIT) {
+          throw new NotebookStoreError(
+            'topic_limit_reached',
+            `general notebook 最多维护 ${GENERAL_TOPIC_LIMIT} 个当前主题；请先 list，再用完全相同的 topic 更新其中一条。现有主题：${existingTopics.join('、')}`,
+          )
+        }
+      }
+      const month = formatBeijingMonth(now)
+      const path = notebookFilePath(options.rootDir, input.kind, now)
+      await ensureMonthlyNotebookFile(path, input.kind, month)
+      const current = await readFile(path, 'utf8')
+      const timestamp = formatBeijingIso(now)
+      const entry: NotebookRecord = {
+        id: options.id?.() ?? generateId(now),
+        kind: input.kind,
+        topic,
+        content,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }
+      const raw = `${current.trimEnd()}\n\n${renderNotebookEntry(entry)}`
+      await atomicWrite(path, raw)
+      return {
+        entry,
+        file: `${input.kind}/${month}.md`,
+        revision: revisionOf(raw),
+        created: true,
+        changed: true,
+        consolidatedIds: [],
+      }
     }
-    const path = notebookFilePath(options.rootDir, input.kind, now)
-    await ensureMonthlyNotebookFile(path, input.kind, month)
-    const current = await readFile(path, 'utf8')
-    await atomicWrite(path, `${current.trimEnd()}\n\n${renderNotebookEntry(entry)}`)
-    return entry
-  }
 
-  return withCoordinatedWrite(options, resourceKey, write)
+    const winner = matches[0]!
+    const consolidatedIds = matches.slice(1).map((match) => match.segment.entry.id)
+    if (winner.segment.entry.content === content && consolidatedIds.length === 0) {
+      return {
+        entry: winner.segment.entry,
+        file: winner.snapshot.relativeFile,
+        revision: winner.snapshot.revision,
+        created: false,
+        changed: false,
+        consolidatedIds,
+      }
+    }
+
+    const entry: NotebookRecord = {
+      ...winner.segment.entry,
+      content,
+      updatedAt: formatBeijingIso(now),
+    }
+    const snapshots = uniqueTopicSnapshots(matches, winner.snapshot.path)
+    let winnerRevision = winner.snapshot.revision
+    for (const snapshot of snapshots) {
+      const snapshotMatches = matches.filter((match) => match.snapshot.path === snapshot.path)
+      const raw = rewriteTopicMatches(
+        snapshot,
+        snapshotMatches,
+        snapshot.path === winner.snapshot.path ? entry : null,
+      )
+      await atomicWrite(snapshot.path, raw)
+      if (snapshot.path === winner.snapshot.path) winnerRevision = revisionOf(raw)
+    }
+    return {
+      entry,
+      file: winner.snapshot.relativeFile,
+      revision: winnerRevision,
+      created: false,
+      changed: true,
+      consolidatedIds,
+    }
+  })
+}
+
+async function currentTopicNames(rootDir: string, kind: NotebookKind): Promise<string[]> {
+  const result = await readKindEntries(rootDir, kind, 0)
+  const topics = new Map<string, string>()
+  for (const entry of result.entries) {
+    const key = topicKey(kind, entry.topic)
+    if (!topics.has(key)) topics.set(key, entry.topic)
+  }
+  return [...topics.values()]
 }
 
 export async function listNotebookRecords(
@@ -185,97 +265,6 @@ export async function readNotebookRecordSnapshot(
   return { entry: segment.entry, file: located.relativeFile, revision: located.revision }
 }
 
-export async function updateNotebookRecord(
-  options: NotebookStoreOptions & {
-    entryId: string
-    expectedRevision: string
-    content: string
-    topic?: string
-  },
-): Promise<NotebookRecordSnapshot> {
-  const route = await findNotebookFileByEntryId(options.rootDir, options.entryId)
-  if (!route) throw new NotebookStoreError('not_found', `notebook entry not found: ${options.entryId}`)
-  return withCoordinatedWrite(options, `notebook:${route.relativeFile}`, async () => {
-    const located = await findNotebookFileByEntryId(options.rootDir, options.entryId)
-    if (!located) throw new NotebookStoreError('not_found', `notebook entry not found: ${options.entryId}`)
-    assertRevision(located.raw, options.expectedRevision)
-    const target = located.segments.find((candidate) => candidate.entry.id === options.entryId)!
-    const entry = {
-      ...target.entry,
-      topic: options.topic == null ? target.entry.topic : normalizeTopic(options.topic),
-      content: options.content.trim(),
-    }
-    const raw = `${located.raw.slice(0, target.start)}${renderNotebookEntry(entry)}${located.raw.slice(target.end)}`.trimEnd() + '\n'
-    await atomicWrite(located.path, raw)
-    return { entry, file: located.relativeFile, revision: revisionOf(raw) }
-  })
-}
-
-export async function deleteNotebookRecord(
-  options: NotebookStoreOptions & { entryId: string; expectedRevision: string },
-): Promise<{ id: string; file: string; revision: string }> {
-  const route = await findNotebookFileByEntryId(options.rootDir, options.entryId)
-  if (!route) throw new NotebookStoreError('not_found', `notebook entry not found: ${options.entryId}`)
-  return withCoordinatedWrite(options, `notebook:${route.relativeFile}`, async () => {
-    const located = await findNotebookFileByEntryId(options.rootDir, options.entryId)
-    if (!located) throw new NotebookStoreError('not_found', `notebook entry not found: ${options.entryId}`)
-    assertRevision(located.raw, options.expectedRevision)
-    const target = located.segments.find((candidate) => candidate.entry.id === options.entryId)!
-    const raw = `${located.raw.slice(0, target.start)}${located.raw.slice(target.end)}`.trimEnd() + '\n'
-    await atomicWrite(located.path, raw)
-    return { id: options.entryId, file: located.relativeFile, revision: revisionOf(raw) }
-  })
-}
-
-export async function compactNotebookRecords(
-  options: NotebookStoreOptions & {
-    ids: string[]
-    expectedRevision: string
-    content: string
-  },
-): Promise<{ entry: NotebookRecord; compactedIds: string[]; file: string; revision: string }> {
-  if (new Set(options.ids).size !== options.ids.length || options.ids.length < 2) {
-    throw new NotebookStoreError('invalid_selection', 'compact requires at least two distinct notebook entry ids')
-  }
-  const route = await findNotebookFileByEntryId(options.rootDir, options.ids[0]!)
-  if (!route) throw new NotebookStoreError('not_found', 'one or more notebook entries were not found')
-  return withCoordinatedWrite(options, `notebook:${route.relativeFile}`, async () => {
-    const located = await findNotebookFileByEntryId(options.rootDir, options.ids[0]!)
-    if (!located) throw new NotebookStoreError('not_found', 'one or more notebook entries were not found')
-    assertRevision(located.raw, options.expectedRevision)
-    const selected = located.segments.filter((segment) => options.ids.includes(segment.entry.id))
-    if (selected.length !== options.ids.length) {
-      throw new NotebookStoreError('invalid_selection', 'compact requires entries from the same notebook month and kind')
-    }
-    const topics = new Set(selected.map((segment) => segment.entry.topic.toLocaleLowerCase()))
-    if (topics.size !== 1) {
-      throw new NotebookStoreError('invalid_selection', 'compact requires entries from the same notebook topic')
-    }
-
-    const now = options.now?.() ?? new Date()
-    const entry: NotebookRecord = {
-      id: options.id?.() ?? generateId(now),
-      kind: selected[0]!.entry.kind,
-      topic: selected[0]!.entry.topic,
-      content: options.content.trim(),
-      createdAt: formatBeijingIso(now),
-    }
-    const firstStart = Math.min(...selected.map((segment) => segment.start))
-    const selectedStarts = new Set(selected.map((segment) => segment.start))
-    let cursor = 0
-    let raw = ''
-    for (const segment of located.segments) {
-      if (!selectedStarts.has(segment.start)) continue
-      raw += located.raw.slice(cursor, segment.start)
-      if (segment.start === firstStart) raw += renderNotebookEntry(entry)
-      cursor = segment.end
-    }
-    raw = `${raw}${located.raw.slice(cursor)}`.trimEnd() + '\n'
-    await atomicWrite(located.path, raw)
-    return { entry, compactedIds: options.ids, file: located.relativeFile, revision: revisionOf(raw) }
-  })
-}
-
 async function ensureMonthlyNotebookFile(
   path: string,
   kind: NotebookKind,
@@ -297,11 +286,43 @@ function renderNotebookEntry(entry: NotebookRecord): string {
     `kind: ${entry.kind}`,
     `topic: ${entry.topic}`,
     `createdAt: ${entry.createdAt}`,
+    `updatedAt: ${entry.updatedAt}`,
     '-->',
     entry.content,
     '<!-- /notebook-entry -->',
     '',
   ].join('\n')
+}
+
+function uniqueTopicSnapshots(
+  matches: NotebookTopicMatch[],
+  winnerPath: string,
+): NotebookFileSnapshot[] {
+  const snapshots = new Map<string, NotebookFileSnapshot>()
+  for (const match of matches) snapshots.set(match.snapshot.path, match.snapshot)
+  const winner = snapshots.get(winnerPath)!
+  snapshots.delete(winnerPath)
+  return [winner, ...snapshots.values()]
+}
+
+function rewriteTopicMatches(
+  snapshot: NotebookFileSnapshot,
+  matches: NotebookTopicMatch[],
+  replacement: NotebookRecord | null,
+): string {
+  const selectedStarts = new Set(matches.map((match) => match.segment.start))
+  const winnerStart = replacement == null
+    ? null
+    : matches.find((match) => match.segment.entry.id === replacement.id)?.segment.start ?? null
+  let cursor = 0
+  let raw = ''
+  for (const segment of snapshot.segments) {
+    if (!selectedStarts.has(segment.start)) continue
+    raw += snapshot.raw.slice(cursor, segment.start)
+    if (segment.start === winnerStart) raw += renderNotebookEntry(replacement!)
+    cursor = segment.end
+  }
+  return `${raw}${snapshot.raw.slice(cursor)}`.trimEnd() + '\n'
 }
 
 async function readEntries(rootDir: string): Promise<NotebookEntriesResult> {
@@ -315,12 +336,61 @@ async function readEntries(rootDir: string): Promise<NotebookEntriesResult> {
     index += result.entries.length
   }
   entries.sort((left, right) => (
-    compareTimestampsDesc(left.createdAt, right.createdAt) || right.index - left.index
+    compareTimestampsDesc(left.updatedAt, right.updatedAt)
+    || compareTimestampsDesc(left.createdAt, right.createdAt)
+    || right.index - left.index
   ))
+  const currentEntries: typeof entries = []
+  const seenTopics = new Set<string>()
+  for (const entry of entries) {
+    const key = topicKey(entry.kind, entry.topic)
+    if (seenTopics.has(key)) continue
+    seenTopics.add(key)
+    currentEntries.push(entry)
+  }
   return {
-    entries: entries.map(({ index: _index, ...entry }) => entry),
+    entries: currentEntries.map(({ index: _index, ...entry }) => entry),
     skippedCorrupt,
   }
+}
+
+async function findNotebookTopicMatches(
+  rootDir: string,
+  kind: NotebookKind,
+  topic: string,
+): Promise<NotebookTopicMatch[]> {
+  const directory = join(rootDir, 'notebook', kind)
+  let files: string[]
+  try {
+    files = await readdir(directory)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+  const key = topicKey(kind, topic)
+  const matches: NotebookTopicMatch[] = []
+  for (const file of files.filter((name) => name.endsWith('.md')).sort()) {
+    const path = join(directory, file)
+    const raw = await readFile(path, 'utf8')
+    const snapshot: NotebookFileSnapshot = {
+      path,
+      relativeFile: `${kind}/${file}`,
+      raw,
+      revision: revisionOf(raw),
+      segments: parseNotebookSegments(raw, kind),
+    }
+    for (const segment of snapshot.segments) {
+      if (topicKey(segment.entry.kind, segment.entry.topic) === key) {
+        matches.push({ snapshot, segment })
+      }
+    }
+  }
+  matches.sort((left, right) => (
+    compareTimestampsDesc(left.segment.entry.updatedAt, right.segment.entry.updatedAt)
+    || compareTimestampsDesc(left.segment.entry.createdAt, right.segment.entry.createdAt)
+    || right.segment.start - left.segment.start
+  ))
+  return matches
 }
 
 function applyQuery(entries: NotebookRecord[], query: NotebookQuery): NotebookRecord[] {
@@ -408,10 +478,11 @@ function parseNotebookSegments(raw: string, expectedKind: NotebookKind): Noteboo
     const kind = fields.get('kind')
     const topic = fields.get('topic')
     const createdAt = fields.get('createdAt')
+    const updatedAt = fields.get('updatedAt') ?? createdAt
     const content = raw.slice(bodyStart, close).trim()
-    if (id && kind === expectedKind && topic && createdAt && content) {
+    if (id && kind === expectedKind && topic && createdAt && updatedAt && content) {
       segments.push({
-        entry: { id, kind: expectedKind, topic, content, createdAt },
+        entry: { id, kind: expectedKind, topic, content, createdAt, updatedAt },
         start,
         end,
       })

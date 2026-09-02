@@ -60,7 +60,7 @@ export const BOT_TOOL_POLICIES: Readonly<Record<string, ToolPolicy>> = Object.fr
   chat_style: fixed(PARALLEL_READ),
   notebook: byAction({
     parallel: ['list', 'search', 'read'],
-    sideEffect: ['write', 'update', 'delete', 'compact'],
+    sideEffect: ['checkpoint'],
   }),
   crypto_paper: byAction({
     exclusive: ['account', 'portfolio', 'orders'],

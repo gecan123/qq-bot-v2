@@ -10,7 +10,7 @@ import {
   readMemoryFile,
   writeMemoryEntry,
 } from '../agent/memory-store.js'
-import { appendNotebookRecord } from '../agent/notebook-store.js'
+import { checkpointNotebookRecord } from '../agent/notebook-store.js'
 import {
   checkAgentMemory,
   memoryCheckExitCode,
@@ -80,7 +80,7 @@ describe('agent memory check', () => {
     await mkdir(join(rootDir, 'memory', 'groups'), { recursive: true })
     await writeFile(join(rootDir, 'memory', 'groups', 'corrupt.md'), 'not memory v1\n', 'utf8')
 
-    await appendNotebookRecord({ rootDir, now, id: () => 'duplicate-id' }, {
+    await checkpointNotebookRecord({ rootDir, now, id: () => 'duplicate-id' }, {
       kind: 'research', topic: 'memory', content: '研究过程',
     })
     await mkdir(join(rootDir, 'notebook', 'research'), { recursive: true })

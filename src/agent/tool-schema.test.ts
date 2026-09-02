@@ -45,13 +45,12 @@ test('zodToToolJsonSchema preserves conditional requirements for every notebook 
 
   assert.deepEqual(json.required, ['action'])
   const props = json.properties as Record<string, Record<string, unknown>>
-  assert.match(String(props.action.description), /action=write 时必须提供 kind, topic, content/)
+  assert.deepEqual(props.action.enum, ['checkpoint', 'list', 'search', 'read'])
+  assert.match(String(props.action.description), /action=checkpoint 时必须提供 kind, topic, content/)
   assert.match(String(props.action.description), /action=search 时必须提供 query/)
-  assert.match(String(props.action.description), /action=update 时必须提供 id, expectedRevision, content/)
-  assert.match(String(props.action.description), /action=compact 时必须提供 ids, expectedRevision, content/)
-  assert.match(String(props.kind.description), /action=write 时必填/)
-  assert.match(String(props.topic.description), /action=write 时必填/)
-  assert.match(String(props.expectedRevision.description), /action=update 或 action=delete 或 action=compact 时必填/)
+  assert.match(String(props.kind.description), /action=checkpoint 时必填/)
+  assert.match(String(props.topic.description), /action=checkpoint 时必填/)
+  assert.equal('expectedRevision' in props, false)
 })
 
 test('tool schemas disclose custom validation constraints that JSON Schema cannot encode', () => {

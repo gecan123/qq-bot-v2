@@ -93,6 +93,19 @@ export function decideLoopPolicy(input: LoopPolicyInput): LoopPolicyDecision {
         reason: input.toolContinuation === 'immediate' ? 'tool_immediate' : 'tool_progress',
       }, { recoverableCorrectionRounds: correctionRounds, noProgressRounds: 0 })
     }
+    if (input.toolContinuation === 'immediate') {
+      const noProgressRounds = input.noProgressRounds + 1
+      if (noProgressRounds >= Math.max(1, input.maxNoProgressRounds)) {
+        return state(input, { action: 'wait_event', reason: 'no_progress_limit' }, {
+          recoverableCorrectionRounds: correctionRounds,
+          noProgressRounds: 0,
+        })
+      }
+      return state(input, { action: 'continue', reason: 'tool_immediate' }, {
+        recoverableCorrectionRounds: correctionRounds,
+        noProgressRounds,
+      })
+    }
     if (input.demand === 'continuation') {
       return state(input, { action: 'continue', reason: 'action_correction' }, {
         recoverableCorrectionRounds: correctionRounds,

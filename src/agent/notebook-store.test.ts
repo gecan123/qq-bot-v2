@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, test } from 'node:test'
@@ -38,41 +38,86 @@ function createGatedCoordinator(): {
   }
 }
 
+function legacyEntry(input: {
+  id: string
+  kind: string
+  topic: string
+  createdAt: string
+  content: string
+}): string {
+  return [
+    '<!-- notebook-entry',
+    `id: ${input.id}`,
+    `kind: ${input.kind}`,
+    `topic: ${input.topic}`,
+    `createdAt: ${input.createdAt}`,
+    '-->',
+    input.content,
+    '<!-- /notebook-entry -->',
+    '',
+  ].join('\n')
+}
+
 describe('notebook store', () => {
-  test('writes an evolving note under a stable topic and kind', async () => {
+  test('checkpoints one current note per stable topic instead of appending', async () => {
     const store = await import('./notebook-store.js').catch(() => null)
     assert.ok(store, 'notebook store module should exist')
 
     const rootDir = await mkdtemp(join(tmpdir(), 'notebook-store-'))
     try {
-      const entry = await store.appendNotebookRecord({
+      let now = new Date('2026-07-13T02:00:00.000Z')
+      let idCalls = 0
+      const options = {
         rootDir,
-        now: () => new Date('2026-07-13T02:00:00.000Z'),
-        id: () => 'note-1',
-      }, {
+        now: () => now,
+        id: () => `note-${++idCalls}`,
+      }
+      const first = await store.checkpointNotebookRecord(options, {
         kind: 'research',
         topic: 'Agent Context',
         content: '先验证 compaction 的失败路径。',
       })
 
-      assert.deepEqual(entry, {
-        id: 'note-1',
+      assert.equal(first.created, true)
+      assert.equal(first.changed, true)
+      assert.equal(first.entry.id, 'note-1')
+      assert.equal(first.entry.updatedAt, '2026-07-13T10:00:00.000+08:00')
+
+      now = new Date('2026-07-14T02:00:00.000Z')
+      const second = await store.checkpointNotebookRecord(options, {
+        kind: 'research',
+        topic: 'agent context',
+        content: '已经验证 compaction 失败路径，下一步检查 replay。',
+      })
+
+      assert.equal(second.created, false)
+      assert.equal(second.changed, true)
+      assert.equal(second.entry.id, 'note-1')
+      assert.equal(second.entry.topic, 'Agent Context')
+      assert.equal(second.entry.updatedAt, '2026-07-14T10:00:00.000+08:00')
+      assert.deepEqual(second.consolidatedIds, [])
+      assert.equal(idCalls, 1)
+
+      const unchanged = await store.checkpointNotebookRecord(options, {
         kind: 'research',
         topic: 'Agent Context',
-        content: '先验证 compaction 的失败路径。',
-        createdAt: '2026-07-13T10:00:00.000+08:00',
+        content: '已经验证 compaction 失败路径，下一步检查 replay。',
       })
+      assert.equal(unchanged.changed, false)
+      assert.equal(unchanged.entry.updatedAt, second.entry.updatedAt)
+
       const path = join(rootDir, 'notebook', 'research', '2026-07.md')
       await access(path)
       const raw = await readFile(path, 'utf8')
-      assert.match(raw, /^# Research Notebook 2026-07/m)
-      assert.match(raw, /topic: Agent Context/)
+      assert.equal(raw.match(/<!-- notebook-entry/g)?.length, 1)
+      assert.match(raw, /updatedAt: 2026-07-14T10:00:00\.000\+08:00/)
+      assert.match(raw, /下一步检查 replay/)
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
   })
 
-  test('filters and searches notes by topic and kind', async () => {
+  test('filters and searches only the current note for each topic', async () => {
     const store = await import('./notebook-store.js').catch(() => null)
     assert.ok(store, 'notebook store module should exist')
     const rootDir = await mkdtemp(join(tmpdir(), 'notebook-query-'))
@@ -80,10 +125,10 @@ describe('notebook store', () => {
       const now = () => new Date('2026-07-13T02:00:00.000Z')
       let id = 0
       const options = { rootDir, now, id: () => `note-${++id}` }
-      await store.appendNotebookRecord(options, {
+      await store.checkpointNotebookRecord(options, {
         kind: 'research', topic: 'Agent Context', content: '验证 replay 不变量。',
       })
-      await store.appendNotebookRecord(options, {
+      await store.checkpointNotebookRecord(options, {
         kind: 'reading', topic: '三体', content: '读到黑暗森林。',
       })
 
@@ -101,101 +146,161 @@ describe('notebook store', () => {
     }
   })
 
-  test('updates, compacts, and deletes notes with revision protection', async () => {
+  test('consolidates legacy duplicate entries when the topic is next checkpointed', async () => {
     const store = await import('./notebook-store.js').catch(() => null)
     assert.ok(store, 'notebook store module should exist')
-    const rootDir = await mkdtemp(join(tmpdir(), 'notebook-mutate-'))
+    const rootDir = await mkdtemp(join(tmpdir(), 'notebook-legacy-'))
     try {
-      let id = 0
-      const options = {
+      const directory = join(rootDir, 'notebook', 'general')
+      await mkdir(directory, { recursive: true })
+      const path = join(directory, '2026-07.md')
+      await writeFile(path, [
+        '# General Notebook 2026-07',
+        '',
+        legacyEntry({
+          id: 'note-old',
+          kind: 'general',
+          topic: '运行记录',
+          createdAt: '2026-07-13T10:00:00.000+08:00',
+          content: '第一次说准备停止。',
+        }),
+        legacyEntry({
+          id: 'note-new',
+          kind: 'general',
+          topic: '运行记录',
+          createdAt: '2026-07-13T11:00:00.000+08:00',
+          content: '第二次说准备停止。',
+        }),
+      ].join('\n'), 'utf8')
+
+      const result = await store.checkpointNotebookRecord({
         rootDir,
-        now: () => new Date('2026-07-13T02:00:00.000Z'),
-        id: () => `note-${++id}`,
-      }
-      await store.appendNotebookRecord(options, {
-        kind: 'market', topic: 'BTC 周期', content: '观察流动性。',
-      })
-      await store.appendNotebookRecord(options, {
-        kind: 'market', topic: 'BTC 周期', content: '补充失效条件。',
-      })
-      await store.appendNotebookRecord(options, {
-        kind: 'market', topic: 'ETH', content: '观察升级。',
+        now: () => new Date('2026-07-13T04:00:00.000Z'),
+      }, {
+        kind: 'general',
+        topic: '运行记录',
+        content: '当前没有未完成方向，等待真实事件。',
       })
 
-      const first = await store.readNotebookRecordSnapshot({ rootDir }, 'note-1')
-      assert.ok(first)
-      const updated = await store.updateNotebookRecord({
-        rootDir,
-        entryId: 'note-1',
-        expectedRevision: first.revision,
-        content: '观察美元流动性。',
-      })
-      assert.equal(updated.entry.content, '观察美元流动性。')
-
-      const second = await store.readNotebookRecordSnapshot({ rootDir }, 'note-2')
-      assert.ok(second)
-      const compacted = await store.compactNotebookRecords({
-        ...options,
-        ids: ['note-1', 'note-2'],
-        expectedRevision: second.revision,
-        content: 'BTC 周期观察需要同时跟踪美元流动性和失效条件。',
-      })
-      assert.deepEqual(compacted.compactedIds, ['note-1', 'note-2'])
-      assert.equal(compacted.entry.topic, 'BTC 周期')
-
-      const third = await store.readNotebookRecordSnapshot({ rootDir }, 'note-3')
-      assert.ok(third)
-      await assert.rejects(
-        store.deleteNotebookRecord({ rootDir, entryId: 'note-3', expectedRevision: first.revision }),
-        (error: unknown) => error instanceof store.NotebookStoreError && error.code === 'revision_conflict',
-      )
-      const deleted = await store.deleteNotebookRecord({
-        rootDir, entryId: 'note-3', expectedRevision: third.revision,
-      })
-      assert.equal(deleted.id, 'note-3')
+      assert.equal(result.created, false)
+      assert.equal(result.changed, true)
+      assert.equal(result.entry.id, 'note-new')
+      assert.deepEqual(result.consolidatedIds, ['note-old'])
+      const raw = await readFile(path, 'utf8')
+      assert.equal(raw.match(/<!-- notebook-entry/g)?.length, 1)
+      assert.doesNotMatch(raw, /第一次说准备停止/)
+      assert.match(raw, /等待真实事件/)
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
   })
 
-  test('serializes append and revision mutation for the same notebook month', async () => {
+  test('serializes concurrent checkpoints for the same topic', async () => {
     const store = await import('./notebook-store.js')
     const rootDir = await mkdtemp(join(tmpdir(), 'notebook-atomic-'))
     try {
-      const now = () => new Date('2026-07-13T02:00:00.000Z')
-      await store.appendNotebookRecord({ rootDir, now, id: () => 'note-initial' }, {
-        kind: 'research', topic: 'Atomic', content: 'initial note',
-      })
-      const initial = await store.readNotebookRecordSnapshot({ rootDir }, 'note-initial')
-      assert.ok(initial)
       const gated = createGatedCoordinator()
-      const append = store.appendNotebookRecord({
+      let id = 0
+      const options = {
         rootDir,
-        now,
-        id: () => 'note-appended',
+        now: () => new Date('2026-07-13T02:00:00.000Z'),
+        id: () => `note-${++id}`,
         workspaceStateCoordinator: gated.coordinator,
-      }, {
-        kind: 'research', topic: 'Atomic', content: 'appended note',
+      }
+      const first = store.checkpointNotebookRecord(options, {
+        kind: 'research', topic: 'Atomic', content: '第一版当前状态。',
       })
       await gated.entered
-      const update = store.updateNotebookRecord({
-        rootDir,
-        entryId: 'note-initial',
-        expectedRevision: initial.revision,
-        content: 'stale update',
-        workspaceStateCoordinator: gated.coordinator,
-      }).then(() => null, (error: unknown) => error)
+      const second = store.checkpointNotebookRecord(options, {
+        kind: 'research', topic: 'atomic', content: '第二版当前状态。',
+      })
 
       for (let attempt = 0; attempt < 20 && gated.resourceKeys.length < 2; attempt++) {
         await new Promise<void>((resolve) => setImmediate(resolve))
       }
       const requestedKeys = [...gated.resourceKeys]
       gated.release()
-      await append
-      const updateError = await update
+      await Promise.all([first, second])
 
-      assert.deepEqual(requestedKeys, ['notebook:research/2026-07.md', 'notebook:research/2026-07.md'])
-      assert.equal(updateError instanceof store.NotebookStoreError && updateError.code === 'revision_conflict', true)
+      assert.deepEqual(requestedKeys, ['notebook', 'notebook'])
+      const listed = await store.listNotebookRecords({ rootDir }, { kind: 'research', topic: 'Atomic' })
+      assert.equal(listed.entries.length, 1)
+      assert.equal(listed.entries[0]?.content, '第二版当前状态。')
+      assert.equal(id, 1)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  test('preserves different topics checkpointed concurrently into one monthly file', async () => {
+    const store = await import('./notebook-store.js')
+    const rootDir = await mkdtemp(join(tmpdir(), 'notebook-parallel-topics-'))
+    try {
+      const gated = createGatedCoordinator()
+      let id = 0
+      const options = {
+        rootDir,
+        now: () => new Date('2026-07-13T02:00:00.000Z'),
+        id: () => `note-${++id}`,
+        workspaceStateCoordinator: gated.coordinator,
+      }
+      const first = store.checkpointNotebookRecord(options, {
+        kind: 'research', topic: '主题甲', content: '主题甲的当前状态。',
+      })
+      await gated.entered
+      const second = store.checkpointNotebookRecord(options, {
+        kind: 'research', topic: '主题乙', content: '主题乙的当前状态。',
+      })
+
+      for (let attempt = 0; attempt < 20 && gated.resourceKeys.length < 2; attempt++) {
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      }
+      const requestedKeys = [...gated.resourceKeys]
+      gated.release()
+      await Promise.all([first, second])
+
+      assert.deepEqual(requestedKeys, ['notebook', 'notebook'])
+      const listed = await store.listNotebookRecords({ rootDir }, { kind: 'research' })
+      assert.deepEqual(new Set(listed.entries.map((entry: { topic: string }) => entry.topic)), new Set(['主题甲', '主题乙']))
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  test('bounds general topics while keeping existing topics updateable', async () => {
+    const store = await import('./notebook-store.js')
+    const rootDir = await mkdtemp(join(tmpdir(), 'notebook-general-limit-'))
+    try {
+      let id = 0
+      const options = {
+        rootDir,
+        now: () => new Date('2026-09-01T02:00:00.000Z'),
+        id: () => `note-${++id}`,
+      }
+      for (const topic of ['停止', '最终停止', '真正的停止', '最终状态', '最终承认']) {
+        await store.checkpointNotebookRecord(options, {
+          kind: 'general', topic, content: `${topic}的当前状态。`,
+        })
+      }
+
+      await assert.rejects(
+        store.checkpointNotebookRecord(options, {
+          kind: 'general', topic: '最终决定', content: '再次创建一个近义状态主题。',
+        }),
+        (error: unknown) => (
+          error instanceof store.NotebookStoreError
+          && error.code === 'topic_limit_reached'
+          && /停止.*最终承认/.test(error.message)
+        ),
+      )
+
+      const updated = await store.checkpointNotebookRecord(options, {
+        kind: 'general', topic: '停止', content: '已有主题仍然可以更新。',
+      })
+      assert.equal(updated.created, false)
+      assert.equal(updated.entry.content, '已有主题仍然可以更新。')
+      const listed = await store.listNotebookRecords({ rootDir }, { kind: 'general' })
+      assert.equal(listed.entries.length, 5)
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }

@@ -225,6 +225,35 @@ describe('runReactRound', () => {
     ])
   })
 
+  test('does not infer progress from a failed tool outcome', async () => {
+    const result = await runReactRound({
+      systemPrompt: 'system',
+      context: createAgentContext(),
+      llm: {
+        async chat() {
+          return {
+            content: '',
+            toolCalls: [{ id: 'failed-1', name: 'lookup', args: {} }],
+            usage: { inputTokens: 10, cachedTokens: 0, outputTokens: 5 },
+            model: 'mock',
+            contextWindowTokens: 200_000,
+          }
+        },
+      },
+      tools: {
+        list: () => [makeTool('lookup')],
+        classify: classifyExclusive,
+        async execute() {
+          return { content: '{"ok":false}', outcome: { ok: false, code: 'failed' } }
+        },
+      },
+      toolContext: { eventQueue: new InMemoryEventQueue<BotEvent>(), roundIndex: 1 },
+    })
+
+    assert.equal(result.toolOutcomes[0]?.ok, false)
+    assert.equal(result.toolOutcomes[0]?.progress, false)
+  })
+
   test('persists assistant native thinking blocks with tool calls', async () => {
     const context = createAgentContext()
     context.appendUserMessage('use tool')

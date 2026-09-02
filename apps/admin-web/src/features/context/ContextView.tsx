@@ -1,4 +1,4 @@
-import { ArrowDown, Bell, Brain, ChevronRight, Wrench } from 'lucide-react'
+import { ArrowDown, Bell, Brain, ChevronRight, Coffee, Radio, Wrench } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -48,6 +48,7 @@ export function ContextView({
       <span>Canonical Ledger 决定下一轮与重启后可恢复的上下文；工具审计与 Token 观测不在这里充当记忆。</span>
       <a href="/timeline">排查执行过程</a>
     </aside>
+    {!isDemo && <LiveActivityStrip activity={snapshot.activity} />}
     {isDemo && (
       <aside className="context-demo-notice" aria-label="示例数据说明">
         <strong>示例数据，不是实际运行记录</strong>
@@ -118,6 +119,81 @@ export function ContextView({
     </details>
     <WarningList warnings={snapshot.warnings} />
   </>
+}
+
+function LiveActivityStrip({ activity }: { activity: ContextSnapshot['activity'] }) {
+  const activeTool = activity.activeTools[0] ?? null
+  const args = recordValue(activeTool?.argsSummary)
+  const isRest = activeTool?.toolName === 'rest' || activeTool?.toolName === 'pause'
+  const reason = stringValue(args?.reason)
+  const resumeAction = stringValue(args?.resumeAction)
+  const durationMinutes = numberValue(args?.durationMinutes)
+  const startedAt = activeTool?.startedAt ?? activity.phaseStartedAt
+  const title = liveActivityTitle(activity, activeTool?.toolName ?? null)
+
+  return (
+    <aside
+      className={`context-live-activity${activity.available ? '' : ' context-live-activity--unavailable'}`}
+      role="status"
+      aria-label="Agent 实时状态"
+    >
+      <div className="context-live-activity-icon" aria-hidden="true">
+        {isRest ? <Coffee size={16} /> : <Radio size={16} />}
+      </div>
+      <div className="context-live-activity-body">
+        <div className="context-live-activity-heading">
+          <strong>{title}</strong>
+          <span>{activity.available ? '实时状态 · 尚未写入 Agent 历史' : '实时观察面 · 不属于 Agent 历史'}</span>
+        </div>
+        {activity.available ? (
+          <>
+            <div className="context-live-activity-meta">
+              {activity.roundIndex !== null && <span>Round {activity.roundIndex}</span>}
+              {startedAt !== null && <span>开始于 {formatTimestamp(startedAt)}</span>}
+              {durationMinutes !== null && <span>计划 {formatCount(durationMinutes)} 分钟</span>}
+              {activity.activeTools.length > 1 && <span>{formatCount(activity.activeTools.length)} 个工具并行执行</span>}
+            </div>
+            {reason && <p><b>休息原因</b><span>{reason}</span></p>}
+            {resumeAction && <p><b>醒来后</b><span>{resumeAction}</span></p>}
+            {!reason && !resumeAction && activity.detail && <p><span>{activity.detail}</span></p>}
+          </>
+        ) : (
+          <p><span>{liveActivityUnavailableText(activity.sourceStatus)}</span></p>
+        )}
+      </div>
+    </aside>
+  )
+}
+
+function liveActivityTitle(
+  activity: ContextSnapshot['activity'],
+  toolName: string | null,
+): string {
+  if (!activity.available) return '实时状态不可用'
+  if (toolName === 'rest' || toolName === 'pause') return '正在短暂休息'
+  if (toolName) return `正在执行 ${toolName}`
+  switch (activity.phase) {
+    case 'starting': return '正在启动'
+    case 'thinking': return '正在思考下一步'
+    case 'committing': return '正在写入 Agent 历史'
+    case 'waiting': return '正在等待下一次唤醒'
+    case 'error': return '运行遇到错误'
+    case 'stopping': return '正在停止'
+    case 'stopped': return '已停止'
+    default: return activity.detail ?? '正在运行'
+  }
+}
+
+function liveActivityUnavailableText(status: ContextSnapshot['activity']['sourceStatus']): string {
+  switch (status) {
+    case 'stale': return '观察文件属于已停止或不可达的 Bot 进程。'
+    case 'invalid': return '实时活动观察文件无效。'
+    default: return '当前没有可用的实时活动观察文件。'
+  }
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 }
 
 function ThinkingArchive({

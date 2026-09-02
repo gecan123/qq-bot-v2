@@ -1,5 +1,7 @@
 import '@tanstack/react-start/server-only'
+import { readLiveAgentActivity } from '../../server/agent-activity.server.js'
 import { getAdminPrisma } from '../../server/db.server.js'
+import { mapLiveAgentActivity } from '../activity/activity.service.js'
 import {
   contextSnapshotSchema,
   contextThinkingArchiveSchema,
@@ -14,7 +16,7 @@ const CONVERSATION_TEXT_LIMIT = 12_000
 
 export async function loadContextSnapshot(now = new Date()): Promise<ContextSnapshot> {
   const db = getAdminPrisma()
-  const [total, rows, grouped, checkpoint, runtime, usage, recentLlmCalls] = await Promise.all([
+  const [total, rows, grouped, checkpoint, runtime, usage, recentLlmCalls, activityInput] = await Promise.all([
     db.botAgentLedgerEntry.count(),
     db.botAgentLedgerEntry.findMany({ orderBy: { id: 'desc' }, take: 80 }),
     db.botAgentLedgerEntry.groupBy({ by: ['entryType'], _count: { _all: true }, orderBy: { _count: { entryType: 'desc' } } }),
@@ -45,16 +47,20 @@ export async function loadContextSnapshot(now = new Date()): Promise<ContextSnap
         evidence: true,
       },
     }),
+    readLiveAgentActivity(),
   ])
   const warnings: string[] = []
   const headId = rows[0]?.id.toString() ?? null
   const runtimeHeadId = runtime?.ledgerHeadEntryId?.toString() ?? null
   if (headId !== runtimeHeadId) warnings.push(`Runtime head (${runtimeHeadId ?? '空'}) 与 ledger head (${headId ?? '空'}) 不一致。`)
   if (checkpoint?.throughEntryId && headId && checkpoint.throughEntryId > BigInt(headId)) warnings.push('Checkpoint throughEntryId 超过 canonical ledger head。')
+  if (activityInput.status === 'invalid') warnings.push('实时活动观察面无效。')
+  if (activityInput.status === 'stale') warnings.push('实时活动观察面属于已停止或不可达的 Bot 进程。')
 
   return contextSnapshotSchema.parse({
-    schemaVersion: 6,
+    schemaVersion: 7,
     generatedAt: now.toISOString(),
+    activity: mapLiveAgentActivity(activityInput),
     ledger: {
       total,
       headId,

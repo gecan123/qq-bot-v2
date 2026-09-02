@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { liveAgentActivitySchema } from '../activity/activity.schema.js'
 
 const evidenceDigestSchema = z.object({
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
@@ -94,8 +95,9 @@ export const contextThinkingBlockSchema = z.object({
 }).strict()
 
 export const contextSnapshotSchema = z.object({
-  schemaVersion: z.literal(6),
+  schemaVersion: z.literal(7),
   generatedAt: z.iso.datetime({ offset: true }),
+  activity: liveAgentActivitySchema,
   ledger: z.object({
     total: z.number().int().nonnegative(),
     headId: z.string().nullable(),

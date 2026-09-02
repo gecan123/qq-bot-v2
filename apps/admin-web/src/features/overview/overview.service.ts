@@ -1,11 +1,8 @@
 import { overviewSnapshotSchema, type OverviewSnapshot } from './overview.schema.js'
-import type {
-  AgentActivitySurface,
-  AgentActivitySurfaceReadResult,
-} from '../../../../../src/agent/activity-surface.js'
+import { mapLiveAgentActivity, type LiveAgentActivityInput } from '../activity/activity.service.js'
 import type { OverviewToolActivityInput } from './overview-tool-log.js'
 
-export type OverviewActivityInput = AgentActivitySurfaceReadResult | { status: 'stale' }
+export type OverviewActivityInput = LiveAgentActivityInput
 
 export interface OverviewDb {
   botAgentLedgerEntry: {
@@ -71,7 +68,7 @@ export async function loadOverviewSnapshot(
   const warnings: string[] = [...toolActivity.warnings]
   const focus = parseFocus(runtime?.conversationFocus, warnings)
 
-  const activity = mapActivity(activityInput)
+  const activity = mapLiveAgentActivity(activityInput)
   if (activityInput.status === 'invalid') warnings.push('实时活动观察面无效。')
   if (activityInput.status === 'stale') warnings.push('实时活动观察面属于已停止或不可达的 Bot 进程。')
 
@@ -112,36 +109,6 @@ export async function loadOverviewSnapshot(
     tools24h: { calls: toolActivity.calls24h, failed: toolActivity.failed24h },
     warnings,
   })
-}
-
-function mapActivity(input: OverviewActivityInput): OverviewSnapshot['activity'] {
-  if (input.status !== 'available') {
-    return {
-      available: false,
-      sourceStatus: input.status,
-      phase: 'unavailable',
-      phaseStartedAt: null,
-      roundIndex: null,
-      detail: null,
-      waitUntil: null,
-      trigger: null,
-      activeTools: [],
-      lastCompleted: null,
-    }
-  }
-  const surface: AgentActivitySurface = input.surface
-  return {
-    available: true,
-    sourceStatus: 'available',
-    phase: surface.phase,
-    phaseStartedAt: surface.phaseStartedAt,
-    roundIndex: surface.roundIndex,
-    detail: surface.detail,
-    waitUntil: surface.waitUntil,
-    trigger: surface.trigger,
-    activeTools: surface.activeTools,
-    lastCompleted: surface.lastCompleted,
-  }
 }
 
 function describeToolAction(

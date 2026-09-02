@@ -8,8 +8,20 @@ import { contextSnapshotSchema, type ContextSnapshot } from './context.schema.js
 import { ContextView } from './ContextView.js'
 
 const snapshot: ContextSnapshot = {
-  schemaVersion: 6,
+  schemaVersion: 7,
   generatedAt: '2026-07-26T08:00:00.000Z',
+  activity: {
+    available: false,
+    sourceStatus: 'missing',
+    phase: 'unavailable',
+    phaseStartedAt: null,
+    roundIndex: null,
+    detail: null,
+    waitUntil: null,
+    trigger: null,
+    activeTools: [],
+    lastCompleted: null,
+  },
   ledger: {
     total: 12,
     headId: '42',
@@ -82,6 +94,45 @@ describe('ContextView LLM calls', () => {
     assert.ok(screen.getByText('server'))
     assert.ok(screen.getAllByText('inbox').length >= 1)
     assert.equal(screen.queryByText(/prompt body|response body/), null)
+  })
+})
+
+describe('ContextView live activity', () => {
+  test('shows an in-progress rest separately from canonical Agent history', () => {
+    const restingSnapshot: ContextSnapshot = {
+      ...snapshot,
+      activity: {
+        available: true,
+        sourceStatus: 'available',
+        phase: 'tool',
+        phaseStartedAt: '2026-07-26T08:01:00.000Z',
+        roundIndex: 14,
+        detail: '正在执行 rest',
+        waitUntil: null,
+        trigger: null,
+        activeTools: [{
+          toolCallId: 'call-rest',
+          toolName: 'rest',
+          roundIndex: 14,
+          startedAt: '2026-07-26T08:01:00.000Z',
+          argsSummary: {
+            durationMinutes: 30,
+            reason: '网站已经发布，该停下来休息了。',
+            resumeAction: '醒来后检查有没有新消息。',
+          },
+        }],
+        lastCompleted: null,
+      },
+    }
+
+    render(<ContextView snapshot={restingSnapshot} isRefreshing={false} refreshFailed={false} />)
+
+    const liveStatus = screen.getByRole('status', { name: 'Agent 实时状态' })
+    assert.ok(within(liveStatus).getByText('正在短暂休息'))
+    assert.ok(within(liveStatus).getByText('实时状态 · 尚未写入 Agent 历史'))
+    assert.ok(within(liveStatus).getByText('网站已经发布，该停下来休息了。'))
+    assert.ok(within(liveStatus).getByText('醒来后检查有没有新消息。'))
+    assert.ok(within(liveStatus).getByText('计划 30 分钟'))
   })
 })
 

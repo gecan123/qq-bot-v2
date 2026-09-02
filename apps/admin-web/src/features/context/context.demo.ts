@@ -2,8 +2,20 @@ import type { ContextSnapshot } from './context.schema.js'
 
 // PROTOTYPE: representative in-memory data for judging the real /context UI via ?demo=1.
 export const contextDemoSnapshot = {
-  schemaVersion: 6,
+  schemaVersion: 7,
   generatedAt: '2026-08-23T10:42:18.000+08:00',
+  activity: {
+    available: false,
+    sourceStatus: 'missing',
+    phase: 'unavailable',
+    phaseStartedAt: null,
+    roundIndex: null,
+    detail: null,
+    waitUntil: null,
+    trigger: null,
+    activeTools: [],
+    lastCompleted: null,
+  },
   ledger: {
     total: 129,
     headId: '129',
